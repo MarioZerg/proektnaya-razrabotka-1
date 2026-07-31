@@ -302,7 +302,7 @@ const ToWorkshop = () => {
                 {isProduction ? 'Запросить материал' : 'Новая заявка'}
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-h-[90vh] max-w-md overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{isProduction ? 'Запросить материал' : 'Заявка на материал в цех'}</DialogTitle>
               </DialogHeader>
