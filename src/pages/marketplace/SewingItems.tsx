@@ -23,8 +23,16 @@ import {
   PaginationItem,
   PaginationLink,
 } from '@/components/ui/pagination';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import Icon from '@/components/ui/icon';
-import { fetchOrders, type Order } from '@/lib/ordersApi';
+import { useToast } from '@/hooks/use-toast';
+import { fetchOrders, updateOrder, cutOrder, type Order, type SewingStatus } from '@/lib/ordersApi';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
@@ -33,7 +41,7 @@ const widthOptions = ['200', '300', '400', '500', '600', '700', '800'];
 const heightOptions = [
   '220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295',
 ];
-const statusOptions = ['Новые', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка', 'Готовые'];
+const statusOptions: SewingStatus[] = ['Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка', 'Готовые'];
 
 const marketplaceLogo: Record<string, { label: string; className: string }> = {
   OZON: { label: 'OZON', className: 'text-[#005BFF] font-bold' },
@@ -62,6 +70,7 @@ const timeAgo = (iso: string) => {
 };
 
 const SewingItems = () => {
+  const { toast } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -69,7 +78,20 @@ const SewingItems = () => {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
 
-  useEffect(() => {
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [employeeFilter, setEmployeeFilter] = useState('all');
+  const [materialFilter, setMaterialFilter] = useState('all');
+  const [widthFilter, setWidthFilter] = useState('all');
+  const [heightFilter, setHeightFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [workshopFilter, setWorkshopFilter] = useState('all');
+
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [cutting, setCutting] = useState(false);
+
+  const load = () => {
     setLoading(true);
     Promise.all([fetchOrders(), fetchEmployees(), fetchMaterialsData(), fetchWorkshops()])
       .then(([ordersData, employeesData, materialsData, workshopsData]) => {
@@ -79,18 +101,104 @@ const SewingItems = () => {
         setWorkshops(workshopsData);
       })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
-  const totalPages = Math.max(1, Math.ceil(orders.length / 10));
-  const pagedOrders = orders.slice((page - 1) * 10, page * 10);
+  const filteredOrders = orders.filter((o) => {
+    if (typeFilter !== 'all' && o.orderType !== typeFilter) return false;
+    if (employeeFilter !== 'all' && String(o.assignedUserId) !== employeeFilter) return false;
+    if (materialFilter !== 'all' && o.material !== materials.find((m) => String(m.id) === materialFilter)?.name) return false;
+    if (widthFilter !== 'all' && String(o.width) !== widthFilter) return false;
+    if (heightFilter !== 'all' && String(o.height) !== heightFilter) return false;
+    if (statusFilter !== 'all' && o.sewingStatus !== statusFilter) return false;
+    if (workshopFilter !== 'all' && String(o.workshopId) !== workshopFilter) return false;
+    return true;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / 10));
+  const pagedOrders = filteredOrders.slice((page - 1) * 10, page * 10);
+
+  const openDetail = (order: Order) => {
+    setSelectedOrder(order);
+    setDialogOpen(true);
+  };
+
+  const handleAssignUser = async (userId: string) => {
+    if (!selectedOrder) return;
+    setSaving(true);
+    try {
+      await updateOrder(selectedOrder.id, { assignedUserId: userId === 'none' ? null : Number(userId) });
+      toast({ title: 'Сотрудник назначен' });
+      const updated = { ...selectedOrder, assignedUserId: userId === 'none' ? null : Number(userId) };
+      setSelectedOrder(updated);
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAssignWorkshop = async (workshopId: string) => {
+    if (!selectedOrder) return;
+    setSaving(true);
+    try {
+      await updateOrder(selectedOrder.id, { workshopId: workshopId === 'none' ? null : Number(workshopId) });
+      toast({ title: 'Цех назначен' });
+      const updated = { ...selectedOrder, workshopId: workshopId === 'none' ? null : Number(workshopId) };
+      setSelectedOrder(updated);
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleStatusChange = async (status: string) => {
+    if (!selectedOrder) return;
+    setSaving(true);
+    try {
+      await updateOrder(selectedOrder.id, { sewingStatus: status as SewingStatus });
+      toast({ title: 'Статус обновлён' });
+      setSelectedOrder({ ...selectedOrder, sewingStatus: status });
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCut = async () => {
+    if (!selectedOrder) return;
+    setCutting(true);
+    try {
+      await cutOrder(selectedOrder.id);
+      toast({ title: 'Раскрой выполнен', description: 'Материалы списаны с рулонов' });
+      setSelectedOrder({ ...selectedOrder, sewingStatus: 'Раскроено' });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось выполнить раскрой',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setCutting(false);
+    }
+  };
 
   return (
     <CrmLayout>
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Товары для пошива</h1>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-          <Select defaultValue="all">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
             <SelectTrigger>
               <SelectValue placeholder="Все типы" />
             </SelectTrigger>
@@ -101,12 +209,12 @@ const SewingItems = () => {
             </SelectContent>
           </Select>
 
-          <Select defaultValue="all">
+          <Select value={employeeFilter} onValueChange={setEmployeeFilter}>
             <SelectTrigger>
-              <SelectValue placeholder="Все" />
+              <SelectValue placeholder="Все сотрудники" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Все</SelectItem>
+              <SelectItem value="all">Все сотрудники</SelectItem>
               {employees.map((e) => (
                 <SelectItem key={e.id} value={String(e.id)}>
                   {e.fullName}
@@ -115,17 +223,7 @@ const SewingItems = () => {
             </SelectContent>
           </Select>
 
-          <Select>
-            <SelectTrigger>
-              <SelectValue placeholder="---" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ozon">OZON</SelectItem>
-              <SelectItem value="wb">WB</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select defaultValue="all">
+          <Select value={materialFilter} onValueChange={setMaterialFilter}>
             <SelectTrigger>
               <SelectValue placeholder="Все материалы" />
             </SelectTrigger>
@@ -139,7 +237,7 @@ const SewingItems = () => {
             </SelectContent>
           </Select>
 
-          <Select defaultValue="all">
+          <Select value={widthFilter} onValueChange={setWidthFilter}>
             <SelectTrigger>
               <SelectValue placeholder="Все ширины" />
             </SelectTrigger>
@@ -153,7 +251,7 @@ const SewingItems = () => {
             </SelectContent>
           </Select>
 
-          <Select defaultValue="all">
+          <Select value={heightFilter} onValueChange={setHeightFilter}>
             <SelectTrigger>
               <SelectValue placeholder="Все высоты" />
             </SelectTrigger>
@@ -167,11 +265,12 @@ const SewingItems = () => {
             </SelectContent>
           </Select>
 
-          <Select defaultValue="Новые">
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger>
-              <SelectValue />
+              <SelectValue placeholder="Все статусы" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="all">Все статусы</SelectItem>
               {statusOptions.map((s) => (
                 <SelectItem key={s} value={s}>
                   {s}
@@ -180,7 +279,7 @@ const SewingItems = () => {
             </SelectContent>
           </Select>
 
-          <Select defaultValue="all">
+          <Select value={workshopFilter} onValueChange={setWorkshopFilter}>
             <SelectTrigger>
               <SelectValue placeholder="Все цеха" />
             </SelectTrigger>
@@ -248,7 +347,11 @@ const SewingItems = () => {
                       </TableCell>
                       <TableCell>{o.completedAt ? formatDate(o.completedAt) : ''}</TableCell>
                       <TableCell>
-                        <Button size="sm" className="bg-blue-600 text-white hover:bg-blue-700">
+                        <Button
+                          size="sm"
+                          className="bg-blue-600 text-white hover:bg-blue-700"
+                          onClick={() => openDetail(o)}
+                        >
                           <Icon name="Eye" size={14} className="mr-1.5" />
                           Просмотр
                         </Button>
@@ -294,6 +397,97 @@ const SewingItems = () => {
             )}
           </>
         )}
+
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Заказ #{selectedOrder?.id}</DialogTitle>
+            </DialogHeader>
+            {selectedOrder && (
+              <div className="space-y-4">
+                <div className="text-sm text-muted-foreground">
+                  {selectedOrder.material} {selectedOrder.width}×{selectedOrder.height} · Заказ {selectedOrder.orderNumber}
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Статус пошива</Label>
+                  <Select value={selectedOrder.sewingStatus} onValueChange={handleStatusChange} disabled={saving}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {statusOptions.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {s}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Сотрудник</Label>
+                  <Select
+                    value={selectedOrder.assignedUserId ? String(selectedOrder.assignedUserId) : 'none'}
+                    onValueChange={handleAssignUser}
+                    disabled={saving}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Не назначен" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Не назначен</SelectItem>
+                      {employees.map((e) => (
+                        <SelectItem key={e.id} value={String(e.id)}>
+                          {e.fullName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Цех</Label>
+                  <Select
+                    value={selectedOrder.workshopId ? String(selectedOrder.workshopId) : 'none'}
+                    onValueChange={handleAssignWorkshop}
+                    disabled={saving}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Не назначен" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Не назначен</SelectItem>
+                      {workshops.map((w) => (
+                        <SelectItem key={w.id} value={String(w.id)}>
+                          {w.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Button
+                  className="w-full"
+                  onClick={handleCut}
+                  disabled={cutting || selectedOrder.sewingStatus === 'Раскроено'}
+                >
+                  {cutting ? (
+                    <>
+                      <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                      Списываем материалы...
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="Scissors" size={16} className="mr-2" />
+                      Раскроить (списать материалы с рулонов)
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </CrmLayout>
   );

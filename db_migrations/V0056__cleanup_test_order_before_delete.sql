@@ -1,0 +1,1 @@
+UPDATE orders SET material = NULL, width = NULL, height = NULL, sewing_status = 'Новый' WHERE order_number = 'TEST-CUT-001';

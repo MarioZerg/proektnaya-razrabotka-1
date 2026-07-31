@@ -3,6 +3,7 @@ const ORDERS_URL = 'https://functions.poehali.dev/1d8ed922-bded-4f5a-a367-a07427
 export type OrderStatus = 'Новый' | 'В работе' | 'Выполнен' | 'Отменён';
 export type OrderType = 'FBO' | 'FBS' | 'Индивидуальный';
 export type Marketplace = 'OZON' | 'WB' | 'Yandex';
+export type SewingStatus = 'Новый' | 'На раскрое' | 'Раскроено' | 'В работе' | 'Стикеровка' | 'Готовые';
 
 export interface Order {
   id: number;
@@ -61,7 +62,12 @@ export const updateOrder = (
     orderType: OrderType;
     status: OrderStatus;
     product: string;
+    sewingStatus: SewingStatus;
+    assignedUserId: number | null;
+    workshopId: number | null;
   }>
 ) => postAction({ action: 'update_order', id, ...fields });
+
+export const cutOrder = (id: number) => postAction({ action: 'cut', id });
 
 export const deleteOrder = (id: number) => postAction({ action: 'delete_order', id });

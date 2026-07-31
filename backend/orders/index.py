@@ -16,7 +16,11 @@ def handler(event: dict, context) -> dict:
 
     GET  /                       - получить список заказов
     POST /  { action: 'create_manual', orderNumber, marketplace, orderType, cluster?, product }
-    POST /  { action: 'update_order', id, orderNumber?, marketplace?, orderType?, status?, product? }
+    POST /  { action: 'update_order', id, orderNumber?, marketplace?, orderType?, status?, product?,
+              sewingStatus?, assignedUserId?, workshopId? }
+    POST /  { action: 'cut', id }
+        - переводит заказ в статус "Раскроено" и автоматически списывает материалы товара
+          (по составу marketplace_items) с доступных рулонов (сначала более старые остатки)
     POST /  { action: 'delete_order', id }
 
     Args:
@@ -168,10 +172,115 @@ def handler(event: dict, context) -> dict:
                         fields.append("completed_at = now()")
                 if 'product' in body_data:
                     fields.append(f"product = '{str(body_data['product']).replace(chr(39), chr(39)*2)}'")
+                if 'sewingStatus' in body_data:
+                    sewing_status_val = str(body_data['sewingStatus']).replace(chr(39), chr(39) * 2)
+                    fields.append(f"sewing_status = '{sewing_status_val}'")
+                if 'assignedUserId' in body_data:
+                    val = body_data['assignedUserId']
+                    fields.append(f"assigned_user_id = {int(val) if val not in (None, '') else 'NULL'}")
+                if 'workshopId' in body_data:
+                    val = body_data['workshopId']
+                    fields.append(f"workshop_id = {int(val) if val not in (None, '') else 'NULL'}")
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 
                 cur.execute(f"UPDATE orders SET {', '.join(fields)} WHERE id = {int(item_id)}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'cut':
+                item_id = body_data.get('id')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+                cur.execute(
+                    "SELECT material, width, height FROM orders WHERE id = %s",
+                    (int(item_id),),
+                )
+                order_row = cur.fetchone()
+                if not order_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
+                material, width, height = order_row
+
+                cur.execute(
+                    "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                    (material, width, height),
+                )
+                item_row = cur.fetchone()
+                if not item_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Не найден товар маркетплейса для этого материала/размера — расход материалов не определён'}),
+                    }
+                marketplace_item_id = item_row[0]
+
+                cur.execute(
+                    "SELECT material_id, quantity FROM marketplace_item_materials WHERE marketplace_item_id = %s",
+                    (marketplace_item_id,),
+                )
+                needed = cur.fetchall()
+                if not needed:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'У товара не заполнен расход материалов'}),
+                    }
+
+                shortages = []
+                write_offs = []
+                for material_id, qty_needed in needed:
+                    qty_needed = float(qty_needed)
+                    cur.execute(
+                        "SELECT id, remaining_quantity FROM rolls "
+                        "WHERE material_id = %s AND status IN ('in_storage', 'in_workshop') AND remaining_quantity > 0 "
+                        "ORDER BY created_at ASC",
+                        (material_id,),
+                    )
+                    available_rolls = cur.fetchall()
+                    total_available = sum(float(r[1]) for r in available_rolls)
+                    if total_available < qty_needed:
+                        cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
+                        mat_name, mat_unit = cur.fetchone()
+                        shortages.append(
+                            f"{mat_name}: нужно {qty_needed} {mat_unit}, доступно {total_available} {mat_unit}"
+                        )
+                        continue
+
+                    remaining_to_take = qty_needed
+                    for roll_id, roll_remaining in available_rolls:
+                        if remaining_to_take <= 0:
+                            break
+                        take = min(float(roll_remaining), remaining_to_take)
+                        write_offs.append((roll_id, material_id, take))
+                        remaining_to_take -= take
+
+                if shortages:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Недостаточно материалов на складе: ' + '; '.join(shortages)}),
+                    }
+
+                for roll_id, material_id, take in write_offs:
+                    cur.execute(
+                        "SELECT remaining_quantity FROM rolls WHERE id = %s",
+                        (roll_id,),
+                    )
+                    roll_remaining = float(cur.fetchone()[0])
+                    new_remaining = roll_remaining - take
+                    new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
+                    cur.execute(
+                        f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {roll_id}"
+                    )
+                    cur.execute(
+                        f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
+                        f"VALUES ({int(item_id)}, {material_id}, {roll_id}, {take})"
+                    )
+
+                cur.execute(
+                    f"UPDATE orders SET sewing_status = 'Раскроено' WHERE id = {int(item_id)}"
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
