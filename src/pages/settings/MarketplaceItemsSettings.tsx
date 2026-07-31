@@ -1,35 +1,6 @@
 import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import {
   fetchMarketplaceItems,
@@ -42,36 +13,16 @@ import {
   type MarketplaceItemMaterial,
 } from '@/lib/marketplaceItemsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
-
-interface ItemFormState {
-  name: string;
-  width: string;
-  height: string;
-  article: string;
-  ozonSku: string;
-  wbSku: string;
-  material: string;
-  barcode: string;
-}
-
-const emptyForm: ItemFormState = {
-  name: '',
-  width: '',
-  height: '',
-  article: '',
-  ozonSku: '',
-  wbSku: '',
-  material: '',
-  barcode: '',
-};
-
-interface MaterialRow {
-  materialId: string;
-  quantity: string;
-}
-
-const PAGE_SIZE = 24;
-const ALL_MATERIALS = '__all__';
+import {
+  emptyForm,
+  PAGE_SIZE,
+  ALL_MATERIALS,
+  type ItemFormState,
+  type MaterialRow,
+} from '@/components/crm/marketplaceItems/marketplaceItemsShared';
+import ItemFormDialog from '@/components/crm/marketplaceItems/ItemFormDialog';
+import ItemsToolbar from '@/components/crm/marketplaceItems/ItemsToolbar';
+import ItemsGrid from '@/components/crm/marketplaceItems/ItemsGrid';
 
 const MarketplaceItemsSettings = () => {
   const { toast } = useToast();
@@ -245,7 +196,7 @@ const MarketplaceItemsSettings = () => {
             )}
           </div>
 
-          <Dialog
+          <ItemFormDialog
             open={dialogOpen}
             onOpenChange={(open) => {
               setDialogOpen(open);
@@ -255,296 +206,46 @@ const MarketplaceItemsSettings = () => {
                 setMaterialRows([]);
               }
             }}
-          >
-            <DialogTrigger asChild>
-              <Button onClick={openCreate} className="bg-blue-600 text-white hover:bg-blue-700">
-                <Icon name="Plus" size={16} className="mr-1.5" />
-                Добавить товар
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-              <DialogHeader>
-                <DialogTitle>{editingId ? 'Изменить товар' : 'Новый товар'}</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label>Название</Label>
-                  <Input
-                    placeholder="Например: Тюль Вуаль"
-                    value={form.name}
-                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Ширина</Label>
-                    <Input
-                      type="number"
-                      value={form.width}
-                      onChange={(e) => setForm((f) => ({ ...f, width: e.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Высота</Label>
-                    <Input
-                      type="number"
-                      value={form.height}
-                      onChange={(e) => setForm((f) => ({ ...f, height: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>SKU / Артикул</Label>
-                    <Input
-                      placeholder="Артикул"
-                      value={form.article}
-                      onChange={(e) => setForm((f) => ({ ...f, article: e.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Материал</Label>
-                    <Input
-                      placeholder="Например: Вуаль"
-                      value={form.material}
-                      onChange={(e) => setForm((f) => ({ ...f, material: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>OZON</Label>
-                    <Input
-                      value={form.ozonSku}
-                      onChange={(e) => setForm((f) => ({ ...f, ozonSku: e.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>WB</Label>
-                    <Input
-                      value={form.wbSku}
-                      onChange={(e) => setForm((f) => ({ ...f, wbSku: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Баркод</Label>
-                  <Input
-                    placeholder="Штрихкод товара"
-                    value={form.barcode}
-                    onChange={(e) => setForm((f) => ({ ...f, barcode: e.target.value }))}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Материалы для изделия</Label>
-                    <Button type="button" size="sm" variant="outline" onClick={addMaterialRow}>
-                      <Icon name="Plus" size={14} className="mr-1" />
-                      Добавить
-                    </Button>
-                  </div>
-                  <div className="space-y-2">
-                    {materialRows.map((row, idx) => (
-                      <div key={idx} className="grid grid-cols-[1fr_100px_32px] gap-2">
-                        <Select
-                          value={row.materialId}
-                          onValueChange={(v) => updateMaterialRow(idx, { materialId: v })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Материал" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {materials.map((m) => (
-                              <SelectItem key={m.id} value={String(m.id)}>
-                                {m.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          placeholder="Кол-во"
-                          value={row.quantity}
-                          onChange={(e) => updateMaterialRow(idx, { quantity: e.target.value })}
-                        />
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => removeMaterialRow(idx)}
-                        >
-                          <Icon name="X" size={14} />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <Button onClick={handleSave} disabled={saving} className="w-full">
-                  {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Сохранить'}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+            editingId={editingId}
+            form={form}
+            setForm={setForm}
+            materials={materials}
+            materialRows={materialRows}
+            addMaterialRow={addMaterialRow}
+            updateMaterialRow={updateMaterialRow}
+            removeMaterialRow={removeMaterialRow}
+            saving={saving}
+            onOpenCreate={openCreate}
+            onSave={handleSave}
+          />
         </div>
 
         {!loading && items.length > 0 && (
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="w-full max-w-xs space-y-1.5">
-              <Label>Поиск по SKU</Label>
-              <div className="relative">
-                <Icon
-                  name="Search"
-                  size={14}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                />
-                <Input
-                  placeholder="Например: vyal3_265"
-                  value={skuQuery}
-                  onChange={(e) => {
-                    setSkuQuery(e.target.value);
-                    setPage(1);
-                  }}
-                  className="pl-8"
-                />
-              </div>
-            </div>
-            <div className="w-full max-w-xs space-y-1.5">
-              <Label>Материал</Label>
-              <Select
-                value={materialFilter}
-                onValueChange={(v) => {
-                  setMaterialFilter(v);
-                  setPage(1);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_MATERIALS}>Все материалы</SelectItem>
-                  {materialOptions.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {m}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {(skuQuery || materialFilter !== ALL_MATERIALS) && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setSkuQuery('');
-                  setMaterialFilter(ALL_MATERIALS);
-                  setPage(1);
-                }}
-              >
-                <Icon name="X" size={14} className="mr-1" />
-                Сбросить
-              </Button>
-            )}
-            <p className="ml-auto text-sm text-muted-foreground">
-              Найдено: {filteredItems.length}
-            </p>
-          </div>
+          <ItemsToolbar
+            skuQuery={skuQuery}
+            setSkuQuery={setSkuQuery}
+            materialFilter={materialFilter}
+            setMaterialFilter={setMaterialFilter}
+            setPage={setPage}
+            materialOptions={materialOptions}
+            filteredCount={filteredItems.length}
+          />
         )}
 
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Icon name="Loader2" size={16} className="animate-spin" />
-            Загрузка...
-          </div>
-        ) : items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Товаров пока нет — добавьте первый.</p>
-        ) : filteredItems.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Ничего не найдено по заданным фильтрам.</p>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {pagedItems.map((item) => (
-                <Card key={item.id} className="border-border shadow-none">
-                  <CardContent className="space-y-2 pt-6">
-                    <div className="flex items-start justify-between">
-                      <p className="font-medium">{item.name}</p>
-                      <div className="flex gap-1">
-                        <Button size="icon" variant="secondary" onClick={() => openEdit(item)}>
-                          <Icon name="Pencil" size={14} />
-                        </Button>
-                        <Button size="icon" variant="destructive" onClick={() => setDeleteId(item.id)}>
-                          <Icon name="Trash2" size={14} />
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {item.article && (
-                        <Badge variant="secondary" className="font-mono-tech">
-                          {item.article}
-                        </Badge>
-                      )}
-                      {item.material && <Badge variant="outline">{item.material}</Badge>}
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {item.width && item.height ? `${item.width}×${item.height}` : '—'}
-                    </div>
-                    {(item.ozonSku || item.wbSku || item.barcode) && (
-                      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                        {item.ozonSku && <span>OZON: {item.ozonSku}</span>}
-                        {item.wbSku && <span>WB: {item.wbSku}</span>}
-                        {item.barcode && <span>Баркод: {item.barcode}</span>}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            {totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2">
-                <Button
-                  size="icon"
-                  variant="outline"
-                  disabled={currentPage === 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                >
-                  <Icon name="ChevronLeft" size={16} />
-                </Button>
-                <span className="px-3 text-sm text-muted-foreground">
-                  {currentPage} / {totalPages}
-                </span>
-                <Button
-                  size="icon"
-                  variant="outline"
-                  disabled={currentPage === totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                >
-                  <Icon name="ChevronRight" size={16} />
-                </Button>
-              </div>
-            )}
-          </>
-        )}
+        <ItemsGrid
+          loading={loading}
+          items={items}
+          filteredItems={filteredItems}
+          pagedItems={pagedItems}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          setPage={setPage}
+          onEdit={openEdit}
+          deleteId={deleteId}
+          setDeleteId={setDeleteId}
+          onDelete={handleDelete}
+        />
       </div>
-
-      <AlertDialog open={deleteId !== null} onOpenChange={(open) => !open && setDeleteId(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Вы уверены, что хотите удалить товар?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Действие нельзя отменить. Если по товару уже есть заказы в системе — удаление
-              будет заблокировано.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Удалить
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </CrmLayout>
   );
 };
