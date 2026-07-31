@@ -9,6 +9,7 @@ import Crm from "./pages/Crm";
 import NotFound from "./pages/NotFound";
 import WarehouseMaterials from "./pages/inventory/WarehouseMaterials";
 import MaterialsSettings from "./pages/settings/MaterialsSettings";
+import MarketplaceOrders from "./pages/marketplace/MarketplaceOrders";
 import { AuthProvider } from "@/context/AuthContext";
 
 const queryClient = new QueryClient();
@@ -25,6 +26,7 @@ const App = () => (
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
             <Route path="/crm/settings/materials" element={<MaterialsSettings />} />
+            <Route path="/crm/marketplace/orders" element={<MarketplaceOrders />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
