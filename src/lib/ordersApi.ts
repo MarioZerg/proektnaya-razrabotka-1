@@ -27,10 +27,31 @@ export interface Order {
   workshopName: string | null;
 }
 
+export interface OrderMaterialUsage {
+  id: number;
+  materialId: number;
+  materialName: string | null;
+  unit: string | null;
+  rollId: number | null;
+  rollBarcode: string | null;
+  quantity: number;
+  createdAt: string;
+}
+
+export interface OrderDetail extends Order {
+  materialUsage: OrderMaterialUsage[];
+}
+
 export const fetchOrders = async (): Promise<Order[]> => {
   const res = await fetch(ORDERS_URL);
   const data = await res.json();
   return data.orders || [];
+};
+
+export const fetchOrderDetail = async (id: number): Promise<OrderDetail> => {
+  const res = await fetch(`${ORDERS_URL}?id=${id}`);
+  const data = await res.json();
+  return data.order;
 };
 
 const postAction = async (payload: Record<string, unknown>) => {

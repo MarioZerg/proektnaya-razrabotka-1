@@ -29,10 +29,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { fetchOrders, updateOrder, cutOrder, type Order, type SewingStatus } from '@/lib/ordersApi';
+import {
+  fetchOrders,
+  fetchOrderDetail,
+  updateOrder,
+  cutOrder,
+  type Order,
+  type OrderDetail,
+  type SewingStatus,
+} from '@/lib/ordersApi';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
@@ -87,6 +96,8 @@ const SewingItems = () => {
   const [workshopFilter, setWorkshopFilter] = useState('all');
 
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [orderDetail, setOrderDetail] = useState<OrderDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [cutting, setCutting] = useState(false);
@@ -121,9 +132,21 @@ const SewingItems = () => {
   const totalPages = Math.max(1, Math.ceil(filteredOrders.length / 10));
   const pagedOrders = filteredOrders.slice((page - 1) * 10, page * 10);
 
+  const loadDetail = async (orderId: number) => {
+    setDetailLoading(true);
+    try {
+      const detail = await fetchOrderDetail(orderId);
+      setOrderDetail(detail);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   const openDetail = (order: Order) => {
     setSelectedOrder(order);
+    setOrderDetail(null);
     setDialogOpen(true);
+    loadDetail(order.id);
   };
 
   const handleAssignUser = async (userId: string) => {
@@ -135,6 +158,7 @@ const SewingItems = () => {
       const updated = { ...selectedOrder, assignedUserId: userId === 'none' ? null : Number(userId) };
       setSelectedOrder(updated);
       load();
+      loadDetail(selectedOrder.id);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
@@ -181,6 +205,7 @@ const SewingItems = () => {
       toast({ title: 'Раскрой выполнен', description: 'Материалы списаны с рулонов' });
       setSelectedOrder({ ...selectedOrder, sewingStatus: 'Раскроено' });
       load();
+      loadDetail(selectedOrder.id);
     } catch (e) {
       toast({
         title: 'Не удалось выполнить раскрой',
@@ -399,91 +424,216 @@ const SewingItems = () => {
         )}
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
             <DialogHeader>
-              <DialogTitle>Заказ #{selectedOrder?.id}</DialogTitle>
+              <div className="flex items-center gap-2">
+                <DialogTitle>Товар #{selectedOrder?.id}</DialogTitle>
+                {selectedOrder && <Badge variant="secondary">{selectedOrder.sewingStatus}</Badge>}
+              </div>
             </DialogHeader>
             {selectedOrder && (
               <div className="space-y-4">
-                <div className="text-sm text-muted-foreground">
-                  {selectedOrder.material} {selectedOrder.width}×{selectedOrder.height} · Заказ {selectedOrder.orderNumber}
+                <Card className="border-border shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">Действия</CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap items-end gap-3">
+                    <div className="w-48 space-y-1.5">
+                      <Label>Статус пошива</Label>
+                      <Select value={selectedOrder.sewingStatus} onValueChange={handleStatusChange} disabled={saving}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {statusOptions.map((s) => (
+                            <SelectItem key={s} value={s}>
+                              {s}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="w-48 space-y-1.5">
+                      <Label>Сотрудник</Label>
+                      <Select
+                        value={selectedOrder.assignedUserId ? String(selectedOrder.assignedUserId) : 'none'}
+                        onValueChange={handleAssignUser}
+                        disabled={saving}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Не назначен" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Не назначен</SelectItem>
+                          {employees.map((e) => (
+                            <SelectItem key={e.id} value={String(e.id)}>
+                              {e.fullName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="w-48 space-y-1.5">
+                      <Label>Цех</Label>
+                      <Select
+                        value={selectedOrder.workshopId ? String(selectedOrder.workshopId) : 'none'}
+                        onValueChange={handleAssignWorkshop}
+                        disabled={saving}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Не назначен" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Не назначен</SelectItem>
+                          {workshops.map((w) => (
+                            <SelectItem key={w.id} value={String(w.id)}>
+                              {w.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <Button
+                      onClick={handleCut}
+                      disabled={cutting || selectedOrder.sewingStatus === 'Раскроено'}
+                    >
+                      {cutting ? (
+                        <>
+                          <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                          Списываем материалы...
+                        </>
+                      ) : (
+                        <>
+                          <Icon name="Scissors" size={16} className="mr-2" />
+                          Раскроить
+                        </>
+                      )}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <Card className="border-border shadow-none">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">Информация</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <Table>
+                        <TableBody>
+                          <TableRow>
+                            <TableCell className="font-medium text-muted-foreground">Товар</TableCell>
+                            <TableCell>
+                              {selectedOrder.material} {selectedOrder.width}×{selectedOrder.height}
+                            </TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="font-medium text-muted-foreground">Номер заказа</TableCell>
+                            <TableCell>{selectedOrder.orderNumber}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="font-medium text-muted-foreground">Маркетплейс</TableCell>
+                            <TableCell>
+                              <span className={marketplaceLogo[selectedOrder.marketplace]?.className}>
+                                {marketplaceLogo[selectedOrder.marketplace]?.label || selectedOrder.marketplace}
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="font-medium text-muted-foreground">Тип</TableCell>
+                            <TableCell>{selectedOrder.orderType}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="font-medium text-muted-foreground">Кластер</TableCell>
+                            <TableCell>{selectedOrder.cluster || '—'}</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-border shadow-none">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">Материалы</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {detailLoading ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Icon name="Loader2" size={14} className="animate-spin" />
+                          Загрузка...
+                        </div>
+                      ) : orderDetail && orderDetail.materialUsage.length > 0 ? (
+                        orderDetail.materialUsage.map((mu) => (
+                          <div key={mu.id} className="rounded border border-border p-2">
+                            <div className="mb-1 flex items-center justify-between">
+                              <span className="font-semibold">{mu.materialName}</span>
+                              <span className="text-sm text-muted-foreground">
+                                {mu.quantity} {mu.unit}
+                              </span>
+                            </div>
+                            {mu.rollBarcode && (
+                              <div className="text-xs text-muted-foreground">
+                                Рулон #{mu.rollBarcode}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          Материалы ещё не списаны — выполните раскрой
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-border shadow-none">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">Сотрудники</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <Table>
+                        <TableBody>
+                          {selectedOrder.assignedUserName ? (
+                            <TableRow>
+                              <TableCell className="font-medium text-muted-foreground">Назначен</TableCell>
+                              <TableCell>{selectedOrder.assignedUserName}</TableCell>
+                            </TableRow>
+                          ) : (
+                            <TableRow>
+                              <TableCell colSpan={2} className="text-center text-muted-foreground">
+                                Сотрудники не назначены
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label>Статус пошива</Label>
-                  <Select value={selectedOrder.sewingStatus} onValueChange={handleStatusChange} disabled={saving}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {statusOptions.map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {s}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>Сотрудник</Label>
-                  <Select
-                    value={selectedOrder.assignedUserId ? String(selectedOrder.assignedUserId) : 'none'}
-                    onValueChange={handleAssignUser}
-                    disabled={saving}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Не назначен" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Не назначен</SelectItem>
-                      {employees.map((e) => (
-                        <SelectItem key={e.id} value={String(e.id)}>
-                          {e.fullName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>Цех</Label>
-                  <Select
-                    value={selectedOrder.workshopId ? String(selectedOrder.workshopId) : 'none'}
-                    onValueChange={handleAssignWorkshop}
-                    disabled={saving}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Не назначен" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Не назначен</SelectItem>
-                      {workshops.map((w) => (
-                        <SelectItem key={w.id} value={String(w.id)}>
-                          {w.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <Button
-                  className="w-full"
-                  onClick={handleCut}
-                  disabled={cutting || selectedOrder.sewingStatus === 'Раскроено'}
-                >
-                  {cutting ? (
-                    <>
-                      <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
-                      Списываем материалы...
-                    </>
-                  ) : (
-                    <>
-                      <Icon name="Scissors" size={16} className="mr-2" />
-                      Раскроить (списать материалы с рулонов)
-                    </>
-                  )}
-                </Button>
+                <Card className="border-border shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">Таймлайн</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <Badge variant="outline">{formatDate(selectedOrder.createdAt)}</Badge>
+                      <span className="flex items-center gap-1.5 text-sm">
+                        <Icon name="Plus" size={14} className="text-blue-600" />
+                        Заказ создан
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Badge variant="secondary">{timeAgo(selectedOrder.createdAt)}</Badge>
+                      <span className="flex items-center gap-1.5 text-sm">
+                        <Icon name="MapPin" size={14} className="text-muted-foreground" />
+                        <Badge variant="secondary">{selectedOrder.sewingStatus}</Badge>
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             )}
           </DialogContent>

@@ -15,6 +15,7 @@ def handler(event: dict, context) -> dict:
         есть в системе (в т.ч. пришедший ранее по API) — новый заказ не создаётся.
 
     GET  /                       - получить список заказов
+    GET  /?id=1                  - получить детальную карточку заказа с расходом материалов
     POST /  { action: 'create_manual', orderNumber, marketplace, orderType, cluster?, product }
     POST /  { action: 'update_order', id, orderNumber?, marketplace?, orderType?, status?, product?,
               sewingStatus?, assignedUserId?, workshopId? }
@@ -48,9 +49,74 @@ def handler(event: dict, context) -> dict:
     dsn = os.environ['DATABASE_URL']
 
     if method == 'GET':
+        params = event.get('queryStringParameters') or {}
+        order_id = params.get('id')
+
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if order_id:
+                cur.execute(
+                    "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
+                    "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
+                    "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name "
+                    "FROM orders o "
+                    "LEFT JOIN users u ON u.id = o.assigned_user_id "
+                    "LEFT JOIN workshops w ON w.id = o.workshop_id "
+                    "WHERE o.id = %s",
+                    (int(order_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
+
+                cur.execute(
+                    "SELECT omu.id, omu.material_id, m.name, m.unit, omu.roll_id, r.barcode, omu.quantity, omu.created_at "
+                    "FROM order_material_usage omu "
+                    "LEFT JOIN materials m ON m.id = omu.material_id "
+                    "LEFT JOIN rolls r ON r.id = omu.roll_id "
+                    "WHERE omu.order_id = %s ORDER BY omu.id",
+                    (int(order_id),),
+                )
+                materialUsage = [
+                    {
+                        'id': r[0],
+                        'materialId': r[1],
+                        'materialName': r[2],
+                        'unit': r[3],
+                        'rollId': r[4],
+                        'rollBarcode': r[5],
+                        'quantity': float(r[6]),
+                        'createdAt': r[7].isoformat(),
+                    }
+                    for r in cur.fetchall()
+                ]
+
+                detail = {
+                    'id': row[0],
+                    'orderNumber': row[1],
+                    'marketplace': row[2],
+                    'orderType': row[3],
+                    'status': row[4],
+                    'cluster': row[5],
+                    'product': row[6],
+                    'quantity': float(row[7]),
+                    'source': row[8],
+                    'createdAt': row[9].isoformat(),
+                    'completedAt': row[10].isoformat() if row[10] else None,
+                    'material': row[11],
+                    'width': row[12],
+                    'height': row[13],
+                    'sewingStatus': row[14],
+                    'assignedUserId': row[15],
+                    'assignedUserName': row[16],
+                    'workshopId': row[17],
+                    'workshopName': row[18],
+                    'materialUsage': materialUsage,
+                }
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'order': detail})}
+
             cur.execute(
                 "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
                 "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
