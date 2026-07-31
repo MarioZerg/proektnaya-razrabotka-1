@@ -4,51 +4,51 @@
 
 @layer base {
   :root {
-    --background: 210 40% 99%;
-    --foreground: 216 60% 11%;
+    --background: 60 15% 97%;
+    --foreground: 90 14% 9%;
 
     --card: 0 0% 100%;
-    --card-foreground: 216 60% 11%;
+    --card-foreground: 90 14% 9%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 216 60% 11%;
+    --popover-foreground: 90 14% 9%;
 
-    --primary: 216 64% 13%;
-    --primary-foreground: 180 60% 96%;
+    --primary: 90 8% 34%;
+    --primary-foreground: 60 15% 97%;
 
-    --secondary: 210 30% 95%;
-    --secondary-foreground: 216 60% 13%;
+    --secondary: 60 10% 93%;
+    --secondary-foreground: 90 14% 9%;
 
-    --muted: 210 30% 95%;
-    --muted-foreground: 216 15% 45%;
+    --muted: 60 10% 93%;
+    --muted-foreground: 90 6% 42%;
 
-    --accent: 176 78% 42%;
-    --accent-foreground: 216 64% 11%;
+    --accent: 90 8% 34%;
+    --accent-foreground: 60 15% 97%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 4 60% 42%;
+    --destructive-foreground: 60 15% 97%;
 
-    --border: 214.3 31.8% 90%;
-    --input: 214.3 31.8% 90%;
-    --ring: 176 78% 42%;
+    --border: 60 8% 88%;
+    --input: 60 8% 88%;
+    --ring: 90 8% 34%;
 
-    --radius: 0.75rem;
+    --radius: 0.5rem;
 
-    --sidebar-background: 0 0% 98%;
+    --sidebar-background: 90 14% 9%;
 
-    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-foreground: 60 15% 90%;
 
-    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary: 90 8% 34%;
 
-    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-primary-foreground: 60 15% 97%;
 
-    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent: 90 12% 15%;
 
-    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-accent-foreground: 60 15% 97%;
 
-    --sidebar-border: 220 13% 91%;
+    --sidebar-border: 90 10% 18%;
 
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-ring: 90 8% 34%;
   }
 
   .dark {
@@ -97,7 +97,7 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: "Golos Text", system-ui, sans-serif;
+    font-family: "Zen Kaku Gothic New", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 }

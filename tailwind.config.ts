@@ -19,7 +19,7 @@ export default {
 		},
 		extend: {
 			fontFamily: {
-				sans: ['Golos Text', 'system-ui', 'sans-serif'],
+				sans: ['Zen Kaku Gothic New', 'system-ui', 'sans-serif'],
 				mono: ['IBM Plex Mono', 'monospace'],
 			},
 			colors: {
