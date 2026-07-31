@@ -25,6 +25,12 @@
       "path": "/",
       "body": {"action": "create", "name": "Цех №1"},
       "expectedStatus": 409
+    },
+    {
+      "name": "Get workshop detail",
+      "method": "GET",
+      "path": "/?id=1",
+      "expectedStatus": 200
     }
   ]
 }

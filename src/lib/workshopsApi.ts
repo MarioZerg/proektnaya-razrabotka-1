@@ -10,10 +10,39 @@ export interface Workshop {
   updatedAt: string;
 }
 
+export interface WorkshopShift {
+  number: number;
+  employeesCount: number;
+}
+
+export interface SettingField {
+  value: string | null;
+  global: string | null;
+}
+
+export interface WorkshopDetail {
+  id: number;
+  name: string;
+  isActive: boolean;
+  shiftsCount: number;
+  allowedProducts: number[];
+  allowedMaterials: number[];
+  createdAt: string;
+  updatedAt: string;
+  shifts: WorkshopShift[];
+  settings: Record<string, SettingField>;
+}
+
 export const fetchWorkshops = async (): Promise<Workshop[]> => {
   const res = await fetch(WORKSHOPS_URL);
   const data = await res.json();
   return data.workshops || [];
+};
+
+export const fetchWorkshopDetail = async (id: number): Promise<WorkshopDetail> => {
+  const res = await fetch(`${WORKSHOPS_URL}?id=${id}`);
+  const data = await res.json();
+  return data.workshop;
 };
 
 const postAction = async (payload: Record<string, unknown>) => {
@@ -34,7 +63,14 @@ export const createWorkshop = (name: string, shiftsCount = 1) =>
 
 export const updateWorkshop = (
   id: number,
-  fields: Partial<{ name: string; shiftsCount: number; isActive: boolean }>
+  fields: Partial<{
+    name: string;
+    shiftsCount: number;
+    isActive: boolean;
+    allowedProducts: number[];
+    allowedMaterials: number[];
+    settings: Record<string, string | null>;
+  }>
 ) => postAction({ action: 'update', id, ...fields });
 
 export const deleteWorkshop = (id: number) => postAction({ action: 'delete', id });
