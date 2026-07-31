@@ -16,6 +16,14 @@ export interface Order {
   source: 'manual' | 'api';
   createdAt: string;
   completedAt: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  sewingStatus: string;
+  assignedUserId: number | null;
+  assignedUserName: string | null;
+  workshopId: number | null;
+  workshopName: string | null;
 }
 
 export const fetchOrders = async (): Promise<Order[]> => {

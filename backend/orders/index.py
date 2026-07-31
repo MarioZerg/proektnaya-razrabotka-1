@@ -48,9 +48,13 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             cur.execute(
-                "SELECT id, order_number, marketplace, order_type, status, cluster, product, "
-                "quantity, source, created_at, completed_at "
-                "FROM orders ORDER BY created_at DESC, id DESC"
+                "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
+                "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
+                "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name "
+                "FROM orders o "
+                "LEFT JOIN users u ON u.id = o.assigned_user_id "
+                "LEFT JOIN workshops w ON w.id = o.workshop_id "
+                "ORDER BY o.created_at DESC, o.id DESC"
             )
             orders = [
                 {
@@ -65,6 +69,14 @@ def handler(event: dict, context) -> dict:
                     'source': r[8],
                     'createdAt': r[9].isoformat(),
                     'completedAt': r[10].isoformat() if r[10] else None,
+                    'material': r[11],
+                    'width': r[12],
+                    'height': r[13],
+                    'sewingStatus': r[14],
+                    'assignedUserId': r[15],
+                    'assignedUserName': r[16],
+                    'workshopId': r[17],
+                    'workshopName': r[18],
                 }
                 for r in cur.fetchall()
             ]
