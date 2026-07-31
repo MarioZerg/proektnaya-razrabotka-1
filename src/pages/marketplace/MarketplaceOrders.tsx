@@ -85,7 +85,6 @@ interface EditFormState {
   orderType: OrderType;
   status: OrderStatus;
   product: string;
-  quantity: string;
 }
 
 const emptyManualForm: EditFormState = {
@@ -94,7 +93,6 @@ const emptyManualForm: EditFormState = {
   orderType: 'FBO',
   status: 'Новый',
   product: productOptions[0],
-  quantity: '1',
 };
 
 const MarketplaceOrders = () => {
@@ -129,7 +127,6 @@ const MarketplaceOrders = () => {
       orderType: order.orderType,
       status: order.status,
       product: order.product,
-      quantity: String(order.quantity),
     });
   };
 
@@ -148,7 +145,6 @@ const MarketplaceOrders = () => {
         orderType: form.orderType,
         status: form.status,
         product: form.product,
-        quantity: Number(form.quantity) || 1,
       });
       closeEdit();
       load();
@@ -182,7 +178,6 @@ const MarketplaceOrders = () => {
         marketplace: manualForm.marketplace,
         orderType: manualForm.orderType,
         product: manualForm.product,
-        quantity: Number(manualForm.quantity) || 1,
       });
       setManualOpen(false);
       load();
@@ -392,34 +387,26 @@ const MarketplaceOrders = () => {
                 </Select>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Товар</Label>
-                  <Select
-                    value={form.product}
-                    onValueChange={(v) => setForm((f) => f && { ...f, product: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {productOptions.map((p) => (
-                        <SelectItem key={p} value={p}>
-                          {p}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Количество</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={form.quantity}
-                    onChange={(e) => setForm((f) => f && { ...f, quantity: e.target.value })}
-                  />
-                </div>
+              <div className="space-y-1.5">
+                <Label>Товар</Label>
+                <Select
+                  value={form.product}
+                  onValueChange={(v) => setForm((f) => f && { ...f, product: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {productOptions.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Один заказ — всегда 1 шт. Для нескольких единиц создайте отдельные заказы.
+                </p>
               </div>
 
               <Button
@@ -488,34 +475,26 @@ const MarketplaceOrders = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Товар</Label>
-                <Select
-                  value={manualForm.product}
-                  onValueChange={(v) => setManualForm((f) => ({ ...f, product: v }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {productOptions.map((p) => (
-                      <SelectItem key={p} value={p}>
-                        {p}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Количество</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={manualForm.quantity}
-                  onChange={(e) => setManualForm((f) => ({ ...f, quantity: e.target.value }))}
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label>Товар</Label>
+              <Select
+                value={manualForm.product}
+                onValueChange={(v) => setManualForm((f) => ({ ...f, product: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {productOptions.map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {p}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Один заказ — всегда 1 шт. Для нескольких единиц создайте отдельные заказы с разными номерами.
+              </p>
             </div>
 
             <Button

@@ -8,14 +8,15 @@ def handler(event: dict, context) -> dict:
     """Управляет заказами с маркетплейсов (OZON, WB, Яндекс.Маркет).
 
     Правила:
-      - Один заказ = одна позиция товара (без объединения нескольких заказов в один).
+      - Один заказ = одна позиция товара, количество всегда равно 1 (без объединения
+        нескольких единиц в одну строку и без дробления одного заказа на несколько).
       - Заказ попадает в систему двумя способами: через API маркетплейса или вручную кнопкой.
       - При ручном создании номер заказа проверяется на дубль: если такой номер уже
         есть в системе (в т.ч. пришедший ранее по API) — новый заказ не создаётся.
 
     GET  /                       - получить список заказов
-    POST /  { action: 'create_manual', orderNumber, marketplace, orderType, cluster?, product, quantity }
-    POST /  { action: 'update_order', id, orderNumber?, marketplace?, orderType?, status?, product?, quantity? }
+    POST /  { action: 'create_manual', orderNumber, marketplace, orderType, cluster?, product }
+    POST /  { action: 'update_order', id, orderNumber?, marketplace?, orderType?, status?, product? }
     POST /  { action: 'delete_order', id }
 
     Args:
@@ -86,7 +87,6 @@ def handler(event: dict, context) -> dict:
                 order_type = (body_data.get('orderType') or 'FBO').strip()
                 cluster = (body_data.get('cluster') or '').strip()
                 product = (body_data.get('product') or '').strip()
-                quantity = body_data.get('quantity', 1)
 
                 if not order_number or not marketplace or not product:
                     return {
@@ -117,7 +117,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     f"INSERT INTO orders (order_number, marketplace, order_type, status, cluster, product, quantity, source) "
                     f"VALUES ('{order_number_esc}', '{marketplace_esc}', '{order_type_esc}', 'Новый', "
-                    f"'{cluster_esc}', '{product_esc}', {float(quantity)}, 'manual') "
+                    f"'{cluster_esc}', '{product_esc}', 1, 'manual') "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
@@ -156,8 +156,6 @@ def handler(event: dict, context) -> dict:
                         fields.append("completed_at = now()")
                 if 'product' in body_data:
                     fields.append(f"product = '{str(body_data['product']).replace(chr(39), chr(39)*2)}'")
-                if 'quantity' in body_data:
-                    fields.append(f"quantity = {float(body_data['quantity'])}")
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 

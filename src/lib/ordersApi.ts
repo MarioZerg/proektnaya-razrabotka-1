@@ -43,7 +43,6 @@ export const createManualOrder = (order: {
   orderType: OrderType;
   cluster?: string;
   product: string;
-  quantity: number;
 }) => postAction({ action: 'create_manual', ...order });
 
 export const updateOrder = (
@@ -54,7 +53,6 @@ export const updateOrder = (
     orderType: OrderType;
     status: OrderStatus;
     product: string;
-    quantity: number;
   }>
 ) => postAction({ action: 'update_order', id, ...fields });
 

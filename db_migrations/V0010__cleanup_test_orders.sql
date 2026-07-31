@@ -1,0 +1,1 @@
+UPDATE orders SET status = 'Отменён', order_number = order_number || '-removed' WHERE id IN (10, 11);
