@@ -232,7 +232,14 @@ const MarketplaceItemsSettings = () => {
     <CrmLayout>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold">Товары маркетплейса</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold">Товары маркетплейса</h1>
+            {!loading && (
+              <Badge variant="secondary" className="text-sm font-normal">
+                Всего товаров: {items.length}
+              </Badge>
+            )}
+          </div>
 
           <Dialog
             open={dialogOpen}
