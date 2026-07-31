@@ -4,6 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
+import type { Role } from '@/lib/roles';
+
+const AUTH_URL = 'https://functions.poehali.dev/eca1843f-b794-48c6-a9e6-4dead2174136';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -12,15 +15,30 @@ const Index = () => {
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      login({ name: 'Администратор', role: 'admin' });
+    try {
+      const res = await fetch(AUTH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login: email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Не удалось войти');
+        return;
+      }
+      login({ name: data.name, role: data.role as Role });
       navigate('/crm');
-    }, 600);
+    } catch {
+      setError('Не удалось связаться с сервером');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -37,7 +55,7 @@ const Index = () => {
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <Input
-            type="email"
+            type="text"
             placeholder="Логин"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -63,6 +81,8 @@ const Index = () => {
               <Icon name={showPass ? 'EyeOff' : 'Eye'} size={16} />
             </button>
           </div>
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
 
           <Button
             type="submit"
