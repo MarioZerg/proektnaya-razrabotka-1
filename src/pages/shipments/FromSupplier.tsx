@@ -35,11 +35,11 @@ import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 
 interface ItemRow {
   materialId: string;
-  barcode: string;
   quantity: string;
+  numberRolls: string;
 }
 
-const emptyRow: ItemRow = { materialId: '', barcode: '', quantity: '' };
+const emptyRow: ItemRow = { materialId: '', quantity: '', numberRolls: '' };
 
 const formatDate = (iso: string) => {
   const d = new Date(iso);
@@ -64,6 +64,7 @@ const FromSupplier = () => {
   const [supplierId, setSupplierId] = useState('');
   const [comment, setComment] = useState('');
   const [rows, setRows] = useState<ItemRow[]>([{ ...emptyRow }]);
+  const [lastCreatedRolls, setLastCreatedRolls] = useState<string[]>([]);
 
   const load = () => {
     setLoading(true);
@@ -84,6 +85,7 @@ const FromSupplier = () => {
     setSupplierId('');
     setComment('');
     setRows([{ ...emptyRow }]);
+    setLastCreatedRolls([]);
     setDialogOpen(true);
   };
 
@@ -92,23 +94,33 @@ const FromSupplier = () => {
   const updateRow = (idx: number, field: keyof ItemRow, value: string) =>
     setRows((r) => r.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
 
+  const materialUnit = (materialId: string) => materials.find((m) => String(m.id) === materialId)?.unit || '';
+
   const handleSave = async () => {
     const items = rows
-      .filter((r) => r.materialId && r.barcode.trim() && r.quantity)
-      .map((r) => ({ materialId: Number(r.materialId), barcode: r.barcode.trim(), quantity: Number(r.quantity) }));
+      .filter((r) => r.materialId && r.quantity && r.numberRolls)
+      .map((r) => ({
+        materialId: Number(r.materialId),
+        quantity: Number(r.quantity),
+        numberRolls: Number(r.numberRolls),
+      }));
     if (items.length === 0) {
       toast({ title: 'Добавьте хотя бы одну позицию', variant: 'destructive' });
       return;
     }
     setSaving(true);
     try {
-      await createShipmentFromSupplier({
+      const res = await createShipmentFromSupplier({
         supplierId: supplierId ? Number(supplierId) : undefined,
         comment: comment.trim() || undefined,
         items,
       });
-      toast({ title: 'Приёмка оформлена', description: 'Рулоны материалов добавлены на склад' });
-      setDialogOpen(false);
+      toast({
+        title: 'Приёмка оформлена',
+        description: `Создано рулонов: ${res.createdRolls.length}`,
+      });
+      setLastCreatedRolls(res.createdRolls);
+      setRows([{ ...emptyRow }]);
       load();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
@@ -124,7 +136,8 @@ const FromSupplier = () => {
           <div>
             <h1 className="text-xl font-bold">Отгрузка от поставщика</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Приёмка материалов на склад — каждая позиция создаёт новый рулон
+              Приехала машина — указали материал, общее количество и сколько рулонов/пачек
+              привезли, система сама создаст рулоны и поделит количество поровну
             </p>
           </div>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -157,14 +170,14 @@ const FromSupplier = () => {
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label>Позиции</Label>
+                    <Label>Материалы</Label>
                     <Button type="button" size="sm" variant="outline" onClick={addRow}>
                       <Icon name="Plus" size={14} className="mr-1" />
-                      Добавить рулон
+                      Добавить материал
                     </Button>
                   </div>
                   {rows.map((row, idx) => (
-                    <div key={idx} className="grid grid-cols-[1fr_1fr_100px_auto] gap-2">
+                    <div key={idx} className="grid grid-cols-[1fr_100px_100px_auto] gap-2">
                       <Select value={row.materialId} onValueChange={(v) => updateRow(idx, 'materialId', v)}>
                         <SelectTrigger>
                           <SelectValue placeholder="Материал" />
@@ -178,16 +191,19 @@ const FromSupplier = () => {
                         </SelectContent>
                       </Select>
                       <Input
-                        placeholder="Штрихкод рулона"
-                        value={row.barcode}
-                        onChange={(e) => updateRow(idx, 'barcode', e.target.value)}
+                        type="number"
+                        step="0.01"
+                        placeholder={materialUnit(row.materialId) || 'Кол-во'}
+                        value={row.quantity}
+                        onChange={(e) => updateRow(idx, 'quantity', e.target.value)}
                       />
                       <Input
                         type="number"
-                        step="0.01"
-                        placeholder="Кол-во"
-                        value={row.quantity}
-                        onChange={(e) => updateRow(idx, 'quantity', e.target.value)}
+                        step="1"
+                        min="1"
+                        placeholder="Рулонов"
+                        value={row.numberRolls}
+                        onChange={(e) => updateRow(idx, 'numberRolls', e.target.value)}
                       />
                       <Button
                         type="button"
@@ -200,6 +216,10 @@ const FromSupplier = () => {
                       </Button>
                     </div>
                   ))}
+                  <p className="text-xs text-muted-foreground">
+                    Например: пришло 3 пачки пакетов по 1000 шт — материал «Пакет 25х30»,
+                    количество 3000, рулонов 3. Штрихкоды рулонов система присвоит сама.
+                  </p>
                 </div>
 
                 <div className="space-y-1.5">
@@ -208,8 +228,23 @@ const FromSupplier = () => {
                 </div>
 
                 <Button className="w-full" onClick={handleSave} disabled={saving}>
-                  {saving ? 'Сохранение...' : 'Оформить приёмку'}
+                  {saving ? 'Сохранение...' : 'Оприходовать'}
                 </Button>
+
+                {lastCreatedRolls.length > 0 && (
+                  <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                    <p className="mb-1.5 text-sm font-medium text-emerald-800">
+                      Создано рулонов: {lastCreatedRolls.length}
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {lastCreatedRolls.map((bc) => (
+                        <Badge key={bc} variant="outline" className="font-mono-tech">
+                          {bc}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </DialogContent>
           </Dialog>

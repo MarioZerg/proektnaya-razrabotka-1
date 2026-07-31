@@ -32,7 +32,14 @@ const Index = () => {
         setError(data.error || 'Не удалось войти');
         return;
       }
-      login({ name: data.name, role: data.role as Role });
+      login({
+        id: data.id,
+        name: data.name,
+        role: data.role as Role,
+        workshopId: data.workshopId ?? null,
+        workshopName: data.workshopName ?? null,
+        shiftNumber: data.shiftNumber ?? null,
+      });
       navigate('/crm');
     } catch {
       setError('Не удалось связаться с сервером');

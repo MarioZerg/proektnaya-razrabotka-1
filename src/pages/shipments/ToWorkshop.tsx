@@ -30,6 +30,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import {
   fetchShipments,
   fetchShipmentDetail,
@@ -42,13 +43,6 @@ import {
 } from '@/lib/shipmentsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
-
-interface RequestRow {
-  materialId: string;
-  requestedQuantity: string;
-}
-
-const emptyRow: RequestRow = { materialId: '', requestedQuantity: '' };
 
 const formatDate = (iso: string) => {
   const d = new Date(iso);
@@ -69,6 +63,9 @@ const statusVariant: Record<string, 'secondary' | 'default' | 'outline'> = {
 
 const ToWorkshop = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isProduction = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
+
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -79,7 +76,8 @@ const ToWorkshop = () => {
   const [reqWorkshopId, setReqWorkshopId] = useState('');
   const [reqShiftNumber, setReqShiftNumber] = useState('');
   const [reqComment, setReqComment] = useState('');
-  const [rows, setRows] = useState<RequestRow[]>([{ ...emptyRow }]);
+  const [reqMaterialId, setReqMaterialId] = useState('');
+  const [reqQuantity, setReqQuantity] = useState('');
 
   const [activeShipment, setActiveShipment] = useState<ShipmentDetail | null>(null);
   const [scanCode, setScanCode] = useState('');
@@ -106,43 +104,48 @@ const ToWorkshop = () => {
   }, [activeShipment]);
 
   const openCreate = () => {
-    setReqWorkshopId('');
-    setReqShiftNumber('');
+    setReqWorkshopId(isProduction && user?.workshopId ? String(user.workshopId) : '');
+    setReqShiftNumber(isProduction && user?.shiftNumber ? String(user.shiftNumber) : '');
     setReqComment('');
-    setRows([{ ...emptyRow }]);
+    setReqMaterialId('');
+    setReqQuantity('');
     setCreateOpen(true);
   };
 
-  const addRow = () => setRows((r) => [...r, { ...emptyRow }]);
-  const removeRow = (idx: number) => setRows((r) => r.filter((_, i) => i !== idx));
-  const updateRow = (idx: number, field: keyof RequestRow, value: string) =>
-    setRows((r) => r.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
-
   const handleCreate = async () => {
-    const items = rows
-      .filter((r) => r.materialId && r.requestedQuantity)
-      .map((r) => ({ materialId: Number(r.materialId), requestedQuantity: Number(r.requestedQuantity) }));
-    if (!reqWorkshopId) {
+    if (!isProduction && !reqWorkshopId) {
       toast({ title: 'Выберите цех', variant: 'destructive' });
       return;
     }
-    if (items.length === 0) {
-      toast({ title: 'Добавьте хотя бы одну позицию', variant: 'destructive' });
+    if (isProduction && !user?.workshopId) {
+      toast({ title: 'За вами не закреплён цех — обратитесь к администратору', variant: 'destructive' });
+      return;
+    }
+    if (!reqMaterialId || !reqQuantity) {
+      toast({ title: 'Укажите материал и количество', variant: 'destructive' });
       return;
     }
     setCreating(true);
     try {
       const res = await requestToWorkshop({
-        workshopId: Number(reqWorkshopId),
-        shiftNumber: reqShiftNumber ? Number(reqShiftNumber) : undefined,
+        workshopId: isProduction ? Number(user!.workshopId) : Number(reqWorkshopId),
+        shiftNumber: isProduction
+          ? (user?.shiftNumber ?? undefined)
+          : reqShiftNumber
+            ? Number(reqShiftNumber)
+            : undefined,
         comment: reqComment.trim() || undefined,
-        items,
+        materialId: Number(reqMaterialId),
+        requestedQuantity: Number(reqQuantity),
+        requestedBy: user?.id,
       });
-      toast({ title: 'Заявка создана' });
+      toast({ title: 'Заявка отправлена кладовщику' });
       setCreateOpen(false);
       load();
-      const detail = await fetchShipmentDetail(res.id);
-      setActiveShipment(detail);
+      if (!isProduction) {
+        const detail = await fetchShipmentDetail(res.id);
+        setActiveShipment(detail);
+      }
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
@@ -196,7 +199,7 @@ const ToWorkshop = () => {
   };
 
   if (activeShipment) {
-    const requestedItems = activeShipment.items.filter((i) => i.requestedQuantity !== null);
+    const requestedItem = activeShipment.items.find((i) => i.requestedQuantity !== null);
     const collectedItems = activeShipment.items.filter((i) => i.rollId !== null);
     return (
       <CrmLayout>
@@ -208,7 +211,8 @@ const ToWorkshop = () => {
             </Button>
             <h1 className="text-xl font-bold">Сборка поставки #{activeShipment.id}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Запрошено: {requestedItems.map((i) => `${i.materialName} ${i.requestedQuantity}`).join(', ')}
+              Запрошено: {requestedItem?.materialName} {requestedItem?.requestedQuantity}
+              {requestedItem?.unit} · Запросил: {activeShipment.requestedByName || '—'}
             </p>
           </div>
 
@@ -286,93 +290,82 @@ const ToWorkshop = () => {
           <div>
             <h1 className="text-xl font-bold">Отгрузка в цех</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Заявка на материал → сборка рулонов сканированием → отправка → приём в цехе
+              {isProduction
+                ? 'Запросите нужный материал — кладовщик соберёт рулоны и отправит вам'
+                : 'Заявка от швеи/закройщика → сборка рулонов сканированием → отправка → приём в цехе'}
             </p>
           </div>
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreate}>
                 <Icon name="Plus" size={16} className="mr-2" />
-                Новая заявка
+                {isProduction ? 'Запросить материал' : 'Новая заявка'}
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>Заявка на материал в цех</DialogTitle>
+                <DialogTitle>{isProduction ? 'Запросить материал' : 'Заявка на материал в цех'}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Цех</Label>
-                    <Select value={reqWorkshopId} onValueChange={setReqWorkshopId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Выберите цех" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {workshops.map((w) => (
-                          <SelectItem key={w.id} value={String(w.id)}>
-                            {w.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Смена (необязательно)</Label>
-                    <Select value={reqShiftNumber || 'none'} onValueChange={(v) => setReqShiftNumber(v === 'none' ? '' : v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Без смены" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Без смены</SelectItem>
-                        <SelectItem value="1">Смена № 1</SelectItem>
-                        <SelectItem value="2">Смена № 2</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Запрашиваемые материалы</Label>
-                    <Button type="button" size="sm" variant="outline" onClick={addRow}>
-                      <Icon name="Plus" size={14} className="mr-1" />
-                      Добавить
-                    </Button>
-                  </div>
-                  {rows.map((row, idx) => (
-                    <div key={idx} className="grid grid-cols-[1fr_100px_auto] gap-2">
-                      <Select value={row.materialId} onValueChange={(v) => updateRow(idx, 'materialId', v)}>
+                {!isProduction && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Цех</Label>
+                      <Select value={reqWorkshopId} onValueChange={setReqWorkshopId}>
                         <SelectTrigger>
-                          <SelectValue placeholder="Материал" />
+                          <SelectValue placeholder="Выберите цех" />
                         </SelectTrigger>
                         <SelectContent>
-                          {materials.map((m) => (
-                            <SelectItem key={m.id} value={String(m.id)}>
-                              {m.name} ({m.unit})
+                          {workshops.map((w) => (
+                            <SelectItem key={w.id} value={String(w.id)}>
+                              {w.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        placeholder="Кол-во"
-                        value={row.requestedQuantity}
-                        onChange={(e) => updateRow(idx, 'requestedQuantity', e.target.value)}
-                      />
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => removeRow(idx)}
-                        disabled={rows.length === 1}
-                      >
-                        <Icon name="Trash2" size={16} />
-                      </Button>
                     </div>
-                  ))}
+                    <div className="space-y-1.5">
+                      <Label>Смена (необязательно)</Label>
+                      <Select value={reqShiftNumber || 'none'} onValueChange={(v) => setReqShiftNumber(v === 'none' ? '' : v)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Без смены" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Без смены</SelectItem>
+                          <SelectItem value="1">Смена № 1</SelectItem>
+                          <SelectItem value="2">Смена № 2</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <Label>Материал</Label>
+                  <Select value={reqMaterialId} onValueChange={setReqMaterialId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите материал" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {materials.map((m) => (
+                        <SelectItem key={m.id} value={String(m.id)}>
+                          {m.name} ({m.unit})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
+                <div className="space-y-1.5">
+                  <Label>Количество</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    placeholder="Кол-во"
+                    value={reqQuantity}
+                    onChange={(e) => setReqQuantity(e.target.value)}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">Одна заявка — один материал.</p>
 
                 <div className="space-y-1.5">
                   <Label>Комментарий</Label>
@@ -380,7 +373,7 @@ const ToWorkshop = () => {
                 </div>
 
                 <Button className="w-full" onClick={handleCreate} disabled={creating}>
-                  {creating ? 'Создание...' : 'Создать заявку'}
+                  {creating ? 'Отправка...' : isProduction ? 'Запросить' : 'Создать заявку'}
                 </Button>
               </div>
             </DialogContent>
@@ -403,7 +396,7 @@ const ToWorkshop = () => {
                   <TableHead className="text-primary-foreground">Статус</TableHead>
                   <TableHead className="text-primary-foreground">Цех</TableHead>
                   <TableHead className="text-primary-foreground">Смена</TableHead>
-                  <TableHead className="text-primary-foreground">Позиций</TableHead>
+                  <TableHead className="text-primary-foreground">Запросил</TableHead>
                   <TableHead className="text-primary-foreground">Комментарий</TableHead>
                   <TableHead className="text-primary-foreground">Создано</TableHead>
                   <TableHead className="text-primary-foreground" />
@@ -418,16 +411,16 @@ const ToWorkshop = () => {
                     </TableCell>
                     <TableCell>{s.workshopName || '—'}</TableCell>
                     <TableCell>{s.shiftNumber ? `Смена № ${s.shiftNumber}` : '—'}</TableCell>
-                    <TableCell>{s.itemsCount}</TableCell>
+                    <TableCell>{s.requestedByName || '—'}</TableCell>
                     <TableCell>{s.comment || '—'}</TableCell>
                     <TableCell>{formatDate(s.createdAt)}</TableCell>
                     <TableCell>
-                      {s.status === 'Новый' && (
+                      {!isProduction && s.status === 'Новый' && (
                         <Button size="sm" variant="outline" onClick={() => openShipment(s.id)}>
                           Собрать
                         </Button>
                       )}
-                      {s.status === 'Отправлено' && (
+                      {!isProduction && s.status === 'Отправлено' && (
                         <Button size="sm" onClick={() => handleReceive(s.id)}>
                           Принять в цехе
                         </Button>

@@ -20,8 +20,12 @@ def handler(event: dict, context) -> dict:
 
     GET  /                          - список документов (можно ?type=from_supplier)
     GET  /?id=1                     - детальная карточка документа с позициями
-    POST /  { action: 'create', type, supplierId?, workshopId?, shiftNumber?, comment?, items: [...] }
-        items для from_supplier: [{materialId, barcode, quantity}]
+    POST /  { action: 'create', type, supplierId?, comment?, items: [...] }
+        items для from_supplier: [{materialId, quantity, numberRolls}]
+            - quantity — общее количество (шт. или пог.м.), numberRolls — сколько рулонов/пачек
+              приехало; система делит quantity поровну на numberRolls новых рулонов и сама
+              присваивает каждому штрихкод (как при приёмке машины с поставщика: посчитали
+              материал и количество упаковок — остальное система оформляет сама)
         items для return_to_supplier / defect_writeoff: [{rollId, quantity}]
         (для to_workshop используйте action 'request_to_workshop')
     POST /  { action: 'delete', id }
@@ -29,8 +33,10 @@ def handler(event: dict, context) -> dict:
 
     Отгрузка в цех (as-is с физического склада, повторяет процесс кладовщика):
     POST /  { action: 'request_to_workshop', workshopId, shiftNumber?, comment?,
-               items: [{materialId, requestedQuantity}] }
-        - создаёт заявку в статусе "Новый" на нужные материалы (без привязки к рулонам)
+               materialId, requestedQuantity, requestedBy? }
+        - создаёт заявку в статусе "Новый" строго на ОДИН материал (без привязки к рулонам).
+          Заявку создаёт швея/закройщик — 1 заявка = 1 материал, workshopId/shiftNumber
+          берутся из профиля сотрудника (не выбираются вручную)
     POST /  { action: 'collect_scan', shipmentId, barcode }
         - сканирование штрихкода рулона на складе, добавляет его целиком в заявку
           (рулон должен быть материала из заявки и находиться в статусе in_storage)
@@ -76,10 +82,11 @@ def handler(event: dict, context) -> dict:
             if shipment_id:
                 cur.execute(
                     "SELECT s.id, s.type, s.status, s.supplier_id, sup.name, s.workshop_id, w.name, "
-                    "s.shift_number, s.comment, s.created_at, s.completed_at "
+                    "s.shift_number, s.comment, s.created_at, s.completed_at, s.requested_by, u.full_name "
                     "FROM shipments s "
                     "LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                     "LEFT JOIN workshops w ON w.id = s.workshop_id "
+                    "LEFT JOIN users u ON u.id = s.requested_by "
                     "WHERE s.id = %s",
                     (int(shipment_id),),
                 )
@@ -123,6 +130,8 @@ def handler(event: dict, context) -> dict:
                     'comment': row[8],
                     'createdAt': row[9].isoformat(),
                     'completedAt': row[10].isoformat() if row[10] else None,
+                    'requestedBy': row[11],
+                    'requestedByName': row[12],
                     'items': items,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'shipment': detail})}
@@ -136,10 +145,12 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 f"SELECT s.id, s.type, s.status, s.supplier_id, sup.name, s.workshop_id, w.name, "
                 f"s.shift_number, s.comment, s.created_at, s.completed_at, "
-                f"(SELECT COUNT(*) FROM shipment_items si WHERE si.shipment_id = s.id) as items_count "
+                f"(SELECT COUNT(*) FROM shipment_items si WHERE si.shipment_id = s.id) as items_count, "
+                f"u.full_name "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                 f"LEFT JOIN workshops w ON w.id = s.workshop_id "
+                f"LEFT JOIN users u ON u.id = s.requested_by "
                 f"{where_clause} "
                 f"ORDER BY s.created_at DESC, s.id DESC"
             )
@@ -157,6 +168,7 @@ def handler(event: dict, context) -> dict:
                     'createdAt': r[9].isoformat(),
                     'completedAt': r[10].isoformat() if r[10] else None,
                     'itemsCount': r[11],
+                    'requestedByName': r[12],
                 }
                 for r in cur.fetchall()
             ]
@@ -193,35 +205,56 @@ def handler(event: dict, context) -> dict:
                 )
                 shipment_id = cur.fetchone()[0]
 
+                created_rolls = []
                 if doc_type == 'from_supplier':
                     for item in items:
                         material_id = item.get('materialId')
-                        barcode = (item.get('barcode') or '').strip()
                         quantity = item.get('quantity')
-                        if not material_id or not barcode or quantity in (None, ''):
+                        number_rolls = item.get('numberRolls')
+                        if not material_id or quantity in (None, '') or not number_rolls:
                             return {
                                 'statusCode': 400,
                                 'headers': headers,
-                                'body': json.dumps({'error': 'Для каждой позиции укажите материал, штрихкод и количество'}),
+                                'body': json.dumps({'error': 'Для каждой позиции укажите материал, количество и число рулонов'}),
                             }
-                        barcode_esc = barcode.replace("'", "''")
-                        cur.execute("SELECT id FROM rolls WHERE barcode = %s", (barcode,))
-                        if cur.fetchone():
-                            return {
-                                'statusCode': 409,
-                                'headers': headers,
-                                'body': json.dumps({'error': f'Рулон со штрихкодом {barcode} уже существует'}),
-                            }
+                        material_id = int(material_id)
+                        quantity = float(quantity)
+                        number_rolls = int(number_rolls)
+                        if number_rolls < 1:
+                            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Число рулонов должно быть не меньше 1'})}
+
+                        cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
+                        type_row = cur.fetchone()
+                        if not type_row:
+                            return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Материал #{material_id} не найден'})}
+                        type_id = type_row[0]
+
                         cur.execute(
-                            f"INSERT INTO rolls (barcode, material_id, initial_quantity, remaining_quantity, status) "
-                            f"VALUES ('{barcode_esc}', {int(material_id)}, {float(quantity)}, {float(quantity)}, 'in_storage') "
-                            f"RETURNING id"
+                            "SELECT barcode FROM rolls WHERE barcode LIKE %s",
+                            (f'{type_id}-%',),
                         )
-                        roll_id = cur.fetchone()[0]
-                        cur.execute(
-                            f"INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity) "
-                            f"VALUES ({shipment_id}, {int(material_id)}, '{barcode_esc}', {roll_id}, {float(quantity)})"
-                        )
+                        existing_barcodes = [r[0] for r in cur.fetchall()]
+                        max_seq = 0
+                        for bc in existing_barcodes:
+                            suffix = bc.split('-', 1)[1] if '-' in bc else ''
+                            if suffix.isdigit():
+                                max_seq = max(max_seq, int(suffix))
+
+                        per_roll_qty = round(quantity / number_rolls, 3)
+                        for i in range(number_rolls):
+                            max_seq += 1
+                            barcode = f"{type_id}-{max_seq:06d}"
+                            cur.execute(
+                                f"INSERT INTO rolls (barcode, material_id, initial_quantity, remaining_quantity, status) "
+                                f"VALUES ('{barcode}', {material_id}, {per_roll_qty}, {per_roll_qty}, 'in_storage') "
+                                f"RETURNING id"
+                            )
+                            roll_id = cur.fetchone()[0]
+                            cur.execute(
+                                f"INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity) "
+                                f"VALUES ({shipment_id}, {material_id}, '{barcode}', {roll_id}, {per_roll_qty})"
+                            )
+                            created_rolls.append(barcode)
 
                 else:
                     for item in items:
@@ -259,37 +292,36 @@ def handler(event: dict, context) -> dict:
                         )
 
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id, 'createdRolls': created_rolls})}
 
             if action == 'request_to_workshop':
                 workshop_id = body_data.get('workshopId')
                 shift_number = body_data.get('shiftNumber')
                 comment = (body_data.get('comment') or '').strip()
-                items = body_data.get('items') or []
+                material_id = body_data.get('materialId')
+                requested_qty = body_data.get('requestedQuantity')
+                requested_by = body_data.get('requestedBy')
 
                 if not workshop_id:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите цех назначения'})}
-                if not items:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Добавьте хотя бы одну позицию'})}
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Не определён цех — обратитесь к администратору'})}
+                if not material_id or requested_qty in (None, ''):
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите материал и количество'})}
 
                 shift_sql = int(shift_number) if shift_number not in (None, '') else 'NULL'
+                requested_by_sql = int(requested_by) if requested_by not in (None, '') else 'NULL'
                 comment_esc = comment.replace("'", "''")
 
                 cur.execute(
-                    f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment) "
-                    f"VALUES ('to_workshop', 'Новый', {int(workshop_id)}, {shift_sql}, '{comment_esc}') RETURNING id"
+                    f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment, requested_by) "
+                    f"VALUES ('to_workshop', 'Новый', {int(workshop_id)}, {shift_sql}, '{comment_esc}', {requested_by_sql}) "
+                    f"RETURNING id"
                 )
                 shipment_id = cur.fetchone()[0]
 
-                for item in items:
-                    material_id = item.get('materialId')
-                    requested_qty = item.get('requestedQuantity')
-                    if not material_id or requested_qty in (None, ''):
-                        return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите материал и количество'})}
-                    cur.execute(
-                        f"INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
-                        f"VALUES ({shipment_id}, {int(material_id)}, {float(requested_qty)})"
-                    )
+                cur.execute(
+                    f"INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
+                    f"VALUES ({shipment_id}, {int(material_id)}, {float(requested_qty)})"
+                )
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}

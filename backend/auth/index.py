@@ -7,7 +7,10 @@ import psycopg2
 
 
 def handler(event: dict, context) -> dict:
-    """Проверяет логин и пароль сотрудника и возвращает его роль и имя.
+    """Проверяет логин и пароль сотрудника и возвращает его данные: роль, имя,
+    закреплённый цех (workshopId/workshopName) и номер смены (shiftNumber).
+    Эти данные позволяют швее/закройщику создавать заявки на материал в свой
+    цех без ручного выбора цеха и смены.
 
     Args:
         event: dict с httpMethod, body (json: login, password)
@@ -63,8 +66,11 @@ def handler(event: dict, context) -> dict:
         cur = conn.cursor()
         login_escaped = login.replace("'", "''")
         cur.execute(
-            f"SELECT id, password_hash, password_salt, full_name, role, is_active "
-            f"FROM users WHERE login = '{login_escaped}'"
+            f"SELECT u.id, u.password_hash, u.password_salt, u.full_name, u.role, u.is_active, "
+            f"u.workshop, u.shift_number, w.id "
+            f"FROM users u "
+            f"LEFT JOIN workshops w ON w.name = u.workshop "
+            f"WHERE u.login = '{login_escaped}'"
         )
         row = cur.fetchone()
     finally:
@@ -77,7 +83,7 @@ def handler(event: dict, context) -> dict:
             'body': json.dumps({'error': 'Неверный логин или пароль'}),
         }
 
-    user_id, password_hash, password_salt, full_name, role, is_active = row
+    user_id, password_hash, password_salt, full_name, role, is_active, workshop_name, shift_number, workshop_id = row
 
     if not is_active:
         return {
@@ -101,6 +107,13 @@ def handler(event: dict, context) -> dict:
         'statusCode': 200,
         'headers': headers,
         'body': json.dumps(
-            {'id': user_id, 'name': full_name, 'role': role}
+            {
+                'id': user_id,
+                'name': full_name,
+                'role': role,
+                'workshopId': workshop_id,
+                'workshopName': workshop_name,
+                'shiftNumber': shift_number,
+            }
         ),
     }

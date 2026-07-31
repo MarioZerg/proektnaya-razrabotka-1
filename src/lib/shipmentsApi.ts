@@ -20,6 +20,7 @@ export interface Shipment {
   createdAt: string;
   completedAt: string | null;
   itemsCount: number;
+  requestedByName: string | null;
 }
 
 export interface ShipmentItem {
@@ -36,6 +37,7 @@ export interface ShipmentItem {
 
 export interface ShipmentDetail extends Shipment {
   items: ShipmentItem[];
+  requestedBy: number | null;
 }
 
 export const fetchShipments = async (type?: ShipmentType): Promise<Shipment[]> => {
@@ -64,11 +66,16 @@ const postAction = async (payload: Record<string, unknown>) => {
   return data;
 };
 
+export interface CreateFromSupplierResult {
+  id: number;
+  createdRolls: string[];
+}
+
 export const createShipmentFromSupplier = (payload: {
   supplierId?: number;
   comment?: string;
-  items: Array<{ materialId: number; barcode: string; quantity: number }>;
-}) => postAction({ action: 'create', type: 'from_supplier', ...payload });
+  items: Array<{ materialId: number; quantity: number; numberRolls: number }>;
+}): Promise<CreateFromSupplierResult> => postAction({ action: 'create', type: 'from_supplier', ...payload });
 
 export const createShipmentReturnToSupplier = (payload: {
   supplierId?: number;
@@ -81,12 +88,15 @@ export const createShipmentDefectWriteoff = (payload: {
   items: Array<{ rollId: number; quantity: number }>;
 }) => postAction({ action: 'create', type: 'defect_writeoff', ...payload });
 
-// Отгрузка в цех — двухстадийный процесс со сканированием (как на физическом складе)
+// Отгрузка в цех — двухстадийный процесс со сканированием (как на физическом складе).
+// Заявку создаёт швея/закройщик: строго 1 материал за раз, цех и смена берутся из его профиля.
 export const requestToWorkshop = (payload: {
   workshopId: number;
   shiftNumber?: number;
   comment?: string;
-  items: Array<{ materialId: number; requestedQuantity: number }>;
+  materialId: number;
+  requestedQuantity: number;
+  requestedBy?: number;
 }) => postAction({ action: 'request_to_workshop', ...payload });
 
 export interface CollectScanResult {

@@ -1,9 +1,13 @@
 import { createContext, useContext, useState, ReactNode } from 'react';
 import type { Role } from '@/lib/roles';
 
-interface User {
+export interface User {
+  id: number;
   name: string;
   role: Role;
+  workshopId: number | null;
+  workshopName: string | null;
+  shiftNumber: number | null;
 }
 
 interface AuthContextValue {
