@@ -10,8 +10,8 @@ import NotFound from "./pages/NotFound";
 import WarehouseMaterials from "./pages/inventory/WarehouseMaterials";
 import MaterialsSettings from "./pages/settings/MaterialsSettings";
 import UsersSettings from "./pages/settings/UsersSettings";
-import RatesSettings from "./pages/settings/RatesSettings";
 import MarketplaceOrders from "./pages/marketplace/MarketplaceOrders";
+import Workshops from "./pages/shifts/Workshops";
 import { AuthProvider } from "@/context/AuthContext";
 
 const queryClient = new QueryClient();
@@ -29,8 +29,8 @@ const App = () => (
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
             <Route path="/crm/settings/materials" element={<MaterialsSettings />} />
             <Route path="/crm/settings/users" element={<UsersSettings />} />
-            <Route path="/crm/settings/rates" element={<RatesSettings />} />
             <Route path="/crm/marketplace/orders" element={<MarketplaceOrders />} />
+            <Route path="/crm/shifts/workshops" element={<Workshops />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

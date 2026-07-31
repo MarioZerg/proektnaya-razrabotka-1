@@ -142,7 +142,6 @@ const adminNav: NavItem[] = [
     children: [
       { label: 'Настройки системы', path: '/crm/settings/system' },
       { label: 'Пользователи', path: '/crm/settings/users' },
-      { label: 'Тарифы', path: '/crm/settings/rates' },
       { label: 'Материалы', path: '/crm/settings/materials' },
       { label: 'Поставщики', path: '/crm/settings/suppliers' },
       { label: 'Товары на маркетплейсе', path: '/crm/settings/marketplace-items' },

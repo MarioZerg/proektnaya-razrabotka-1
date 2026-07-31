@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get workshops list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Create workshop without name fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Create workshop with duplicate name fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create", "name": "Цех №1"},
+      "expectedStatus": 409
+    }
+  ]
+}
