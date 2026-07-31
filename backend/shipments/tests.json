@@ -1,0 +1,23 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get shipments list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Create shipment without type fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "create" },
+      "expectedStatus": 400
+    }
+  ]
+}
