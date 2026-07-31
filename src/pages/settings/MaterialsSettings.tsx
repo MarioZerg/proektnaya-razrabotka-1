@@ -36,7 +36,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import Icon from '@/components/ui/icon';
+import { useToast } from '@/hooks/use-toast';
 import {
   fetchMaterialsData,
   createType,
@@ -69,6 +75,7 @@ const emptyForm: MaterialFormState = {
 };
 
 const MaterialsSettings = () => {
+  const { toast } = useToast();
   const [types, setTypes] = useState<MaterialType[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
@@ -168,9 +175,18 @@ const MaterialsSettings = () => {
 
   const handleDelete = async () => {
     if (!deleteId) return;
-    await deleteMaterial(deleteId);
-    setDeleteId(null);
-    load();
+    try {
+      await deleteMaterial(deleteId);
+      setDeleteId(null);
+      load();
+    } catch (err) {
+      setDeleteId(null);
+      toast({
+        title: 'Нельзя удалить материал',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    }
   };
 
   return (
@@ -322,13 +338,28 @@ const MaterialsSettings = () => {
                         <Button size="icon" variant="secondary" onClick={() => openEditDialog(m)}>
                           <Icon name="Pencil" size={14} />
                         </Button>
-                        <Button
-                          size="icon"
-                          variant="destructive"
-                          onClick={() => setDeleteId(m.id)}
-                        >
-                          <Icon name="Trash2" size={14} />
-                        </Button>
+                        {m.hasMovements ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>
+                                <Button size="icon" variant="destructive" disabled>
+                                  <Icon name="Lock" size={14} />
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Материал участвовал в движениях по заказам — удалить нельзя
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <Button
+                            size="icon"
+                            variant="destructive"
+                            onClick={() => setDeleteId(m.id)}
+                          >
+                            <Icon name="Trash2" size={14} />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

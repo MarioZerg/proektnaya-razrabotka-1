@@ -14,6 +14,7 @@ export interface Material {
   cost: number;
   status: 'active' | 'archive';
   sortOrder: number;
+  hasMovements: boolean;
 }
 
 export interface MaterialsData {
@@ -69,5 +70,9 @@ export const deleteMaterial = async (id: number) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'delete_material', id }),
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Не удалось удалить материал');
+  }
+  return data;
 };

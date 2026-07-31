@@ -45,8 +45,9 @@ def handler(event: dict, context) -> dict:
             types = [{'id': r[0], 'name': r[1], 'sortOrder': r[2]} for r in cur.fetchall()]
 
             cur.execute(
-                "SELECT id, type_id, name, unit, cost, status, sort_order "
-                "FROM materials ORDER BY sort_order, id"
+                "SELECT m.id, m.type_id, m.name, m.unit, m.cost, m.status, m.sort_order, "
+                "EXISTS(SELECT 1 FROM material_movements mm WHERE mm.material_id = m.id) "
+                "FROM materials m ORDER BY m.sort_order, m.id"
             )
             materials = [
                 {
@@ -57,6 +58,7 @@ def handler(event: dict, context) -> dict:
                     'cost': float(r[4]),
                     'status': r[5],
                     'sortOrder': r[6],
+                    'hasMovements': r[7],
                 }
                 for r in cur.fetchall()
             ]
@@ -138,6 +140,18 @@ def handler(event: dict, context) -> dict:
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                cur.execute(
+                    f"SELECT COUNT(*) FROM material_movements WHERE material_id = {int(item_id)}"
+                )
+                movements_count = cur.fetchone()[0]
+                if movements_count > 0:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Материал участвовал в движениях по заказам — удалить нельзя. Переведите его в архив.'}
+                        ),
+                    }
                 cur.execute(f"DELETE FROM materials WHERE id = {int(item_id)}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
