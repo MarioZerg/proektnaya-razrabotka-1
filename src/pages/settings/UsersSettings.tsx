@@ -147,7 +147,7 @@ const UsersSettings = () => {
     if (!createForm.fullName.trim() || !createForm.email.trim() || !createForm.password.trim()) return;
     setCreating(true);
     try {
-      await createEmployee({
+      const result = await createEmployee({
         fullName: createForm.fullName.trim(),
         email: createForm.email.trim(),
         role: createForm.role,
@@ -157,7 +157,10 @@ const UsersSettings = () => {
       });
       setCreateOpen(false);
       load();
-      toast({ title: 'Сотрудник добавлен', description: createForm.fullName });
+      toast({
+        title: 'Сотрудник добавлен',
+        description: `Логин для входа: ${result.login} — сообщите его сотруднику вместе с паролем`,
+      });
     } catch (err) {
       toast({
         title: 'Не удалось добавить сотрудника',
@@ -435,7 +438,12 @@ const UsersSettings = () => {
                         <AvatarFallback className="text-xs">{initials(emp.fullName)}</AvatarFallback>
                       </Avatar>
                     </TableCell>
-                    <TableCell className="font-medium">{emp.fullName}</TableCell>
+                    <TableCell className="font-medium">
+                      <div>{emp.fullName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        Логин: <span className="font-mono-tech">{emp.login}</span>
+                      </div>
+                    </TableCell>
                     <TableCell>{roleLabels[emp.role]}</TableCell>
                     <TableCell>{emp.workshop || '—'}</TableCell>
                     <TableCell>
@@ -485,7 +493,6 @@ const UsersSettings = () => {
                   >
                     Сменить аватар
                   </Button>
-                  <p className="mt-1 text-xs text-muted-foreground">Логин: {cardEmployee.login}</p>
                 </div>
                 <input
                   ref={cardFileRef}
@@ -499,6 +506,24 @@ const UsersSettings = () => {
                     setCardForm((f) => f && { ...f, avatarBase64: base64 });
                   }}
                 />
+              </div>
+
+              <div className="flex items-center justify-between rounded-md border border-border bg-muted px-3 py-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">Логин для входа</p>
+                  <p className="font-mono-tech text-sm font-semibold">{cardEmployee.login}</p>
+                </div>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => {
+                    navigator.clipboard.writeText(cardEmployee.login);
+                    toast({ title: 'Логин скопирован' });
+                  }}
+                >
+                  <Icon name="Copy" size={14} />
+                </Button>
               </div>
 
               <div className="space-y-1.5">
