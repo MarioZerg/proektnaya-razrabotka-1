@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -26,36 +26,17 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
-
-type OrderStatus = 'Новый' | 'В работе' | 'Выполнен' | 'Отменён';
-type OrderType = 'FBO' | 'FBS' | 'Индивидуальный';
-type Marketplace = 'OZON' | 'WB' | 'Yandex';
-
-interface OrderRow {
-  id: number;
-  status: OrderStatus;
-  orderNumber: string;
-  marketplace: Marketplace;
-  type: OrderType;
-  cluster: string;
-  products: string;
-  quantity: number;
-  createdAt: string;
-  createdAgo: string;
-  completedAt: string | null;
-}
-
-const initialOrders: OrderRow[] = [
-  { id: 72455, status: 'Новый', orderNumber: '119956630-172', marketplace: 'OZON', type: 'FBO', cluster: 'Краснодар', products: 'Вуаль 200x265', quantity: 1, createdAt: '29/07/2026 09:50', createdAgo: '2 дня 7 часов назад', completedAt: null },
-  { id: 72456, status: 'Новый', orderNumber: '119956630-173', marketplace: 'OZON', type: 'FBO', cluster: 'Краснодар', products: 'Вуаль 200x265', quantity: 1, createdAt: '29/07/2026 09:50', createdAgo: '2 дня 7 часов назад', completedAt: null },
-  { id: 72457, status: 'Новый', orderNumber: '119956630-174', marketplace: 'OZON', type: 'FBO', cluster: 'Краснодар', products: 'Вуаль 200x265', quantity: 1, createdAt: '29/07/2026 09:50', createdAgo: '2 дня 7 часов назад', completedAt: null },
-  { id: 72458, status: 'Новый', orderNumber: '119956630-175', marketplace: 'OZON', type: 'FBO', cluster: 'Краснодар', products: 'Вуаль 300x255', quantity: 1, createdAt: '29/07/2026 09:50', createdAgo: '2 дня 7 часов назад', completedAt: null },
-  { id: 72459, status: 'Новый', orderNumber: '119956630-176', marketplace: 'OZON', type: 'FBO', cluster: 'Краснодар', products: 'Вуаль 300x255', quantity: 1, createdAt: '29/07/2026 09:50', createdAgo: '2 дня 7 часов назад', completedAt: null },
-  { id: 72460, status: 'Новый', orderNumber: '119956630-177', marketplace: 'OZON', type: 'FBO', cluster: 'Краснодар', products: 'Вуаль 300x255', quantity: 1, createdAt: '29/07/2026 09:50', createdAgo: '2 дня 7 часов назад', completedAt: null },
-  { id: 72461, status: 'Новый', orderNumber: '119956630-178', marketplace: 'OZON', type: 'FBO', cluster: 'Краснодар', products: 'Вуаль 300x265', quantity: 1, createdAt: '29/07/2026 09:50', createdAgo: '2 дня 7 часов назад', completedAt: null },
-  { id: 72462, status: 'Новый', orderNumber: '119956630-179', marketplace: 'OZON', type: 'FBO', cluster: 'Краснодар', products: 'Вуаль 300x265', quantity: 1, createdAt: '29/07/2026 09:50', createdAgo: '2 дня 7 часов назад', completedAt: null },
-  { id: 72463, status: 'Новый', orderNumber: '119956630-180', marketplace: 'OZON', type: 'FBO', cluster: 'Краснодар', products: 'Вуаль 300x265', quantity: 1, createdAt: '29/07/2026 09:50', createdAgo: '2 дня 7 часов назад', completedAt: null },
-];
+import { useToast } from '@/hooks/use-toast';
+import {
+  fetchOrders,
+  createManualOrder,
+  updateOrder,
+  deleteOrder,
+  type Order,
+  type OrderStatus,
+  type OrderType,
+  type Marketplace,
+} from '@/lib/ordersApi';
 
 const productOptions = [
   'Вуаль 200x265',
@@ -78,29 +59,76 @@ const statusVariant = (status: OrderStatus): 'default' | 'secondary' | 'destruct
   return 'outline';
 };
 
+const formatDate = (iso: string) => {
+  const d = new Date(iso);
+  return d.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const timeAgo = (iso: string) => {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const hours = Math.floor(diffMs / 3600000);
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  if (days > 0) return `${days} дн. ${remHours} час. назад`;
+  return `${hours} час. назад`;
+};
+
 interface EditFormState {
   orderNumber: string;
   marketplace: Marketplace;
-  type: OrderType;
+  orderType: OrderType;
   status: OrderStatus;
   product: string;
   quantity: string;
 }
 
+const emptyManualForm: EditFormState = {
+  orderNumber: '',
+  marketplace: 'OZON',
+  orderType: 'FBO',
+  status: 'Новый',
+  product: productOptions[0],
+  quantity: '1',
+};
+
 const MarketplaceOrders = () => {
-  const [orders, setOrders] = useState<OrderRow[]>(initialOrders);
-  const [editingOrder, setEditingOrder] = useState<OrderRow | null>(null);
+  const { toast } = useToast();
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [form, setForm] = useState<EditFormState | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const openEdit = (order: OrderRow) => {
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualForm, setManualForm] = useState<EditFormState>(emptyManualForm);
+  const [manualSaving, setManualSaving] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    fetchOrders()
+      .then(setOrders)
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const openEdit = (order: Order) => {
     setEditingOrder(order);
     setForm({
       orderNumber: order.orderNumber,
       marketplace: order.marketplace,
-      type: order.type,
+      orderType: order.orderType,
       status: order.status,
-      product: order.products,
+      product: order.product,
       quantity: String(order.quantity),
     });
   };
@@ -110,28 +138,64 @@ const MarketplaceOrders = () => {
     setForm(null);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editingOrder || !form) return;
     setSaving(true);
-    setTimeout(() => {
-      setOrders((prev) =>
-        prev.map((o) =>
-          o.id === editingOrder.id
-            ? {
-                ...o,
-                orderNumber: form.orderNumber,
-                marketplace: form.marketplace,
-                type: form.type,
-                status: form.status,
-                products: form.product,
-                quantity: Number(form.quantity) || 1,
-              }
-            : o
-        )
-      );
-      setSaving(false);
+    try {
+      await updateOrder(editingOrder.id, {
+        orderNumber: form.orderNumber.trim(),
+        marketplace: form.marketplace,
+        orderType: form.orderType,
+        status: form.status,
+        product: form.product,
+        quantity: Number(form.quantity) || 1,
+      });
       closeEdit();
-    }, 400);
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось сохранить заказ',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    await deleteOrder(id);
+    load();
+  };
+
+  const openManual = () => {
+    setManualForm(emptyManualForm);
+    setManualOpen(true);
+  };
+
+  const handleManualCreate = async () => {
+    if (!manualForm.orderNumber.trim()) return;
+    setManualSaving(true);
+    try {
+      await createManualOrder({
+        orderNumber: manualForm.orderNumber.trim(),
+        marketplace: manualForm.marketplace,
+        orderType: manualForm.orderType,
+        product: manualForm.product,
+        quantity: Number(manualForm.quantity) || 1,
+      });
+      setManualOpen(false);
+      load();
+      toast({ title: 'Заказ создан', description: `№ ${manualForm.orderNumber}` });
+    } catch (err) {
+      toast({
+        title: 'Заказ не создан',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setManualSaving(false);
+    }
   };
 
   return (
@@ -140,19 +204,19 @@ const MarketplaceOrders = () => {
         <h1 className="text-xl font-bold">Заказы</h1>
 
         <div className="flex flex-wrap gap-3">
-          <Button className="bg-blue-600 text-white hover:bg-blue-700">
+          <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={openManual}>
             <Icon name="Plus" size={16} className="mr-1.5" />
             Добавить заказ вручную
           </Button>
-          <Button className="bg-emerald-600 text-white hover:bg-emerald-700">
+          <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled>
             <Icon name="RefreshCw" size={16} className="mr-1.5" />
             Загрузить заказы с API
           </Button>
-          <Button className="bg-amber-500 text-white hover:bg-amber-600">
+          <Button className="bg-amber-500 text-white hover:bg-amber-600" disabled>
             <Icon name="Ban" size={16} className="mr-1.5" />
             Проверить отменённые заказы
           </Button>
-          <Button className="bg-teal-600 text-white hover:bg-teal-700">
+          <Button className="bg-teal-600 text-white hover:bg-teal-700" disabled>
             <Icon name="FileSpreadsheet" size={16} className="mr-1.5" />
             Добавить заказ через Excel
           </Button>
@@ -192,62 +256,71 @@ const MarketplaceOrders = () => {
           </Select>
         </div>
 
-        <div className="rounded-md border border-border">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-primary hover:bg-primary">
-                <TableHead className="text-primary-foreground">#</TableHead>
-                <TableHead className="text-primary-foreground">Статус</TableHead>
-                <TableHead className="text-primary-foreground">Номер заказа</TableHead>
-                <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
-                <TableHead className="text-primary-foreground">Тип</TableHead>
-                <TableHead className="text-primary-foreground">Кластер</TableHead>
-                <TableHead className="text-primary-foreground">Товары</TableHead>
-                <TableHead className="text-primary-foreground">Создан</TableHead>
-                <TableHead className="text-primary-foreground">Выполнен</TableHead>
-                <TableHead className="text-primary-foreground" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {orders.map((o) => (
-                <TableRow key={o.id}>
-                  <TableCell>{o.id}</TableCell>
-                  <TableCell>
-                    <Badge variant={statusVariant(o.status)}>{o.status}</Badge>
-                  </TableCell>
-                  <TableCell className="font-medium">{o.orderNumber}</TableCell>
-                  <TableCell>
-                    <span className={marketplaceLogo[o.marketplace].className}>
-                      {marketplaceLogo[o.marketplace].label}
-                    </span>
-                  </TableCell>
-                  <TableCell>{o.type}</TableCell>
-                  <TableCell>{o.cluster}</TableCell>
-                  <TableCell>
-                    {o.products} - {o.quantity} шт.
-                  </TableCell>
-                  <TableCell>
-                    <div className="whitespace-nowrap">{o.createdAt}</div>
-                    <Badge variant="destructive" className="mt-1 font-normal">
-                      {o.createdAgo}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{o.completedAt || ''}</TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-2">
-                      <Button size="icon" variant="secondary" onClick={() => openEdit(o)}>
-                        <Icon name="Pencil" size={14} />
-                      </Button>
-                      <Button size="icon" variant="destructive">
-                        <Icon name="Trash2" size={14} />
-                      </Button>
-                    </div>
-                  </TableCell>
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Icon name="Loader2" size={16} className="animate-spin" />
+            Загрузка...
+          </div>
+        ) : orders.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Заказов пока нет.</p>
+        ) : (
+          <div className="rounded-md border border-border">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-primary hover:bg-primary">
+                  <TableHead className="text-primary-foreground">#</TableHead>
+                  <TableHead className="text-primary-foreground">Статус</TableHead>
+                  <TableHead className="text-primary-foreground">Номер заказа</TableHead>
+                  <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
+                  <TableHead className="text-primary-foreground">Тип</TableHead>
+                  <TableHead className="text-primary-foreground">Кластер</TableHead>
+                  <TableHead className="text-primary-foreground">Товары</TableHead>
+                  <TableHead className="text-primary-foreground">Создан</TableHead>
+                  <TableHead className="text-primary-foreground">Выполнен</TableHead>
+                  <TableHead className="text-primary-foreground" />
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+              </TableHeader>
+              <TableBody>
+                {orders.map((o) => (
+                  <TableRow key={o.id}>
+                    <TableCell>{o.id}</TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(o.status)}>{o.status}</Badge>
+                    </TableCell>
+                    <TableCell className="font-medium">{o.orderNumber}</TableCell>
+                    <TableCell>
+                      <span className={marketplaceLogo[o.marketplace]?.className}>
+                        {marketplaceLogo[o.marketplace]?.label || o.marketplace}
+                      </span>
+                    </TableCell>
+                    <TableCell>{o.orderType}</TableCell>
+                    <TableCell>{o.cluster || '—'}</TableCell>
+                    <TableCell>
+                      {o.product} - {o.quantity} шт.
+                    </TableCell>
+                    <TableCell>
+                      <div className="whitespace-nowrap">{formatDate(o.createdAt)}</div>
+                      <Badge variant="destructive" className="mt-1 font-normal">
+                        {timeAgo(o.createdAt)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{o.completedAt ? formatDate(o.completedAt) : ''}</TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <Button size="icon" variant="secondary" onClick={() => openEdit(o)}>
+                          <Icon name="Pencil" size={14} />
+                        </Button>
+                        <Button size="icon" variant="destructive" onClick={() => handleDelete(o.id)}>
+                          <Icon name="Trash2" size={14} />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </div>
 
       <Dialog open={editingOrder !== null} onOpenChange={(open) => !open && closeEdit()}>
@@ -286,8 +359,8 @@ const MarketplaceOrders = () => {
                 <div className="space-y-1.5">
                   <Label>Тип</Label>
                   <Select
-                    value={form.type}
-                    onValueChange={(v) => setForm((f) => f && { ...f, type: v as OrderType })}
+                    value={form.orderType}
+                    onValueChange={(v) => setForm((f) => f && { ...f, orderType: v as OrderType })}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -358,6 +431,101 @@ const MarketplaceOrders = () => {
               </Button>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={manualOpen} onOpenChange={setManualOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Добавить заказ вручную</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Номер заявки</Label>
+              <Input
+                placeholder="Например: 119956630-181"
+                value={manualForm.orderNumber}
+                onChange={(e) => setManualForm((f) => ({ ...f, orderNumber: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Если такой номер уже есть в системе — заказ не будет создан повторно.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Маркетплейс</Label>
+                <Select
+                  value={manualForm.marketplace}
+                  onValueChange={(v) => setManualForm((f) => ({ ...f, marketplace: v as Marketplace }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="OZON">OZON</SelectItem>
+                    <SelectItem value="WB">Wildberries</SelectItem>
+                    <SelectItem value="Yandex">Яндекс.Маркет</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Тип</Label>
+                <Select
+                  value={manualForm.orderType}
+                  onValueChange={(v) => setManualForm((f) => ({ ...f, orderType: v as OrderType }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="FBO">FBO</SelectItem>
+                    <SelectItem value="FBS">FBS</SelectItem>
+                    <SelectItem value="Индивидуальный">Индивидуальный</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Товар</Label>
+                <Select
+                  value={manualForm.product}
+                  onValueChange={(v) => setManualForm((f) => ({ ...f, product: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {productOptions.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Количество</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={manualForm.quantity}
+                  onChange={(e) => setManualForm((f) => ({ ...f, quantity: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <Button
+              onClick={handleManualCreate}
+              disabled={manualSaving || !manualForm.orderNumber.trim()}
+              className="w-full bg-blue-600 text-white hover:bg-blue-700"
+            >
+              {manualSaving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Создать заказ'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </CrmLayout>

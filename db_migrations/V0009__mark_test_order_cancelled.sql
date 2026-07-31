@@ -1,0 +1,1 @@
+UPDATE orders SET status = 'Отменён' WHERE order_number = 'TEST-UNIQUE-001';
