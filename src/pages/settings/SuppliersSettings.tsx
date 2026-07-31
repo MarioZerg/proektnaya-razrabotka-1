@@ -46,11 +46,13 @@ interface SupplierFormState {
 }
 
 const emptyForm: SupplierFormState = { name: '', phone: '', address: '', comment: '' };
+const PAGE_SIZE = 10;
 
 const SuppliersSettings = () => {
   const { toast } = useToast();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -109,6 +111,9 @@ const SuppliersSettings = () => {
       setSaving(false);
     }
   };
+
+  const totalPages = Math.max(1, Math.ceil(suppliers.length / PAGE_SIZE));
+  const pagedSuppliers = suppliers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const handleDelete = async () => {
     if (!deleteId) return;
@@ -210,7 +215,7 @@ const SuppliersSettings = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {suppliers.map((s) => (
+                {pagedSuppliers.map((s) => (
                   <TableRow key={s.id}>
                     <TableCell>{s.id}</TableCell>
                     <TableCell className="font-medium">{s.name}</TableCell>
@@ -231,6 +236,37 @@ const SuppliersSettings = () => {
                 ))}
               </TableBody>
             </Table>
+          </div>
+        )}
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2">
+            <Button
+              size="icon"
+              variant="outline"
+              disabled={page === 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              <Icon name="ChevronLeft" size={16} />
+            </Button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+              <Button
+                key={p}
+                size="icon"
+                variant={p === page ? 'default' : 'outline'}
+                onClick={() => setPage(p)}
+              >
+                {p}
+              </Button>
+            ))}
+            <Button
+              size="icon"
+              variant="outline"
+              disabled={page === totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              <Icon name="ChevronRight" size={16} />
+            </Button>
           </div>
         )}
       </div>
