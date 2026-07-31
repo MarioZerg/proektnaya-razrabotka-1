@@ -10,8 +10,8 @@ def handler(event: dict, context) -> dict:
 
     GET  /                        - получить список товаров
     GET  /?id=1                   - получить детальную карточку товара с расходом материалов
-    POST /  { action: 'create', name, width?, height?, article?, ozonSku?, wbSku? }
-    POST /  { action: 'update', id, name?, width?, height?, article?, ozonSku?, wbSku? }
+    POST /  { action: 'create', name, width?, height?, article?, ozonSku?, wbSku?, material? }
+    POST /  { action: 'update', id, name?, width?, height?, article?, ozonSku?, wbSku?, material? }
     POST /  { action: 'delete', id }
     POST /  { action: 'set_materials', itemId, materials: [{materialId, quantity}] }
         - полностью заменяет список расходов материалов для товара
@@ -50,7 +50,7 @@ def handler(event: dict, context) -> dict:
 
             if item_id:
                 cur.execute(
-                    "SELECT id, name, sku, width, height, ozon_sku, wb_sku, created_at, updated_at "
+                    "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, created_at, updated_at "
                     "FROM marketplace_items WHERE id = %s",
                     (int(item_id),),
                 )
@@ -84,14 +84,15 @@ def handler(event: dict, context) -> dict:
                     'height': row[4],
                     'ozonSku': row[5],
                     'wbSku': row[6],
-                    'createdAt': row[7].isoformat(),
-                    'updatedAt': row[8].isoformat(),
+                    'material': row[7],
+                    'createdAt': row[8].isoformat(),
+                    'updatedAt': row[9].isoformat(),
                     'materials': materials,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'item': detail})}
 
             cur.execute(
-                "SELECT id, name, sku, width, height, ozon_sku, wb_sku, created_at, updated_at "
+                "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, created_at, updated_at "
                 "FROM marketplace_items ORDER BY id DESC"
             )
             items = [
@@ -103,8 +104,9 @@ def handler(event: dict, context) -> dict:
                     'height': r[4],
                     'ozonSku': r[5],
                     'wbSku': r[6],
-                    'createdAt': r[7].isoformat(),
-                    'updatedAt': r[8].isoformat(),
+                    'material': r[7],
+                    'createdAt': r[8].isoformat(),
+                    'updatedAt': r[9].isoformat(),
                 }
                 for r in cur.fetchall()
             ]
@@ -126,6 +128,7 @@ def handler(event: dict, context) -> dict:
                 article = (body_data.get('article') or '').strip()
                 ozon_sku = (body_data.get('ozonSku') or '').strip()
                 wb_sku = (body_data.get('wbSku') or '').strip()
+                material = (body_data.get('material') or '').strip()
                 width = body_data.get('width')
                 height = body_data.get('height')
 
@@ -136,12 +139,13 @@ def handler(event: dict, context) -> dict:
                 article_esc = article.replace("'", "''")
                 ozon_sku_esc = ozon_sku.replace("'", "''")
                 wb_sku_esc = wb_sku.replace("'", "''")
+                material_esc = material.replace("'", "''")
                 width_sql = int(width) if width not in (None, '') else 'NULL'
                 height_sql = int(height) if height not in (None, '') else 'NULL'
 
                 cur.execute(
-                    f"INSERT INTO marketplace_items (name, sku, width, height, ozon_sku, wb_sku) "
-                    f"VALUES ('{name_esc}', '{article_esc}', {width_sql}, {height_sql}, '{ozon_sku_esc}', '{wb_sku_esc}') "
+                    f"INSERT INTO marketplace_items (name, sku, width, height, ozon_sku, wb_sku, material) "
+                    f"VALUES ('{name_esc}', '{article_esc}', {width_sql}, {height_sql}, '{ozon_sku_esc}', '{wb_sku_esc}', '{material_esc}') "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
@@ -162,6 +166,8 @@ def handler(event: dict, context) -> dict:
                     fields.append(f"ozon_sku = '{str(body_data['ozonSku']).replace(chr(39), chr(39)*2)}'")
                 if 'wbSku' in body_data:
                     fields.append(f"wb_sku = '{str(body_data['wbSku']).replace(chr(39), chr(39)*2)}'")
+                if 'material' in body_data:
+                    fields.append(f"material = '{str(body_data['material']).replace(chr(39), chr(39)*2)}'")
                 if 'width' in body_data:
                     val = body_data['width']
                     fields.append(f"width = {int(val) if val not in (None, '') else 'NULL'}")

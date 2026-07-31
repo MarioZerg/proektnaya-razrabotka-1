@@ -8,6 +8,7 @@ export interface MarketplaceItem {
   height: number | null;
   ozonSku: string | null;
   wbSku: string | null;
+  material: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -56,6 +57,7 @@ export const createMarketplaceItem = (payload: {
   height?: number;
   ozonSku?: string;
   wbSku?: string;
+  material?: string;
 }) => postAction({ action: 'create', ...payload });
 
 export const updateMarketplaceItem = (
@@ -67,6 +69,7 @@ export const updateMarketplaceItem = (
     height: number;
     ozonSku: string;
     wbSku: string;
+    material: string;
   }>
 ) => postAction({ action: 'update', id, ...fields });
 

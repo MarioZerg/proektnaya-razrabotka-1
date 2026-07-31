@@ -50,6 +50,7 @@ interface ItemFormState {
   article: string;
   ozonSku: string;
   wbSku: string;
+  material: string;
 }
 
 const emptyForm: ItemFormState = {
@@ -59,6 +60,7 @@ const emptyForm: ItemFormState = {
   article: '',
   ozonSku: '',
   wbSku: '',
+  material: '',
 };
 
 interface MaterialRow {
@@ -66,11 +68,18 @@ interface MaterialRow {
   quantity: string;
 }
 
+const PAGE_SIZE = 24;
+const ALL_MATERIALS = '__all__';
+
 const MarketplaceItemsSettings = () => {
   const { toast } = useToast();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [skuQuery, setSkuQuery] = useState('');
+  const [materialFilter, setMaterialFilter] = useState(ALL_MATERIALS);
+  const [page, setPage] = useState(1);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -109,6 +118,7 @@ const MarketplaceItemsSettings = () => {
       article: item.article || '',
       ozonSku: item.ozonSku || '',
       wbSku: item.wbSku || '',
+      material: item.material || '',
     });
     setDialogOpen(true);
     const detail = await fetchMarketplaceItemDetail(item.id);
@@ -140,6 +150,7 @@ const MarketplaceItemsSettings = () => {
         article: form.article.trim(),
         ozonSku: form.ozonSku.trim(),
         wbSku: form.wbSku.trim(),
+        material: form.material.trim(),
         width: form.width ? Number(form.width) : undefined,
         height: form.height ? Number(form.height) : undefined,
       };
@@ -197,6 +208,26 @@ const MarketplaceItemsSettings = () => {
     }
   };
 
+  const materialOptions = Array.from(
+    new Set(items.map((i) => i.material).filter((m): m is string => !!m))
+  ).sort((a, b) => a.localeCompare(b));
+
+  const filteredItems = items.filter((item) => {
+    const matchesSku = skuQuery.trim()
+      ? (item.article || '').toLowerCase().includes(skuQuery.trim().toLowerCase())
+      : true;
+    const matchesMaterial =
+      materialFilter === ALL_MATERIALS ? true : item.material === materialFilter;
+    return matchesSku && matchesMaterial;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedItems = filteredItems.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
+
   return (
     <CrmLayout>
       <div className="space-y-6">
@@ -251,13 +282,23 @@ const MarketplaceItemsSettings = () => {
                     />
                   </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label>SKU / Артикул</Label>
-                  <Input
-                    placeholder="Артикул"
-                    value={form.article}
-                    onChange={(e) => setForm((f) => ({ ...f, article: e.target.value }))}
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>SKU / Артикул</Label>
+                    <Input
+                      placeholder="Артикул"
+                      value={form.article}
+                      onChange={(e) => setForm((f) => ({ ...f, article: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Материал</Label>
+                    <Input
+                      placeholder="Например: Вуаль"
+                      value={form.material}
+                      onChange={(e) => setForm((f) => ({ ...f, material: e.target.value }))}
+                    />
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
@@ -330,6 +371,68 @@ const MarketplaceItemsSettings = () => {
           </Dialog>
         </div>
 
+        {!loading && items.length > 0 && (
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="w-full max-w-xs space-y-1.5">
+              <Label>Поиск по SKU</Label>
+              <div className="relative">
+                <Icon
+                  name="Search"
+                  size={14}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  placeholder="Например: vyal3_265"
+                  value={skuQuery}
+                  onChange={(e) => {
+                    setSkuQuery(e.target.value);
+                    setPage(1);
+                  }}
+                  className="pl-8"
+                />
+              </div>
+            </div>
+            <div className="w-full max-w-xs space-y-1.5">
+              <Label>Материал</Label>
+              <Select
+                value={materialFilter}
+                onValueChange={(v) => {
+                  setMaterialFilter(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_MATERIALS}>Все материалы</SelectItem>
+                  {materialOptions.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {(skuQuery || materialFilter !== ALL_MATERIALS) && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setSkuQuery('');
+                  setMaterialFilter(ALL_MATERIALS);
+                  setPage(1);
+                }}
+              >
+                <Icon name="X" size={14} className="mr-1" />
+                Сбросить
+              </Button>
+            )}
+            <p className="ml-auto text-sm text-muted-foreground">
+              Найдено: {filteredItems.length}
+            </p>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -337,40 +440,71 @@ const MarketplaceItemsSettings = () => {
           </div>
         ) : items.length === 0 ? (
           <p className="text-sm text-muted-foreground">Товаров пока нет — добавьте первый.</p>
+        ) : filteredItems.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Ничего не найдено по заданным фильтрам.</p>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {items.map((item) => (
-              <Card key={item.id} className="border-border shadow-none">
-                <CardContent className="space-y-2 pt-6">
-                  <div className="flex items-start justify-between">
-                    <p className="font-medium">{item.name}</p>
-                    <div className="flex gap-1">
-                      <Button size="icon" variant="secondary" onClick={() => openEdit(item)}>
-                        <Icon name="Pencil" size={14} />
-                      </Button>
-                      <Button size="icon" variant="destructive" onClick={() => setDeleteId(item.id)}>
-                        <Icon name="Trash2" size={14} />
-                      </Button>
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {pagedItems.map((item) => (
+                <Card key={item.id} className="border-border shadow-none">
+                  <CardContent className="space-y-2 pt-6">
+                    <div className="flex items-start justify-between">
+                      <p className="font-medium">{item.name}</p>
+                      <div className="flex gap-1">
+                        <Button size="icon" variant="secondary" onClick={() => openEdit(item)}>
+                          <Icon name="Pencil" size={14} />
+                        </Button>
+                        <Button size="icon" variant="destructive" onClick={() => setDeleteId(item.id)}>
+                          <Icon name="Trash2" size={14} />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                  {item.article && (
-                    <Badge variant="secondary" className="font-mono-tech">
-                      {item.article}
-                    </Badge>
-                  )}
-                  <div className="text-sm text-muted-foreground">
-                    {item.width && item.height ? `${item.width}×${item.height}` : '—'}
-                  </div>
-                  {(item.ozonSku || item.wbSku) && (
-                    <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      {item.ozonSku && <span>OZON: {item.ozonSku}</span>}
-                      {item.wbSku && <span>WB: {item.wbSku}</span>}
+                    <div className="flex flex-wrap gap-1.5">
+                      {item.article && (
+                        <Badge variant="secondary" className="font-mono-tech">
+                          {item.article}
+                        </Badge>
+                      )}
+                      {item.material && <Badge variant="outline">{item.material}</Badge>}
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                    <div className="text-sm text-muted-foreground">
+                      {item.width && item.height ? `${item.width}×${item.height}` : '—'}
+                    </div>
+                    {(item.ozonSku || item.wbSku) && (
+                      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        {item.ozonSku && <span>OZON: {item.ozonSku}</span>}
+                        {item.wbSku && <span>WB: {item.wbSku}</span>}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2">
+                <Button
+                  size="icon"
+                  variant="outline"
+                  disabled={currentPage === 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  <Icon name="ChevronLeft" size={16} />
+                </Button>
+                <span className="px-3 text-sm text-muted-foreground">
+                  {currentPage} / {totalPages}
+                </span>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  <Icon name="ChevronRight" size={16} />
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
