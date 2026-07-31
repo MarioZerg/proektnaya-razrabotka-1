@@ -13,6 +13,9 @@ import FromSupplier from "./pages/shipments/FromSupplier";
 import ToWorkshop from "./pages/shipments/ToWorkshop";
 import ReturnToSupplier from "./pages/shipments/ReturnToSupplier";
 import DefectWriteoff from "./pages/shipments/DefectWriteoff";
+import ToMarketplace from "./pages/shipments/ToMarketplace";
+import GoodsWarehouse from "./pages/inventory/GoodsWarehouse";
+import ShelvesSettings from "./pages/settings/ShelvesSettings";
 import MaterialsSettings from "./pages/settings/MaterialsSettings";
 import UsersSettings from "./pages/settings/UsersSettings";
 import MarketplaceOrders from "./pages/marketplace/MarketplaceOrders";
@@ -46,6 +49,9 @@ const App = () => (
             <Route path="/crm/shipments/to-workshop" element={<ToWorkshop />} />
             <Route path="/crm/shipments/return-to-supplier" element={<ReturnToSupplier />} />
             <Route path="/crm/shipments/defect-writeoff" element={<DefectWriteoff />} />
+            <Route path="/crm/shipments/to-marketplace" element={<ToMarketplace />} />
+            <Route path="/crm/inventory/goods-warehouse" element={<GoodsWarehouse />} />
+            <Route path="/crm/settings/shelves" element={<ShelvesSettings />} />
             <Route path="/crm/settings/materials" element={<MaterialsSettings />} />
             <Route path="/crm/settings/users" element={<UsersSettings />} />
             <Route path="/crm/marketplace/orders" element={<MarketplaceOrders />} />

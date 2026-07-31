@@ -1,4 +1,7 @@
 {
+  "marketplace_supplies": "https://functions.poehali.dev/d0a75e82-2c63-440c-8eae-dd036df61fac",
+  "goods_warehouse": "https://functions.poehali.dev/370fdff8-7cae-4cc7-a853-b664f3da61cf",
+  "shelves": "https://functions.poehali.dev/06b83d03-2e1c-4061-972d-a39d81cf0b2d",
   "shipments": "https://functions.poehali.dev/a68cce8d-f3b0-4f06-a66a-305eeacd17bb",
   "rolls": "https://functions.poehali.dev/10824802-d4e4-48de-b98a-0fc06f8412d5",
   "suppliers": "https://functions.poehali.dev/eb3fba8a-def9-443a-a867-97243dacc9f8",

@@ -1,0 +1,23 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get goods warehouse list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Receive without orderId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "receive" },
+      "expectedStatus": 400
+    }
+  ]
+}
