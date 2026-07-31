@@ -9,6 +9,7 @@ export interface MarketplaceItem {
   ozonSku: string | null;
   wbSku: string | null;
   material: string | null;
+  barcode: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -58,6 +59,7 @@ export const createMarketplaceItem = (payload: {
   ozonSku?: string;
   wbSku?: string;
   material?: string;
+  barcode?: string;
 }) => postAction({ action: 'create', ...payload });
 
 export const updateMarketplaceItem = (
@@ -70,6 +72,7 @@ export const updateMarketplaceItem = (
     ozonSku: string;
     wbSku: string;
     material: string;
+    barcode: string;
   }>
 ) => postAction({ action: 'update', id, ...fields });
 

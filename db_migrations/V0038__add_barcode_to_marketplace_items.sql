@@ -1,0 +1,1 @@
+ALTER TABLE marketplace_items ADD COLUMN IF NOT EXISTS barcode VARCHAR(100);

@@ -51,6 +51,7 @@ interface ItemFormState {
   ozonSku: string;
   wbSku: string;
   material: string;
+  barcode: string;
 }
 
 const emptyForm: ItemFormState = {
@@ -61,6 +62,7 @@ const emptyForm: ItemFormState = {
   ozonSku: '',
   wbSku: '',
   material: '',
+  barcode: '',
 };
 
 interface MaterialRow {
@@ -119,6 +121,7 @@ const MarketplaceItemsSettings = () => {
       ozonSku: item.ozonSku || '',
       wbSku: item.wbSku || '',
       material: item.material || '',
+      barcode: item.barcode || '',
     });
     setDialogOpen(true);
     const detail = await fetchMarketplaceItemDetail(item.id);
@@ -151,6 +154,7 @@ const MarketplaceItemsSettings = () => {
         ozonSku: form.ozonSku.trim(),
         wbSku: form.wbSku.trim(),
         material: form.material.trim(),
+        barcode: form.barcode.trim(),
         width: form.width ? Number(form.width) : undefined,
         height: form.height ? Number(form.height) : undefined,
       };
@@ -323,6 +327,14 @@ const MarketplaceItemsSettings = () => {
                     />
                   </div>
                 </div>
+                <div className="space-y-1.5">
+                  <Label>Баркод</Label>
+                  <Input
+                    placeholder="Штрихкод товара"
+                    value={form.barcode}
+                    onChange={(e) => setForm((f) => ({ ...f, barcode: e.target.value }))}
+                  />
+                </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -477,10 +489,11 @@ const MarketplaceItemsSettings = () => {
                     <div className="text-sm text-muted-foreground">
                       {item.width && item.height ? `${item.width}×${item.height}` : '—'}
                     </div>
-                    {(item.ozonSku || item.wbSku) && (
+                    {(item.ozonSku || item.wbSku || item.barcode) && (
                       <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                         {item.ozonSku && <span>OZON: {item.ozonSku}</span>}
                         {item.wbSku && <span>WB: {item.wbSku}</span>}
+                        {item.barcode && <span>Баркод: {item.barcode}</span>}
                       </div>
                     )}
                   </CardContent>
