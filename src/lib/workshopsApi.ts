@@ -8,6 +8,7 @@ export interface Workshop {
   employeesCount: number;
   createdAt: string;
   updatedAt: string;
+  shiftNames: string[];
 }
 
 export interface WorkshopShift {

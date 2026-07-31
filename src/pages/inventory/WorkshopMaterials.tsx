@@ -3,6 +3,7 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -27,7 +28,11 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { fetchWorkshopMaterials, type WorkshopMaterialType } from '@/lib/workshopMaterialsApi';
+import {
+  fetchWorkshopMaterials,
+  type WorkshopMaterialType,
+  type WorkshopMaterialColumn,
+} from '@/lib/workshopMaterialsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { workshopWriteoff } from '@/lib/shipmentsApi';
@@ -42,6 +47,8 @@ const emptyRow: WriteoffRow = { materialId: '', quantity: '' };
 const WorkshopMaterials = () => {
   const { toast } = useToast();
   const [types, setTypes] = useState<WorkshopMaterialType[]>([]);
+  const [columns, setColumns] = useState<WorkshopMaterialColumn[]>([]);
+  const [activeColumn, setActiveColumn] = useState<{ workshopId: number; shiftNumber: number | null } | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,8 +63,10 @@ const WorkshopMaterials = () => {
   const load = () => {
     setLoading(true);
     Promise.all([fetchWorkshopMaterials(), fetchMaterialsData(), fetchWorkshops()])
-      .then(([typesData, materialsData, workshopsData]) => {
-        setTypes(typesData);
+      .then(([materialsResp, materialsData, workshopsData]) => {
+        setTypes(materialsResp.types);
+        setColumns(materialsResp.columns);
+        setActiveColumn(materialsResp.activeColumn);
         setMaterials(materialsData.materials);
         setWorkshops(workshopsData);
       })
@@ -68,9 +77,13 @@ const WorkshopMaterials = () => {
     load();
   }, []);
 
-  const shiftNumbers = Array.from(
-    new Set(types.flatMap((t) => t.materials.flatMap((m) => m.shifts.map((s) => s.shiftNumber))))
-  ).sort((a, b) => (a ?? 99) - (b ?? 99));
+  const isActiveColumn = (col: WorkshopMaterialColumn) =>
+    activeColumn !== null &&
+    activeColumn.workshopId === col.workshopId &&
+    activeColumn.shiftNumber === col.shiftNumber;
+
+  const selectedWorkshopShiftNames =
+    workshops.find((w) => String(w.id) === woWorkshopId)?.shiftNames ?? [];
 
   const openWriteoff = () => {
     setWoWorkshopId('');
@@ -136,7 +149,13 @@ const WorkshopMaterials = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Цех (необязательно)</Label>
-                    <Select value={woWorkshopId || 'none'} onValueChange={(v) => setWoWorkshopId(v === 'none' ? '' : v)}>
+                    <Select
+                      value={woWorkshopId || 'none'}
+                      onValueChange={(v) => {
+                        setWoWorkshopId(v === 'none' ? '' : v);
+                        setWoShiftNumber('');
+                      }}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Любой цех" />
                       </SelectTrigger>
@@ -152,14 +171,21 @@ const WorkshopMaterials = () => {
                   </div>
                   <div className="space-y-1.5">
                     <Label>Смена (необязательно)</Label>
-                    <Select value={woShiftNumber || 'none'} onValueChange={(v) => setWoShiftNumber(v === 'none' ? '' : v)}>
+                    <Select
+                      value={woShiftNumber || 'none'}
+                      onValueChange={(v) => setWoShiftNumber(v === 'none' ? '' : v)}
+                      disabled={!woWorkshopId}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Любая смена" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">Любая смена</SelectItem>
-                        <SelectItem value="1">Смена № 1</SelectItem>
-                        <SelectItem value="2">Смена № 2</SelectItem>
+                        {selectedWorkshopShiftNames.map((name, idx) => (
+                          <SelectItem key={idx} value={String(idx + 1)}>
+                            {name}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -231,32 +257,48 @@ const WorkshopMaterials = () => {
           <div className="space-y-6">
             {types.map((type) => (
               <div key={type.id} className="rounded-md border border-border">
-                <div className="border-b border-border bg-muted/50 px-4 py-2 text-sm font-semibold">
-                  {type.name} — {type.materials.length} поз.
+                <div className="flex items-center justify-between border-b border-border bg-muted/50 px-4 py-2">
+                  <span className="text-sm font-semibold">{type.name}</span>
+                  <Badge variant="secondary">{type.materials.length} поз.</Badge>
                 </div>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Материал</TableHead>
-                      {shiftNumbers.map((sn) => (
-                        <TableHead key={sn ?? 'none'}>{sn ? `Смена № ${sn}` : 'Без смены'}</TableHead>
+                      <TableHead className="w-56">Материал</TableHead>
+                      {columns.map((col) => (
+                        <TableHead
+                          key={`${col.workshopId}-${col.shiftNumber}`}
+                          className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''}`}
+                        >
+                          {col.shiftLabel}
+                          {isActiveColumn(col) && (
+                            <Badge variant="outline" className="ml-1.5 text-[10px]">
+                              Работает
+                            </Badge>
+                          )}
+                        </TableHead>
                       ))}
-                      <TableHead>Итого</TableHead>
+                      <TableHead className="w-48 text-center">Итого</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {type.materials.map((m) => (
                       <TableRow key={m.materialId}>
                         <TableCell className="font-medium">{m.materialName}</TableCell>
-                        {shiftNumbers.map((sn) => {
-                          const shift = m.shifts.find((s) => s.shiftNumber === sn);
+                        {columns.map((col) => {
+                          const cell = m.cells.find(
+                            (c) => c.workshopId === col.workshopId && c.shiftNumber === col.shiftNumber
+                          );
                           return (
-                            <TableCell key={sn ?? 'none'}>
-                              {shift ? `${shift.quantity} ${m.unit}, ${shift.rollCount} рул.` : '—'}
+                            <TableCell
+                              key={`${col.workshopId}-${col.shiftNumber}`}
+                              className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''} ${cell ? 'bg-emerald-50' : ''}`}
+                            >
+                              {cell ? `${cell.quantity} ${m.unit}, ${cell.rollCount} рул.` : '—'}
                             </TableCell>
                           );
                         })}
-                        <TableCell className="font-semibold">
+                        <TableCell className="text-center font-semibold">
                           {m.totalQuantity} {m.unit}, {m.totalRolls} рул.
                         </TableCell>
                       </TableRow>

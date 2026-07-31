@@ -84,6 +84,12 @@ const ToWorkshop = () => {
   const [scanning, setScanning] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
 
+  const shiftLabel = (workshopId: number | null, shiftNumber: number | null) => {
+    if (!shiftNumber) return '—';
+    const w = workshops.find((wk) => wk.id === workshopId);
+    return w?.shiftNames?.[shiftNumber - 1] || `Смена № ${shiftNumber}`;
+  };
+
   const load = () => {
     setLoading(true);
     Promise.all([fetchShipments('to_workshop'), fetchWorkshops(), fetchMaterialsData()])
@@ -311,7 +317,13 @@ const ToWorkshop = () => {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label>Цех</Label>
-                      <Select value={reqWorkshopId} onValueChange={setReqWorkshopId}>
+                      <Select
+                        value={reqWorkshopId}
+                        onValueChange={(v) => {
+                          setReqWorkshopId(v);
+                          setReqShiftNumber('');
+                        }}
+                      >
                         <SelectTrigger>
                           <SelectValue placeholder="Выберите цех" />
                         </SelectTrigger>
@@ -326,14 +338,23 @@ const ToWorkshop = () => {
                     </div>
                     <div className="space-y-1.5">
                       <Label>Смена (необязательно)</Label>
-                      <Select value={reqShiftNumber || 'none'} onValueChange={(v) => setReqShiftNumber(v === 'none' ? '' : v)}>
+                      <Select
+                        value={reqShiftNumber || 'none'}
+                        onValueChange={(v) => setReqShiftNumber(v === 'none' ? '' : v)}
+                        disabled={!reqWorkshopId}
+                      >
                         <SelectTrigger>
                           <SelectValue placeholder="Без смены" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">Без смены</SelectItem>
-                          <SelectItem value="1">Смена № 1</SelectItem>
-                          <SelectItem value="2">Смена № 2</SelectItem>
+                          {(workshops.find((w) => String(w.id) === reqWorkshopId)?.shiftNames ?? []).map(
+                            (name, idx) => (
+                              <SelectItem key={idx} value={String(idx + 1)}>
+                                {name}
+                              </SelectItem>
+                            )
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
@@ -410,7 +431,7 @@ const ToWorkshop = () => {
                       <Badge variant={statusVariant[s.status] || 'secondary'}>{s.status}</Badge>
                     </TableCell>
                     <TableCell>{s.workshopName || '—'}</TableCell>
-                    <TableCell>{s.shiftNumber ? `Смена № ${s.shiftNumber}` : '—'}</TableCell>
+                    <TableCell>{shiftLabel(s.workshopId, s.shiftNumber)}</TableCell>
                     <TableCell>{s.requestedByName || '—'}</TableCell>
                     <TableCell>{s.comment || '—'}</TableCell>
                     <TableCell>{formatDate(s.createdAt)}</TableCell>

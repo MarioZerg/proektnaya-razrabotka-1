@@ -1,6 +1,7 @@
 const WORKSHOP_MATERIALS_URL = 'https://functions.poehali.dev/db49c8fd-1344-4e72-a6e8-5a2c90a2656a';
 
-export interface WorkshopMaterialShift {
+export interface WorkshopMaterialCell {
+  workshopId: number;
   shiftNumber: number | null;
   quantity: number;
   rollCount: number;
@@ -10,7 +11,7 @@ export interface WorkshopMaterialRow {
   materialId: number;
   materialName: string;
   unit: string;
-  shifts: WorkshopMaterialShift[];
+  cells: WorkshopMaterialCell[];
   totalQuantity: number;
   totalRolls: number;
 }
@@ -21,9 +22,22 @@ export interface WorkshopMaterialType {
   materials: WorkshopMaterialRow[];
 }
 
-export const fetchWorkshopMaterials = async (workshopId?: number): Promise<WorkshopMaterialType[]> => {
+export interface WorkshopMaterialColumn {
+  workshopId: number;
+  workshopName: string;
+  shiftNumber: number | null;
+  shiftLabel: string;
+}
+
+export interface WorkshopMaterialsResponse {
+  types: WorkshopMaterialType[];
+  columns: WorkshopMaterialColumn[];
+  activeColumn: { workshopId: number; shiftNumber: number | null } | null;
+}
+
+export const fetchWorkshopMaterials = async (workshopId?: number): Promise<WorkshopMaterialsResponse> => {
   const url = workshopId ? `${WORKSHOP_MATERIALS_URL}?workshop_id=${workshopId}` : WORKSHOP_MATERIALS_URL;
   const res = await fetch(url);
   const data = await res.json();
-  return data.types || [];
+  return { types: data.types || [], columns: data.columns || [], activeColumn: data.activeColumn || null };
 };
