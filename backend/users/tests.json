@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get users list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Create user without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Create user with invalid role fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create", "fullName": "Тест Тестов", "email": "test@example.com", "role": "unknown", "password": "12345678"},
+      "expectedStatus": 400
+    }
+  ]
+}

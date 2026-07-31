@@ -9,6 +9,8 @@ import Crm from "./pages/Crm";
 import NotFound from "./pages/NotFound";
 import WarehouseMaterials from "./pages/inventory/WarehouseMaterials";
 import MaterialsSettings from "./pages/settings/MaterialsSettings";
+import UsersSettings from "./pages/settings/UsersSettings";
+import RatesSettings from "./pages/settings/RatesSettings";
 import MarketplaceOrders from "./pages/marketplace/MarketplaceOrders";
 import { AuthProvider } from "@/context/AuthContext";
 
@@ -26,6 +28,8 @@ const App = () => (
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
             <Route path="/crm/settings/materials" element={<MaterialsSettings />} />
+            <Route path="/crm/settings/users" element={<UsersSettings />} />
+            <Route path="/crm/settings/rates" element={<RatesSettings />} />
             <Route path="/crm/marketplace/orders" element={<MarketplaceOrders />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
