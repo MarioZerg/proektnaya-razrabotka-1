@@ -518,12 +518,17 @@ const MarketplaceItemsSettings = () => {
       <AlertDialog open={deleteId !== null} onOpenChange={(open) => !open && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить товар?</AlertDialogTitle>
-            <AlertDialogDescription>Действие нельзя отменить.</AlertDialogDescription>
+            <AlertDialogTitle>Вы уверены, что хотите удалить товар?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Действие нельзя отменить. Если по товару уже есть заказы в системе — удаление
+              будет заблокировано.
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>Удалить</AlertDialogAction>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Удалить
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

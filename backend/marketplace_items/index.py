@@ -13,6 +13,7 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'create', name, width?, height?, article?, ozonSku?, wbSku?, material? }
     POST /  { action: 'update', id, name?, width?, height?, article?, ozonSku?, wbSku?, material? }
     POST /  { action: 'delete', id }
+        - запрещено, если по товару (material+width+height) уже есть заказы (движение)
     POST /  { action: 'set_materials', itemId, materials: [{materialId, quantity}] }
         - полностью заменяет список расходов материалов для товара
 
@@ -187,6 +188,33 @@ def handler(event: dict, context) -> dict:
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+                cur.execute(
+                    "SELECT material, width, height FROM marketplace_items WHERE id = %s",
+                    (int(item_id),),
+                )
+                item_row = cur.fetchone()
+                if not item_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
+
+                item_material, item_width, item_height = item_row
+                if item_material and item_width and item_height:
+                    material_esc = item_material.replace("'", "''")
+                    cur.execute(
+                        f"SELECT COUNT(*) FROM orders WHERE material = '{material_esc}' "
+                        f"AND width = {int(item_width)} AND height = {int(item_height)}"
+                    )
+                    orders_count = cur.fetchone()[0]
+                    if orders_count > 0:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Нельзя удалить товар: по нему есть движение в заказах ({orders_count} шт.). '
+                                         f'Удаление карточек с историей заказов запрещено.'
+                            }),
+                        }
+
                 cur.execute(f"DELETE FROM marketplace_item_materials WHERE marketplace_item_id = {int(item_id)}")
                 cur.execute(f"DELETE FROM marketplace_items WHERE id = {int(item_id)}")
                 conn.commit()
