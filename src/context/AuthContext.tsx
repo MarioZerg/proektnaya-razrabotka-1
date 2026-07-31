@@ -8,6 +8,7 @@ export interface User {
   workshopId: number | null;
   workshopName: string | null;
   shiftNumber: number | null;
+  isDemo?: boolean;
 }
 
 interface AuthContextValue {

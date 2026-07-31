@@ -19,6 +19,13 @@
       "path": "/",
       "body": {"login": "no_such_user", "password": "whatever"},
       "expectedStatus": 401
+    },
+    {
+      "name": "Test accounts list",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "test_accounts"},
+      "expectedStatus": 200
     }
   ]
 }

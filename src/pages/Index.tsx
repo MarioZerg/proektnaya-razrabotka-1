@@ -5,8 +5,9 @@ import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import type { Role } from '@/lib/roles';
-
-const AUTH_URL = 'https://functions.poehali.dev/eca1843f-b794-48c6-a9e6-4dead2174136';
+import { AUTH_URL } from '@/lib/authApi';
+import type { TestAccount } from '@/lib/authApi';
+import TestAccountsPanel from '@/components/auth/TestAccountsPanel';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -46,6 +47,11 @@ const Index = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleTestAccountSelect = (account: TestAccount) => {
+    login({ ...account, isDemo: true });
+    navigate('/crm');
   };
 
   return (
@@ -99,6 +105,17 @@ const Index = () => {
             {loading ? <Icon name="Loader2" size={18} className="animate-spin" /> : 'Войти'}
           </Button>
         </form>
+
+        <div className="mt-8 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-border" />
+            <p className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              Демо-вход без пароля
+            </p>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+          <TestAccountsPanel onSelect={handleTestAccountSelect} disabled={loading} />
+        </div>
       </div>
     </div>
   );

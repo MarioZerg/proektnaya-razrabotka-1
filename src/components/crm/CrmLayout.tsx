@@ -17,21 +17,37 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from '@/components/ui/sidebar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels } from '@/lib/roles';
+import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
-  const { user, logout } = useAuth();
+  const { user, login, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [testAccounts, setTestAccounts] = useState<TestAccount[]>([]);
 
   useEffect(() => {
     if (!user) {
       navigate('/');
     }
   }, [user, navigate]);
+
+  useEffect(() => {
+    if (user?.isDemo) {
+      fetchTestAccounts().then(setTestAccounts);
+    }
+  }, [user?.isDemo]);
 
   if (!user) {
     return null;
@@ -45,6 +61,11 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   const handleLogout = () => {
     logout();
     navigate('/');
+  };
+
+  const handleSwitchAccount = (account: TestAccount) => {
+    login({ ...account, isDemo: true });
+    navigate('/crm');
   };
 
   const initials = user.name
@@ -118,6 +139,14 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           </SidebarGroup>
         </SidebarContent>
         <SidebarFooter className="border-t border-sidebar-border p-3">
+          {user.isDemo && (
+            <div className="mb-2 flex items-center gap-1.5 rounded-sm bg-sidebar-accent/60 px-2 py-1">
+              <Icon name="FlaskConical" size={12} className="shrink-0 text-sidebar-foreground/60" />
+              <p className="truncate text-[10px] uppercase tracking-wide text-sidebar-foreground/60">
+                Демо-режим
+              </p>
+            </div>
+          )}
           <div className="flex items-center gap-2.5 px-1 py-1">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-sidebar-accent text-xs font-semibold">
               {initials}
@@ -128,6 +157,34 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                 {roleLabels[user.role]}
               </p>
             </div>
+            {user.isDemo && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
+                    aria-label="Переключить аккаунт"
+                  >
+                    <Icon name="Users" size={16} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>Переключить аккаунт</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {testAccounts.map((acc) => (
+                    <DropdownMenuItem
+                      key={acc.id}
+                      onClick={() => handleSwitchAccount(acc)}
+                      disabled={acc.id === user.id}
+                    >
+                      <span className="flex-1 truncate">{acc.name}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {roleLabels[acc.role]}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             <button
               onClick={handleLogout}
               className="text-sidebar-foreground/60 hover:text-sidebar-foreground"

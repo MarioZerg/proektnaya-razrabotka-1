@@ -12,6 +12,9 @@ def handler(event: dict, context) -> dict:
     Эти данные позволяют швее/закройщику создавать заявки на материал в свой
     цех без ручного выбора цеха и смены.
 
+    POST { action: 'test_accounts' } — возвращает по одному активному сотруднику
+    на каждую роль системы (без проверки пароля) для демо-режима "быстрый вход".
+
     Args:
         event: dict с httpMethod, body (json: login, password)
         context: объект с request_id
@@ -43,6 +46,36 @@ def handler(event: dict, context) -> dict:
         }
 
     body_data = json.loads(event.get('body') or '{}')
+
+    if body_data.get('action') == 'test_accounts':
+        dsn = os.environ['DATABASE_URL']
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT DISTINCT ON (u.role) u.id, u.full_name, u.role, u.workshop, u.shift_number, w.id "
+                "FROM users u "
+                "LEFT JOIN workshops w ON w.name = u.workshop "
+                "WHERE u.is_active = true "
+                "ORDER BY u.role, u.id"
+            )
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+
+        accounts = [
+            {
+                'id': r[0],
+                'name': r[1],
+                'role': r[2],
+                'workshopName': r[3],
+                'shiftNumber': r[4],
+                'workshopId': r[5],
+            }
+            for r in rows
+        ]
+        return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'accounts': accounts})}
+
     login = (body_data.get('login') or '').strip()
     password = body_data.get('password') or ''
 
