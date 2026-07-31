@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,23 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Table,
   TableBody,
   TableCell,
@@ -21,30 +38,55 @@ import {
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import {
-  fetchCategories,
-  createCategory,
-  createItem,
-  type InventoryCategory,
-} from '@/lib/inventoryApi';
+  fetchMaterialsData,
+  createType,
+  createMaterial,
+  updateMaterial,
+  deleteMaterial,
+  type Material,
+  type MaterialType,
+} from '@/lib/materialsApi';
+
+const NEW_TYPE_VALUE = '__new__';
+const PAGE_SIZE = 10;
+
+interface MaterialFormState {
+  typeId: string;
+  newTypeName: string;
+  name: string;
+  unit: string;
+  cost: string;
+  status: 'active' | 'archive';
+}
+
+const emptyForm: MaterialFormState = {
+  typeId: '',
+  newTypeName: '',
+  name: '',
+  unit: 'шт',
+  cost: '',
+  status: 'active',
+};
 
 const MaterialsSettings = () => {
-  const [categories, setCategories] = useState<InventoryCategory[]>([]);
+  const [types, setTypes] = useState<MaterialType[]>([]);
+  const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
-  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState('');
-  const [newCategoryTab, setNewCategoryTab] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [page, setPage] = useState(1);
 
-  const [itemDialogCategory, setItemDialogCategory] = useState<InventoryCategory | null>(null);
-  const [itemName, setItemName] = useState('');
-  const [itemQuantity, setItemQuantity] = useState('');
-  const [itemRolls, setItemRolls] = useState('');
-  const [itemStatus, setItemStatus] = useState('В наличии');
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [form, setForm] = useState<MaterialFormState>(emptyForm);
+  const [saving, setSaving] = useState(false);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
 
   const load = () => {
     setLoading(true);
-    fetchCategories()
-      .then(setCategories)
+    fetchMaterialsData()
+      .then((data) => {
+        setTypes(data.types);
+        setMaterials(data.materials);
+      })
       .finally(() => setLoading(false));
   };
 
@@ -52,96 +94,189 @@ const MaterialsSettings = () => {
     load();
   }, []);
 
-  const handleCreateCategory = async () => {
-    if (!newCategoryName.trim() || !newCategoryTab.trim()) return;
+  const typeById = useMemo(() => {
+    const map = new Map<number, string>();
+    types.forEach((t) => map.set(t.id, t.name));
+    return map;
+  }, [types]);
+
+  const totalPages = Math.max(1, Math.ceil(materials.length / PAGE_SIZE));
+  const pagedMaterials = materials.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const openCreateDialog = () => {
+    setEditingId(null);
+    setForm(emptyForm);
+    setDialogOpen(true);
+  };
+
+  const openEditDialog = (m: Material) => {
+    setEditingId(m.id);
+    setForm({
+      typeId: String(m.typeId),
+      newTypeName: '',
+      name: m.name,
+      unit: m.unit,
+      cost: String(m.cost),
+      status: m.status,
+    });
+    setDialogOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) return;
+
     setSaving(true);
     try {
-      await createCategory(newCategoryName.trim(), newCategoryTab.trim());
-      setNewCategoryName('');
-      setNewCategoryTab('');
-      setCategoryDialogOpen(false);
+      let typeId = Number(form.typeId);
+
+      if (form.typeId === NEW_TYPE_VALUE) {
+        if (!form.newTypeName.trim()) {
+          setSaving(false);
+          return;
+        }
+        const res = await createType(form.newTypeName.trim());
+        typeId = res.id;
+      }
+
+      if (!typeId) {
+        setSaving(false);
+        return;
+      }
+
+      const cost = parseFloat(form.cost.replace(',', '.')) || 0;
+
+      if (editingId) {
+        await updateMaterial(editingId, {
+          name: form.name.trim(),
+          unit: form.unit.trim() || 'шт',
+          cost,
+          status: form.status,
+          typeId,
+        });
+      } else {
+        await createMaterial(typeId, form.name.trim(), form.unit.trim() || 'шт', cost, form.status);
+      }
+
+      setDialogOpen(false);
+      setForm(emptyForm);
+      setEditingId(null);
       load();
     } finally {
       setSaving(false);
     }
   };
 
-  const handleCreateItem = async () => {
-    if (!itemDialogCategory || !itemName.trim()) return;
-    setSaving(true);
-    try {
-      await createItem(
-        itemDialogCategory.id,
-        itemName.trim(),
-        itemQuantity.trim() || '0',
-        itemRolls.trim() || '0',
-        itemStatus
-      );
-      setItemName('');
-      setItemQuantity('');
-      setItemRolls('');
-      setItemStatus('В наличии');
-      setItemDialogCategory(null);
-      load();
-    } finally {
-      setSaving(false);
-    }
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    await deleteMaterial(deleteId);
+    setDeleteId(null);
+    load();
   };
-
-  const existingTabs = Array.from(new Set(categories.map((c) => c.tab)));
 
   return (
     <CrmLayout>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold">Материалы</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Категории и позиции для страницы «Материалы на складе»
-            </p>
-          </div>
+          <h1 className="text-xl font-bold">Материалы</h1>
 
-          <Dialog open={categoryDialogOpen} onOpenChange={setCategoryDialogOpen}>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(open) => {
+              setDialogOpen(open);
+              if (!open) {
+                setEditingId(null);
+                setForm(emptyForm);
+              }
+            }}
+          >
             <DialogTrigger asChild>
-              <Button>
-                <Icon name="Plus" size={16} className="mr-1.5" />
-                Новая категория
-              </Button>
+              <Button onClick={openCreateDialog}>Добавить материал</Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Новая категория</DialogTitle>
+                <DialogTitle>{editingId ? 'Изменить материал' : 'Новый материал'}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="cat-name">Название категории</Label>
-                  <Input
-                    id="cat-name"
-                    placeholder="Например: Тюль"
-                    value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
-                  />
+                  <Label>Тип</Label>
+                  <Select
+                    value={form.typeId}
+                    onValueChange={(v) => setForm((f) => ({ ...f, typeId: v }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите тип" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {types.map((t) => (
+                        <SelectItem key={t.id} value={String(t.id)}>
+                          {t.name}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value={NEW_TYPE_VALUE}>+ Создать новый тип</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {form.typeId === NEW_TYPE_VALUE && (
+                    <Input
+                      className="mt-2"
+                      placeholder="Название нового типа"
+                      value={form.newTypeName}
+                      onChange={(e) => setForm((f) => ({ ...f, newTypeName: e.target.value }))}
+                    />
+                  )}
                 </div>
+
                 <div className="space-y-1.5">
-                  <Label htmlFor="cat-tab">Вкладка</Label>
+                  <Label>Название</Label>
                   <Input
-                    id="cat-tab"
-                    placeholder="Например: Ткани"
-                    value={newCategoryTab}
-                    onChange={(e) => setNewCategoryTab(e.target.value)}
-                    list="existing-tabs"
+                    placeholder="Например: Вуаль"
+                    value={form.name}
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                   />
-                  <datalist id="existing-tabs">
-                    {existingTabs.map((t) => (
-                      <option key={t} value={t} />
-                    ))}
-                  </datalist>
-                  <p className="text-xs text-muted-foreground">
-                    Существующие вкладки: {existingTabs.join(', ') || '—'}
-                  </p>
                 </div>
-                <Button onClick={handleCreateCategory} disabled={saving} className="w-full">
-                  {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Создать'}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Ед. измерения</Label>
+                    <Input
+                      placeholder="п.м. / шт"
+                      value={form.unit}
+                      onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Себестоимость</Label>
+                    <Input
+                      placeholder="0"
+                      value={form.cost}
+                      onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Статус</Label>
+                  <Select
+                    value={form.status}
+                    onValueChange={(v) => setForm((f) => ({ ...f, status: v as 'active' | 'archive' }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Активен</SelectItem>
+                      <SelectItem value="archive">Архив</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Button onClick={handleSave} disabled={saving} className="w-full">
+                  {saving ? (
+                    <Icon name="Loader2" size={16} className="animate-spin" />
+                  ) : editingId ? (
+                    'Сохранить'
+                  ) : (
+                    'Создать'
+                  )}
                 </Button>
               </div>
             </DialogContent>
@@ -153,116 +288,102 @@ const MaterialsSettings = () => {
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
-        ) : categories.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Категорий пока нет — создайте первую.</p>
+        ) : materials.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Материалов пока нет — добавьте первый.</p>
         ) : (
-          <div className="space-y-6">
-            {categories.map((c) => (
-              <div key={c.id} className="rounded-md border border-border">
-                <div className="flex items-center justify-between border-b border-border p-4">
-                  <div>
-                    <p className="font-medium">{c.name}</p>
-                    <p className="text-xs text-muted-foreground">Вкладка: {c.tab}</p>
-                  </div>
-                  <Dialog
-                    open={itemDialogCategory?.id === c.id}
-                    onOpenChange={(open) => setItemDialogCategory(open ? c : null)}
-                  >
-                    <DialogTrigger asChild>
-                      <Button size="sm" variant="outline">
-                        <Icon name="Plus" size={14} className="mr-1.5" />
-                        Позиция
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Новая позиция в «{c.name}»</DialogTitle>
-                      </DialogHeader>
-                      <div className="space-y-4">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="item-name">Название</Label>
-                          <Input
-                            id="item-name"
-                            placeholder="Например: Вуаль"
-                            value={itemName}
-                            onChange={(e) => setItemName(e.target.value)}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <Label htmlFor="item-qty">Кол-во</Label>
-                            <Input
-                              id="item-qty"
-                              placeholder="120 м"
-                              value={itemQuantity}
-                              onChange={(e) => setItemQuantity(e.target.value)}
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label htmlFor="item-rolls">Рулоны</Label>
-                            <Input
-                              id="item-rolls"
-                              placeholder="4"
-                              value={itemRolls}
-                              onChange={(e) => setItemRolls(e.target.value)}
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="item-status">Статус</Label>
-                          <Input
-                            id="item-status"
-                            placeholder="В наличии / Заканчивается"
-                            value={itemStatus}
-                            onChange={(e) => setItemStatus(e.target.value)}
-                          />
-                        </div>
-                        <Button onClick={handleCreateItem} disabled={saving} className="w-full">
-                          {saving ? (
-                            <Icon name="Loader2" size={16} className="animate-spin" />
-                          ) : (
-                            'Добавить'
-                          )}
+          <div className="rounded-md border border-border">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-primary hover:bg-primary">
+                  <TableHead className="text-primary-foreground">#</TableHead>
+                  <TableHead className="text-primary-foreground">Тип</TableHead>
+                  <TableHead className="text-primary-foreground">Название</TableHead>
+                  <TableHead className="text-primary-foreground">Ед.измерения</TableHead>
+                  <TableHead className="text-primary-foreground">Себестоимость</TableHead>
+                  <TableHead className="text-primary-foreground">Статус</TableHead>
+                  <TableHead className="text-primary-foreground" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pagedMaterials.map((m) => (
+                  <TableRow key={m.id}>
+                    <TableCell>{m.id}</TableCell>
+                    <TableCell>{typeById.get(m.typeId) || '—'}</TableCell>
+                    <TableCell className="font-medium">{m.name}</TableCell>
+                    <TableCell>{m.unit}</TableCell>
+                    <TableCell>{m.cost} руб.</TableCell>
+                    <TableCell>
+                      <Badge variant={m.status === 'active' ? 'secondary' : 'outline'}>
+                        {m.status === 'active' ? 'Активен' : 'Архив'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <Button size="icon" variant="secondary" onClick={() => openEditDialog(m)}>
+                          <Icon name="Pencil" size={14} />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="destructive"
+                          onClick={() => setDeleteId(m.id)}
+                        >
+                          <Icon name="Trash2" size={14} />
                         </Button>
                       </div>
-                    </DialogContent>
-                  </Dialog>
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Название</TableHead>
-                      <TableHead>Кол-во</TableHead>
-                      <TableHead>Рулоны</TableHead>
-                      <TableHead>Статус</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {c.items.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-center text-muted-foreground">
-                          Нет позиций
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      c.items.map((item) => (
-                        <TableRow key={item.id}>
-                          <TableCell className="font-medium">{item.name}</TableCell>
-                          <TableCell>{item.quantity}</TableCell>
-                          <TableCell>{item.rolls}</TableCell>
-                          <TableCell>
-                            <Badge variant="secondary">{item.status}</Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2">
+            <Button
+              size="icon"
+              variant="outline"
+              disabled={page === 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              <Icon name="ChevronLeft" size={16} />
+            </Button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+              <Button
+                key={p}
+                size="icon"
+                variant={p === page ? 'default' : 'outline'}
+                onClick={() => setPage(p)}
+              >
+                {p}
+              </Button>
             ))}
+            <Button
+              size="icon"
+              variant="outline"
+              disabled={page === totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              <Icon name="ChevronRight" size={16} />
+            </Button>
           </div>
         )}
       </div>
+
+      <AlertDialog open={deleteId !== null} onOpenChange={(open) => !open && setDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить материал?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Материал исчезнет из справочника и из таблицы на складе.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete}>Удалить</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </CrmLayout>
   );
 };

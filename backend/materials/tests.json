@@ -7,22 +7,16 @@
       "expectedStatus": 200
     },
     {
-      "name": "Get all categories",
+      "name": "Get types and materials",
       "method": "GET",
       "path": "/",
       "expectedStatus": 200
     },
     {
-      "name": "Get categories by tab",
-      "method": "GET",
-      "path": "/?tab=Ткани",
-      "expectedStatus": 200
-    },
-    {
-      "name": "Create category without data fails",
+      "name": "Create material without data fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "create_category"},
+      "body": {"action": "create_material"},
       "expectedStatus": 400
     }
   ]
