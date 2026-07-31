@@ -78,7 +78,7 @@ def handler(event: dict, context) -> dict:
             cur = conn.cursor()
             cur.execute(
                 "SELECT id, login, email, full_name, role, workshop, salary, "
-                "shift_from, shift_to, avatar_url, is_active, created_at, updated_at "
+                "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number "
                 "FROM users ORDER BY id DESC"
             )
             users = [
@@ -96,6 +96,7 @@ def handler(event: dict, context) -> dict:
                     'isActive': r[10],
                     'createdAt': r[11].isoformat(),
                     'updatedAt': r[12].isoformat(),
+                    'shiftNumber': r[13],
                 }
                 for r in cur.fetchall()
             ]
@@ -208,6 +209,10 @@ def handler(event: dict, context) -> dict:
                     fields.append(f"shift_to = {shift_to_val}")
                 if 'isActive' in body_data:
                     fields.append(f"is_active = {'true' if body_data['isActive'] else 'false'}")
+                if 'shiftNumber' in body_data:
+                    val = body_data['shiftNumber']
+                    shift_number_val = str(int(val)) if val not in (None, '') else 'NULL'
+                    fields.append(f"shift_number = {shift_number_val}")
                 if body_data.get('password'):
                     salt = secrets.token_hex(16)
                     pwd_hash = hash_password(body_data['password'], salt)

@@ -16,6 +16,7 @@ export interface Employee {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  shiftNumber: number | null;
 }
 
 export const fetchEmployees = async (): Promise<Employee[]> => {

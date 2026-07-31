@@ -1,0 +1,23 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get suppliers list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Create supplier without name fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create"},
+      "expectedStatus": 400
+    }
+  ]
+}

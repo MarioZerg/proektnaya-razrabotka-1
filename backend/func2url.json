@@ -1,4 +1,6 @@
 {
+  "suppliers": "https://functions.poehali.dev/eb3fba8a-def9-443a-a867-97243dacc9f8",
+  "marketplace_items": "https://functions.poehali.dev/9959a7b8-9bf6-4fbe-8170-68cc9e031f77",
   "workshops": "https://functions.poehali.dev/c3ce83da-9296-40d9-b00b-720d364431ea",
   "users": "https://functions.poehali.dev/1db3a89a-f0f6-470e-bef4-fb5ca8fa02df",
   "orders": "https://functions.poehali.dev/1d8ed922-bded-4f5a-a367-a0742711203a",
