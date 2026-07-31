@@ -3,20 +3,20 @@ const ITEMS_URL = 'https://functions.poehali.dev/9959a7b8-9bf6-4fbe-8170-68cc9e0
 export interface MarketplaceItem {
   id: number;
   name: string;
-  sku: string | null;
-  material: string | null;
+  article: string | null;
   width: number | null;
   height: number | null;
+  ozonSku: string | null;
+  wbSku: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface MarketplaceItemMaterial {
   id: number;
-  workshopId: number | null;
-  workshopName: string | null;
   materialId: number | null;
   materialName: string | null;
+  unit: string | null;
   quantity: number;
 }
 
@@ -51,20 +51,28 @@ const postAction = async (payload: Record<string, unknown>) => {
 
 export const createMarketplaceItem = (payload: {
   name: string;
-  sku?: string;
-  material?: string;
+  article?: string;
   width?: number;
   height?: number;
+  ozonSku?: string;
+  wbSku?: string;
 }) => postAction({ action: 'create', ...payload });
 
 export const updateMarketplaceItem = (
   id: number,
-  fields: Partial<{ name: string; sku: string; material: string; width: number; height: number }>
+  fields: Partial<{
+    name: string;
+    article: string;
+    width: number;
+    height: number;
+    ozonSku: string;
+    wbSku: string;
+  }>
 ) => postAction({ action: 'update', id, ...fields });
 
 export const deleteMarketplaceItem = (id: number) => postAction({ action: 'delete', id });
 
 export const setMarketplaceItemMaterials = (
   itemId: number,
-  materials: Array<{ workshopId: number | null; materialId: number | null; quantity: number }>
+  materials: Array<{ materialId: number; quantity: number }>
 ) => postAction({ action: 'set_materials', itemId, materials });

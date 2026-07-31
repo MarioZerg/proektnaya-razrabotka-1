@@ -5,15 +5,15 @@ import psycopg2
 
 
 def handler(event: dict, context) -> dict:
-    """Управляет товарами на маркетплейсе: карточка товара с артикулом и расходом
-    материалов по цехам на выполнение заказа.
+    """Управляет товарами на маркетплейсе: карточка товара с артикулами (свой/OZON/WB)
+    и расходом материалов на пошив (материал + количество на единицу товара).
 
-    GET  /                        - получить список товаров с их расходом материалов
-    GET  /?id=1                   - получить детальную карточку товара
-    POST /  { action: 'create', name, sku?, material?, width?, height? }
-    POST /  { action: 'update', id, name?, sku?, material?, width?, height? }
+    GET  /                        - получить список товаров
+    GET  /?id=1                   - получить детальную карточку товара с расходом материалов
+    POST /  { action: 'create', name, width?, height?, article?, ozonSku?, wbSku? }
+    POST /  { action: 'update', id, name?, width?, height?, article?, ozonSku?, wbSku? }
     POST /  { action: 'delete', id }
-    POST /  { action: 'set_materials', itemId, materials: [{workshopId, materialId, quantity}] }
+    POST /  { action: 'set_materials', itemId, materials: [{materialId, quantity}] }
         - полностью заменяет список расходов материалов для товара
 
     Args:
@@ -50,7 +50,7 @@ def handler(event: dict, context) -> dict:
 
             if item_id:
                 cur.execute(
-                    "SELECT id, name, sku, material, width, height, created_at, updated_at "
+                    "SELECT id, name, sku, width, height, ozon_sku, wb_sku, created_at, updated_at "
                     "FROM marketplace_items WHERE id = %s",
                     (int(item_id),),
                 )
@@ -59,9 +59,8 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
 
                 cur.execute(
-                    "SELECT im.id, im.workshop_id, w.name, im.material_id, m.name, im.quantity "
+                    "SELECT im.id, im.material_id, m.name, m.unit, im.quantity "
                     "FROM marketplace_item_materials im "
-                    "LEFT JOIN workshops w ON w.id = im.workshop_id "
                     "LEFT JOIN materials m ON m.id = im.material_id "
                     "WHERE im.marketplace_item_id = %s ORDER BY im.id",
                     (int(item_id),),
@@ -69,11 +68,10 @@ def handler(event: dict, context) -> dict:
                 materials = [
                     {
                         'id': r[0],
-                        'workshopId': r[1],
-                        'workshopName': r[2],
-                        'materialId': r[3],
-                        'materialName': r[4],
-                        'quantity': float(r[5]),
+                        'materialId': r[1],
+                        'materialName': r[2],
+                        'unit': r[3],
+                        'quantity': float(r[4]),
                     }
                     for r in cur.fetchall()
                 ]
@@ -81,30 +79,32 @@ def handler(event: dict, context) -> dict:
                 detail = {
                     'id': row[0],
                     'name': row[1],
-                    'sku': row[2],
-                    'material': row[3],
-                    'width': row[4],
-                    'height': row[5],
-                    'createdAt': row[6].isoformat(),
-                    'updatedAt': row[7].isoformat(),
+                    'article': row[2],
+                    'width': row[3],
+                    'height': row[4],
+                    'ozonSku': row[5],
+                    'wbSku': row[6],
+                    'createdAt': row[7].isoformat(),
+                    'updatedAt': row[8].isoformat(),
                     'materials': materials,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'item': detail})}
 
             cur.execute(
-                "SELECT id, name, sku, material, width, height, created_at, updated_at "
+                "SELECT id, name, sku, width, height, ozon_sku, wb_sku, created_at, updated_at "
                 "FROM marketplace_items ORDER BY id DESC"
             )
             items = [
                 {
                     'id': r[0],
                     'name': r[1],
-                    'sku': r[2],
-                    'material': r[3],
-                    'width': r[4],
-                    'height': r[5],
-                    'createdAt': r[6].isoformat(),
-                    'updatedAt': r[7].isoformat(),
+                    'article': r[2],
+                    'width': r[3],
+                    'height': r[4],
+                    'ozonSku': r[5],
+                    'wbSku': r[6],
+                    'createdAt': r[7].isoformat(),
+                    'updatedAt': r[8].isoformat(),
                 }
                 for r in cur.fetchall()
             ]
@@ -123,8 +123,9 @@ def handler(event: dict, context) -> dict:
 
             if action == 'create':
                 name = (body_data.get('name') or '').strip()
-                sku = (body_data.get('sku') or '').strip()
-                material = (body_data.get('material') or '').strip()
+                article = (body_data.get('article') or '').strip()
+                ozon_sku = (body_data.get('ozonSku') or '').strip()
+                wb_sku = (body_data.get('wbSku') or '').strip()
                 width = body_data.get('width')
                 height = body_data.get('height')
 
@@ -132,14 +133,15 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите название товара'})}
 
                 name_esc = name.replace("'", "''")
-                sku_esc = sku.replace("'", "''")
-                material_esc = material.replace("'", "''")
+                article_esc = article.replace("'", "''")
+                ozon_sku_esc = ozon_sku.replace("'", "''")
+                wb_sku_esc = wb_sku.replace("'", "''")
                 width_sql = int(width) if width not in (None, '') else 'NULL'
                 height_sql = int(height) if height not in (None, '') else 'NULL'
 
                 cur.execute(
-                    f"INSERT INTO marketplace_items (name, sku, material, width, height) "
-                    f"VALUES ('{name_esc}', '{sku_esc}', '{material_esc}', {width_sql}, {height_sql}) "
+                    f"INSERT INTO marketplace_items (name, sku, width, height, ozon_sku, wb_sku) "
+                    f"VALUES ('{name_esc}', '{article_esc}', {width_sql}, {height_sql}, '{ozon_sku_esc}', '{wb_sku_esc}') "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
@@ -154,10 +156,12 @@ def handler(event: dict, context) -> dict:
                 fields = []
                 if 'name' in body_data:
                     fields.append(f"name = '{str(body_data['name']).replace(chr(39), chr(39)*2)}'")
-                if 'sku' in body_data:
-                    fields.append(f"sku = '{str(body_data['sku']).replace(chr(39), chr(39)*2)}'")
-                if 'material' in body_data:
-                    fields.append(f"material = '{str(body_data['material']).replace(chr(39), chr(39)*2)}'")
+                if 'article' in body_data:
+                    fields.append(f"sku = '{str(body_data['article']).replace(chr(39), chr(39)*2)}'")
+                if 'ozonSku' in body_data:
+                    fields.append(f"ozon_sku = '{str(body_data['ozonSku']).replace(chr(39), chr(39)*2)}'")
+                if 'wbSku' in body_data:
+                    fields.append(f"wb_sku = '{str(body_data['wbSku']).replace(chr(39), chr(39)*2)}'")
                 if 'width' in body_data:
                     val = body_data['width']
                     fields.append(f"width = {int(val) if val not in (None, '') else 'NULL'}")
@@ -190,14 +194,13 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(f"DELETE FROM marketplace_item_materials WHERE marketplace_item_id = {int(item_id)}")
                 for m in materials:
-                    workshop_id = m.get('workshopId')
                     material_id = m.get('materialId')
                     quantity = m.get('quantity', 0)
-                    workshop_sql = int(workshop_id) if workshop_id else 'NULL'
-                    material_sql = int(material_id) if material_id else 'NULL'
+                    if not material_id:
+                        continue
                     cur.execute(
-                        f"INSERT INTO marketplace_item_materials (marketplace_item_id, workshop_id, material_id, quantity) "
-                        f"VALUES ({int(item_id)}, {workshop_sql}, {material_sql}, {float(quantity)})"
+                        f"INSERT INTO marketplace_item_materials (marketplace_item_id, material_id, quantity) "
+                        f"VALUES ({int(item_id)}, {int(material_id)}, {float(quantity)})"
                     )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

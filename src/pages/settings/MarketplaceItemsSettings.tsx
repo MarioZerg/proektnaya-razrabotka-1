@@ -41,21 +41,27 @@ import {
   type MarketplaceItem,
   type MarketplaceItemMaterial,
 } from '@/lib/marketplaceItemsApi';
-import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 
 interface ItemFormState {
   name: string;
-  sku: string;
-  material: string;
   width: string;
   height: string;
+  article: string;
+  ozonSku: string;
+  wbSku: string;
 }
 
-const emptyForm: ItemFormState = { name: '', sku: '', material: '', width: '', height: '' };
+const emptyForm: ItemFormState = {
+  name: '',
+  width: '',
+  height: '',
+  article: '',
+  ozonSku: '',
+  wbSku: '',
+};
 
 interface MaterialRow {
-  workshopId: string;
   materialId: string;
   quantity: string;
 }
@@ -63,7 +69,6 @@ interface MaterialRow {
 const MarketplaceItemsSettings = () => {
   const { toast } = useToast();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
-  const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -76,10 +81,9 @@ const MarketplaceItemsSettings = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchMarketplaceItems(), fetchWorkshops(), fetchMaterialsData()])
-      .then(([itemsData, workshopsData, materialsData]) => {
+    Promise.all([fetchMarketplaceItems(), fetchMaterialsData()])
+      .then(([itemsData, materialsData]) => {
         setItems(itemsData);
-        setWorkshops(workshopsData);
         setMaterials(materialsData.materials);
       })
       .finally(() => setLoading(false));
@@ -92,7 +96,7 @@ const MarketplaceItemsSettings = () => {
   const openCreate = () => {
     setEditingId(null);
     setForm(emptyForm);
-    setMaterialRows([]);
+    setMaterialRows([{ materialId: '', quantity: '' }]);
     setDialogOpen(true);
   };
 
@@ -100,24 +104,23 @@ const MarketplaceItemsSettings = () => {
     setEditingId(item.id);
     setForm({
       name: item.name,
-      sku: item.sku || '',
-      material: item.material || '',
       width: item.width ? String(item.width) : '',
       height: item.height ? String(item.height) : '',
+      article: item.article || '',
+      ozonSku: item.ozonSku || '',
+      wbSku: item.wbSku || '',
     });
     setDialogOpen(true);
     const detail = await fetchMarketplaceItemDetail(item.id);
-    setMaterialRows(
-      detail.materials.map((m: MarketplaceItemMaterial) => ({
-        workshopId: m.workshopId ? String(m.workshopId) : '',
-        materialId: m.materialId ? String(m.materialId) : '',
-        quantity: String(m.quantity),
-      }))
-    );
+    const rows = detail.materials.map((m: MarketplaceItemMaterial) => ({
+      materialId: m.materialId ? String(m.materialId) : '',
+      quantity: String(m.quantity),
+    }));
+    setMaterialRows(rows.length > 0 ? rows : [{ materialId: '', quantity: '' }]);
   };
 
   const addMaterialRow = () => {
-    setMaterialRows((rows) => [...rows, { workshopId: '', materialId: '', quantity: '' }]);
+    setMaterialRows((rows) => [...rows, { materialId: '', quantity: '' }]);
   };
 
   const updateMaterialRow = (idx: number, fields: Partial<MaterialRow>) => {
@@ -134,8 +137,9 @@ const MarketplaceItemsSettings = () => {
     try {
       const payload = {
         name: form.name.trim(),
-        sku: form.sku.trim(),
-        material: form.material.trim(),
+        article: form.article.trim(),
+        ozonSku: form.ozonSku.trim(),
+        wbSku: form.wbSku.trim(),
         width: form.width ? Number(form.width) : undefined,
         height: form.height ? Number(form.height) : undefined,
       };
@@ -152,9 +156,8 @@ const MarketplaceItemsSettings = () => {
         await setMarketplaceItemMaterials(
           itemId,
           materialRows
-            .filter((r) => r.workshopId && r.materialId)
+            .filter((r) => r.materialId)
             .map((r) => ({
-              workshopId: Number(r.workshopId),
               materialId: Number(r.materialId),
               quantity: Number(r.quantity) || 0,
             }))
@@ -225,26 +228,12 @@ const MarketplaceItemsSettings = () => {
                 <div className="space-y-1.5">
                   <Label>Название</Label>
                   <Input
-                    placeholder="Например: Тюль Вуаль 200x265"
+                    placeholder="Например: Тюль Вуаль"
                     value={form.name}
                     onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Артикул (SKU)</Label>
-                  <Input
-                    value={form.sku}
-                    onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
-                  />
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Материал</Label>
-                    <Input
-                      value={form.material}
-                      onChange={(e) => setForm((f) => ({ ...f, material: e.target.value }))}
-                    />
-                  </div>
+                <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Ширина</Label>
                     <Input
@@ -262,69 +251,75 @@ const MarketplaceItemsSettings = () => {
                     />
                   </div>
                 </div>
+                <div className="space-y-1.5">
+                  <Label>SKU / Артикул</Label>
+                  <Input
+                    placeholder="Артикул"
+                    value={form.article}
+                    onChange={(e) => setForm((f) => ({ ...f, article: e.target.value }))}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>OZON</Label>
+                    <Input
+                      value={form.ozonSku}
+                      onChange={(e) => setForm((f) => ({ ...f, ozonSku: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>WB</Label>
+                    <Input
+                      value={form.wbSku}
+                      onChange={(e) => setForm((f) => ({ ...f, wbSku: e.target.value }))}
+                    />
+                  </div>
+                </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label>Расход материалов по цехам на заказ</Label>
+                    <Label>Материалы для изделия</Label>
                     <Button type="button" size="sm" variant="outline" onClick={addMaterialRow}>
                       <Icon name="Plus" size={14} className="mr-1" />
                       Добавить
                     </Button>
                   </div>
-                  {materialRows.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">Расход материалов не задан</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {materialRows.map((row, idx) => (
-                        <div key={idx} className="grid grid-cols-[1fr_1fr_80px_32px] gap-2">
-                          <Select
-                            value={row.workshopId}
-                            onValueChange={(v) => updateMaterialRow(idx, { workshopId: v })}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Цех" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {workshops.map((w) => (
-                                <SelectItem key={w.id} value={String(w.id)}>
-                                  {w.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Select
-                            value={row.materialId}
-                            onValueChange={(v) => updateMaterialRow(idx, { materialId: v })}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Материал" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {materials.map((m) => (
-                                <SelectItem key={m.id} value={String(m.id)}>
-                                  {m.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Input
-                            type="number"
-                            placeholder="Кол-во"
-                            value={row.quantity}
-                            onChange={(e) => updateMaterialRow(idx, { quantity: e.target.value })}
-                          />
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            onClick={() => removeMaterialRow(idx)}
-                          >
-                            <Icon name="X" size={14} />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div className="space-y-2">
+                    {materialRows.map((row, idx) => (
+                      <div key={idx} className="grid grid-cols-[1fr_100px_32px] gap-2">
+                        <Select
+                          value={row.materialId}
+                          onValueChange={(v) => updateMaterialRow(idx, { materialId: v })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Материал" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {materials.map((m) => (
+                              <SelectItem key={m.id} value={String(m.id)}>
+                                {m.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="Кол-во"
+                          value={row.quantity}
+                          onChange={(e) => updateMaterialRow(idx, { quantity: e.target.value })}
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => removeMaterialRow(idx)}
+                        >
+                          <Icon name="X" size={14} />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <Button onClick={handleSave} disabled={saving} className="w-full">
@@ -358,15 +353,20 @@ const MarketplaceItemsSettings = () => {
                       </Button>
                     </div>
                   </div>
-                  {item.sku && (
+                  {item.article && (
                     <Badge variant="secondary" className="font-mono-tech">
-                      {item.sku}
+                      {item.article}
                     </Badge>
                   )}
                   <div className="text-sm text-muted-foreground">
-                    {item.material || '—'}
-                    {item.width && item.height ? ` · ${item.width}×${item.height}` : ''}
+                    {item.width && item.height ? `${item.width}×${item.height}` : '—'}
                   </div>
+                  {(item.ozonSku || item.wbSku) && (
+                    <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      {item.ozonSku && <span>OZON: {item.ozonSku}</span>}
+                      {item.wbSku && <span>WB: {item.wbSku}</span>}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}

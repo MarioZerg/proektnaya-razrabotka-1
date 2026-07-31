@@ -1,0 +1,2 @@
+ALTER TABLE marketplace_items ADD COLUMN IF NOT EXISTS ozon_sku VARCHAR(100);
+ALTER TABLE marketplace_items ADD COLUMN IF NOT EXISTS wb_sku VARCHAR(100);
