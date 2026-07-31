@@ -1,0 +1,2 @@
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS requested_by INTEGER NULL REFERENCES users(id);
+ALTER TABLE shipment_items ADD COLUMN IF NOT EXISTS requested_quantity NUMERIC(12,3) NULL;

@@ -1,6 +1,11 @@
 const SHIPMENTS_URL = 'https://functions.poehali.dev/a68cce8d-f3b0-4f06-a66a-305eeacd17bb';
 
-export type ShipmentType = 'from_supplier' | 'to_workshop' | 'return_to_supplier' | 'defect_writeoff';
+export type ShipmentType =
+  | 'from_supplier'
+  | 'to_workshop'
+  | 'return_to_supplier'
+  | 'defect_writeoff'
+  | 'workshop_writeoff';
 
 export interface Shipment {
   id: number;
@@ -26,6 +31,7 @@ export interface ShipmentItem {
   rollId: number | null;
   rollBarcode: string | null;
   quantity: number | null;
+  requestedQuantity: number | null;
 }
 
 export interface ShipmentDetail extends Shipment {
@@ -64,13 +70,6 @@ export const createShipmentFromSupplier = (payload: {
   items: Array<{ materialId: number; barcode: string; quantity: number }>;
 }) => postAction({ action: 'create', type: 'from_supplier', ...payload });
 
-export const createShipmentToWorkshop = (payload: {
-  workshopId: number;
-  shiftNumber?: number;
-  comment?: string;
-  items: Array<{ rollId: number }>;
-}) => postAction({ action: 'create', type: 'to_workshop', ...payload });
-
 export const createShipmentReturnToSupplier = (payload: {
   supplierId?: number;
   comment?: string;
@@ -81,5 +80,35 @@ export const createShipmentDefectWriteoff = (payload: {
   comment?: string;
   items: Array<{ rollId: number; quantity: number }>;
 }) => postAction({ action: 'create', type: 'defect_writeoff', ...payload });
+
+// Отгрузка в цех — двухстадийный процесс со сканированием (как на физическом складе)
+export const requestToWorkshop = (payload: {
+  workshopId: number;
+  shiftNumber?: number;
+  comment?: string;
+  items: Array<{ materialId: number; requestedQuantity: number }>;
+}) => postAction({ action: 'request_to_workshop', ...payload });
+
+export interface CollectScanResult {
+  success: true;
+  rollId: number;
+  materialId: number;
+  quantity: number;
+}
+
+export const collectScan = (shipmentId: number, barcode: string): Promise<CollectScanResult> =>
+  postAction({ action: 'collect_scan', shipmentId, barcode });
+
+export const shipToWorkshop = (shipmentId: number) => postAction({ action: 'ship', shipmentId });
+
+export const receiveAtWorkshop = (shipmentId: number) => postAction({ action: 'receive', shipmentId });
+
+// Списание материала прямо в цехе (без указания рулона — FIFO по остаткам в цехе)
+export const workshopWriteoff = (payload: {
+  workshopId?: number;
+  shiftNumber?: number;
+  comment?: string;
+  items: Array<{ materialId: number; quantity: number }>;
+}) => postAction({ action: 'workshop_writeoff', ...payload });
 
 export const deleteShipment = (id: number) => postAction({ action: 'delete', id });

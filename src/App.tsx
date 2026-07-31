@@ -8,6 +8,7 @@ import Index from "./pages/Index";
 import Crm from "./pages/Crm";
 import NotFound from "./pages/NotFound";
 import WarehouseMaterials from "./pages/inventory/WarehouseMaterials";
+import WorkshopMaterials from "./pages/inventory/WorkshopMaterials";
 import Rolls from "./pages/inventory/Rolls";
 import FromSupplier from "./pages/shipments/FromSupplier";
 import ToWorkshop from "./pages/shipments/ToWorkshop";
@@ -44,6 +45,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
+            <Route path="/crm/inventory/workshop-materials" element={<WorkshopMaterials />} />
             <Route path="/crm/inventory/rolls" element={<Rolls />} />
             <Route path="/crm/shipments/from-supplier" element={<FromSupplier />} />
             <Route path="/crm/shipments/to-workshop" element={<ToWorkshop />} />

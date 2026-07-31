@@ -4,7 +4,7 @@ import os
 import psycopg2
 
 
-VALID_TYPES = {'from_supplier', 'to_workshop', 'return_to_supplier', 'defect_writeoff'}
+VALID_TYPES = {'from_supplier', 'to_workshop', 'return_to_supplier', 'defect_writeoff', 'workshop_writeoff'}
 
 
 def handler(event: dict, context) -> dict:
@@ -14,7 +14,7 @@ def handler(event: dict, context) -> dict:
 
     Типы документов:
       - from_supplier      — приёмка от поставщика: создаёт новые рулоны на складе
-      - to_workshop         — отгрузка в цех: перемещает существующие рулоны в цех/смену
+      - to_workshop         — заявка на отгрузку в цех, двухстадийный процесс со сканированием (см. ниже)
       - return_to_supplier  — возврат поставщику: списывает количество с рулона
       - defect_writeoff     — списание брака: списывает количество с рулона
 
@@ -22,11 +22,23 @@ def handler(event: dict, context) -> dict:
     GET  /?id=1                     - детальная карточка документа с позициями
     POST /  { action: 'create', type, supplierId?, workshopId?, shiftNumber?, comment?, items: [...] }
         items для from_supplier: [{materialId, barcode, quantity}]
-        items для to_workshop: [{rollId}]
         items для return_to_supplier / defect_writeoff: [{rollId, quantity}]
+        (для to_workshop используйте action 'request_to_workshop')
     POST /  { action: 'delete', id }
-        - запрещено, если документ уже изменил остатки безвозвратно (всегда разрешено
-          только для последнего документа не старше по бизнес-правилам не проверяется здесь)
+        - запрещено, если документ уже изменил остатки безвозвратно
+
+    Отгрузка в цех (as-is с физического склада, повторяет процесс кладовщика):
+    POST /  { action: 'request_to_workshop', workshopId, shiftNumber?, comment?,
+               items: [{materialId, requestedQuantity}] }
+        - создаёт заявку в статусе "Новый" на нужные материалы (без привязки к рулонам)
+    POST /  { action: 'collect_scan', shipmentId, barcode }
+        - сканирование штрихкода рулона на складе, добавляет его целиком в заявку
+          (рулон должен быть материала из заявки и находиться в статусе in_storage)
+    POST /  { action: 'ship', shipmentId }
+        - переводит заявку в статус "Отправлено", все собранные рулоны получают статус
+          in_workshop и привязку к цеху/смене
+    POST /  { action: 'receive', shipmentId }
+        - подтверждение приёмки в цехе, статус "Получено"
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -76,7 +88,8 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Документ не найден'})}
 
                 cur.execute(
-                    "SELECT si.id, si.material_id, m.name, m.unit, si.barcode, si.roll_id, r.barcode, si.quantity "
+                    "SELECT si.id, si.material_id, m.name, m.unit, si.barcode, si.roll_id, r.barcode, "
+                    "si.quantity, si.requested_quantity "
                     "FROM shipment_items si "
                     "LEFT JOIN materials m ON m.id = si.material_id "
                     "LEFT JOIN rolls r ON r.id = si.roll_id "
@@ -93,6 +106,7 @@ def handler(event: dict, context) -> dict:
                         'rollId': r[5],
                         'rollBarcode': r[6],
                         'quantity': float(r[7]) if r[7] is not None else None,
+                        'requestedQuantity': float(r[8]) if r[8] is not None else None,
                     }
                     for r in cur.fetchall()
                 ]
@@ -162,28 +176,20 @@ def handler(event: dict, context) -> dict:
             if action == 'create':
                 doc_type = body_data.get('type')
                 supplier_id = body_data.get('supplierId')
-                workshop_id = body_data.get('workshopId')
-                shift_number = body_data.get('shiftNumber')
                 comment = (body_data.get('comment') or '').strip()
                 items = body_data.get('items') or []
 
-                if doc_type not in VALID_TYPES:
+                if doc_type not in ('from_supplier', 'return_to_supplier', 'defect_writeoff'):
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректный тип документа'})}
                 if not items:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Добавьте хотя бы одну позицию'})}
 
-                if doc_type == 'to_workshop' and not workshop_id:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите цех назначения'})}
-
                 supplier_sql = int(supplier_id) if supplier_id not in (None, '') else 'NULL'
-                workshop_sql = int(workshop_id) if workshop_id not in (None, '') else 'NULL'
-                shift_sql = int(shift_number) if shift_number not in (None, '') else 'NULL'
                 comment_esc = comment.replace("'", "''")
 
                 cur.execute(
-                    f"INSERT INTO shipments (type, status, supplier_id, workshop_id, shift_number, comment, completed_at) "
-                    f"VALUES ('{doc_type}', 'Выполнена', {supplier_sql}, {workshop_sql}, {shift_sql}, "
-                    f"'{comment_esc}', now()) RETURNING id"
+                    f"INSERT INTO shipments (type, status, supplier_id, comment, completed_at) "
+                    f"VALUES ('{doc_type}', 'Выполнена', {supplier_sql}, '{comment_esc}', now()) RETURNING id"
                 )
                 shipment_id = cur.fetchone()[0]
 
@@ -215,29 +221,6 @@ def handler(event: dict, context) -> dict:
                         cur.execute(
                             f"INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity) "
                             f"VALUES ({shipment_id}, {int(material_id)}, '{barcode_esc}', {roll_id}, {float(quantity)})"
-                        )
-
-                elif doc_type == 'to_workshop':
-                    for item in items:
-                        roll_id = item.get('rollId')
-                        if not roll_id:
-                            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите рулон'})}
-                        cur.execute(
-                            "SELECT material_id, status FROM rolls WHERE id = %s",
-                            (int(roll_id),),
-                        )
-                        roll_row = cur.fetchone()
-                        if not roll_row:
-                            return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Рулон #{roll_id} не найден'})}
-                        material_id = roll_row[0]
-
-                        cur.execute(
-                            f"UPDATE rolls SET workshop_id = {int(workshop_id)}, "
-                            f"shift_number = {shift_sql}, status = 'in_workshop' WHERE id = {int(roll_id)}"
-                        )
-                        cur.execute(
-                            f"INSERT INTO shipment_items (shipment_id, material_id, roll_id) "
-                            f"VALUES ({shipment_id}, {material_id}, {int(roll_id)})"
                         )
 
                 else:
@@ -274,6 +257,207 @@ def handler(event: dict, context) -> dict:
                             f"INSERT INTO shipment_items (shipment_id, material_id, roll_id, quantity) "
                             f"VALUES ({shipment_id}, {material_id}, {int(roll_id)}, {quantity})"
                         )
+
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}
+
+            if action == 'request_to_workshop':
+                workshop_id = body_data.get('workshopId')
+                shift_number = body_data.get('shiftNumber')
+                comment = (body_data.get('comment') or '').strip()
+                items = body_data.get('items') or []
+
+                if not workshop_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите цех назначения'})}
+                if not items:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Добавьте хотя бы одну позицию'})}
+
+                shift_sql = int(shift_number) if shift_number not in (None, '') else 'NULL'
+                comment_esc = comment.replace("'", "''")
+
+                cur.execute(
+                    f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment) "
+                    f"VALUES ('to_workshop', 'Новый', {int(workshop_id)}, {shift_sql}, '{comment_esc}') RETURNING id"
+                )
+                shipment_id = cur.fetchone()[0]
+
+                for item in items:
+                    material_id = item.get('materialId')
+                    requested_qty = item.get('requestedQuantity')
+                    if not material_id or requested_qty in (None, ''):
+                        return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите материал и количество'})}
+                    cur.execute(
+                        f"INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
+                        f"VALUES ({shipment_id}, {int(material_id)}, {float(requested_qty)})"
+                    )
+
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}
+
+            if action == 'collect_scan':
+                shipment_id = body_data.get('shipmentId')
+                barcode = (body_data.get('barcode') or '').strip()
+                if not shipment_id or not barcode:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте штрихкод рулона'})}
+
+                cur.execute("SELECT type, status FROM shipments WHERE id = %s", (int(shipment_id),))
+                sh_row = cur.fetchone()
+                if not sh_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заявка не найдена'})}
+                if sh_row[0] != 'to_workshop' or sh_row[1] != 'Новый':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявка не в статусе сборки'})}
+
+                cur.execute(
+                    "SELECT DISTINCT material_id FROM shipment_items WHERE shipment_id = %s AND requested_quantity IS NOT NULL",
+                    (int(shipment_id),),
+                )
+                requested_material_ids = {r[0] for r in cur.fetchall()}
+
+                cur.execute(
+                    "SELECT id, material_id, remaining_quantity, status FROM rolls WHERE barcode = %s",
+                    (barcode,),
+                )
+                roll_row = cur.fetchone()
+                if not roll_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Рулон {barcode} не найден'})}
+                roll_id, material_id, remaining, roll_status = roll_row
+                if roll_status != 'in_storage':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Рулон {barcode} не на складе (статус: {roll_status})'})}
+                if material_id not in requested_material_ids:
+                    cur.execute("SELECT name FROM materials WHERE id = %s", (material_id,))
+                    mat_name = cur.fetchone()[0]
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Рулон {barcode} — материал "{mat_name}", он не запрошен в этой заявке'})}
+
+                cur.execute(
+                    "SELECT id FROM shipment_items WHERE shipment_id = %s AND roll_id = %s",
+                    (int(shipment_id), roll_id),
+                )
+                if cur.fetchone():
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Рулон {barcode} уже добавлен в заявку'})}
+
+                cur.execute(
+                    f"INSERT INTO shipment_items (shipment_id, material_id, roll_id, quantity) "
+                    f"VALUES ({int(shipment_id)}, {material_id}, {roll_id}, {float(remaining)})"
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'rollId': roll_id, 'materialId': material_id, 'quantity': float(remaining)}),
+                }
+
+            if action == 'ship':
+                shipment_id = body_data.get('shipmentId')
+                if not shipment_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите shipmentId'})}
+
+                cur.execute("SELECT type, status, workshop_id, shift_number FROM shipments WHERE id = %s", (int(shipment_id),))
+                sh_row = cur.fetchone()
+                if not sh_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заявка не найдена'})}
+                if sh_row[0] != 'to_workshop' or sh_row[1] != 'Новый':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявку нельзя отправить в текущем статусе'})}
+                workshop_id, shift_number = sh_row[2], sh_row[3]
+
+                cur.execute(
+                    "SELECT roll_id FROM shipment_items WHERE shipment_id = %s AND roll_id IS NOT NULL",
+                    (int(shipment_id),),
+                )
+                roll_ids = [r[0] for r in cur.fetchall()]
+                if not roll_ids:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Соберите хотя бы один рулон перед отправкой'})}
+
+                shift_sql = shift_number if shift_number is not None else 'NULL'
+                for roll_id in roll_ids:
+                    cur.execute(
+                        f"UPDATE rolls SET status = 'in_workshop', workshop_id = {workshop_id}, "
+                        f"shift_number = {shift_sql} WHERE id = {roll_id}"
+                    )
+
+                cur.execute(f"UPDATE shipments SET status = 'Отправлено' WHERE id = {int(shipment_id)}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'receive':
+                shipment_id = body_data.get('shipmentId')
+                if not shipment_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите shipmentId'})}
+
+                cur.execute("SELECT type, status FROM shipments WHERE id = %s", (int(shipment_id),))
+                sh_row = cur.fetchone()
+                if not sh_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заявка не найдена'})}
+                if sh_row[0] != 'to_workshop' or sh_row[1] != 'Отправлено':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявка ещё не отправлена или уже получена'})}
+
+                cur.execute(f"UPDATE shipments SET status = 'Получено', completed_at = now() WHERE id = {int(shipment_id)}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'workshop_writeoff':
+                workshop_id = body_data.get('workshopId')
+                shift_number = body_data.get('shiftNumber')
+                comment = (body_data.get('comment') or '').strip()
+                items = body_data.get('items') or []
+
+                if not items:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Добавьте хотя бы одну позицию'})}
+
+                workshop_sql = int(workshop_id) if workshop_id not in (None, '') else 'NULL'
+                shift_sql = int(shift_number) if shift_number not in (None, '') else 'NULL'
+                comment_esc = comment.replace("'", "''")
+
+                cur.execute(
+                    f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment, completed_at) "
+                    f"VALUES ('workshop_writeoff', 'Выполнена', {workshop_sql}, {shift_sql}, '{comment_esc}', now()) "
+                    f"RETURNING id"
+                )
+                shipment_id = cur.fetchone()[0]
+
+                for item in items:
+                    material_id = item.get('materialId')
+                    quantity = item.get('quantity')
+                    if not material_id or quantity in (None, ''):
+                        return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите материал и количество'})}
+                    quantity = float(quantity)
+
+                    roll_conditions = ["material_id = %s", "status = 'in_workshop'", "remaining_quantity > 0"]
+                    params = [int(material_id)]
+                    if workshop_id not in (None, ''):
+                        roll_conditions.append("workshop_id = %s")
+                        params.append(int(workshop_id))
+                    if shift_number not in (None, ''):
+                        roll_conditions.append("shift_number = %s")
+                        params.append(int(shift_number))
+
+                    cur.execute(
+                        f"SELECT id, remaining_quantity FROM rolls WHERE {' AND '.join(roll_conditions)} ORDER BY created_at ASC",
+                        tuple(params),
+                    )
+                    available_rolls = cur.fetchall()
+                    total_available = sum(float(r[1]) for r in available_rolls)
+                    if total_available < quantity:
+                        cur.execute("SELECT name, unit FROM materials WHERE id = %s", (int(material_id),))
+                        mat_name, mat_unit = cur.fetchone()
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({'error': f'{mat_name}: в цехе есть только {total_available} {mat_unit}, нужно {quantity}'}),
+                        }
+
+                    remaining_to_take = quantity
+                    for roll_id, roll_remaining in available_rolls:
+                        if remaining_to_take <= 0:
+                            break
+                        take = min(float(roll_remaining), remaining_to_take)
+                        new_remaining = float(roll_remaining) - take
+                        status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
+                        cur.execute(f"UPDATE rolls SET remaining_quantity = {new_remaining}{status_sql} WHERE id = {roll_id}")
+                        cur.execute(
+                            f"INSERT INTO shipment_items (shipment_id, material_id, roll_id, quantity) "
+                            f"VALUES ({shipment_id}, {int(material_id)}, {roll_id}, {take})"
+                        )
+                        remaining_to_take -= take
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}
