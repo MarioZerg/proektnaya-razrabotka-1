@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAX Auth + Multi-role — техническая карта</title>
+<style>
+body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 860px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #1a1a1a; }
+h1, h2, h3 { line-height: 1.3; }
+code { background: #f2f2f2; padding: 2px 5px; border-radius: 3px; font-size: 0.9em; }
+pre { background: #f2f2f2; padding: 12px; border-radius: 6px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+hr { border: none; border-top: 1px solid #ddd; margin: 24px 0; }
+</style>
+</head>
+<body>
+<h1>Авторизация через MAX + множественные роли — техническая карта проекта</h1>
+<p>Статус: часть функциональности реализована и задеплоена, часть — в процессе.
+Документ описывает что уже сделано (с точными путями к файлам) и что осталось,
+чтобы можно было дополнить логику новыми пунктами.</p>
+<hr />
+<h2>1. Идея целиком</h2>
+<ol>
+<li>Пользователь на сайте жмёт <strong>«Войти через MAX»</strong> — открывается бот в мессенджере MAX.</li>
+<li>В боте пользователь жмёт кнопку <strong>«Поделиться номером»</strong>.</li>
+<li>Бот ищет номер телефона в базе:</li>
+<li>если сотрудник уже существует — привязывает его MAX-аккаунт (<code>max_user_id</code>) и присылает код;</li>
+<li>если номера нет — создаёт нового пользователя без роли и тоже присылает код.</li>
+<li>Пользователь вводит код на сайте.</li>
+<li>Дальше ветвление:</li>
+<li><strong>ролей нет вообще</strong> → экран выбора желаемой должности → должность уходит на утверждение админом → экран ожидания;</li>
+<li><strong>есть роли, но ни одна не утверждена</strong> → экран ожидания;</li>
+<li><strong>утверждена ровно одна роль</strong> → сразу вход в неё;</li>
+<li><strong>утверждено несколько ролей</strong> → экран выбора, в какой роли работать сейчас.</li>
+<li>После входа в сайдбаре есть переключатель должностей (если их несколько утверждённых) —
+   позволяет переключаться без повторного входа через MAX.</li>
+<li>Администратор в карточке сотрудника видит все его должности, может утверждать/добавлять/убирать.</li>
+</ol>
+<hr />
+<h2>2. База данных</h2>
+<p>Миграции: <code>db_migrations/V0089__add_max_messenger_auth_support.sql</code>,
+<code>V0092__max_only_auth_multi_role_support.sql</code> (плюс более ранняя, неотслеженная
+миграцией часть — таблица <code>user_roles</code> и поля <code>registered_via_max</code>,
+<code>max_pending_token</code> в <code>users</code>, они уже были в БД до текущей сессии).</p>
+<h3>Таблица <code>users</code> (ключевые поля, помимо существовавших)</h3>
+<ul>
+<li><code>max_user_id VARCHAR(50)</code> — ID пользователя в MAX, уникален (<code>idx_users_max_user_id_unique</code>)</li>
+<li><code>phone VARCHAR(30)</code> — номер телефона, уникален (<code>idx_users_phone_unique</code>)</li>
+<li><code>registered_via_max BOOLEAN</code> — true, если человек сам зарегистрировался через бота</li>
+<li><code>role</code> — оставлено для обратной совместимости (роль по умолчанию/последняя активная),
+  реальный источник правды — таблица <code>user_roles</code></li>
+</ul>
+<h3>Таблица <code>user_roles</code> (уже существовала, доработана уникальным индексом)</h3>
+<pre><code class="language-sql">id, user_id → users(id), role VARCHAR(30), is_approved BOOLEAN, created_at
+UNIQUE (user_id, role) — idx_user_roles_user_role_unique
+</code></pre>
+<p>У существующих сотрудников (созданных вручную до этой фичи) уже проставлена
+одна запись с <code>is_approved = true</code> — миграция назад не требовалась, это было
+сделано раньре в текущей сессии работы.</p>
+<h3>Таблица <code>max_auth_sessions</code> (новая, для кода входа)</h3>
+<pre><code class="language-sql">id, max_user_id, code VARCHAR(10), phone, full_name,
+created_at, expires_at, used BOOLEAN
+</code></pre>
+<p>Код живёт 5 минут (<code>CODE_TTL_MINUTES</code> в backend), одноразовый (<code>used</code>).</p>
+<h3>Таблица <code>max_login_codes</code> (старая, от первой версии интеграции по логину — уже не используется в новом флоу, но не удалена)</h3>
+<hr />
+<h2>3. Backend</h2>
+<h3><code>backend/max_bot/index.py</code> — приём webhook от MAX</h3>
+<p>URL: см. <code>func2url.json</code> → <code>max_bot</code>.
+Обрабатывает:
+- <code>update_type = 'bot_started'</code> — шлёт приветствие с кнопкой <code>request_contact</code>
+  («Поделиться номером и войти»).
+- <code>update_type = 'message_created'</code> — достаёт номер телефона из вложения-контакта
+  (или из текста как fallback), нормализует к <code>+7XXXXXXXXXX</code>
+  (<code>normalize_phone</code>), ищет пользователя по <code>max_user_id</code> → по <code>phone</code>,
+  если не находит — создаёт нового (<code>registered_via_max=true</code>, без роли),
+  создаёт запись в <code>max_auth_sessions</code> со случайным 6-значным кодом,
+  отправляет код сообщением.
+- <code>action = 'register_webhook'</code> — служебное действие (уже вызвано один раз),
+  регистрирует URL этой функции как webhook в MAX Bot API
+  (<code>POST /subscriptions</code>, update_types: <code>bot_started</code>, <code>message_created</code>).</p>
+<p>Особенность: сайт <code>platform-api2.max.ru</code> использует сертификат российского
+УЦ (Минцифры), которого нет в стандартном <code>certifi</code> bundle — сертификат
+встроен в код константой <code>RUSSIAN_TRUSTED_CA</code> и подмешивается к <code>certifi</code>
+через временный файл (см. <code>_get_ca_bundle()</code>). Тот же приём продублирован
+в <code>backend/auth/index.py</code>, хотя там он сейчас не используется (auth больше
+не делает исходящих HTTP-запросов) — можно почистить при следующей правке.</p>
+<p>Токен бота передаётся в заголовке <code>Authorization</code>, не в query-параметре —
+чтобы не светился в логах/URL.</p>
+<h3><code>backend/auth/index.py</code> — вся логика входа</h3>
+<p>Actions:
+- <code>bot_info</code> → <code>{ botUrl }</code>, ссылка на бота (<code>https://max.ru/{MAX_BOT_USERNAME}</code>)
+- <code>max_verify_code { code }</code> → ищет сессию в <code>max_auth_sessions</code>, помечает
+  использованной, возвращает <code>{ id, name, phone, roles: [{role, isApproved}] }</code>
+- <code>select_role { userId, role }</code> → создаёт запись в <code>user_roles</code> с
+  <code>is_approved=false</code> (только если у пользователя ещё нет ни одной роли)
+- <code>enter_role { userId, role }</code> → проверяет <code>is_active</code> и <code>is_approved</code>,
+  возвращает полные данные сессии <code>{ id, name, role, workshopId, workshopName, shiftNumber }</code>
+- <code>test_accounts</code> → для демо-входа (кнопки на странице логина), без проверки кода</p>
+<h3><code>backend/users/index.py</code> — управление сотрудниками и их ролями</h3>
+<p>GET теперь возвращает у каждого сотрудника доп. поля: <code>maxUserId</code>, <code>phone</code>,
+<code>registeredViaMax</code>, <code>roles: [{role, isApproved}]</code>.</p>
+<p>Новые actions:
+- <code>add_role { id, role, approved? }</code> — добавить/обновить роль (upsert по <code>(user_id, role)</code>)
+- <code>approve_role { id, role }</code> — утвердить существующую роль
+- <code>remove_role { id, role }</code> — убрать роль</p>
+<p>При <code>action='create'</code> (админ создаёт сотрудника вручную) автоматически
+создаётся запись в <code>user_roles</code> с <code>is_approved=true</code> для указанной роли.</p>
+<hr />
+<h2>4. Frontend</h2>
+<h3><code>src/context/AuthContext.tsx</code></h3>
+<p><code>User</code> дополнен полем <code>availableRoles: Role[]</code> — утверждённые должности
+пользователя, для переключателя. Добавлен метод <code>switchRole(role)</code> —
+меняет активную <code>role</code> в контексте и localStorage без повторного похода
+на backend (просто переключение внутри уже полученных прав).</p>
+<h3><code>src/lib/authApi.ts</code></h3>
+<p>Новые функции: <code>fetchMaxBotUrl</code>, <code>verifyMaxCode</code>, <code>selectDesiredRole</code>, <code>enterRole</code>.
+Старые <code>sendMaxLoginCode</code>/<code>verifyMaxLoginCode</code> (по логину) удалены вместе со
+старым флоу.</p>
+<h3><code>src/lib/usersApi.ts</code></h3>
+<p><code>Employee</code> дополнен <code>phone</code>, <code>registeredViaMax</code>, <code>roles: UserRoleEntry[]</code>.
+Новые функции: <code>addEmployeeRole</code>, <code>approveEmployeeRole</code>, <code>removeEmployeeRole</code>.</p>
+<h3><code>src/pages/Index.tsx</code> — страница входа, полностью переписана</h3>
+<p>Шаги (<code>Step</code>): <code>start → code → pickDesiredRole | pendingApproval | pickActiveRole</code>.
+- <code>start</code> — кнопка «Войти через MAX» (открывает <code>botUrl</code> в новой вкладке) + демо-вход
+- <code>code</code> — ввод 6-значного кода
+- <code>pickDesiredRole</code> — для новых пользователей без единой роли
+- <code>pendingApproval</code> — ожидание решения администратора
+- <code>pickActiveRole</code> — выбор роли, если утверждено несколько</p>
+<p>Логин/пароль с этой страницы убран полностью.</p>
+<h3><code>src/components/auth/RoleSelectScreen.tsx</code> (новый)</h3>
+<p>Переиспользуемая сетка кнопок-должностей с иконками — используется и для
+выбора желаемой роли, и для выбора активной роли при входе.</p>
+<h3><code>src/components/auth/PendingApprovalScreen.tsx</code> (новый)</h3>
+<p>Экран «Ждём подтверждения администратора» с кнопкой «Выйти».</p>
+<h3><code>src/components/crm/CrmLayout.tsx</code></h3>
+<p>Добавлен переключатель должностей в футере сайдбара (иконка <code>Repeat</code>,
+рядом с уже существующим демо-переключателем аккаунтов) — виден только
+если <code>availableRoles.length &gt; 1</code>. Вызывает <code>switchRole</code> + переход на <code>/crm</code>.</p>
+<h3><code>src/components/crm/users/EmployeeCardDialog.tsx</code></h3>
+<p>Добавлен блок «Должности»: список ролей сотрудника с бейджами
+«Утверждена» / «Ждёт утверждения», кнопки «Утвердить» и убрать (крестик),
+выпадающий список «Добавить должность...» с ролями, которых у сотрудника
+ещё нет. Поле MAX ID подписано пояснением, что оно заполняется автоматически
+через бота (осталась возможность поправить вручную).</p>
+<h3><code>src/pages/settings/UsersSettings.tsx</code></h3>
+<p>Добавлены обработчики <code>handleApproveRole/handleAddRole/handleRemoveRole</code>,
+после каждого действия — перезагрузка списка сотрудников и обновление
+открытой карточки.</p>
+<hr />
+<h2>5. Что ЕЩЁ НЕ сделано (осталось на следующий заход)</h2>
+<ol>
+<li>
+<p><strong>Ограничение доступа для неутверждённых пользователей.</strong>
+   Сейчас <code>src/pages/Crm.tsx</code> показывает урезанный дашборд только по признаку
+   <code>role !== 'admin'</code>. Нужно добавить отдельную проверку: если у пользователя
+   вообще нет ни одной утверждённой роли (<code>availableRoles.length === 0</code>),
+   доступны только дашборд/страница ожидания — остальные разделы CRM должны
+   быть недоступны (сейчас маршруты в <code>src/App.tsx</code> не защищены вообще, см.
+   <code>&lt;Route path="/crm/..." element={...} /&gt;</code> без обёртки). Нужен компонент
+   вроде <code>ProtectedRoute</code>/проверка в <code>CrmLayout</code>, который редиректит на
+   заглушку, если <code>user.availableRoles.length === 0</code>.</p>
+</li>
+<li>
+<p><strong>Очистка старого кода логина по паролю.</strong>
+   В БД остались поля <code>password_hash</code>, <code>password_salt</code>, <code>login</code> как
+   <code>NOT NULL</code> (снять <code>NOT NULL</code> через ALTER не удалось — заблокировано
+   инструментом миграций как потенциально опасная операция). Сейчас при
+   регистрации через MAX (<code>backend/max_bot/index.py</code>) генерируется
+   случайный логин и фиктивный хеш пароля, чтобы вставка в <code>users</code> прошла.
+   Это рабочий, но не самый чистый костыль — можно оставить как есть.</p>
+</li>
+<li>
+<p><strong><code>backend/auth/index.py</code></strong> всё ещё содержит неиспользуемую константу
+   <code>RUSSIAN_TRUSTED_CA</code> и импорт <code>certifi</code>/<code>requests</code> в <code>requirements.txt</code> —
+   можно убрать, поскольку исходящих HTTP-запросов в auth больше нет
+   (переехали в <code>max_bot</code>). Не критично, но для чистоты стоит проверить
+   <code>backend/auth/requirements.txt</code>.</p>
+</li>
+<li>
+<p><strong>Таблица <code>max_login_codes</code></strong> (старая, от первой версии по логину) не
+   используется новым флоу — можно оставить как историческую или удалить
+   отдельной миграцией, если она мешает.</p>
+</li>
+<li>
+<p><strong>Тесты </strong>backend/max_bot/tests.json<strong> покрывают только базовые кейсы</strong>
+   (OPTIONS, неизвестный update_type, GET не разрешён, register_webhook без
+   url). Полноценный сценарий bot_started/message_created не протестирован
+   автотестами (требует реальных данных от MAX, тестировался вручную curl-ом
+   частично).</p>
+</li>
+<li>
+<p>Визуальная проверка нового флоу входа (<code>Index.tsx</code>) через скриншот ещё
+   не делалась в этой сессии — сделана только для базовой структуры
+   страницы до переписывания.</p>
+</li>
+</ol>
+<hr />
+<h2>6. Список изменённых/новых файлов за сессию</h2>
+<p><strong>Backend:</strong>
+- <code>backend/max_bot/index.py</code>, <code>requirements.txt</code>, <code>tests.json</code> (новые)
+- <code>backend/auth/index.py</code>, <code>tests.json</code> — переписаны
+- <code>backend/users/index.py</code>, <code>tests.json</code> — дополнены</p>
+<p><strong>DB:</strong>
+- <code>db_migrations/V0089__add_max_messenger_auth_support.sql</code>
+- <code>db_migrations/V0092__max_only_auth_multi_role_support.sql</code></p>
+<p><strong>Frontend:</strong>
+- <code>src/context/AuthContext.tsx</code> — дополнен
+- <code>src/lib/authApi.ts</code> — переписан
+- <code>src/lib/usersApi.ts</code> — дополнен
+- <code>src/pages/Index.tsx</code> — переписан полностью
+- <code>src/components/auth/RoleSelectScreen.tsx</code> (новый)
+- <code>src/components/auth/PendingApprovalScreen.tsx</code> (новый)
+- <code>src/components/crm/CrmLayout.tsx</code> — переключатель ролей
+- <code>src/components/crm/users/EmployeeCardDialog.tsx</code> — блок должностей
+- <code>src/pages/settings/UsersSettings.tsx</code> — обработчики ролей</p>
+<p><strong>Секреты:</strong>
+- <code>MAX_BOT_TOKEN</code> — токен бота (уже задан)
+- <code>MAX_BOT_USERNAME</code> — юзернейм бота для ссылки (уже задан)</p>
+</body>
+</html>
