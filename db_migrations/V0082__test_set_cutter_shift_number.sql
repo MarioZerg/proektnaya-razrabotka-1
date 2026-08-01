@@ -1,0 +1,1 @@
+UPDATE users SET shift_number=1 WHERE id=9;

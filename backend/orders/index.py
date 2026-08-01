@@ -375,13 +375,19 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
 
                 cur.execute(
-                    "SELECT material, width, height, workshop_id FROM orders WHERE id = %s",
+                    "SELECT material, width, height, workshop_id, assigned_user_id FROM orders WHERE id = %s",
                     (int(item_id),),
                 )
                 order_row = cur.fetchone()
                 if not order_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-                material, width, height, order_workshop_id = order_row
+                material, width, height, order_workshop_id, order_assigned_user_id = order_row
+
+                order_shift_number = None
+                if order_assigned_user_id:
+                    cur.execute("SELECT shift_number FROM users WHERE id = %s", (order_assigned_user_id,))
+                    u_row = cur.fetchone()
+                    order_shift_number = u_row[0] if u_row else None
 
                 cur.execute(
                     "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
@@ -446,7 +452,7 @@ def handler(event: dict, context) -> dict:
 
                     if fabric_material_id and material_id == fabric_material_id:
                         cur.execute(
-                            "SELECT id, remaining_quantity, workshop_id FROM rolls WHERE id = %s "
+                            "SELECT id, remaining_quantity, workshop_id, shift_number FROM rolls WHERE id = %s "
                             "AND material_id = %s AND status = 'in_workshop'",
                             (int(roll_id_chosen), material_id),
                         )
@@ -462,6 +468,12 @@ def handler(event: dict, context) -> dict:
                                 'statusCode': 409,
                                 'headers': headers,
                                 'body': json.dumps({'error': 'Рулон не принадлежит вашему цеху/смене'}),
+                            }
+                        if order_shift_number and roll_row[3] != order_shift_number:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({'error': 'Рулон не принадлежит вашей смене'}),
                             }
                         roll_remaining = float(roll_row[1])
                         if roll_remaining < qty_needed:
@@ -564,19 +576,25 @@ def handler(event: dict, context) -> dict:
                     }
 
                 cur.execute(
-                    "SELECT material, width, height, workshop_id, sewing_status FROM orders WHERE id = %s",
+                    "SELECT material, width, height, workshop_id, sewing_status, assigned_user_id FROM orders WHERE id = %s",
                     (int(item_id),),
                 )
                 order_row = cur.fetchone()
                 if not order_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-                material, width, height, order_workshop_id, current_status = order_row
+                material, width, height, order_workshop_id, current_status, order_assigned_user_id = order_row
                 if current_status == 'Стикеровка':
                     return {
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({'error': 'Заказ уже отправлен на стикеровку'}),
                     }
+
+                order_shift_number = None
+                if order_assigned_user_id:
+                    cur.execute("SELECT shift_number FROM users WHERE id = %s", (order_assigned_user_id,))
+                    u_row = cur.fetchone()
+                    order_shift_number = u_row[0] if u_row else None
 
                 cur.execute(
                     "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
@@ -620,7 +638,7 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
                 cur.execute(
-                    "SELECT id, remaining_quantity, workshop_id FROM rolls WHERE id = %s "
+                    "SELECT id, remaining_quantity, workshop_id, shift_number FROM rolls WHERE id = %s "
                     "AND material_id = %s AND status = 'in_workshop'",
                     (int(roll_id_chosen), trim_material_id),
                 )
@@ -636,6 +654,12 @@ def handler(event: dict, context) -> dict:
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({'error': 'Рулон не принадлежит вашему цеху/смене'}),
+                    }
+                if order_shift_number and roll_row[3] != order_shift_number:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Рулон не принадлежит вашей смене'}),
                     }
                 roll_remaining = float(roll_row[1])
                 if roll_remaining < trim_qty_needed:
