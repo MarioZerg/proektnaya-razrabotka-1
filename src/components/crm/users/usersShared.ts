@@ -58,4 +58,5 @@ export interface CardFormState {
   shiftTo: string;
   newPassword: string;
   avatarBase64: string;
+  maxUserId: string;
 }

@@ -17,6 +17,7 @@ export interface Employee {
   createdAt: string;
   updatedAt: string;
   shiftNumber: number | null;
+  maxUserId: string | null;
 }
 
 export const fetchEmployees = async (): Promise<Employee[]> => {
@@ -62,6 +63,7 @@ export const updateEmployee = (
     shiftTo: string | null;
     isActive: boolean;
     avatarBase64: string;
+    maxUserId: string | null;
   }>
 ) => postAction({ action: 'update', id, ...fields });
 

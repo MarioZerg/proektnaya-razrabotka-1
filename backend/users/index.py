@@ -40,9 +40,14 @@ def upload_avatar(base64_data: str) -> str:
 def handler(event: dict, context) -> dict:
     """Управляет сотрудниками: список, создание, редактирование, график смен, зарплата, аватар.
 
-    GET  /                       - получить список пользователей
+    GET  /                       - получить список пользователей (включая maxUserId — привязанный
+                                    ID мессенджера MAX, нужен для входа по коду вместо пароля)
     POST /  { action: 'create', fullName, email, role, password, workshop?, salary?, shiftFrom?, shiftTo?, avatarBase64? }
-    POST /  { action: 'update', id, fullName?, role?, password?, workshop?, salary?, shiftFrom?, shiftTo?, avatarBase64?, isActive? }
+    POST /  { action: 'update', id, fullName?, role?, password?, workshop?, salary?, shiftFrom?, shiftTo?,
+              avatarBase64?, isActive?, maxUserId? }
+        - maxUserId: числовой ID пользователя в MAX, администратор вводит его в карточке
+          сотрудника вручную (сотрудник узнаёт свой ID у бота или в настройках MAX).
+          Пустая строка/null снимает привязку
     POST /  { action: 'delete', id }
 
     Логин сотрудника генерируется из email (часть до @). Пароль хранится как
@@ -78,7 +83,7 @@ def handler(event: dict, context) -> dict:
             cur = conn.cursor()
             cur.execute(
                 "SELECT id, login, email, full_name, role, workshop, salary, "
-                "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number "
+                "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number, max_user_id "
                 "FROM users ORDER BY id DESC"
             )
             users = [
@@ -97,6 +102,7 @@ def handler(event: dict, context) -> dict:
                     'createdAt': r[11].isoformat(),
                     'updatedAt': r[12].isoformat(),
                     'shiftNumber': r[13],
+                    'maxUserId': r[14],
                 }
                 for r in cur.fetchall()
             ]
@@ -209,6 +215,10 @@ def handler(event: dict, context) -> dict:
                     fields.append(f"shift_to = {shift_to_val}")
                 if 'isActive' in body_data:
                     fields.append(f"is_active = {'true' if body_data['isActive'] else 'false'}")
+                if 'maxUserId' in body_data:
+                    val = (body_data['maxUserId'] or '').strip() if body_data['maxUserId'] else ''
+                    max_user_id_val = f"'{val.replace(chr(39), chr(39)*2)}'" if val else 'NULL'
+                    fields.append(f"max_user_id = {max_user_id_val}")
                 if 'shiftNumber' in body_data:
                     val = body_data['shiftNumber']
                     shift_number_val = str(int(val)) if val not in (None, '') else 'NULL'

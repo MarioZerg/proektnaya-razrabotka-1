@@ -93,6 +93,7 @@ const UsersSettings = () => {
       shiftTo: emp.shiftTo || '',
       newPassword: '',
       avatarBase64: '',
+      maxUserId: emp.maxUserId || '',
     });
   };
 
@@ -112,6 +113,7 @@ const UsersSettings = () => {
         salary: Number(cardForm.salary) || 0,
         shiftFrom: cardForm.shiftFrom || null,
         shiftTo: cardForm.shiftTo || null,
+        maxUserId: cardForm.maxUserId.trim() || null,
         ...(cardForm.newPassword.trim() ? { password: cardForm.newPassword.trim() } : {}),
         ...(cardForm.avatarBase64 ? { avatarBase64: cardForm.avatarBase64 } : {}),
       });

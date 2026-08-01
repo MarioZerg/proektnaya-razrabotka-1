@@ -21,4 +21,31 @@ export const fetchTestAccounts = async (): Promise<TestAccount[]> => {
   return data.accounts || [];
 };
 
+const postAuthAction = async (payload: Record<string, unknown>) => {
+  const res = await fetch(AUTH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Ошибка запроса');
+  }
+  return data;
+};
+
+export const sendMaxLoginCode = (login: string) => postAuthAction({ action: 'max_send_code', login });
+
+export interface MaxVerifyResult {
+  id: number;
+  name: string;
+  role: Role;
+  workshopId: number | null;
+  workshopName: string | null;
+  shiftNumber: number | null;
+}
+
+export const verifyMaxLoginCode = (login: string, code: string): Promise<MaxVerifyResult> =>
+  postAuthAction({ action: 'max_verify_code', login, code });
+
 export { AUTH_URL };

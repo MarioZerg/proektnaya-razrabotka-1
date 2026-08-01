@@ -1,0 +1,1 @@
+UPDATE users SET max_user_id='123456789' WHERE login='admin';

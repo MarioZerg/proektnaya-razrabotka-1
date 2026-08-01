@@ -26,6 +26,27 @@
       "path": "/",
       "body": {"action": "test_accounts"},
       "expectedStatus": 200
+    },
+    {
+      "name": "Max send code without login fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "max_send_code"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Max send code for unknown login fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "max_send_code", "login": "no_such_user"},
+      "expectedStatus": 404
+    },
+    {
+      "name": "Max verify code without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "max_verify_code"},
+      "expectedStatus": 400
     }
   ]
 }

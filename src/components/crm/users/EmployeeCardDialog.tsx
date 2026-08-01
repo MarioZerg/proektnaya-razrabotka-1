@@ -192,6 +192,20 @@ const EmployeeCardDialog = ({
               />
             </div>
 
+            <div className="space-y-1.5">
+              <Label>MAX ID сотрудника</Label>
+              <Input
+                type="text"
+                placeholder="Числовой ID из мессенджера MAX"
+                value={cardForm.maxUserId}
+                onChange={(e) => setCardForm((f) => f && { ...f, maxUserId: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Нужен для входа по коду вместо пароля. Сотрудник узнаёт свой ID в настройках MAX
+                или у бота.
+              </p>
+            </div>
+
             <Button
               onClick={onSave}
               disabled={cardSaving}
