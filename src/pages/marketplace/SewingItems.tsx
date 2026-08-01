@@ -285,68 +285,91 @@ const SewingItems = () => {
   return (
     <CrmLayout>
       <div className="space-y-4 sm:space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-xl font-bold">Товары для пошива</h1>
-          {isCutter && (
-            <Button onClick={handleTakeStack} disabled={takingStack || myUnfinishedCount > 0} className="w-full sm:w-auto">
-              {takingStack ? (
-                <>
-                  <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
-                  Берём заказы...
-                </>
-              ) : (
-                <>
-                  <Icon name="Layers" size={16} className="mr-2" />
-                  Взять стек заказов
-                </>
-              )}
-            </Button>
-          )}
-          {isSewer && (
-            <Button onClick={handleTakeOrder} disabled={takingOrder || takeOrderCooldown} className="w-full sm:w-auto">
-              {takingOrder ? (
-                <>
-                  <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
-                  Получаем заказ...
-                </>
-              ) : (
-                <>
-                  <Icon name="PackagePlus" size={16} className="mr-2" />
-                  Получить новый заказ
-                </>
-              )}
-            </Button>
-          )}
-        </div>
+        <h1 className="text-xl font-bold">Товары для пошива</h1>
 
-        {isCutter && myUnfinishedCount > 0 && (
-          <p className="text-sm text-muted-foreground">
-            У вас {myUnfinishedCount} нераскроенных заказов — раскроите их, прежде чем брать новый стек.
-          </p>
+        {!isProductionRole && (
+          <div className="relative">
+            <Icon
+              name="Search"
+              size={16}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              placeholder="Поиск по номеру заказа или ШК"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setPage(1);
+              }}
+              className="pl-9"
+            />
+          </div>
         )}
 
-        {isSewer && myInWorkCount > 0 && (
-          <p className="text-sm text-muted-foreground">
-            У вас {myInWorkCount} заказов в работе — укажите рулон тесьмы и отправьте их на стикеровку.
-          </p>
-        )}
+        <SewingItemsFilters
+          employees={employees}
+          materials={materials}
+          workshops={workshops}
+          typeFilter={typeFilter}
+          setTypeFilter={setTypeFilter}
+          employeeFilter={employeeFilter}
+          setEmployeeFilter={setEmployeeFilter}
+          materialFilter={materialFilter}
+          setMaterialFilter={setMaterialFilter}
+          widthFilter={widthFilter}
+          setWidthFilter={setWidthFilter}
+          heightFilter={heightFilter}
+          setHeightFilter={setHeightFilter}
+          workshopFilter={workshopFilter}
+          setWorkshopFilter={setWorkshopFilter}
+        />
 
-        <div className="relative">
-          <Icon
-            name="Search"
-            size={16}
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            placeholder="Поиск по номеру заказа или ШК"
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setPage(1);
-            }}
-            className="pl-9"
-          />
-        </div>
+        {(isCutter || isSewer) && (
+          <div className="flex flex-col gap-2">
+            {isCutter && (
+              <Button onClick={handleTakeStack} disabled={takingStack || myUnfinishedCount > 0} className="w-full sm:w-auto">
+                {takingStack ? (
+                  <>
+                    <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                    Берём заказы...
+                  </>
+                ) : (
+                  <>
+                    <Icon name="Layers" size={16} className="mr-2" />
+                    Взять стек заказов
+                  </>
+                )}
+              </Button>
+            )}
+            {isSewer && (
+              <Button onClick={handleTakeOrder} disabled={takingOrder || takeOrderCooldown} className="w-full sm:w-auto">
+                {takingOrder ? (
+                  <>
+                    <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                    Получаем заказ...
+                  </>
+                ) : (
+                  <>
+                    <Icon name="PackagePlus" size={16} className="mr-2" />
+                    Получить новый заказ
+                  </>
+                )}
+              </Button>
+            )}
+
+            {isCutter && myUnfinishedCount > 0 && (
+              <p className="text-sm text-muted-foreground">
+                У вас {myUnfinishedCount} нераскроенных заказов — раскроите их, прежде чем брать новый стек.
+              </p>
+            )}
+
+            {isSewer && myInWorkCount > 0 && (
+              <p className="text-sm text-muted-foreground">
+                У вас {myInWorkCount} заказов в работе — укажите рулон тесьмы и отправьте их на стикеровку.
+              </p>
+            )}
+          </div>
+        )}
 
         <Tabs
           value={activeTab}
@@ -366,24 +389,6 @@ const SewingItems = () => {
             ))}
           </TabsList>
         </Tabs>
-
-        <SewingItemsFilters
-          employees={employees}
-          materials={materials}
-          workshops={workshops}
-          typeFilter={typeFilter}
-          setTypeFilter={setTypeFilter}
-          employeeFilter={employeeFilter}
-          setEmployeeFilter={setEmployeeFilter}
-          materialFilter={materialFilter}
-          setMaterialFilter={setMaterialFilter}
-          widthFilter={widthFilter}
-          setWidthFilter={setWidthFilter}
-          heightFilter={heightFilter}
-          setHeightFilter={setHeightFilter}
-          workshopFilter={workshopFilter}
-          setWorkshopFilter={setWorkshopFilter}
-        />
 
         <SewingItemsTable
           loading={loading}
