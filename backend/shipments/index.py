@@ -19,13 +19,15 @@ def handler(event: dict, context) -> dict:
       - defect_writeoff     — списание брака: списывает количество с рулона
 
     GET  /                          - список документов (можно ?type=from_supplier)
+        доп. фильтры: ?supplier_id=1, ?status=Завершено, ?date_from=2026-01-01, ?date_to=2026-01-31
     GET  /?id=1                     - детальная карточка документа с позициями
-    POST /  { action: 'create', type, supplierId?, comment?, items: [...] }
+    POST /  { action: 'create', type, supplierId?, comment?, createdBy?, items: [...] }
         items для from_supplier: [{materialId, quantity, numberRolls}]
             - quantity — общее количество (шт. или пог.м.), numberRolls — сколько рулонов/пачек
               приехало; система делит quantity поровну на numberRolls новых рулонов и сама
               присваивает каждому штрихкод (как при приёмке машины с поставщика: посчитали
               материал и количество упаковок — остальное система оформляет сама)
+            - createdBy — id кладовщика, оформившего приёмку (опционально)
         items для return_to_supplier / defect_writeoff: [{rollId, quantity}]
         (для to_workshop используйте action 'request_to_workshop')
     POST /  { action: 'delete', id }
@@ -82,11 +84,13 @@ def handler(event: dict, context) -> dict:
             if shipment_id:
                 cur.execute(
                     "SELECT s.id, s.type, s.status, s.supplier_id, sup.name, s.workshop_id, w.name, "
-                    "s.shift_number, s.comment, s.created_at, s.completed_at, s.requested_by, u.full_name "
+                    "s.shift_number, s.comment, s.created_at, s.completed_at, s.requested_by, u.full_name, "
+                    "s.created_by, cu.full_name "
                     "FROM shipments s "
                     "LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                     "LEFT JOIN workshops w ON w.id = s.workshop_id "
                     "LEFT JOIN users u ON u.id = s.requested_by "
+                    "LEFT JOIN users cu ON cu.id = s.created_by "
                     "WHERE s.id = %s",
                     (int(shipment_id),),
                 )
@@ -132,25 +136,45 @@ def handler(event: dict, context) -> dict:
                     'completedAt': row[10].isoformat() if row[10] else None,
                     'requestedBy': row[11],
                     'requestedByName': row[12],
+                    'createdBy': row[13],
+                    'createdByName': row[14],
                     'items': items,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'shipment': detail})}
+
+            supplier_filter = params.get('supplier_id')
+            status_filter = params.get('status')
+            date_from = params.get('date_from')
+            date_to = params.get('date_to')
 
             conditions = []
             if type_filter:
                 type_esc = type_filter.replace("'", "''")
                 conditions.append(f"s.type = '{type_esc}'")
+            if supplier_filter:
+                conditions.append(f"s.supplier_id = {int(supplier_filter)}")
+            if status_filter:
+                status_esc = status_filter.replace("'", "''")
+                conditions.append(f"s.status = '{status_esc}'")
+            if date_from:
+                date_from_esc = date_from.replace("'", "''")
+                conditions.append(f"s.created_at >= '{date_from_esc}'::date")
+            if date_to:
+                date_to_esc = date_to.replace("'", "''")
+                conditions.append(f"s.created_at < '{date_to_esc}'::date + interval '1 day'")
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
             cur.execute(
                 f"SELECT s.id, s.type, s.status, s.supplier_id, sup.name, s.workshop_id, w.name, "
                 f"s.shift_number, s.comment, s.created_at, s.completed_at, "
                 f"(SELECT COUNT(*) FROM shipment_items si WHERE si.shipment_id = s.id) as items_count, "
-                f"u.full_name "
+                f"u.full_name, cu.full_name, "
+                f"(SELECT COALESCE(SUM(si.quantity), 0) FROM shipment_items si WHERE si.shipment_id = s.id) as total_qty "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                 f"LEFT JOIN workshops w ON w.id = s.workshop_id "
                 f"LEFT JOIN users u ON u.id = s.requested_by "
+                f"LEFT JOIN users cu ON cu.id = s.created_by "
                 f"{where_clause} "
                 f"ORDER BY s.created_at DESC, s.id DESC"
             )
@@ -169,6 +193,8 @@ def handler(event: dict, context) -> dict:
                     'completedAt': r[10].isoformat() if r[10] else None,
                     'itemsCount': r[11],
                     'requestedByName': r[12],
+                    'createdByName': r[13],
+                    'totalQuantity': float(r[14]) if r[14] is not None else 0.0,
                 }
                 for r in cur.fetchall()
             ]
@@ -198,10 +224,12 @@ def handler(event: dict, context) -> dict:
 
                 supplier_sql = int(supplier_id) if supplier_id not in (None, '') else 'NULL'
                 comment_esc = comment.replace("'", "''")
+                created_by = body_data.get('createdBy')
+                created_by_sql = int(created_by) if created_by not in (None, '') else 'NULL'
 
                 cur.execute(
-                    f"INSERT INTO shipments (type, status, supplier_id, comment, completed_at) "
-                    f"VALUES ('{doc_type}', 'Выполнена', {supplier_sql}, '{comment_esc}', now()) RETURNING id"
+                    f"INSERT INTO shipments (type, status, supplier_id, comment, completed_at, created_by) "
+                    f"VALUES ('{doc_type}', 'Завершено', {supplier_sql}, '{comment_esc}', now(), {created_by_sql}) RETURNING id"
                 )
                 shipment_id = cur.fetchone()[0]
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,11 +27,24 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { fetchShipments, createShipmentFromSupplier, type Shipment } from '@/lib/shipmentsApi';
+import { useAuth } from '@/context/AuthContext';
+import {
+  fetchShipments,
+  fetchShipmentDetail,
+  createShipmentFromSupplier,
+  type Shipment,
+  type ShipmentDetail,
+} from '@/lib/shipmentsApi';
 import { fetchSuppliers, type Supplier } from '@/lib/suppliersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
+import { printBarcodes } from '@/lib/printBarcodes';
 
 interface ItemRow {
   materialId: string;
@@ -54,10 +67,16 @@ const formatDate = (iso: string) => {
 
 const FromSupplier = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [supplierFilter, setSupplierFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -66,9 +85,22 @@ const FromSupplier = () => {
   const [rows, setRows] = useState<ItemRow[]>([{ ...emptyRow }]);
   const [lastCreatedRolls, setLastCreatedRolls] = useState<string[]>([]);
 
+  const [expandedRolls, setExpandedRolls] = useState<Record<number, ShipmentDetail | null>>({});
+  const [loadingRolls, setLoadingRolls] = useState<number | null>(null);
+
   const load = () => {
     setLoading(true);
-    Promise.all([fetchShipments('from_supplier'), fetchSuppliers(), fetchMaterialsData()])
+    Promise.all([
+      fetchShipments({
+        type: 'from_supplier',
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+        supplierId: supplierFilter !== 'all' ? Number(supplierFilter) : undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+      }),
+      fetchSuppliers(),
+      fetchMaterialsData(),
+    ])
       .then(([shipmentsData, suppliersData, materialsData]) => {
         setShipments(shipmentsData);
         setSuppliers(suppliersData);
@@ -79,7 +111,8 @@ const FromSupplier = () => {
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, supplierFilter, dateFrom, dateTo]);
 
   const openCreate = () => {
     setSupplierId('');
@@ -113,6 +146,7 @@ const FromSupplier = () => {
       const res = await createShipmentFromSupplier({
         supplierId: supplierId ? Number(supplierId) : undefined,
         comment: comment.trim() || undefined,
+        createdBy: user?.id,
         items,
       });
       toast({
@@ -127,6 +161,47 @@ const FromSupplier = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const toggleRolls = async (shipmentId: number) => {
+    if (shipmentId in expandedRolls) {
+      setExpandedRolls((prev) => {
+        const next = { ...prev };
+        delete next[shipmentId];
+        return next;
+      });
+      return;
+    }
+    setLoadingRolls(shipmentId);
+    try {
+      const detail = await fetchShipmentDetail(shipmentId);
+      setExpandedRolls((prev) => ({ ...prev, [shipmentId]: detail }));
+    } finally {
+      setLoadingRolls(null);
+    }
+  };
+
+  const printShipmentBarcodes = async (shipmentId: number) => {
+    let detail = expandedRolls[shipmentId];
+    if (!detail) {
+      detail = await fetchShipmentDetail(shipmentId);
+    }
+    const items = detail.items
+      .filter((i) => i.barcode)
+      .map((i) => ({ code: i.barcode as string, label: `${i.materialName} — ${i.quantity} ${i.unit || ''}` }));
+    printBarcodes(items, `Приёмка #${shipmentId}`);
+  };
+
+  const activeFiltersCount = useMemo(
+    () => [statusFilter !== 'all', supplierFilter !== 'all', !!dateFrom, !!dateTo].filter(Boolean).length,
+    [statusFilter, supplierFilter, dateFrom, dateTo]
+  );
+
+  const resetFilters = () => {
+    setStatusFilter('all');
+    setSupplierFilter('all');
+    setDateFrom('');
+    setDateTo('');
   };
 
   return (
@@ -250,6 +325,52 @@ const FromSupplier = () => {
           </Dialog>
         </div>
 
+        <div className="flex flex-wrap items-end gap-3 rounded-md border border-border bg-muted/30 p-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Статус</Label>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все статусы</SelectItem>
+                <SelectItem value="Новый">Новый</SelectItem>
+                <SelectItem value="Завершено">Завершено</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Поставщик</Label>
+            <Select value={supplierFilter} onValueChange={setSupplierFilter}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все поставщики</SelectItem>
+                {suppliers.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Дата от</Label>
+            <Input type="date" className="w-[160px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Дата до</Label>
+            <Input type="date" className="w-[160px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+          {activeFiltersCount > 0 && (
+            <Button variant="ghost" size="sm" onClick={resetFilters}>
+              <Icon name="X" size={14} className="mr-1" />
+              Сбросить
+            </Button>
+          )}
+        </div>
+
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -263,26 +384,85 @@ const FromSupplier = () => {
               <TableHeader>
                 <TableRow className="bg-primary hover:bg-primary">
                   <TableHead className="text-primary-foreground">#</TableHead>
+                  <TableHead className="text-primary-foreground">Материалы</TableHead>
                   <TableHead className="text-primary-foreground">Статус</TableHead>
+                  <TableHead className="text-primary-foreground">Кладовщик</TableHead>
                   <TableHead className="text-primary-foreground">Поставщик</TableHead>
-                  <TableHead className="text-primary-foreground">Позиций</TableHead>
                   <TableHead className="text-primary-foreground">Комментарий</TableHead>
                   <TableHead className="text-primary-foreground">Создано</TableHead>
+                  <TableHead className="text-primary-foreground"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {shipments.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell>{s.id}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{s.status}</Badge>
-                    </TableCell>
-                    <TableCell>{s.supplierName || '—'}</TableCell>
-                    <TableCell>{s.itemsCount}</TableCell>
-                    <TableCell>{s.comment || '—'}</TableCell>
-                    <TableCell>{formatDate(s.createdAt)}</TableCell>
-                  </TableRow>
-                ))}
+                {shipments.map((s) => {
+                  const detail = expandedRolls[s.id];
+                  const isExpanded = s.id in expandedRolls;
+                  return (
+                      <TableRow key={s.id}>
+                        <TableCell>{s.id}</TableCell>
+                        <TableCell>
+                          <div className="mb-1 font-semibold">
+                            Итого: {s.itemsCount} рул., {s.totalQuantity} п.м.
+                          </div>
+                          <Collapsible open={isExpanded}>
+                            <CollapsibleTrigger asChild>
+                              <Button
+                                variant="link"
+                                size="sm"
+                                className="h-auto px-0 py-0 text-xs"
+                                onClick={() => toggleRolls(s.id)}
+                                disabled={loadingRolls === s.id}
+                              >
+                                <Icon
+                                  name={isExpanded ? 'ChevronDown' : 'ChevronRight'}
+                                  size={12}
+                                  className="mr-1"
+                                />
+                                {loadingRolls === s.id ? 'Загрузка...' : `Показать рулоны (${s.itemsCount})`}
+                              </Button>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="mt-1.5 space-y-1">
+                              {detail?.items.map((item) => (
+                                <div key={item.id} className="flex items-center gap-1.5 text-xs">
+                                  <span className="font-medium">{item.materialName}</span>
+                                  <span className="text-muted-foreground">
+                                    — {item.quantity} {item.unit}
+                                  </span>
+                                  {item.barcode && (
+                                    <>
+                                      <Button
+                                        variant="outline"
+                                        size="icon"
+                                        className="h-5 w-5"
+                                        onClick={() => printBarcodes([{ code: item.barcode as string, label: `${item.materialName} — ${item.quantity} ${item.unit || ''}` }], item.barcode as string)}
+                                      >
+                                        <Icon name="Barcode" size={11} />
+                                      </Button>
+                                      <span className="font-mono-tech text-muted-foreground">
+                                        ({item.barcode})
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              ))}
+                            </CollapsibleContent>
+                          </Collapsible>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{s.status}</Badge>
+                        </TableCell>
+                        <TableCell>{s.createdByName || '—'}</TableCell>
+                        <TableCell>{s.supplierName || '—'}</TableCell>
+                        <TableCell>{s.comment || '—'}</TableCell>
+                        <TableCell>{formatDate(s.createdAt)}</TableCell>
+                        <TableCell>
+                          <Button variant="outline" size="icon" onClick={() => printShipmentBarcodes(s.id)}>
+                            <Icon name="Barcode" size={14} />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

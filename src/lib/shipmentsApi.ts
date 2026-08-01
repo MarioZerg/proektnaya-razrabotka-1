@@ -21,6 +21,8 @@ export interface Shipment {
   completedAt: string | null;
   itemsCount: number;
   requestedByName: string | null;
+  createdByName: string | null;
+  totalQuantity: number;
 }
 
 export interface ShipmentItem {
@@ -38,11 +40,27 @@ export interface ShipmentItem {
 export interface ShipmentDetail extends Shipment {
   items: ShipmentItem[];
   requestedBy: number | null;
+  createdBy: number | null;
 }
 
-export const fetchShipments = async (type?: ShipmentType): Promise<Shipment[]> => {
-  const url = type ? `${SHIPMENTS_URL}?type=${type}` : SHIPMENTS_URL;
-  const res = await fetch(url);
+export interface ShipmentFilters {
+  type?: ShipmentType;
+  supplierId?: number;
+  status?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export const fetchShipments = async (filters?: ShipmentType | ShipmentFilters): Promise<Shipment[]> => {
+  const f: ShipmentFilters = typeof filters === 'string' ? { type: filters } : filters || {};
+  const params = new URLSearchParams();
+  if (f.type) params.set('type', f.type);
+  if (f.supplierId) params.set('supplier_id', String(f.supplierId));
+  if (f.status) params.set('status', f.status);
+  if (f.dateFrom) params.set('date_from', f.dateFrom);
+  if (f.dateTo) params.set('date_to', f.dateTo);
+  const qs = params.toString();
+  const res = await fetch(qs ? `${SHIPMENTS_URL}?${qs}` : SHIPMENTS_URL);
   const data = await res.json();
   return data.shipments || [];
 };
@@ -74,6 +92,7 @@ export interface CreateFromSupplierResult {
 export const createShipmentFromSupplier = (payload: {
   supplierId?: number;
   comment?: string;
+  createdBy?: number;
   items: Array<{ materialId: number; quantity: number; numberRolls: number }>;
 }): Promise<CreateFromSupplierResult> => postAction({ action: 'create', type: 'from_supplier', ...payload });
 

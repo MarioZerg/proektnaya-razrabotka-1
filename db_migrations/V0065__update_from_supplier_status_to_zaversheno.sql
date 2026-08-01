@@ -1,0 +1,1 @@
+UPDATE shipments SET status = 'Завершено' WHERE type = 'from_supplier' AND status = 'Выполнена';
