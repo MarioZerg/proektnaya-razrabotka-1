@@ -3,6 +3,7 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
@@ -54,6 +55,7 @@ const SewingItems = () => {
 
   const [activeTab, setActiveTab] = useState<SewingStatus>(visibleTabs[0]?.value || 'Новый');
 
+  const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [employeeFilter, setEmployeeFilter] = useState('all');
   const [materialFilter, setMaterialFilter] = useState('all');
@@ -90,6 +92,7 @@ const SewingItems = () => {
   const ordersInTab = orders.filter((o) => o.sewingStatus === activeTab);
 
   const filteredOrders = ordersInTab.filter((o) => {
+    if (searchQuery.trim() && !o.orderNumber.toLowerCase().includes(searchQuery.trim().toLowerCase())) return false;
     if (typeFilter !== 'all' && o.orderType !== typeFilter) return false;
     if (employeeFilter !== 'all' && String(o.assignedUserId) !== employeeFilter) return false;
     if (materialFilter !== 'all' && o.material !== materials.find((m) => String(m.id) === materialFilter)?.name) return false;
@@ -281,11 +284,11 @@ const SewingItems = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="space-y-4 sm:space-y-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-xl font-bold">Товары для пошива</h1>
           {isCutter && (
-            <Button onClick={handleTakeStack} disabled={takingStack || myUnfinishedCount > 0}>
+            <Button onClick={handleTakeStack} disabled={takingStack || myUnfinishedCount > 0} className="w-full sm:w-auto">
               {takingStack ? (
                 <>
                   <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
@@ -300,7 +303,7 @@ const SewingItems = () => {
             </Button>
           )}
           {isSewer && (
-            <Button onClick={handleTakeOrder} disabled={takingOrder || takeOrderCooldown}>
+            <Button onClick={handleTakeOrder} disabled={takingOrder || takeOrderCooldown} className="w-full sm:w-auto">
               {takingOrder ? (
                 <>
                   <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
@@ -328,6 +331,23 @@ const SewingItems = () => {
           </p>
         )}
 
+        <div className="relative">
+          <Icon
+            name="Search"
+            size={16}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            placeholder="Поиск по номеру заказа или ШК"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPage(1);
+            }}
+            className="pl-9"
+          />
+        </div>
+
         <Tabs
           value={activeTab}
           onValueChange={(v) => {
@@ -335,9 +355,9 @@ const SewingItems = () => {
             setPage(1);
           }}
         >
-          <TabsList className="flex h-auto flex-wrap justify-start gap-1">
+          <TabsList className="flex h-auto w-full flex-nowrap justify-start gap-1 overflow-x-auto sm:flex-wrap">
             {visibleTabs.map((tab) => (
-              <TabsTrigger key={tab.value} value={tab.value} className="gap-1.5">
+              <TabsTrigger key={tab.value} value={tab.value} className="shrink-0 gap-1.5">
                 {tab.label}
                 <Badge variant="secondary" className="ml-1">
                   {countForTab(tab.value)}
@@ -372,6 +392,7 @@ const SewingItems = () => {
           page={page}
           setPage={setPage}
           totalPages={totalPages}
+          totalCount={filteredOrders.length}
         />
 
         <SewingItemDetailDialog

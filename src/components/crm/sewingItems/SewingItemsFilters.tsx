@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Select,
   SelectContent,
@@ -5,6 +6,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
+import Icon from '@/components/ui/icon';
 import type { Employee } from '@/lib/usersApi';
 import type { Material } from '@/lib/materialsApi';
 import type { Workshop } from '@/lib/workshopsApi';
@@ -45,8 +48,24 @@ const SewingItemsFilters = ({
   workshopFilter,
   setWorkshopFilter,
 }: SewingItemsFiltersProps) => {
+  const [mobileOpen, setMobileOpen] = useState(false);
+
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full justify-between sm:hidden"
+        onClick={() => setMobileOpen((v) => !v)}
+      >
+        <span className="flex items-center gap-1.5">
+          <Icon name="SlidersHorizontal" size={14} />
+          Фильтры
+        </span>
+        <Icon name={mobileOpen ? 'ChevronUp' : 'ChevronDown'} size={14} />
+      </Button>
+
+      <div className={`grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6 ${mobileOpen ? 'mt-3 grid' : 'hidden'} sm:mt-0 sm:grid`}>
       <Select value={typeFilter} onValueChange={setTypeFilter}>
         <SelectTrigger>
           <SelectValue placeholder="Все типы" />
@@ -127,6 +146,7 @@ const SewingItemsFilters = ({
           ))}
         </SelectContent>
       </Select>
+      </div>
     </div>
   );
 };

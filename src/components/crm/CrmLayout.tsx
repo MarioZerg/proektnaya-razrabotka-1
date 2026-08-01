@@ -201,7 +201,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           <SidebarTrigger />
           <img src="/assets/megatul-logo.png" alt="МЕГАТЮЛЬ" className="h-5 w-auto" />
         </div>
-        <div className="p-6">{children}</div>
+        <div className="p-3 sm:p-6">{children}</div>
       </main>
     </SidebarProvider>
   );

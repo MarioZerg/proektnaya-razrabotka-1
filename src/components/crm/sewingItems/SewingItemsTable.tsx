@@ -18,6 +18,7 @@ import {
 import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
 import { marketplaceLogo, formatDate, timeAgo } from '@/components/crm/sewingItems/sewingItemsShared';
+import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
 
 interface SewingItemsTableProps {
   loading: boolean;
@@ -26,6 +27,7 @@ interface SewingItemsTableProps {
   page: number;
   setPage: Dispatch<SetStateAction<number>>;
   totalPages: number;
+  totalCount?: number;
 }
 
 const SewingItemsTable = ({
@@ -35,6 +37,7 @@ const SewingItemsTable = ({
   page,
   setPage,
   totalPages,
+  totalCount = 0,
 }: SewingItemsTableProps) => {
   if (loading) {
     return (
@@ -47,7 +50,19 @@ const SewingItemsTable = ({
 
   return (
     <>
-      <div className="rounded-md border border-border">
+      <div className="md:hidden">
+        <SewingItemsCards
+          loading={loading}
+          pagedOrders={pagedOrders}
+          onOpenDetail={onOpenDetail}
+          page={page}
+          setPage={setPage}
+          totalPages={totalPages}
+          totalCount={totalCount}
+        />
+      </div>
+
+      <div className="hidden rounded-md border border-border md:block">
         <Table>
           <TableHeader>
             <TableRow className="bg-primary hover:bg-primary">
@@ -109,37 +124,39 @@ const SewingItemsTable = ({
       </div>
 
       {totalPages > 1 && (
-        <Pagination>
-          <PaginationContent>
-            <PaginationItem>
-              <PaginationLink
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="cursor-pointer"
-              >
-                <Icon name="ChevronLeft" size={16} />
-              </PaginationLink>
-            </PaginationItem>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-              <PaginationItem key={p}>
+        <div className="hidden md:block">
+          <Pagination>
+            <PaginationContent>
+              <PaginationItem>
                 <PaginationLink
-                  isActive={p === page}
-                  onClick={() => setPage(p)}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
                   className="cursor-pointer"
                 >
-                  {p}
+                  <Icon name="ChevronLeft" size={16} />
                 </PaginationLink>
               </PaginationItem>
-            ))}
-            <PaginationItem>
-              <PaginationLink
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                className="cursor-pointer"
-              >
-                <Icon name="ChevronRight" size={16} />
-              </PaginationLink>
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                <PaginationItem key={p}>
+                  <PaginationLink
+                    isActive={p === page}
+                    onClick={() => setPage(p)}
+                    className="cursor-pointer"
+                  >
+                    {p}
+                  </PaginationLink>
+                </PaginationItem>
+              ))}
+              <PaginationItem>
+                <PaginationLink
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  className="cursor-pointer"
+                >
+                  <Icon name="ChevronRight" size={16} />
+                </PaginationLink>
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>
       )}
     </>
   );
