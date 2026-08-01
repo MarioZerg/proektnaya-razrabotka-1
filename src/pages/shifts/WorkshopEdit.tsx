@@ -31,6 +31,7 @@ import {
 } from '@/lib/workshopsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { workshopSettingsConfig } from '@/lib/workshopSettingsConfig';
+import { printShiftSticker } from '@/lib/printShiftSticker';
 
 const WorkshopEdit = () => {
   const { id } = useParams<{ id: string }>();
@@ -160,9 +161,20 @@ const WorkshopEdit = () => {
               <p className="text-sm text-muted-foreground">В этом цехе пока нет открытых смен</p>
             ) : (
               workshop.shifts.map((s) => (
-                <Badge key={s.number} variant="secondary" className="px-3 py-1.5 text-sm">
-                  Смена № {s.number} — {s.employeesCount} сотр.
-                </Badge>
+                <div key={s.number} className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1">
+                  <Badge variant="secondary" className="px-2 py-1 text-sm">
+                    Смена № {s.number} — {s.employeesCount} сотр.
+                  </Badge>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6"
+                    title="Напечатать стикер смены 58×40"
+                    onClick={() => printShiftSticker(s.number)}
+                  >
+                    <Icon name="Printer" size={13} />
+                  </Button>
+                </div>
               ))
             )}
           </CardContent>

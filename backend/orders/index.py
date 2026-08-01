@@ -4,6 +4,25 @@ import os
 import psycopg2
 
 
+def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
+    """Пишет запись в журнал действий (audit_log). Вызывается в той же транзакции,
+    что и само изменение, непосредственно перед conn.commit()."""
+    cur.execute(
+        "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, entity_id, description, details) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            'production',
+            action,
+            entity_type,
+            int(entity_id) if entity_id not in (None, '') else None,
+            description,
+            json.dumps(details) if details else None,
+        ),
+    )
+
+
 def handler(event: dict, context) -> dict:
     """Управляет заказами с маркетплейсов (OZON, WB, Яндекс.Маркет).
 
@@ -215,6 +234,8 @@ def handler(event: dict, context) -> dict:
     if method == 'POST':
         body_data = json.loads(event.get('body') or '{}')
         action = body_data.get('action')
+        actor_id = body_data.get('actorId')
+        actor_name = body_data.get('actorName')
 
         conn = psycopg2.connect(dsn)
         try:
@@ -277,6 +298,11 @@ def handler(event: dict, context) -> dict:
                     f"UPDATE orders SET sewing_status = 'На раскрое', assigned_user_id = {int(user_id)}, "
                     f"workshop_id = {int(workshop_id)} WHERE id IN ({ids_csv})"
                 )
+                log_action(
+                    cur, actor_id, actor_name, 'take_stack', 'order', None,
+                    f'Взял в раскрой стек из {len(order_ids)} заказов',
+                    {'orderIds': order_ids, 'workshopId': workshop_id, 'shiftNumber': shift_number},
+                )
                 conn.commit()
                 return {
                     'statusCode': 200,
@@ -324,6 +350,10 @@ def handler(event: dict, context) -> dict:
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
+                log_action(
+                    cur, actor_id, actor_name, 'create_manual', 'order', new_id,
+                    f'Создал заказ {order_number} вручную ({marketplace}, {product})',
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 
@@ -372,6 +402,11 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 
                 cur.execute(f"UPDATE orders SET {', '.join(fields)} WHERE id = {int(item_id)}")
+                log_action(
+                    cur, actor_id, actor_name, 'update_order', 'order', item_id,
+                    f'Изменил заказ #{item_id}',
+                    {k: v for k, v in body_data.items() if k not in ('action', 'id', 'actorId', 'actorName')},
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
@@ -543,6 +578,11 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now() WHERE id = {int(item_id)}"
                 )
+                log_action(
+                    cur, actor_id, actor_name, 'cut', 'order', item_id,
+                    f'Раскроил заказ #{item_id}',
+                    {'rollId': roll_id_chosen},
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
@@ -568,6 +608,10 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     f"UPDATE orders SET sewing_status = 'В работе', assigned_user_id = {int(user_id)} "
                     f"WHERE id = {order_id}"
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'take_order', 'order', order_id,
+                    f'Взял в работу заказ #{order_id}',
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'orderId': order_id})}
@@ -641,6 +685,10 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         f"UPDATE orders SET sewing_status = 'Стикеровка' WHERE id = {int(item_id)}"
                     )
+                    log_action(
+                        cur, actor_id, actor_name, 'send_to_stickering', 'order', item_id,
+                        f'Отправил заказ #{item_id} на стикеровку',
+                    )
                     conn.commit()
                     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
@@ -692,6 +740,11 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     f"UPDATE orders SET sewing_status = 'Стикеровка' WHERE id = {int(item_id)}"
                 )
+                log_action(
+                    cur, actor_id, actor_name, 'send_to_stickering', 'order', item_id,
+                    f'Отправил заказ #{item_id} на стикеровку',
+                    {'rollId': roll_id_chosen},
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
@@ -726,6 +779,10 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': f'Заказ в статусе "{current_status}" нельзя отменить'}),
                     }
 
+                log_action(
+                    cur, actor_id, actor_name, 'cancel_order', 'order', item_id,
+                    f'Отменил заказ #{item_id} (был в статусе "{current_status}")',
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
@@ -734,6 +791,10 @@ def handler(event: dict, context) -> dict:
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
                 cur.execute(f"DELETE FROM orders WHERE id = {int(item_id)}")
+                log_action(
+                    cur, actor_id, actor_name, 'delete_order', 'order', item_id,
+                    f'Удалил заказ #{item_id}',
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 

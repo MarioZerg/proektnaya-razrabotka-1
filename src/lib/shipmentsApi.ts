@@ -1,3 +1,5 @@
+import { withActor } from '@/lib/actor';
+
 const SHIPMENTS_URL = 'https://functions.poehali.dev/a68cce8d-f3b0-4f06-a66a-305eeacd17bb';
 
 export type ShipmentType =
@@ -35,6 +37,7 @@ export interface ShipmentItem {
   rollBarcode: string | null;
   quantity: number | null;
   requestedQuantity: number | null;
+  numberRolls: number | null;
 }
 
 export interface ShipmentDetail extends Shipment {
@@ -75,7 +78,7 @@ const postAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(SHIPMENTS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withActor(payload)),
   });
   const data = await res.json();
   if (!res.ok) {
@@ -86,15 +89,32 @@ const postAction = async (payload: Record<string, unknown>) => {
 
 export interface CreateFromSupplierResult {
   id: number;
-  createdRolls: string[];
 }
 
+// Приёмка от поставщика теперь уходит на подтверждение админом — рулоны создаются
+// только после approveSupply(). supplierId обязателен.
 export const createShipmentFromSupplier = (payload: {
-  supplierId?: number;
+  supplierId: number;
   comment?: string;
   createdBy?: number;
   items: Array<{ materialId: number; quantity: number; numberRolls: number }>;
 }): Promise<CreateFromSupplierResult> => postAction({ action: 'create', type: 'from_supplier', ...payload });
+
+// Правка позиций неподтверждённой поставки (например, кладовщик ошибся в метраже)
+export const updatePendingSupply = (
+  id: number,
+  payload: { supplierId?: number; items: Array<{ materialId: number; quantity: number; numberRolls: number }> }
+) => postAction({ action: 'update_pending_supply', id, ...payload });
+
+export interface ApproveSupplyResult {
+  success: true;
+  createdRolls: string[];
+}
+
+// Подтверждение поставки: только теперь создаются реальные рулоны на складе
+export const approveSupply = (id: number): Promise<ApproveSupplyResult> => postAction({ action: 'approve_supply', id });
+
+export const rejectSupply = (id: number) => postAction({ action: 'reject_supply', id });
 
 export const createShipmentReturnToSupplier = (payload: {
   supplierId?: number;
