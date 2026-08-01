@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get employees with shift status",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Open shift without userId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "open" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Close shift without userId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "close" },
+      "expectedStatus": 400
+    }
+  ]
+}
