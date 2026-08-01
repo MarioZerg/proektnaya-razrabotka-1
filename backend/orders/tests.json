@@ -25,6 +25,20 @@
       "path": "/",
       "body": {"action": "create_manual", "orderNumber": "119956630-172", "marketplace": "OZON", "orderType": "FBO", "product": "Вуаль 200x265", "quantity": 1},
       "expectedStatus": 409
+    },
+    {
+      "name": "Take stack without userId fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "take_stack", "workshopId": 1},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Cut without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "cut"},
+      "expectedStatus": 400
     }
   ]
 }

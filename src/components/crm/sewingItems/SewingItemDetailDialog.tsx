@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -25,6 +26,7 @@ import Icon from '@/components/ui/icon';
 import type { Order, OrderDetail } from '@/lib/ordersApi';
 import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
+import type { Roll } from '@/lib/rollsApi';
 import { marketplaceLogo, formatDate, timeAgo, statusOptions } from '@/components/crm/sewingItems/sewingItemsShared';
 
 interface SewingItemDetailDialogProps {
@@ -40,8 +42,10 @@ interface SewingItemDetailDialogProps {
   onStatusChange: (status: string) => void;
   onAssignUser: (userId: string) => void;
   onAssignWorkshop: (workshopId: string) => void;
-  onCut: () => void;
+  onCut: (rollId?: number) => void;
   readOnly?: boolean;
+  isCutterView?: boolean;
+  availableRolls?: Roll[];
 }
 
 const SewingItemDetailDialog = ({
@@ -59,7 +63,13 @@ const SewingItemDetailDialog = ({
   onAssignWorkshop,
   onCut,
   readOnly = false,
+  isCutterView = false,
+  availableRolls = [],
 }: SewingItemDetailDialogProps) => {
+  const [selectedRollId, setSelectedRollId] = useState<string>('');
+
+  const isAlreadyCut = selectedOrder?.sewingStatus === 'Раскроено';
+
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
@@ -71,7 +81,53 @@ const SewingItemDetailDialog = ({
         </DialogHeader>
         {selectedOrder && (
           <div className="space-y-4">
-            {!readOnly && (
+            {!readOnly && isCutterView && (
+              <Card className="border-border shadow-none">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm">Выбор рулона тюля</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-wrap items-end gap-3">
+                  <div className="w-64 space-y-1.5">
+                    <Label>Рулон в вашем цехе/смене</Label>
+                    <Select value={selectedRollId} onValueChange={setSelectedRollId} disabled={cutting || isAlreadyCut}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите рулон" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableRolls.length === 0 ? (
+                          <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет доступных рулонов</div>
+                        ) : (
+                          availableRolls.map((r) => (
+                            <SelectItem key={r.id} value={String(r.id)}>
+                              {r.materialName} #{r.barcode} — {r.remainingQuantity} {r.unit}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <Button
+                    onClick={() => onCut(selectedRollId ? Number(selectedRollId) : undefined)}
+                    disabled={cutting || isAlreadyCut || !selectedRollId}
+                  >
+                    {cutting ? (
+                      <>
+                        <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                        Списываем материалы...
+                      </>
+                    ) : (
+                      <>
+                        <Icon name="Scissors" size={16} className="mr-2" />
+                        Раскроено
+                      </>
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {!readOnly && !isCutterView && (
               <Card className="border-border shadow-none">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm">Действия</CardTitle>
@@ -135,10 +191,7 @@ const SewingItemDetailDialog = ({
                     </Select>
                   </div>
 
-                  <Button
-                    onClick={onCut}
-                    disabled={cutting || selectedOrder.sewingStatus === 'Раскроено'}
-                  >
+                  <Button onClick={() => onCut()} disabled={cutting || isAlreadyCut}>
                     {cutting ? (
                       <>
                         <Icon name="Loader2" size={16} className="mr-2 animate-spin" />

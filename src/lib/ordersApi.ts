@@ -89,6 +89,15 @@ export const updateOrder = (
   }>
 ) => postAction({ action: 'update_order', id, ...fields });
 
-export const cutOrder = (id: number) => postAction({ action: 'cut', id });
+export const cutOrder = (id: number, rollId?: number) => postAction({ action: 'cut', id, rollId });
 
 export const deleteOrder = (id: number) => postAction({ action: 'delete_order', id });
+
+export interface TakeStackResult {
+  success: true;
+  count: number;
+  orderIds: number[];
+}
+
+export const takeStack = (userId: number, workshopId: number, shiftNumber?: number | null): Promise<TakeStackResult> =>
+  postAction({ action: 'take_stack', userId, workshopId, shiftNumber });

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -9,6 +11,7 @@ import {
   fetchOrderDetail,
   updateOrder,
   cutOrder,
+  takeStack,
   type Order,
   type OrderDetail,
   type SewingStatus,
@@ -16,6 +19,7 @@ import {
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
+import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import SewingItemsFilters from '@/components/crm/sewingItems/SewingItemsFilters';
 import SewingItemsTable from '@/components/crm/sewingItems/SewingItemsTable';
 import SewingItemDetailDialog from '@/components/crm/sewingItems/SewingItemDetailDialog';
@@ -28,15 +32,17 @@ const SewingItems = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
+  const [rolls, setRolls] = useState<Roll[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [takingStack, setTakingStack] = useState(false);
+
+  const isCutter = user?.role === 'cutter';
+  const isProductionRole = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
 
   const visibleTabs = useMemo(
-    () =>
-      user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer'
-        ? statusTabs.filter((t) => t.value !== 'Новый')
-        : statusTabs,
-    [user?.role]
+    () => (isProductionRole ? statusTabs.filter((t) => t.value !== 'Новый') : statusTabs),
+    [isProductionRole]
   );
 
   const [activeTab, setActiveTab] = useState<SewingStatus>(visibleTabs[0]?.value || 'Новый');
@@ -57,12 +63,13 @@ const SewingItems = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchOrders(), fetchEmployees(), fetchMaterialsData(), fetchWorkshops()])
-      .then(([ordersData, employeesData, materialsData, workshopsData]) => {
+    Promise.all([fetchOrders(), fetchEmployees(), fetchMaterialsData(), fetchWorkshops(), fetchRolls({ status: 'in_workshop' })])
+      .then(([ordersData, employeesData, materialsData, workshopsData, rollsData]) => {
         setOrders(ordersData);
         setEmployees(employeesData);
         setMaterials(materialsData.materials);
         setWorkshops(workshopsData);
+        setRolls(rollsData);
       })
       .finally(() => setLoading(false));
   };
@@ -71,7 +78,6 @@ const SewingItems = () => {
     load();
   }, []);
 
-  const isProductionRole = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
   const isReadOnlyTab = activeTab === 'Раскроено' && (user?.role === 'sewer' || user?.role === 'cutter');
 
   const ordersInTab = orders.filter((o) => o.sewingStatus === activeTab);
@@ -102,6 +108,10 @@ const SewingItems = () => {
     }
     return orders.filter((o) => o.sewingStatus === status).length;
   };
+
+  const myUnfinishedCount = orders.filter(
+    (o) => o.sewingStatus === 'На раскрое' && o.assignedUserId === user?.id
+  ).length;
 
   const loadDetail = async (orderId: number) => {
     setDetailLoading(true);
@@ -168,11 +178,11 @@ const SewingItems = () => {
     }
   };
 
-  const handleCut = async () => {
+  const handleCut = async (rollId?: number) => {
     if (!selectedOrder) return;
     setCutting(true);
     try {
-      await cutOrder(selectedOrder.id);
+      await cutOrder(selectedOrder.id, rollId);
       toast({ title: 'Раскрой выполнен', description: 'Материалы списаны с рулонов' });
       setSelectedOrder({ ...selectedOrder, sewingStatus: 'Раскроено' });
       load();
@@ -188,10 +198,55 @@ const SewingItems = () => {
     }
   };
 
+  const handleTakeStack = async () => {
+    if (!user?.workshopId) {
+      toast({ title: 'У вас не указан цех в профиле', variant: 'destructive' });
+      return;
+    }
+    setTakingStack(true);
+    try {
+      const res = await takeStack(user.id, user.workshopId, user.shiftNumber);
+      toast({ title: `Взято в работу заказов: ${res.count}` });
+      setActiveTab('На раскрое');
+      load();
+    } catch (e) {
+      toast({ title: 'Не удалось взять стек', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setTakingStack(false);
+    }
+  };
+
+  const myWorkshopRolls = rolls.filter(
+    (r) => r.workshopId === user?.workshopId && (!user?.shiftNumber || r.shiftNumber === user.shiftNumber)
+  );
+
   return (
     <CrmLayout>
       <div className="space-y-6">
-        <h1 className="text-xl font-bold">Товары для пошива</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold">Товары для пошива</h1>
+          {isCutter && (
+            <Button onClick={handleTakeStack} disabled={takingStack || myUnfinishedCount > 0}>
+              {takingStack ? (
+                <>
+                  <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                  Берём заказы...
+                </>
+              ) : (
+                <>
+                  <Icon name="Layers" size={16} className="mr-2" />
+                  Взять стек заказов
+                </>
+              )}
+            </Button>
+          )}
+        </div>
+
+        {isCutter && myUnfinishedCount > 0 && (
+          <p className="text-sm text-muted-foreground">
+            У вас {myUnfinishedCount} нераскроенных заказов — раскроите их, прежде чем брать новый стек.
+          </p>
+        )}
 
         <Tabs
           value={activeTab}
@@ -254,6 +309,8 @@ const SewingItems = () => {
           onAssignWorkshop={handleAssignWorkshop}
           onCut={handleCut}
           readOnly={isReadOnlyTab}
+          isCutterView={isCutter}
+          availableRolls={myWorkshopRolls}
         />
       </div>
     </CrmLayout>

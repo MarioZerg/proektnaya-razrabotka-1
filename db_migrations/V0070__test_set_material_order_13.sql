@@ -1,0 +1,1 @@
+UPDATE orders SET material='Вуаль', width=200, height=240 WHERE id=13;
