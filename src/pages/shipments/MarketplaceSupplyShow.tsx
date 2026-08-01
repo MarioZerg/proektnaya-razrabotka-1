@@ -82,15 +82,18 @@ const MarketplaceSupplyShow = () => {
   const [availableGoods, setAvailableGoods] = useState<GoodsWarehouseItem[]>([]);
   const [selectedGoods, setSelectedGoods] = useState<number[]>([]);
 
+  const [readyGoods, setReadyGoods] = useState<GoodsWarehouseItem[]>([]);
+
   const [scanOrderNumber, setScanOrderNumber] = useState('');
   const [scanning, setScanning] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
     setLoading(true);
-    fetchSupplyDetail(supplyId)
-      .then((data) => {
+    Promise.all([fetchSupplyDetail(supplyId), fetchGoodsWarehouse('in_stock')])
+      .then(([data, goods]) => {
         setSupply(data);
+        setReadyGoods(goods);
         setSupplyNumber(data.supplyNumber || '');
         setSupplyBarcode(data.supplyBarcode || '');
         setCluster(data.cluster || '');
@@ -323,11 +326,18 @@ const MarketplaceSupplyShow = () => {
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">
-              {supply.type === 'FBS'
-                ? `Добавлено товаров: ${supply.items.length}`
-                : `Товары в поставке (${supply.items.length})`}
-            </h2>
+            {supply.type === 'FBS' ? (
+              <div className="flex flex-wrap gap-4 text-sm">
+                <span>
+                  Готово к сканированию: <b>{readyGoods.length}</b>
+                </span>
+                <span>
+                  Добавлено товаров: <b>{supply.items.length}</b>
+                </span>
+              </div>
+            ) : (
+              <h2 className="font-semibold">Товары в поставке ({supply.items.length})</h2>
+            )}
             {canEditItems && supply.type === 'FBO' && (
               <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
                 <DialogTrigger asChild>
@@ -406,7 +416,32 @@ const MarketplaceSupplyShow = () => {
             </Card>
           )}
 
-          {supply.items.length === 0 ? (
+          {supply.type === 'FBS' ? (
+            readyGoods.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Нет готовых товаров, ожидающих сканирования
+              </p>
+            ) : (
+              <div className="rounded-md border border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-primary hover:bg-primary">
+                      <TableHead className="text-primary-foreground">Номер заказа</TableHead>
+                      <TableHead className="text-primary-foreground">Товар</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {readyGoods.map((g) => (
+                      <TableRow key={g.id}>
+                        <TableCell className="font-medium">{g.orderNumber || '—'}</TableCell>
+                        <TableCell>{g.product || '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )
+          ) : supply.items.length === 0 ? (
             <p className="text-sm text-muted-foreground">В поставке пока нет товаров</p>
           ) : (
             <div className="rounded-md border border-border">
