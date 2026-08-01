@@ -93,6 +93,14 @@ export const createSupply = (payload: {
 export const addSupplyItems = (supplyId: number, goodsWarehouseIds: number[]) =>
   postAction({ action: 'add_items', supplyId, goodsWarehouseIds });
 
+export interface ScanOrderResult {
+  success: true;
+  goodsWarehouseId: number;
+}
+
+export const scanOrderToSupply = (supplyId: number, orderNumber: string): Promise<ScanOrderResult> =>
+  postAction({ action: 'scan_order', supplyId, orderNumber });
+
 export const removeSupplyItem = (itemId: number) => postAction({ action: 'remove_item', itemId });
 
 export const updateSupply = (

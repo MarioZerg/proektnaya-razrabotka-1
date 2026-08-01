@@ -1,0 +1,1 @@
+INSERT INTO goods_warehouse (order_id, status) VALUES (15, 'in_stock');

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ import {
   fetchSupplyDetail,
   addSupplyItems,
   removeSupplyItem,
+  scanOrderToSupply,
   updateSupply,
   moveSupplyStatus,
   deleteSupply,
@@ -80,6 +82,10 @@ const MarketplaceSupplyShow = () => {
   const [availableGoods, setAvailableGoods] = useState<GoodsWarehouseItem[]>([]);
   const [selectedGoods, setSelectedGoods] = useState<number[]>([]);
 
+  const [scanOrderNumber, setScanOrderNumber] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const scanInputRef = useRef<HTMLInputElement>(null);
+
   const load = () => {
     setLoading(true);
     fetchSupplyDetail(supplyId)
@@ -124,6 +130,23 @@ const MarketplaceSupplyShow = () => {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleScanOrder = async () => {
+    const orderNumber = scanOrderNumber.trim();
+    if (!orderNumber) return;
+    setScanning(true);
+    try {
+      await scanOrderToSupply(supplyId, orderNumber);
+      toast({ title: `Заказ ${orderNumber} добавлен` });
+      setScanOrderNumber('');
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка сканирования', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setScanning(false);
+      scanInputRef.current?.focus();
     }
   };
 
@@ -199,7 +222,7 @@ const MarketplaceSupplyShow = () => {
 
   const nextStatusLabel: Record<string, string> = {
     'На сборке': 'Взять на сборку',
-    Отгрузка: 'Отгрузить в Газельку',
+    Отгрузка: supply.type === 'FBS' ? 'Закрыть поставку и передать в доставку' : 'Отгрузить в Газельку',
     Выполнена: 'Отметить выполненной',
   };
 
@@ -300,8 +323,12 @@ const MarketplaceSupplyShow = () => {
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Товары в поставке ({supply.items.length})</h2>
-            {canEditItems && (
+            <h2 className="font-semibold">
+              {supply.type === 'FBS'
+                ? `Добавлено товаров: ${supply.items.length}`
+                : `Товары в поставке (${supply.items.length})`}
+            </h2>
+            {canEditItems && supply.type === 'FBO' && (
               <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
                 <DialogTrigger asChild>
                   <Button size="sm" onClick={openAddDialog}>
@@ -345,6 +372,39 @@ const MarketplaceSupplyShow = () => {
               </Dialog>
             )}
           </div>
+
+          {canEditItems && supply.type === 'FBS' && (
+            <Card className="border-primary/30 bg-primary/5 shadow-none">
+              <CardContent
+                className="space-y-2 pt-6"
+                onClick={(e) => {
+                  if (!(e.target as HTMLElement).closest('input, button, a')) {
+                    scanInputRef.current?.focus();
+                  }
+                }}
+              >
+                <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                  <Icon name="ScanLine" size={18} />
+                  Отсканируйте или введите номер заказа
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    ref={scanInputRef}
+                    autoFocus
+                    placeholder="Номер заказа"
+                    value={scanOrderNumber}
+                    onChange={(e) => setScanOrderNumber(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleScanOrder()}
+                    disabled={scanning}
+                    className="font-mono-tech"
+                  />
+                  <Button onClick={handleScanOrder} disabled={scanning || !scanOrderNumber.trim()}>
+                    {scanning ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Добавить заказ'}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {supply.items.length === 0 ? (
             <p className="text-sm text-muted-foreground">В поставке пока нет товаров</p>

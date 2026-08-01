@@ -25,6 +25,11 @@ def handler(event: dict, context) -> dict:
         - создаёт пустую поставку в статусе "Открытая" (без товаров)
     POST /  { action: 'add_items', supplyId, goodsWarehouseIds: [...] }
         - добавляет товары со склада в поставку, резервирует их (status='reserved')
+        - используется для FBO (выбор товаров чекбоксами из списка)
+    POST /  { action: 'scan_order', supplyId, orderNumber }
+        - добавляет заказ в поставку по номеру (сканирование/ввод номера заказа);
+          используется для FBS — кладовщик вводит/сканирует номер заказа, система находит
+          готовый товар на складе (goods_warehouse, status='in_stock') и резервирует его
     POST /  { action: 'remove_item', itemId }
         - убирает товар из поставки, возвращает его на склад (status='in_stock')
     POST /  { action: 'update', supplyId, supplyNumber?, supplyBarcode?, cluster?,
@@ -268,6 +273,54 @@ def handler(event: dict, context) -> dict:
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'scan_order':
+                supply_id = body_data.get('supplyId')
+                order_number = (body_data.get('orderNumber') or '').strip()
+                if not supply_id or not order_number:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку и номер заказа'})}
+
+                cur.execute("SELECT status FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
+                if row[0] not in ('Открытая', 'На сборке'):
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять заказы'})}
+
+                order_number_esc = order_number.replace("'", "''")
+                cur.execute(
+                    "SELECT gw.id, gw.status FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.order_id "
+                    f"WHERE o.order_number = '{order_number_esc}'"
+                )
+                gw_row = cur.fetchone()
+                if not gw_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Заказ {order_number} не найден на складе готового товара (не готов или не принят)'}),
+                    }
+                goods_id, goods_status = gw_row
+                if goods_status != 'in_stock':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Заказ {order_number} уже зарезервирован или отгружен'}),
+                    }
+
+                cur.execute(
+                    "SELECT id FROM marketplace_supply_items WHERE supply_id = %s AND goods_warehouse_id = %s",
+                    (int(supply_id), goods_id),
+                )
+                if cur.fetchone():
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Заказ {order_number} уже в этой поставке'})}
+
+                cur.execute(
+                    f"INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id) VALUES ({int(supply_id)}, {goods_id})"
+                )
+                cur.execute(f"UPDATE goods_warehouse SET status = 'reserved' WHERE id = {goods_id}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'goodsWarehouseId': goods_id})}
 
             if action == 'remove_item':
                 item_id = body_data.get('itemId')

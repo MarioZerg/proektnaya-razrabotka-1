@@ -32,6 +32,13 @@
       "path": "/",
       "body": { "action": "move_status", "supplyId": 1, "status": "Не статус" },
       "expectedStatus": 400
+    },
+    {
+      "name": "Scan order without supplyId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "scan_order", "orderNumber": "TEST-001" },
+      "expectedStatus": 400
     }
   ]
 }
