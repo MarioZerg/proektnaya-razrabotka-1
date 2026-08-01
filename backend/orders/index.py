@@ -26,8 +26,17 @@ def handler(event: dict, context) -> dict:
           Если у закройщика уже есть незавершённые заказы в "На раскрое" — отклоняется (409).
     POST /  { action: 'cut', id, rollId }
         - переводит заказ в статус "Раскроено". Тюль списывается с указанного закройщиком
-          рулона rollId (должен быть в его цехе/смене), остальные материалы товара (фурнитура,
-          упаковка) списываются автоматически по FIFO со склада — как раньше
+          рулона rollId (должен быть в его цехе/смене), упаковка (этикетки, пакеты) списывается
+          автоматически по FIFO со склада. Тесьма (Аксессуары) НЕ списывается на этом этапе —
+          её позже указывает швея перед отправкой на стикеровку
+    POST /  { action: 'take_order', userId }
+        - швея получает в работу самый старый заказ из "Раскроено" (по времени раскроя, FIFO,
+          без привязки к цеху). Атомарная операция (FOR UPDATE SKIP LOCKED) исключает дубли
+          при одновременных нажатиях. Назначает заказ на userId, переводит в "В работе"
+    POST /  { action: 'send_to_stickering', id, rollId }
+        - швея указывает рулон тесьмы (должен быть в её цехе/смене), с которого списывается
+          тесьма товара, и переводит заказ в статус "Стикеровка". Без указания рулона тесьмы
+          перевод недоступен
     POST /  { action: 'delete_order', id }
 
     Args:
@@ -368,14 +377,21 @@ def handler(event: dict, context) -> dict:
                 tul_type_row = cur.fetchone()
                 tul_type_id = tul_type_row[0] if tul_type_row else None
 
+                cur.execute("SELECT id FROM material_types WHERE name = 'Аксессуары'")
+                acc_type_row = cur.fetchone()
+                acc_type_id = acc_type_row[0] if acc_type_row else None
+
                 fabric_material_id = None
-                if tul_type_id:
-                    for material_id, _qty in needed:
-                        cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
-                        mt_row = cur.fetchone()
-                        if mt_row and mt_row[0] == tul_type_id:
-                            fabric_material_id = material_id
-                            break
+                accessory_material_ids = set()
+                for material_id, _qty in needed:
+                    cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
+                    mt_row = cur.fetchone()
+                    if not mt_row:
+                        continue
+                    if tul_type_id and mt_row[0] == tul_type_id and fabric_material_id is None:
+                        fabric_material_id = material_id
+                    elif acc_type_id and mt_row[0] == acc_type_id:
+                        accessory_material_ids.add(material_id)
 
                 if fabric_material_id and not roll_id_chosen:
                     return {
@@ -388,6 +404,10 @@ def handler(event: dict, context) -> dict:
                 write_offs = []
                 for material_id, qty_needed in needed:
                     qty_needed = float(qty_needed)
+
+                    if material_id in accessory_material_ids:
+                        # Тесьма списывается позже швеёй перед отправкой на стикеровку
+                        continue
 
                     if fabric_material_id and material_id == fabric_material_id:
                         cur.execute(
@@ -467,7 +487,144 @@ def handler(event: dict, context) -> dict:
                     )
 
                 cur.execute(
-                    f"UPDATE orders SET sewing_status = 'Раскроено' WHERE id = {int(item_id)}"
+                    f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now() WHERE id = {int(item_id)}"
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'take_order':
+                user_id = body_data.get('userId')
+                if not user_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
+
+                cur.execute(
+                    "SELECT id FROM orders WHERE sewing_status = 'Раскроено' "
+                    "ORDER BY cut_at ASC NULLS LAST, id ASC "
+                    "LIMIT 1 FOR UPDATE SKIP LOCKED"
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Нет раскроенных заказов в очереди'}),
+                    }
+                order_id = row[0]
+
+                cur.execute(
+                    f"UPDATE orders SET sewing_status = 'В работе', assigned_user_id = {int(user_id)} "
+                    f"WHERE id = {order_id}"
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'orderId': order_id})}
+
+            if action == 'send_to_stickering':
+                item_id = body_data.get('id')
+                roll_id_chosen = body_data.get('rollId')
+                if not item_id or not roll_id_chosen:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите id заказа и rollId рулона тесьмы'}),
+                    }
+
+                cur.execute(
+                    "SELECT material, width, height, workshop_id, sewing_status FROM orders WHERE id = %s",
+                    (int(item_id),),
+                )
+                order_row = cur.fetchone()
+                if not order_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
+                material, width, height, order_workshop_id, current_status = order_row
+                if current_status == 'Стикеровка':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Заказ уже отправлен на стикеровку'}),
+                    }
+
+                cur.execute(
+                    "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                    (material, width, height),
+                )
+                item_row = cur.fetchone()
+                if not item_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Не найден товар маркетплейса для этого материала/размера'}),
+                    }
+                marketplace_item_id = item_row[0]
+
+                cur.execute("SELECT id FROM material_types WHERE name = 'Аксессуары'")
+                acc_type_row = cur.fetchone()
+                acc_type_id = acc_type_row[0] if acc_type_row else None
+
+                cur.execute(
+                    "SELECT material_id, quantity FROM marketplace_item_materials WHERE marketplace_item_id = %s",
+                    (marketplace_item_id,),
+                )
+                needed = cur.fetchall()
+
+                trim_material_id = None
+                trim_qty_needed = None
+                if acc_type_id:
+                    for material_id, qty in needed:
+                        cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
+                        mt_row = cur.fetchone()
+                        if mt_row and mt_row[0] == acc_type_id:
+                            trim_material_id = material_id
+                            trim_qty_needed = float(qty)
+                            break
+
+                if not trim_material_id:
+                    cur.execute(
+                        f"UPDATE orders SET sewing_status = 'Стикеровка' WHERE id = {int(item_id)}"
+                    )
+                    conn.commit()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+                cur.execute(
+                    "SELECT id, remaining_quantity, workshop_id FROM rolls WHERE id = %s "
+                    "AND material_id = %s AND status = 'in_workshop'",
+                    (int(roll_id_chosen), trim_material_id),
+                )
+                roll_row = cur.fetchone()
+                if not roll_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Выбранный рулон тесьмы не найден или недоступен'}),
+                    }
+                if order_workshop_id and roll_row[2] != order_workshop_id:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Рулон не принадлежит вашему цеху/смене'}),
+                    }
+                roll_remaining = float(roll_row[1])
+                if roll_remaining < trim_qty_needed:
+                    cur.execute("SELECT name, unit FROM materials WHERE id = %s", (trim_material_id,))
+                    mat_name, mat_unit = cur.fetchone()
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'{mat_name}: нужно {trim_qty_needed} {mat_unit}, в рулоне осталось {roll_remaining} {mat_unit}'}
+                        ),
+                    }
+
+                new_remaining = roll_remaining - trim_qty_needed
+                new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
+                cur.execute(
+                    f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {roll_row[0]}"
+                )
+                cur.execute(
+                    f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
+                    f"VALUES ({int(item_id)}, {trim_material_id}, {roll_row[0]}, {trim_qty_needed})"
+                )
+                cur.execute(
+                    f"UPDATE orders SET sewing_status = 'Стикеровка' WHERE id = {int(item_id)}"
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

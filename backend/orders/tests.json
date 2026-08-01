@@ -39,6 +39,20 @@
       "path": "/",
       "body": {"action": "cut"},
       "expectedStatus": 400
+    },
+    {
+      "name": "Take order without userId fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "take_order"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Send to stickering without rollId fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "send_to_stickering", "id": 1},
+      "expectedStatus": 400
     }
   ]
 }

@@ -45,7 +45,9 @@ interface SewingItemDetailDialogProps {
   onCut: (rollId?: number) => void;
   readOnly?: boolean;
   isCutterView?: boolean;
+  isSewerView?: boolean;
   availableRolls?: Roll[];
+  onSendToStickering?: (rollId?: number) => void;
 }
 
 const SewingItemDetailDialog = ({
@@ -64,11 +66,14 @@ const SewingItemDetailDialog = ({
   onCut,
   readOnly = false,
   isCutterView = false,
+  isSewerView = false,
   availableRolls = [],
+  onSendToStickering,
 }: SewingItemDetailDialogProps) => {
   const [selectedRollId, setSelectedRollId] = useState<string>('');
 
   const isAlreadyCut = selectedOrder?.sewingStatus === 'Раскроено';
+  const isAlreadyStickering = selectedOrder?.sewingStatus === 'Стикеровка';
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -127,7 +132,57 @@ const SewingItemDetailDialog = ({
               </Card>
             )}
 
-            {!readOnly && !isCutterView && (
+            {!readOnly && isSewerView && (
+              <Card className="border-border shadow-none">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm">Выбор рулона тесьмы</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-wrap items-end gap-3">
+                  <div className="w-64 space-y-1.5">
+                    <Label>Рулон тесьмы в вашем цехе/смене</Label>
+                    <Select
+                      value={selectedRollId}
+                      onValueChange={setSelectedRollId}
+                      disabled={cutting || isAlreadyStickering}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите рулон" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableRolls.length === 0 ? (
+                          <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет доступных рулонов</div>
+                        ) : (
+                          availableRolls.map((r) => (
+                            <SelectItem key={r.id} value={String(r.id)}>
+                              {r.materialName} #{r.barcode} — {r.remainingQuantity} {r.unit}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <Button
+                    onClick={() => onSendToStickering?.(selectedRollId ? Number(selectedRollId) : undefined)}
+                    disabled={cutting || isAlreadyStickering || !selectedRollId}
+                  >
+                    {cutting ? (
+                      <>
+                        <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                        Списываем тесьму...
+                      </>
+                    ) : (
+                      <>
+                        <Icon name="Tag" size={16} className="mr-2" />
+                        Отправить на стикеровку
+                      </>
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {!readOnly && !isCutterView && !isSewerView && (
               <Card className="border-border shadow-none">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm">Действия</CardTitle>

@@ -12,12 +12,14 @@ import {
   updateOrder,
   cutOrder,
   takeStack,
+  takeOrder,
+  sendToStickering,
   type Order,
   type OrderDetail,
   type SewingStatus,
 } from '@/lib/ordersApi';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
-import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
+import { fetchMaterialsData, type Material, type MaterialType } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import SewingItemsFilters from '@/components/crm/sewingItems/SewingItemsFilters';
@@ -25,19 +27,25 @@ import SewingItemsTable from '@/components/crm/sewingItems/SewingItemsTable';
 import SewingItemDetailDialog from '@/components/crm/sewingItems/SewingItemDetailDialog';
 import { statusTabs } from '@/components/crm/sewingItems/sewingItemsShared';
 
+const TAKE_ORDER_COOLDOWN_MS = 5000;
+
 const SewingItems = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
+  const [materialTypes, setMaterialTypes] = useState<MaterialType[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [takingStack, setTakingStack] = useState(false);
+  const [takingOrder, setTakingOrder] = useState(false);
+  const [takeOrderCooldown, setTakeOrderCooldown] = useState(false);
 
   const isCutter = user?.role === 'cutter';
+  const isSewer = user?.role === 'sewer';
   const isProductionRole = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
 
   const visibleTabs = useMemo(
@@ -68,6 +76,7 @@ const SewingItems = () => {
         setOrders(ordersData);
         setEmployees(employeesData);
         setMaterials(materialsData.materials);
+        setMaterialTypes(materialsData.types);
         setWorkshops(workshopsData);
         setRolls(rollsData);
       })
@@ -111,6 +120,10 @@ const SewingItems = () => {
 
   const myUnfinishedCount = orders.filter(
     (o) => o.sewingStatus === 'На раскрое' && o.assignedUserId === user?.id
+  ).length;
+
+  const myInWorkCount = orders.filter(
+    (o) => o.sewingStatus === 'В работе' && o.assignedUserId === user?.id
   ).length;
 
   const loadDetail = async (orderId: number) => {
@@ -183,13 +196,34 @@ const SewingItems = () => {
     setCutting(true);
     try {
       await cutOrder(selectedOrder.id, rollId);
-      toast({ title: 'Раскрой выполнен', description: 'Материалы списаны с рулонов' });
+      toast({ title: 'Раскрой выполнен', description: 'Тюль списан, тесьму укажет швея перед стикеровкой' });
       setSelectedOrder({ ...selectedOrder, sewingStatus: 'Раскроено' });
       load();
       loadDetail(selectedOrder.id);
     } catch (e) {
       toast({
         title: 'Не удалось выполнить раскрой',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setCutting(false);
+    }
+  };
+
+  const handleSendToStickering = async (rollId?: number) => {
+    if (!selectedOrder || !rollId) return;
+    setCutting(true);
+    try {
+      await sendToStickering(selectedOrder.id, rollId);
+      toast({ title: 'Заказ отправлен на стикеровку', description: 'Тесьма списана с рулона' });
+      setSelectedOrder({ ...selectedOrder, sewingStatus: 'Стикеровка' });
+      load();
+      loadDetail(selectedOrder.id);
+      setDialogOpen(false);
+    } catch (e) {
+      toast({
+        title: 'Не удалось отправить на стикеровку',
         description: e instanceof Error ? e.message : undefined,
         variant: 'destructive',
       });
@@ -216,9 +250,37 @@ const SewingItems = () => {
     }
   };
 
-  const myWorkshopRolls = rolls.filter(
+  const handleTakeOrder = async () => {
+    if (!user) return;
+    setTakingOrder(true);
+    setTakeOrderCooldown(true);
+    try {
+      await takeOrder(user.id);
+      toast({ title: 'Заказ получен' });
+      setActiveTab('В работе');
+      load();
+    } catch (e) {
+      toast({ title: 'Не удалось получить заказ', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setTakingOrder(false);
+      setTimeout(() => setTakeOrderCooldown(false), TAKE_ORDER_COOLDOWN_MS);
+    }
+  };
+
+  const tulTypeId = useMemo(() => materialTypes.find((t) => t.name === 'Тюль')?.id, [materialTypes]);
+  const accessoryTypeId = useMemo(() => materialTypes.find((t) => t.name === 'Аксессуары')?.id, [materialTypes]);
+
+  const rollsInMyWorkshop = rolls.filter(
     (r) => r.workshopId === user?.workshopId && (!user?.shiftNumber || r.shiftNumber === user.shiftNumber)
   );
+
+  const myFabricRolls = tulTypeId
+    ? rollsInMyWorkshop.filter((r) => materials.find((m) => m.id === r.materialId)?.typeId === tulTypeId)
+    : rollsInMyWorkshop;
+
+  const myTrimRolls = accessoryTypeId
+    ? rollsInMyWorkshop.filter((r) => materials.find((m) => m.id === r.materialId)?.typeId === accessoryTypeId)
+    : [];
 
   return (
     <CrmLayout>
@@ -240,11 +302,32 @@ const SewingItems = () => {
               )}
             </Button>
           )}
+          {isSewer && (
+            <Button onClick={handleTakeOrder} disabled={takingOrder || takeOrderCooldown}>
+              {takingOrder ? (
+                <>
+                  <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                  Получаем заказ...
+                </>
+              ) : (
+                <>
+                  <Icon name="PackagePlus" size={16} className="mr-2" />
+                  Получить новый заказ
+                </>
+              )}
+            </Button>
+          )}
         </div>
 
         {isCutter && myUnfinishedCount > 0 && (
           <p className="text-sm text-muted-foreground">
             У вас {myUnfinishedCount} нераскроенных заказов — раскроите их, прежде чем брать новый стек.
+          </p>
+        )}
+
+        {isSewer && myInWorkCount > 0 && (
+          <p className="text-sm text-muted-foreground">
+            У вас {myInWorkCount} заказов в работе — укажите рулон тесьмы и отправьте их на стикеровку.
           </p>
         )}
 
@@ -310,7 +393,9 @@ const SewingItems = () => {
           onCut={handleCut}
           readOnly={isReadOnlyTab}
           isCutterView={isCutter}
-          availableRolls={myWorkshopRolls}
+          isSewerView={isSewer}
+          availableRolls={isSewer ? myTrimRolls : myFabricRolls}
+          onSendToStickering={handleSendToStickering}
         />
       </div>
     </CrmLayout>

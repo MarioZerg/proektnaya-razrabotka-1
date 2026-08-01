@@ -1,0 +1,1 @@
+UPDATE rolls SET workshop_id=1, shift_number=NULL, status='in_workshop' WHERE id=2;

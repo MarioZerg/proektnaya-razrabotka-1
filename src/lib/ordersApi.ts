@@ -101,3 +101,14 @@ export interface TakeStackResult {
 
 export const takeStack = (userId: number, workshopId: number, shiftNumber?: number | null): Promise<TakeStackResult> =>
   postAction({ action: 'take_stack', userId, workshopId, shiftNumber });
+
+export interface TakeOrderResult {
+  success: true;
+  orderId: number;
+}
+
+export const takeOrder = (userId: number): Promise<TakeOrderResult> =>
+  postAction({ action: 'take_order', userId });
+
+export const sendToStickering = (id: number, rollId: number) =>
+  postAction({ action: 'send_to_stickering', id, rollId });
