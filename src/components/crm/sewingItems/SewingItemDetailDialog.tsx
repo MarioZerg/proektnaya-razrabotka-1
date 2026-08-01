@@ -101,22 +101,22 @@ const SewingItemDetailDialog = ({
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 pr-8">
             <DialogTitle>Товар #{selectedOrder?.id}</DialogTitle>
             {selectedOrder && <Badge variant="secondary">{selectedOrder.sewingStatus}</Badge>}
-            {canCancel && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="ml-auto h-7 w-7 text-muted-foreground hover:text-destructive"
-                onClick={() => setCancelConfirmOpen(true)}
-                disabled={cancelling}
-                aria-label="Отменить заказ"
-              >
-                <Icon name="X" size={16} />
-              </Button>
-            )}
           </div>
+          {canCancel && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-1 w-fit text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => setCancelConfirmOpen(true)}
+              disabled={cancelling}
+            >
+              <Icon name="Ban" size={14} className="mr-1.5" />
+              Отменить заказ
+            </Button>
+          )}
         </DialogHeader>
 
         <AlertDialog open={cancelConfirmOpen} onOpenChange={setCancelConfirmOpen}>
