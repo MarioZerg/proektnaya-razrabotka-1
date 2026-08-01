@@ -1,16 +1,9 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -27,10 +20,16 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { fetchSupplies, createSupply, type Supply } from '@/lib/marketplaceSuppliesApi';
-import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import { useAuth } from '@/context/AuthContext';
+import { fetchSupplies, createSupply, type Supply, type SupplyType } from '@/lib/marketplaceSuppliesApi';
 
 const formatDate = (iso: string) => {
   const d = new Date(iso);
@@ -43,152 +42,187 @@ const formatDate = (iso: string) => {
   });
 };
 
+const formatDateOnly = (iso: string) => {
+  const d = new Date(iso);
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+};
+
 const marketplaceLogo: Record<string, { label: string; className: string }> = {
   OZON: { label: 'OZON', className: 'text-[#005BFF] font-bold' },
   WB: { label: 'Wildberries', className: 'text-[#CB11AB] font-bold' },
   Yandex: { label: 'Яндекс.Маркет', className: 'text-[#FFCC00] font-bold' },
 };
 
+const statusVariant: Record<string, { className: string }> = {
+  Открытая: { className: 'bg-slate-500 text-white hover:bg-slate-500' },
+  'На сборке': { className: 'bg-sky-500 text-white hover:bg-sky-500' },
+  Отгрузка: { className: 'bg-amber-500 text-white hover:bg-amber-500' },
+  Выполнена: { className: 'bg-emerald-600 text-white hover:bg-emerald-600' },
+};
+
+const createOptions: Array<{ marketplace: string; type: SupplyType; label: string }> = [
+  { marketplace: 'OZON', type: 'FBS', label: 'OZON FBS' },
+  { marketplace: 'WB', type: 'FBS', label: 'WB FBS' },
+  { marketplace: 'OZON', type: 'FBO', label: 'OZON FBO' },
+  { marketplace: 'WB', type: 'FBO', label: 'WB FBO' },
+];
+
 const ToMarketplace = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [supplies, setSupplies] = useState<Supply[]>([]);
-  const [availableGoods, setAvailableGoods] = useState<GoodsWarehouseItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
 
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [marketplace, setMarketplace] = useState('');
-  const [comment, setComment] = useState('');
-  const [selectedGoods, setSelectedGoods] = useState<number[]>([]);
+  const [statusFilter, setStatusFilter] = useState('open');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [marketplaceFilter, setMarketplaceFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [search, setSearch] = useState('');
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchSupplies(), fetchGoodsWarehouse('in_stock')])
-      .then(([suppliesData, goodsData]) => {
-        setSupplies(suppliesData);
-        setAvailableGoods(goodsData);
+    fetchSupplies({
+      status: statusFilter === 'open' ? undefined : statusFilter === 'closed' ? 'Выполнена' : statusFilter,
+      type: typeFilter !== 'all' ? (typeFilter as SupplyType) : undefined,
+      marketplace: marketplaceFilter !== 'all' ? marketplaceFilter : undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+      search: search || undefined,
+    })
+      .then((data) => {
+        const filtered =
+          statusFilter === 'open' ? data.filter((s) => s.status !== 'Выполнена') : data;
+        setSupplies(filtered);
       })
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, typeFilter, marketplaceFilter, dateFrom, dateTo]);
 
-  const openCreate = () => {
-    setMarketplace('');
-    setComment('');
-    setSelectedGoods([]);
-    setDialogOpen(true);
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    load();
   };
 
-  const toggleGood = (id: number) => {
-    setSelectedGoods((prev) => (prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id]));
-  };
-
-  const handleSave = async () => {
-    if (!marketplace) {
-      toast({ title: 'Выберите маркетплейс', variant: 'destructive' });
-      return;
-    }
-    if (selectedGoods.length === 0) {
-      toast({ title: 'Выберите хотя бы один товар', variant: 'destructive' });
-      return;
-    }
-    setSaving(true);
+  const handleCreate = async (marketplace: string, type: SupplyType) => {
+    setCreating(true);
     try {
-      await createSupply({
-        marketplace,
-        comment: comment.trim() || undefined,
-        goodsWarehouseIds: selectedGoods,
-      });
-      toast({ title: 'Поставка оформлена' });
-      setDialogOpen(false);
-      load();
+      const res = await createSupply({ marketplace, type, createdBy: user?.id });
+      toast({ title: 'Поставка создана', description: `#${res.id} — заполните товары на карточке` });
+      navigate(`/crm/shipments/to-marketplace/${res.id}`);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
-      setSaving(false);
+      setCreating(false);
     }
+  };
+
+  const resetFilters = () => {
+    setStatusFilter('open');
+    setTypeFilter('all');
+    setMarketplaceFilter('all');
+    setDateFrom('');
+    setDateTo('');
+    setSearch('');
   };
 
   return (
     <CrmLayout>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold">Поставки в маркетплейс</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Формирование отгрузки готового товара со склада на маркетплейс
-            </p>
-          </div>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button onClick={openCreate}>
+        <div>
+          <h1 className="text-xl font-bold">Поставки маркетплейса</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Формирование отгрузки готового товара со склада на маркетплейс
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3 rounded-md border border-border bg-muted/30 p-3">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button disabled={creating}>
                 <Icon name="Plus" size={16} className="mr-2" />
-                Новая поставка
+                Создать поставку
               </Button>
-            </DialogTrigger>
-            <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Поставка в маркетплейс</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label>Маркетплейс</Label>
-                  <Select value={marketplace} onValueChange={setMarketplace}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Выберите маркетплейс" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="OZON">OZON</SelectItem>
-                      <SelectItem value="WB">Wildberries</SelectItem>
-                      <SelectItem value="Yandex">Яндекс.Маркет</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              {createOptions.map((opt) => (
+                <DropdownMenuItem key={opt.label} onClick={() => handleCreate(opt.marketplace, opt.type)}>
+                  {opt.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-                <div className="space-y-2">
-                  <Label>Товары на складе ({availableGoods.length})</Label>
-                  <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border border-border p-2">
-                    {availableGoods.length === 0 ? (
-                      <p className="p-2 text-sm text-muted-foreground">На складе нет готового товара</p>
-                    ) : (
-                      availableGoods.map((g) => (
-                        <label
-                          key={g.id}
-                          className="flex cursor-pointer items-center gap-2 rounded p-1.5 hover:bg-muted"
-                        >
-                          <Checkbox
-                            checked={selectedGoods.includes(g.id)}
-                            onCheckedChange={() => toggleGood(g.id)}
-                          />
-                          <span className="text-sm font-medium">{g.orderNumber}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {g.material} {g.width}×{g.height}
-                          </span>
-                          {g.shelfName && (
-                            <Badge variant="outline" className="ml-auto text-xs">
-                              {g.shelfName}
-                            </Badge>
-                          )}
-                        </label>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>Комментарий</Label>
-                  <Textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} />
-                </div>
-
-                <Button className="w-full" onClick={handleSave} disabled={saving}>
-                  {saving ? 'Сохранение...' : `Оформить поставку (${selectedGoods.length})`}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Статус</Label>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="open">Открытые</SelectItem>
+                <SelectItem value="closed">Закрытые</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Тип</Label>
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="w-[130px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все типы</SelectItem>
+                <SelectItem value="FBS">FBS</SelectItem>
+                <SelectItem value="FBO">FBO</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Маркетплейс</Label>
+            <Select value={marketplaceFilter} onValueChange={setMarketplaceFilter}>
+              <SelectTrigger className="w-[170px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все маркетплейсы</SelectItem>
+                <SelectItem value="OZON">OZON</SelectItem>
+                <SelectItem value="WB">WB</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Отгрузка от</Label>
+            <Input type="date" className="w-[150px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Отгрузка до</Label>
+            <Input type="date" className="w-[150px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+          <form onSubmit={handleSearch} className="flex items-end gap-1.5">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Поиск</Label>
+              <Input
+                className="w-[180px]"
+                placeholder="Номер поставки"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <Button type="submit" size="icon" variant="outline">
+              <Icon name="Search" size={14} />
+            </Button>
+          </form>
+          <Button variant="ghost" size="sm" onClick={resetFilters}>
+            <Icon name="X" size={14} className="mr-1" />
+            Сбросить фильтр
+          </Button>
         </div>
 
         {loading ? (
@@ -205,10 +239,15 @@ const ToMarketplace = () => {
                 <TableRow className="bg-primary hover:bg-primary">
                   <TableHead className="text-primary-foreground">#</TableHead>
                   <TableHead className="text-primary-foreground">Статус</TableHead>
+                  <TableHead className="text-primary-foreground">Номер поставки</TableHead>
+                  <TableHead className="text-primary-foreground">id Газельки</TableHead>
                   <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
-                  <TableHead className="text-primary-foreground">Товаров</TableHead>
-                  <TableHead className="text-primary-foreground">Комментарий</TableHead>
-                  <TableHead className="text-primary-foreground">Отгружено</TableHead>
+                  <TableHead className="text-primary-foreground">Тип</TableHead>
+                  <TableHead className="text-primary-foreground">Создан</TableHead>
+                  <TableHead className="text-primary-foreground">Отгрузка в Газельку</TableHead>
+                  <TableHead className="text-primary-foreground">Отгрузка в маркетплейс</TableHead>
+                  <TableHead className="text-primary-foreground">Выполнен</TableHead>
+                  <TableHead className="text-primary-foreground"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -216,16 +255,41 @@ const ToMarketplace = () => {
                   <TableRow key={s.id}>
                     <TableCell>{s.id}</TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{s.status}</Badge>
+                      <Badge className={statusVariant[s.status]?.className}>{s.status}</Badge>
                     </TableCell>
+                    <TableCell>
+                      {s.supplyNumber ? (
+                        <>
+                          <div className="font-semibold">{s.supplyNumber}</div>
+                          {s.supplyBarcode && (
+                            <div className="text-xs text-muted-foreground">{s.supplyBarcode}</div>
+                          )}
+                          {s.cluster && <div className="text-xs text-muted-foreground">({s.cluster})</div>}
+                        </>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    <TableCell>{s.gazelkaId || '—'}</TableCell>
                     <TableCell>
                       <span className={marketplaceLogo[s.marketplace]?.className}>
                         {marketplaceLogo[s.marketplace]?.label || s.marketplace}
                       </span>
                     </TableCell>
-                    <TableCell>{s.itemsCount}</TableCell>
-                    <TableCell>{s.comment || '—'}</TableCell>
-                    <TableCell>{s.shippedAt ? formatDate(s.shippedAt) : '—'}</TableCell>
+                    <TableCell>{s.type}</TableCell>
+                    <TableCell>{formatDate(s.createdAt)}</TableCell>
+                    <TableCell>{s.shipToGazelkaAt ? formatDateOnly(s.shipToGazelkaAt) : '—'}</TableCell>
+                    <TableCell>{s.shipToMarketplaceAt ? formatDateOnly(s.shipToMarketplaceAt) : '—'}</TableCell>
+                    <TableCell>{s.completedAt ? formatDateOnly(s.completedAt) : '—'}</TableCell>
+                    <TableCell>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => navigate(`/crm/shipments/to-marketplace/${s.id}`)}
+                      >
+                        <Icon name="Pencil" size={14} />
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

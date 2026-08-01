@@ -1,13 +1,26 @@
 const SUPPLIES_URL = 'https://functions.poehali.dev/d0a75e82-2c63-440c-8eae-dd036df61fac';
 
+export type SupplyStatus = 'Открытая' | 'На сборке' | 'Отгрузка' | 'Выполнена';
+export type SupplyType = 'FBO' | 'FBS';
+
+export const supplyStatusFlow: SupplyStatus[] = ['Открытая', 'На сборке', 'Отгрузка', 'Выполнена'];
+
 export interface Supply {
   id: number;
   marketplace: string;
-  status: string;
+  type: SupplyType;
+  status: SupplyStatus;
   comment: string | null;
   createdAt: string;
-  shippedAt: string | null;
+  supplyNumber: string | null;
+  supplyBarcode: string | null;
+  cluster: string | null;
+  gazelkaId: string | null;
+  shipToGazelkaAt: string | null;
+  shipToMarketplaceAt: string | null;
+  completedAt: string | null;
   itemsCount: number;
+  createdByName: string | null;
 }
 
 export interface SupplyItem {
@@ -18,14 +31,34 @@ export interface SupplyItem {
   material: string | null;
   width: number | null;
   height: number | null;
+  goodsStatus: string | null;
+  shippedAt: string | null;
 }
 
 export interface SupplyDetail extends Supply {
   items: SupplyItem[];
+  createdBy: number | null;
 }
 
-export const fetchSupplies = async (): Promise<Supply[]> => {
-  const res = await fetch(SUPPLIES_URL);
+export interface SupplyFilters {
+  status?: string;
+  type?: SupplyType;
+  marketplace?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+}
+
+export const fetchSupplies = async (filters?: SupplyFilters): Promise<Supply[]> => {
+  const params = new URLSearchParams();
+  if (filters?.status) params.set('status', filters.status);
+  if (filters?.type) params.set('type', filters.type);
+  if (filters?.marketplace) params.set('marketplace', filters.marketplace);
+  if (filters?.dateFrom) params.set('date_from', filters.dateFrom);
+  if (filters?.dateTo) params.set('date_to', filters.dateTo);
+  if (filters?.search) params.set('search', filters.search);
+  const qs = params.toString();
+  const res = await fetch(qs ? `${SUPPLIES_URL}?${qs}` : SUPPLIES_URL);
   const data = await res.json();
   return data.supplies || [];
 };
@@ -49,7 +82,33 @@ const postAction = async (payload: Record<string, unknown>) => {
   return data;
 };
 
-export const createSupply = (payload: { marketplace: string; comment?: string; goodsWarehouseIds: number[] }) =>
-  postAction({ action: 'create', ...payload });
+export const createSupply = (payload: {
+  marketplace: string;
+  type: SupplyType;
+  comment?: string;
+  createdBy?: number;
+  goodsWarehouseIds?: number[];
+}) => postAction({ action: 'create', ...payload });
+
+export const addSupplyItems = (supplyId: number, goodsWarehouseIds: number[]) =>
+  postAction({ action: 'add_items', supplyId, goodsWarehouseIds });
+
+export const removeSupplyItem = (itemId: number) => postAction({ action: 'remove_item', itemId });
+
+export const updateSupply = (
+  supplyId: number,
+  fields: Partial<{
+    supplyNumber: string;
+    supplyBarcode: string;
+    cluster: string;
+    gazelkaId: string;
+    comment: string;
+    shipToGazelkaAt: string;
+    shipToMarketplaceAt: string;
+  }>
+) => postAction({ action: 'update', supplyId, ...fields });
+
+export const moveSupplyStatus = (supplyId: number, status: SupplyStatus) =>
+  postAction({ action: 'move_status', supplyId, status });
 
 export const deleteSupply = (id: number) => postAction({ action: 'delete', id });
