@@ -53,6 +53,20 @@
       "path": "/",
       "body": {"action": "send_to_stickering", "id": 1},
       "expectedStatus": 400
+    },
+    {
+      "name": "Cancel order without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "cancel_order"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Cancel non-existent order fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "cancel_order", "id": 999999},
+      "expectedStatus": 404
     }
   ]
 }

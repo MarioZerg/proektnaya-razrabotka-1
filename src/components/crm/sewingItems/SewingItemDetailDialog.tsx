@@ -6,6 +6,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -48,6 +58,8 @@ interface SewingItemDetailDialogProps {
   isSewerView?: boolean;
   availableRolls?: Roll[];
   onSendToStickering?: (rollId?: number) => void;
+  onCancelOrder?: () => void;
+  cancelling?: boolean;
 }
 
 const SewingItemDetailDialog = ({
@@ -69,11 +81,21 @@ const SewingItemDetailDialog = ({
   isSewerView = false,
   availableRolls = [],
   onSendToStickering,
+  onCancelOrder,
+  cancelling = false,
 }: SewingItemDetailDialogProps) => {
   const [selectedRollId, setSelectedRollId] = useState<string>('');
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
 
   const isAlreadyCut = selectedOrder?.sewingStatus === 'Раскроено';
   const isAlreadyStickering = selectedOrder?.sewingStatus === 'Стикеровка';
+
+  const canCancel =
+    !!onCancelOrder &&
+    ((isCutterView && selectedOrder?.sewingStatus === 'На раскрое') ||
+      (isSewerView && selectedOrder?.sewingStatus === 'В работе'));
+
+  const cancelTargetLabel = isCutterView ? '«Новый»' : '«Раскроено»';
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -82,8 +104,44 @@ const SewingItemDetailDialog = ({
           <div className="flex items-center gap-2">
             <DialogTitle>Товар #{selectedOrder?.id}</DialogTitle>
             {selectedOrder && <Badge variant="secondary">{selectedOrder.sewingStatus}</Badge>}
+            {canCancel && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="ml-auto h-7 w-7 text-muted-foreground hover:text-destructive"
+                onClick={() => setCancelConfirmOpen(true)}
+                disabled={cancelling}
+                aria-label="Отменить заказ"
+              >
+                <Icon name="X" size={16} />
+              </Button>
+            )}
           </div>
         </DialogHeader>
+
+        <AlertDialog open={cancelConfirmOpen} onOpenChange={setCancelConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Отменить заказ?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Заказ будет отменён и вернётся во вкладку {cancelTargetLabel}, откуда его снова
+                сможет взять в работу любой сотрудник в порядке очереди. Из системы заказ не пропадёт.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Не отменять</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() => {
+                  setCancelConfirmOpen(false);
+                  onCancelOrder?.();
+                }}
+              >
+                Отменить заказ
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         {selectedOrder && (
           <div className="space-y-4">
             {!readOnly && isCutterView && (

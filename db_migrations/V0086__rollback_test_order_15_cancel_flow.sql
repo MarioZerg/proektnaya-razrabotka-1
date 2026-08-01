@@ -1,0 +1,1 @@
+UPDATE orders SET sewing_status='Новый', assigned_user_id=NULL, workshop_id=NULL, cut_at=NULL WHERE id=15;

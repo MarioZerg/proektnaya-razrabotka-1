@@ -116,3 +116,5 @@ export const takeOrder = (userId: number): Promise<TakeOrderResult> =>
 
 export const sendToStickering = (id: number, rollId: number) =>
   postAction({ action: 'send_to_stickering', id, rollId });
+
+export const cancelOrder = (id: number) => postAction({ action: 'cancel_order', id });

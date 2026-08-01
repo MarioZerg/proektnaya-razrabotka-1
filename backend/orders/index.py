@@ -41,6 +41,13 @@ def handler(event: dict, context) -> dict:
         - швея указывает рулон тесьмы (должен быть в её цехе/смене), с которого списывается
           тесьма товара, и переводит заказ в статус "Стикеровка". Без указания рулона тесьмы
           перевод недоступен
+    POST /  { action: 'cancel_order', id }
+        - отмена заказа закройщиком (статус "На раскрое") или швеёй (статус "В работе").
+          Заказ НЕ удаляется из системы: снимается назначенный сотрудник, и заказ возвращается
+          на предыдущий этап очереди — "На раскрое" -> "Новый" (снимается и цех, заказ снова
+          доступен любому закройщику по общей очереди), "В работе" -> "Раскроено" (цех и время
+          раскроя cut_at не меняются, заказ остаётся на своём месте в FIFO-очереди для швей).
+          Для остальных статусов отмена недоступна (409)
     POST /  { action: 'delete_order', id }
 
     Args:
@@ -685,6 +692,40 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     f"UPDATE orders SET sewing_status = 'Стикеровка' WHERE id = {int(item_id)}"
                 )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'cancel_order':
+                item_id = body_data.get('id')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+                cur.execute(
+                    "SELECT sewing_status FROM orders WHERE id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
+                current_status = row[0]
+
+                if current_status == 'На раскрое':
+                    cur.execute(
+                        f"UPDATE orders SET sewing_status = 'Новый', assigned_user_id = NULL, "
+                        f"workshop_id = NULL WHERE id = {int(item_id)}"
+                    )
+                elif current_status == 'В работе':
+                    cur.execute(
+                        f"UPDATE orders SET sewing_status = 'Раскроено', assigned_user_id = NULL "
+                        f"WHERE id = {int(item_id)}"
+                    )
+                else:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Заказ в статусе "{current_status}" нельзя отменить'}),
+                    }
+
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 

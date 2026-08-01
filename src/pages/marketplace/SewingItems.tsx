@@ -15,6 +15,7 @@ import {
   takeStack,
   takeOrder,
   sendToStickering,
+  cancelOrder,
   type Order,
   type OrderDetail,
   type SewingStatus,
@@ -69,6 +70,7 @@ const SewingItems = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [cutting, setCutting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -230,6 +232,26 @@ const SewingItems = () => {
       });
     } finally {
       setCutting(false);
+    }
+  };
+
+  const handleCancelOrder = async () => {
+    if (!selectedOrder) return;
+    setCancelling(true);
+    try {
+      await cancelOrder(selectedOrder.id);
+      const targetTab = isCutter ? 'Новый' : 'Раскроено';
+      toast({ title: 'Заказ отменён', description: `Заказ возвращён во вкладку «${targetTab}»` });
+      setDialogOpen(false);
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось отменить заказ',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -419,6 +441,8 @@ const SewingItems = () => {
           isSewerView={isSewer}
           availableRolls={isSewer ? myTrimRolls : myFabricRolls}
           onSendToStickering={handleSendToStickering}
+          onCancelOrder={handleCancelOrder}
+          cancelling={cancelling}
         />
       </div>
     </CrmLayout>
