@@ -5,6 +5,8 @@ export interface User {
   id: number;
   name: string;
   role: Role;
+  /** Все утверждённые администратором должности пользователя — для переключателя ролей. */
+  availableRoles: Role[];
   workshopId: number | null;
   workshopName: string | null;
   shiftNumber: number | null;
@@ -15,6 +17,7 @@ interface AuthContextValue {
   user: User | null;
   login: (user: User) => void;
   logout: () => void;
+  switchRole: (role: Role) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -37,8 +40,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
   };
 
+  const switchRole = (role: Role) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, role };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, login, logout, switchRole }}>{children}</AuthContext.Provider>
   );
 };
 

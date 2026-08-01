@@ -31,7 +31,7 @@ import { navByRole, roleLabels } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
-  const { user, login, logout } = useAuth();
+  const { user, login, logout, switchRole } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
@@ -44,6 +44,12 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   }, [user, navigate]);
 
   useEffect(() => {
+    if (user && user.availableRoles.length === 0 && location.pathname !== '/crm') {
+      navigate('/crm');
+    }
+  }, [user, location.pathname, navigate]);
+
+  useEffect(() => {
     if (user?.isDemo) {
       fetchTestAccounts().then(setTestAccounts);
     }
@@ -53,7 +59,8 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     return null;
   }
 
-  const nav = navByRole[user.role];
+  const nav = navByRole[user.role] || [{ label: 'Главная', icon: 'LayoutDashboard', path: '/crm' }];
+  const otherRoles = user.availableRoles.filter((r) => r !== user.role);
 
   const toggleGroup = (label: string) =>
     setOpenGroups((prev) => ({ ...prev, [label]: !prev[label] }));
@@ -64,7 +71,12 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   };
 
   const handleSwitchAccount = (account: TestAccount) => {
-    login({ ...account, isDemo: true });
+    login({ ...account, availableRoles: [account.role], isDemo: true });
+    navigate('/crm');
+  };
+
+  const handleSwitchRole = (role: (typeof user.availableRoles)[number]) => {
+    switchRole(role);
     navigate('/crm');
   };
 
@@ -154,9 +166,35 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{user.name}</p>
               <p className="truncate text-xs text-sidebar-foreground/60">
-                {roleLabels[user.role]}
+                {roleLabels[user.role] || 'Должность не утверждена'}
               </p>
             </div>
+            {otherRoles.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
+                    aria-label="Переключить должность"
+                  >
+                    <Icon name="Repeat" size={16} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuLabel>Переключить должность</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {user.availableRoles.map((role) => (
+                    <DropdownMenuItem
+                      key={role}
+                      onClick={() => handleSwitchRole(role)}
+                      disabled={role === user.role}
+                    >
+                      <span className="flex-1 truncate">{roleLabels[role]}</span>
+                      {role === user.role && <Icon name="Check" size={14} className="ml-2" />}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             {user.isDemo && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

@@ -2,6 +2,7 @@ import { Dispatch, RefObject, SetStateAction } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Select,
@@ -31,6 +32,10 @@ interface EmployeeCardDialogProps {
   onClose: () => void;
   onSave: () => void;
   cardFileRef: RefObject<HTMLInputElement>;
+  onApproveRole: (role: Role) => void;
+  onAddRole: (role: Role) => void;
+  onRemoveRole: (role: Role) => void;
+  roleActionLoading: boolean;
 }
 
 const EmployeeCardDialog = ({
@@ -41,8 +46,15 @@ const EmployeeCardDialog = ({
   onClose,
   onSave,
   cardFileRef,
+  onApproveRole,
+  onAddRole,
+  onRemoveRole,
+  roleActionLoading,
 }: EmployeeCardDialogProps) => {
   const { toast } = useToast();
+
+  const employeeRoles = cardEmployee?.roles || [];
+  const addableRoles = roleOptions.filter((r) => !employeeRoles.some((er) => er.role === r));
 
   return (
     <Dialog open={cardEmployee !== null} onOpenChange={(open) => !open && onClose()}>
@@ -196,14 +208,83 @@ const EmployeeCardDialog = ({
               <Label>MAX ID сотрудника</Label>
               <Input
                 type="text"
-                placeholder="Числовой ID из мессенджера MAX"
+                placeholder="Заполняется автоматически при входе через бота"
                 value={cardForm.maxUserId}
                 onChange={(e) => setCardForm((f) => f && { ...f, maxUserId: e.target.value })}
               />
               <p className="text-xs text-muted-foreground">
-                Нужен для входа по коду вместо пароля. Сотрудник узнаёт свой ID в настройках MAX
-                или у бота.
+                {cardEmployee.phone
+                  ? `Телефон, которым поделился сотрудник: ${cardEmployee.phone}`
+                  : 'Заполняется автоматически, когда сотрудник делится номером телефона в боте MAX.'}
               </p>
+            </div>
+
+            <div className="space-y-2 rounded-md border border-border p-3">
+              <Label>Должности</Label>
+              {employeeRoles.length === 0 ? (
+                <p className="text-xs text-muted-foreground">У сотрудника пока нет должностей.</p>
+              ) : (
+                <div className="space-y-2">
+                  {employeeRoles.map((r) => (
+                    <div key={r.role} className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">{roleLabels[r.role]}</span>
+                        {r.isApproved ? (
+                          <Badge variant="secondary" className="text-[10px]">
+                            Утверждена
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-amber-500 text-[10px] text-amber-600">
+                            Ждёт утверждения
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {!r.isApproved && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={roleActionLoading}
+                            onClick={() => onApproveRole(r.role)}
+                          >
+                            Утвердить
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          disabled={roleActionLoading}
+                          onClick={() => onRemoveRole(r.role)}
+                          aria-label="Убрать должность"
+                        >
+                          <Icon name="X" size={14} />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {addableRoles.length > 0 && (
+                <Select
+                  value=""
+                  onValueChange={(v) => onAddRole(v as Role)}
+                  disabled={roleActionLoading}
+                >
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="Добавить должность..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {addableRoles.map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {roleLabels[r]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             <Button

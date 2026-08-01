@@ -6,8 +6,12 @@ import {
   createEmployee,
   updateEmployee,
   deleteEmployee,
+  addEmployeeRole,
+  approveEmployeeRole,
+  removeEmployeeRole,
   type Employee,
 } from '@/lib/usersApi';
+import type { Role } from '@/lib/roles';
 import {
   emptyCreateForm,
   type CardFormState,
@@ -131,6 +135,71 @@ const UsersSettings = () => {
     }
   };
 
+  const [roleActionLoading, setRoleActionLoading] = useState(false);
+
+  const handleApproveRole = async (role: Role) => {
+    if (!cardEmployee) return;
+    setRoleActionLoading(true);
+    try {
+      await approveEmployeeRole(cardEmployee.id, role);
+      const updated = await fetchEmployees();
+      setEmployees(updated);
+      const fresh = updated.find((e) => e.id === cardEmployee.id);
+      if (fresh) setCardEmployee(fresh);
+      toast({ title: 'Должность утверждена' });
+    } catch (err) {
+      toast({
+        title: 'Не удалось утвердить должность',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setRoleActionLoading(false);
+    }
+  };
+
+  const handleAddRole = async (role: Role) => {
+    if (!cardEmployee) return;
+    setRoleActionLoading(true);
+    try {
+      await addEmployeeRole(cardEmployee.id, role, true);
+      const updated = await fetchEmployees();
+      setEmployees(updated);
+      const fresh = updated.find((e) => e.id === cardEmployee.id);
+      if (fresh) setCardEmployee(fresh);
+      toast({ title: 'Должность добавлена' });
+    } catch (err) {
+      toast({
+        title: 'Не удалось добавить должность',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setRoleActionLoading(false);
+    }
+  };
+
+  const handleRemoveRole = async (role: Role) => {
+    if (!cardEmployee) return;
+    setRoleActionLoading(true);
+    try {
+      await removeEmployeeRole(cardEmployee.id, role);
+      const updated = await fetchEmployees();
+      setEmployees(updated);
+      const fresh = updated.find((e) => e.id === cardEmployee.id);
+      if (fresh) setCardEmployee(fresh);
+      toast({ title: 'Должность убрана' });
+    } catch (err) {
+      toast({
+        title: 'Не удалось убрать должность',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setRoleActionLoading(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!deleteId) return;
     try {
@@ -191,6 +260,10 @@ const UsersSettings = () => {
         onClose={closeCard}
         onSave={handleCardSave}
         cardFileRef={cardFileRef}
+        onApproveRole={handleApproveRole}
+        onAddRole={handleAddRole}
+        onRemoveRole={handleRemoveRole}
+        roleActionLoading={roleActionLoading}
       />
 
       <DeleteEmployeeDialog

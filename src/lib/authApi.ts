@@ -21,6 +21,17 @@ export const fetchTestAccounts = async (): Promise<TestAccount[]> => {
   return data.accounts || [];
 };
 
+/** Публичная ссылка на бота MAX для кнопки «Войти через MAX». */
+export const fetchMaxBotUrl = async (): Promise<string | null> => {
+  const res = await fetch(AUTH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'bot_info' }),
+  });
+  const data = await res.json();
+  return data.botUrl || null;
+};
+
 const postAuthAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(AUTH_URL, {
     method: 'POST',
@@ -34,9 +45,27 @@ const postAuthAction = async (payload: Record<string, unknown>) => {
   return data;
 };
 
-export const sendMaxLoginCode = (login: string) => postAuthAction({ action: 'max_send_code', login });
+export interface UserRoleEntry {
+  role: Role;
+  isApproved: boolean;
+}
 
 export interface MaxVerifyResult {
+  id: number;
+  name: string;
+  phone: string | null;
+  roles: UserRoleEntry[];
+}
+
+/** Проверяет код, присланный ботом MAX. Возвращает пользователя и список его должностей. */
+export const verifyMaxCode = (code: string): Promise<MaxVerifyResult> =>
+  postAuthAction({ action: 'max_verify_code', code });
+
+/** Новый пользователь (без единой должности) выбирает желаемую роль — уходит на утверждение админом. */
+export const selectDesiredRole = (userId: number, role: Role): Promise<{ success: true }> =>
+  postAuthAction({ action: 'select_role', userId, role });
+
+export interface EnterRoleResult {
   id: number;
   name: string;
   role: Role;
@@ -45,7 +74,8 @@ export interface MaxVerifyResult {
   shiftNumber: number | null;
 }
 
-export const verifyMaxLoginCode = (login: string, code: string): Promise<MaxVerifyResult> =>
-  postAuthAction({ action: 'max_verify_code', login, code });
+/** Вход в конкретную утверждённую роль пользователя — завершает авторизацию. */
+export const enterRole = (userId: number, role: Role): Promise<EnterRoleResult> =>
+  postAuthAction({ action: 'enter_role', userId, role });
 
 export { AUTH_URL };

@@ -7,18 +7,11 @@
       "expectedStatus": 200
     },
     {
-      "name": "Missing credentials",
+      "name": "Unknown action fails",
       "method": "POST",
       "path": "/",
       "body": {},
       "expectedStatus": 400
-    },
-    {
-      "name": "Wrong login",
-      "method": "POST",
-      "path": "/",
-      "body": {"login": "no_such_user", "password": "whatever"},
-      "expectedStatus": 401
     },
     {
       "name": "Test accounts list",
@@ -28,24 +21,31 @@
       "expectedStatus": 200
     },
     {
-      "name": "Max send code without login fails",
-      "method": "POST",
-      "path": "/",
-      "body": {"action": "max_send_code"},
-      "expectedStatus": 400
-    },
-    {
-      "name": "Max send code for unknown login fails",
-      "method": "POST",
-      "path": "/",
-      "body": {"action": "max_send_code", "login": "no_such_user"},
-      "expectedStatus": 404
-    },
-    {
-      "name": "Max verify code without data fails",
+      "name": "Max verify code without code fails",
       "method": "POST",
       "path": "/",
       "body": {"action": "max_verify_code"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Max verify code with unknown code fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "max_verify_code", "code": "000000"},
+      "expectedStatus": 401
+    },
+    {
+      "name": "Select role without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "select_role"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Enter role without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "enter_role"},
       "expectedStatus": 400
     }
   ]

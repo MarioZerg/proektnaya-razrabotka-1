@@ -25,6 +25,27 @@
       "path": "/",
       "body": {"action": "create", "fullName": "Тест Тестов", "email": "test@example.com", "role": "unknown", "password": "12345678"},
       "expectedStatus": 400
+    },
+    {
+      "name": "Add role without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "add_role"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Approve role without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "approve_role"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Remove role without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "remove_role"},
+      "expectedStatus": 400
     }
   ]
 }

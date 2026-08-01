@@ -2,6 +2,11 @@ import type { Role } from '@/lib/roles';
 
 const USERS_URL = 'https://functions.poehali.dev/1db3a89a-f0f6-470e-bef4-fb5ca8fa02df';
 
+export interface UserRoleEntry {
+  role: Role;
+  isApproved: boolean;
+}
+
 export interface Employee {
   id: number;
   login: string;
@@ -18,6 +23,9 @@ export interface Employee {
   updatedAt: string;
   shiftNumber: number | null;
   maxUserId: string | null;
+  phone: string | null;
+  registeredViaMax: boolean;
+  roles: UserRoleEntry[];
 }
 
 export const fetchEmployees = async (): Promise<Employee[]> => {
@@ -68,3 +76,12 @@ export const updateEmployee = (
 ) => postAction({ action: 'update', id, ...fields });
 
 export const deleteEmployee = (id: number) => postAction({ action: 'delete', id });
+
+export const addEmployeeRole = (id: number, role: Role, approved = true) =>
+  postAction({ action: 'add_role', id, role, approved });
+
+export const approveEmployeeRole = (id: number, role: Role) =>
+  postAction({ action: 'approve_role', id, role });
+
+export const removeEmployeeRole = (id: number, role: Role) =>
+  postAction({ action: 'remove_role', id, role });

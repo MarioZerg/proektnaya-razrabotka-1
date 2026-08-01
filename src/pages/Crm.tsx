@@ -158,6 +158,20 @@ const CrmDashboard = () => {
     </div>
   );
 
+  if (user && user.availableRoles.length === 0) {
+    return (
+      <CrmLayout>
+        <div className="space-y-1">
+          <h1 className="text-xl font-bold">Главная</h1>
+          <p className="text-sm text-muted-foreground">
+            Добро пожаловать, {user.name}. Ваша должность ещё не утверждена администратором —
+            как только это произойдёт, вам откроется доступ к разделам системы.
+          </p>
+        </div>
+      </CrmLayout>
+    );
+  }
+
   if (user?.role !== 'admin') {
     return (
       <CrmLayout>

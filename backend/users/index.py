@@ -40,15 +40,25 @@ def upload_avatar(base64_data: str) -> str:
 def handler(event: dict, context) -> dict:
     """Управляет сотрудниками: список, создание, редактирование, график смен, зарплата, аватар.
 
-    GET  /                       - получить список пользователей (включая maxUserId — привязанный
-                                    ID мессенджера MAX, нужен для входа по коду вместо пароля)
+    GET  /  - список пользователей. Каждый включает maxUserId (привязанный MAX-аккаунт,
+              заполняется автоматически при входе через бота), phone, registeredViaMax
+              (true, если человек сам зарегистрировался через MAX, а не создан админом),
+              и roles — список всех должностей пользователя вида
+              [{role, isApproved}] (утверждённые админом отображаются в интерфейсе,
+              неутверждённые ждут решения администратора).
     POST /  { action: 'create', fullName, email, role, password, workshop?, salary?, shiftFrom?, shiftTo?, avatarBase64? }
+        - создаёт сотрудника классическим способом (админ вручную), сразу с одной
+          утверждённой ролью role в user_roles
     POST /  { action: 'update', id, fullName?, role?, password?, workshop?, salary?, shiftFrom?, shiftTo?,
               avatarBase64?, isActive?, maxUserId? }
-        - maxUserId: числовой ID пользователя в MAX, администратор вводит его в карточке
-          сотрудника вручную (сотрудник узнаёт свой ID у бота или в настройках MAX).
-          Пустая строка/null снимает привязку
+        - maxUserId: числовой ID пользователя в MAX, можно скорректировать вручную.
+          Обычно заполняется автоматически, когда сотрудник делится номером в боте
     POST /  { action: 'delete', id }
+    POST /  { action: 'add_role', id, role, approved? } — добавляет пользователю новую
+        должность. approved (по умолчанию true) — сразу утверждённая или нет
+    POST /  { action: 'approve_role', id, role } — утверждает ранее выбранную
+        пользователем должность (после регистрации через MAX она ждёт подтверждения)
+    POST /  { action: 'remove_role', id, role } — убирает должность у пользователя
 
     Логин сотрудника генерируется из email (часть до @). Пароль хранится как
     PBKDF2-HMAC-SHA256 с солью. Аватар загружается в S3, сохраняется публичная ссылка.
@@ -83,9 +93,17 @@ def handler(event: dict, context) -> dict:
             cur = conn.cursor()
             cur.execute(
                 "SELECT id, login, email, full_name, role, workshop, salary, "
-                "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number, max_user_id "
+                "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number, "
+                "max_user_id, phone, registered_via_max "
                 "FROM users ORDER BY id DESC"
             )
+            rows = cur.fetchall()
+
+            cur.execute('SELECT user_id, role, is_approved FROM user_roles ORDER BY id')
+            roles_by_user: dict[int, list] = {}
+            for user_id, role, is_approved in cur.fetchall():
+                roles_by_user.setdefault(user_id, []).append({'role': role, 'isApproved': is_approved})
+
             users = [
                 {
                     'id': r[0],
@@ -103,8 +121,11 @@ def handler(event: dict, context) -> dict:
                     'updatedAt': r[12].isoformat(),
                     'shiftNumber': r[13],
                     'maxUserId': r[14],
+                    'phone': r[15],
+                    'registeredViaMax': r[16],
+                    'roles': roles_by_user.get(r[0], []),
                 }
-                for r in cur.fetchall()
+                for r in rows
             ]
         finally:
             conn.close()
@@ -186,6 +207,10 @@ def handler(event: dict, context) -> dict:
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
+                cur.execute(
+                    'INSERT INTO user_roles (user_id, role, is_approved) VALUES (%s, %s, true)',
+                    (new_id, role),
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'login': login})}
 
@@ -246,6 +271,41 @@ def handler(event: dict, context) -> dict:
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
                 cur.execute(f"DELETE FROM users WHERE id = {int(user_id)}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'add_role':
+                user_id = body_data.get('id')
+                role = (body_data.get('role') or '').strip()
+                approved = bool(body_data.get('approved', True))
+                if not user_id or role not in ROLES:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректные данные'})}
+                cur.execute(
+                    'INSERT INTO user_roles (user_id, role, is_approved) VALUES (%s, %s, %s) '
+                    'ON CONFLICT (user_id, role) DO UPDATE SET is_approved = EXCLUDED.is_approved',
+                    (int(user_id), role, approved),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'approve_role':
+                user_id = body_data.get('id')
+                role = (body_data.get('role') or '').strip()
+                if not user_id or not role:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректные данные'})}
+                cur.execute(
+                    'UPDATE user_roles SET is_approved = true WHERE user_id = %s AND role = %s',
+                    (int(user_id), role),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'remove_role':
+                user_id = body_data.get('id')
+                role = (body_data.get('role') or '').strip()
+                if not user_id or not role:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректные данные'})}
+                cur.execute('DELETE FROM user_roles WHERE user_id = %s AND role = %s', (int(user_id), role))
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
