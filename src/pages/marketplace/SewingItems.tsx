@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import {
   fetchOrders,
   fetchOrderDetail,
@@ -16,9 +19,11 @@ import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import SewingItemsFilters from '@/components/crm/sewingItems/SewingItemsFilters';
 import SewingItemsTable from '@/components/crm/sewingItems/SewingItemsTable';
 import SewingItemDetailDialog from '@/components/crm/sewingItems/SewingItemDetailDialog';
+import { statusTabs } from '@/components/crm/sewingItems/sewingItemsShared';
 
 const SewingItems = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -26,12 +31,21 @@ const SewingItems = () => {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
 
+  const visibleTabs = useMemo(
+    () =>
+      user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer'
+        ? statusTabs.filter((t) => t.value !== 'Новый')
+        : statusTabs,
+    [user?.role]
+  );
+
+  const [activeTab, setActiveTab] = useState<SewingStatus>(visibleTabs[0]?.value || 'Новый');
+
   const [typeFilter, setTypeFilter] = useState('all');
   const [employeeFilter, setEmployeeFilter] = useState('all');
   const [materialFilter, setMaterialFilter] = useState('all');
   const [widthFilter, setWidthFilter] = useState('all');
   const [heightFilter, setHeightFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
   const [workshopFilter, setWorkshopFilter] = useState('all');
 
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
@@ -57,19 +71,37 @@ const SewingItems = () => {
     load();
   }, []);
 
-  const filteredOrders = orders.filter((o) => {
+  const isProductionRole = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
+  const isReadOnlyTab = activeTab === 'Раскроено' && (user?.role === 'sewer' || user?.role === 'cutter');
+
+  const ordersInTab = orders.filter((o) => o.sewingStatus === activeTab);
+
+  const filteredOrders = ordersInTab.filter((o) => {
     if (typeFilter !== 'all' && o.orderType !== typeFilter) return false;
     if (employeeFilter !== 'all' && String(o.assignedUserId) !== employeeFilter) return false;
     if (materialFilter !== 'all' && o.material !== materials.find((m) => String(m.id) === materialFilter)?.name) return false;
     if (widthFilter !== 'all' && String(o.width) !== widthFilter) return false;
     if (heightFilter !== 'all' && String(o.height) !== heightFilter) return false;
-    if (statusFilter !== 'all' && o.sewingStatus !== statusFilter) return false;
     if (workshopFilter !== 'all' && String(o.workshopId) !== workshopFilter) return false;
+    if (
+      (activeTab === 'В работе' || activeTab === 'На раскрое') &&
+      isProductionRole &&
+      o.assignedUserId !== user?.id
+    ) {
+      return false;
+    }
     return true;
   });
 
   const totalPages = Math.max(1, Math.ceil(filteredOrders.length / 10));
   const pagedOrders = filteredOrders.slice((page - 1) * 10, page * 10);
+
+  const countForTab = (status: SewingStatus) => {
+    if ((status === 'В работе' || status === 'На раскрое') && isProductionRole) {
+      return orders.filter((o) => o.sewingStatus === status && o.assignedUserId === user?.id).length;
+    }
+    return orders.filter((o) => o.sewingStatus === status).length;
+  };
 
   const loadDetail = async (orderId: number) => {
     setDetailLoading(true);
@@ -161,6 +193,25 @@ const SewingItems = () => {
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Товары для пошива</h1>
 
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => {
+            setActiveTab(v as SewingStatus);
+            setPage(1);
+          }}
+        >
+          <TabsList className="flex h-auto flex-wrap justify-start gap-1">
+            {visibleTabs.map((tab) => (
+              <TabsTrigger key={tab.value} value={tab.value} className="gap-1.5">
+                {tab.label}
+                <Badge variant="secondary" className="ml-1">
+                  {countForTab(tab.value)}
+                </Badge>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+
         <SewingItemsFilters
           employees={employees}
           materials={materials}
@@ -175,8 +226,6 @@ const SewingItems = () => {
           setWidthFilter={setWidthFilter}
           heightFilter={heightFilter}
           setHeightFilter={setHeightFilter}
-          statusFilter={statusFilter}
-          setStatusFilter={setStatusFilter}
           workshopFilter={workshopFilter}
           setWorkshopFilter={setWorkshopFilter}
         />
@@ -204,6 +253,7 @@ const SewingItems = () => {
           onAssignUser={handleAssignUser}
           onAssignWorkshop={handleAssignWorkshop}
           onCut={handleCut}
+          readOnly={isReadOnlyTab}
         />
       </div>
     </CrmLayout>

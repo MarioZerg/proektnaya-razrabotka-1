@@ -6,6 +6,20 @@ export const heightOptions = [
 ];
 export const statusOptions: SewingStatus[] = ['Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка', 'Готовые'];
 
+export interface StatusTab {
+  value: SewingStatus;
+  label: string;
+}
+
+export const statusTabs: StatusTab[] = [
+  { value: 'Новый', label: 'Новый' },
+  { value: 'На раскрое', label: 'На раскрое' },
+  { value: 'В работе', label: 'В работе' },
+  { value: 'Раскроено', label: 'Раскроено' },
+  { value: 'Стикеровка', label: 'На стикеровке' },
+  { value: 'Готовые', label: 'Готовые' },
+];
+
 export const marketplaceLogo: Record<string, { label: string; className: string }> = {
   OZON: { label: 'OZON', className: 'text-[#005BFF] font-bold' },
   WB: { label: 'Wildberries', className: 'text-[#CB11AB] font-bold' },

@@ -8,7 +8,7 @@ import {
 import type { Employee } from '@/lib/usersApi';
 import type { Material } from '@/lib/materialsApi';
 import type { Workshop } from '@/lib/workshopsApi';
-import { widthOptions, heightOptions, statusOptions } from '@/components/crm/sewingItems/sewingItemsShared';
+import { widthOptions, heightOptions } from '@/components/crm/sewingItems/sewingItemsShared';
 
 interface SewingItemsFiltersProps {
   employees: Employee[];
@@ -24,8 +24,6 @@ interface SewingItemsFiltersProps {
   setWidthFilter: (v: string) => void;
   heightFilter: string;
   setHeightFilter: (v: string) => void;
-  statusFilter: string;
-  setStatusFilter: (v: string) => void;
   workshopFilter: string;
   setWorkshopFilter: (v: string) => void;
 }
@@ -44,13 +42,11 @@ const SewingItemsFilters = ({
   setWidthFilter,
   heightFilter,
   setHeightFilter,
-  statusFilter,
-  setStatusFilter,
   workshopFilter,
   setWorkshopFilter,
 }: SewingItemsFiltersProps) => {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <Select value={typeFilter} onValueChange={setTypeFilter}>
         <SelectTrigger>
           <SelectValue placeholder="Все типы" />
@@ -113,20 +109,6 @@ const SewingItemsFilters = ({
           {heightOptions.map((h) => (
             <SelectItem key={h} value={h}>
               {h}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <Select value={statusFilter} onValueChange={setStatusFilter}>
-        <SelectTrigger>
-          <SelectValue placeholder="Все статусы" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">Все статусы</SelectItem>
-          {statusOptions.map((s) => (
-            <SelectItem key={s} value={s}>
-              {s}
             </SelectItem>
           ))}
         </SelectContent>

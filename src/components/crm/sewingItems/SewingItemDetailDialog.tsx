@@ -41,6 +41,7 @@ interface SewingItemDetailDialogProps {
   onAssignUser: (userId: string) => void;
   onAssignWorkshop: (workshopId: string) => void;
   onCut: () => void;
+  readOnly?: boolean;
 }
 
 const SewingItemDetailDialog = ({
@@ -57,6 +58,7 @@ const SewingItemDetailDialog = ({
   onAssignUser,
   onAssignWorkshop,
   onCut,
+  readOnly = false,
 }: SewingItemDetailDialogProps) => {
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -69,87 +71,89 @@ const SewingItemDetailDialog = ({
         </DialogHeader>
         {selectedOrder && (
           <div className="space-y-4">
-            <Card className="border-border shadow-none">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm">Действия</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-wrap items-end gap-3">
-                <div className="w-48 space-y-1.5">
-                  <Label>Статус пошива</Label>
-                  <Select value={selectedOrder.sewingStatus} onValueChange={onStatusChange} disabled={saving}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {statusOptions.map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {s}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+            {!readOnly && (
+              <Card className="border-border shadow-none">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm">Действия</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-wrap items-end gap-3">
+                  <div className="w-48 space-y-1.5">
+                    <Label>Статус пошива</Label>
+                    <Select value={selectedOrder.sewingStatus} onValueChange={onStatusChange} disabled={saving}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {statusOptions.map((s) => (
+                          <SelectItem key={s} value={s}>
+                            {s}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-                <div className="w-48 space-y-1.5">
-                  <Label>Сотрудник</Label>
-                  <Select
-                    value={selectedOrder.assignedUserId ? String(selectedOrder.assignedUserId) : 'none'}
-                    onValueChange={onAssignUser}
-                    disabled={saving}
+                  <div className="w-48 space-y-1.5">
+                    <Label>Сотрудник</Label>
+                    <Select
+                      value={selectedOrder.assignedUserId ? String(selectedOrder.assignedUserId) : 'none'}
+                      onValueChange={onAssignUser}
+                      disabled={saving}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Не назначен" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Не назначен</SelectItem>
+                        {employees.map((e) => (
+                          <SelectItem key={e.id} value={String(e.id)}>
+                            {e.fullName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="w-48 space-y-1.5">
+                    <Label>Цех</Label>
+                    <Select
+                      value={selectedOrder.workshopId ? String(selectedOrder.workshopId) : 'none'}
+                      onValueChange={onAssignWorkshop}
+                      disabled={saving}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Не назначен" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Не назначен</SelectItem>
+                        {workshops.map((w) => (
+                          <SelectItem key={w.id} value={String(w.id)}>
+                            {w.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <Button
+                    onClick={onCut}
+                    disabled={cutting || selectedOrder.sewingStatus === 'Раскроено'}
                   >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Не назначен" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Не назначен</SelectItem>
-                      {employees.map((e) => (
-                        <SelectItem key={e.id} value={String(e.id)}>
-                          {e.fullName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="w-48 space-y-1.5">
-                  <Label>Цех</Label>
-                  <Select
-                    value={selectedOrder.workshopId ? String(selectedOrder.workshopId) : 'none'}
-                    onValueChange={onAssignWorkshop}
-                    disabled={saving}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Не назначен" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Не назначен</SelectItem>
-                      {workshops.map((w) => (
-                        <SelectItem key={w.id} value={String(w.id)}>
-                          {w.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <Button
-                  onClick={onCut}
-                  disabled={cutting || selectedOrder.sewingStatus === 'Раскроено'}
-                >
-                  {cutting ? (
-                    <>
-                      <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
-                      Списываем материалы...
-                    </>
-                  ) : (
-                    <>
-                      <Icon name="Scissors" size={16} className="mr-2" />
-                      Раскроить
-                    </>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
+                    {cutting ? (
+                      <>
+                        <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                        Списываем материалы...
+                      </>
+                    ) : (
+                      <>
+                        <Icon name="Scissors" size={16} className="mr-2" />
+                        Раскроить
+                      </>
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <Card className="border-border shadow-none">
