@@ -15,7 +15,11 @@ def handler(event: dict, context) -> dict:
         есть в системе (в т.ч. пришедший ранее по API) — новый заказ не создаётся.
 
     GET  /                       - получить список заказов
-    GET  /?id=1                  - получить детальную карточку заказа с расходом материалов
+    GET  /?id=1                  - получить детальную карточку заказа с расходом материалов;
+                                    дополнительно возвращает requiredFabricMaterialId/Name и
+                                    requiredTrimMaterialId/Name — конкретный материал тюля и тесьмы,
+                                    нужный именно для этого товара (чтобы на фронте показывать
+                                    только подходящие рулоны, а не всю категорию)
     POST /  { action: 'create_manual', orderNumber, marketplace, orderType, cluster?, product }
     POST /  { action: 'update_order', id, orderNumber?, marketplace?, orderType?, status?, product?,
               sewingStatus?, assignedUserId?, workshopId? }
@@ -108,6 +112,33 @@ def handler(event: dict, context) -> dict:
                     for r in cur.fetchall()
                 ]
 
+                material_name, width_val, height_val = row[11], row[12], row[13]
+                required_fabric_material_id = None
+                required_fabric_material_name = None
+                required_trim_material_id = None
+                required_trim_material_name = None
+                if material_name and width_val and height_val:
+                    cur.execute(
+                        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                        (material_name, width_val, height_val),
+                    )
+                    mi_row = cur.fetchone()
+                    if mi_row:
+                        cur.execute(
+                            "SELECT m.id, m.name, mt.name FROM marketplace_item_materials mim "
+                            "JOIN materials m ON m.id = mim.material_id "
+                            "JOIN material_types mt ON mt.id = m.type_id "
+                            "WHERE mim.marketplace_item_id = %s",
+                            (mi_row[0],),
+                        )
+                        for mat_id, mat_name, mat_type_name in cur.fetchall():
+                            if mat_type_name == 'Тюль' and required_fabric_material_id is None:
+                                required_fabric_material_id = mat_id
+                                required_fabric_material_name = mat_name
+                            elif mat_type_name == 'Аксессуары' and required_trim_material_id is None:
+                                required_trim_material_id = mat_id
+                                required_trim_material_name = mat_name
+
                 detail = {
                     'id': row[0],
                     'orderNumber': row[1],
@@ -129,6 +160,10 @@ def handler(event: dict, context) -> dict:
                     'workshopId': row[17],
                     'workshopName': row[18],
                     'materialUsage': materialUsage,
+                    'requiredFabricMaterialId': required_fabric_material_id,
+                    'requiredFabricMaterialName': required_fabric_material_name,
+                    'requiredTrimMaterialId': required_trim_material_id,
+                    'requiredTrimMaterialName': required_trim_material_name,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'order': detail})}
 

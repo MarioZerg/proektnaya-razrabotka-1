@@ -40,6 +40,10 @@ export interface OrderMaterialUsage {
 
 export interface OrderDetail extends Order {
   materialUsage: OrderMaterialUsage[];
+  requiredFabricMaterialId: number | null;
+  requiredFabricMaterialName: string | null;
+  requiredTrimMaterialId: number | null;
+  requiredTrimMaterialName: string | null;
 }
 
 export const fetchOrders = async (): Promise<Order[]> => {

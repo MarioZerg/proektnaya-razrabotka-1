@@ -1,0 +1,1 @@
+UPDATE orders SET material=NULL, width=NULL, height=NULL, workshop_id=NULL WHERE id=13;

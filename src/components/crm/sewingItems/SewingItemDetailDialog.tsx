@@ -89,7 +89,14 @@ const SewingItemDetailDialog = ({
             {!readOnly && isCutterView && (
               <Card className="border-border shadow-none">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm">Выбор рулона тюля</CardTitle>
+                  <CardTitle className="text-sm">
+                    Выбор рулона тюля
+                    {orderDetail?.requiredFabricMaterialName && (
+                      <span className="ml-1 font-normal text-muted-foreground">
+                        — нужен материал «{orderDetail.requiredFabricMaterialName}»
+                      </span>
+                    )}
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-wrap items-end gap-3">
                   <div className="w-64 space-y-1.5">
@@ -135,7 +142,14 @@ const SewingItemDetailDialog = ({
             {!readOnly && isSewerView && (
               <Card className="border-border shadow-none">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm">Выбор рулона тесьмы</CardTitle>
+                  <CardTitle className="text-sm">
+                    Выбор рулона тесьмы
+                    {orderDetail?.requiredTrimMaterialName && (
+                      <span className="ml-1 font-normal text-muted-foreground">
+                        — нужен материал «{orderDetail.requiredTrimMaterialName}»
+                      </span>
+                    )}
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-wrap items-end gap-3">
                   <div className="w-64 space-y-1.5">

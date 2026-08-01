@@ -1,0 +1,1 @@
+UPDATE orders SET material='Сетка', width=500, height=255, workshop_id=1 WHERE id=13;

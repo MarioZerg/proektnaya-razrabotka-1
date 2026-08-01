@@ -19,7 +19,7 @@ import {
   type SewingStatus,
 } from '@/lib/ordersApi';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
-import { fetchMaterialsData, type Material, type MaterialType } from '@/lib/materialsApi';
+import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import SewingItemsFilters from '@/components/crm/sewingItems/SewingItemsFilters';
@@ -35,7 +35,6 @@ const SewingItems = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
-  const [materialTypes, setMaterialTypes] = useState<MaterialType[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,7 +75,6 @@ const SewingItems = () => {
         setOrders(ordersData);
         setEmployees(employeesData);
         setMaterials(materialsData.materials);
-        setMaterialTypes(materialsData.types);
         setWorkshops(workshopsData);
         setRolls(rollsData);
       })
@@ -267,19 +265,18 @@ const SewingItems = () => {
     }
   };
 
-  const tulTypeId = useMemo(() => materialTypes.find((t) => t.name === 'Тюль')?.id, [materialTypes]);
-  const accessoryTypeId = useMemo(() => materialTypes.find((t) => t.name === 'Аксессуары')?.id, [materialTypes]);
-
   const rollsInMyWorkshop = rolls.filter(
     (r) => r.workshopId === user?.workshopId && (!user?.shiftNumber || r.shiftNumber === user.shiftNumber)
   );
 
-  const myFabricRolls = tulTypeId
-    ? rollsInMyWorkshop.filter((r) => materials.find((m) => m.id === r.materialId)?.typeId === tulTypeId)
-    : rollsInMyWorkshop;
+  // Показываем только рулоны материала, который реально нужен для этого товара
+  // (например, для товара "Сетка 200x265" — только рулоны материала "Сетка", не любой тюль)
+  const myFabricRolls = orderDetail?.requiredFabricMaterialId
+    ? rollsInMyWorkshop.filter((r) => r.materialId === orderDetail.requiredFabricMaterialId)
+    : [];
 
-  const myTrimRolls = accessoryTypeId
-    ? rollsInMyWorkshop.filter((r) => materials.find((m) => m.id === r.materialId)?.typeId === accessoryTypeId)
+  const myTrimRolls = orderDetail?.requiredTrimMaterialId
+    ? rollsInMyWorkshop.filter((r) => r.materialId === orderDetail.requiredTrimMaterialId)
     : [];
 
   return (
