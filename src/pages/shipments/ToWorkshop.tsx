@@ -64,6 +64,17 @@ const ToWorkshop = () => {
     if (activeShipment) scanInputRef.current?.focus();
   }, [activeShipment]);
 
+  // Швея/закройщик/упаковщик видит только заявки СВОЕГО цеха и смены — не весь список.
+  // Заявка без указанной смены (shiftNumber === null) относится ко всем сменам этого цеха.
+  // Кладовщик и админ видят полный список, как и раньше.
+  const visibleShipments = isProduction
+    ? shipments.filter(
+        (s) =>
+          s.workshopId === user?.workshopId &&
+          (s.shiftNumber === null || s.shiftNumber === user?.shiftNumber)
+      )
+    : shipments;
+
   const openCreate = () => {
     setReqComment('');
     setReqMaterialId('');
@@ -225,7 +236,7 @@ const ToWorkshop = () => {
 
         <ToWorkshopTable
           loading={loading}
-          shipments={shipments}
+          shipments={visibleShipments}
           workshops={workshops}
           zone={zone}
           userWorkshopId={user?.workshopId ?? null}
