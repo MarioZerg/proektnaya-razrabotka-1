@@ -1,31 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -40,13 +15,10 @@ import {
   type SupplyDetail,
 } from '@/lib/marketplaceSuppliesApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
-import {
-  formatDateTime,
-  formatDuration,
-  marketplaceLogo,
-  statusVariant,
-} from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFboApplicationCard';
+import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
+import SupplyFboFieldsCard from '@/components/crm/marketplaceSupplies/SupplyFboFieldsCard';
+import SupplyItemsSection from '@/components/crm/marketplaceSupplies/SupplyItemsSection';
 
 const MarketplaceSupplyShow = () => {
   const { id } = useParams();
@@ -233,98 +205,19 @@ const MarketplaceSupplyShow = () => {
   return (
     <CrmLayout>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <Button variant="ghost" size="sm" onClick={() => navigate('/crm/shipments/to-marketplace')} className="mb-2 -ml-2">
-              <Icon name="ChevronLeft" size={16} className="mr-1" />
-              К списку
-            </Button>
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold">Поставка #{supply.id}</h1>
-              {isOzonFbo ? (
-                <Badge variant={supply.ozonStatus === 'Сформирована' ? 'default' : 'secondary'}>
-                  {supply.ozonStatus || 'Заполнение данных'}
-                </Badge>
-              ) : (
-                <Badge className={statusVariant[supply.status]?.className}>{supply.status}</Badge>
-              )}
-              <span className={marketplaceLogo[supply.marketplace]?.className}>
-                {marketplaceLogo[supply.marketplace]?.label || supply.marketplace}
-              </span>
-              <Badge variant="outline">{supply.type}</Badge>
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Создана {formatDateTime(supply.createdAt)}
-              {supply.createdByName && ` — ${supply.createdByName}`}
-              {supply.type === 'FBS' && supply.status !== 'Выполнена' && (
-                <>
-                  {' '}
-                  · на сборке{' '}
-                  <span className="font-medium text-foreground">{formatDuration(supply.createdAt, now)}</span>
-                </>
-              )}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            {supply.status === 'Открытая' && (
-              <Button variant="destructive" onClick={handleDelete}>
-                <Icon name="Trash2" size={16} className="mr-2" />
-                Удалить
-              </Button>
-            )}
-            {supply.type === 'FBS' && supply.status !== 'Выполнена' && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" disabled={forceCompleting}>
-                    <Icon name="ShieldAlert" size={16} className="mr-2" />
-                    Закрыть принудительно
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Закрыть поставку принудительно?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Поставка сразу перейдёт в статус «Выполнена» в нашей системе, все товары будут
-                      отмечены отгруженными. Используйте это, если поставка зависла из-за задержек
-                      на стороне маркетплейса. Действие нельзя отменить.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Отмена</AlertDialogCancel>
-                    <AlertDialogAction onClick={handleForceComplete}>Закрыть принудительно</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
-            {nextStatus && (
-              <Button onClick={handleMoveStatus} disabled={saving}>
-                <Icon name="ArrowRight" size={16} className="mr-2" />
-                {nextStatusLabel[nextStatus] || nextStatus}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {supply.type === 'FBS' && supply.status === 'Отгрузка' && (
-          <Card className="border-border shadow-none">
-            <CardContent className="flex items-center justify-between gap-3 pt-6">
-              <div className="flex items-center gap-2 text-sm">
-                <Icon name="FileText" size={18} className="text-muted-foreground" />
-                <span>Стикер маркетплейса для отгрузки</span>
-              </div>
-              {supply.marketplace === 'WB' ? (
-                <Button variant="outline" size="sm" disabled>
-                  <Icon name="Download" size={14} className="mr-1.5" />
-                  Подгрузится после подключения API
-                </Button>
-              ) : (
-                <span className="text-xs text-muted-foreground">
-                  У OZON FBS нет стикера — только движение товаров по статусам
-                </span>
-              )}
-            </CardContent>
-          </Card>
-        )}
+        <SupplyHeader
+          supply={supply}
+          isOzonFbo={isOzonFbo}
+          now={now}
+          nextStatus={nextStatus}
+          nextStatusLabel={nextStatusLabel}
+          saving={saving}
+          forceCompleting={forceCompleting}
+          onBack={() => navigate('/crm/shipments/to-marketplace')}
+          onDelete={handleDelete}
+          onForceComplete={handleForceComplete}
+          onMoveStatus={handleMoveStatus}
+        />
 
         {isOzonFbo && (
           <OzonFboApplicationCard
@@ -336,191 +229,36 @@ const MarketplaceSupplyShow = () => {
         )}
 
         {supply.type === 'FBO' && !isOzonFbo && (
-          <div className="grid gap-6 md:grid-cols-2">
-            <div className="space-y-4 rounded-md border border-border p-4">
-              <h2 className="font-semibold">Данные поставки</h2>
-              <div className="space-y-1.5">
-                <Label>Номер поставки</Label>
-                <Input
-                  value={supplyNumber}
-                  onChange={(e) => setSupplyNumber(e.target.value)}
-                  placeholder="Подгрузится через API маркетплейса"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Штрихкод поставки</Label>
-                <Input value={supplyBarcode} onChange={(e) => setSupplyBarcode(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Кластер / регион</Label>
-                <Input value={cluster} onChange={(e) => setCluster(e.target.value)} placeholder="Например: Москва, МО и Дальние регионы" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>id Газельки</Label>
-                <Input value={gazelkaId} onChange={(e) => setGazelkaId(e.target.value)} placeholder="Номер рейса развоза" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Комментарий</Label>
-                <Textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} />
-              </div>
-              <Button onClick={handleSaveFields} disabled={saving}>
-                {saving ? 'Сохранение...' : 'Сохранить'}
-              </Button>
-            </div>
-
-            <div className="space-y-4 rounded-md border border-border p-4">
-              <h2 className="font-semibold">Даты этапов</h2>
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center justify-between border-b border-border pb-2">
-                  <span className="text-muted-foreground">Создана</span>
-                  <span className="font-medium">{formatDateTime(supply.createdAt)}</span>
-                </div>
-                <div className="flex items-center justify-between border-b border-border pb-2">
-                  <span className="text-muted-foreground">Отгрузка в Газельку</span>
-                  <span className="font-medium">
-                    {supply.shipToGazelkaAt ? formatDateTime(supply.shipToGazelkaAt) : '—'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between border-b border-border pb-2">
-                  <span className="text-muted-foreground">Отгрузка в маркетплейс</span>
-                  <span className="font-medium">
-                    {supply.shipToMarketplaceAt ? formatDateTime(supply.shipToMarketplaceAt) : '—'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Выполнена</span>
-                  <span className="font-medium">
-                    {supply.completedAt ? formatDateTime(supply.completedAt) : '—'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
+          <SupplyFboFieldsCard
+            supply={supply}
+            supplyNumber={supplyNumber}
+            setSupplyNumber={setSupplyNumber}
+            supplyBarcode={supplyBarcode}
+            setSupplyBarcode={setSupplyBarcode}
+            cluster={cluster}
+            setCluster={setCluster}
+            gazelkaId={gazelkaId}
+            setGazelkaId={setGazelkaId}
+            comment={comment}
+            setComment={setComment}
+            saving={saving}
+            onSave={handleSaveFields}
+          />
         )}
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            {supply.type === 'FBS' ? (
-              <div className="flex flex-wrap gap-4 text-sm">
-                <span>
-                  Готово к сканированию: <b>{readyGoods.length}</b>
-                </span>
-                <span>
-                  Добавлено товаров: <b>{supply.items.length}</b>
-                </span>
-              </div>
-            ) : (
-              <h2 className="font-semibold">Товары в поставке ({supply.items.length})</h2>
-            )}
-            {canEditItems && supply.type === 'FBO' && (
-              <Button size="sm" onClick={() => navigate(`/crm/shipments/to-marketplace/${supplyId}/assemble`)}>
-                <Icon name="PackagePlus" size={14} className="mr-1" />
-                Собрать поставку
-              </Button>
-            )}
-          </div>
-
-          {canEditItems && supply.type === 'FBS' && (
-            <Card className="border-primary/30 bg-primary/5 shadow-none">
-              <CardContent
-                className="space-y-2 pt-6"
-                onClick={(e) => {
-                  if (!(e.target as HTMLElement).closest('input, button, a')) {
-                    scanInputRef.current?.focus();
-                  }
-                }}
-              >
-                <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                  <Icon name="ScanLine" size={18} />
-                  Отсканируйте или введите номер заказа
-                </div>
-                <div className="flex gap-2">
-                  <Input
-                    ref={scanInputRef}
-                    autoFocus
-                    placeholder="Номер заказа"
-                    value={scanOrderNumber}
-                    onChange={(e) => setScanOrderNumber(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleScanOrder()}
-                    disabled={scanning}
-                    className="font-mono-tech"
-                  />
-                  <Button onClick={handleScanOrder} disabled={scanning || !scanOrderNumber.trim()}>
-                    {scanning ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Добавить заказ'}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {supply.type === 'FBS' ? (
-            readyGoods.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Нет готовых товаров, ожидающих сканирования
-              </p>
-            ) : (
-              <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-primary hover:bg-primary">
-                      <TableHead className="text-primary-foreground">Номер заказа</TableHead>
-                      <TableHead className="text-primary-foreground">Товар</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {readyGoods.map((g) => (
-                      <TableRow key={g.id}>
-                        <TableCell className="font-medium">{g.orderNumber || '—'}</TableCell>
-                        <TableCell>{g.product || '—'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )
-          ) : supply.items.length === 0 ? (
-            <p className="text-sm text-muted-foreground">В поставке пока нет товаров</p>
-          ) : (
-            <div className="rounded-md border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-primary hover:bg-primary">
-                    <TableHead className="text-primary-foreground">Заказ</TableHead>
-                    <TableHead className="text-primary-foreground">Товар</TableHead>
-                    <TableHead className="text-primary-foreground">Материал</TableHead>
-                    <TableHead className="text-primary-foreground">Размер</TableHead>
-                    <TableHead className="text-primary-foreground">Статус</TableHead>
-                    {canEditItems && <TableHead className="text-primary-foreground"></TableHead>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {supply.items.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">{item.orderNumber || '—'}</TableCell>
-                      <TableCell>{item.product || '—'}</TableCell>
-                      <TableCell>{item.material || '—'}</TableCell>
-                      <TableCell>
-                        {item.width && item.height ? `${item.width}×${item.height}` : '—'}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {item.goodsStatus === 'reserved' ? 'Зарезервирован' : item.goodsStatus === 'shipped' ? 'Отгружен' : item.goodsStatus}
-                        </Badge>
-                      </TableCell>
-                      {canEditItems && (
-                        <TableCell>
-                          <Button variant="ghost" size="icon" onClick={() => handleRemoveItem(item.id)}>
-                            <Icon name="Trash2" size={14} />
-                          </Button>
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </div>
+        <SupplyItemsSection
+          supply={supply}
+          supplyId={supplyId}
+          canEditItems={canEditItems}
+          readyGoods={readyGoods}
+          scanOrderNumber={scanOrderNumber}
+          setScanOrderNumber={setScanOrderNumber}
+          scanning={scanning}
+          scanInputRef={scanInputRef}
+          onScanOrder={handleScanOrder}
+          onRemoveItem={handleRemoveItem}
+          onNavigateAssemble={() => navigate(`/crm/shipments/to-marketplace/${supplyId}/assemble`)}
+        />
       </div>
     </CrmLayout>
   );
