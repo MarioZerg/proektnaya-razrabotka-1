@@ -34,7 +34,13 @@ export interface SalarySummary {
   operations: SalaryOperation[];
   totalCount: number;
   totalPages: number;
-  totalUnpaid: number;
+  /** Сумма ПОЛОЖИТЕЛЬНЫХ невыплаченных остатков — считается по каждому сотруднику
+   * отдельно, затем суммируется, чтобы штраф одного не компенсировал незаметно премию
+   * другого в общей цифре. Это то, что реально нужно выплатить. */
+  totalToAccrue: number;
+  /** Сумма ОТРИЦАТЕЛЬНЫХ невыплаченных остатков (штрафы превысили начисления) —
+   * суммарный долг сотрудников компании. */
+  totalDebts: number;
   period1Total: number;
   period2Total: number;
 }

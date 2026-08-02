@@ -43,10 +43,16 @@ def handler(event: dict, context) -> dict:
     начисления за заказы. Дневной оклад администратора создаётся здесь же при каждом GET-запросе
     (аналогично автозаказу материалов — нет отдельного cron).
 
-    GET  /                                  - сводка для админа: общий баланс начислений,
+    GET  /                                  - сводка для админа: totalToAccrue (сумма
+                                               ПОЛОЖИТЕЛЬНЫХ невыплаченных остатков — считается
+                                               ПО КАЖДОМУ сотруднику отдельно, затем суммируется,
+                                               чтобы штраф одного не компенсировал незаметно
+                                               премию другого) и totalDebts (сумма ОТРИЦАТЕЛЬНЫХ
+                                               остатков — суммарный долг сотрудников компании),
                                                начисления за период 1-19 и 20-конец текущего
-                                               месяца (в контексте выплаты в СЛЕДУЮЩЕМ месяце
-                                               10 и 25 числа), список последних операций
+                                               месяца — ТОЛЬКО невыплаченные (в контексте выплаты
+                                               в СЛЕДУЮЩЕМ месяце 10 и 25 числа), список последних
+                                               операций
         ?userId=1                            - фильтр по сотруднику
         ?type=salary|manual|penalty|all       - фильтр по типу начисления
         ?page=1                              - пагинация (по 50 записей)
@@ -271,8 +277,22 @@ def handler(event: dict, context) -> dict:
                 for r in cur.fetchall()
             ]
 
-            cur.execute("SELECT COALESCE(SUM(amount), 0) FROM salary_accruals WHERE paid_at IS NULL")
-            total_unpaid = float(cur.fetchone()[0])
+            # "К выплате" разбито на два числа, чтобы штраф одного сотрудника не
+            # компенсировал незаметно премию другого в общей сумме:
+            #   totalToAccrue — сумма ПОЛОЖИТЕЛЬНЫХ остатков (посчитанных ПО КАЖДОМУ
+            #                   сотруднику отдельно) — сколько реально нужно выплатить
+            #   totalDebts    — сумма ОТРИЦАТЕЛЬНЫХ остатков (тоже по сотрудникам) —
+            #                   суммарный долг сотрудников компании (штрафы превысили начисления)
+            cur.execute(
+                "SELECT COALESCE(SUM(GREATEST(user_balance, 0)), 0), "
+                "COALESCE(SUM(LEAST(user_balance, 0)), 0) FROM ("
+                "  SELECT user_id, SUM(amount) as user_balance FROM salary_accruals "
+                "  WHERE paid_at IS NULL GROUP BY user_id"
+                ") sub"
+            )
+            total_to_accrue_row = cur.fetchone()
+            total_to_accrue = float(total_to_accrue_row[0])
+            total_debts = float(total_to_accrue_row[1])
 
             today = date.today()
             if today.day >= 20:
@@ -289,17 +309,22 @@ def handler(event: dict, context) -> dict:
                 period1_to = today.replace(day=1)
 
             period2_from = today.replace(day=1)
-            period2_to = today.replace(day=min(20, 28))
+            period2_to = today.replace(day=20)
 
+            # За период считаются ТОЛЬКО ещё невыплаченные начисления (paid_at IS NULL) —
+            # иначе сюда попадали бы уже выплаченные суммы прошлых периодов, искажая цифру
+            # предстоящей выплаты.
             cur.execute(
-                "SELECT COALESCE(SUM(amount), 0) FROM salary_accruals WHERE accrued_for >= %s AND accrued_for < %s",
+                "SELECT COALESCE(SUM(amount), 0) FROM salary_accruals "
+                "WHERE accrued_for >= %s AND accrued_for < %s AND paid_at IS NULL",
                 (period1_from, period1_to),
             )
             period1_total = float(cur.fetchone()[0])
 
             cur.execute(
-                "SELECT COALESCE(SUM(amount), 0) FROM salary_accruals WHERE accrued_for >= %s AND accrued_for < %s",
-                (period2_from, today.replace(day=20) if today.day < 20 else period2_to),
+                "SELECT COALESCE(SUM(amount), 0) FROM salary_accruals "
+                "WHERE accrued_for >= %s AND accrued_for < %s AND paid_at IS NULL",
+                (period2_from, period2_to),
             )
             period2_total = float(cur.fetchone()[0])
         finally:
@@ -312,7 +337,8 @@ def handler(event: dict, context) -> dict:
                 'operations': operations,
                 'totalCount': total_count,
                 'totalPages': max(1, (total_count + per_page - 1) // per_page),
-                'totalUnpaid': total_unpaid,
+                'totalToAccrue': total_to_accrue,
+                'totalDebts': total_debts,
                 'period1Total': period1_total,
                 'period2Total': period2_total,
             }),

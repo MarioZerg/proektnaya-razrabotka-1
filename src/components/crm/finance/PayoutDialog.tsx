@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import type { Employee } from '@/lib/usersApi';
-import { fetchSalarySummary } from '@/lib/salaryApi';
+import { fetchMySalary } from '@/lib/salaryApi';
 import { formatMoney } from '@/components/crm/finance/financeShared';
 
 interface PayoutDialogProps {
@@ -38,8 +38,8 @@ const PayoutDialog = ({ employees, saving, onSubmit }: PayoutDialogProps) => {
       return;
     }
     setLoadingBalance(true);
-    fetchSalarySummary({ userId: Number(userId) })
-      .then((data) => setBalance(data.totalUnpaid))
+    fetchMySalary(Number(userId))
+      .then((data) => setBalance(data.balance))
       .finally(() => setLoadingBalance(false));
   }, [userId]);
 

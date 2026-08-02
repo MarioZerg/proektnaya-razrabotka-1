@@ -36,7 +36,8 @@ const Finance = () => {
 
   const [operations, setOperations] = useState<SalaryOperation[]>([]);
   const [totalPages, setTotalPages] = useState(1);
-  const [totalUnpaid, setTotalUnpaid] = useState(0);
+  const [totalToAccrue, setTotalToAccrue] = useState(0);
+  const [totalDebts, setTotalDebts] = useState(0);
   const [period1Total, setPeriod1Total] = useState(0);
   const [period2Total, setPeriod2Total] = useState(0);
   const [operationsLoading, setOperationsLoading] = useState(true);
@@ -77,7 +78,8 @@ const Finance = () => {
       .then((data) => {
         setOperations(data.operations);
         setTotalPages(data.totalPages);
-        setTotalUnpaid(data.totalUnpaid);
+        setTotalToAccrue(data.totalToAccrue);
+        setTotalDebts(data.totalDebts);
         setPeriod1Total(data.period1Total);
         setPeriod2Total(data.period2Total);
       })
@@ -219,7 +221,8 @@ const Finance = () => {
 
           <div className="space-y-6 lg:col-span-1">
             <FinanceSummaryCard
-              totalUnpaid={totalUnpaid}
+              totalToAccrue={totalToAccrue}
+              totalDebts={totalDebts}
               period1Total={period1Total}
               period2Total={period2Total}
               loading={operationsLoading}
