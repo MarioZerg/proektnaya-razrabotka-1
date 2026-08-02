@@ -23,10 +23,12 @@ const SupplyBoxCard = ({ box, canEdit, onAddOrder, onRemoveItem, onDeleteBox }: 
   const handleAdd = async () => {
     const value = orderNumber.trim();
     if (!value) return;
+    // Поле очищаем сразу, до ответа сервера — чтобы не было повторных отправок того же
+    // номера при ошибке (автосканирование иначе попыталось бы отправить его снова).
+    setOrderNumber('');
     setScanning(true);
     try {
       await onAddOrder(box.id, value);
-      setOrderNumber('');
     } finally {
       setScanning(false);
       inputRef.current?.focus();

@@ -16,6 +16,12 @@ export function useScannerAutoSubmit(value: string, onSubmit: () => void, enable
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
+  // Запоминаем значение, для которого уже была вызвана отправка. Это защита от зацикливания:
+  // пока идёт запрос, enabled становится false, а после его завершения (успех или ошибка)
+  // снова true — если само значение поля при этом не очистилось (например, обработчик забыл
+  // это сделать при ошибке), то без этой проверки эффект перезапустился бы просто от смены
+  // enabled и повторно отправил бы тот же самый код по кругу.
+  const lastSubmittedRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (timerRef.current) {
@@ -23,9 +29,15 @@ export function useScannerAutoSubmit(value: string, onSubmit: () => void, enable
       timerRef.current = null;
     }
 
-    if (!enabled || !value.trim()) return;
+    if (!value.trim()) {
+      lastSubmittedRef.current = null;
+      return;
+    }
+
+    if (!enabled || lastSubmittedRef.current === value) return;
 
     timerRef.current = setTimeout(() => {
+      lastSubmittedRef.current = value;
       onSubmitRef.current();
     }, 200);
 

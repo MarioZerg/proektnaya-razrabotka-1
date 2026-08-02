@@ -74,12 +74,14 @@ const MarketplaceSupplyShow = () => {
   const handleScanOrder = async () => {
     const orderNumber = scanOrderNumber.trim();
     if (!orderNumber) return;
+    // Поле очищаем сразу, до ответа сервера — чтобы не было повторных отправок того же
+    // номера при ошибке (автосканирование иначе попыталось бы отправить его снова).
+    setScanOrderNumber('');
     setScanning(true);
     try {
       await scanOrderToSupply(supplyId, orderNumber);
       playScanSound();
       toast({ title: `Заказ ${orderNumber} добавлен` });
-      setScanOrderNumber('');
       load();
     } catch (e) {
       playScanErrorSound();

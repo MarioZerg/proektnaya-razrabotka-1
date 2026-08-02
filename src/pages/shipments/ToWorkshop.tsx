@@ -124,12 +124,15 @@ const ToWorkshop = () => {
   const handleScan = async () => {
     const code = scanCode.trim();
     if (!code || !activeShipment) return;
+    // Поле очищаем сразу, до ответа сервера — чтобы кладовщик не мог повторно нажать
+    // "Добавить" с тем же значением, пока идёт запрос, и чтобы строка ввода не оставалась
+    // с "зависшим" кодом при ошибке (иначе автосканирование попытается отправить его снова).
+    setScanCode('');
     setScanning(true);
     try {
       await collectScan(activeShipment.id, code);
       playScanSound();
       toast({ title: `Рулон ${code} добавлен` });
-      setScanCode('');
       const detail = await fetchShipmentDetail(activeShipment.id);
       setActiveShipment(detail);
     } catch (e) {

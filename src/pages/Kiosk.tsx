@@ -23,6 +23,9 @@ const Kiosk = () => {
   const handleSearch = async () => {
     const value = orderNumber.trim();
     if (!value) return;
+    // Поле очищаем сразу, до ответа сервера — чтобы не было повторных отправок того же
+    // номера при ошибке (автосканирование иначе попыталось бы отправить его снова).
+    setOrderNumber('');
     setSearching(true);
     setOrder(null);
     try {
