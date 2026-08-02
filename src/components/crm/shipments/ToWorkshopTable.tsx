@@ -21,14 +21,14 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { Shipment } from '@/lib/shipmentsApi';
 import type { Workshop } from '@/lib/workshopsApi';
+import type { AccessZone } from '@/lib/roles';
 import { formatDate, statusVariant, shiftLabel } from '@/components/crm/shipments/toWorkshopShared';
 
 interface ToWorkshopTableProps {
   loading: boolean;
   shipments: Shipment[];
   workshops: Workshop[];
-  isProduction: boolean;
-  isAdmin: boolean;
+  zone: AccessZone;
   userWorkshopId: number | null;
   userShiftNumber: number | null;
   deleteId: number | null;
@@ -43,8 +43,7 @@ const ToWorkshopTable = ({
   loading,
   shipments,
   workshops,
-  isProduction,
-  isAdmin,
+  zone,
   userWorkshopId,
   userShiftNumber,
   deleteId,
@@ -54,11 +53,16 @@ const ToWorkshopTable = ({
   onSetDeleteId,
   onDelete,
 }: ToWorkshopTableProps) => {
-  // Швея/закройщик/упаковщик принимает материал только в СВОЙ цех/смену — иначе видел бы
-  // и мог принять чужую поставку. Кладовщик/админ видят кнопку для любой заявки (как раньше).
+  // Собирает и отправляет рулоны только зона склада (кладовщик) — админ тоже может, для
+  // исправления ошибок. Работники цехов (зона workshop) эту кнопку не видят вообще.
+  const canAssemble = zone === 'admin' || zone === 'warehouse';
+
+  // Принять в цехе может только сам работник СВОЕГО цеха/смены — кладовщик эту кнопку
+  // больше не видит вообще (не его зона ответственности). Админ видит всегда — для
+  // исправления ошибок.
   const canReceive = (s: Shipment) =>
-    !isProduction ||
-    (s.workshopId === userWorkshopId && (s.shiftNumber === null || s.shiftNumber === userShiftNumber));
+    zone === 'admin' ||
+    (zone === 'workshop' && s.workshopId === userWorkshopId && (s.shiftNumber === null || s.shiftNumber === userShiftNumber));
 
   return (
     <>
@@ -107,7 +111,7 @@ const ToWorkshopTable = ({
                   <TableCell>{formatDate(s.createdAt)}</TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">
-                      {!isProduction && s.status === 'Новый' && (
+                      {canAssemble && s.status === 'Новый' && (
                         <Button size="sm" variant="outline" onClick={() => onOpenShipment(s.id)}>
                           Собрать
                         </Button>
@@ -117,7 +121,7 @@ const ToWorkshopTable = ({
                           Принять в цехе
                         </Button>
                       )}
-                      {isAdmin && (s.status === 'Новый' || s.status === 'Отправлено') && (
+                      {zone === 'admin' && (s.status === 'Новый' || s.status === 'Отправлено') && (
                         <Button size="icon" variant="ghost" onClick={() => onSetDeleteId(s.id)}>
                           <Icon name="Trash2" size={14} />
                         </Button>

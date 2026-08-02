@@ -1,5 +1,24 @@
 export type Role = 'sewer' | 'cutter' | 'packer' | 'storekeeper' | 'cleaner' | 'admin';
 
+/**
+ * Зона доступа — укрупнённая группировка ролей, используется для разграничения прав
+ * там, где неважна конкретная должность, а важна принадлежность к общей зоне
+ * (например, кто может подтвердить приём поставки в цех). Ничего не хранится в БД —
+ * зона всегда вычисляется на лету по текущей роли пользователя.
+ *   - admin     — Администраторы: полный доступ везде
+ *   - warehouse — Работники складов: кладовщик
+ *   - workshop  — Работники цехов: швея, закройщик, упаковщик
+ *   - none      — вне зон (уборщица) — доступа к отгрузкам нет
+ */
+export type AccessZone = 'admin' | 'warehouse' | 'workshop' | 'none';
+
+export const getAccessZone = (role: Role | undefined | null): AccessZone => {
+  if (role === 'admin') return 'admin';
+  if (role === 'storekeeper') return 'warehouse';
+  if (role === 'sewer' || role === 'cutter' || role === 'packer') return 'workshop';
+  return 'none';
+};
+
 export interface NavChild {
   label: string;
   path: string;

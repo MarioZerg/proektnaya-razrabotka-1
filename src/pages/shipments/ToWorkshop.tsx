@@ -17,6 +17,7 @@ import {
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import { getAccessZone } from '@/lib/roles';
 import RequestMaterialDialog from '@/components/crm/shipments/RequestMaterialDialog';
 import ToWorkshopTable from '@/components/crm/shipments/ToWorkshopTable';
 import AssembleShipmentView from '@/components/crm/shipments/AssembleShipmentView';
@@ -25,7 +26,7 @@ const ToWorkshop = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const isProduction = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
-  const isAdmin = user?.role === 'admin';
+  const zone = getAccessZone(user?.role);
 
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
@@ -251,8 +252,7 @@ const ToWorkshop = () => {
           loading={loading}
           shipments={shipments}
           workshops={workshops}
-          isProduction={isProduction}
-          isAdmin={isAdmin}
+          zone={zone}
           userWorkshopId={user?.workshopId ?? null}
           userShiftNumber={user?.shiftNumber ?? null}
           deleteId={deleteId}

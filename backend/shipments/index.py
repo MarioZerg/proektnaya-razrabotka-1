@@ -91,10 +91,14 @@ def handler(event: dict, context) -> dict:
           Сам рулон остаётся на складе в статусе in_storage
     POST /  { action: 'ship', shipmentId }
         - переводит заявку в статус "Отправлено", все собранные рулоны получают статус
-          in_workshop и привязку к цеху/смене
+          in_workshop и привязку к цеху/смене. Разрешено только зоне склада (role='storekeeper')
+          или администратору (role='admin') — проверяется по actorId, если он передан
     POST /  { action: 'receive', shipmentId }
         - подтверждение приёмки в цехе, статус "Получено" (после этого статуса по данному
-          материалу/цеху/смене можно снова создать новую заявку)
+          материалу/цеху/смене можно снова создать новую заявку). Разрешено только сотруднику
+          ИМЕННО того цеха/смены, куда отправлена заявка (role in sewer/cutter/packer,
+          users.workshop/shift_number совпадают с заявкой), либо администратору —
+          проверяется по actorId, если он передан
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -672,6 +676,14 @@ def handler(event: dict, context) -> dict:
                 if not shipment_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите shipmentId'})}
 
+                # Отправить рулоны в цех может только зона склада (кладовщик) или админ —
+                # проверяем на сервере, чтобы нельзя было обойти проверку на фронтенде.
+                if actor_id:
+                    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                    actor_row = cur.fetchone()
+                    if actor_row and actor_row[0] not in ('storekeeper', 'admin'):
+                        return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Отправлять заявку может только кладовщик или администратор'})}
+
                 cur.execute("SELECT type, status, workshop_id, shift_number FROM shipments WHERE id = %s", (int(shipment_id),))
                 sh_row = cur.fetchone()
                 if not sh_row:
@@ -715,6 +727,27 @@ def handler(event: dict, context) -> dict:
                 if sh_row[0] != 'to_workshop' or sh_row[1] != 'Отправлено':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявка ещё не отправлена или уже получена'})}
                 workshop_id, shift_number = sh_row[2], sh_row[3]
+
+                # Подтвердить приём в цехе может только работник ИМЕННО этого цеха/смены
+                # (зона workshop) или админ — проверяем на сервере, чтобы нельзя было
+                # подтвердить приём чужой заявки прямым API-запросом в обход фронтенда.
+                if actor_id:
+                    cur.execute(
+                        "SELECT role, workshop, shift_number FROM users WHERE id = %s", (int(actor_id),)
+                    )
+                    actor_row = cur.fetchone()
+                    if actor_row:
+                        actor_role, actor_workshop_name, actor_shift_number = actor_row
+                        if actor_role != 'admin':
+                            if actor_role not in ('sewer', 'cutter', 'packer'):
+                                return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Принять заявку в цехе может только сотрудник этого цеха'})}
+                            cur.execute("SELECT id FROM workshops WHERE name = %s", (actor_workshop_name,))
+                            wr = cur.fetchone()
+                            actor_workshop_id = wr[0] if wr else None
+                            if actor_workshop_id != workshop_id or (
+                                shift_number is not None and actor_shift_number != shift_number
+                            ):
+                                return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Эта заявка отправлена в другой цех/смену'})}
 
                 cur.execute(f"UPDATE shipments SET status = 'Получено', completed_at = now() WHERE id = {int(shipment_id)}")
 
