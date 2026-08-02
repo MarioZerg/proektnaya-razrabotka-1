@@ -37,6 +37,9 @@ const Kiosk = () => {
       toast({ title: 'Заказ не найден', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setSearching(false);
+      // setTimeout — иначе .focus() сработает раньше, чем React снимет disabled с поля
+      // после ререндера, и браузер молча проигнорирует вызов на задизейбленном инпуте.
+      setTimeout(() => inputRef.current?.focus(), 0);
     }
   };
 

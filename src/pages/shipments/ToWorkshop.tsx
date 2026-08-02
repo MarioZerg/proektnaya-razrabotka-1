@@ -140,7 +140,9 @@ const ToWorkshop = () => {
       toast({ title: 'Ошибка сканирования', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setScanning(false);
-      scanInputRef.current?.focus();
+      // setTimeout — иначе .focus() сработает раньше, чем React снимет disabled с поля
+      // после ререндера, и браузер молча проигнорирует вызов на задизейбленном инпуте.
+      setTimeout(() => scanInputRef.current?.focus(), 0);
     }
   };
 

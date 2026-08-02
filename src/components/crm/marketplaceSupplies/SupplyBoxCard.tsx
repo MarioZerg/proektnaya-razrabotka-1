@@ -31,7 +31,9 @@ const SupplyBoxCard = ({ box, canEdit, onAddOrder, onRemoveItem, onDeleteBox }: 
       await onAddOrder(box.id, value);
     } finally {
       setScanning(false);
-      inputRef.current?.focus();
+      // setTimeout — иначе .focus() сработает раньше, чем React снимет disabled с поля
+      // после ререндера, и браузер молча проигнорирует вызов на задизейбленном инпуте.
+      setTimeout(() => inputRef.current?.focus(), 0);
     }
   };
 
