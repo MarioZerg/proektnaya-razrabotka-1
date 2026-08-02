@@ -25,6 +25,9 @@ export interface Employee {
   maxUserId: string | null;
   phone: string | null;
   registeredViaMax: boolean;
+  /** Гостевой режим ("смена выключена" сотруднику) — не привязан жёстко к штатной смене,
+   * при открытии смены сам выбирает цех/смену на сегодня. */
+  shiftFree: boolean;
   roles: UserRoleEntry[];
 }
 
@@ -72,6 +75,8 @@ export const updateEmployee = (
     isActive: boolean;
     avatarBase64: string;
     maxUserId: string | null;
+    shiftNumber: number | null;
+    shiftFree: boolean;
   }>
 ) => postAction({ action: 'update', id, ...fields });
 

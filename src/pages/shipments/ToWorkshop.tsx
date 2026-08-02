@@ -72,14 +72,19 @@ const ToWorkshop = () => {
     if (activeShipment) scanInputRef.current?.focus();
   }, [activeShipment]);
 
+  // Цех/смена ТЕКУЩЕЙ открытой рабочей смены (может отличаться от штатных в гостевом
+  // режиме) — сотрудник в гостях запрашивает и видит заявки именно той смены, куда зашёл.
+  const effectiveWorkshopId = user?.activeWorkshopId ?? user?.workshopId ?? null;
+  const effectiveShiftNumber = user?.activeShiftNumber ?? user?.shiftNumber ?? null;
+
   // Швея/закройщик/упаковщик видит только заявки СВОЕГО цеха и смены — не весь список.
   // Заявка без указанной смены (shiftNumber === null) относится ко всем сменам этого цеха.
   // Кладовщик и админ видят полный список, как и раньше.
   const visibleShipments = isProduction
     ? shipments.filter(
         (s) =>
-          s.workshopId === user?.workshopId &&
-          (s.shiftNumber === null || s.shiftNumber === user?.shiftNumber)
+          s.workshopId === effectiveWorkshopId &&
+          (s.shiftNumber === null || s.shiftNumber === effectiveShiftNumber)
       )
     : shipments;
 
@@ -90,8 +95,8 @@ const ToWorkshop = () => {
   };
 
   const handleCreate = async () => {
-    if (!user?.workshopId) {
-      toast({ title: 'За вами не закреплён цех — обратитесь к администратору', variant: 'destructive' });
+    if (!effectiveWorkshopId) {
+      toast({ title: 'За вами не закреплён цех — откройте смену на главной странице', variant: 'destructive' });
       return;
     }
     if (!reqMaterialId) {
@@ -101,8 +106,8 @@ const ToWorkshop = () => {
     setCreating(true);
     try {
       await requestToWorkshop({
-        workshopId: Number(user.workshopId),
-        shiftNumber: user?.shiftNumber ?? undefined,
+        workshopId: effectiveWorkshopId,
+        shiftNumber: effectiveShiftNumber ?? undefined,
         comment: reqComment.trim() || undefined,
         materialId: Number(reqMaterialId),
         requestedBy: user?.id,
@@ -290,8 +295,8 @@ const ToWorkshop = () => {
           shipments={visibleShipments}
           workshops={workshops}
           zone={zone}
-          userWorkshopId={user?.workshopId ?? null}
-          userShiftNumber={user?.shiftNumber ?? null}
+          userWorkshopId={effectiveWorkshopId}
+          userShiftNumber={effectiveShiftNumber}
           expandedRolls={expandedRolls}
           loadingRolls={loadingRolls}
           onToggleRolls={toggleRolls}

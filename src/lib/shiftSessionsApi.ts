@@ -8,6 +8,12 @@ export interface EmployeeShiftStatus {
   isOpen: boolean;
   openedAt: string | null;
   canCloseAt: string | null;
+  /** Гостевой режим — сотрудник не привязан жёстко к штатной смене. */
+  shiftFree: boolean;
+  /** Цех/смена ТЕКУЩЕЙ открытой смены — может отличаться от штатной (workshop/shiftNumber
+   * профиля), если сотрудник зашёл гостем в другую смену. */
+  sessionWorkshopId: number | null;
+  sessionShiftNumber: number | null;
 }
 
 export const fetchEmployeeShifts = async (): Promise<EmployeeShiftStatus[]> => {
@@ -28,6 +34,20 @@ export const fetchShiftCalendar = async (month: string): Promise<ShiftCalendarDa
   return data.days || [];
 };
 
+export interface AvailableShift {
+  workshopId: number;
+  workshopName: string;
+  shiftNumber: number;
+  shiftName: string;
+  isHome: boolean;
+}
+
+export const fetchAvailableShifts = async (userId: number): Promise<AvailableShift[]> => {
+  const res = await fetch(`${SHIFT_SESSIONS_URL}?available_shifts=1&userId=${userId}`);
+  const data = await res.json();
+  return data.shifts || [];
+};
+
 const postAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(SHIFT_SESSIONS_URL, {
     method: 'POST',
@@ -41,7 +61,17 @@ const postAction = async (payload: Record<string, unknown>) => {
   return data;
 };
 
-export const openShift = (userId: number, workshopId?: number | null, shiftNumber?: number | null) =>
-  postAction({ action: 'open', userId, workshopId, shiftNumber });
+export interface OpenShiftResult {
+  id: number;
+  openedAt: string;
+  workshopId: number;
+  shiftNumber: number;
+}
+
+export const openShift = (
+  userId: number,
+  workshopId?: number | null,
+  shiftNumber?: number | null
+): Promise<OpenShiftResult> => postAction({ action: 'open', userId, workshopId, shiftNumber });
 
 export const closeShift = (userId: number) => postAction({ action: 'close', userId });

@@ -255,14 +255,20 @@ const SewingItems = () => {
     }
   };
 
+  // Цех/смена ТЕКУЩЕЙ открытой рабочей смены (может отличаться от штатных в гостевом
+  // режиме) — именно они используются для взятия стека и фильтрации доступных рулонов,
+  // чтобы сотрудник в гостях работал с материалами той смены, куда зашёл.
+  const effectiveWorkshopId = user?.activeWorkshopId ?? user?.workshopId ?? null;
+  const effectiveShiftNumber = user?.activeShiftNumber ?? user?.shiftNumber ?? null;
+
   const handleTakeStack = async () => {
-    if (!user?.workshopId) {
-      toast({ title: 'У вас не указан цех в профиле', variant: 'destructive' });
+    if (!effectiveWorkshopId) {
+      toast({ title: 'У вас не указан цех — откройте смену на главной странице', variant: 'destructive' });
       return;
     }
     setTakingStack(true);
     try {
-      const res = await takeStack(user.id, user.workshopId, user.shiftNumber);
+      const res = await takeStack(user!.id, effectiveWorkshopId, effectiveShiftNumber);
       toast({ title: `Взято в работу заказов: ${res.count}` });
       setActiveTab('На раскрое');
       load();
@@ -291,7 +297,7 @@ const SewingItems = () => {
   };
 
   const rollsInMyWorkshop = rolls.filter(
-    (r) => r.workshopId === user?.workshopId && (!user?.shiftNumber || r.shiftNumber === user.shiftNumber)
+    (r) => r.workshopId === effectiveWorkshopId && (!effectiveShiftNumber || r.shiftNumber === effectiveShiftNumber)
   );
 
   // Показываем только рулоны материала, который реально нужен для этого товара

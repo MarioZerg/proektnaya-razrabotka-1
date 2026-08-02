@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
-import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -18,7 +17,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
-import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
+import { useToast } from '@/hooks/use-toast';
+import { fetchShifts, fetchShiftDaysOff, setShiftDayOff, type ShiftListItem } from '@/lib/shiftsApi';
 
 const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -53,64 +53,118 @@ const monthNames = [
 const formatDate = (d: Date) =>
   `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
 
+const toIsoDate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 const ShiftsCalendar = () => {
-  const [workshops, setWorkshops] = useState<Workshop[]>([]);
-  const [workshopId, setWorkshopId] = useState('');
+  const { toast } = useToast();
+  const [shifts, setShifts] = useState<ShiftListItem[]>([]);
+  const [shiftId, setShiftId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [daysOff, setDaysOff] = useState<Set<string>>(new Set());
+  const [savingDate, setSavingDate] = useState<string | null>(null);
 
   const today = new Date();
-  const weeks = buildMonthGrid(today.getFullYear(), today.getMonth());
+  const [monthOffset, setMonthOffset] = useState(0);
+  const viewDate = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+  const weeks = useMemo(() => buildMonthGrid(viewDate.getFullYear(), viewDate.getMonth()), [viewDate]);
 
   useEffect(() => {
-    fetchWorkshops()
-      .then((w) => {
-        setWorkshops(w);
-        if (w.length > 0) setWorkshopId(String(w[0].id));
+    fetchShifts()
+      .then((data) => {
+        setShifts(data);
+        if (data.length > 0) setShiftId(String(data[0].id));
       })
       .finally(() => setLoading(false));
   }, []);
 
-  const selectedWorkshop = workshops.find((w) => String(w.id) === workshopId);
+  const selectedShift = shifts.find((s) => String(s.id) === shiftId);
 
-  const shiftForDay = (date: Date) => {
-    if (!selectedWorkshop || selectedWorkshop.shiftsCount === 0) return null;
-    const dayIndex = Math.floor(date.getTime() / (1000 * 60 * 60 * 24));
-    const shiftNumber = (dayIndex % selectedWorkshop.shiftsCount) + 1;
-    return `Смена № ${shiftNumber}`;
+  const loadDaysOff = () => {
+    if (!selectedShift) return;
+    const month = `${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}`;
+    fetchShiftDaysOff(selectedShift.workshopId, selectedShift.shiftNumber, month).then((data) =>
+      setDaysOff(new Set(data))
+    );
+  };
+
+  useEffect(() => {
+    loadDaysOff();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedShift?.id, viewDate.getFullYear(), viewDate.getMonth()]);
+
+  const toggleDayOff = async (date: Date, isCurrentMonth: boolean) => {
+    if (!selectedShift || !isCurrentMonth) return;
+    const iso = toIsoDate(date);
+    const isDayOff = daysOff.has(iso);
+    setSavingDate(iso);
+    try {
+      await setShiftDayOff(selectedShift.workshopId, selectedShift.shiftNumber, iso, !isDayOff);
+      setDaysOff((prev) => {
+        const next = new Set(prev);
+        if (isDayOff) next.delete(iso);
+        else next.add(iso);
+        return next;
+      });
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSavingDate(null);
+    }
   };
 
   return (
     <CrmLayout>
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Календарь смен</h1>
+        <p className="text-sm text-muted-foreground">
+          Кликните по дню, чтобы отметить его выходным для выбранной смены — в этот день
+          сотрудники смены не смогут открыть смену. Например, для Цеха №2 (график 5/2) вручную
+          отмечайте каждую субботу и воскресенье.
+        </p>
 
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1.5">
-            <Label>Цех:</Label>
-            <Select value={workshopId} onValueChange={setWorkshopId} disabled={loading}>
-              <SelectTrigger className="w-[200px]">
+            <Label>Смена:</Label>
+            <Select value={shiftId} onValueChange={setShiftId} disabled={loading}>
+              <SelectTrigger className="w-[260px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {workshops.map((w) => (
-                  <SelectItem key={w.id} value={String(w.id)}>
-                    {w.name}
+                {shifts.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    {s.workshopName} — {s.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded-md border border-border p-1.5 hover:bg-muted"
+              onClick={() => setMonthOffset((v) => v - 1)}
+            >
+              <Icon name="ChevronLeft" size={16} />
+            </button>
+            <p className="min-w-[140px] text-center text-sm font-medium capitalize">
+              {monthNames[viewDate.getMonth()]} {viewDate.getFullYear()}
+            </p>
+            <button
+              className="rounded-md border border-border p-1.5 hover:bg-muted"
+              onClick={() => setMonthOffset((v) => v + 1)}
+            >
+              <Icon name="ChevronRight" size={16} />
+            </button>
+          </div>
         </div>
-
-        <p className="text-sm font-medium capitalize">
-          {monthNames[today.getMonth()]} {today.getFullYear()}
-        </p>
 
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
+        ) : shifts.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Сначала создайте смену на вкладке «Смены».</p>
         ) : (
           <div className="rounded-md border border-border">
             <Table>
@@ -127,19 +181,25 @@ const ShiftsCalendar = () => {
                 {weeks.map((week, wIdx) => (
                   <TableRow key={wIdx}>
                     {week.map((date, dIdx) => {
-                      const isCurrentMonth = date.getMonth() === today.getMonth();
-                      const shift = isCurrentMonth ? shiftForDay(date) : null;
+                      const isCurrentMonth = date.getMonth() === viewDate.getMonth();
+                      const iso = toIsoDate(date);
+                      const isDayOff = daysOff.has(iso);
+                      const isSaving = savingDate === iso;
                       return (
                         <TableCell
                           key={dIdx}
+                          onClick={() => toggleDayOff(date, isCurrentMonth)}
                           className={`min-w-[110px] align-top ${
-                            isCurrentMonth ? 'bg-muted/40' : 'text-muted-foreground'
-                          }`}
+                            isCurrentMonth ? 'cursor-pointer bg-muted/40 hover:bg-muted' : 'text-muted-foreground'
+                          } ${isDayOff && isCurrentMonth ? 'bg-destructive/10' : ''}`}
                         >
-                          <div className="text-xs font-semibold">{formatDate(date)}</div>
-                          {shift && (
-                            <div className="mt-1 rounded bg-background px-2 py-1 text-xs">
-                              {shift}
+                          <div className="flex items-center justify-between text-xs font-semibold">
+                            {formatDate(date)}
+                            {isSaving && <Icon name="Loader2" size={11} className="animate-spin" />}
+                          </div>
+                          {isDayOff && isCurrentMonth && (
+                            <div className="mt-1 rounded bg-destructive px-2 py-1 text-xs text-destructive-foreground">
+                              Выходной
                             </div>
                           )}
                         </TableCell>
@@ -151,11 +211,6 @@ const ShiftsCalendar = () => {
             </Table>
           </div>
         )}
-
-        <div className="flex gap-3">
-          <Button className="bg-emerald-600 text-white hover:bg-emerald-700">Сохранить календарь</Button>
-          <Button variant="outline">Назад к сменам</Button>
-        </div>
       </div>
     </CrmLayout>
   );

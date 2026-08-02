@@ -1,0 +1,50 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get shifts list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get shift detail",
+      "method": "GET",
+      "path": "/?id=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Create shift without name fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create", "workshopId": 1},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Create shift with duplicate number fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create", "workshopId": 1, "name": "Тест", "shiftNumber": 1},
+      "expectedStatus": 409
+    },
+    {
+      "name": "Update without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "update"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Delete non-existing shift fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "delete", "id": 999999},
+      "expectedStatus": 404
+    }
+  ]
+}

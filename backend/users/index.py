@@ -50,9 +50,13 @@ def handler(event: dict, context) -> dict:
         - создаёт сотрудника классическим способом (админ вручную), сразу с одной
           утверждённой ролью role в user_roles
     POST /  { action: 'update', id, fullName?, role?, password?, workshop?, salary?, shiftFrom?, shiftTo?,
-              avatarBase64?, isActive?, maxUserId? }
+              avatarBase64?, isActive?, maxUserId?, shiftNumber?, shiftFree? }
         - maxUserId: числовой ID пользователя в MAX, можно скорректировать вручную.
           Обычно заполняется автоматически, когда сотрудник делится номером в боте
+        - shiftFree=true — "выключает смену" сотруднику (гостевой режим): он перестаёт быть
+          жёстко привязан к своей штатной смене (workshop/shiftNumber в профиле НЕ меняются)
+          и при открытии смены сам выбирает, в какой цех/смену зайти сегодня (см.
+          backend/shift_sessions). shiftFree=false возвращает жёсткую привязку
     POST /  { action: 'delete', id }
     POST /  { action: 'add_role', id, role, approved? } — добавляет пользователю новую
         должность. approved (по умолчанию true) — сразу утверждённая или нет
@@ -94,7 +98,7 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "SELECT id, login, email, full_name, role, workshop, salary, "
                 "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number, "
-                "max_user_id, phone, registered_via_max "
+                "max_user_id, phone, registered_via_max, shift_free "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -123,6 +127,7 @@ def handler(event: dict, context) -> dict:
                     'maxUserId': r[14],
                     'phone': r[15],
                     'registeredViaMax': r[16],
+                    'shiftFree': r[17],
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows
@@ -248,6 +253,8 @@ def handler(event: dict, context) -> dict:
                     val = body_data['shiftNumber']
                     shift_number_val = str(int(val)) if val not in (None, '') else 'NULL'
                     fields.append(f"shift_number = {shift_number_val}")
+                if 'shiftFree' in body_data:
+                    fields.append(f"shift_free = {'true' if body_data['shiftFree'] else 'false'}")
                 if body_data.get('password'):
                     salt = secrets.token_hex(16)
                     pwd_hash = hash_password(body_data['password'], salt)

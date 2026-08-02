@@ -7,7 +7,7 @@ import { fetchOrders, type Order } from '@/lib/ordersApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { fetchShipments, type Shipment } from '@/lib/shipmentsApi';
-import { fetchEmployees, type Employee } from '@/lib/usersApi';
+import { fetchEmployees, updateEmployee, type Employee } from '@/lib/usersApi';
 import {
   fetchEmployeeShifts,
   fetchShiftCalendar,
@@ -16,6 +16,7 @@ import {
   type EmployeeShiftStatus,
   type ShiftCalendarDay,
 } from '@/lib/shiftSessionsApi';
+import { fetchShifts, type ShiftListItem } from '@/lib/shiftsApi';
 import DashboardWidgetsGrid from '@/components/crm/dashboard/DashboardWidgetsGrid';
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
@@ -24,7 +25,7 @@ import MySalaryCard from '@/components/crm/dashboard/MySalaryCard';
 import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 
 const CrmDashboard = () => {
-  const { user } = useAuth();
+  const { user, setActiveShift } = useAuth();
   const { toast } = useToast();
   const isAdmin = user?.role === 'admin';
   const isCleaner = user?.role === 'cleaner';
@@ -40,6 +41,7 @@ const CrmDashboard = () => {
   const [shiftsLoading, setShiftsLoading] = useState(true);
   const [employeeShifts, setEmployeeShifts] = useState<EmployeeShiftStatus[]>([]);
   const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [allShifts, setAllShifts] = useState<ShiftListItem[]>([]);
 
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [calendarDays, setCalendarDays] = useState<ShiftCalendarDay[]>([]);
@@ -83,6 +85,7 @@ const CrmDashboard = () => {
       return;
     }
     loadShifts();
+    if (isAdmin) fetchShifts().then(setAllShifts);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.role]);
 
@@ -96,6 +99,15 @@ const CrmDashboard = () => {
     () => employeeShifts.find((e) => e.id === user?.id) || null,
     [employeeShifts, user?.id]
   );
+
+  // Синхронизируем AuthContext с фактическим цехом/сменой уже открытой сессии — важно
+  // после перезагрузки страницы, когда смена была открыта раньше (в т.ч. гостем).
+  useEffect(() => {
+    if (myShiftStatus?.isOpen) {
+      setActiveShift(myShiftStatus.sessionWorkshopId, myShiftStatus.sessionShiftNumber);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myShiftStatus?.isOpen, myShiftStatus?.sessionWorkshopId, myShiftStatus?.sessionShiftNumber]);
 
   const mySalary = useMemo(
     () => employees.find((e) => e.id === user?.id)?.salary ?? null,
@@ -118,20 +130,52 @@ const CrmDashboard = () => {
     }
   };
 
-  const handleToggleMyShift = async () => {
+  // Сотруднику нужен выбор цеха/смены на дашборде, если он в гостевом режиме (shiftFree),
+  // либо у него вообще нет штатной смены — тогда открытие требует явного выбора (см. backend).
+  const needsShiftChoice = !!(myShiftStatus?.shiftFree || (!isCleaner && !user?.workshopId) || (!isCleaner && !user?.shiftNumber));
+
+  const handleToggleMyShift = async (choice?: { workshopId: number; shiftNumber: number }) => {
     if (!user) return;
     setTogglingId(user.id);
     try {
       if (myShiftStatus?.isOpen) {
         await closeShift(user.id);
+        setActiveShift(null, null);
       } else {
-        await openShift(user.id, user.workshopId, user.shiftNumber);
+        const res = await openShift(user.id, choice?.workshopId ?? user.workshopId, choice?.shiftNumber ?? user.shiftNumber);
+        setActiveShift(res.workshopId, res.shiftNumber);
       }
       loadShifts();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setTogglingId(null);
+    }
+  };
+
+  // Админ постоянно переключает штатную смену сотрудника (users.workshop/shiftNumber) —
+  // сотрудник теперь официально числится в новой смене, пока его не переключат снова.
+  const handleSwitchShift = async (employeeId: number, shiftId: number) => {
+    const shift = allShifts.find((s) => s.id === shiftId);
+    if (!shift) return;
+    try {
+      await updateEmployee(employeeId, { workshop: shift.workshopName, shiftNumber: shift.shiftNumber });
+      toast({ title: 'Смена сотрудника переключена' });
+      loadShifts();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
+  // Админ включает/выключает сотруднику "свободный график" (гостевой режим) — не меняет
+  // штатную смену в профиле, только снимает жёсткую привязку на будущие открытия смены.
+  const handleToggleFree = async (employeeId: number, shiftFree: boolean) => {
+    try {
+      await updateEmployee(employeeId, { shiftFree });
+      toast({ title: shiftFree ? 'Смена сотруднику выключена' : 'Сотрудник возвращён в свою смену' });
+      loadShifts();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
   };
 
@@ -195,9 +239,12 @@ const CrmDashboard = () => {
           <>
             <ShiftManagementCard
               employees={employeeShifts}
+              shifts={allShifts}
               loading={shiftsLoading}
               togglingId={togglingId}
               onToggle={handleToggleShift}
+              onSwitchShift={handleSwitchShift}
+              onToggleFree={handleToggleFree}
             />
             <ShiftCalendarCard
               selectedDate={selectedDate}
@@ -211,8 +258,10 @@ const CrmDashboard = () => {
               <div className="lg:col-span-2">
                 <MyShiftCard
                   status={myShiftStatus}
+                  userId={user?.id}
                   loading={shiftsLoading}
                   toggling={togglingId === user?.id}
+                  needsShiftChoice={needsShiftChoice}
                   onToggle={handleToggleMyShift}
                 />
               </div>

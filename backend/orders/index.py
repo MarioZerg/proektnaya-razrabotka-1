@@ -446,11 +446,25 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
                 material, width, height, order_workshop_id, order_assigned_user_id = order_row
 
+                # Текущая смена закройщика берётся из его ОТКРЫТОЙ shift_sessions (а не из
+                # статичного users.shift_number) — это учитывает гостевой режим: если
+                # сотрудник сегодня зашёл в чужую смену, рулон должен списываться именно с
+                # неё. Если открытой смены нет (например, старые тестовые данные) — fallback
+                # на штатную смену профиля.
                 order_shift_number = None
                 if order_assigned_user_id:
-                    cur.execute("SELECT shift_number FROM users WHERE id = %s", (order_assigned_user_id,))
-                    u_row = cur.fetchone()
-                    order_shift_number = u_row[0] if u_row else None
+                    cur.execute(
+                        "SELECT shift_number FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                        "ORDER BY opened_at DESC LIMIT 1",
+                        (order_assigned_user_id,),
+                    )
+                    session_row = cur.fetchone()
+                    if session_row and session_row[0] is not None:
+                        order_shift_number = session_row[0]
+                    else:
+                        cur.execute("SELECT shift_number FROM users WHERE id = %s", (order_assigned_user_id,))
+                        u_row = cur.fetchone()
+                        order_shift_number = u_row[0] if u_row else None
 
                 cur.execute(
                     "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
@@ -688,11 +702,22 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'Заказ уже отправлен на стикеровку'}),
                     }
 
+                # Текущая смена швеи берётся из её ОТКРЫТОЙ shift_sessions (учитывает
+                # гостевой режим), с fallback на штатную смену профиля.
                 order_shift_number = None
                 if order_assigned_user_id:
-                    cur.execute("SELECT shift_number FROM users WHERE id = %s", (order_assigned_user_id,))
-                    u_row = cur.fetchone()
-                    order_shift_number = u_row[0] if u_row else None
+                    cur.execute(
+                        "SELECT shift_number FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                        "ORDER BY opened_at DESC LIMIT 1",
+                        (order_assigned_user_id,),
+                    )
+                    session_row = cur.fetchone()
+                    if session_row and session_row[0] is not None:
+                        order_shift_number = session_row[0]
+                    else:
+                        cur.execute("SELECT shift_number FROM users WHERE id = %s", (order_assigned_user_id,))
+                        u_row = cur.fetchone()
+                        order_shift_number = u_row[0] if u_row else None
 
                 cur.execute(
                     "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
