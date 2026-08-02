@@ -55,7 +55,10 @@ def handler(event: dict, context) -> dict:
           заявка была автозаказом (is_auto_order=true) — по этому материалу/цеху/смене
           создаётся блокировка (auto_order_blocks): автозаказ не будет создавать новые
           заявки на эту комбинацию, пока следующая заявка (созданная вручную) не дойдёт
-          до статуса "Получено" (action 'receive' снимает блокировку)
+          до статуса "Получено" (action 'receive' снимает блокировку).
+          Для from_supplier разрешено в ЛЮБОМ статусе (включая "Завершено"): если поставка
+          уже подтверждена, созданные рулоны удаляются вместе с ней, но ТОЛЬКО если ни один
+          из них ещё не использован (не списан, не передан в цех) — иначе 409
 
     Подтверждение поставки от поставщика (только type='from_supplier', статус 'Новый'):
     POST /  { action: 'update_pending_supply', id, items: [...], supplierId? }
@@ -776,6 +779,35 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'Удалить можно только заявку в статусе "Новый" или "Отправлено"'}),
                     }
 
+                # Поставку от поставщика можно удалить в любом статусе. Если она уже подтверждена
+                # (status='Завершено') — рулоны, созданные при подтверждении, тоже удаляются, но
+                # ТОЛЬКО если они ещё не использованы (остаток = исходному кол-ву, статус
+                # 'in_storage' — не списаны, не переданы в цех). Если хотя бы один рулон уже тронут —
+                # удаление всей поставки блокируется, чтобы не потерять историю расхода материала.
+                supply_roll_ids_to_delete: list = []
+                if sh_type == 'from_supplier' and sh_status == 'Завершено':
+                    cur.execute(
+                        "SELECT r.id, r.barcode, r.status, r.initial_quantity, r.remaining_quantity "
+                        "FROM shipment_items si JOIN rolls r ON r.id = si.roll_id "
+                        "WHERE si.shipment_id = %s",
+                        (int(item_id),),
+                    )
+                    roll_rows = cur.fetchall()
+                    touched = [
+                        r[1] for r in roll_rows
+                        if r[2] != 'in_storage' or float(r[3]) != float(r[4])
+                    ]
+                    if touched:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Нельзя удалить: рулоны уже используются (списаны или переданы в цех): '
+                                + ', '.join(touched)
+                            }),
+                        }
+                    supply_roll_ids_to_delete = [r[0] for r in roll_rows]
+
                 # Если отправленная заявка уже собрала рулоны (status='Отправлено' или
                 # они привязаны к цеху) — возвращаем их на склад, чтобы удаление не "теряло" материал.
                 if sh_type == 'to_workshop':
@@ -808,6 +840,8 @@ def handler(event: dict, context) -> dict:
                             )
 
                 cur.execute("DELETE FROM shipment_items WHERE shipment_id = %s", (int(item_id),))
+                for roll_id in supply_roll_ids_to_delete:
+                    cur.execute("DELETE FROM rolls WHERE id = %s", (roll_id,))
                 cur.execute("DELETE FROM shipments WHERE id = %s", (int(item_id),))
                 log_action(
                     cur, actor_id, actor_name, 'delete_shipment', 'shipment', item_id,

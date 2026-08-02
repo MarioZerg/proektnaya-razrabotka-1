@@ -10,6 +10,7 @@ import {
   updatePendingSupply,
   approveSupply,
   rejectSupply,
+  deleteShipment,
   type Shipment,
   type ShipmentDetail,
 } from '@/lib/shipmentsApi';
@@ -53,6 +54,9 @@ const FromSupplier = () => {
   const [reviewSaving, setReviewSaving] = useState(false);
   const [rejectId, setRejectId] = useState<number | null>(null);
   const [lastCreatedRolls, setLastCreatedRolls] = useState<{ shipmentId: number; rolls: string[] } | null>(null);
+
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -223,6 +227,21 @@ const FromSupplier = () => {
     }
   };
 
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    setDeleting(true);
+    try {
+      await deleteShipment(deleteId);
+      toast({ title: 'Поставка удалена' });
+      setDeleteId(null);
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const activeFiltersCount = useMemo(
     () => [statusFilter !== 'all', supplierFilter !== 'all', !!dateFrom, !!dateTo].filter(Boolean).length,
     [statusFilter, supplierFilter, dateFrom, dateTo]
@@ -292,6 +311,10 @@ const FromSupplier = () => {
           onToggleRolls={toggleRolls}
           onOpenReview={openReview}
           onPrintShipmentBarcodes={printShipmentBarcodes}
+          deleteId={deleteId}
+          deleting={deleting}
+          onSetDeleteId={setDeleteId}
+          onDelete={handleDelete}
         />
       </div>
 
