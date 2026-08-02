@@ -15,6 +15,7 @@ import {
   type SupplyDetail,
 } from '@/lib/marketplaceSuppliesApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import { playScanSound } from '@/lib/scanSound';
 import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFboApplicationCard';
 import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
 import SupplyFboFieldsCard from '@/components/crm/marketplaceSupplies/SupplyFboFieldsCard';
@@ -76,6 +77,7 @@ const MarketplaceSupplyShow = () => {
     setScanning(true);
     try {
       await scanOrderToSupply(supplyId, orderNumber);
+      playScanSound();
       toast({ title: `Заказ ${orderNumber} добавлен` });
       setScanOrderNumber('');
       load();
