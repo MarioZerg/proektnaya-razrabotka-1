@@ -31,22 +31,12 @@ import { useToast } from '@/hooks/use-toast';
 import { fetchRolls, createRoll, type Roll, type RollStatus } from '@/lib/rollsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
+import { formatDateTime as formatDate } from '@/lib/dateUtils';
 
 const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | 'default' | 'outline' }> = {
   in_storage: { label: 'На складе', variant: 'secondary' },
   in_workshop: { label: 'В цехе', variant: 'default' },
   completed: { label: 'Завершён', variant: 'outline' },
-};
-
-const formatDate = (iso: string) => {
-  const d = new Date(iso);
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 };
 
 const Rolls = () => {

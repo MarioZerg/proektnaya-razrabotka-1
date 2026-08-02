@@ -87,8 +87,8 @@ def handler(event: dict, context) -> dict:
                     'wbSku': row[6],
                     'material': row[7],
                     'barcode': row[8],
-                    'createdAt': row[9].isoformat(),
-                    'updatedAt': row[10].isoformat(),
+                    'createdAt': row[9].isoformat() + 'Z',
+                    'updatedAt': row[10].isoformat() + 'Z',
                     'materials': materials,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'item': detail})}
@@ -108,8 +108,8 @@ def handler(event: dict, context) -> dict:
                     'wbSku': r[6],
                     'material': r[7],
                     'barcode': r[8],
-                    'createdAt': r[9].isoformat(),
-                    'updatedAt': r[10].isoformat(),
+                    'createdAt': r[9].isoformat() + 'Z',
+                    'updatedAt': r[10].isoformat() + 'Z',
                 }
                 for r in cur.fetchall()
             ]

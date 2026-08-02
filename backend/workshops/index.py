@@ -127,8 +127,8 @@ def handler(event: dict, context) -> dict:
                     'shiftsCount': row[3],
                     'allowedProducts': row[4] or [],
                     'allowedMaterials': row[5] or [],
-                    'createdAt': row[6].isoformat(),
-                    'updatedAt': row[7].isoformat(),
+                    'createdAt': row[6].isoformat() + 'Z',
+                    'updatedAt': row[7].isoformat() + 'Z',
                     'shifts': shifts,
                     'settings': settings,
                 }
@@ -145,8 +145,8 @@ def handler(event: dict, context) -> dict:
                     'name': r[1],
                     'isActive': r[2],
                     'shiftsCount': r[3],
-                    'createdAt': r[4].isoformat(),
-                    'updatedAt': r[5].isoformat(),
+                    'createdAt': r[4].isoformat() + 'Z',
+                    'updatedAt': r[5].isoformat() + 'Z',
                     'employeesCount': r[6],
                     'shiftNames': r[7] if isinstance(r[7], list) else json.loads(r[7] or '[]'),
                 }

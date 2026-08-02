@@ -51,8 +51,8 @@ def handler(event: dict, context) -> dict:
                     'phone': r[2],
                     'address': r[3],
                     'comment': r[4],
-                    'createdAt': r[5].isoformat(),
-                    'updatedAt': r[6].isoformat(),
+                    'createdAt': r[5].isoformat() + 'Z',
+                    'updatedAt': r[6].isoformat() + 'Z',
                 }
                 for r in cur.fetchall()
             ]

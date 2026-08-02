@@ -83,8 +83,8 @@ def handler(event: dict, context) -> dict:
                     'initialQuantity': float(r[8]),
                     'remainingQuantity': float(r[9]),
                     'status': r[10],
-                    'createdAt': r[11].isoformat(),
-                    'completedAt': r[12].isoformat() if r[12] else None,
+                    'createdAt': r[11].isoformat() + 'Z',
+                    'completedAt': (r[12].isoformat() + 'Z') if r[12] else None,
                 }
                 for r in cur.fetchall()
             ]

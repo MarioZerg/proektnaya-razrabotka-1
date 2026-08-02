@@ -198,7 +198,7 @@ def handler(event: dict, context) -> dict:
                         'description': r[2],
                         'payoutId': r[3],
                         'createdByName': r[4],
-                        'createdAt': r[5].isoformat(),
+                        'createdAt': r[5].isoformat() + 'Z',
                     }
                     for r in cur.fetchall()
                 ]
@@ -222,7 +222,7 @@ def handler(event: dict, context) -> dict:
                         'userId': r[1],
                         'userName': r[2],
                         'amount': float(r[3]),
-                        'paidAt': r[4].isoformat(),
+                        'paidAt': r[4].isoformat() + 'Z',
                         'periodFrom': r[5].isoformat() if r[5] else None,
                         'periodTo': r[6].isoformat() if r[6] else None,
                     }
@@ -250,8 +250,8 @@ def handler(event: dict, context) -> dict:
                         'description': r[3],
                         'orderNumber': r[4],
                         'accruedFor': r[5].isoformat(),
-                        'createdAt': r[6].isoformat(),
-                        'paidAt': r[7].isoformat() if r[7] else None,
+                        'createdAt': r[6].isoformat() + 'Z',
+                        'paidAt': (r[7].isoformat() + 'Z') if r[7] else None,
                     }
                     for r in cur.fetchall()
                 ]
@@ -268,7 +268,7 @@ def handler(event: dict, context) -> dict:
                     (int(user_id),),
                 )
                 payouts = [
-                    {'id': r[0], 'amount': float(r[1]), 'paidAt': r[2].isoformat()}
+                    {'id': r[0], 'amount': float(r[1]), 'paidAt': r[2].isoformat() + 'Z'}
                     for r in cur.fetchall()
                 ]
 
@@ -313,8 +313,8 @@ def handler(event: dict, context) -> dict:
                     'description': r[5],
                     'orderNumber': r[6],
                     'accruedFor': r[7].isoformat(),
-                    'createdAt': r[8].isoformat(),
-                    'paidAt': r[9].isoformat() if r[9] else None,
+                    'createdAt': r[8].isoformat() + 'Z',
+                    'paidAt': (r[9].isoformat() + 'Z') if r[9] else None,
                 }
                 for r in cur.fetchall()
             ]

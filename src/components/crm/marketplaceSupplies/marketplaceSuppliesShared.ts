@@ -1,13 +1,4 @@
-export const formatDateTime = (iso: string) => {
-  const d = new Date(iso);
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
+export { formatDateTime } from '@/lib/dateUtils';
 
 export const marketplaceLogo: Record<string, { label: string; className: string }> = {
   OZON: { label: 'OZON', className: 'text-[#005BFF] font-bold' },
@@ -38,11 +29,4 @@ export const readFileAsBase64 = (file: File): Promise<string> =>
   });
 
 /** Форматирует длительность в виде «2 ч 15 мин» (или «45 мин», если меньше часа). */
-export const formatDuration = (fromIso: string, now: Date) => {
-  const diffMs = Math.max(0, now.getTime() - new Date(fromIso).getTime());
-  const totalMinutes = Math.floor(diffMs / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes} мин`;
-  return `${hours} ч ${minutes} мин`;
-};
+export { formatDuration } from '@/lib/dateUtils';

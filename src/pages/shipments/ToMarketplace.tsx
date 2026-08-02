@@ -37,22 +37,7 @@ import {
   type OzonDeliveryMethod,
 } from '@/lib/marketplaceSuppliesApi';
 import CreateOzonFboDialog from '@/components/crm/marketplaceSupplies/CreateOzonFboDialog';
-
-const formatDate = (iso: string) => {
-  const d = new Date(iso);
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
-
-const formatDateOnly = (iso: string) => {
-  const d = new Date(iso);
-  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
-};
+import { formatDate, formatDateTime } from '@/lib/dateUtils';
 
 const marketplaceLogo: Record<string, { label: string; className: string }> = {
   OZON: { label: 'OZON', className: 'text-[#005BFF] font-bold' },
@@ -313,10 +298,10 @@ const ToMarketplace = () => {
                       </span>
                     </TableCell>
                     <TableCell>{s.type}</TableCell>
-                    <TableCell>{formatDate(s.createdAt)}</TableCell>
-                    <TableCell>{s.shipToGazelkaAt ? formatDateOnly(s.shipToGazelkaAt) : '—'}</TableCell>
-                    <TableCell>{s.shipToMarketplaceAt ? formatDateOnly(s.shipToMarketplaceAt) : '—'}</TableCell>
-                    <TableCell>{s.completedAt ? formatDateOnly(s.completedAt) : '—'}</TableCell>
+                    <TableCell>{formatDateTime(s.createdAt)}</TableCell>
+                    <TableCell>{s.shipToGazelkaAt ? formatDate(s.shipToGazelkaAt) : '—'}</TableCell>
+                    <TableCell>{s.shipToMarketplaceAt ? formatDate(s.shipToMarketplaceAt) : '—'}</TableCell>
+                    <TableCell>{s.completedAt ? formatDate(s.completedAt) : '—'}</TableCell>
                     <TableCell>
                       <Button
                         variant="outline"

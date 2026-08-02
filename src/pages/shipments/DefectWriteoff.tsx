@@ -31,6 +31,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchShipments, createShipmentDefectWriteoff, type Shipment } from '@/lib/shipmentsApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
+import { formatDateTime as formatDate } from '@/lib/dateUtils';
 
 interface ItemRow {
   rollId: string;
@@ -38,17 +39,6 @@ interface ItemRow {
 }
 
 const emptyRow: ItemRow = { rollId: '', quantity: '' };
-
-const formatDate = (iso: string) => {
-  const d = new Date(iso);
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
 
 const DefectWriteoff = () => {
   const { toast } = useToast();

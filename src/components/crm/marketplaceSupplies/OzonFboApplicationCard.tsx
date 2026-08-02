@@ -21,6 +21,7 @@ import {
 import Icon from '@/components/ui/icon';
 import type { SupplyDetail, PackagingType } from '@/lib/marketplaceSuppliesApi';
 import { formatDateTime } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import { formatDate } from '@/lib/dateUtils';
 
 const deliveryMethodLabels: Record<string, string> = {
   direct: 'Прямая поставка',
@@ -99,7 +100,7 @@ const OzonFboApplicationCard = ({ supply, canEdit, saving, onSave }: OzonFboAppl
         <div className="flex items-center justify-between border-b border-border pb-2">
           <span className="text-muted-foreground">Дата поставки / таймслот</span>
           <span className="font-medium">
-            {supply.supplyDate ? new Date(supply.supplyDate).toLocaleDateString('ru-RU') : '—'}
+            {supply.supplyDate ? formatDate(supply.supplyDate) : '—'}
             {supply.timeslot ? ` · ${supply.timeslot}` : ''}
           </span>
         </div>

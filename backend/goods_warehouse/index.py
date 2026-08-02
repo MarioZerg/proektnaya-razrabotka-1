@@ -129,9 +129,9 @@ def handler(event: dict, context) -> dict:
                 item = {
                     'id': row[0], 'orderId': row[1], 'orderNumber': row[2], 'product': row[3],
                     'material': row[4], 'width': row[5], 'height': row[6], 'shelfId': row[7],
-                    'shelfName': row[8], 'status': row[9], 'receivedAt': row[10].isoformat(),
-                    'shippedAt': row[11].isoformat() if row[11] else None, 'storageBarcode': row[12],
-                    'lostReason': row[13], 'lostAt': row[14].isoformat() if row[14] else None,
+                    'shelfName': row[8], 'status': row[9], 'receivedAt': row[10].isoformat() + 'Z',
+                    'shippedAt': (row[11].isoformat() + 'Z') if row[11] else None, 'storageBarcode': row[12],
+                    'lostReason': row[13], 'lostAt': (row[14].isoformat() + 'Z') if row[14] else None,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'item': item})}
 
@@ -172,11 +172,11 @@ def handler(event: dict, context) -> dict:
                     'shelfId': r[7],
                     'shelfName': r[8],
                     'status': r[9],
-                    'receivedAt': r[10].isoformat(),
-                    'shippedAt': r[11].isoformat() if r[11] else None,
+                    'receivedAt': r[10].isoformat() + 'Z',
+                    'shippedAt': (r[11].isoformat() + 'Z') if r[11] else None,
                     'storageBarcode': r[12],
                     'lostReason': r[13],
-                    'lostAt': r[14].isoformat() if r[14] else None,
+                    'lostAt': (r[14].isoformat() + 'Z') if r[14] else None,
                 }
                 for r in cur.fetchall()
             ]

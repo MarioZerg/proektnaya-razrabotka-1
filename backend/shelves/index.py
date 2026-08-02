@@ -46,7 +46,7 @@ def handler(event: dict, context) -> dict:
                 "FROM shelves s ORDER BY s.name"
             )
             shelves = [
-                {'id': r[0], 'name': r[1], 'createdAt': r[2].isoformat(), 'itemsCount': r[3]}
+                {'id': r[0], 'name': r[1], 'createdAt': r[2].isoformat() + 'Z', 'itemsCount': r[3]}
                 for r in cur.fetchall()
             ]
         finally:

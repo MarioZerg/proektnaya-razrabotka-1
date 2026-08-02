@@ -223,7 +223,7 @@ def handler(event: dict, context) -> dict:
                         'rollId': r[4],
                         'rollBarcode': r[5],
                         'quantity': float(r[6]),
-                        'createdAt': r[7].isoformat(),
+                        'createdAt': r[7].isoformat() + 'Z',
                     }
                     for r in cur.fetchall()
                 ]
@@ -265,8 +265,8 @@ def handler(event: dict, context) -> dict:
                     'product': row[6],
                     'quantity': float(row[7]),
                     'source': row[8],
-                    'createdAt': row[9].isoformat(),
-                    'completedAt': row[10].isoformat() if row[10] else None,
+                    'createdAt': row[9].isoformat() + 'Z',
+                    'completedAt': (row[10].isoformat() + 'Z') if row[10] else None,
                     'material': row[11],
                     'width': row[12],
                     'height': row[13],
@@ -303,8 +303,8 @@ def handler(event: dict, context) -> dict:
                     'product': r[6],
                     'quantity': float(r[7]),
                     'source': r[8],
-                    'createdAt': r[9].isoformat(),
-                    'completedAt': r[10].isoformat() if r[10] else None,
+                    'createdAt': r[9].isoformat() + 'Z',
+                    'completedAt': (r[10].isoformat() + 'Z') if r[10] else None,
                     'material': r[11],
                     'width': r[12],
                     'height': r[13],

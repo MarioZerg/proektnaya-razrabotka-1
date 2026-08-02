@@ -192,13 +192,13 @@ def handler(event: dict, context) -> dict:
             for uid, full_name, role, shift_number, shift_from, shift_to, workshop_name, shift_free in employee_rows:
                 latest = latest_by_user.get(uid)
                 is_open = bool(latest and latest[1] is None)
-                opened_at = latest[0].isoformat() if is_open else None
+                opened_at = (latest[0].isoformat() + 'Z') if is_open else None
                 can_close_at = None
                 if is_open and shift_to:
                     close_dt = datetime.combine(latest[0].date(), shift_to)
                     if shift_from and shift_to < shift_from:
                         close_dt += timedelta(days=1)
-                    can_close_at = close_dt.isoformat()
+                    can_close_at = close_dt.isoformat() + 'Z'
                 session_workshop_id = latest[2] if is_open else None
                 session_shift_number = latest[3] if is_open else None
                 employees.append({
@@ -356,7 +356,7 @@ def handler(event: dict, context) -> dict:
                     'headers': headers,
                     'body': json.dumps({
                         'id': new_id,
-                        'openedAt': opened_at.isoformat(),
+                        'openedAt': opened_at.isoformat() + 'Z',
                         'workshopId': workshop_id,
                         'shiftNumber': shift_number,
                         'isLate': is_late,

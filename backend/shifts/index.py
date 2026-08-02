@@ -151,8 +151,8 @@ def handler(event: dict, context) -> dict:
                     'name': row[4],
                     'isActive': row[5],
                     'workshopIsActive': row[6],
-                    'createdAt': row[7].isoformat(),
-                    'updatedAt': row[8].isoformat(),
+                    'createdAt': row[7].isoformat() + 'Z',
+                    'updatedAt': row[8].isoformat() + 'Z',
                     'employees': employees,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'shift': detail})}
