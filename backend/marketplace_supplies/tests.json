@@ -39,6 +39,27 @@
       "path": "/",
       "body": { "action": "scan_order", "orderNumber": "TEST-001" },
       "expectedStatus": 400
+    },
+    {
+      "name": "Create box without supplyId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "create_box" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Delete box without boxId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "delete_box" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Add order to box without boxId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "add_order_to_box", "orderNumber": "TEST-001" },
+      "expectedStatus": 400
     }
   ]
 }

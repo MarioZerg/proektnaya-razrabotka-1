@@ -1,10 +1,45 @@
+import base64
 import json
 import os
+import uuid
 
+import boto3
 import psycopg2
 
 
 VALID_STATUSES = ['Открытая', 'На сборке', 'Отгрузка', 'Выполнена']
+
+# Черновые (незавершённые) этапы пошива — заказ ещё "в работе" на производстве.
+IN_PROGRESS_SEWING_STATUSES = ('На раскрое', 'Раскроено', 'В работе', 'Стикеровка')
+
+
+def upload_pass_sticker(base64_data: str, file_name: str) -> str:
+    """Загружает PDF стикера пропуска (WB) в S3, возвращает публичный CDN URL."""
+    _, _, data = base64_data.partition(',')
+    binary = base64.b64decode(data)
+
+    s3 = boto3.client(
+        's3',
+        endpoint_url='https://bucket.poehali.dev',
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    )
+    safe_name = ''.join(c for c in (file_name or 'sticker.pdf') if c.isalnum() or c in ('.', '_', '-')) or 'sticker.pdf'
+    key = f'pass-stickers/{uuid.uuid4().hex}-{safe_name}'
+    s3.put_object(Bucket='files', Key=key, Body=binary, ContentType='application/pdf')
+    return f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
+
+
+def compute_order_status(sewing_status: str, box_number) -> str:
+    """Мапит производственный статус заказа + принадлежность к коробу в статус для дропдауна:
+    Новый / В работе / На поставку / В коробе №N."""
+    if box_number:
+        return f'В коробе №{box_number}'
+    if sewing_status == 'Готовые':
+        return 'На поставку'
+    if sewing_status in IN_PROGRESS_SEWING_STATUSES:
+        return 'В работе'
+    return 'Новый'
 
 
 def handler(event: dict, context) -> dict:
@@ -17,24 +52,44 @@ def handler(event: dict, context) -> dict:
     При добавлении в поставку товар резервируется (status='reserved'), при переводе
     поставки в статус "Отгрузка" — считается отгруженным (status='shipped').
 
+    Для FBO поставок сборка идёт через короба: кладовщик создаёт короб кнопкой
+    "Добавить короб", затем добавляет в него заказы (готовый товар резервируется и
+    привязывается к конкретному коробу). Каждый короб получает свой номер и штрихкод.
+
     GET  /                       - список поставок, фильтры: ?status=, ?type=FBO|FBS,
                                      ?marketplace=OZON|WB|Yandex, ?date_from=, ?date_to=, ?search=
-    GET  /?id=1                  - детальная карточка поставки с товарами
+    GET  /?id=1                  - детальная карточка поставки с товарами и коробами
+    GET  /?id=1&candidates=1     - список заказов, которые должны быть в этой FBO поставке
+                                     (тот же маркетплейс, тип FBO, тот же кластер что и у
+                                     поставки), с их статусом движения по производству:
+                                     Новый / В работе / На поставку / В коробе №N
 
     POST /  { action: 'create', marketplace, type, comment?, createdBy? }
         - создаёт пустую поставку в статусе "Открытая" (без товаров)
     POST /  { action: 'add_items', supplyId, goodsWarehouseIds: [...] }
         - добавляет товары со склада в поставку, резервирует их (status='reserved')
-        - используется для FBO (выбор товаров чекбоксами из списка)
+        - используется для FBS (выбор товаров чекбоксами из списка)
     POST /  { action: 'scan_order', supplyId, orderNumber }
         - добавляет заказ в поставку по номеру (сканирование/ввод номера заказа);
           используется для FBS — кладовщик вводит/сканирует номер заказа, система находит
           готовый товар на складе (goods_warehouse, status='in_stock') и резервирует его
     POST /  { action: 'remove_item', itemId }
         - убирает товар из поставки, возвращает его на склад (status='in_stock')
+    POST /  { action: 'create_box', supplyId }
+        - создаёт новый короб в поставке (следующий по счёту номер), генерирует штрихкод
+    POST /  { action: 'delete_box', boxId }
+        - удаляет короб (разрешено только если в нём нет товаров)
+    POST /  { action: 'add_order_to_box', boxId, orderNumber }
+        - добавляет заказ в конкретный короб поставки: находит готовый товар на складе
+          (goods_warehouse, status='in_stock') по номеру заказа, резервирует его и
+          привязывает к коробу
+    POST /  { action: 'remove_box_item', itemId }
+        - убирает товар из короба и из поставки, возвращает его на склад (status='in_stock')
     POST /  { action: 'update', supplyId, supplyNumber?, supplyBarcode?, cluster?,
-               gazelkaId?, comment?, shipToGazelkaAt?, shipToMarketplaceAt? }
-        - обновляет служебные поля поставки (номер, штрихкод, кластер, id Газельки, даты)
+               gazelkaId?, comment?, shipToGazelkaAt?, shipToMarketplaceAt?,
+               totalQuantityMarketplace?, passStickerBase64?, passStickerName? }
+        - обновляет служебные поля поставки (номер, штрихкод, кластер, id Газельки, даты,
+          общее кол-во товаров с маркетплейса, PDF стикера пропуска для WB)
     POST /  { action: 'move_status', supplyId, status }
         - переводит поставку на следующий статус жизненного цикла:
           "На сборке" — просто меняет статус;
@@ -75,12 +130,55 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
+            if supply_id and params.get('candidates'):
+                cur.execute(
+                    "SELECT marketplace, type, cluster FROM marketplace_supplies WHERE id = %s",
+                    (int(supply_id),),
+                )
+                srow = cur.fetchone()
+                if not srow:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
+                marketplace, supply_type, cluster = srow
+                if supply_type != 'FBO':
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Список кандидатов доступен только для FBO'})}
+
+                marketplace_esc = marketplace.replace("'", "''")
+                cluster_cond = ""
+                if cluster:
+                    cluster_esc = cluster.replace("'", "''")
+                    cluster_cond = f"AND o.cluster = '{cluster_esc}'"
+
+                cur.execute(
+                    f"SELECT o.id, o.order_number, o.product, o.sewing_status, "
+                    f"msi.id, mb.box_number "
+                    f"FROM orders o "
+                    f"LEFT JOIN goods_warehouse gw ON gw.order_id = o.id "
+                    f"LEFT JOIN marketplace_supply_items msi ON msi.goods_warehouse_id = gw.id AND msi.supply_id = {int(supply_id)} "
+                    f"LEFT JOIN marketplace_supply_boxes mb ON mb.id = msi.box_id "
+                    f"WHERE o.marketplace = '{marketplace_esc}' AND o.order_type = 'FBO' {cluster_cond} "
+                    f"ORDER BY o.created_at DESC"
+                )
+                candidates = [
+                    {
+                        'orderId': r[0],
+                        'orderNumber': r[1],
+                        'product': r[2],
+                        'sewingStatus': r[3],
+                        'supplyItemId': r[4],
+                        'boxNumber': r[5],
+                        'status': compute_order_status(r[3], r[5]),
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'candidates': candidates})}
+
             if supply_id:
                 cur.execute(
                     "SELECT s.id, s.marketplace, s.type, s.status, s.comment, s.created_at, "
                     "s.supply_number, s.supply_barcode, s.cluster, s.gazelka_id, "
                     "s.ship_to_gazelka_at, s.ship_to_marketplace_at, s.completed_at, "
-                    "s.created_by, u.full_name "
+                    "s.created_by, u.full_name, s.total_quantity_marketplace, "
+                    "s.pass_sticker_url, s.pass_sticker_name "
                     "FROM marketplace_supplies s "
                     "LEFT JOIN users u ON u.id = s.created_by "
                     "WHERE s.id = %s",
@@ -92,7 +190,7 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(
                     "SELECT msi.id, msi.goods_warehouse_id, o.order_number, o.product, o.material, o.width, o.height, "
-                    "gw.status, gw.shipped_at "
+                    "gw.status, gw.shipped_at, msi.box_id "
                     "FROM marketplace_supply_items msi "
                     "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
@@ -110,6 +208,23 @@ def handler(event: dict, context) -> dict:
                         'height': r[6],
                         'goodsStatus': r[7],
                         'shippedAt': r[8].isoformat() if r[8] else None,
+                        'boxId': r[9],
+                    }
+                    for r in cur.fetchall()
+                ]
+
+                cur.execute(
+                    "SELECT id, box_number, barcode, created_at FROM marketplace_supply_boxes "
+                    "WHERE supply_id = %s ORDER BY box_number",
+                    (int(supply_id),),
+                )
+                boxes = [
+                    {
+                        'id': r[0],
+                        'boxNumber': r[1],
+                        'barcode': r[2],
+                        'createdAt': r[3].isoformat(),
+                        'items': [it for it in items if it['boxId'] == r[0]],
                     }
                     for r in cur.fetchall()
                 ]
@@ -130,7 +245,11 @@ def handler(event: dict, context) -> dict:
                     'completedAt': row[12].isoformat() if row[12] else None,
                     'createdBy': row[13],
                     'createdByName': row[14],
+                    'totalQuantityMarketplace': row[15],
+                    'passStickerUrl': row[16],
+                    'passStickerName': row[17],
                     'items': items,
+                    'boxes': boxes,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'supply': detail})}
 
@@ -344,6 +463,136 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            if action == 'create_box':
+                supply_id = body_data.get('supplyId')
+                if not supply_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите supplyId'})}
+
+                cur.execute("SELECT status, type FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
+                if row[1] != 'FBO':
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Короба доступны только для FBO'})}
+                if row[0] not in ('Открытая', 'На сборке'):
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять короба'})}
+
+                cur.execute(
+                    "SELECT COALESCE(MAX(box_number), 0) FROM marketplace_supply_boxes WHERE supply_id = %s",
+                    (int(supply_id),),
+                )
+                next_number = cur.fetchone()[0] + 1
+                barcode = f"SUPPLY{supply_id}-BOX{next_number:03d}"
+
+                cur.execute(
+                    f"INSERT INTO marketplace_supply_boxes (supply_id, box_number, barcode) "
+                    f"VALUES ({int(supply_id)}, {next_number}, '{barcode}') RETURNING id, created_at"
+                )
+                box_id, created_at = cur.fetchone()
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'id': box_id,
+                        'boxNumber': next_number,
+                        'barcode': barcode,
+                        'createdAt': created_at.isoformat(),
+                    }),
+                }
+
+            if action == 'delete_box':
+                box_id = body_data.get('boxId')
+                if not box_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите boxId'})}
+
+                cur.execute(
+                    "SELECT COUNT(*) FROM marketplace_supply_items WHERE box_id = %s", (int(box_id),)
+                )
+                if cur.fetchone()[0] > 0:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В коробе есть товары — сначала уберите их'})}
+
+                cur.execute("DELETE FROM marketplace_supply_boxes WHERE id = %s", (int(box_id),))
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'add_order_to_box':
+                box_id = body_data.get('boxId')
+                order_number = (body_data.get('orderNumber') or '').strip()
+                if not box_id or not order_number:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите короб и номер заказа'})}
+
+                cur.execute(
+                    "SELECT mb.supply_id, s.status FROM marketplace_supply_boxes mb "
+                    "JOIN marketplace_supplies s ON s.id = mb.supply_id WHERE mb.id = %s",
+                    (int(box_id),),
+                )
+                box_row = cur.fetchone()
+                if not box_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Короб не найден'})}
+                supply_id, supply_status = box_row
+                if supply_status not in ('Открытая', 'На сборке'):
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять товары'})}
+
+                order_number_esc = order_number.replace("'", "''")
+                cur.execute(
+                    "SELECT gw.id, gw.status FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.order_id "
+                    f"WHERE o.order_number = '{order_number_esc}'"
+                )
+                gw_row = cur.fetchone()
+                if not gw_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Заказ {order_number} не найден на складе готового товара (не готов или не принят)'}),
+                    }
+                goods_id, goods_status = gw_row
+                if goods_status != 'in_stock':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Заказ {order_number} уже зарезервирован или отгружен'}),
+                    }
+
+                cur.execute(
+                    "SELECT id FROM marketplace_supply_items WHERE supply_id = %s AND goods_warehouse_id = %s",
+                    (supply_id, goods_id),
+                )
+                if cur.fetchone():
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Заказ {order_number} уже в этой поставке'})}
+
+                cur.execute(
+                    f"INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id, box_id) "
+                    f"VALUES ({supply_id}, {goods_id}, {int(box_id)}) RETURNING id"
+                )
+                item_id = cur.fetchone()[0]
+                cur.execute(f"UPDATE goods_warehouse SET status = 'reserved' WHERE id = {goods_id}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'itemId': item_id, 'goodsWarehouseId': goods_id})}
+
+            if action == 'remove_box_item':
+                item_id = body_data.get('itemId')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите itemId'})}
+
+                cur.execute(
+                    "SELECT msi.goods_warehouse_id, s.status FROM marketplace_supply_items msi "
+                    "JOIN marketplace_supplies s ON s.id = msi.supply_id WHERE msi.id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Позиция не найдена'})}
+                goods_id, supply_status = row
+                if supply_status not in ('Открытая', 'На сборке'):
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Из этой поставки уже нельзя убрать товар'})}
+
+                cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(item_id)}")
+                cur.execute(f"UPDATE goods_warehouse SET status = 'in_stock' WHERE id = {int(goods_id)}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
             if action == 'update':
                 supply_id = body_data.get('supplyId')
                 if not supply_id:
@@ -373,6 +622,15 @@ def handler(event: dict, context) -> dict:
                     fields.append(sql_ts_or_null('ship_to_gazelka_at', body_data['shipToGazelkaAt']))
                 if 'shipToMarketplaceAt' in body_data:
                     fields.append(sql_ts_or_null('ship_to_marketplace_at', body_data['shipToMarketplaceAt']))
+                if 'totalQuantityMarketplace' in body_data:
+                    qty = body_data['totalQuantityMarketplace']
+                    fields.append(f"total_quantity_marketplace = {int(qty)}" if qty not in (None, '') else "total_quantity_marketplace = NULL")
+                if body_data.get('passStickerBase64'):
+                    sticker_name = (body_data.get('passStickerName') or 'sticker.pdf').strip()
+                    sticker_url = upload_pass_sticker(body_data['passStickerBase64'], sticker_name)
+                    sticker_name_esc = sticker_name.replace("'", "''")
+                    fields.append(f"pass_sticker_url = '{sticker_url}'")
+                    fields.append(f"pass_sticker_name = '{sticker_name_esc}'")
 
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нечего обновлять'})}
@@ -438,6 +696,7 @@ def handler(event: dict, context) -> dict:
                     cur.execute(f"UPDATE goods_warehouse SET status = 'in_stock' WHERE id = {gid}")
 
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE supply_id = {int(item_id)}")
+                cur.execute(f"DELETE FROM marketplace_supply_boxes WHERE supply_id = {int(item_id)}")
                 cur.execute(f"DELETE FROM marketplace_supplies WHERE id = {int(item_id)}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

@@ -6,15 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 import {
   Table,
   TableBody,
@@ -27,7 +19,6 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import {
   fetchSupplyDetail,
-  addSupplyItems,
   removeSupplyItem,
   scanOrderToSupply,
   updateSupply,
@@ -37,30 +28,11 @@ import {
   type SupplyDetail,
 } from '@/lib/marketplaceSuppliesApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
-
-const formatDateTime = (iso: string) => {
-  const d = new Date(iso);
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
-
-const marketplaceLogo: Record<string, { label: string; className: string }> = {
-  OZON: { label: 'OZON', className: 'text-[#005BFF] font-bold' },
-  WB: { label: 'Wildberries', className: 'text-[#CB11AB] font-bold' },
-  Yandex: { label: 'Яндекс.Маркет', className: 'text-[#FFCC00] font-bold' },
-};
-
-const statusVariant: Record<string, { className: string }> = {
-  Открытая: { className: 'bg-slate-500 text-white hover:bg-slate-500' },
-  'На сборке': { className: 'bg-sky-500 text-white hover:bg-sky-500' },
-  Отгрузка: { className: 'bg-amber-500 text-white hover:bg-amber-500' },
-  Выполнена: { className: 'bg-emerald-600 text-white hover:bg-emerald-600' },
-};
+import {
+  formatDateTime,
+  marketplaceLogo,
+  statusVariant,
+} from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 
 const MarketplaceSupplyShow = () => {
   const { id } = useParams();
@@ -77,10 +49,6 @@ const MarketplaceSupplyShow = () => {
   const [cluster, setCluster] = useState('');
   const [gazelkaId, setGazelkaId] = useState('');
   const [comment, setComment] = useState('');
-
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [availableGoods, setAvailableGoods] = useState<GoodsWarehouseItem[]>([]);
-  const [selectedGoods, setSelectedGoods] = useState<number[]>([]);
 
   const [readyGoods, setReadyGoods] = useState<GoodsWarehouseItem[]>([]);
 
@@ -107,34 +75,6 @@ const MarketplaceSupplyShow = () => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplyId]);
-
-  const openAddDialog = () => {
-    setSelectedGoods([]);
-    fetchGoodsWarehouse('in_stock').then(setAvailableGoods);
-    setAddDialogOpen(true);
-  };
-
-  const toggleGood = (gid: number) => {
-    setSelectedGoods((prev) => (prev.includes(gid) ? prev.filter((g) => g !== gid) : [...prev, gid]));
-  };
-
-  const handleAddItems = async () => {
-    if (selectedGoods.length === 0) {
-      toast({ title: 'Выберите хотя бы один товар', variant: 'destructive' });
-      return;
-    }
-    setSaving(true);
-    try {
-      await addSupplyItems(supplyId, selectedGoods);
-      toast({ title: 'Товары добавлены в поставку' });
-      setAddDialogOpen(false);
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const handleScanOrder = async () => {
     const orderNumber = scanOrderNumber.trim();
@@ -273,7 +213,11 @@ const MarketplaceSupplyShow = () => {
               <h2 className="font-semibold">Данные поставки</h2>
               <div className="space-y-1.5">
                 <Label>Номер поставки</Label>
-                <Input value={supplyNumber} onChange={(e) => setSupplyNumber(e.target.value)} placeholder="Номер в маркетплейсе" />
+                <Input
+                  value={supplyNumber}
+                  onChange={(e) => setSupplyNumber(e.target.value)}
+                  placeholder="Подгрузится через API маркетплейса"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Штрихкод поставки</Label>
@@ -341,47 +285,10 @@ const MarketplaceSupplyShow = () => {
               <h2 className="font-semibold">Товары в поставке ({supply.items.length})</h2>
             )}
             {canEditItems && supply.type === 'FBO' && (
-              <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm" onClick={openAddDialog}>
-                    <Icon name="Plus" size={14} className="mr-1" />
-                    Добавить товары
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
-                  <DialogHeader>
-                    <DialogTitle>Добавить товары со склада</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <div className="max-h-80 space-y-1 overflow-y-auto rounded-md border border-border p-2">
-                      {availableGoods.length === 0 ? (
-                        <p className="p-2 text-sm text-muted-foreground">На складе нет готового товара</p>
-                      ) : (
-                        availableGoods.map((g) => (
-                          <label
-                            key={g.id}
-                            className="flex cursor-pointer items-center gap-2 rounded p-1.5 hover:bg-muted"
-                          >
-                            <Checkbox checked={selectedGoods.includes(g.id)} onCheckedChange={() => toggleGood(g.id)} />
-                            <span className="text-sm font-medium">{g.orderNumber}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {g.material} {g.width}×{g.height}
-                            </span>
-                            {g.shelfName && (
-                              <Badge variant="outline" className="ml-auto text-xs">
-                                {g.shelfName}
-                              </Badge>
-                            )}
-                          </label>
-                        ))
-                      )}
-                    </div>
-                    <Button className="w-full" onClick={handleAddItems} disabled={saving}>
-                      {saving ? 'Добавление...' : `Добавить (${selectedGoods.length})`}
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
+              <Button size="sm" onClick={() => navigate(`/crm/shipments/to-marketplace/${supplyId}/assemble`)}>
+                <Icon name="PackagePlus" size={14} className="mr-1" />
+                Собрать поставку
+              </Button>
             )}
           </div>
 

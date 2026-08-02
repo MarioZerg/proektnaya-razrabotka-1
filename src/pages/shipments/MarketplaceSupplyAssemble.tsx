@@ -1,0 +1,260 @@
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import CrmLayout from '@/components/crm/CrmLayout';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import Icon from '@/components/ui/icon';
+import { useToast } from '@/hooks/use-toast';
+import {
+  fetchSupplyDetail,
+  fetchSupplyCandidates,
+  createSupplyBox,
+  deleteSupplyBox,
+  addOrderToBox,
+  removeBoxItem,
+  updateSupply,
+  type SupplyDetail,
+  type SupplyCandidate,
+} from '@/lib/marketplaceSuppliesApi';
+import {
+  formatDateTime,
+  marketplaceLogo,
+  statusVariant,
+} from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import SupplyBoxCard from '@/components/crm/marketplaceSupplies/SupplyBoxCard';
+import SupplyCandidatesPanel from '@/components/crm/marketplaceSupplies/SupplyCandidatesPanel';
+import PassStickerCard from '@/components/crm/marketplaceSupplies/PassStickerCard';
+
+const MarketplaceSupplyAssemble = () => {
+  const { id } = useParams();
+  const supplyId = Number(id);
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
+  const [supply, setSupply] = useState<SupplyDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [addingBox, setAddingBox] = useState(false);
+
+  const [candidatesOpen, setCandidatesOpen] = useState(false);
+  const [candidates, setCandidates] = useState<SupplyCandidate[]>([]);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+
+  const [totalQuantity, setTotalQuantity] = useState('');
+  const [savingQuantity, setSavingQuantity] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    fetchSupplyDetail(supplyId)
+      .then((data) => {
+        setSupply(data);
+        setTotalQuantity(data.totalQuantityMarketplace != null ? String(data.totalQuantityMarketplace) : '');
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplyId]);
+
+  useEffect(() => {
+    if (!candidatesOpen) return;
+    setCandidatesLoading(true);
+    fetchSupplyCandidates(supplyId)
+      .then(setCandidates)
+      .finally(() => setCandidatesLoading(false));
+  }, [candidatesOpen, supplyId]);
+
+  const handleAddBox = async () => {
+    setAddingBox(true);
+    try {
+      await createSupplyBox(supplyId);
+      toast({ title: 'Короб добавлен' });
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setAddingBox(false);
+    }
+  };
+
+  const handleDeleteBox = async (boxId: number) => {
+    try {
+      await deleteSupplyBox(boxId);
+      toast({ title: 'Короб удалён' });
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
+  const handleAddOrderToBox = async (boxId: number, orderNumber: string) => {
+    try {
+      await addOrderToBox(boxId, orderNumber);
+      toast({ title: `Заказ ${orderNumber} добавлен в короб` });
+      load();
+      if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
+  const handleRemoveItem = async (itemId: number) => {
+    try {
+      await removeBoxItem(itemId);
+      toast({ title: 'Товар убран из короба' });
+      load();
+      if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
+  const handleSaveQuantity = async () => {
+    setSavingQuantity(true);
+    try {
+      await updateSupply(supplyId, {
+        totalQuantityMarketplace: totalQuantity.trim() ? Number(totalQuantity) : null,
+      });
+      toast({ title: 'Количество сохранено' });
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSavingQuantity(false);
+    }
+  };
+
+  const handleUploadSticker = async (base64: string, fileName: string) => {
+    try {
+      await updateSupply(supplyId, { passStickerBase64: base64, passStickerName: fileName });
+      toast({ title: 'Стикер пропуска загружен' });
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
+  if (loading || !supply) {
+    return (
+      <CrmLayout>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Icon name="Loader2" size={16} className="animate-spin" />
+          Загрузка...
+        </div>
+      </CrmLayout>
+    );
+  }
+
+  const canEdit = supply.status === 'Открытая' || supply.status === 'На сборке';
+  const totalBoxedItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
+
+  return (
+    <CrmLayout>
+      <div className="space-y-6">
+        <div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate(`/crm/shipments/to-marketplace/${supplyId}`)}
+            className="mb-2 -ml-2"
+          >
+            <Icon name="ChevronLeft" size={16} className="mr-1" />
+            К поставке
+          </Button>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold">Сборка поставки #{supply.id}</h1>
+            <Badge className={statusVariant[supply.status]?.className}>{supply.status}</Badge>
+            <span className={marketplaceLogo[supply.marketplace]?.className}>
+              {marketplaceLogo[supply.marketplace]?.label || supply.marketplace}
+            </span>
+            <Badge variant="outline">{supply.type}</Badge>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Номер поставки: {supply.supplyNumber || 'подгрузится через API маркетплейса'} · Создана{' '}
+            {formatDateTime(supply.createdAt)}
+          </p>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-2">
+          <div className="space-y-4 rounded-md border border-border p-4">
+            <h2 className="font-semibold">Количество товаров</h2>
+            <div className="space-y-1.5">
+              <Label>Общее кол-во добавленных в поставку на маркетплейсе</Label>
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  value={totalQuantity}
+                  onChange={(e) => setTotalQuantity(e.target.value)}
+                  placeholder="Подгрузится через API"
+                  disabled={!canEdit}
+                />
+                <Button onClick={handleSaveQuantity} disabled={savingQuantity || !canEdit}>
+                  {savingQuantity ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить'}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Собрано в коробах: {totalBoxedItems} из {supply.totalQuantityMarketplace ?? '—'}
+              </p>
+            </div>
+          </div>
+
+          {supply.marketplace === 'WB' && (
+            <PassStickerCard
+              passStickerUrl={supply.passStickerUrl}
+              passStickerName={supply.passStickerName}
+              saving={!canEdit}
+              onUpload={handleUploadSticker}
+            />
+          )}
+        </div>
+
+        <SupplyCandidatesPanel
+          open={candidatesOpen}
+          onOpenChange={setCandidatesOpen}
+          candidates={candidates}
+          loading={candidatesLoading}
+        />
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Короба ({supply.boxes.length})</h2>
+            {canEdit && (
+              <Button size="sm" onClick={handleAddBox} disabled={addingBox}>
+                {addingBox ? (
+                  <Icon name="Loader2" size={14} className="mr-1 animate-spin" />
+                ) : (
+                  <Icon name="PackagePlus" size={14} className="mr-1" />
+                )}
+                Добавить короб
+              </Button>
+            )}
+          </div>
+
+          {supply.boxes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Коробов пока нет — нажмите «Добавить короб», чтобы начать сборку
+            </p>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {supply.boxes.map((box) => (
+                <SupplyBoxCard
+                  key={box.id}
+                  box={box}
+                  canEdit={canEdit}
+                  onAddOrder={handleAddOrderToBox}
+                  onRemoveItem={handleRemoveItem}
+                  onDeleteBox={handleDeleteBox}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </CrmLayout>
+  );
+};
+
+export default MarketplaceSupplyAssemble;

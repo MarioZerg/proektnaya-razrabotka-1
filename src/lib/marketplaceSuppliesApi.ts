@@ -33,11 +33,24 @@ export interface SupplyItem {
   height: number | null;
   goodsStatus: string | null;
   shippedAt: string | null;
+  boxId: number | null;
+}
+
+export interface SupplyBox {
+  id: number;
+  boxNumber: number;
+  barcode: string;
+  createdAt: string;
+  items: SupplyItem[];
 }
 
 export interface SupplyDetail extends Supply {
   items: SupplyItem[];
+  boxes: SupplyBox[];
   createdBy: number | null;
+  totalQuantityMarketplace: number | null;
+  passStickerUrl: string | null;
+  passStickerName: string | null;
 }
 
 export interface SupplyFilters {
@@ -67,6 +80,22 @@ export const fetchSupplyDetail = async (id: number): Promise<SupplyDetail> => {
   const res = await fetch(`${SUPPLIES_URL}?id=${id}`);
   const data = await res.json();
   return data.supply;
+};
+
+export interface SupplyCandidate {
+  orderId: number;
+  orderNumber: string;
+  product: string | null;
+  sewingStatus: string;
+  supplyItemId: number | null;
+  boxNumber: number | null;
+  status: string;
+}
+
+export const fetchSupplyCandidates = async (id: number): Promise<SupplyCandidate[]> => {
+  const res = await fetch(`${SUPPLIES_URL}?id=${id}&candidates=1`);
+  const data = await res.json();
+  return data.candidates || [];
 };
 
 const postAction = async (payload: Record<string, unknown>) => {
@@ -103,6 +132,29 @@ export const scanOrderToSupply = (supplyId: number, orderNumber: string): Promis
 
 export const removeSupplyItem = (itemId: number) => postAction({ action: 'remove_item', itemId });
 
+export interface CreateBoxResult {
+  id: number;
+  boxNumber: number;
+  barcode: string;
+  createdAt: string;
+}
+
+export const createSupplyBox = (supplyId: number): Promise<CreateBoxResult> =>
+  postAction({ action: 'create_box', supplyId });
+
+export const deleteSupplyBox = (boxId: number) => postAction({ action: 'delete_box', boxId });
+
+export interface AddOrderToBoxResult {
+  success: true;
+  itemId: number;
+  goodsWarehouseId: number;
+}
+
+export const addOrderToBox = (boxId: number, orderNumber: string): Promise<AddOrderToBoxResult> =>
+  postAction({ action: 'add_order_to_box', boxId, orderNumber });
+
+export const removeBoxItem = (itemId: number) => postAction({ action: 'remove_box_item', itemId });
+
 export const updateSupply = (
   supplyId: number,
   fields: Partial<{
@@ -113,6 +165,9 @@ export const updateSupply = (
     comment: string;
     shipToGazelkaAt: string;
     shipToMarketplaceAt: string;
+    totalQuantityMarketplace: number | null;
+    passStickerBase64: string;
+    passStickerName: string;
   }>
 ) => postAction({ action: 'update', supplyId, ...fields });
 
