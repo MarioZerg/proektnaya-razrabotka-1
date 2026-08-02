@@ -18,6 +18,7 @@ import ToMarketplace from "./pages/shipments/ToMarketplace";
 import MarketplaceSupplyShow from "./pages/shipments/MarketplaceSupplyShow";
 import MarketplaceSupplyAssemble from "./pages/shipments/MarketplaceSupplyAssemble";
 import GoodsWarehouse from "./pages/inventory/GoodsWarehouse";
+import GoodsPicking from "./pages/inventory/GoodsPicking";
 import ShelvesSettings from "./pages/settings/ShelvesSettings";
 import MaterialsSettings from "./pages/settings/MaterialsSettings";
 import UsersSettings from "./pages/settings/UsersSettings";
@@ -58,6 +59,7 @@ const App = () => (
             <Route path="/crm/shipments/to-marketplace/:id" element={<MarketplaceSupplyShow />} />
             <Route path="/crm/shipments/to-marketplace/:id/assemble" element={<MarketplaceSupplyAssemble />} />
             <Route path="/crm/inventory/goods-warehouse" element={<GoodsWarehouse />} />
+            <Route path="/crm/inventory/goods-picking" element={<GoodsPicking />} />
             <Route path="/crm/settings/shelves" element={<ShelvesSettings />} />
             <Route path="/crm/settings/materials" element={<MaterialsSettings />} />
             <Route path="/crm/settings/users" element={<UsersSettings />} />

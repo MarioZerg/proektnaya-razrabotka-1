@@ -53,7 +53,7 @@ const MarketplaceSupplyShow = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchSupplyDetail(supplyId), fetchGoodsWarehouse('in_stock')])
+    Promise.all([fetchSupplyDetail(supplyId), fetchGoodsWarehouse('picking')])
       .then(([data, goods]) => {
         setSupply(data);
         setReadyGoods(goods);

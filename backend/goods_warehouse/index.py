@@ -4,18 +4,76 @@ import os
 import psycopg2
 
 
+def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
+    """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit()."""
+    cur.execute(
+        "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, entity_id, description, details) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            'warehouse',
+            action,
+            entity_type,
+            int(entity_id) if entity_id not in (None, '') else None,
+            description,
+            json.dumps(details) if details else None,
+        ),
+    )
+
+
+def next_storage_barcode(cur) -> str:
+    """Генерирует следующий штрихкод хранения вида GW-000001 (по максимальному текущему)."""
+    cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE storage_barcode LIKE 'GW-%'")
+    max_seq = 0
+    for (bc,) in cur.fetchall():
+        suffix = bc.split('-', 1)[1] if '-' in bc else ''
+        if suffix.isdigit():
+            max_seq = max(max_seq, int(suffix))
+    return f"GW-{max_seq + 1:06d}"
+
+
 def handler(event: dict, context) -> dict:
     """Склад готового товара: изделия, сшитые и упакованные (статус заказа "Готовые"),
-    попадают на склад товара на конкретную полку, откуда далее уходят в поставку
-    на маркетплейс.
+    попадают на склад товара на конкретную полку под уникальным штрихкодом хранения
+    (storage_barcode), откуда далее уходят в поставку на маркетплейс.
 
-    GET  /                          - список товаров на складе (можно ?status=in_stock)
+    Статусы (status):
+      - in_stock  — на хранении (лежит на полке, ничего с ним не происходит)
+      - picking   — на сборке (кладовщик отобрал его как нужный для будущей поставки FBS,
+                     ещё не привязан к конкретной поставке)
+      - reserved  — зарезервирован в конкретной поставке (marketplace_supply_items)
+      - shipped   — отгружен на маркетплейс
+      - lost      — утерян (с указанием причины), выбывает из активных статусов
+
+    GET  /                          - список товаров (можно ?status=in_stock и т.д.)
+        доп. фильтры: ?material=Вуаль, ?width=200, ?height=250, ?shelf_id=1
+    GET  /?barcode=GW-000001         - найти товар по штрихкоду хранения (для сканера подбора
+                                        и сканирования в поставку)
     POST /  { action: 'receive', orderId, shelfId? }
-        - принимает готовый заказ на склад товара (заказ должен быть в статусе "Готовые")
+        - принимает готовый заказ на склад товара (заказ должен быть в статусе "Готовые"),
+          генерирует новый storage_barcode
+    POST /  { action: 'receive_return', orderNumber, shelfId? }
+        - приём возврата с маркетплейса по номеру заказа (ручной ввод, до появления API):
+          если заказ уже был на складе — запись просто возвращается в статус in_stock с
+          выбором полки (старый storage_barcode сохраняется); если заказа на складе не было —
+          создаётся новая запись (заказ должен существовать в orders)
+    POST /  { action: 'group_receive', orderIds: [...], shelfId? }
+        - принимает несколько готовых заказов сразу на одну полку
     POST /  { action: 'move_shelf', id, shelfId }
-        - перемещает товар на другую полку
+        - перемещает товар на другую полку (по id записи)
+    POST /  { action: 'move_shelf_by_barcode', barcode, shelfId }
+        - то же самое, но по штрихкоду хранения (для диалога "Смена полки" со сканером)
     POST /  { action: 'return_to_workshop', id }
-        - возвращает товар в цех (например, брак при выходном контроле), статус заказа сбрасывается на "В работе"
+        - возвращает товар в цех (например, брак при выходном контроле), статус заказа
+          сбрасывается на "В работе", запись удаляется со склада
+    POST /  { action: 'start_picking', barcode }
+        - сканер подбора: находит товар по storage_barcode (должен быть in_stock),
+          переводит в статус picking — отмечает "то, что нужно для будущей поставки FBS"
+    POST /  { action: 'cancel_picking', id }
+        - отмена подбора: возвращает товар из picking обратно в in_stock
+    POST /  { action: 'mark_lost', id, reason }
+        - отмечает товар утерянным (с любого активного статуса, кроме shipped/lost)
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -44,19 +102,58 @@ def handler(event: dict, context) -> dict:
     if method == 'GET':
         params = event.get('queryStringParameters') or {}
         status = params.get('status')
+        barcode = params.get('barcode')
+        material = params.get('material')
+        width = params.get('width')
+        height = params.get('height')
+        shelf_id_filter = params.get('shelf_id')
 
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if barcode:
+                barcode_esc = barcode.strip().replace("'", "''")
+                cur.execute(
+                    "SELECT gw.id, gw.order_id, o.order_number, o.product, o.material, o.width, o.height, "
+                    "gw.shelf_id, s.name, gw.status, gw.received_at, gw.shipped_at, gw.storage_barcode, "
+                    "gw.lost_reason, gw.lost_at "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN shelves s ON s.id = gw.shelf_id "
+                    f"WHERE gw.storage_barcode = '{barcode_esc}'"
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Товар со штрихкодом {barcode} не найден'})}
+                item = {
+                    'id': row[0], 'orderId': row[1], 'orderNumber': row[2], 'product': row[3],
+                    'material': row[4], 'width': row[5], 'height': row[6], 'shelfId': row[7],
+                    'shelfName': row[8], 'status': row[9], 'receivedAt': row[10].isoformat(),
+                    'shippedAt': row[11].isoformat() if row[11] else None, 'storageBarcode': row[12],
+                    'lostReason': row[13], 'lostAt': row[14].isoformat() if row[14] else None,
+                }
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'item': item})}
+
             conditions = []
             if status:
                 status_esc = status.replace("'", "''")
                 conditions.append(f"gw.status = '{status_esc}'")
+            if material:
+                material_esc = material.replace("'", "''")
+                conditions.append(f"o.material = '{material_esc}'")
+            if width:
+                conditions.append(f"o.width = {int(width)}")
+            if height:
+                conditions.append(f"o.height = {int(height)}")
+            if shelf_id_filter:
+                conditions.append(f"gw.shelf_id = {int(shelf_id_filter)}")
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
             cur.execute(
                 f"SELECT gw.id, gw.order_id, o.order_number, o.product, o.material, o.width, o.height, "
-                f"gw.shelf_id, s.name, gw.status, gw.received_at, gw.shipped_at "
+                f"gw.shelf_id, s.name, gw.status, gw.received_at, gw.shipped_at, gw.storage_barcode, "
+                f"gw.lost_reason, gw.lost_at "
                 f"FROM goods_warehouse gw "
                 f"LEFT JOIN orders o ON o.id = gw.order_id "
                 f"LEFT JOIN shelves s ON s.id = gw.shelf_id "
@@ -77,6 +174,9 @@ def handler(event: dict, context) -> dict:
                     'status': r[9],
                     'receivedAt': r[10].isoformat(),
                     'shippedAt': r[11].isoformat() if r[11] else None,
+                    'storageBarcode': r[12],
+                    'lostReason': r[13],
+                    'lostAt': r[14].isoformat() if r[14] else None,
                 }
                 for r in cur.fetchall()
             ]
@@ -88,6 +188,8 @@ def handler(event: dict, context) -> dict:
     if method == 'POST':
         body_data = json.loads(event.get('body') or '{}')
         action = body_data.get('action')
+        actor_id = body_data.get('actorId')
+        actor_name = body_data.get('actorName')
 
         conn = psycopg2.connect(dsn)
         try:
@@ -115,13 +217,82 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Этот заказ уже принят на склад товара'})}
 
                 shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
+                storage_barcode = next_storage_barcode(cur)
                 cur.execute(
-                    f"INSERT INTO goods_warehouse (order_id, shelf_id, status) "
-                    f"VALUES ({int(order_id)}, {shelf_sql}, 'in_stock') RETURNING id"
+                    f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode) "
+                    f"VALUES ({int(order_id)}, {shelf_sql}, 'in_stock', '{storage_barcode}') RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
+                log_action(cur, actor_id, actor_name, 'receive', 'goods_warehouse', new_id, f'Принял товар на склад ({storage_barcode})')
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'storageBarcode': storage_barcode})}
+
+            if action == 'receive_return':
+                order_number = (body_data.get('orderNumber') or '').strip()
+                shelf_id = body_data.get('shelfId')
+                if not order_number:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите номер заказа'})}
+
+                order_number_esc = order_number.replace("'", "''")
+                cur.execute(f"SELECT id FROM orders WHERE order_number = '{order_number_esc}'")
+                order_row = cur.fetchone()
+                if not order_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Заказ {order_number} не найден'})}
+                order_id = order_row[0]
+
+                shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
+
+                # Заказ уже был на складе (в т.ч. отгружен раньше) — просто возвращаем
+                # существующую запись обратно в "На хранении" с новой полкой, без дублирования
+                # (order_id в таблице UNIQUE).
+                cur.execute("SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s", (order_id,))
+                existing = cur.fetchone()
+                if existing:
+                    gw_id, storage_barcode = existing
+                    cur.execute(
+                        f"UPDATE goods_warehouse SET status = 'in_stock', shelf_id = {shelf_sql}, "
+                        f"shipped_at = NULL, lost_reason = NULL, lost_at = NULL WHERE id = {gw_id}"
+                    )
+                    log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', gw_id, f'Принял возврат заказа #{order_number} повторно')
+                    conn.commit()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': gw_id, 'storageBarcode': storage_barcode})}
+
+                storage_barcode = next_storage_barcode(cur)
+                cur.execute(
+                    f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode) "
+                    f"VALUES ({order_id}, {shelf_sql}, 'in_stock', '{storage_barcode}') RETURNING id"
+                )
+                new_id = cur.fetchone()[0]
+                log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', new_id, f'Принял возврат заказа #{order_number} ({storage_barcode})')
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'storageBarcode': storage_barcode})}
+
+            if action == 'group_receive':
+                order_ids = body_data.get('orderIds') or []
+                shelf_id = body_data.get('shelfId')
+                if not order_ids:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите хотя бы один заказ'})}
+
+                shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
+                created = []
+                for order_id in order_ids:
+                    cur.execute("SELECT sewing_status FROM orders WHERE id = %s", (int(order_id),))
+                    row = cur.fetchone()
+                    if not row or row[0] != 'Готовые':
+                        continue
+                    cur.execute("SELECT id FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
+                    if cur.fetchone():
+                        continue
+                    storage_barcode = next_storage_barcode(cur)
+                    cur.execute(
+                        f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode) "
+                        f"VALUES ({int(order_id)}, {shelf_sql}, 'in_stock', '{storage_barcode}') RETURNING id"
+                    )
+                    created.append(cur.fetchone()[0])
+
+                log_action(cur, actor_id, actor_name, 'group_receive', 'goods_warehouse', None, f'Принял группой {len(created)} товаров на склад')
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'createdCount': len(created), 'ids': created})}
 
             if action == 'move_shelf':
                 item_id = body_data.get('id')
@@ -133,6 +304,21 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            if action == 'move_shelf_by_barcode':
+                barcode = (body_data.get('barcode') or '').strip()
+                shelf_id = body_data.get('shelfId')
+                if not barcode:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте штрихкод хранения'})}
+                barcode_esc = barcode.replace("'", "''")
+                cur.execute(f"SELECT id FROM goods_warehouse WHERE storage_barcode = '{barcode_esc}'")
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Товар со штрихкодом {barcode} не найден'})}
+                shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
+                cur.execute(f"UPDATE goods_warehouse SET shelf_id = {shelf_sql} WHERE id = {row[0]}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'id': row[0]})}
+
             if action == 'return_to_workshop':
                 item_id = body_data.get('id')
                 if not item_id:
@@ -141,10 +327,65 @@ def handler(event: dict, context) -> dict:
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Запись не найдена'})}
-                if row[1] != 'in_stock':
-                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Товар уже отгружен, вернуть нельзя'})}
+                if row[1] not in ('in_stock', 'picking'):
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Товар уже зарезервирован/отгружен, вернуть нельзя'})}
                 cur.execute(f"DELETE FROM goods_warehouse WHERE id = {int(item_id)}")
                 cur.execute(f"UPDATE orders SET sewing_status = 'В работе' WHERE id = {int(row[0])}")
+                log_action(cur, actor_id, actor_name, 'return_to_workshop', 'order', row[0], f'Вернул товар #{item_id} в цех')
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'start_picking':
+                barcode = (body_data.get('barcode') or '').strip()
+                if not barcode:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте штрихкод хранения'})}
+                barcode_esc = barcode.replace("'", "''")
+                cur.execute("SELECT id, status FROM goods_warehouse WHERE storage_barcode = %s", (barcode_esc,))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Товар со штрихкодом {barcode} не найден'})}
+                gw_id, status = row
+                if status != 'in_stock':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Товар не на хранении (статус: {status}), подобрать нельзя'}),
+                    }
+                cur.execute(f"UPDATE goods_warehouse SET status = 'picking' WHERE id = {gw_id}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'id': gw_id})}
+
+            if action == 'cancel_picking':
+                item_id = body_data.get('id')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                cur.execute("SELECT status FROM goods_warehouse WHERE id = %s", (int(item_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Запись не найдена'})}
+                if row[0] != 'picking':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Товар не в статусе "На сборке"'})}
+                cur.execute(f"UPDATE goods_warehouse SET status = 'in_stock' WHERE id = {int(item_id)}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'mark_lost':
+                item_id = body_data.get('id')
+                reason = (body_data.get('reason') or '').strip()
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                cur.execute("SELECT status FROM goods_warehouse WHERE id = %s", (int(item_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Запись не найдена'})}
+                if row[0] in ('shipped', 'lost'):
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Товар уже отгружен или помечен утерянным'})}
+                reason_esc = reason.replace("'", "''")
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'lost', lost_reason = '{reason_esc}', lost_at = now() "
+                    f"WHERE id = {int(item_id)}"
+                )
+                log_action(cur, actor_id, actor_name, 'mark_lost', 'goods_warehouse', item_id, f'Отметил товар #{item_id} утерянным: {reason}')
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 

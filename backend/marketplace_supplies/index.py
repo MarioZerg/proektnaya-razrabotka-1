@@ -73,11 +73,15 @@ def handler(event: dict, context) -> dict:
         - добавляет товары со склада в поставку, резервирует их (status='reserved')
         - используется для FBS (выбор товаров чекбоксами из списка)
     POST /  { action: 'scan_order', supplyId, orderNumber }
-        - добавляет заказ в поставку по номеру (сканирование/ввод номера заказа);
-          используется для FBS — кладовщик вводит/сканирует номер заказа, система находит
-          готовый товар на складе (goods_warehouse, status='in_stock') и резервирует его
+        - добавляет товар в поставку по ШТРИХКОДУ ХРАНЕНИЯ (параметр orderNumber по факту
+          принимает storage_barcode из goods_warehouse — оставлено для совместимости фронтенда);
+          используется для FBS: кладовщик заранее отбирает нужные товары на складе (раздел
+          "Товар к подбору", action 'start_picking', статус picking), а здесь сканирует стикер
+          хранения каждого отобранного товара, чтобы добавить его в конкретную поставку и
+          перевести статус picking -> reserved
     POST /  { action: 'remove_item', itemId }
-        - убирает товар из поставки, возвращает его на склад (status='in_stock')
+        - убирает товар из поставки, возвращает его на склад в статус 'picking' (он остаётся
+          отобранным, но не привязанным к этой поставке)
     POST /  { action: 'create_box', supplyId }
         - создаёт новый короб в поставке (следующий по счёту номер), генерирует штрихкод
     POST /  { action: 'delete_box', boxId }
@@ -434,10 +438,16 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'scan_order':
+                # Сканируется ШТРИХКОД ХРАНЕНИЯ товара (storage_barcode из goods_warehouse),
+                # а не номер заказа маркетплейса — кладовщик заранее отбирает товары к подбору
+                # на складе (action 'start_picking' в backend/goods_warehouse, статус picking),
+                # а здесь только подтверждает добавление конкретного отобранного товара в
+                # конкретную поставку. Параметр называется orderNumber для обратной
+                # совместимости фронтенда, но по факту принимает штрихкод хранения.
                 supply_id = body_data.get('supplyId')
-                order_number = (body_data.get('orderNumber') or '').strip()
-                if not supply_id or not order_number:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку и номер заказа'})}
+                storage_barcode = (body_data.get('orderNumber') or '').strip()
+                if not supply_id or not storage_barcode:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку и штрихкод хранения товара'})}
 
                 cur.execute("SELECT status FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
                 row = cur.fetchone()
@@ -446,25 +456,28 @@ def handler(event: dict, context) -> dict:
                 if row[0] not in ('Открытая', 'На сборке'):
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять заказы'})}
 
-                order_number_esc = order_number.replace("'", "''")
+                barcode_esc = storage_barcode.replace("'", "''")
                 cur.execute(
-                    "SELECT gw.id, gw.status FROM goods_warehouse gw "
-                    "JOIN orders o ON o.id = gw.order_id "
-                    f"WHERE o.order_number = '{order_number_esc}'"
+                    "SELECT gw.id, gw.status, o.order_number FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    f"WHERE gw.storage_barcode = '{barcode_esc}'"
                 )
                 gw_row = cur.fetchone()
                 if not gw_row:
                     return {
                         'statusCode': 404,
                         'headers': headers,
-                        'body': json.dumps({'error': f'Заказ {order_number} не найден на складе готового товара (не готов или не принят)'}),
+                        'body': json.dumps({'error': f'Товар со штрихкодом {storage_barcode} не найден на складе'}),
                     }
-                goods_id, goods_status = gw_row
-                if goods_status != 'in_stock':
+                goods_id, goods_status, order_number = gw_row
+                if goods_status != 'picking':
                     return {
                         'statusCode': 409,
                         'headers': headers,
-                        'body': json.dumps({'error': f'Заказ {order_number} уже зарезервирован или отгружен'}),
+                        'body': json.dumps({
+                            'error': f'Товар {order_number or ""} не отобран к подбору (статус: {goods_status}) — '
+                            'сначала отсканируйте его на складе в разделе "Товар к подбору"'
+                        }),
                     }
 
                 cur.execute(
@@ -479,7 +492,7 @@ def handler(event: dict, context) -> dict:
                 )
                 cur.execute(f"UPDATE goods_warehouse SET status = 'reserved' WHERE id = {goods_id}")
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'goodsWarehouseId': goods_id})}
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'goodsWarehouseId': goods_id, 'orderNumber': order_number})}
 
             if action == 'remove_item':
                 item_id = body_data.get('itemId')
@@ -499,7 +512,7 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Из этой поставки уже нельзя убрать товар'})}
 
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(item_id)}")
-                cur.execute(f"UPDATE goods_warehouse SET status = 'in_stock' WHERE id = {int(goods_id)}")
+                cur.execute(f"UPDATE goods_warehouse SET status = 'picking' WHERE id = {int(goods_id)}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
