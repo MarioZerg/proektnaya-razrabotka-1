@@ -10,13 +10,15 @@ import {
 import Icon from '@/components/ui/icon';
 import type { SalaryPayout } from '@/lib/salaryApi';
 import { formatDateTime, formatMoney } from '@/components/crm/finance/financeShared';
+import ConfirmDeleteButton from '@/components/crm/finance/ConfirmDeleteButton';
 
 interface SalaryPayoutsTableProps {
   payouts: SalaryPayout[];
   loading: boolean;
+  onDelete: (id: number) => void;
 }
 
-const SalaryPayoutsTable = ({ payouts, loading }: SalaryPayoutsTableProps) => {
+const SalaryPayoutsTable = ({ payouts, loading, onDelete }: SalaryPayoutsTableProps) => {
   return (
     <Card className="border-border shadow-none">
       <CardHeader>
@@ -31,19 +33,20 @@ const SalaryPayoutsTable = ({ payouts, loading }: SalaryPayoutsTableProps) => {
                 <TableHead className="text-primary-foreground">Дата выплаты</TableHead>
                 <TableHead className="text-primary-foreground">Сумма</TableHead>
                 <TableHead className="text-primary-foreground">Сотрудник</TableHead>
+                <TableHead className="text-primary-foreground" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
                     <Icon name="Loader2" size={16} className="mr-2 inline animate-spin" />
                     Загрузка...
                   </TableCell>
                 </TableRow>
               ) : payouts.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
                     Выплат пока не было
                   </TableCell>
                 </TableRow>
@@ -54,6 +57,13 @@ const SalaryPayoutsTable = ({ payouts, loading }: SalaryPayoutsTableProps) => {
                     <TableCell className="whitespace-nowrap">{formatDateTime(p.paidAt)}</TableCell>
                     <TableCell className="whitespace-nowrap">{formatMoney(p.amount)} ₽</TableCell>
                     <TableCell>{p.userName}</TableCell>
+                    <TableCell>
+                      <ConfirmDeleteButton
+                        title="Удалить выплату?"
+                        description={`Выплата #${p.id} сотруднику ${p.userName} на сумму ${formatMoney(p.amount)} ₽ будет удалена. Связанные начисления вернутся в статус "невыплачено", а сумма вернётся в кассу компании.`}
+                        onConfirm={() => onDelete(p.id)}
+                      />
+                    </TableCell>
                   </TableRow>
                 ))
               )}

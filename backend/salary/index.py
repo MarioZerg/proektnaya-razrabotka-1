@@ -63,6 +63,10 @@ def handler(event: dict, context) -> dict:
                                                без него возвращаются тарифы всех цехов подряд)
                                                с названиями материалов и названием цеха
     GET  /?payouts=1&userId=1                 - история выплат (все или по сотруднику)
+    GET  /?cashBox=1                          - касса компании: текущий баланс (сумма всех
+                                               операций cash_box_transactions) и последние
+                                               100 операций (пополнения — amount>0, списания
+                                               на выплаты зарплаты — amount<0)
 
     POST /  { action: 'update_rate', id, rate }
         - админ меняет ставку тарифа
@@ -70,11 +74,23 @@ def handler(event: dict, context) -> dict:
         - ручное начисление средств за выполненную работу (admin)
     POST /  { action: 'penalty', userId, amount, description }
         - штраф сотруднику: создаёт начисление с отрицательной суммой (type='penalty')
+    POST /  { action: 'update_accrual', id, amount, description }
+        - админ редактирует сумму/описание ЛЮБОГО (автоматического или ручного) начисления,
+          пока оно не выплачено (409, если уже выплачено)
     POST /  { action: 'delete_accrual', id }
-        - админ удаляет начисление за заказ поштучно (только пока не выплачено)
+        - админ удаляет начисление поштучно (только пока не выплачено)
     POST /  { action: 'payout', userId }
         - выплачивает сотруднику ВСЕ его невыплаченные начисления целиком: создаёт запись в
-          salary_payouts на сумму остатка, помечает все accruals paid_at=now()/payout_id
+          salary_payouts на сумму остатка, помечает все accruals paid_at=now()/payout_id.
+          Сумма СПИСЫВАЕТСЯ из кассы компании (cash_box_transactions, amount<0) — если в
+          кассе недостаточно средств, выплата отклоняется (409) ДО создания записей
+    POST /  { action: 'delete_payout', id }
+        - админ удаляет выплату (ошибка при выдаче и т.п.): все связанные с ней начисления
+          возвращаются в невыплаченные (paid_at/payout_id = NULL), списанная сумма
+          возвращается в кассу компании (cash_box_transactions, amount>0)
+    POST /  { action: 'cash_deposit', amount, description }
+        - админ пополняет кассу компании вручную (например, внёс выручку из банка) —
+          создаёт запись cash_box_transactions с положительной суммой
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -165,6 +181,32 @@ def handler(event: dict, context) -> dict:
                     for r in cur.fetchall()
                 ]
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'rates': rates})}
+
+            if params.get('cashBox'):
+                cur.execute("SELECT COALESCE(SUM(amount), 0) FROM cash_box_transactions")
+                balance = float(cur.fetchone()[0])
+
+                cur.execute(
+                    "SELECT ct.id, ct.amount, ct.description, ct.payout_id, u.full_name, ct.created_at "
+                    "FROM cash_box_transactions ct LEFT JOIN users u ON u.id = ct.created_by "
+                    "ORDER BY ct.created_at DESC LIMIT 100"
+                )
+                transactions = [
+                    {
+                        'id': r[0],
+                        'amount': float(r[1]),
+                        'description': r[2],
+                        'payoutId': r[3],
+                        'createdByName': r[4],
+                        'createdAt': r[5].isoformat(),
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'balance': balance, 'transactions': transactions}),
+                }
 
             if params.get('payouts'):
                 user_id_filter = params.get('userId')
@@ -421,6 +463,36 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 
+            if action == 'update_accrual':
+                accrual_id = body_data.get('id')
+                amount = body_data.get('amount')
+                description = (body_data.get('description') or '').strip()
+                if not accrual_id or amount in (None, '') or not description:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите id, сумму и описание'}),
+                    }
+
+                cur.execute("SELECT paid_at FROM salary_accruals WHERE id = %s", (int(accrual_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Начисление не найдено'})}
+                if row[0] is not None:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Нельзя редактировать уже выплаченное начисление'})}
+
+                description_esc = description.replace("'", "''")
+                cur.execute(
+                    f"UPDATE salary_accruals SET amount = {float(amount)}, description = '{description_esc}' "
+                    f"WHERE id = {int(accrual_id)}"
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'update_accrual', 'salary_accrual', accrual_id,
+                    f'Изменил начисление #{accrual_id}: сумма {amount}, описание "{description}"',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
             if action == 'delete_accrual':
                 accrual_id = body_data.get('id')
                 if not accrual_id:
@@ -454,6 +526,17 @@ def handler(event: dict, context) -> dict:
                 if balance <= 0:
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Нет начислений к выплате'})}
 
+                # Выплата списывается из кассы компании — если денег в кассе недостаточно,
+                # выплата блокируется полностью (частичных выплат нет).
+                cur.execute("SELECT COALESCE(SUM(amount), 0) FROM cash_box_transactions")
+                cash_balance = float(cur.fetchone()[0])
+                if cash_balance < balance:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Недостаточно средств в кассе: доступно {cash_balance}, нужно {balance}'}),
+                    }
+
                 actor_id_sql = int(actor_id) if actor_id not in (None, '') else 'NULL'
                 cur.execute(
                     f"INSERT INTO salary_payouts (user_id, amount, paid_by) "
@@ -466,12 +549,82 @@ def handler(event: dict, context) -> dict:
                     f"WHERE user_id = {int(user_id)} AND paid_at IS NULL"
                 )
 
+                cur.execute(
+                    f"INSERT INTO cash_box_transactions (amount, description, payout_id, created_by) "
+                    f"VALUES ({-balance}, 'Выплата зарплаты сотруднику #{int(user_id)}', {payout_id}, {actor_id_sql})"
+                )
+
                 log_action(
                     cur, actor_id, actor_name, 'payout', 'salary_payout', payout_id,
                     f'Выплатил сотруднику #{user_id} {balance}',
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': payout_id, 'amount': balance})}
+
+            if action == 'delete_payout':
+                payout_id = body_data.get('id')
+                if not payout_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+                cur.execute("SELECT user_id, amount FROM salary_payouts WHERE id = %s", (int(payout_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Выплата не найдена'})}
+                payout_user_id, payout_amount = row
+
+                # Начисления, входившие в эту выплату, возвращаются в невыплаченные — снова
+                # появятся в "К выплате", сотруднику можно будет выплатить заново корректно.
+                cur.execute(
+                    "UPDATE salary_accruals SET paid_at = NULL, payout_id = NULL WHERE payout_id = %s",
+                    (int(payout_id),),
+                )
+
+                # Списанная на эту выплату сумма возвращается в кассу.
+                actor_id_sql = int(actor_id) if actor_id not in (None, '') else 'NULL'
+                cur.execute(
+                    f"INSERT INTO cash_box_transactions (amount, description, created_by) "
+                    f"VALUES ({float(payout_amount)}, 'Отмена выплаты #{int(payout_id)} сотруднику #{payout_user_id}', {actor_id_sql})"
+                )
+
+                # Историческую запись списания этой выплаты из кассы отвязываем от payout_id
+                # (саму транзакцию НЕ удаляем — касса должна сохранить полную историю), иначе
+                # foreign key не даст удалить строку из salary_payouts.
+                cur.execute(
+                    "UPDATE cash_box_transactions SET payout_id = NULL WHERE payout_id = %s",
+                    (int(payout_id),),
+                )
+
+                cur.execute("DELETE FROM salary_payouts WHERE id = %s", (int(payout_id),))
+                log_action(
+                    cur, actor_id, actor_name, 'delete_payout', 'salary_payout', payout_id,
+                    f'Удалил выплату #{payout_id} сотруднику #{payout_user_id} на сумму {payout_amount}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'cash_deposit':
+                amount = body_data.get('amount')
+                description = (body_data.get('description') or '').strip()
+                if amount in (None, '') or float(amount) <= 0 or not description:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите положительную сумму и описание'}),
+                    }
+
+                description_esc = description.replace("'", "''")
+                actor_id_sql = int(actor_id) if actor_id not in (None, '') else 'NULL'
+                cur.execute(
+                    f"INSERT INTO cash_box_transactions (amount, description, created_by) "
+                    f"VALUES ({float(amount)}, '{description_esc}', {actor_id_sql}) RETURNING id"
+                )
+                new_id = cur.fetchone()[0]
+                log_action(
+                    cur, actor_id, actor_name, 'cash_deposit', 'cash_box_transaction', new_id,
+                    f'Пополнил кассу на {amount} ({description})',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
         finally:

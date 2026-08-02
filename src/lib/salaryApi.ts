@@ -140,6 +140,14 @@ export const createPenalty = (payload: {
 export const deleteAccrual = (id: number, actorId?: number, actorName?: string) =>
   postAction({ action: 'delete_accrual', id, actorId, actorName });
 
+export const updateAccrual = (payload: {
+  id: number;
+  amount: number;
+  description: string;
+  actorId?: number;
+  actorName?: string;
+}) => postAction({ action: 'update_accrual', ...payload });
+
 export interface PayoutResult {
   id: number;
   amount: number;
@@ -147,3 +155,28 @@ export interface PayoutResult {
 
 export const payoutSalary = (userId: number, actorId?: number, actorName?: string): Promise<PayoutResult> =>
   postAction({ action: 'payout', userId, actorId, actorName });
+
+export const deletePayout = (id: number, actorId?: number, actorName?: string) =>
+  postAction({ action: 'delete_payout', id, actorId, actorName });
+
+export interface CashBoxTransaction {
+  id: number;
+  amount: number;
+  description: string;
+  payoutId: number | null;
+  createdByName: string | null;
+  createdAt: string;
+}
+
+export interface CashBoxData {
+  balance: number;
+  transactions: CashBoxTransaction[];
+}
+
+export const fetchCashBox = async (): Promise<CashBoxData> => {
+  const res = await fetch(`${SALARY_URL}?cashBox=1`);
+  return res.json();
+};
+
+export const cashDeposit = (payload: { amount: number; description: string; actorId?: number; actorName?: string }) =>
+  postAction({ action: 'cash_deposit', ...payload });

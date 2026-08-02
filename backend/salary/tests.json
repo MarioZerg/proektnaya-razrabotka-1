@@ -58,6 +58,33 @@
       "path": "/",
       "body": { "action": "update_rate" },
       "expectedStatus": 400
+    },
+    {
+      "name": "Get cash box",
+      "method": "GET",
+      "path": "/?cashBox=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Update accrual without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "update_accrual" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Delete payout without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "delete_payout" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Cash deposit without amount fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "cash_deposit" },
+      "expectedStatus": 400
     }
   ]
 }

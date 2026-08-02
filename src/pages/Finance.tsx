@@ -7,15 +7,20 @@ import {
   fetchSalarySummary,
   fetchSalaryPayouts,
   fetchMySalary,
+  fetchCashBox,
   createManualAccrual,
   createPenalty,
+  updateAccrual,
   deleteAccrual,
   payoutSalary,
+  deletePayout,
+  cashDeposit,
   updateSalaryRate,
   type SalaryOperation,
   type SalaryPayout,
   type MyAccrual,
   type MyPayout,
+  type CashBoxTransaction,
 } from '@/lib/salaryApi';
 import FinanceSummaryCard from '@/components/crm/finance/FinanceSummaryCard';
 import FinanceToolbar from '@/components/crm/finance/FinanceToolbar';
@@ -24,6 +29,7 @@ import SalaryPayoutsTable from '@/components/crm/finance/SalaryPayoutsTable';
 import SalaryRatesCard from '@/components/crm/finance/SalaryRatesCard';
 import MyAccrualsTable from '@/components/crm/finance/MyAccrualsTable';
 import MyPayoutsCard from '@/components/crm/finance/MyPayoutsCard';
+import CashBoxCard from '@/components/crm/finance/CashBoxCard';
 import { formatMoney } from '@/components/crm/finance/financeShared';
 
 const Finance = () => {
@@ -44,6 +50,10 @@ const Finance = () => {
 
   const [payouts, setPayouts] = useState<SalaryPayout[]>([]);
   const [payoutsLoading, setPayoutsLoading] = useState(true);
+
+  const [cashBalance, setCashBalance] = useState(0);
+  const [cashTransactions, setCashTransactions] = useState<CashBoxTransaction[]>([]);
+  const [cashLoading, setCashLoading] = useState(true);
 
   const [savingAccrual, setSavingAccrual] = useState(false);
 
@@ -93,6 +103,16 @@ const Finance = () => {
       .finally(() => setPayoutsLoading(false));
   };
 
+  const loadCashBox = () => {
+    setCashLoading(true);
+    fetchCashBox()
+      .then((data) => {
+        setCashBalance(data.balance);
+        setCashTransactions(data.transactions);
+      })
+      .finally(() => setCashLoading(false));
+  };
+
   useEffect(() => {
     if (user?.role !== 'admin') return;
     loadOperations();
@@ -102,6 +122,7 @@ const Finance = () => {
   useEffect(() => {
     if (user?.role !== 'admin') return;
     loadPayouts();
+    loadCashBox();
   }, [user?.role]);
 
   const handleManualAccrual = async (userId: number, amount: number, description: string) => {
@@ -130,6 +151,19 @@ const Finance = () => {
     }
   };
 
+  const handleEditAccrual = async (id: number, amount: number, description: string) => {
+    setSavingAccrual(true);
+    try {
+      await updateAccrual({ id, amount, description, actorId: user?.id, actorName: user?.name });
+      toast({ title: 'Начисление обновлено' });
+      loadOperations();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSavingAccrual(false);
+    }
+  };
+
   const handlePayout = async (userId: number) => {
     setSavingAccrual(true);
     try {
@@ -137,6 +171,7 @@ const Finance = () => {
       toast({ title: 'Зарплата выплачена', description: `Сумма: ${res.amount.toFixed(2)} ₽` });
       loadOperations();
       loadPayouts();
+      loadCashBox();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
@@ -151,6 +186,31 @@ const Finance = () => {
       loadOperations();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
+  const handleDeletePayout = async (id: number) => {
+    try {
+      await deletePayout(id, user?.id, user?.name);
+      toast({ title: 'Выплата удалена' });
+      loadOperations();
+      loadPayouts();
+      loadCashBox();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
+  const handleCashDeposit = async (amount: number, description: string) => {
+    setSavingAccrual(true);
+    try {
+      await cashDeposit({ amount, description, actorId: user?.id, actorName: user?.name });
+      toast({ title: 'Касса пополнена' });
+      loadCashBox();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSavingAccrual(false);
     }
   };
 
@@ -215,7 +275,9 @@ const Finance = () => {
               page={operationsPage}
               setPage={setOperationsPage}
               totalPages={totalPages}
+              savingAccrual={savingAccrual}
               onDelete={handleDeleteAccrual}
+              onEdit={handleEditAccrual}
             />
           </div>
 
@@ -231,9 +293,17 @@ const Finance = () => {
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <CashBoxCard
+            balance={cashBalance}
+            transactions={cashTransactions}
+            loading={cashLoading}
+            saving={savingAccrual}
+            onDeposit={handleCashDeposit}
+          />
           <SalaryRatesCard onUpdate={handleUpdateRate} />
-          <SalaryPayoutsTable payouts={payouts} loading={payoutsLoading} />
         </div>
+
+        <SalaryPayoutsTable payouts={payouts} loading={payoutsLoading} onDelete={handleDeletePayout} />
       </div>
     </CrmLayout>
   );

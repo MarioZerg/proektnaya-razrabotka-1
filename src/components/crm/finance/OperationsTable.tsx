@@ -12,10 +12,11 @@ import {
   PaginationItem,
   PaginationLink,
 } from '@/components/ui/pagination';
-import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import type { SalaryOperation } from '@/lib/salaryApi';
 import { accrualTypeLabels, formatDateTime, formatMoney } from '@/components/crm/finance/financeShared';
+import EditAccrualDialog from '@/components/crm/finance/EditAccrualDialog';
+import ConfirmDeleteButton from '@/components/crm/finance/ConfirmDeleteButton';
 
 interface OperationsTableProps {
   operations: SalaryOperation[];
@@ -23,10 +24,21 @@ interface OperationsTableProps {
   page: number;
   setPage: (page: number) => void;
   totalPages: number;
+  savingAccrual: boolean;
   onDelete: (id: number) => void;
+  onEdit: (id: number, amount: number, description: string) => Promise<void>;
 }
 
-const OperationsTable = ({ operations, loading, page, setPage, totalPages, onDelete }: OperationsTableProps) => {
+const OperationsTable = ({
+  operations,
+  loading,
+  page,
+  setPage,
+  totalPages,
+  savingAccrual,
+  onDelete,
+  onEdit,
+}: OperationsTableProps) => {
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-border">
@@ -82,10 +94,15 @@ const OperationsTable = ({ operations, loading, page, setPage, totalPages, onDel
                   <TableCell className="whitespace-nowrap">{formatDateTime(op.createdAt)}</TableCell>
                   <TableCell className="whitespace-nowrap">{op.paidAt ? formatDateTime(op.paidAt) : '—'}</TableCell>
                   <TableCell>
-                    {op.orderNumber && !op.paidAt && (
-                      <Button variant="ghost" size="icon" onClick={() => onDelete(op.id)}>
-                        <Icon name="Trash2" size={14} />
-                      </Button>
+                    {!op.paidAt && (
+                      <div className="flex items-center">
+                        <EditAccrualDialog operation={op} saving={savingAccrual} onSubmit={onEdit} />
+                        <ConfirmDeleteButton
+                          title="Удалить начисление?"
+                          description={`Начисление #${op.id} на сумму ${formatMoney(op.amount)} ₽ будет удалено безвозвратно.`}
+                          onConfirm={() => onDelete(op.id)}
+                        />
+                      </div>
                     )}
                   </TableCell>
                 </TableRow>
