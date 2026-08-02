@@ -8,6 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 
 const Kiosk = () => {
   const { toast } = useToast();
@@ -35,6 +36,8 @@ const Kiosk = () => {
       setSearching(false);
     }
   };
+
+  useScannerAutoSubmit(orderNumber, handleSearch, !searching && !order);
 
   const handleClose = async () => {
     if (!order || !user) return;

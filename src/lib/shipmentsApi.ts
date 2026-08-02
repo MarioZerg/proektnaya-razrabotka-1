@@ -152,6 +152,10 @@ export interface CollectScanResult {
 export const collectScan = (shipmentId: number, barcode: string): Promise<CollectScanResult> =>
   postAction({ action: 'collect_scan', shipmentId, barcode });
 
+// Кладовщик убирает обратно ошибочно отсканированный рулон из собираемой заявки — без
+// жёстких условий, пока заявка ещё в статусе "Новый". Сам рулон остаётся на складе.
+export const removeScannedRoll = (itemId: number) => postAction({ action: 'remove_scanned_roll', itemId });
+
 export const shipToWorkshop = (shipmentId: number) => postAction({ action: 'ship', shipmentId });
 
 export const receiveAtWorkshop = (shipmentId: number) => postAction({ action: 'receive', shipmentId });

@@ -14,6 +14,7 @@ import {
 import Icon from '@/components/ui/icon';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 
 interface SupplyItemsSectionProps {
   supply: SupplyDetail;
@@ -41,6 +42,8 @@ const SupplyItemsSection = ({
   onRemoveItem,
   onNavigateAssemble,
 }: SupplyItemsSectionProps) => {
+  useScannerAutoSubmit(scanOrderNumber, onScanOrder, !scanning && supply.type === 'FBS' && canEditItems);
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -97,7 +100,7 @@ const SupplyItemsSection = ({
         </Card>
       )}
 
-      {supply.type === 'FBS' ? (
+      {supply.type === 'FBS' && (
         readyGoods.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             Нет готовых товаров, ожидающих сканирования
@@ -122,7 +125,13 @@ const SupplyItemsSection = ({
             </Table>
           </div>
         )
-      ) : supply.items.length === 0 ? (
+      )}
+
+      {supply.type === 'FBS' && (
+        <h3 className="pt-2 text-sm font-semibold">Добавлено в поставку ({supply.items.length})</h3>
+      )}
+
+      {supply.items.length === 0 ? (
         <p className="text-sm text-muted-foreground">В поставке пока нет товаров</p>
       ) : (
         <div className="rounded-md border border-border">

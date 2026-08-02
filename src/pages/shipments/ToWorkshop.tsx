@@ -7,6 +7,7 @@ import {
   fetchShipmentDetail,
   requestToWorkshop,
   collectScan,
+  removeScannedRoll,
   shipToWorkshop,
   receiveAtWorkshop,
   deleteShipment,
@@ -140,6 +141,18 @@ const ToWorkshop = () => {
     }
   };
 
+  const handleRemoveRoll = async (itemId: number) => {
+    if (!activeShipment) return;
+    try {
+      await removeScannedRoll(itemId);
+      toast({ title: 'Рулон убран из заявки' });
+      const detail = await fetchShipmentDetail(activeShipment.id);
+      setActiveShipment(detail);
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
   const handleShip = async () => {
     if (!activeShipment) return;
     try {
@@ -189,6 +202,7 @@ const ToWorkshop = () => {
           onBack={() => setActiveShipment(null)}
           onScan={handleScan}
           onShip={handleShip}
+          onRemoveRoll={handleRemoveRoll}
         />
       </CrmLayout>
     );

@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import type { ShipmentDetail } from '@/lib/shipmentsApi';
+import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 
 interface AssembleShipmentViewProps {
   activeShipment: ShipmentDetail;
@@ -22,6 +23,7 @@ interface AssembleShipmentViewProps {
   onBack: () => void;
   onScan: () => void;
   onShip: () => void;
+  onRemoveRoll: (itemId: number) => void;
 }
 
 const AssembleShipmentView = ({
@@ -33,7 +35,10 @@ const AssembleShipmentView = ({
   onBack,
   onScan,
   onShip,
+  onRemoveRoll,
 }: AssembleShipmentViewProps) => {
+  useScannerAutoSubmit(scanCode, onScan, !scanning);
+
   // Запрошенная позиция — исходная строка заявки (создана при request_to_workshop), у нее
   // ещё нет rollId. requestedQuantity теперь необязателен (сотрудник может не указывать
   // количество), поэтому находим её по отсутствию rollId, а не по наличию requestedQuantity.
@@ -96,6 +101,7 @@ const AssembleShipmentView = ({
                 <TableHead>Рулон</TableHead>
                 <TableHead>Материал</TableHead>
                 <TableHead>Кол-во</TableHead>
+                <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -105,6 +111,11 @@ const AssembleShipmentView = ({
                   <TableCell>{i.materialName}</TableCell>
                   <TableCell>
                     {i.quantity} {i.unit}
+                  </TableCell>
+                  <TableCell>
+                    <Button variant="ghost" size="icon" onClick={() => onRemoveRoll(i.id)}>
+                      <Icon name="Trash2" size={14} />
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}

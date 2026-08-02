@@ -85,6 +85,10 @@ def handler(event: dict, context) -> dict:
           Рулон должен быть в статусе in_storage и НЕ закреплён за другим цехом/сменой
           (рулон должен быть материала из заявки и находиться в статусе in_storage —
           то есть уже подтверждённый админом при приёмке)
+    POST /  { action: 'remove_scanned_roll', itemId }
+        - кладовщик убирает обратно ошибочно отсканированный рулон из собираемой заявки
+          (без жёстких условий), пока заявка ещё в статусе "Новый" (не отправлена).
+          Сам рулон остаётся на складе в статусе in_storage
     POST /  { action: 'ship', shipmentId }
         - переводит заявку в статус "Отправлено", все собранные рулоны получают статус
           in_workshop и привязку к цеху/смене
@@ -631,6 +635,37 @@ def handler(event: dict, context) -> dict:
                     'headers': headers,
                     'body': json.dumps({'success': True, 'rollId': roll_id, 'materialId': material_id, 'quantity': float(remaining)}),
                 }
+
+            if action == 'remove_scanned_roll':
+                # Кладовщик убирает обратно ошибочно отсканированный рулон из заявки на
+                # отгрузку в цех — без жёстких условий, пока заявка ещё в статусе "Новый"
+                # (не отправлена). Сам рулон остаётся в статусе in_storage (collect_scan его
+                # не менял), просто удаляется строка-привязка к заявке.
+                item_id = body_data.get('itemId')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите itemId'})}
+
+                cur.execute(
+                    "SELECT si.shipment_id, si.roll_id, s.type, s.status FROM shipment_items si "
+                    "JOIN shipments s ON s.id = si.shipment_id WHERE si.id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Позиция не найдена'})}
+                sh_shipment_id, sh_roll_id, sh_type, sh_status = row
+                if sh_type != 'to_workshop' or sh_roll_id is None:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Эту позицию нельзя убрать'})}
+                if sh_status != 'Новый':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявка уже не в статусе сборки'})}
+
+                cur.execute("DELETE FROM shipment_items WHERE id = %s", (int(item_id),))
+                log_action(
+                    cur, actor_id, actor_name, 'remove_scanned_roll', 'shipment', sh_shipment_id,
+                    f'Убрал рулон из собираемой заявки #{sh_shipment_id}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'ship':
                 shipment_id = body_data.get('shipmentId')

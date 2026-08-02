@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { SupplyBox } from '@/lib/marketplaceSuppliesApi';
+import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 
 interface SupplyBoxCardProps {
   box: SupplyBox;
@@ -31,6 +32,8 @@ const SupplyBoxCard = ({ box, canEdit, onAddOrder, onRemoveItem, onDeleteBox }: 
       inputRef.current?.focus();
     }
   };
+
+  useScannerAutoSubmit(orderNumber, handleAdd, canEdit && !scanning);
 
   return (
     <Card className="border-border shadow-none">
