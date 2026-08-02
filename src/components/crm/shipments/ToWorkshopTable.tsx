@@ -29,6 +29,8 @@ interface ToWorkshopTableProps {
   workshops: Workshop[];
   isProduction: boolean;
   isAdmin: boolean;
+  userWorkshopId: number | null;
+  userShiftNumber: number | null;
   deleteId: number | null;
   deleting: boolean;
   onOpenShipment: (id: number) => void;
@@ -43,6 +45,8 @@ const ToWorkshopTable = ({
   workshops,
   isProduction,
   isAdmin,
+  userWorkshopId,
+  userShiftNumber,
   deleteId,
   deleting,
   onOpenShipment,
@@ -50,6 +54,12 @@ const ToWorkshopTable = ({
   onSetDeleteId,
   onDelete,
 }: ToWorkshopTableProps) => {
+  // Швея/закройщик/упаковщик принимает материал только в СВОЙ цех/смену — иначе видел бы
+  // и мог принять чужую поставку. Кладовщик/админ видят кнопку для любой заявки (как раньше).
+  const canReceive = (s: Shipment) =>
+    !isProduction ||
+    (s.workshopId === userWorkshopId && (s.shiftNumber === null || s.shiftNumber === userShiftNumber));
+
   return (
     <>
       {loading ? (
@@ -102,7 +112,7 @@ const ToWorkshopTable = ({
                           Собрать
                         </Button>
                       )}
-                      {!isProduction && s.status === 'Отправлено' && (
+                      {s.status === 'Отправлено' && canReceive(s) && (
                         <Button size="sm" onClick={() => onReceive(s.id)}>
                           Принять в цехе
                         </Button>

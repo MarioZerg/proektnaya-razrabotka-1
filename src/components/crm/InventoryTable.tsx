@@ -25,10 +25,16 @@ const InventoryTable = ({ typeName, materials }: { typeName: string; materials: 
           {materials.map((item) => (
             <TableRow key={item.id}>
               <TableCell className="font-medium">{item.name}</TableCell>
-              <TableCell>0</TableCell>
-              <TableCell>0</TableCell>
               <TableCell>
-                <Badge variant="secondary">В наличии</Badge>
+                {item.warehouseQuantity} {item.unit}
+              </TableCell>
+              <TableCell>{item.warehouseRolls}</TableCell>
+              <TableCell>
+                {item.warehouseRolls > 0 ? (
+                  <Badge variant="secondary">В наличии</Badge>
+                ) : (
+                  <Badge variant="outline">Нет на складе</Badge>
+                )}
               </TableCell>
             </TableRow>
           ))}

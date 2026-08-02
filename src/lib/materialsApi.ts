@@ -15,6 +15,10 @@ export interface Material {
   status: 'active' | 'archive';
   sortOrder: number;
   hasMovements: boolean;
+  /** Сумма остатков рулонов на складе (status='in_storage') — появляется после подтверждения приёмки от поставщика. */
+  warehouseQuantity: number;
+  /** Количество рулонов на складе (status='in_storage'). */
+  warehouseRolls: number;
 }
 
 export interface MaterialsData {

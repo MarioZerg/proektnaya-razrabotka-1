@@ -7,7 +7,13 @@ import psycopg2
 def handler(event: dict, context) -> dict:
     """Управляет справочником типов и материалов (тюль, аксессуары, упаковка и т.д.).
 
-    GET  /                      - получить все типы и материалы
+    GET  /                      - получить все типы и материалы; у каждого материала
+                                   дополнительно приходят warehouseQuantity (сумма остатков
+                                   рулонов со статусом in_storage) и warehouseRolls (число таких
+                                   рулонов) — это фактические остатки на складе, появляются
+                                   только после того, как админ подтвердит приёмку от поставщика
+                                   (action 'approve_supply' в backend/shipments создаёт рулоны
+                                   in_storage); списание/отгрузка в цех эти остатки уменьшает
     POST /  { action: 'create_type', name }
     POST /  { action: 'create_material', typeId, name, unit, cost, status }
     POST /  { action: 'update_material', id, name?, unit?, cost?, status?, typeId? }
@@ -46,7 +52,11 @@ def handler(event: dict, context) -> dict:
 
             cur.execute(
                 "SELECT m.id, m.type_id, m.name, m.unit, m.cost, m.status, m.sort_order, "
-                "EXISTS(SELECT 1 FROM material_movements mm WHERE mm.material_id = m.id) "
+                "EXISTS(SELECT 1 FROM material_movements mm WHERE mm.material_id = m.id), "
+                "COALESCE((SELECT SUM(r.remaining_quantity) FROM rolls r "
+                "WHERE r.material_id = m.id AND r.status = 'in_storage'), 0), "
+                "COALESCE((SELECT COUNT(*) FROM rolls r "
+                "WHERE r.material_id = m.id AND r.status = 'in_storage'), 0) "
                 "FROM materials m ORDER BY m.sort_order, m.id"
             )
             materials = [
@@ -59,6 +69,8 @@ def handler(event: dict, context) -> dict:
                     'status': r[5],
                     'sortOrder': r[6],
                     'hasMovements': r[7],
+                    'warehouseQuantity': float(r[8]),
+                    'warehouseRolls': r[9],
                 }
                 for r in cur.fetchall()
             ]

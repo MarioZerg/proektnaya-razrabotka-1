@@ -253,6 +253,8 @@ const ToWorkshop = () => {
           workshops={workshops}
           isProduction={isProduction}
           isAdmin={isAdmin}
+          userWorkshopId={user?.workshopId ?? null}
+          userShiftNumber={user?.shiftNumber ?? null}
           deleteId={deleteId}
           deleting={deleting}
           onOpenShipment={openShipment}
