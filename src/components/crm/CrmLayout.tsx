@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import Icon from '@/components/ui/icon';
+import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
 import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
@@ -36,6 +37,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   const location = useLocation();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [testAccounts, setTestAccounts] = useState<TestAccount[]>([]);
+  const [qrOpen, setQrOpen] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -224,6 +226,14 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
               </DropdownMenu>
             )}
             <button
+              onClick={() => setQrOpen(true)}
+              className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
+              aria-label="QR-код для открытия смены"
+              title="QR-код для открытия смены"
+            >
+              <Icon name="QrCode" size={16} />
+            </button>
+            <button
               onClick={handleLogout}
               className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
               aria-label="Выйти"
@@ -233,6 +243,8 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           </div>
         </SidebarFooter>
       </Sidebar>
+
+      <ShiftQrDialog open={qrOpen} onOpenChange={setQrOpen} />
 
       <main className="flex-1 overflow-x-hidden">
         <div className="flex items-center gap-3 border-b border-border px-4 py-3 md:hidden">

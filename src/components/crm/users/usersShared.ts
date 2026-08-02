@@ -53,7 +53,6 @@ export interface CardFormState {
   fullName: string;
   role: Role;
   workshop: string;
-  salary: string;
   shiftFrom: string;
   shiftTo: string;
   newPassword: string;

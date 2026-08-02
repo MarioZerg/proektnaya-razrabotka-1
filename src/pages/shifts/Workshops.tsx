@@ -12,6 +12,16 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Table,
   TableBody,
   TableCell,
@@ -22,7 +32,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { fetchWorkshops, createWorkshop, type Workshop } from '@/lib/workshopsApi';
+import { fetchWorkshops, createWorkshop, deleteWorkshop, type Workshop } from '@/lib/workshopsApi';
 
 const Workshops = () => {
   const { toast } = useToast();
@@ -34,6 +44,9 @@ const Workshops = () => {
   const [createName, setCreateName] = useState('');
   const [createShifts, setCreateShifts] = useState('1');
   const [creating, setCreating] = useState(false);
+
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -68,6 +81,25 @@ const Workshops = () => {
       });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    setDeleting(true);
+    try {
+      await deleteWorkshop(deleteId);
+      toast({ title: 'Цех удалён' });
+      setDeleteId(null);
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось удалить цех',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -150,13 +182,18 @@ const Workshops = () => {
                     <TableCell>{w.shiftsCount}</TableCell>
                     <TableCell>{w.employeesCount}</TableCell>
                     <TableCell>
-                      <Button
-                        size="icon"
-                        className="bg-sky-500 text-white hover:bg-sky-600"
-                        onClick={() => navigate(`/crm/shifts/workshops/${w.id}/edit`)}
-                      >
-                        <Icon name="Pencil" size={14} />
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          size="icon"
+                          className="bg-sky-500 text-white hover:bg-sky-600"
+                          onClick={() => navigate(`/crm/shifts/workshops/${w.id}/edit`)}
+                        >
+                          <Icon name="Pencil" size={14} />
+                        </Button>
+                        <Button size="icon" variant="destructive" onClick={() => setDeleteId(w.id)}>
+                          <Icon name="Trash2" size={14} />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -165,6 +202,28 @@ const Workshops = () => {
           </div>
         )}
       </div>
+
+      <AlertDialog open={deleteId !== null} onOpenChange={(open) => !open && setDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить цех?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Удаление возможно только если у цеха нет ни одной смены — если смены есть,
+              сначала удалите их на вкладке «Смены». Действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? 'Удаление...' : 'Удалить'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </CrmLayout>
   );
 };

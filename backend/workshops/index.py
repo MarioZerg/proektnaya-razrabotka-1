@@ -47,6 +47,12 @@ def handler(event: dict, context) -> dict:
           у нового цеха сразу появляется рабочий набор ставок (админ может их скорректировать)
     POST /  { action: 'update', id, name?, shiftsCount?, isActive?, allowedProducts?, allowedMaterials?, settings? }
     POST /  { action: 'delete', id }
+        - удаляет цех. Отклоняется (409), если у цеха есть хотя бы одна смена (таблица
+          shifts) — сначала нужно удалить все смены цеха на вкладке "Смены". Также
+          отклоняется, если с цехом связаны реальные бизнес-данные (рулоны, заказы,
+          отгрузки, история открытия смен) — их нельзя молча потерять. Конфигурационные
+          данные (тарифы salary_rates, переопределения настроек workshop_settings,
+          блокировки автозаказа, нормы расхода материалов) удаляются каскадно вместе с цехом
 
     settings — словарь { key: value|null }, null означает "использовать глобальное значение".
 
@@ -246,6 +252,48 @@ def handler(event: dict, context) -> dict:
                 workshop_id = body_data.get('id')
                 if not workshop_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+                cur.execute("SELECT id FROM workshops WHERE id = %s", (int(workshop_id),))
+                if not cur.fetchone():
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Цех не найден'})}
+
+                # Удаление запрещено, если у цеха ещё есть хоть одна смена — сначала нужно
+                # удалить все смены цеха (на вкладке "Смены"), только потом можно удалить сам цех.
+                cur.execute("SELECT COUNT(*) FROM shifts WHERE workshop_id = %s", (int(workshop_id),))
+                shifts_count = cur.fetchone()[0]
+                if shifts_count > 0:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'У цеха есть {shifts_count} смен(ы) — сначала удалите все смены цеха'}),
+                    }
+
+                # Удаление также запрещено, если с цехом связаны реальные бизнес-данные
+                # (рулоны, заказы, отгрузки, история открытия смен) — их нельзя молча потерять.
+                data_checks = [
+                    ('rolls', 'рулонов материалов'),
+                    ('orders', 'заказов'),
+                    ('shipments', 'отгрузок/поставок'),
+                    ('shift_sessions', 'записей истории смен'),
+                ]
+                for table, label in data_checks:
+                    cur.execute(f"SELECT COUNT(*) FROM {table} WHERE workshop_id = %s", (int(workshop_id),))
+                    cnt = cur.fetchone()[0]
+                    if cnt > 0:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({'error': f'С цехом связано {cnt} {label} — удаление невозможно'}),
+                        }
+
+                # Конфигурационные данные цеха (тарифы, переопределения настроек, блокировки
+                # автозаказа) бессмысленны без самого цеха — удаляются каскадно вместе с ним.
+                cur.execute("DELETE FROM salary_rates WHERE workshop_id = %s", (int(workshop_id),))
+                cur.execute("DELETE FROM workshop_settings WHERE workshop_id = %s", (int(workshop_id),))
+                cur.execute("DELETE FROM auto_order_blocks WHERE workshop_id = %s", (int(workshop_id),))
+                cur.execute("DELETE FROM shift_calendar WHERE workshop_id = %s", (int(workshop_id),))
+                cur.execute("DELETE FROM marketplace_item_materials WHERE workshop_id = %s", (int(workshop_id),))
+
                 cur.execute(f"DELETE FROM workshops WHERE id = {int(workshop_id)}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

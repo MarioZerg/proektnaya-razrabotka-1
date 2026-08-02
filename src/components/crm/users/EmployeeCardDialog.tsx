@@ -162,16 +162,6 @@ const EmployeeCardDialog = ({
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label>Заработная плата, ₽</Label>
-              <Input
-                type="number"
-                min={0}
-                value={cardForm.salary}
-                onChange={(e) => setCardForm((f) => f && { ...f, salary: e.target.value })}
-              />
-            </div>
-
             <div>
               <Label>График — когда можно открыть смену</Label>
               <div className="mt-1.5 grid grid-cols-2 gap-3">

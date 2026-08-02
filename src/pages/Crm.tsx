@@ -7,7 +7,8 @@ import { fetchOrders, type Order } from '@/lib/ordersApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { fetchShipments, type Shipment } from '@/lib/shipmentsApi';
-import { fetchEmployees, updateEmployee, type Employee } from '@/lib/usersApi';
+import { updateEmployee } from '@/lib/usersApi';
+import { fetchMySalary } from '@/lib/salaryApi';
 import {
   fetchEmployeeShifts,
   fetchShiftCalendar,
@@ -36,7 +37,6 @@ const CrmDashboard = () => {
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [goodsItems, setGoodsItems] = useState<GoodsWarehouseItem[]>([]);
   const [shipmentsToWorkshop, setShipmentsToWorkshop] = useState<Shipment[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
 
   const [shiftsLoading, setShiftsLoading] = useState(true);
   const [employeeShifts, setEmployeeShifts] = useState<EmployeeShiftStatus[]>([]);
@@ -58,14 +58,12 @@ const CrmDashboard = () => {
       canSeeWarehouseWidgets ? fetchRolls({ status: 'in_workshop' }) : Promise.resolve([]),
       canSeeWarehouseWidgets ? fetchGoodsWarehouse('in_stock') : Promise.resolve([]),
       fetchShipments('to_workshop'),
-      user?.role !== 'admin' ? fetchEmployees() : Promise.resolve([]),
     ])
-      .then(([ordersData, rollsData, goodsData, shipmentsData, employeesData]) => {
+      .then(([ordersData, rollsData, goodsData, shipmentsData]) => {
         setOrders(ordersData);
         setRolls(rollsData);
         setGoodsItems(goodsData);
         setShipmentsToWorkshop(shipmentsData);
-        setEmployees(employeesData);
       })
       .finally(() => setDataLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,10 +107,22 @@ const CrmDashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myShiftStatus?.isOpen, myShiftStatus?.sessionWorkshopId, myShiftStatus?.sessionShiftNumber]);
 
-  const mySalary = useMemo(
-    () => employees.find((e) => e.id === user?.id)?.salary ?? null,
-    [employees, user?.id]
-  );
+  // Реальный остаток к выплате (то же число, что и на вкладке "Финансы" у сотрудника) —
+  // сумма невыплаченных начислений (salary_accruals без paid_at), а не статичный оклад
+  // из профиля. Загружается отдельно от остальных данных дашборда.
+  const [mySalary, setMySalary] = useState<number | null>(null);
+  const [mySalaryLoading, setMySalaryLoading] = useState(true);
+
+  useEffect(() => {
+    if (isCleaner || !user?.id) {
+      setMySalaryLoading(false);
+      return;
+    }
+    setMySalaryLoading(true);
+    fetchMySalary(user.id)
+      .then((data) => setMySalary(data.balance))
+      .finally(() => setMySalaryLoading(false));
+  }, [isCleaner, user?.id]);
 
   const handleToggleShift = async (employee: EmployeeShiftStatus) => {
     setTogglingId(employee.id);
@@ -266,7 +276,7 @@ const CrmDashboard = () => {
                 />
               </div>
               <div className="lg:col-span-2">
-                <MySalaryCard salary={mySalary} loading={dataLoading} />
+                <MySalaryCard salary={mySalary} loading={mySalaryLoading} />
               </div>
             </>
           )

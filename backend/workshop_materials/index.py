@@ -29,7 +29,11 @@ def handler(event: dict, context) -> dict:
     группирует остатки рулонов со статусом in_workshop по материалу, цеху и смене.
     У каждого цеха свой набор именованных смен (например у Цеха №1 — "Смена № 1" и
     "Смена № 2", у Цеха №2 — "5/2"), поэтому колонки строятся динамически по всем
-    цехам сразу: cпискок колонок = все смены всех активных цехов.
+    цехам сразу: cпискок колонок = все смены всех активных цехов. Если у цеха есть
+    именованные смены, добавляется ещё одна колонка "Без смены" — в неё попадают rolls,
+    отправленные в цех БЕЗ привязки к конкретной смене (shift_number IS NULL, доступны
+    сотрудникам любой смены этого цеха); без такой колонки эти остатки учитывались бы
+    в "Итого", но не отображались бы ни в одной колонке.
 
     Автозаказ материала в цех ОТКЛЮЧЁН: заявки на отгрузку в цех создают только сами
     сотрудники цеха (action 'request_to_workshop' в backend/shipments) вручную, когда
@@ -84,6 +88,8 @@ def handler(event: dict, context) -> dict:
         for wid, wname, shift_names in workshop_rows:
             names = shift_names if isinstance(shift_names, list) else json.loads(shift_names or '[]')
             if not names:
+                # У цеха нет именованных смен — единственная колонка уже покрывает rolls с
+                # shift_number IS NULL (нет отдельной "Без смены").
                 columns.append({'workshopId': wid, 'workshopName': wname, 'shiftNumber': None, 'shiftLabel': wname})
             else:
                 for idx, sname in enumerate(names, start=1):
@@ -93,6 +99,15 @@ def handler(event: dict, context) -> dict:
                         'shiftNumber': idx,
                         'shiftLabel': sname,
                     })
+                # Доп. колонка для rolls, отправленных в цех БЕЗ привязки к конкретной смене
+                # (shift_number IS NULL) — доступны сотрудникам любой смены этого цеха. Без
+                # неё такие остатки учитывались в "Итого", но не попадали ни в одну колонку.
+                columns.append({
+                    'workshopId': wid,
+                    'workshopName': wname,
+                    'shiftNumber': None,
+                    'shiftLabel': 'Без смены',
+                })
 
         today_weekday = None
         cur.execute("SELECT EXTRACT(DOW FROM now())")
@@ -102,7 +117,11 @@ def handler(event: dict, context) -> dict:
 
         active_column_key = None
         if columns:
-            first_workshop_columns = [c for c in columns if c['workshopId'] == columns[0]['workshopId']]
+            # "Без смены" — не настоящая смена, исключаем её из ротации активной смены дня.
+            first_workshop_columns = [
+                c for c in columns
+                if c['workshopId'] == columns[0]['workshopId'] and c['shiftNumber'] is not None
+            ]
             if len(first_workshop_columns) > 0 and today_weekday is not None:
                 active_idx = today_weekday % len(first_workshop_columns)
                 active_column_key = (
