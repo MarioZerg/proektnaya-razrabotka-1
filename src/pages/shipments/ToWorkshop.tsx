@@ -37,11 +37,8 @@ const ToWorkshop = () => {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [reqWorkshopId, setReqWorkshopId] = useState('');
-  const [reqShiftNumber, setReqShiftNumber] = useState('');
   const [reqComment, setReqComment] = useState('');
   const [reqMaterialId, setReqMaterialId] = useState('');
-  const [reqQuantity, setReqQuantity] = useState('');
 
   const [activeShipment, setActiveShipment] = useState<ShipmentDetail | null>(null);
   const [scanCode, setScanCode] = useState('');
@@ -68,20 +65,13 @@ const ToWorkshop = () => {
   }, [activeShipment]);
 
   const openCreate = () => {
-    setReqWorkshopId(isProduction && user?.workshopId ? String(user.workshopId) : '');
-    setReqShiftNumber(isProduction && user?.shiftNumber ? String(user.shiftNumber) : '');
     setReqComment('');
     setReqMaterialId('');
-    setReqQuantity('');
     setCreateOpen(true);
   };
 
   const handleCreate = async () => {
-    if (!isProduction && !reqWorkshopId) {
-      toast({ title: 'Выберите цех', variant: 'destructive' });
-      return;
-    }
-    if (isProduction && !user?.workshopId) {
+    if (!user?.workshopId) {
       toast({ title: 'За вами не закреплён цех — обратитесь к администратору', variant: 'destructive' });
       return;
     }
@@ -91,25 +81,16 @@ const ToWorkshop = () => {
     }
     setCreating(true);
     try {
-      const res = await requestToWorkshop({
-        workshopId: isProduction ? Number(user!.workshopId) : Number(reqWorkshopId),
-        shiftNumber: isProduction
-          ? (user?.shiftNumber ?? undefined)
-          : reqShiftNumber
-            ? Number(reqShiftNumber)
-            : undefined,
+      await requestToWorkshop({
+        workshopId: Number(user.workshopId),
+        shiftNumber: user?.shiftNumber ?? undefined,
         comment: reqComment.trim() || undefined,
         materialId: Number(reqMaterialId),
-        requestedQuantity: reqQuantity ? Number(reqQuantity) : undefined,
         requestedBy: user?.id,
       });
       toast({ title: 'Заявка отправлена кладовщику' });
       setCreateOpen(false);
       load();
-      if (!isProduction) {
-        const detail = await fetchShipmentDetail(res.id);
-        setActiveShipment(detail);
-      }
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
@@ -223,29 +204,23 @@ const ToWorkshop = () => {
             <p className="mt-1 text-sm text-muted-foreground">
               {isProduction
                 ? 'Запросите нужный материал — кладовщик соберёт рулоны и отправит вам'
-                : 'Заявка от швеи/закройщика → сборка рулонов сканированием → отправка → приём в цехе'}
+                : 'Заявку создаёт сотрудник цеха → сборка рулонов сканированием → отправка → приём в цехе'}
             </p>
           </div>
-          <RequestMaterialDialog
-            isProduction={isProduction}
-            open={createOpen}
-            onOpenChange={setCreateOpen}
-            onOpenCreate={openCreate}
-            workshops={workshops}
-            materials={materials}
-            reqWorkshopId={reqWorkshopId}
-            setReqWorkshopId={setReqWorkshopId}
-            reqShiftNumber={reqShiftNumber}
-            setReqShiftNumber={setReqShiftNumber}
-            reqMaterialId={reqMaterialId}
-            setReqMaterialId={setReqMaterialId}
-            reqQuantity={reqQuantity}
-            setReqQuantity={setReqQuantity}
-            reqComment={reqComment}
-            setReqComment={setReqComment}
-            creating={creating}
-            onCreate={handleCreate}
-          />
+          {isProduction && (
+            <RequestMaterialDialog
+              open={createOpen}
+              onOpenChange={setCreateOpen}
+              onOpenCreate={openCreate}
+              materials={materials}
+              reqMaterialId={reqMaterialId}
+              setReqMaterialId={setReqMaterialId}
+              reqComment={reqComment}
+              setReqComment={setReqComment}
+              creating={creating}
+              onCreate={handleCreate}
+            />
+          )}
         </div>
 
         <ToWorkshopTable

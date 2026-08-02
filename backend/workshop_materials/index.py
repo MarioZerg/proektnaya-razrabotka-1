@@ -31,19 +31,12 @@ def handler(event: dict, context) -> dict:
     "Смена № 2", у Цеха №2 — "5/2"), поэтому колонки строятся динамически по всем
     цехам сразу: cпискок колонок = все смены всех активных цехов.
 
-    Автозаказ: при каждом открытии этой страницы (раз настоящего планировщика/cron в
-    платформе нет — проверка встроена сюда) для каждой ячейки "материал-цех-смена" с
-    остатком меньше порога auto_order_threshold (system_settings, по умолчанию 100)
-    автоматически создаётся заявка на отгрузку в цех (shipments type='to_workshop',
-    is_auto_order=true), если по этому материалу/цеху/смене ещё нет незакрытой заявки
-    и нет активной блокировки (auto_order_blocks — ставится, если админ вручную удалил
-    предыдущий автозаказ по этой же комбинации; снимается, когда следующая заявка на
-    эту комбинацию дойдёт до статуса "Получено"). Управляется настройкой
-    auto_order_enabled, количество в заявке — auto_order_quantity (по умолчанию 300).
+    Автозаказ материала в цех ОТКЛЮЧЁН: заявки на отгрузку в цех создают только сами
+    сотрудники цеха (action 'request_to_workshop' в backend/shipments) вручную, когда
+    им нужен материал — кладовщик и система заявки не создают.
 
     GET  /                - сводка по всем цехам сразу: для каждого материала показывает
-                             остаток и число рулонов по каждой колонке "цех - смена" + итого;
-                             попутно создаёт автозаказы, если остаток ниже порога
+                             остаток и число рулонов по каждой колонке "цех - смена" + итого
     GET  /?workshop_id=1  - фильтр: только смены конкретного цеха
 
     Args:
@@ -51,8 +44,7 @@ def handler(event: dict, context) -> dict:
         context: объект с request_id
 
     Returns:
-        dict: HTTP-ответ со сводкой материалов в цехах, списком колонок смен и
-              autoOrdersCreated — список созданных за этот запрос автозаказов
+        dict: HTTP-ответ со сводкой материалов в цехах и списком колонок смен
     """
     method = event.get('httpMethod', 'GET')
 
@@ -162,86 +154,6 @@ def handler(event: dict, context) -> dict:
             entry['totalRolls'] += roll_count
 
         result = list(types_map.values())
-
-        # --- Автозаказ материала в цех при низком остатке (нет cron — проверяем при заходе на страницу) ---
-        auto_orders_created = []
-        cur.execute(
-            "SELECT key, value FROM system_settings WHERE key IN "
-            "('auto_order_enabled', 'auto_order_threshold', 'auto_order_quantity')"
-        )
-        settings_map = {k: v for k, v in cur.fetchall()}
-        auto_order_enabled = (settings_map.get('auto_order_enabled') or 'true') == 'true'
-
-        if auto_order_enabled and not workshop_id_filter:
-            threshold = float(settings_map.get('auto_order_threshold') or 100)
-            order_qty = float(settings_map.get('auto_order_quantity') or 300)
-
-            cur.execute("SELECT id, allowed_materials FROM workshops WHERE is_active = true")
-            allowed_by_workshop = {}
-            for wid, allowed in cur.fetchall():
-                ids = allowed if isinstance(allowed, list) else json.loads(allowed or '[]')
-                allowed_by_workshop[wid] = set(ids) if ids else None  # None = все материалы
-
-            cur.execute("SELECT id FROM materials WHERE status = 'active'")
-            all_material_ids = [r[0] for r in cur.fetchall()]
-
-            remaining_by_key = {}
-            for mat_entry in materials_map.values():
-                for cell in mat_entry['cells']:
-                    remaining_by_key[(mat_entry['materialId'], cell['workshopId'], cell['shiftNumber'])] = cell['quantity']
-
-            for col in columns:
-                wid, shift = col['workshopId'], col['shiftNumber']
-                allowed = allowed_by_workshop.get(wid)
-                material_ids = [m for m in all_material_ids if allowed is None or m in allowed]
-                for material_id in material_ids:
-                    remaining = remaining_by_key.get((material_id, wid, shift), 0.0)
-                    if remaining >= threshold:
-                        continue
-
-                    shift_condition = "s.shift_number = %s" if shift is not None else "s.shift_number IS NULL"
-                    query_params = (wid, shift, material_id) if shift is not None else (wid, material_id)
-                    cur.execute(
-                        f"SELECT s.id FROM shipments s JOIN shipment_items si ON si.shipment_id = s.id "
-                        f"WHERE s.type = 'to_workshop' AND s.workshop_id = %s AND {shift_condition} "
-                        f"AND si.material_id = %s AND s.status != 'Получено' LIMIT 1",
-                        query_params,
-                    )
-                    if cur.fetchone():
-                        continue
-
-                    # Админ мог удалить предыдущий автозаказ по этой же комбинации —
-                    # блокировка снимается только когда следующая (уже ручная) заявка на
-                    # этот материал/цех/смену дойдёт до статуса "Получено" (см. backend/shipments).
-                    block_shift_condition = "shift_number = %s" if shift is not None else "shift_number IS NULL"
-                    block_query_params = (material_id, wid, shift) if shift is not None else (material_id, wid)
-                    cur.execute(
-                        f"SELECT id FROM auto_order_blocks WHERE material_id = %s AND workshop_id = %s "
-                        f"AND {block_shift_condition} LIMIT 1",
-                        block_query_params,
-                    )
-                    if cur.fetchone():
-                        continue
-
-                    shift_sql = int(shift) if shift is not None else 'NULL'
-                    comment_esc = f"Автозаказ: остаток {remaining} ниже порога {threshold}"
-                    cur.execute(
-                        f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment, is_auto_order) "
-                        f"VALUES ('to_workshop', 'Новый', {wid}, {shift_sql}, '{comment_esc}', true) RETURNING id"
-                    )
-                    new_shipment_id = cur.fetchone()[0]
-                    cur.execute(
-                        f"INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
-                        f"VALUES ({new_shipment_id}, {material_id}, {order_qty})"
-                    )
-                    log_action(
-                        cur, None, 'Система (автозаказ)', 'auto_order', 'shipment', new_shipment_id,
-                        f'Автозаказ материала #{material_id} в цех #{wid}: остаток {remaining} ниже порога {threshold}',
-                    )
-                    auto_orders_created.append({'shipmentId': new_shipment_id, 'materialId': material_id, 'workshopId': wid, 'shiftNumber': shift})
-
-            if auto_orders_created:
-                conn.commit()
     finally:
         conn.close()
 
@@ -256,6 +168,5 @@ def handler(event: dict, context) -> dict:
             'types': result,
             'columns': columns,
             'activeColumn': active_column,
-            'autoOrdersCreated': auto_orders_created,
         }),
     }

@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import type { Shelf } from '@/lib/shelvesApi';
+import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 
 interface MoveShelfDialogProps {
   open: boolean;
@@ -43,6 +44,10 @@ const MoveShelfDialog = ({
   saving,
   onSave,
 }: MoveShelfDialogProps) => {
+  // Автоотправка после сканирования штрихкода — только если полка уже выбрана, иначе
+  // сканирование раньше выбора полки просто заполнит поле и подождёт.
+  useScannerAutoSubmit(barcode, onSave, !!shelfId && !saving);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>

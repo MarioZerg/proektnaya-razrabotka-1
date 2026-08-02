@@ -150,10 +150,14 @@ const GoodsWarehouse = () => {
   };
 
   const handleReceiveReturn = async () => {
-    if (!returnOrderNumber.trim()) return;
+    const orderNumber = returnOrderNumber.trim();
+    if (!orderNumber) return;
+    // Поле очищаем сразу, до ответа сервера — чтобы не было повторных отправок того же
+    // номера при случайных повторных нажатиях, пока идёт запрос.
+    setReturnOrderNumber('');
     setReturnSaving(true);
     try {
-      await receiveReturn(returnOrderNumber.trim(), returnShelfId ? Number(returnShelfId) : undefined);
+      await receiveReturn(orderNumber, returnShelfId ? Number(returnShelfId) : undefined);
       toast({ title: 'Возврат принят на хранение' });
       setReturnOpen(false);
       load();
@@ -196,10 +200,14 @@ const GoodsWarehouse = () => {
   };
 
   const handleMoveShelf = async () => {
-    if (!moveBarcode.trim() || !moveShelfId) return;
+    const barcode = moveBarcode.trim();
+    if (!barcode || !moveShelfId) return;
+    // Поле очищаем сразу, до ответа сервера — чтобы не было повторных отправок того же
+    // штрихкода при случайных повторных нажатиях, пока идёт запрос.
+    setMoveBarcode('');
     setMoveSaving(true);
     try {
-      await moveGoodsShelfByBarcode(moveBarcode.trim(), Number(moveShelfId));
+      await moveGoodsShelfByBarcode(barcode, Number(moveShelfId));
       toast({ title: 'Полка обновлена' });
       setMoveOpen(false);
       load();
