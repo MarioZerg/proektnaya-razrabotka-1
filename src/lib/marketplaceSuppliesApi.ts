@@ -2,6 +2,8 @@ const SUPPLIES_URL = 'https://functions.poehali.dev/d0a75e82-2c63-440c-8eae-dd03
 
 export type SupplyStatus = 'Открытая' | 'На сборке' | 'Отгрузка' | 'Выполнена';
 export type SupplyType = 'FBO' | 'FBS';
+export type OzonDeliveryMethod = 'direct' | 'cross_docking';
+export type PackagingType = 'boxes' | 'pallets';
 
 export const supplyStatusFlow: SupplyStatus[] = ['Открытая', 'На сборке', 'Отгрузка', 'Выполнена'];
 
@@ -21,6 +23,9 @@ export interface Supply {
   completedAt: string | null;
   itemsCount: number;
   createdByName: string | null;
+  ozonDeliveryMethod: OzonDeliveryMethod | null;
+  ozonApplicationNumber: string | null;
+  ozonStatus: string | null;
 }
 
 export interface SupplyItem {
@@ -51,6 +56,12 @@ export interface SupplyDetail extends Supply {
   totalQuantityMarketplace: number | null;
   passStickerUrl: string | null;
   passStickerName: string | null;
+  supplyDate: string | null;
+  timeslot: string | null;
+  shipmentType: string | null;
+  packagingType: PackagingType | null;
+  packagingCount: number | null;
+  gazelkaPickup: boolean;
 }
 
 export interface SupplyFilters {
@@ -117,6 +128,7 @@ export const createSupply = (payload: {
   comment?: string;
   createdBy?: number;
   goodsWarehouseIds?: number[];
+  ozonDeliveryMethod?: OzonDeliveryMethod;
 }) => postAction({ action: 'create', ...payload });
 
 export const addSupplyItems = (supplyId: number, goodsWarehouseIds: number[]) =>
@@ -168,6 +180,14 @@ export const updateSupply = (
     totalQuantityMarketplace: number | null;
     passStickerBase64: string;
     passStickerName: string;
+    ozonApplicationNumber: string;
+    ozonStatus: string;
+    supplyDate: string;
+    timeslot: string;
+    shipmentType: string;
+    packagingType: PackagingType | '';
+    packagingCount: number | null;
+    gazelkaPickup: boolean;
   }>
 ) => postAction({ action: 'update', supplyId, ...fields });
 

@@ -67,6 +67,20 @@
       "path": "/",
       "body": { "action": "force_complete" },
       "expectedStatus": 400
+    },
+    {
+      "name": "Create OZON FBO without delivery method fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "create", "marketplace": "OZON", "type": "FBO" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Create OZON FBO with invalid delivery method fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "create", "marketplace": "OZON", "type": "FBO", "ozonDeliveryMethod": "invalid" },
+      "expectedStatus": 400
     }
   ]
 }

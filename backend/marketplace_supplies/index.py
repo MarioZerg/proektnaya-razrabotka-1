@@ -64,8 +64,11 @@ def handler(event: dict, context) -> dict:
                                      поставки), с их статусом движения по производству:
                                      Новый / В работе / На поставку / В коробе №N
 
-    POST /  { action: 'create', marketplace, type, comment?, createdBy? }
-        - создаёт пустую поставку в статусе "Открытая" (без товаров)
+    POST /  { action: 'create', marketplace, type, comment?, createdBy?, ozonDeliveryMethod? }
+        - создаёт пустую поставку в статусе "Открытая" (без товаров).
+          Для OZON FBO обязателен ozonDeliveryMethod: 'direct' (прямая поставка) или
+          'cross_docking' (кросс-докинг) — без него создание отклоняется (400).
+          У такой поставки автоматически ozon_status = 'Заполнение данных'
     POST /  { action: 'add_items', supplyId, goodsWarehouseIds: [...] }
         - добавляет товары со склада в поставку, резервирует их (status='reserved')
         - используется для FBS (выбор товаров чекбоксами из списка)
@@ -87,9 +90,14 @@ def handler(event: dict, context) -> dict:
         - убирает товар из короба и из поставки, возвращает его на склад (status='in_stock')
     POST /  { action: 'update', supplyId, supplyNumber?, supplyBarcode?, cluster?,
                gazelkaId?, comment?, shipToGazelkaAt?, shipToMarketplaceAt?,
-               totalQuantityMarketplace?, passStickerBase64?, passStickerName? }
+               totalQuantityMarketplace?, passStickerBase64?, passStickerName?,
+               ozonApplicationNumber?, ozonStatus?, supplyDate?, timeslot?,
+               shipmentType?, packagingType?, packagingCount?, gazelkaPickup? }
         - обновляет служебные поля поставки (номер, штрихкод, кластер, id Газельки, даты,
-          общее кол-во товаров с маркетплейса, PDF стикера пропуска для WB)
+          общее кол-во товаров с маркетплейса, PDF стикера пропуска для WB).
+          Для OZON FBO дополнительно: номер заявки OZON, статус на стороне OZON
+          (Заполнение данных/Сформирована), дата поставки/таймслот, тип отгрузки,
+          тип упаковки (короба/палеты) и их количество, забор Газелькой (да/нет)
     POST /  { action: 'move_status', supplyId, status }
         - переводит поставку на следующий статус жизненного цикла:
           "На сборке" — просто меняет статус;
@@ -183,7 +191,10 @@ def handler(event: dict, context) -> dict:
                     "s.supply_number, s.supply_barcode, s.cluster, s.gazelka_id, "
                     "s.ship_to_gazelka_at, s.ship_to_marketplace_at, s.completed_at, "
                     "s.created_by, u.full_name, s.total_quantity_marketplace, "
-                    "s.pass_sticker_url, s.pass_sticker_name "
+                    "s.pass_sticker_url, s.pass_sticker_name, "
+                    "s.ozon_delivery_method, s.ozon_application_number, s.ozon_status, "
+                    "s.supply_date, s.timeslot, s.shipment_type, s.packaging_type, "
+                    "s.packaging_count, s.gazelka_pickup "
                     "FROM marketplace_supplies s "
                     "LEFT JOIN users u ON u.id = s.created_by "
                     "WHERE s.id = %s",
@@ -253,6 +264,15 @@ def handler(event: dict, context) -> dict:
                     'totalQuantityMarketplace': row[15],
                     'passStickerUrl': row[16],
                     'passStickerName': row[17],
+                    'ozonDeliveryMethod': row[18],
+                    'ozonApplicationNumber': row[19],
+                    'ozonStatus': row[20],
+                    'supplyDate': row[21].isoformat() if row[21] else None,
+                    'timeslot': row[22],
+                    'shipmentType': row[23],
+                    'packagingType': row[24],
+                    'packagingCount': row[25],
+                    'gazelkaPickup': row[26],
                     'items': items,
                     'boxes': boxes,
                 }
@@ -293,7 +313,7 @@ def handler(event: dict, context) -> dict:
                 f"s.supply_number, s.supply_barcode, s.cluster, s.gazelka_id, "
                 f"s.ship_to_gazelka_at, s.ship_to_marketplace_at, s.completed_at, "
                 f"(SELECT COUNT(*) FROM marketplace_supply_items msi WHERE msi.supply_id = s.id), "
-                f"u.full_name "
+                f"u.full_name, s.ozon_delivery_method, s.ozon_application_number, s.ozon_status "
                 f"FROM marketplace_supplies s "
                 f"LEFT JOIN users u ON u.id = s.created_by "
                 f"{where_clause} "
@@ -316,6 +336,9 @@ def handler(event: dict, context) -> dict:
                     'completedAt': r[12].isoformat() if r[12] else None,
                     'itemsCount': r[13],
                     'createdByName': r[14],
+                    'ozonDeliveryMethod': r[15],
+                    'ozonApplicationNumber': r[16],
+                    'ozonStatus': r[17],
                 }
                 for r in cur.fetchall()
             ]
@@ -337,20 +360,27 @@ def handler(event: dict, context) -> dict:
                 supply_type = (body_data.get('type') or 'FBS').strip()
                 comment = (body_data.get('comment') or '').strip()
                 created_by = body_data.get('createdBy')
+                ozon_delivery_method = (body_data.get('ozonDeliveryMethod') or '').strip()
 
                 if not marketplace:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите маркетплейс'})}
                 if supply_type not in ('FBO', 'FBS'):
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Тип поставки должен быть FBO или FBS'})}
+                if marketplace == 'OZON' and supply_type == 'FBO' and ozon_delivery_method not in ('direct', 'cross_docking'):
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите способ поставки: прямая или кросс-докинг'})}
 
                 marketplace_esc = marketplace.replace("'", "''")
                 type_esc = supply_type.replace("'", "''")
                 comment_esc = comment.replace("'", "''")
                 created_by_sql = int(created_by) if created_by not in (None, '') else 'NULL'
+                ozon_delivery_method_sql = f"'{ozon_delivery_method}'" if ozon_delivery_method else 'NULL'
+                ozon_status_sql = "'Заполнение данных'" if (marketplace == 'OZON' and supply_type == 'FBO') else 'NULL'
 
                 cur.execute(
-                    f"INSERT INTO marketplace_supplies (marketplace, type, status, comment, created_by) "
-                    f"VALUES ('{marketplace_esc}', '{type_esc}', 'Открытая', '{comment_esc}', {created_by_sql}) RETURNING id"
+                    f"INSERT INTO marketplace_supplies (marketplace, type, status, comment, created_by, "
+                    f"ozon_delivery_method, ozon_status) "
+                    f"VALUES ('{marketplace_esc}', '{type_esc}', 'Открытая', '{comment_esc}', {created_by_sql}, "
+                    f"{ozon_delivery_method_sql}, {ozon_status_sql}) RETURNING id"
                 )
                 supply_id = cur.fetchone()[0]
 
@@ -611,6 +641,10 @@ def handler(event: dict, context) -> dict:
                     v = (value or '').strip().replace("'", "''")
                     return f"{column} = NULL" if not v else f"{column} = '{v}'::timestamp"
 
+                def sql_date_or_null(column: str, value) -> str:
+                    v = (value or '').strip().replace("'", "''")
+                    return f"{column} = NULL" if not v else f"{column} = '{v}'::date"
+
                 fields = []
                 if 'supplyNumber' in body_data:
                     fields.append(sql_str_or_null('supply_number', body_data['supplyNumber']))
@@ -636,6 +670,23 @@ def handler(event: dict, context) -> dict:
                     sticker_name_esc = sticker_name.replace("'", "''")
                     fields.append(f"pass_sticker_url = '{sticker_url}'")
                     fields.append(f"pass_sticker_name = '{sticker_name_esc}'")
+                if 'ozonApplicationNumber' in body_data:
+                    fields.append(sql_str_or_null('ozon_application_number', body_data['ozonApplicationNumber']))
+                if 'ozonStatus' in body_data:
+                    fields.append(sql_str_or_null('ozon_status', body_data['ozonStatus']))
+                if 'supplyDate' in body_data:
+                    fields.append(sql_date_or_null('supply_date', body_data['supplyDate']))
+                if 'timeslot' in body_data:
+                    fields.append(sql_str_or_null('timeslot', body_data['timeslot']))
+                if 'shipmentType' in body_data:
+                    fields.append(sql_str_or_null('shipment_type', body_data['shipmentType']))
+                if 'packagingType' in body_data:
+                    fields.append(sql_str_or_null('packaging_type', body_data['packagingType']))
+                if 'packagingCount' in body_data:
+                    pc = body_data['packagingCount']
+                    fields.append(f"packaging_count = {int(pc)}" if pc not in (None, '') else "packaging_count = NULL")
+                if 'gazelkaPickup' in body_data:
+                    fields.append(f"gazelka_pickup = {'true' if body_data['gazelkaPickup'] else 'false'}")
 
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нечего обновлять'})}

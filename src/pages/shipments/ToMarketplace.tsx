@@ -29,7 +29,14 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import { fetchSupplies, createSupply, type Supply, type SupplyType } from '@/lib/marketplaceSuppliesApi';
+import {
+  fetchSupplies,
+  createSupply,
+  type Supply,
+  type SupplyType,
+  type OzonDeliveryMethod,
+} from '@/lib/marketplaceSuppliesApi';
+import CreateOzonFboDialog from '@/components/crm/marketplaceSupplies/CreateOzonFboDialog';
 
 const formatDate = (iso: string) => {
   const d = new Date(iso);
@@ -74,6 +81,7 @@ const ToMarketplace = () => {
   const [supplies, setSupplies] = useState<Supply[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [ozonFboDialogOpen, setOzonFboDialogOpen] = useState(false);
 
   const [statusFilter, setStatusFilter] = useState('open');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -111,10 +119,38 @@ const ToMarketplace = () => {
   };
 
   const handleCreate = async (marketplace: string, type: SupplyType) => {
+    if (marketplace === 'OZON' && type === 'FBO') {
+      setOzonFboDialogOpen(true);
+      return;
+    }
     setCreating(true);
     try {
       const res = await createSupply({ marketplace, type, createdBy: user?.id });
       toast({ title: 'Поставка создана', description: `#${res.id} — заполните товары на карточке` });
+      navigate(`/crm/shipments/to-marketplace/${res.id}`);
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleSelectExistingOzonSupply = (supplyId: number) => {
+    setOzonFboDialogOpen(false);
+    navigate(`/crm/shipments/to-marketplace/${supplyId}`);
+  };
+
+  const handleCreateOzonDraft = async (deliveryMethod: OzonDeliveryMethod) => {
+    setCreating(true);
+    try {
+      const res = await createSupply({
+        marketplace: 'OZON',
+        type: 'FBO',
+        createdBy: user?.id,
+        ozonDeliveryMethod: deliveryMethod,
+      });
+      toast({ title: 'Черновик заявки создан', description: `#${res.id} — заполните данные заявки` });
+      setOzonFboDialogOpen(false);
       navigate(`/crm/shipments/to-marketplace/${res.id}`);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
@@ -297,6 +333,14 @@ const ToMarketplace = () => {
           </div>
         )}
       </div>
+
+      <CreateOzonFboDialog
+        open={ozonFboDialogOpen}
+        onOpenChange={setOzonFboDialogOpen}
+        creating={creating}
+        onSelectExisting={handleSelectExistingOzonSupply}
+        onCreateDraft={handleCreateOzonDraft}
+      />
     </CrmLayout>
   );
 };

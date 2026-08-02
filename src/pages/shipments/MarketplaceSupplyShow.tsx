@@ -46,6 +46,7 @@ import {
   marketplaceLogo,
   statusVariant,
 } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFboApplicationCard';
 
 const MarketplaceSupplyShow = () => {
   const { id } = useParams();
@@ -143,6 +144,31 @@ const MarketplaceSupplyShow = () => {
     }
   };
 
+  const handleSaveOzonFboFields = async (fields: {
+    gazelkaId: string;
+    shipToGazelkaAt: string;
+    packagingType: 'boxes' | 'pallets' | '';
+    packagingCount: string;
+    gazelkaPickup: boolean;
+  }) => {
+    setSaving(true);
+    try {
+      await updateSupply(supplyId, {
+        gazelkaId: fields.gazelkaId,
+        shipToGazelkaAt: fields.shipToGazelkaAt,
+        packagingType: fields.packagingType,
+        packagingCount: fields.packagingCount ? Number(fields.packagingCount) : null,
+        gazelkaPickup: fields.gazelkaPickup,
+      });
+      toast({ title: 'Данные заявки сохранены' });
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleMoveStatus = async () => {
     if (!supply) return;
     const idx = supplyStatusFlow.indexOf(supply.status);
@@ -196,6 +222,7 @@ const MarketplaceSupplyShow = () => {
 
   const nextStatus = supplyStatusFlow[supplyStatusFlow.indexOf(supply.status) + 1];
   const canEditItems = supply.status === 'Открытая' || supply.status === 'На сборке';
+  const isOzonFbo = supply.marketplace === 'OZON' && supply.type === 'FBO';
 
   const nextStatusLabel: Record<string, string> = {
     'На сборке': 'Взять на сборку',
@@ -214,7 +241,13 @@ const MarketplaceSupplyShow = () => {
             </Button>
             <div className="flex items-center gap-3">
               <h1 className="text-xl font-bold">Поставка #{supply.id}</h1>
-              <Badge className={statusVariant[supply.status]?.className}>{supply.status}</Badge>
+              {isOzonFbo ? (
+                <Badge variant={supply.ozonStatus === 'Сформирована' ? 'default' : 'secondary'}>
+                  {supply.ozonStatus || 'Заполнение данных'}
+                </Badge>
+              ) : (
+                <Badge className={statusVariant[supply.status]?.className}>{supply.status}</Badge>
+              )}
               <span className={marketplaceLogo[supply.marketplace]?.className}>
                 {marketplaceLogo[supply.marketplace]?.label || supply.marketplace}
               </span>
@@ -293,7 +326,16 @@ const MarketplaceSupplyShow = () => {
           </Card>
         )}
 
-        {supply.type === 'FBO' && (
+        {isOzonFbo && (
+          <OzonFboApplicationCard
+            supply={supply}
+            canEdit={canEditItems}
+            saving={saving}
+            onSave={handleSaveOzonFboFields}
+          />
+        )}
+
+        {supply.type === 'FBO' && !isOzonFbo && (
           <div className="grid gap-6 md:grid-cols-2">
             <div className="space-y-4 rounded-md border border-border p-4">
               <h2 className="font-semibold">Данные поставки</h2>
