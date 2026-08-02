@@ -87,21 +87,34 @@ def handler(event: dict, context) -> dict:
         - сканирование штрихкода рулона на складе, добавляет его целиком в заявку.
           Рулон должен быть в статусе in_storage и НЕ закреплён за другим цехом/сменой
           (рулон должен быть материала из заявки и находиться в статусе in_storage —
-          то есть уже подтверждённый админом при приёмке)
+          то есть уже подтверждённый админом при приёмке). Разрешено в статусе "Новый",
+          а также в режиме коррекции — статус "Отправлено" с непустым reject_reason
+          (цех отказал в приёме, кладовщик правит состав перед повторной отправкой)
     POST /  { action: 'remove_scanned_roll', itemId }
-        - кладовщик убирает обратно ошибочно отсканированный рулон из собираемой заявки
-          (без жёстких условий), пока заявка ещё в статусе "Новый" (не отправлена).
-          Сам рулон остаётся на складе в статусе in_storage
+        - кладовщик убирает обратно ошибочно отсканированный рулон из заявки (без жёстких
+          условий) — либо пока заявка в статусе "Новый" (не отправлена; рулон остаётся
+          in_storage), либо в режиме коррекции (статус "Отправлено" + reject_reason —
+          рулон уже был in_workshop, при удалении возвращается на склад в in_storage)
     POST /  { action: 'ship', shipmentId }
         - переводит заявку в статус "Отправлено", все собранные рулоны получают статус
           in_workshop и привязку к цеху/смене. Разрешено только зоне склада (role='storekeeper')
-          или администратору (role='admin') — проверяется по actorId, если он передан
+          или администратору (role='admin') — проверяется по actorId, если он передан.
+          Также разрешена ПОВТОРНАЯ отправка в режиме коррекции (статус уже "Отправлено" +
+          непустой reject_reason) — после правок состава заявка уходит на повторную проверку
+          цеху, reject_reason сбрасывается
     POST /  { action: 'receive', shipmentId }
         - подтверждение приёмки в цехе, статус "Получено" (после этого статуса по данному
-          материалу/цеху/смене можно снова создать новую заявку). Разрешено только сотруднику
-          ИМЕННО того цеха/смены, куда отправлена заявка (role in sewer/cutter/packer,
-          users.workshop/shift_number совпадают с заявкой), либо администратору —
-          проверяется по actorId, если он передан
+          материалу/цеху/смене можно снова создать новую заявку), reject_reason сбрасывается.
+          Разрешено только сотруднику ИМЕННО того цеха/смены, куда отправлена заявка
+          (role in sewer/cutter/packer, users.workshop/shift_number совпадают с заявкой),
+          либо администратору — проверяется по actorId, если он передан
+    POST /  { action: 'reject_receive', shipmentId, rejectReason }
+        - сотрудник цеха ОТКАЗЫВАЕТСЯ принять заявку (состав не в порядке — например, не
+          хватает рулона). Заявка ОСТАЁТСЯ в статусе "Отправлено" (рулоны остаются в цехе,
+          in_workshop), фиксируется обязательная причина отказа (reject_reason) — кладовщик/
+          админ видят её в списке заявок и могут открыть экран сборки, чтобы добавить/убрать
+          рулоны и отправить заявку заново (см. collect_scan/remove_scanned_roll/ship выше).
+          Права те же, что и у 'receive' — только сотрудник того же цеха/смены или админ
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -140,7 +153,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT s.id, s.type, s.status, s.supplier_id, sup.name, s.workshop_id, w.name, "
                     "s.shift_number, s.comment, s.created_at, s.completed_at, s.requested_by, u.full_name, "
-                    "s.created_by, cu.full_name, s.is_auto_order "
+                    "s.created_by, cu.full_name, s.is_auto_order, s.reject_reason "
                     "FROM shipments s "
                     "LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                     "LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -195,6 +208,7 @@ def handler(event: dict, context) -> dict:
                     'createdBy': row[13],
                     'createdByName': row[14],
                     'isAutoOrder': row[15],
+                    'rejectReason': row[16],
                     'items': items,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'shipment': detail})}
@@ -229,7 +243,8 @@ def handler(event: dict, context) -> dict:
                 f"(SELECT COALESCE(SUM(si.quantity), 0) FROM shipment_items si WHERE si.shipment_id = s.id) as total_qty, "
                 f"s.is_auto_order, "
                 f"(SELECT STRING_AGG(DISTINCT m.name, ', ') FROM shipment_items si "
-                f"JOIN materials m ON m.id = si.material_id WHERE si.shipment_id = s.id) as material_names "
+                f"JOIN materials m ON m.id = si.material_id WHERE si.shipment_id = s.id) as material_names, "
+                f"s.reject_reason "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                 f"LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -257,6 +272,7 @@ def handler(event: dict, context) -> dict:
                     'totalQuantity': float(r[14]) if r[14] is not None else 0.0,
                     'isAutoOrder': r[15],
                     'materialNames': r[16],
+                    'rejectReason': r[17],
                 }
                 for r in cur.fetchall()
             ]
@@ -594,11 +610,15 @@ def handler(event: dict, context) -> dict:
                 if not shipment_id or not barcode:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте штрихкод рулона'})}
 
-                cur.execute("SELECT type, status FROM shipments WHERE id = %s", (int(shipment_id),))
+                cur.execute("SELECT type, status, reject_reason FROM shipments WHERE id = %s", (int(shipment_id),))
                 sh_row = cur.fetchone()
                 if not sh_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заявка не найдена'})}
-                if sh_row[0] != 'to_workshop' or sh_row[1] != 'Новый':
+                # Сборка разрешена либо в статусе "Новый" (обычный процесс), либо в статусе
+                # "Отправлено" с непустым reject_reason — это режим коррекции после отказа
+                # цеха в приёме (кладовщик/админ добавляет/убирает рулоны и отправляет заново).
+                is_correction = sh_row[1] == 'Отправлено' and sh_row[2]
+                if sh_row[0] != 'to_workshop' or (sh_row[1] != 'Новый' and not is_correction):
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявка не в статусе сборки'})}
 
                 # "Запрошенная" позиция — это исходная строка заявки (создана в request_to_workshop),
@@ -663,18 +683,30 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите itemId'})}
 
                 cur.execute(
-                    "SELECT si.shipment_id, si.roll_id, s.type, s.status FROM shipment_items si "
+                    "SELECT si.shipment_id, si.roll_id, s.type, s.status, s.reject_reason FROM shipment_items si "
                     "JOIN shipments s ON s.id = si.shipment_id WHERE si.id = %s",
                     (int(item_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Позиция не найдена'})}
-                sh_shipment_id, sh_roll_id, sh_type, sh_status = row
+                sh_shipment_id, sh_roll_id, sh_type, sh_status, sh_reject_reason = row
                 if sh_type != 'to_workshop' or sh_roll_id is None:
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Эту позицию нельзя убрать'})}
-                if sh_status != 'Новый':
+                # Убрать рулон можно либо пока заявка ещё в статусе "Новый" (сборка), либо в
+                # режиме коррекции после отказа цеха в приёме (статус "Отправлено" +
+                # непустой reject_reason).
+                is_correction = sh_status == 'Отправлено' and sh_reject_reason
+                if sh_status != 'Новый' and not is_correction:
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявка уже не в статусе сборки'})}
+
+                # В режиме коррекции рулон уже был переведён в in_workshop при первой отправке —
+                # возвращаем его на склад, раз кладовщик решил убрать его из заявки.
+                if is_correction:
+                    cur.execute(
+                        f"UPDATE rolls SET status = 'in_storage', workshop_id = NULL, shift_number = NULL "
+                        f"WHERE id = {sh_roll_id}"
+                    )
 
                 cur.execute("DELETE FROM shipment_items WHERE id = %s", (int(item_id),))
                 log_action(
@@ -697,11 +729,15 @@ def handler(event: dict, context) -> dict:
                     if actor_row and actor_row[0] not in ('storekeeper', 'admin'):
                         return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Отправлять заявку может только кладовщик или администратор'})}
 
-                cur.execute("SELECT type, status, workshop_id, shift_number FROM shipments WHERE id = %s", (int(shipment_id),))
+                cur.execute("SELECT type, status, workshop_id, shift_number, reject_reason FROM shipments WHERE id = %s", (int(shipment_id),))
                 sh_row = cur.fetchone()
                 if not sh_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заявка не найдена'})}
-                if sh_row[0] != 'to_workshop' or sh_row[1] != 'Новый':
+                # Повторная отправка разрешена в режиме коррекции после отказа цеха в приёме
+                # (статус "Отправлено" + непустой reject_reason) — кладовщик поправил состав
+                # и отправляет заново на проверку тому же цеху.
+                is_correction = sh_row[1] == 'Отправлено' and sh_row[4]
+                if sh_row[0] != 'to_workshop' or (sh_row[1] != 'Новый' and not is_correction):
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявку нельзя отправить в текущем статусе'})}
                 workshop_id, shift_number = sh_row[2], sh_row[3]
 
@@ -720,10 +756,12 @@ def handler(event: dict, context) -> dict:
                         f"shift_number = {shift_sql} WHERE id = {roll_id}"
                     )
 
-                cur.execute(f"UPDATE shipments SET status = 'Отправлено' WHERE id = {int(shipment_id)}")
+                cur.execute(
+                    f"UPDATE shipments SET status = 'Отправлено', reject_reason = NULL WHERE id = {int(shipment_id)}"
+                )
                 log_action(
                     cur, actor_id, actor_name, 'ship', 'shipment', shipment_id,
-                    f'Отправил заявку #{shipment_id} ({len(roll_ids)} рулонов)',
+                    f'Отправил заявку #{shipment_id} ({len(roll_ids)} рулонов)' + (' — повторно после исправлений' if is_correction else ''),
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
@@ -762,7 +800,10 @@ def handler(event: dict, context) -> dict:
                             ):
                                 return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Эта заявка отправлена в другой цех/смену'})}
 
-                cur.execute(f"UPDATE shipments SET status = 'Получено', completed_at = now() WHERE id = {int(shipment_id)}")
+                cur.execute(
+                    f"UPDATE shipments SET status = 'Получено', completed_at = now(), reject_reason = NULL "
+                    f"WHERE id = {int(shipment_id)}"
+                )
 
                 # Успешное получение этой заявки снимает блокировку автозаказа (если она
                 # была наложена ранее удалением админом предыдущей автозаявки на этот же
@@ -783,6 +824,58 @@ def handler(event: dict, context) -> dict:
                 log_action(
                     cur, actor_id, actor_name, 'receive', 'shipment', shipment_id,
                     f'Принял заявку #{shipment_id} в цехе',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'reject_receive':
+                # Сотрудник цеха отказывается принять заявку — состав не в порядке (например,
+                # не хватает рулона). Заявка ОСТАЁТСЯ в статусе "Отправлено" (рулоны остаются
+                # привязаны к цеху, in_workshop), просто фиксируется причина отказа —
+                # кладовщик/админ видят её в списке и могут внести исправления через экран
+                # сборки (снова открыть заявку, добавить/убрать рулоны, отправить заново).
+                shipment_id = body_data.get('shipmentId')
+                reject_reason = (body_data.get('rejectReason') or '').strip()
+                if not shipment_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите shipmentId'})}
+                if not reject_reason:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите причину отказа'})}
+
+                cur.execute("SELECT type, status, workshop_id, shift_number FROM shipments WHERE id = %s", (int(shipment_id),))
+                sh_row = cur.fetchone()
+                if not sh_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заявка не найдена'})}
+                if sh_row[0] != 'to_workshop' or sh_row[1] != 'Отправлено':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявка ещё не отправлена или уже получена'})}
+                workshop_id, shift_number = sh_row[2], sh_row[3]
+
+                # Та же проверка прав, что и для 'receive' — отказать может только сотрудник
+                # именно этого цеха/смены или админ.
+                if actor_id:
+                    cur.execute(
+                        "SELECT role, workshop, shift_number FROM users WHERE id = %s", (int(actor_id),)
+                    )
+                    actor_row = cur.fetchone()
+                    if actor_row:
+                        actor_role, actor_workshop_name, actor_shift_number = actor_row
+                        if actor_role != 'admin':
+                            if actor_role not in ('sewer', 'cutter', 'packer'):
+                                return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Отказать в приёме заявки может только сотрудник этого цеха'})}
+                            cur.execute("SELECT id FROM workshops WHERE name = %s", (actor_workshop_name,))
+                            wr = cur.fetchone()
+                            actor_workshop_id = wr[0] if wr else None
+                            if actor_workshop_id != workshop_id or (
+                                shift_number is not None and actor_shift_number != shift_number
+                            ):
+                                return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Эта заявка отправлена в другой цех/смену'})}
+
+                reject_reason_esc = reject_reason.replace("'", "''")
+                cur.execute(
+                    f"UPDATE shipments SET reject_reason = '{reject_reason_esc}' WHERE id = {int(shipment_id)}"
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'reject_receive', 'shipment', shipment_id,
+                    f'Отказал в приёме заявки #{shipment_id}: {reject_reason}',
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

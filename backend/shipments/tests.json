@@ -32,6 +32,20 @@
       "path": "/",
       "body": { "action": "delete", "id": 999999 },
       "expectedStatus": 404
+    },
+    {
+      "name": "Reject receive without shipmentId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "reject_receive" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Reject receive without reason fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "reject_receive", "shipmentId": 1 },
+      "expectedStatus": 400
     }
   ]
 }

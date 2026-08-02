@@ -10,6 +10,7 @@ import {
   removeScannedRoll,
   shipToWorkshop,
   receiveAtWorkshop,
+  rejectWorkshopReceive,
   deleteShipment,
   type Shipment,
   type ShipmentDetail,
@@ -21,6 +22,7 @@ import { getAccessZone } from '@/lib/roles';
 import RequestMaterialDialog from '@/components/crm/shipments/RequestMaterialDialog';
 import ToWorkshopTable from '@/components/crm/shipments/ToWorkshopTable';
 import AssembleShipmentView from '@/components/crm/shipments/AssembleShipmentView';
+import ReceiveConfirmDialog from '@/components/crm/shipments/ReceiveConfirmDialog';
 
 const ToWorkshop = () => {
   const { toast } = useToast();
@@ -44,6 +46,12 @@ const ToWorkshop = () => {
   const [scanCode, setScanCode] = useState('');
   const [scanning, setScanning] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
+
+  const [expandedRolls, setExpandedRolls] = useState<Record<number, ShipmentDetail | null>>({});
+  const [loadingRolls, setLoadingRolls] = useState<number | null>(null);
+
+  const [receiveShipment, setReceiveShipment] = useState<ShipmentDetail | null>(null);
+  const [receiving, setReceiving] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -163,13 +171,56 @@ const ToWorkshop = () => {
     }
   };
 
-  const handleReceive = async (id: number) => {
+  const toggleRolls = async (shipmentId: number) => {
+    if (shipmentId in expandedRolls) {
+      setExpandedRolls((prev) => {
+        const next = { ...prev };
+        delete next[shipmentId];
+        return next;
+      });
+      return;
+    }
+    setLoadingRolls(shipmentId);
     try {
-      await receiveAtWorkshop(id);
-      toast({ title: 'Поставка принята в цехе' });
+      const detail = await fetchShipmentDetail(shipmentId);
+      setExpandedRolls((prev) => ({ ...prev, [shipmentId]: detail }));
+    } finally {
+      setLoadingRolls(null);
+    }
+  };
+
+  const openReceiveDialog = async (id: number) => {
+    const detail = await fetchShipmentDetail(id);
+    setReceiveShipment(detail);
+  };
+
+  const handleAcceptReceive = async () => {
+    if (!receiveShipment) return;
+    setReceiving(true);
+    try {
+      await receiveAtWorkshop(receiveShipment.id);
+      toast({ title: 'Заявка принята в цехе' });
+      setReceiveShipment(null);
       load();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setReceiving(false);
+    }
+  };
+
+  const handleRejectReceive = async (reason: string) => {
+    if (!receiveShipment) return;
+    setReceiving(true);
+    try {
+      await rejectWorkshopReceive(receiveShipment.id, reason);
+      toast({ title: 'Отказ зафиксирован', description: 'Заявка останется у кладовщика до исправлений' });
+      setReceiveShipment(null);
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setReceiving(false);
     }
   };
 
@@ -241,14 +292,25 @@ const ToWorkshop = () => {
           zone={zone}
           userWorkshopId={user?.workshopId ?? null}
           userShiftNumber={user?.shiftNumber ?? null}
+          expandedRolls={expandedRolls}
+          loadingRolls={loadingRolls}
+          onToggleRolls={toggleRolls}
           deleteId={deleteId}
           deleting={deleting}
           onOpenShipment={openShipment}
-          onReceive={handleReceive}
+          onOpenReceiveDialog={openReceiveDialog}
           onSetDeleteId={setDeleteId}
           onDelete={handleDelete}
         />
       </div>
+
+      <ReceiveConfirmDialog
+        shipment={receiveShipment}
+        onOpenChange={(open) => !open && setReceiveShipment(null)}
+        saving={receiving}
+        onAccept={handleAcceptReceive}
+        onReject={handleRejectReceive}
+      />
     </CrmLayout>
   );
 };

@@ -27,6 +27,8 @@ export interface Shipment {
   totalQuantity: number;
   isAutoOrder: boolean;
   materialNames: string | null;
+  /** Причина отказа сотрудника цеха в приёме — заявка при этом остаётся в статусе "Отправлено". */
+  rejectReason: string | null;
 }
 
 export interface ShipmentItem {
@@ -159,6 +161,12 @@ export const removeScannedRoll = (itemId: number) => postAction({ action: 'remov
 export const shipToWorkshop = (shipmentId: number) => postAction({ action: 'ship', shipmentId });
 
 export const receiveAtWorkshop = (shipmentId: number) => postAction({ action: 'receive', shipmentId });
+
+// Сотрудник цеха отказывается принять заявку (состав не в порядке). Заявка ОСТАЁТСЯ в
+// статусе "Отправлено" с указанной причиной — кладовщик/админ смогут открыть экран сборки,
+// поправить состав (добавить/убрать рулоны) и отправить заявку заново.
+export const rejectWorkshopReceive = (shipmentId: number, rejectReason: string) =>
+  postAction({ action: 'reject_receive', shipmentId, rejectReason });
 
 // Списание материала прямо в цехе (без указания рулона — FIFO по остаткам в цехе)
 export const workshopWriteoff = (payload: {
