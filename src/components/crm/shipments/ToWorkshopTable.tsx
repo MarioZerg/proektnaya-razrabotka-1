@@ -65,6 +65,7 @@ const ToWorkshopTable = ({
             <TableHeader>
               <TableRow className="bg-primary hover:bg-primary">
                 <TableHead className="text-primary-foreground">#</TableHead>
+                <TableHead className="text-primary-foreground">Материал</TableHead>
                 <TableHead className="text-primary-foreground">Статус</TableHead>
                 <TableHead className="text-primary-foreground">Цех</TableHead>
                 <TableHead className="text-primary-foreground">Смена</TableHead>
@@ -78,6 +79,7 @@ const ToWorkshopTable = ({
               {shipments.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell>{s.id}</TableCell>
+                  <TableCell>{s.materialNames || '—'}</TableCell>
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <Badge variant={statusVariant[s.status] || 'secondary'}>{s.status}</Badge>

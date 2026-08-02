@@ -82,8 +82,8 @@ const ToWorkshop = () => {
       toast({ title: 'За вами не закреплён цех — обратитесь к администратору', variant: 'destructive' });
       return;
     }
-    if (!reqMaterialId || !reqQuantity) {
-      toast({ title: 'Укажите материал и количество', variant: 'destructive' });
+    if (!reqMaterialId) {
+      toast({ title: 'Выберите материал', variant: 'destructive' });
       return;
     }
     setCreating(true);
@@ -97,7 +97,7 @@ const ToWorkshop = () => {
             : undefined,
         comment: reqComment.trim() || undefined,
         materialId: Number(reqMaterialId),
-        requestedQuantity: Number(reqQuantity),
+        requestedQuantity: reqQuantity ? Number(reqQuantity) : undefined,
         requestedBy: user?.id,
       });
       toast({ title: 'Заявка отправлена кладовщику' });

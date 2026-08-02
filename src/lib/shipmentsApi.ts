@@ -26,6 +26,7 @@ export interface Shipment {
   createdByName: string | null;
   totalQuantity: number;
   isAutoOrder: boolean;
+  materialNames: string | null;
 }
 
 export interface ShipmentItem {
@@ -130,12 +131,14 @@ export const createShipmentDefectWriteoff = (payload: {
 
 // Отгрузка в цех — двухстадийный процесс со сканированием (как на физическом складе).
 // Заявку создаёт швея/закройщик: строго 1 материал за раз, цех и смена берутся из его профиля.
+// Сотрудник только выбирает материал — количество не указывается, кладовщик сам определит,
+// сколько и какие рулоны собрать по факту наличия на складе.
 export const requestToWorkshop = (payload: {
   workshopId: number;
   shiftNumber?: number;
   comment?: string;
   materialId: number;
-  requestedQuantity: number;
+  requestedQuantity?: number;
   requestedBy?: number;
 }) => postAction({ action: 'request_to_workshop', ...payload });
 

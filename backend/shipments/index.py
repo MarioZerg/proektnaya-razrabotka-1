@@ -73,13 +73,16 @@ def handler(event: dict, context) -> dict:
 
     Отгрузка в цех (as-is с физического склада, повторяет процесс кладовщика):
     POST /  { action: 'request_to_workshop', workshopId, shiftNumber?, comment?,
-               materialId, requestedQuantity, requestedBy? }
+               materialId, requestedQuantity?, requestedBy? }
         - создаёт заявку в статусе "Новый" строго на ОДИН материал (без привязки к рулонам).
           Заявку создаёт швея/закройщик — 1 заявка = 1 материал, workshopId/shiftNumber
-          берутся из профиля сотрудника (не выбираются вручную). Если по этому материалу
-          на эту же смену/цех уже есть незакрытая заявка (статус != 'Получено') — отклоняется (409)
+          берутся из профиля сотрудника (не выбираются вручную). Сотрудник только выбирает
+          материал, requestedQuantity необязателен (кладовщик сам определит, сколько и
+          какие рулоны собрать). Если по этому материалу на эту же смену/цех уже есть
+          незакрытая заявка (статус != 'Получено') — отклоняется (409)
     POST /  { action: 'collect_scan', shipmentId, barcode }
-        - сканирование штрихкода рулона на складе, добавляет его целиком в заявку
+        - сканирование штрихкода рулона на складе, добавляет его целиком в заявку.
+          Рулон должен быть в статусе in_storage и НЕ закреплён за другим цехом/сменой
           (рулон должен быть материала из заявки и находиться в статусе in_storage —
           то есть уже подтверждённый админом при приёмке)
     POST /  { action: 'ship', shipmentId }
@@ -213,7 +216,9 @@ def handler(event: dict, context) -> dict:
                 f"(SELECT COUNT(*) FROM shipment_items si WHERE si.shipment_id = s.id) as items_count, "
                 f"u.full_name, cu.full_name, "
                 f"(SELECT COALESCE(SUM(si.quantity), 0) FROM shipment_items si WHERE si.shipment_id = s.id) as total_qty, "
-                f"s.is_auto_order "
+                f"s.is_auto_order, "
+                f"(SELECT STRING_AGG(DISTINCT m.name, ', ') FROM shipment_items si "
+                f"JOIN materials m ON m.id = si.material_id WHERE si.shipment_id = s.id) as material_names "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                 f"LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -240,6 +245,7 @@ def handler(event: dict, context) -> dict:
                     'createdByName': r[13],
                     'totalQuantity': float(r[14]) if r[14] is not None else 0.0,
                     'isAutoOrder': r[15],
+                    'materialNames': r[16],
                 }
                 for r in cur.fetchall()
             ]
@@ -514,8 +520,8 @@ def handler(event: dict, context) -> dict:
 
                 if not workshop_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Не определён цех — обратитесь к администратору'})}
-                if not material_id or requested_qty in (None, ''):
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите материал и количество'})}
+                if not material_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите материал'})}
 
                 # 1 материал = 1 незакрытая заявка на смену: пока предыдущая заявка на этот же
                 # материал/цех/смену не дошла до статуса "Получено" (отгружена кладовщиком И
@@ -548,9 +554,10 @@ def handler(event: dict, context) -> dict:
                 )
                 shipment_id = cur.fetchone()[0]
 
+                requested_qty_sql = float(requested_qty) if requested_qty not in (None, '') else 'NULL'
                 cur.execute(
                     f"INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
-                    f"VALUES ({shipment_id}, {int(material_id)}, {float(requested_qty)})"
+                    f"VALUES ({shipment_id}, {int(material_id)}, {requested_qty_sql})"
                 )
 
                 log_action(
@@ -573,22 +580,35 @@ def handler(event: dict, context) -> dict:
                 if sh_row[0] != 'to_workshop' or sh_row[1] != 'Новый':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявка не в статусе сборки'})}
 
+                # "Запрошенная" позиция — это исходная строка заявки (создана в request_to_workshop),
+                # у неё ещё нет roll_id. Строки с roll_id — это уже отсканированные рулоны. Раньше
+                # тут фильтровали по requested_quantity IS NOT NULL, но т.к. requestedQuantity стало
+                # необязательным полем, эта проверка сломалась бы — используем roll_id IS NULL.
                 cur.execute(
-                    "SELECT DISTINCT material_id FROM shipment_items WHERE shipment_id = %s AND requested_quantity IS NOT NULL",
+                    "SELECT DISTINCT material_id FROM shipment_items WHERE shipment_id = %s AND roll_id IS NULL",
                     (int(shipment_id),),
                 )
                 requested_material_ids = {r[0] for r in cur.fetchall()}
 
                 cur.execute(
-                    "SELECT id, material_id, remaining_quantity, status FROM rolls WHERE barcode = %s",
+                    "SELECT id, material_id, remaining_quantity, status, workshop_id, shift_number FROM rolls WHERE barcode = %s",
                     (barcode,),
                 )
                 roll_row = cur.fetchone()
                 if not roll_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Рулон {barcode} не найден'})}
-                roll_id, material_id, remaining, roll_status = roll_row
+                roll_id, material_id, remaining, roll_status, roll_workshop_id, roll_shift_number = roll_row
                 if roll_status != 'in_storage':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Рулон {barcode} не на складе (статус: {roll_status})'})}
+                # Рулон, привязанный к какому-то цеху/смене, нельзя забрать в заявку другого
+                # цеха/смены — даже если формально он ещё в статусе in_storage (защита от
+                # рассинхронизации данных при ручном редактировании рулона администратором).
+                if roll_workshop_id is not None or roll_shift_number is not None:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Рулон {barcode} уже закреплён за другим цехом/сменой'}),
+                    }
                 if material_id not in requested_material_ids:
                     cur.execute("SELECT name FROM materials WHERE id = %s", (material_id,))
                     mat_name = cur.fetchone()[0]

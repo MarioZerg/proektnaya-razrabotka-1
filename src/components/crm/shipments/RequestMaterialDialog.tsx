@@ -137,17 +137,25 @@ const RequestMaterialDialog = ({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5">
-            <Label>Количество</Label>
-            <Input
-              type="number"
-              step="0.01"
-              placeholder="Кол-во"
-              value={reqQuantity}
-              onChange={(e) => setReqQuantity(e.target.value)}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground">Одна заявка — один материал.</p>
+          {isProduction ? (
+            <p className="text-xs text-muted-foreground">
+              Кладовщик сам определит количество и рулоны — просто выберите материал и отправьте заявку.
+            </p>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <Label>Количество (необязательно)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="Кол-во"
+                  value={reqQuantity}
+                  onChange={(e) => setReqQuantity(e.target.value)}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">Одна заявка — один материал.</p>
+            </>
+          )}
 
           <div className="space-y-1.5">
             <Label>Комментарий</Label>
@@ -155,7 +163,7 @@ const RequestMaterialDialog = ({
           </div>
 
           <Button className="w-full" onClick={onCreate} disabled={creating}>
-            {creating ? 'Отправка...' : isProduction ? 'Запросить' : 'Создать заявку'}
+            {creating ? 'Отправка...' : isProduction ? 'Отправить заявку на склад' : 'Создать заявку'}
           </Button>
         </div>
       </DialogContent>

@@ -34,7 +34,10 @@ const AssembleShipmentView = ({
   onScan,
   onShip,
 }: AssembleShipmentViewProps) => {
-  const requestedItem = activeShipment.items.find((i) => i.requestedQuantity !== null);
+  // Запрошенная позиция — исходная строка заявки (создана при request_to_workshop), у нее
+  // ещё нет rollId. requestedQuantity теперь необязателен (сотрудник может не указывать
+  // количество), поэтому находим её по отсутствию rollId, а не по наличию requestedQuantity.
+  const requestedItem = activeShipment.items.find((i) => i.rollId === null);
   const collectedItems = activeShipment.items.filter((i) => i.rollId !== null);
 
   return (
@@ -46,8 +49,9 @@ const AssembleShipmentView = ({
         </Button>
         <h1 className="text-xl font-bold">Сборка поставки #{activeShipment.id}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Запрошено: {requestedItem?.materialName} {requestedItem?.requestedQuantity}
-          {requestedItem?.unit} · Запросил: {activeShipment.requestedByName || '—'}
+          Запрошено: {requestedItem?.materialName}
+          {requestedItem?.requestedQuantity ? ` ${requestedItem.requestedQuantity} ${requestedItem.unit || ''}` : ''}
+          {' '}· Запросил: {activeShipment.requestedByName || '—'}
         </p>
       </div>
 
