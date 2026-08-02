@@ -5,7 +5,6 @@ import { useToast } from '@/hooks/use-toast';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import {
   fetchSalarySummary,
-  fetchSalaryRates,
   fetchSalaryPayouts,
   fetchMySalary,
   createManualAccrual,
@@ -14,7 +13,6 @@ import {
   payoutSalary,
   updateSalaryRate,
   type SalaryOperation,
-  type SalaryRate,
   type SalaryPayout,
   type MyAccrual,
   type MyPayout,
@@ -42,9 +40,6 @@ const Finance = () => {
   const [period1Total, setPeriod1Total] = useState(0);
   const [period2Total, setPeriod2Total] = useState(0);
   const [operationsLoading, setOperationsLoading] = useState(true);
-
-  const [rates, setRates] = useState<SalaryRate[]>([]);
-  const [ratesLoading, setRatesLoading] = useState(true);
 
   const [payouts, setPayouts] = useState<SalaryPayout[]>([]);
   const [payoutsLoading, setPayoutsLoading] = useState(true);
@@ -89,13 +84,6 @@ const Finance = () => {
       .finally(() => setOperationsLoading(false));
   };
 
-  const loadRates = () => {
-    setRatesLoading(true);
-    fetchSalaryRates()
-      .then(setRates)
-      .finally(() => setRatesLoading(false));
-  };
-
   const loadPayouts = () => {
     setPayoutsLoading(true);
     fetchSalaryPayouts()
@@ -111,7 +99,6 @@ const Finance = () => {
 
   useEffect(() => {
     if (user?.role !== 'admin') return;
-    loadRates();
     loadPayouts();
   }, [user?.role]);
 
@@ -169,7 +156,6 @@ const Finance = () => {
     try {
       await updateSalaryRate(id, rate, user?.id, user?.name);
       toast({ title: 'Тариф обновлён' });
-      loadRates();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
@@ -242,7 +228,7 @@ const Finance = () => {
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <SalaryRatesCard rates={rates} loading={ratesLoading} onUpdate={handleUpdateRate} />
+          <SalaryRatesCard onUpdate={handleUpdateRate} />
           <SalaryPayoutsTable payouts={payouts} loading={payoutsLoading} />
         </div>
       </div>

@@ -105,8 +105,9 @@ def handler(event: dict, context) -> dict:
           "Выполнена" — фиксирует completed_at (и ship_to_marketplace_at, если не указана).
           При переходе в "На сборке"/"Отгрузка": если создатель поставки (created_by) —
           кладовщик с открытой сменой, начисляет ему оклад за смену (salary_accruals,
-          type='storekeeper_shift', ставка из salary_rates role='storekeeper'), но не
-          больше одного начисления на одну смену (shift_session_id)
+          type='storekeeper_shift'). Ставка (salary_rates, role='storekeeper') берётся из
+          тарифов цеха этой смены (workshop_id смены), либо из цеха профиля кладовщика, если
+          у смены цех не указан. Не больше одного начисления на одну смену (shift_session_id)
     POST /  { action: 'force_complete', supplyId }
         - принудительное закрытие поставки в системе из любого статуса (кроме уже
           "Выполнена"): используется, если реальная поставка зависла на любом этапе
@@ -742,27 +743,38 @@ def handler(event: dict, context) -> dict:
                     creator_row = cur.fetchone()
                     creator_id = creator_row[0] if creator_row else None
                     if creator_id:
-                        cur.execute("SELECT role FROM users WHERE id = %s", (creator_id,))
-                        role_row = cur.fetchone()
-                        if role_row and role_row[0] == 'storekeeper':
+                        cur.execute("SELECT role, workshop FROM users WHERE id = %s", (creator_id,))
+                        user_row = cur.fetchone()
+                        if user_row and user_row[0] == 'storekeeper':
                             cur.execute(
-                                "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                                "SELECT id, workshop_id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
                                 "ORDER BY opened_at DESC LIMIT 1",
                                 (creator_id,),
                             )
                             session_row = cur.fetchone()
                             if session_row:
-                                session_id = session_row[0]
-                                cur.execute("SELECT rate FROM salary_rates WHERE role = 'storekeeper'")
-                                rate_row = cur.fetchone()
-                                rate = float(rate_row[0]) if rate_row else 0
-                                if rate > 0:
+                                session_id, session_workshop_id = session_row
+                                # Ставка берётся из тарифов цеха этой смены (workshop_id смены);
+                                # если у смены цех не указан — из цеха профиля кладовщика.
+                                rate_workshop_id = session_workshop_id
+                                if not rate_workshop_id and user_row[1]:
+                                    cur.execute("SELECT id FROM workshops WHERE name = %s", (user_row[1],))
+                                    w_row = cur.fetchone()
+                                    rate_workshop_id = w_row[0] if w_row else None
+                                if rate_workshop_id:
                                     cur.execute(
-                                        f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
-                                        f"VALUES ({creator_id}, 'storekeeper_shift', {rate}, {session_id}, "
-                                        f"'Оклад за смену (сборка поставки #{supply_id})') "
-                                        f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                                        "SELECT rate FROM salary_rates WHERE role = 'storekeeper' AND workshop_id = %s",
+                                        (rate_workshop_id,),
                                     )
+                                    rate_row = cur.fetchone()
+                                    rate = float(rate_row[0]) if rate_row else 0
+                                    if rate > 0:
+                                        cur.execute(
+                                            f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
+                                            f"VALUES ({creator_id}, 'storekeeper_shift', {rate}, {session_id}, "
+                                            f"'Оклад за смену (сборка поставки #{supply_id})') "
+                                            f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                                        )
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

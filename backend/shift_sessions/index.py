@@ -24,7 +24,9 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'close', userId }
         - закрывает последнюю открытую смену сотрудника (closed_at = now()).
           Если сотрудник — уборщица (role='cleaner'), начисляет ей оклад за смену
-          (salary_accruals, type='cleaner_shift', ставка из salary_rates role='cleaner')
+          (salary_accruals, type='cleaner_shift'). Ставка (salary_rates, role='cleaner')
+          берётся из тарифов цеха, указанного при открытии этой смены (workshop_id), либо
+          из цеха её профиля (users.workshop), если у смены цех не был указан
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -152,30 +154,41 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
 
                 cur.execute(
-                    "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "SELECT id, workshop_id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
                     "ORDER BY opened_at DESC LIMIT 1",
                     (int(user_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Открытой смены не найдено'})}
-                session_id = row[0]
+                session_id, session_workshop_id = row
 
                 cur.execute("UPDATE shift_sessions SET closed_at = now() WHERE id = %s", (session_id,))
 
-                # Уборщица получает оклад за смену при её закрытии (salary_rates, role='cleaner')
-                cur.execute("SELECT role FROM users WHERE id = %s", (int(user_id),))
-                user_role_row = cur.fetchone()
-                if user_role_row and user_role_row[0] == 'cleaner':
-                    cur.execute("SELECT rate FROM salary_rates WHERE role = 'cleaner'")
-                    rate_row = cur.fetchone()
-                    rate = float(rate_row[0]) if rate_row else 0
-                    if rate > 0:
+                # Уборщица получает оклад за смену при её закрытии (salary_rates, role='cleaner'),
+                # ставка берётся из тарифов цеха, указанного при открытии этой смены (workshop_id).
+                # Если цех у смены не указан — если у уборщицы есть свой цех в профиле, используем его.
+                cur.execute("SELECT role, workshop FROM users WHERE id = %s", (int(user_id),))
+                user_row = cur.fetchone()
+                if user_row and user_row[0] == 'cleaner':
+                    rate_workshop_id = session_workshop_id
+                    if not rate_workshop_id and user_row[1]:
+                        cur.execute("SELECT id FROM workshops WHERE name = %s", (user_row[1],))
+                        w_row = cur.fetchone()
+                        rate_workshop_id = w_row[0] if w_row else None
+                    if rate_workshop_id:
                         cur.execute(
-                            f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
-                            f"VALUES ({int(user_id)}, 'cleaner_shift', {rate}, {session_id}, 'Оклад за смену') "
-                            f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                            "SELECT rate FROM salary_rates WHERE role = 'cleaner' AND workshop_id = %s",
+                            (rate_workshop_id,),
                         )
+                        rate_row = cur.fetchone()
+                        rate = float(rate_row[0]) if rate_row else 0
+                        if rate > 0:
+                            cur.execute(
+                                f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
+                                f"VALUES ({int(user_id)}, 'cleaner_shift', {rate}, {session_id}, 'Оклад за смену') "
+                                f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                            )
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

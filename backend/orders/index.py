@@ -56,7 +56,8 @@ def handler(event: dict, context) -> dict:
           автоматически по FIFO со склада. Тесьма (Аксессуары) НЕ списывается на этом этапе —
           её позже указывает швея перед отправкой на стикеровку.
           Начисляет закройщику зарплату (salary_accruals, type='cutter_cut'): ставка за 1 пог.м.
-          материала тюля (salary_rates, role='cutter') × фактический расход материала на товар
+          материала тюля (salary_rates, role='cutter', тарифы цеха заказа workshop_id) ×
+          фактический расход материала на товар
     POST /  { action: 'take_order', userId }
         - швея получает в работу самый старый заказ из "Раскроено" (по времени раскроя, FIFO,
           без привязки к цеху). Атомарная операция (FOR UPDATE SKIP LOCKED) исключает дубли
@@ -600,14 +601,16 @@ def handler(event: dict, context) -> dict:
                 )
 
                 # Начисление закройщику: ставка за 1 пог.м. по материалу тюля (salary_rates,
-                # role='cutter'). Если заказ позже удалят из раскроя (cancel_order/delete_order),
-                # начисление снимается там же.
-                if fabric_material_id and order_assigned_user_id:
+                # role='cutter'), берётся из тарифов цеха, в котором выполняется заказ
+                # (order_workshop_id) — тарифы полностью раздельные по цехам. Если заказ позже
+                # удалят из раскроя (cancel_order/delete_order), начисление снимается там же.
+                if fabric_material_id and order_assigned_user_id and order_workshop_id:
                     fabric_qty = next((q for m, q in needed if m == fabric_material_id), None)
                     if fabric_qty:
                         cur.execute(
-                            "SELECT rate FROM salary_rates WHERE role = 'cutter' AND material_id = %s",
-                            (fabric_material_id,),
+                            "SELECT rate FROM salary_rates WHERE role = 'cutter' AND material_id = %s "
+                            "AND workshop_id = %s",
+                            (fabric_material_id, order_workshop_id),
                         )
                         rate_row = cur.fetchone()
                         rate = float(rate_row[0]) if rate_row else 0

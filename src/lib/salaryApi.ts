@@ -7,10 +7,12 @@ export interface SalaryRate {
   materialName: string | null;
   width: number | null;
   rate: number;
+  workshopId: number;
+  workshopName: string;
 }
 
-export const fetchSalaryRates = async (): Promise<SalaryRate[]> => {
-  const res = await fetch(`${SALARY_URL}?rates=1`);
+export const fetchSalaryRates = async (workshopId: number): Promise<SalaryRate[]> => {
+  const res = await fetch(`${SALARY_URL}?rates=1&workshopId=${workshopId}`);
   const data = await res.json();
   return data.rates || [];
 };

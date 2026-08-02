@@ -27,13 +27,15 @@ def handler(event: dict, context) -> dict:
     """Зарплаты сотрудников: тарифы по ролям, начисления за выполненную работу, выплаты,
     ручные начисления/штрафы админом.
 
-    Тарифы (salary_rates):
+    Тарифы (salary_rates) полностью РАЗДЕЛЬНЫЕ по цехам (workshop_id) — у каждого цеха своя
+    независимая таблица ставок, общего/дефолтного значения нет:
       - cutter (закройщик)     — ставка за 1 пог.м. по каждому материалу типа "Тюль" (material_id)
       - sewer (швея)           — фиксированная ставка за штуку по ширине товара (width)
-      - packer (упаковщик)     — ставка за пог.м. на стикеровке (общая, material_id/width = NULL)
-      - storekeeper (кладовщик)— оклад за смену (общая ставка)
-      - cleaner (уборщица)     — оклад за смену (общая ставка)
-      - admin (администратор)  — оклад за день (общая ставка)
+      - packer (упаковщик)     — ставка за пог.м. на стикеровке (общая по цеху, material_id/width = NULL)
+      - storekeeper (кладовщик)— оклад за смену (общая ставка по цеху)
+      - cleaner (уборщица)     — оклад за смену (общая ставка по цеху)
+      - admin (администратор)  — оклад за день (общая ставка по цеху; берётся по цеху из профиля
+                                   администратора users.workshop, если не указан — по первому цеху)
 
     Начисления (salary_accruals) создаются другими backend-функциями при наступлении события
     (раскрой заказа, закрытие стикеровки, закрытие смены и т.д.) — эта функция лишь читает и
@@ -50,8 +52,10 @@ def handler(event: dict, context) -> dict:
         ?page=1                              - пагинация (по 50 записей)
     GET  /?my=1&userId=1                     - для сотрудника: его начисления (с указанием
                                                заказа) и список последних выплат
-    GET  /?rates=1                            - список тарифов (salary_rates) с названиями
-                                               материалов, для экрана настройки тарифов админом
+    GET  /?rates=1&workshopId=1               - список тарифов (salary_rates) конкретного цеха
+                                               (workshopId обязателен для корректной фильтрации;
+                                               без него возвращаются тарифы всех цехов подряд)
+                                               с названиями материалов и названием цеха
     GET  /?payouts=1&userId=1                 - история выплат (все или по сотруднику)
 
     POST /  { action: 'update_rate', id, rate }
@@ -98,12 +102,25 @@ def handler(event: dict, context) -> dict:
             cur = conn.cursor()
 
             # Дневной оклад администратора — создаём один раз в день при любом заходе сюда.
+            # Тариф берётся по цеху, указанному в профиле админа (users.workshop -> workshops.name);
+            # если цех не указан — берём тариф первого по списку цеха как запасной вариант.
             cur.execute(
-                "SELECT sr.rate, u.id FROM salary_rates sr "
-                "CROSS JOIN users u "
-                "WHERE sr.role = 'admin' AND u.role = 'admin' AND u.is_active = true AND sr.rate > 0"
+                "SELECT u.id, COALESCE(w.id, (SELECT id FROM workshops ORDER BY id LIMIT 1)) "
+                "FROM users u LEFT JOIN workshops w ON w.name = u.workshop "
+                "WHERE u.role = 'admin' AND u.is_active = true"
             )
-            admin_rows = cur.fetchall()
+            admin_workshop_rows = cur.fetchall()
+            admin_rows = []
+            for admin_user_id, admin_workshop_id in admin_workshop_rows:
+                if admin_workshop_id is None:
+                    continue
+                cur.execute(
+                    "SELECT rate FROM salary_rates WHERE role = 'admin' AND workshop_id = %s",
+                    (admin_workshop_id,),
+                )
+                rate_row = cur.fetchone()
+                if rate_row and float(rate_row[0]) > 0:
+                    admin_rows.append((float(rate_row[0]), admin_user_id))
             for rate, admin_user_id in admin_rows:
                 cur.execute(
                     "SELECT id FROM salary_accruals WHERE user_id = %s AND type = 'admin_daily' AND accrued_for = CURRENT_DATE",
@@ -119,10 +136,14 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
 
             if params.get('rates'):
+                workshop_id_filter = params.get('workshopId')
+                where_clause = f"WHERE sr.workshop_id = {int(workshop_id_filter)}" if workshop_id_filter else ""
                 cur.execute(
-                    "SELECT sr.id, sr.role, sr.material_id, m.name, sr.width, sr.rate "
-                    "FROM salary_rates sr LEFT JOIN materials m ON m.id = sr.material_id "
-                    "ORDER BY sr.role, sr.width NULLS FIRST, m.sort_order NULLS FIRST"
+                    f"SELECT sr.id, sr.role, sr.material_id, m.name, sr.width, sr.rate, sr.workshop_id, w.name "
+                    f"FROM salary_rates sr LEFT JOIN materials m ON m.id = sr.material_id "
+                    f"JOIN workshops w ON w.id = sr.workshop_id "
+                    f"{where_clause} "
+                    f"ORDER BY sr.workshop_id, sr.role, sr.width NULLS FIRST, m.sort_order NULLS FIRST"
                 )
                 rates = [
                     {
@@ -132,6 +153,8 @@ def handler(event: dict, context) -> dict:
                         'materialName': r[3],
                         'width': r[4],
                         'rate': float(r[5]),
+                        'workshopId': r[6],
+                        'workshopName': r[7],
                     }
                     for r in cur.fetchall()
                 ]

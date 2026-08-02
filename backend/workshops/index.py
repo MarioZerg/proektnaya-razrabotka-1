@@ -42,6 +42,9 @@ def handler(event: dict, context) -> dict:
     GET  /                       - получить список цехов с числом смен и сотрудников
     GET  /?id=1                  - получить детальную карточку цеха (материалы, товары, настройки, смены)
     POST /  { action: 'create', name, shiftsCount? }
+        - создаёт цех; автоматически копирует полную таблицу тарифов зарплаты (salary_rates)
+          с первого по списку существующего цеха — тарифы полностью раздельные по цехам,
+          у нового цеха сразу появляется рабочий набор ставок (админ может их скорректировать)
     POST /  { action: 'update', id, name?, shiftsCount?, isActive?, allowedProducts?, allowedMaterials?, settings? }
     POST /  { action: 'delete', id }
 
@@ -176,6 +179,23 @@ def handler(event: dict, context) -> dict:
                     f"INSERT INTO workshops (name, shifts_count) VALUES ('{name_esc}', {int(shifts_count)}) RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
+
+                # Тарифы зарплаты (salary_rates) полностью раздельные по цехам — у нового цеха
+                # своих ставок ещё нет. Заполняем копированием структуры/значений тарифов
+                # первого по списку существующего цеха (кроме только что созданного), чтобы
+                # сразу была рабочая конфигурация — админ при необходимости скорректирует ставки.
+                cur.execute(
+                    "SELECT id FROM workshops WHERE id != %s ORDER BY id LIMIT 1", (new_id,)
+                )
+                template_row = cur.fetchone()
+                if template_row:
+                    template_workshop_id = template_row[0]
+                    cur.execute(
+                        "INSERT INTO salary_rates (role, material_id, width, rate, workshop_id) "
+                        "SELECT role, material_id, width, rate, %s FROM salary_rates WHERE workshop_id = %s",
+                        (new_id, template_workshop_id),
+                    )
+
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 

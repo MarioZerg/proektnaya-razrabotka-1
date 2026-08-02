@@ -27,13 +27,15 @@ def handler(event: dict, context) -> dict:
 
     Упаковщица находит заказ со статусом "Стикеровка" по номеру заказа, проверяет его и
     нажимает "Закрыть заказ" — заказ переходит в статус "Готовые" (после этого доступен для
-    приёмки на склад готового товара). При закрытии начисляется зарплата:
+    приёмки на склад готового товара). Тарифы (salary_rates) полностью раздельные по цехам.
+    При закрытии начисляется зарплата:
       - швее (assignedUserId заказа) — фиксированная ставка за штуку по ширине товара
-        (salary_rates, role='sewer', width). Именно на этом шаге, а не раньше, чтобы не
-        начислять за заказ, который швея не успела дошить (мог быть отправлен на
-        стикеровку по ошибке)
+        (salary_rates, role='sewer', width), берётся из тарифов ЦЕХА ЗАКАЗА (workshop_id заказа).
+        Именно на этом шаге, а не раньше, чтобы не начислять за заказ, который швея не успела
+        дошить (мог быть отправлен на стикеровку по ошибке)
       - упаковщице (та, что закрывает заказ) — ставка за пог.м. на стикеровке
-        (salary_rates, role='packer'), метраж = ширина заказа в пог.метрах (width / 100)
+        (salary_rates, role='packer'), берётся из тарифов ЦЕХА САМОЙ УПАКОВЩИЦЫ (users.workshop
+        её профиля, а не цеха заказа), метраж = ширина заказа в пог.метрах (width / 100)
 
     GET  /?orderNumber=XXX  - найти заказ по номеру (для проверки перед закрытием),
                                возвращает базовую информацию, только если заказ в
@@ -125,13 +127,13 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите orderId и packerId'})}
 
                 cur.execute(
-                    "SELECT sewing_status, width, assigned_user_id, order_number FROM orders WHERE id = %s",
+                    "SELECT sewing_status, width, assigned_user_id, order_number, workshop_id FROM orders WHERE id = %s",
                     (int(order_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-                sewing_status, width, assigned_user_id, order_number = row
+                sewing_status, width, assigned_user_id, order_number, order_workshop_id = row
                 if sewing_status != 'Стикеровка':
                     return {
                         'statusCode': 409,
@@ -144,11 +146,12 @@ def handler(event: dict, context) -> dict:
                 )
 
                 # Швея получает фиксированную ставку за штуку по ширине товара — именно сейчас,
-                # когда заказ реально дошит и прошёл стикеровку (не раньше)
-                if assigned_user_id and width:
+                # когда заказ реально дошит и прошёл стикеровку (не раньше). Ставка берётся из
+                # тарифов цеха, в котором выполняется заказ (order_workshop_id).
+                if assigned_user_id and width and order_workshop_id:
                     cur.execute(
-                        "SELECT rate FROM salary_rates WHERE role = 'sewer' AND width = %s",
-                        (int(width),),
+                        "SELECT rate FROM salary_rates WHERE role = 'sewer' AND width = %s AND workshop_id = %s",
+                        (int(width), order_workshop_id),
                     )
                     rate_row = cur.fetchone()
                     sewer_rate = float(rate_row[0]) if rate_row else 0
@@ -160,10 +163,23 @@ def handler(event: dict, context) -> dict:
                             f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
                         )
 
-                # Упаковщица получает ставку за пог.м. на стикеровке
-                cur.execute("SELECT rate FROM salary_rates WHERE role = 'packer' LIMIT 1")
-                packer_rate_row = cur.fetchone()
-                packer_rate = float(packer_rate_row[0]) if packer_rate_row else 0
+                # Упаковщица получает ставку за пог.м. на стикеровке — берётся из тарифов ЕЁ
+                # СОБСТВЕННОГО цеха (users.workshop её профиля), а не цеха заказа.
+                cur.execute(
+                    "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
+                    (int(packer_id),),
+                )
+                packer_workshop_row = cur.fetchone()
+                packer_workshop_id = packer_workshop_row[0] if packer_workshop_row else None
+
+                packer_rate = 0.0
+                if packer_workshop_id:
+                    cur.execute(
+                        "SELECT rate FROM salary_rates WHERE role = 'packer' AND workshop_id = %s",
+                        (packer_workshop_id,),
+                    )
+                    packer_rate_row = cur.fetchone()
+                    packer_rate = float(packer_rate_row[0]) if packer_rate_row else 0
                 if packer_rate > 0 and width:
                     meters = round(float(width) / 100, 2)
                     amount = round(meters * packer_rate, 2)
