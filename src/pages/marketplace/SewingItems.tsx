@@ -22,8 +22,9 @@ import {
 } from '@/lib/ordersApi';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
-import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
+import { fetchWorkshops, fetchWorkshopDetail, type Workshop } from '@/lib/workshopsApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
+import { printCuttingSheet } from '@/lib/printCuttingSheet';
 import SewingItemsFilters from '@/components/crm/sewingItems/SewingItemsFilters';
 import SewingItemsTable from '@/components/crm/sewingItems/SewingItemsTable';
 import SewingItemDetailDialog from '@/components/crm/sewingItems/SewingItemDetailDialog';
@@ -44,6 +45,7 @@ const SewingItems = () => {
   const [takingStack, setTakingStack] = useState(false);
   const [takingOrder, setTakingOrder] = useState(false);
   const [takeOrderCooldown, setTakeOrderCooldown] = useState(false);
+  const [printQrCuttingEnabled, setPrintQrCuttingEnabled] = useState(true);
 
   const isCutter = user?.role === 'cutter';
   const isSewer = user?.role === 'sewer';
@@ -72,6 +74,12 @@ const SewingItems = () => {
   const [cutting, setCutting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
+  // Цех/смена ТЕКУЩЕЙ открытой рабочей смены (может отличаться от штатных в гостевом
+  // режиме) — именно они используются для взятия стека и фильтрации доступных рулонов,
+  // чтобы сотрудник в гостях работал с материалами той смены, куда зашёл.
+  const effectiveWorkshopId = user?.activeWorkshopId ?? user?.workshopId ?? null;
+  const effectiveShiftNumber = user?.activeShiftNumber ?? user?.shiftNumber ?? null;
+
   const load = () => {
     setLoading(true);
     Promise.all([fetchOrders(), fetchEmployees(), fetchMaterialsData(), fetchWorkshops(), fetchRolls({ status: 'in_workshop' })])
@@ -88,6 +96,15 @@ const SewingItems = () => {
   useEffect(() => {
     load();
   }, []);
+
+  // Настройка "печать QR на листе закройщика" — читается из настроек ТЕКУЩЕГО цеха
+  // закройщика (переопределение цеха или глобальное значение). По умолчанию включена.
+  useEffect(() => {
+    if (!isCutter || !effectiveWorkshopId) return;
+    fetchWorkshopDetail(effectiveWorkshopId).then((w) => {
+      setPrintQrCuttingEnabled((w.settings.print_qr_cutting?.value ?? w.settings.print_qr_cutting?.global ?? 'enabled') !== 'disabled');
+    });
+  }, [isCutter, effectiveWorkshopId]);
 
   const isReadOnlyTab = activeTab === 'Раскроено' && (user?.role === 'sewer' || user?.role === 'cutter');
 
@@ -235,6 +252,11 @@ const SewingItems = () => {
     }
   };
 
+  const handlePrintCuttingSheet = () => {
+    if (!selectedOrder) return;
+    printCuttingSheet(selectedOrder.id, selectedOrder.orderNumber);
+  };
+
   const handleCancelOrder = async () => {
     if (!selectedOrder) return;
     setCancelling(true);
@@ -254,12 +276,6 @@ const SewingItems = () => {
       setCancelling(false);
     }
   };
-
-  // Цех/смена ТЕКУЩЕЙ открытой рабочей смены (может отличаться от штатных в гостевом
-  // режиме) — именно они используются для взятия стека и фильтрации доступных рулонов,
-  // чтобы сотрудник в гостях работал с материалами той смены, куда зашёл.
-  const effectiveWorkshopId = user?.activeWorkshopId ?? user?.workshopId ?? null;
-  const effectiveShiftNumber = user?.activeShiftNumber ?? user?.shiftNumber ?? null;
 
   const handleTakeStack = async () => {
     if (!effectiveWorkshopId) {
@@ -449,6 +465,7 @@ const SewingItems = () => {
           onSendToStickering={handleSendToStickering}
           onCancelOrder={handleCancelOrder}
           cancelling={cancelling}
+          onPrintCuttingSheet={isCutter && printQrCuttingEnabled ? handlePrintCuttingSheet : undefined}
         />
       </div>
     </CrmLayout>

@@ -23,6 +23,73 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
+def get_setting(cur, workshop_id, key, default=None):
+    """Читает значение настройки: сначала переопределение цеха (workshop_settings),
+    если его нет — глобальное значение (system_settings), если и его нет — default.
+    Возвращает строку (как хранится в БД) или default."""
+    if workshop_id:
+        cur.execute(
+            "SELECT value FROM workshop_settings WHERE workshop_id = %s AND key = %s",
+            (int(workshop_id), key),
+        )
+        row = cur.fetchone()
+        if row and row[0] not in (None, ''):
+            return row[0]
+    cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
+    row = cur.fetchone()
+    if row and row[0] not in (None, ''):
+        return row[0]
+    return default
+
+
+def get_setting_float(cur, workshop_id, key, default=0.0):
+    val = get_setting(cur, workshop_id, key, None)
+    try:
+        return float(val) if val not in (None, '') else default
+    except (TypeError, ValueError):
+        return default
+
+
+def get_setting_int(cur, workshop_id, key, default=0):
+    val = get_setting(cur, workshop_id, key, None)
+    try:
+        return int(val) if val not in (None, '') else default
+    except (TypeError, ValueError):
+        return default
+
+
+def apply_penalty(cur, user_id, amount, description, order_id=None):
+    """Начисляет автоматический штраф сотруднику (salary_accruals, type='penalty') —
+    отрицательная сумма, как и у ручных штрафов через backend/salary. Если order_id указан,
+    защищено уникальным индексом (order_id, type) — повторный штраф за тот же заказ не
+    создастся (ON CONFLICT DO NOTHING)."""
+    if amount <= 0 or not user_id:
+        return
+    penalty_amount = -abs(float(amount))
+    description_esc = description.replace("'", "''")
+    order_sql = str(int(order_id)) if order_id else 'NULL'
+    conflict_sql = "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING" if order_id else ""
+    cur.execute(
+        f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+        f"VALUES ({int(user_id)}, 'penalty', {penalty_amount}, {order_sql}, '{description_esc}') "
+        f"{conflict_sql}"
+    )
+
+
+TIMEOUT_WIDTHS = [200, 300, 400, 500, 600, 700, 800]
+
+
+def nearest_timeout_width(width):
+    """Подбирает ближайшую ширину из списка timeout_200..800 (снизу вверх) для заданной
+    ширины товара — используется, чтобы взять из настроек цеха соответствующий timeout_XXX."""
+    if not width:
+        return None
+    for w in TIMEOUT_WIDTHS:
+        if width <= w:
+            return w
+    return TIMEOUT_WIDTHS[-1]
+
+
 def handler(event: dict, context) -> dict:
     """Управляет заказами с маркетплейсов (OZON, WB, Яндекс.Маркет).
 
@@ -57,11 +124,23 @@ def handler(event: dict, context) -> dict:
           её позже указывает швея перед отправкой на стикеровку.
           Начисляет закройщику зарплату (salary_accruals, type='cutter_cut'): ставка за 1 пог.м.
           материала тюля (salary_rates, role='cutter', тарифы цеха заказа workshop_id) ×
-          фактический расход материала на товар
+          фактический расход материала на товар.
+          Отклоняется (409), если за текущую открытую смену закройщика уже исчерпан лимит
+          метража (cutter_daily_limit) или число уникальных рулонов тюля (max_fabric_rolls_per_shift)
+          из настроек цеха — оба лимита считаются только в пределах текущей смены
     POST /  { action: 'take_order', userId }
-        - швея получает в работу самый старый заказ из "Раскроено" (по времени раскроя, FIFO,
-          без привязки к цеху). Атомарная операция (FOR UPDATE SKIP LOCKED) исключает дубли
-          при одновременных нажатиях. Назначает заказ на userId, переводит в "В работе"
+        - швея получает в работу заказ из "Раскроено". Порядок выборки зависит от настроек
+          ЦЕХА текущей открытой смены швеи: orders_filter (all/fbo/fbs — ограничивает выборку),
+          orders_cluster_priority (приоритетный FBO-кластер идёт первым), orders_priority
+          (ozon_first/wb_first — соответствующий маркетплейс идёт первым), при равенстве —
+          FIFO по времени раскроя (cut_at). Атомарная операция (FOR UPDATE SKIP LOCKED)
+          исключает дубли при одновременных нажатиях. Назначает заказ на userId, переводит
+          в "В работе", фиксирует taken_at.
+          Отклоняется (409), если: у швеи уже max_quantity_orders_to_seamstress заказов "В
+          работе"; за текущую смену исчерпан лимит метража (seamstress_daily_limit); не прошло
+          нужное время (timeout_200..800 по ширине последнего взятого заказа) после первых
+          max_quantity_orders_without_timeout взятий без задержки. Лимиты/таймаут действуют
+          только при наличии открытой рабочей смены (shift_sessions) — без неё не применяются
     POST /  { action: 'send_to_stickering', id, rollId }
         - швея указывает рулон тесьмы (должен быть в её цехе/смене), с которого списывается
           тесьма товара, и переводит заказ в статус "Стикеровка". Без указания рулона тесьмы
@@ -72,7 +151,10 @@ def handler(event: dict, context) -> dict:
           на предыдущий этап очереди — "На раскрое" -> "Новый" (снимается и цех, заказ снова
           доступен любому закройщику по общей очереди), "В работе" -> "Раскроено" (цех и время
           раскроя cut_at не меняются, заказ остаётся на своём месте в FIFO-очереди для швей).
-          Для остальных статусов отмена недоступна (409)
+          Для остальных статусов отмена недоступна (409).
+          Автоматически начисляет отменившему сотруднику штраф (salary_accruals, type='penalty')
+          на сумму cancel_order_penalty из настроек цеха заказа, если она больше 0 — повторный
+          штраф за тот же заказ не задваивается (уникальный индекс order_id+type)
     POST /  { action: 'delete_order', id }
         - удаляет заказ полностью; снимает его невыплаченные начисления зарплаты (уже
           выплаченные остаются в истории, order_id у них обнуляется)
@@ -446,6 +528,55 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
                 material, width, height, order_workshop_id, order_assigned_user_id = order_row
 
+                # Лимит метража и макс. число рулонов на смену закройщика (cutter_daily_limit,
+                # max_fabric_rolls_per_shift) — считаются в пределах ТЕКУЩЕЙ открытой рабочей
+                # смены (сбрасываются при открытии новой). Без открытой смены не применяются.
+                if order_assigned_user_id:
+                    cur.execute(
+                        "SELECT opened_at FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                        "ORDER BY opened_at DESC LIMIT 1",
+                        (order_assigned_user_id,),
+                    )
+                    cutter_session_row = cur.fetchone()
+                    if cutter_session_row:
+                        session_opened_at = cutter_session_row[0]
+                        cutter_daily_limit = get_setting_float(cur, order_workshop_id, 'cutter_daily_limit', 0)
+                        if cutter_daily_limit > 0:
+                            cur.execute(
+                                "SELECT COALESCE(SUM(width), 0) FROM orders WHERE assigned_user_id = %s "
+                                "AND sewing_status IN ('Раскроено', 'В работе', 'Стикеровка', 'Готовые') AND cut_at >= %s",
+                                (order_assigned_user_id, session_opened_at),
+                            )
+                            cut_meters = float(cur.fetchone()[0] or 0) / 100
+                            if cut_meters >= cutter_daily_limit:
+                                return {
+                                    'statusCode': 409,
+                                    'headers': headers,
+                                    'body': json.dumps({'error': f'Лимит метража на смену исчерпан: {round(cut_meters, 2)}/{cutter_daily_limit} пог.м.'}),
+                                }
+
+                        max_rolls = get_setting_int(cur, order_workshop_id, 'max_fabric_rolls_per_shift', 0)
+                        if max_rolls > 0 and roll_id_chosen:
+                            cur.execute(
+                                "SELECT COUNT(DISTINCT omu.roll_id) FROM order_material_usage omu "
+                                "JOIN orders o ON o.id = omu.order_id "
+                                "WHERE o.assigned_user_id = %s AND o.cut_at >= %s AND omu.roll_id IS NOT NULL",
+                                (order_assigned_user_id, session_opened_at),
+                            )
+                            rolls_used = cur.fetchone()[0]
+                            cur.execute(
+                                "SELECT 1 FROM order_material_usage omu JOIN orders o ON o.id = omu.order_id "
+                                "WHERE o.assigned_user_id = %s AND o.cut_at >= %s AND omu.roll_id = %s LIMIT 1",
+                                (order_assigned_user_id, session_opened_at, int(roll_id_chosen)),
+                            )
+                            roll_already_used = bool(cur.fetchone())
+                            if not roll_already_used and rolls_used >= max_rolls:
+                                return {
+                                    'statusCode': 409,
+                                    'headers': headers,
+                                    'body': json.dumps({'error': f'Лимит рулонов на смену исчерпан: {rolls_used}/{max_rolls}'}),
+                                }
+
                 # Текущая смена закройщика берётся из его ОТКРЫТОЙ shift_sessions (а не из
                 # статичного users.shift_number) — это учитывает гостевой режим: если
                 # сотрудник сегодня зашёл в чужую смену, рулон должен списываться именно с
@@ -652,10 +783,103 @@ def handler(event: dict, context) -> dict:
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
 
+                # Настройки лимитов/таймаута/приоритета берутся по цеху ТЕКУЩЕЙ открытой
+                # рабочей смены швеи (учитывает гостевой режим), при её отсутствии — глобальные.
                 cur.execute(
-                    "SELECT id FROM orders WHERE sewing_status = 'Раскроено' "
-                    "ORDER BY cut_at ASC NULLS LAST, id ASC "
-                    "LIMIT 1 FOR UPDATE SKIP LOCKED"
+                    "SELECT workshop_id, opened_at FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "ORDER BY opened_at DESC LIMIT 1",
+                    (int(user_id),),
+                )
+                session_row = cur.fetchone()
+                session_workshop_id, session_opened_at = session_row if session_row else (None, None)
+
+                # Лимит одновременных заказов "В работе" у швеи (max_quantity_orders_to_seamstress)
+                max_orders = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_to_seamstress', 0)
+                if max_orders > 0:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM orders WHERE assigned_user_id = %s AND sewing_status = 'В работе'",
+                        (int(user_id),),
+                    )
+                    in_work = cur.fetchone()[0]
+                    if in_work >= max_orders:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({'error': f'У вас уже {in_work} заказов в работе (лимит {max_orders}) — сначала отправьте их на стикеровку'}),
+                        }
+
+                # Лимиты и таймаут считаются в пределах ТЕКУЩЕЙ открытой смены (сбрасываются
+                # при открытии новой) — без открытой смены не применяются.
+                if session_opened_at:
+                    daily_limit = get_setting_float(cur, session_workshop_id, 'seamstress_daily_limit', 0)
+                    if daily_limit > 0:
+                        cur.execute(
+                            "SELECT COALESCE(SUM(width), 0) FROM orders WHERE assigned_user_id = %s AND taken_at >= %s",
+                            (int(user_id), session_opened_at),
+                        )
+                        taken_meters = float(cur.fetchone()[0] or 0) / 100
+                        if taken_meters >= daily_limit:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({'error': f'Лимит метража на смену исчерпан: {round(taken_meters, 2)}/{daily_limit} пог.м.'}),
+                            }
+
+                    without_timeout = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_without_timeout', 0)
+                    cur.execute(
+                        "SELECT COUNT(*) FROM orders WHERE assigned_user_id = %s AND taken_at >= %s",
+                        (int(user_id), session_opened_at),
+                    )
+                    taken_count = cur.fetchone()[0]
+                    if taken_count >= without_timeout:
+                        cur.execute(
+                            "SELECT width, EXTRACT(EPOCH FROM (now() - taken_at))::float FROM orders "
+                            "WHERE assigned_user_id = %s AND taken_at IS NOT NULL "
+                            "ORDER BY taken_at DESC LIMIT 1",
+                            (int(user_id),),
+                        )
+                        last_row = cur.fetchone()
+                        if last_row:
+                            last_width, elapsed_sec = last_row
+                            bucket = nearest_timeout_width(last_width)
+                            if bucket:
+                                timeout_sec = get_setting_int(cur, session_workshop_id, f'timeout_{bucket}', 0)
+                                if timeout_sec > 0 and elapsed_sec < timeout_sec:
+                                    wait_left = round(timeout_sec - elapsed_sec)
+                                    return {
+                                        'statusCode': 409,
+                                        'headers': headers,
+                                        'body': json.dumps({'error': f'Подождите ещё {wait_left} сек. перед взятием следующего заказа'}),
+                                    }
+
+                # Приоритет и фильтр заказов (по цеху смены): orders_filter — ограничивает
+                # выборку FBO/FBS, orders_cluster_priority — приоритетный FBO-кластер идёт
+                # первым, orders_priority — сначала OZON/WB, при равенстве — FIFO по cut_at.
+                orders_filter_setting = get_setting(cur, session_workshop_id, 'orders_filter', 'all')
+                cluster_priority = get_setting(cur, session_workshop_id, 'orders_cluster_priority', '')
+                orders_priority_setting = get_setting(cur, session_workshop_id, 'orders_priority', 'by_date')
+
+                where_parts = ["sewing_status = 'Раскроено'"]
+                if orders_filter_setting == 'fbo':
+                    where_parts.append("order_type = 'FBO'")
+                elif orders_filter_setting == 'fbs':
+                    where_parts.append("order_type = 'FBS'")
+
+                order_parts = []
+                if cluster_priority:
+                    cluster_esc = cluster_priority.replace("'", "''")
+                    order_parts.append(f"(cluster = '{cluster_esc}') DESC")
+                if orders_priority_setting == 'ozon_first':
+                    order_parts.append("(marketplace = 'OZON') DESC")
+                elif orders_priority_setting == 'wb_first':
+                    order_parts.append("(marketplace = 'WB') DESC")
+                order_parts.append("cut_at ASC NULLS LAST")
+                order_parts.append("id ASC")
+
+                cur.execute(
+                    f"SELECT id FROM orders WHERE {' AND '.join(where_parts)} "
+                    f"ORDER BY {', '.join(order_parts)} "
+                    f"LIMIT 1 FOR UPDATE SKIP LOCKED"
                 )
                 row = cur.fetchone()
                 if not row:
@@ -667,8 +891,8 @@ def handler(event: dict, context) -> dict:
                 order_id = row[0]
 
                 cur.execute(
-                    f"UPDATE orders SET sewing_status = 'В работе', assigned_user_id = {int(user_id)} "
-                    f"WHERE id = {order_id}"
+                    f"UPDATE orders SET sewing_status = 'В работе', assigned_user_id = {int(user_id)}, "
+                    f"taken_at = now() WHERE id = {order_id}"
                 )
                 log_action(
                     cur, actor_id, actor_name, 'take_order', 'order', order_id,
@@ -826,13 +1050,13 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
 
                 cur.execute(
-                    "SELECT sewing_status FROM orders WHERE id = %s",
+                    "SELECT sewing_status, workshop_id, assigned_user_id FROM orders WHERE id = %s",
                     (int(item_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-                current_status = row[0]
+                current_status, order_workshop_id, order_assigned_user_id = row
 
                 if current_status == 'На раскрое':
                     cur.execute(
@@ -850,6 +1074,17 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': f'Заказ в статусе "{current_status}" нельзя отменить'}),
                     }
+
+                # Автоштраф сотруднику, отменившему заказ (cancel_order_penalty из настроек
+                # цеха заказа) — начисляется сразу при отмене, защищён от дубля уникальным
+                # индексом (order_id, type='penalty'), поэтому повторная отмена того же заказа
+                # штраф не задвоит.
+                penalty = get_setting_float(cur, order_workshop_id, 'cancel_order_penalty', 0)
+                if penalty > 0 and order_assigned_user_id:
+                    apply_penalty(
+                        cur, order_assigned_user_id, penalty,
+                        f'Отмена заказа #{item_id}', order_id=item_id,
+                    )
 
                 log_action(
                     cur, actor_id, actor_name, 'cancel_order', 'order', item_id,

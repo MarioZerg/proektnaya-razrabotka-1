@@ -5,6 +5,44 @@ from datetime import datetime, timedelta
 import psycopg2
 
 
+def get_setting(cur, workshop_id, key, default=None):
+    """Читает значение настройки: сначала переопределение цеха (workshop_settings),
+    если его нет — глобальное значение (system_settings), если и его нет — default."""
+    if workshop_id:
+        cur.execute(
+            "SELECT value FROM workshop_settings WHERE workshop_id = %s AND key = %s",
+            (int(workshop_id), key),
+        )
+        row = cur.fetchone()
+        if row and row[0] not in (None, ''):
+            return row[0]
+    cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
+    row = cur.fetchone()
+    if row and row[0] not in (None, ''):
+        return row[0]
+    return default
+
+
+def apply_penalty(cur, user_id, amount, description, shift_session_id=None):
+    """Начисляет автоматический штраф сотруднику (salary_accruals, type='penalty').
+    Если shift_session_id указан, защищено уникальным индексом (shift_session_id, type) —
+    повторный штраф за ту же смену не создастся (ON CONFLICT DO NOTHING)."""
+    if amount <= 0 or not user_id:
+        return
+    penalty_amount = -abs(float(amount))
+    description_esc = description.replace("'", "''")
+    session_sql = str(int(shift_session_id)) if shift_session_id else 'NULL'
+    conflict_sql = (
+        "ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+        if shift_session_id else ""
+    )
+    cur.execute(
+        f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
+        f"VALUES ({int(user_id)}, 'penalty', {penalty_amount}, {session_sql}, '{description_esc}') "
+        f"{conflict_sql}"
+    )
+
+
 def handler(event: dict, context) -> dict:
     """Управляет открытием/закрытием смен сотрудников (shift_sessions).
 
@@ -45,7 +83,11 @@ def handler(event: dict, context) -> dict:
           и сегодня не выходной — workshopId/shiftNumber ИГНОРИРУЮТСЯ и берутся из профиля
           (нельзя открыть смену в чужом цехе). Если сотрудник свободен (shift_free=true,
           либо его штатная смена/цех выключены) — workshopId/shiftNumber ОБЯЗАТЕЛЬНЫ и должны
-          указывать на активный цех + активную смену, не отмеченную выходным на сегодня
+          указывать на активный цех + активную смену, не отмеченную выходным на сегодня.
+          Опоздание (is_late в shift_sessions) определяется сравнением текущего времени с
+          shift_from сотрудника (если задан) либо working_day_start настроек цеха. При
+          опоздании сразу начисляется автоштраф (salary_accruals, type='penalty') на сумму
+          late_opened_shift_penalty из настроек цеха, если она больше 0
     POST /  { action: 'close', userId }
         - закрывает последнюю открытую смену сотрудника (closed_at = now()).
           Если сотрудник — уборщица (role='cleaner'), начисляет ей оклад за смену
@@ -198,11 +240,11 @@ def handler(event: dict, context) -> dict:
                 if cur.fetchone():
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'У сотрудника уже открыта смена'})}
 
-                cur.execute("SELECT workshop, shift_number, shift_free FROM users WHERE id = %s", (int(user_id),))
+                cur.execute("SELECT workshop, shift_number, shift_free, shift_from FROM users WHERE id = %s", (int(user_id),))
                 u_row = cur.fetchone()
                 if not u_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник не найден'})}
-                home_workshop_name, home_shift_number, shift_free = u_row
+                home_workshop_name, home_shift_number, shift_free, shift_from = u_row
 
                 home_workshop_id = None
                 home_workshop_active = False
@@ -271,11 +313,43 @@ def handler(event: dict, context) -> dict:
                     workshop_id = int(req_workshop_id)
                     shift_number = int(req_shift_number)
 
+                # Опоздание определяется по времени начала: shift_from сотрудника, если задан
+                # в профиле, иначе working_day_start настроек цеха (переопределение цеха или
+                # глобальное значение). Если ни то, ни другое не задано — проверка пропускается.
+                start_time_str = str(shift_from) if shift_from else get_setting(cur, workshop_id, 'working_day_start')
+                is_late = False
+                if start_time_str:
+                    try:
+                        start_time = datetime.strptime(str(start_time_str)[:5], '%H:%M').time()
+                        now_dt = datetime.now()
+                        start_dt = datetime.combine(now_dt.date(), start_time)
+                        is_late = now_dt > start_dt
+                    except ValueError:
+                        is_late = False
+
                 cur.execute(
-                    f"INSERT INTO shift_sessions (user_id, workshop_id, shift_number) "
-                    f"VALUES ({int(user_id)}, {workshop_id}, {shift_number}) RETURNING id, opened_at"
+                    f"INSERT INTO shift_sessions (user_id, workshop_id, shift_number, is_late) "
+                    f"VALUES ({int(user_id)}, {workshop_id}, {shift_number}, {'true' if is_late else 'false'}) "
+                    f"RETURNING id, opened_at"
                 )
                 new_id, opened_at = cur.fetchone()
+
+                # Автоштраф за опоздание (late_opened_shift_penalty из настроек цеха) —
+                # начисляется сразу при открытии, защищён от дубля уникальным индексом
+                # (shift_session_id, type) на случай повторного вызова.
+                if is_late:
+                    penalty = get_setting(cur, workshop_id, 'late_opened_shift_penalty')
+                    try:
+                        penalty_amount = float(penalty) if penalty not in (None, '') else 0
+                    except (TypeError, ValueError):
+                        penalty_amount = 0
+                    if penalty_amount > 0:
+                        apply_penalty(
+                            cur, user_id, penalty_amount,
+                            f'Опоздание при открытии смены (после {start_time_str})',
+                            shift_session_id=new_id,
+                        )
+
                 conn.commit()
                 return {
                     'statusCode': 200,
@@ -285,6 +359,7 @@ def handler(event: dict, context) -> dict:
                         'openedAt': opened_at.isoformat(),
                         'workshopId': workshop_id,
                         'shiftNumber': shift_number,
+                        'isLate': is_late,
                     }),
                 }
 
