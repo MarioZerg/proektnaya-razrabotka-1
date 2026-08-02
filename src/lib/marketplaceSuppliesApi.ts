@@ -174,4 +174,7 @@ export const updateSupply = (
 export const moveSupplyStatus = (supplyId: number, status: SupplyStatus) =>
   postAction({ action: 'move_status', supplyId, status });
 
+export const forceCompleteSupply = (supplyId: number) =>
+  postAction({ action: 'force_complete', supplyId });
+
 export const deleteSupply = (id: number) => postAction({ action: 'delete', id });

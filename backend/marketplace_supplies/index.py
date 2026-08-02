@@ -95,6 +95,11 @@ def handler(event: dict, context) -> dict:
           "На сборке" — просто меняет статус;
           "Отгрузка" — фиксирует ship_to_gazelka_at и переводит все товары в 'shipped';
           "Выполнена" — фиксирует completed_at (и ship_to_marketplace_at, если не указана)
+    POST /  { action: 'force_complete', supplyId }
+        - принудительное закрытие поставки в системе из любого статуса (кроме уже
+          "Выполнена"): используется, если реальная поставка зависла на любом этапе
+          из-за задержек API маркетплейса. Все товары переводятся в 'shipped',
+          фиксируются все даты этапов, поставка сразу переходит в "Выполнена"
     POST /  { action: 'delete', id }
         - удаляет поставку (разрешено только для статуса "Открытая", товары возвращаются на склад)
 
@@ -673,6 +678,36 @@ def handler(event: dict, context) -> dict:
                     extra_sql = ", completed_at = now(), ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now())"
 
                 cur.execute(f"UPDATE marketplace_supplies SET status = '{new_status}'{extra_sql} WHERE id = {int(supply_id)}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'force_complete':
+                supply_id = body_data.get('supplyId')
+                if not supply_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите supplyId'})}
+
+                cur.execute("SELECT status FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
+                if row[0] == 'Выполнена':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Поставка уже выполнена'})}
+
+                cur.execute(
+                    "SELECT goods_warehouse_id FROM marketplace_supply_items WHERE supply_id = %s",
+                    (int(supply_id),),
+                )
+                goods_ids = [r[0] for r in cur.fetchall()]
+                for gid in goods_ids:
+                    cur.execute(f"UPDATE goods_warehouse SET status = 'shipped', shipped_at = COALESCE(shipped_at, now()) WHERE id = {gid}")
+
+                cur.execute(
+                    f"UPDATE marketplace_supplies SET status = 'Выполнена', "
+                    f"ship_to_gazelka_at = COALESCE(ship_to_gazelka_at, now()), "
+                    f"completed_at = now(), "
+                    f"ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now()) "
+                    f"WHERE id = {int(supply_id)}"
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 

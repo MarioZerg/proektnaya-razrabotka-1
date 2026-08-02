@@ -60,6 +60,13 @@
       "path": "/",
       "body": { "action": "add_order_to_box", "orderNumber": "TEST-001" },
       "expectedStatus": 400
+    },
+    {
+      "name": "Force complete without supplyId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "force_complete" },
+      "expectedStatus": 400
     }
   ]
 }

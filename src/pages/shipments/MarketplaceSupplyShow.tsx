@@ -8,6 +8,17 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import {
   Table,
   TableBody,
   TableCell,
@@ -23,6 +34,7 @@ import {
   scanOrderToSupply,
   updateSupply,
   moveSupplyStatus,
+  forceCompleteSupply,
   deleteSupply,
   supplyStatusFlow,
   type SupplyDetail,
@@ -30,6 +42,7 @@ import {
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import {
   formatDateTime,
+  formatDuration,
   marketplaceLogo,
   statusVariant,
 } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
@@ -55,6 +68,14 @@ const MarketplaceSupplyShow = () => {
   const [scanOrderNumber, setScanOrderNumber] = useState('');
   const [scanning, setScanning] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
+
+  const [forceCompleting, setForceCompleting] = useState(false);
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   const load = () => {
     setLoading(true);
@@ -139,6 +160,19 @@ const MarketplaceSupplyShow = () => {
     }
   };
 
+  const handleForceComplete = async () => {
+    setForceCompleting(true);
+    try {
+      await forceCompleteSupply(supplyId);
+      toast({ title: 'Поставка закрыта принудительно' });
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setForceCompleting(false);
+    }
+  };
+
   const handleDelete = async () => {
     try {
       await deleteSupply(supplyId);
@@ -189,6 +223,13 @@ const MarketplaceSupplyShow = () => {
             <p className="mt-1 text-sm text-muted-foreground">
               Создана {formatDateTime(supply.createdAt)}
               {supply.createdByName && ` — ${supply.createdByName}`}
+              {supply.type === 'FBS' && supply.status !== 'Выполнена' && (
+                <>
+                  {' '}
+                  · на сборке{' '}
+                  <span className="font-medium text-foreground">{formatDuration(supply.createdAt, now)}</span>
+                </>
+              )}
             </p>
           </div>
           <div className="flex gap-2">
@@ -198,6 +239,30 @@ const MarketplaceSupplyShow = () => {
                 Удалить
               </Button>
             )}
+            {supply.type === 'FBS' && supply.status !== 'Выполнена' && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" disabled={forceCompleting}>
+                    <Icon name="ShieldAlert" size={16} className="mr-2" />
+                    Закрыть принудительно
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Закрыть поставку принудительно?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Поставка сразу перейдёт в статус «Выполнена» в нашей системе, все товары будут
+                      отмечены отгруженными. Используйте это, если поставка зависла из-за задержек
+                      на стороне маркетплейса. Действие нельзя отменить.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Отмена</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleForceComplete}>Закрыть принудительно</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
             {nextStatus && (
               <Button onClick={handleMoveStatus} disabled={saving}>
                 <Icon name="ArrowRight" size={16} className="mr-2" />
@@ -206,6 +271,27 @@ const MarketplaceSupplyShow = () => {
             )}
           </div>
         </div>
+
+        {supply.type === 'FBS' && supply.status === 'Отгрузка' && (
+          <Card className="border-border shadow-none">
+            <CardContent className="flex items-center justify-between gap-3 pt-6">
+              <div className="flex items-center gap-2 text-sm">
+                <Icon name="FileText" size={18} className="text-muted-foreground" />
+                <span>Стикер маркетплейса для отгрузки</span>
+              </div>
+              {supply.marketplace === 'WB' ? (
+                <Button variant="outline" size="sm" disabled>
+                  <Icon name="Download" size={14} className="mr-1.5" />
+                  Подгрузится после подключения API
+                </Button>
+              ) : (
+                <span className="text-xs text-muted-foreground">
+                  У OZON FBS нет стикера — только движение товаров по статусам
+                </span>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {supply.type === 'FBO' && (
           <div className="grid gap-6 md:grid-cols-2">

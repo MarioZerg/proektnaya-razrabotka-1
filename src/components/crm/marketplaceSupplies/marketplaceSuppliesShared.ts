@@ -36,3 +36,13 @@ export const readFileAsBase64 = (file: File): Promise<string> =>
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+
+/** Форматирует длительность в виде «2 ч 15 мин» (или «45 мин», если меньше часа). */
+export const formatDuration = (fromIso: string, now: Date) => {
+  const diffMs = Math.max(0, now.getTime() - new Date(fromIso).getTime());
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} мин`;
+  return `${hours} ч ${minutes} мин`;
+};
