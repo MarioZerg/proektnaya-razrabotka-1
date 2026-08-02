@@ -1,0 +1,63 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get salary summary",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get rates list",
+      "method": "GET",
+      "path": "/?rates=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get payouts list",
+      "method": "GET",
+      "path": "/?payouts=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Manual accrual without userId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "manual_accrual" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Penalty without userId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "penalty" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Delete accrual without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "delete_accrual" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Payout without userId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "payout" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Update rate without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "update_rate" },
+      "expectedStatus": 400
+    }
+  ]
+}

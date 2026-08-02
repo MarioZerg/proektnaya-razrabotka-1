@@ -1,10 +1,3 @@
-import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -12,8 +5,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import type { Employee } from '@/lib/usersApi';
+import ManualAccrualDialog from '@/components/crm/finance/ManualAccrualDialog';
+import PayoutDialog from '@/components/crm/finance/PayoutDialog';
 
 interface FinanceToolbarProps {
   employees: Employee[];
@@ -21,6 +17,10 @@ interface FinanceToolbarProps {
   setUserFilter: (value: string) => void;
   typeFilter: string;
   setTypeFilter: (value: string) => void;
+  savingAccrual: boolean;
+  onManualAccrual: (userId: number, amount: number, description: string) => Promise<void>;
+  onPenalty: (userId: number, amount: number, description: string) => Promise<void>;
+  onPayout: (userId: number) => Promise<void>;
 }
 
 const FinanceToolbar = ({
@@ -29,6 +29,10 @@ const FinanceToolbar = ({
   setUserFilter,
   typeFilter,
   setTypeFilter,
+  savingAccrual,
+  onManualAccrual,
+  onPenalty,
+  onPayout,
 }: FinanceToolbarProps) => {
   const handleReset = () => {
     setUserFilter('all');
@@ -38,22 +42,9 @@ const FinanceToolbar = ({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-3">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button className="bg-blue-600 text-white hover:bg-blue-700">
-              Добавить операцию
-              <Icon name="ChevronDown" size={16} className="ml-1.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem>зарплата</DropdownMenuItem>
-            <DropdownMenuItem>бонусы</DropdownMenuItem>
-            <DropdownMenuItem>операция компании</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Button className="bg-blue-600 text-white hover:bg-blue-700">Выплатить зарплату</Button>
-        <Button className="bg-blue-600 text-white hover:bg-blue-700">Выплатить бонусы</Button>
+        <ManualAccrualDialog employees={employees} mode="accrual" saving={savingAccrual} onSubmit={onManualAccrual} />
+        <ManualAccrualDialog employees={employees} mode="penalty" saving={savingAccrual} onSubmit={onPenalty} />
+        <PayoutDialog employees={employees} saving={savingAccrual} onSubmit={onPayout} />
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -62,7 +53,7 @@ const FinanceToolbar = ({
             <SelectValue placeholder="Все" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="all">Все сотрудники</SelectItem>
             {employees.map((e) => (
               <SelectItem key={e.id} value={String(e.id)}>
                 {e.fullName}
@@ -76,14 +67,20 @@ const FinanceToolbar = ({
             <SelectValue placeholder="Все" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Все</SelectItem>
-            <SelectItem value="salary">Операции сотрудников</SelectItem>
-            <SelectItem value="company">Операция компании</SelectItem>
+            <SelectItem value="all">Все типы</SelectItem>
+            <SelectItem value="cutter_cut">Раскрой</SelectItem>
+            <SelectItem value="sewer_piece">Пошив</SelectItem>
+            <SelectItem value="packer_stickering">Стикеровка</SelectItem>
+            <SelectItem value="storekeeper_shift">Оклад кладовщика</SelectItem>
+            <SelectItem value="cleaner_shift">Оклад уборщицы</SelectItem>
+            <SelectItem value="admin_daily">Оклад администратора</SelectItem>
+            <SelectItem value="manual">Ручное начисление</SelectItem>
+            <SelectItem value="penalty">Штраф</SelectItem>
           </SelectContent>
         </Select>
 
-        <Button variant="outline">Фильтр</Button>
         <Button variant="ghost" onClick={handleReset}>
+          <Icon name="X" size={14} className="mr-1" />
           Сбросить
         </Button>
       </div>

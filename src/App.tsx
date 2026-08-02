@@ -32,6 +32,7 @@ import ShiftsCalendar from "./pages/shifts/ShiftsCalendar";
 import SystemSettings from "./pages/settings/SystemSettings";
 import SuppliersSettings from "./pages/settings/SuppliersSettings";
 import MarketplaceItemsSettings from "./pages/settings/MarketplaceItemsSettings";
+import Kiosk from "./pages/Kiosk";
 import { AuthProvider } from "@/context/AuthContext";
 
 const queryClient = new QueryClient();
@@ -71,6 +72,7 @@ const App = () => (
             <Route path="/crm/settings/system" element={<SystemSettings />} />
             <Route path="/crm/settings/suppliers" element={<SuppliersSettings />} />
             <Route path="/crm/settings/marketplace-items" element={<MarketplaceItemsSettings />} />
+            <Route path="/crm/kiosk" element={<Kiosk />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX idx_salary_accruals_daily_cleaner ON salary_accruals(user_id, type, accrued_for) WHERE type = 'cleaner_shift';
+CREATE UNIQUE INDEX idx_salary_accruals_daily_storekeeper ON salary_accruals(user_id, type, accrued_for) WHERE type = 'storekeeper_shift';

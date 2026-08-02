@@ -1,0 +1,431 @@
+import json
+import os
+from datetime import date
+
+import psycopg2
+
+
+def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
+    """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit()."""
+    cur.execute(
+        "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, entity_id, description, details) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            'finance',
+            action,
+            entity_type,
+            int(entity_id) if entity_id not in (None, '') else None,
+            description,
+            json.dumps(details) if details else None,
+        ),
+    )
+
+
+def handler(event: dict, context) -> dict:
+    """Зарплаты сотрудников: тарифы по ролям, начисления за выполненную работу, выплаты,
+    ручные начисления/штрафы админом.
+
+    Тарифы (salary_rates):
+      - cutter (закройщик)     — ставка за 1 пог.м. по каждому материалу типа "Тюль" (material_id)
+      - sewer (швея)           — фиксированная ставка за штуку по ширине товара (width)
+      - packer (упаковщик)     — ставка за пог.м. на стикеровке (общая, material_id/width = NULL)
+      - storekeeper (кладовщик)— оклад за смену (общая ставка)
+      - cleaner (уборщица)     — оклад за смену (общая ставка)
+      - admin (администратор)  — оклад за день (общая ставка)
+
+    Начисления (salary_accruals) создаются другими backend-функциями при наступлении события
+    (раскрой заказа, закрытие стикеровки, закрытие смены и т.д.) — эта функция лишь читает и
+    показывает их, а также позволяет админу создавать ручные начисления/штрафы и удалять
+    начисления за заказы. Дневной оклад администратора создаётся здесь же при каждом GET-запросе
+    (аналогично автозаказу материалов — нет отдельного cron).
+
+    GET  /                                  - сводка для админа: общий баланс начислений,
+                                               начисления за период 1-19 и 20-конец текущего
+                                               месяца (в контексте выплаты в СЛЕДУЮЩЕМ месяце
+                                               10 и 25 числа), список последних операций
+        ?userId=1                            - фильтр по сотруднику
+        ?type=salary|manual|penalty|all       - фильтр по типу начисления
+        ?page=1                              - пагинация (по 50 записей)
+    GET  /?my=1&userId=1                     - для сотрудника: его начисления (с указанием
+                                               заказа) и список последних выплат
+    GET  /?rates=1                            - список тарифов (salary_rates) с названиями
+                                               материалов, для экрана настройки тарифов админом
+    GET  /?payouts=1&userId=1                 - история выплат (все или по сотруднику)
+
+    POST /  { action: 'update_rate', id, rate }
+        - админ меняет ставку тарифа
+    POST /  { action: 'manual_accrual', userId, amount, description }
+        - ручное начисление средств за выполненную работу (admin)
+    POST /  { action: 'penalty', userId, amount, description }
+        - штраф сотруднику: создаёт начисление с отрицательной суммой (type='penalty')
+    POST /  { action: 'delete_accrual', id }
+        - админ удаляет начисление за заказ поштучно (только пока не выплачено)
+    POST /  { action: 'payout', userId }
+        - выплачивает сотруднику ВСЕ его невыплаченные начисления целиком: создаёт запись в
+          salary_payouts на сумму остатка, помечает все accruals paid_at=now()/payout_id
+
+    Args:
+        event: dict с httpMethod, queryStringParameters, body
+        context: объект с request_id
+
+    Returns:
+        dict: HTTP-ответ со сводкой/списком начислений/результатом операции
+    """
+    method = event.get('httpMethod', 'GET')
+
+    if method == 'OPTIONS':
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, X-Auth-Token, X-Session-Id',
+                'Access-Control-Max-Age': '86400',
+            },
+            'body': '',
+        }
+
+    headers = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
+    dsn = os.environ['DATABASE_URL']
+
+    if method == 'GET':
+        params = event.get('queryStringParameters') or {}
+
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+
+            # Дневной оклад администратора — создаём один раз в день при любом заходе сюда.
+            cur.execute(
+                "SELECT sr.rate, u.id FROM salary_rates sr "
+                "CROSS JOIN users u "
+                "WHERE sr.role = 'admin' AND u.role = 'admin' AND u.is_active = true AND sr.rate > 0"
+            )
+            admin_rows = cur.fetchall()
+            for rate, admin_user_id in admin_rows:
+                cur.execute(
+                    "SELECT id FROM salary_accruals WHERE user_id = %s AND type = 'admin_daily' AND accrued_for = CURRENT_DATE",
+                    (admin_user_id,),
+                )
+                if cur.fetchone():
+                    continue
+                cur.execute(
+                    f"INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
+                    f"VALUES ({admin_user_id}, 'admin_daily', {float(rate)}, 'Оклад администратора за день', CURRENT_DATE)"
+                )
+            if admin_rows:
+                conn.commit()
+
+            if params.get('rates'):
+                cur.execute(
+                    "SELECT sr.id, sr.role, sr.material_id, m.name, sr.width, sr.rate "
+                    "FROM salary_rates sr LEFT JOIN materials m ON m.id = sr.material_id "
+                    "ORDER BY sr.role, sr.width NULLS FIRST, m.sort_order NULLS FIRST"
+                )
+                rates = [
+                    {
+                        'id': r[0],
+                        'role': r[1],
+                        'materialId': r[2],
+                        'materialName': r[3],
+                        'width': r[4],
+                        'rate': float(r[5]),
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'rates': rates})}
+
+            if params.get('payouts'):
+                user_id_filter = params.get('userId')
+                cond = f"WHERE sp.user_id = {int(user_id_filter)}" if user_id_filter else ""
+                cur.execute(
+                    f"SELECT sp.id, sp.user_id, u.full_name, sp.amount, sp.paid_at, sp.period_from, sp.period_to "
+                    f"FROM salary_payouts sp JOIN users u ON u.id = sp.user_id "
+                    f"{cond} ORDER BY sp.paid_at DESC LIMIT 100"
+                )
+                payouts = [
+                    {
+                        'id': r[0],
+                        'userId': r[1],
+                        'userName': r[2],
+                        'amount': float(r[3]),
+                        'paidAt': r[4].isoformat(),
+                        'periodFrom': r[5].isoformat() if r[5] else None,
+                        'periodTo': r[6].isoformat() if r[6] else None,
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'payouts': payouts})}
+
+            if params.get('my'):
+                user_id = params.get('userId')
+                if not user_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
+
+                cur.execute(
+                    "SELECT sa.id, sa.type, sa.amount, sa.description, o.order_number, "
+                    "sa.accrued_for, sa.created_at, sa.paid_at "
+                    "FROM salary_accruals sa LEFT JOIN orders o ON o.id = sa.order_id "
+                    "WHERE sa.user_id = %s ORDER BY sa.created_at DESC LIMIT 200",
+                    (int(user_id),),
+                )
+                accruals = [
+                    {
+                        'id': r[0],
+                        'type': r[1],
+                        'amount': float(r[2]),
+                        'description': r[3],
+                        'orderNumber': r[4],
+                        'accruedFor': r[5].isoformat(),
+                        'createdAt': r[6].isoformat(),
+                        'paidAt': r[7].isoformat() if r[7] else None,
+                    }
+                    for r in cur.fetchall()
+                ]
+
+                cur.execute(
+                    "SELECT COALESCE(SUM(amount), 0) FROM salary_accruals WHERE user_id = %s AND paid_at IS NULL",
+                    (int(user_id),),
+                )
+                balance = float(cur.fetchone()[0])
+
+                cur.execute(
+                    "SELECT id, amount, paid_at FROM salary_payouts WHERE user_id = %s "
+                    "ORDER BY paid_at DESC LIMIT 20",
+                    (int(user_id),),
+                )
+                payouts = [
+                    {'id': r[0], 'amount': float(r[1]), 'paidAt': r[2].isoformat()}
+                    for r in cur.fetchall()
+                ]
+
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'accruals': accruals, 'balance': balance, 'payouts': payouts}),
+                }
+
+            user_id_filter = params.get('userId')
+            type_filter = params.get('type')
+            page = int(params.get('page') or 1)
+            per_page = 50
+            offset = (page - 1) * per_page
+
+            conditions = []
+            if user_id_filter:
+                conditions.append(f"sa.user_id = {int(user_id_filter)}")
+            if type_filter and type_filter != 'all':
+                type_esc = type_filter.replace("'", "''")
+                conditions.append(f"sa.type = '{type_esc}'")
+            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+            cur.execute(f"SELECT COUNT(*) FROM salary_accruals sa {where_clause}")
+            total_count = cur.fetchone()[0]
+
+            cur.execute(
+                f"SELECT sa.id, sa.user_id, u.full_name, sa.type, sa.amount, sa.description, "
+                f"o.order_number, sa.accrued_for, sa.created_at, sa.paid_at "
+                f"FROM salary_accruals sa JOIN users u ON u.id = sa.user_id "
+                f"LEFT JOIN orders o ON o.id = sa.order_id "
+                f"{where_clause} "
+                f"ORDER BY sa.created_at DESC LIMIT {per_page} OFFSET {offset}"
+            )
+            operations = [
+                {
+                    'id': r[0],
+                    'userId': r[1],
+                    'userName': r[2],
+                    'type': r[3],
+                    'amount': float(r[4]),
+                    'description': r[5],
+                    'orderNumber': r[6],
+                    'accruedFor': r[7].isoformat(),
+                    'createdAt': r[8].isoformat(),
+                    'paidAt': r[9].isoformat() if r[9] else None,
+                }
+                for r in cur.fetchall()
+            ]
+
+            cur.execute("SELECT COALESCE(SUM(amount), 0) FROM salary_accruals WHERE paid_at IS NULL")
+            total_unpaid = float(cur.fetchone()[0])
+
+            today = date.today()
+            if today.day >= 20:
+                period1_from = today.replace(day=20)
+                if today.month == 12:
+                    period1_to = date(today.year + 1, 1, 1)
+                else:
+                    period1_to = date(today.year, today.month + 1, 1)
+            else:
+                if today.month == 1:
+                    period1_from = date(today.year - 1, 12, 20)
+                else:
+                    period1_from = date(today.year, today.month - 1, 20)
+                period1_to = today.replace(day=1)
+
+            period2_from = today.replace(day=1)
+            period2_to = today.replace(day=min(20, 28))
+
+            cur.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM salary_accruals WHERE accrued_for >= %s AND accrued_for < %s",
+                (period1_from, period1_to),
+            )
+            period1_total = float(cur.fetchone()[0])
+
+            cur.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM salary_accruals WHERE accrued_for >= %s AND accrued_for < %s",
+                (period2_from, today.replace(day=20) if today.day < 20 else period2_to),
+            )
+            period2_total = float(cur.fetchone()[0])
+        finally:
+            conn.close()
+
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': json.dumps({
+                'operations': operations,
+                'totalCount': total_count,
+                'totalPages': max(1, (total_count + per_page - 1) // per_page),
+                'totalUnpaid': total_unpaid,
+                'period1Total': period1_total,
+                'period2Total': period2_total,
+            }),
+        }
+
+    if method == 'POST':
+        body_data = json.loads(event.get('body') or '{}')
+        action = body_data.get('action')
+        actor_id = body_data.get('actorId')
+        actor_name = body_data.get('actorName')
+
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+
+            if action == 'update_rate':
+                rate_id = body_data.get('id')
+                rate = body_data.get('rate')
+                if not rate_id or rate in (None, ''):
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id и rate'})}
+
+                cur.execute(f"UPDATE salary_rates SET rate = {float(rate)}, updated_at = now() WHERE id = {int(rate_id)}")
+                log_action(
+                    cur, actor_id, actor_name, 'update_rate', 'salary_rate', rate_id,
+                    f'Изменил тариф #{rate_id} на {rate}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'manual_accrual':
+                user_id = body_data.get('userId')
+                amount = body_data.get('amount')
+                description = (body_data.get('description') or '').strip()
+                if not user_id or amount in (None, '') or not description:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите сотрудника, сумму и описание'}),
+                    }
+
+                description_esc = description.replace("'", "''")
+                actor_id_sql = int(actor_id) if actor_id not in (None, '') else 'NULL'
+                cur.execute(
+                    f"INSERT INTO salary_accruals (user_id, type, amount, description, created_by) "
+                    f"VALUES ({int(user_id)}, 'manual', {float(amount)}, '{description_esc}', {actor_id_sql}) "
+                    f"RETURNING id"
+                )
+                new_id = cur.fetchone()[0]
+                log_action(
+                    cur, actor_id, actor_name, 'manual_accrual', 'salary_accrual', new_id,
+                    f'Ручное начисление сотруднику #{user_id}: {amount} ({description})',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
+
+            if action == 'penalty':
+                user_id = body_data.get('userId')
+                amount = body_data.get('amount')
+                description = (body_data.get('description') or '').strip()
+                if not user_id or amount in (None, '') or not description:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите сотрудника, сумму и описание'}),
+                    }
+
+                penalty_amount = -abs(float(amount))
+                description_esc = description.replace("'", "''")
+                actor_id_sql = int(actor_id) if actor_id not in (None, '') else 'NULL'
+                cur.execute(
+                    f"INSERT INTO salary_accruals (user_id, type, amount, description, created_by) "
+                    f"VALUES ({int(user_id)}, 'penalty', {penalty_amount}, '{description_esc}', {actor_id_sql}) "
+                    f"RETURNING id"
+                )
+                new_id = cur.fetchone()[0]
+                log_action(
+                    cur, actor_id, actor_name, 'penalty', 'salary_accrual', new_id,
+                    f'Штраф сотруднику #{user_id}: {penalty_amount} ({description})',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
+
+            if action == 'delete_accrual':
+                accrual_id = body_data.get('id')
+                if not accrual_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+                cur.execute("SELECT paid_at FROM salary_accruals WHERE id = %s", (int(accrual_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Начисление не найдено'})}
+                if row[0] is not None:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Нельзя удалить уже выплаченное начисление'})}
+
+                cur.execute("DELETE FROM salary_accruals WHERE id = %s", (int(accrual_id),))
+                log_action(
+                    cur, actor_id, actor_name, 'delete_accrual', 'salary_accrual', accrual_id,
+                    f'Удалил начисление #{accrual_id}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'payout':
+                user_id = body_data.get('userId')
+                if not user_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
+
+                cur.execute(
+                    "SELECT COALESCE(SUM(amount), 0) FROM salary_accruals WHERE user_id = %s AND paid_at IS NULL",
+                    (int(user_id),),
+                )
+                balance = float(cur.fetchone()[0])
+                if balance <= 0:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Нет начислений к выплате'})}
+
+                actor_id_sql = int(actor_id) if actor_id not in (None, '') else 'NULL'
+                cur.execute(
+                    f"INSERT INTO salary_payouts (user_id, amount, paid_by) "
+                    f"VALUES ({int(user_id)}, {balance}, {actor_id_sql}) RETURNING id, paid_at"
+                )
+                payout_id, paid_at = cur.fetchone()
+
+                cur.execute(
+                    f"UPDATE salary_accruals SET paid_at = '{paid_at.isoformat()}', payout_id = {payout_id} "
+                    f"WHERE user_id = {int(user_id)} AND paid_at IS NULL"
+                )
+
+                log_action(
+                    cur, actor_id, actor_name, 'payout', 'salary_payout', payout_id,
+                    f'Выплатил сотруднику #{user_id} {balance}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': payout_id, 'amount': balance})}
+
+            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
+        finally:
+            conn.close()
+
+    return {'statusCode': 405, 'headers': headers, 'body': json.dumps({'error': 'Method not allowed'})}

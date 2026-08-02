@@ -42,6 +42,9 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'create_manual', orderNumber, marketplace, orderType, cluster?, product }
     POST /  { action: 'update_order', id, orderNumber?, marketplace?, orderType?, status?, product?,
               sewingStatus?, assignedUserId?, workshopId? }
+        - если sewingStatus вручную возвращается на "Новый"/"На раскрое" — снимается
+          невыплаченное начисление закройщику за раскрой этого заказа (salary_accruals,
+          type='cutter_cut'), как если бы заказ убрали из раскроя
     POST /  { action: 'take_stack', userId, workshopId, shiftNumber }
         - закройщик берёт стек заказов из статуса "Новый": количество берётся из настройки
           цеха max_quantity_orders_to_cutter (или глобальной system_settings, по умолчанию 20).
@@ -51,7 +54,9 @@ def handler(event: dict, context) -> dict:
         - переводит заказ в статус "Раскроено". Тюль списывается с указанного закройщиком
           рулона rollId (должен быть в его цехе/смене), упаковка (этикетки, пакеты) списывается
           автоматически по FIFO со склада. Тесьма (Аксессуары) НЕ списывается на этом этапе —
-          её позже указывает швея перед отправкой на стикеровку
+          её позже указывает швея перед отправкой на стикеровку.
+          Начисляет закройщику зарплату (salary_accruals, type='cutter_cut'): ставка за 1 пог.м.
+          материала тюля (salary_rates, role='cutter') × фактический расход материала на товар
     POST /  { action: 'take_order', userId }
         - швея получает в работу самый старый заказ из "Раскроено" (по времени раскроя, FIFO,
           без привязки к цеху). Атомарная операция (FOR UPDATE SKIP LOCKED) исключает дубли
@@ -68,6 +73,8 @@ def handler(event: dict, context) -> dict:
           раскроя cut_at не меняются, заказ остаётся на своём месте в FIFO-очереди для швей).
           Для остальных статусов отмена недоступна (409)
     POST /  { action: 'delete_order', id }
+        - удаляет заказ полностью; снимает его невыплаченные начисления зарплаты (уже
+          выплаченные остаются в истории, order_id у них обнуляется)
 
     Args:
         event: dict с httpMethod, body
@@ -389,9 +396,15 @@ def handler(event: dict, context) -> dict:
                         fields.append("completed_at = now()")
                 if 'product' in body_data:
                     fields.append(f"product = '{str(body_data['product']).replace(chr(39), chr(39)*2)}'")
+                revert_cutter_accrual = False
                 if 'sewingStatus' in body_data:
                     sewing_status_val = str(body_data['sewingStatus']).replace(chr(39), chr(39) * 2)
                     fields.append(f"sewing_status = '{sewing_status_val}'")
+                    # Если заказ вручную возвращают ДО этапа "Раскроено" — начисление
+                    # закройщику за раскрой этого заказа снимается (as per ТЗ: "в случае
+                    # удаления из раскроя начисления пропадают")
+                    if body_data['sewingStatus'] in ('Новый', 'На раскрое'):
+                        revert_cutter_accrual = True
                 if 'assignedUserId' in body_data:
                     val = body_data['assignedUserId']
                     fields.append(f"assigned_user_id = {int(val) if val not in (None, '') else 'NULL'}")
@@ -402,6 +415,13 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 
                 cur.execute(f"UPDATE orders SET {', '.join(fields)} WHERE id = {int(item_id)}")
+
+                if revert_cutter_accrual:
+                    cur.execute(
+                        "DELETE FROM salary_accruals WHERE order_id = %s AND type = 'cutter_cut' AND paid_at IS NULL",
+                        (int(item_id),),
+                    )
+
                 log_action(
                     cur, actor_id, actor_name, 'update_order', 'order', item_id,
                     f'Изменил заказ #{item_id}',
@@ -578,6 +598,30 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now() WHERE id = {int(item_id)}"
                 )
+
+                # Начисление закройщику: ставка за 1 пог.м. по материалу тюля (salary_rates,
+                # role='cutter'). Если заказ позже удалят из раскроя (cancel_order/delete_order),
+                # начисление снимается там же.
+                if fabric_material_id and order_assigned_user_id:
+                    fabric_qty = next((q for m, q in needed if m == fabric_material_id), None)
+                    if fabric_qty:
+                        cur.execute(
+                            "SELECT rate FROM salary_rates WHERE role = 'cutter' AND material_id = %s",
+                            (fabric_material_id,),
+                        )
+                        rate_row = cur.fetchone()
+                        rate = float(rate_row[0]) if rate_row else 0
+                        if rate > 0:
+                            cur.execute("SELECT name FROM materials WHERE id = %s", (fabric_material_id,))
+                            mat_name = cur.fetchone()[0]
+                            amount = round(float(fabric_qty) * rate, 2)
+                            cur.execute(
+                                f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                                f"VALUES ({order_assigned_user_id}, 'cutter_cut', {amount}, {int(item_id)}, "
+                                f"'Раскрой заказа #{item_id} ({mat_name}) - {fabric_qty} пог.м.') "
+                                f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
+                            )
+
                 log_action(
                     cur, actor_id, actor_name, 'cut', 'order', item_id,
                     f'Раскроил заказ #{item_id}',
@@ -790,6 +834,15 @@ def handler(event: dict, context) -> dict:
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                # Удаление заказа снимает его невыплаченные начисления зарплаты (закройщику
+                # за раскрой, швее/упаковщице за готовый товар). Уже выплаченные начисления
+                # сохраняются в истории — order_id у них обнуляется, чтобы не нарушать внешний ключ
+                cur.execute(
+                    "DELETE FROM salary_accruals WHERE order_id = %s AND paid_at IS NULL", (int(item_id),)
+                )
+                cur.execute(
+                    "UPDATE salary_accruals SET order_id = NULL WHERE order_id = %s", (int(item_id),)
+                )
                 cur.execute(f"DELETE FROM orders WHERE id = {int(item_id)}")
                 log_action(
                     cur, actor_id, actor_name, 'delete_order', 'order', item_id,

@@ -7,23 +7,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-} from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
-import { formatMoney, mockPayouts } from '@/components/crm/finance/financeShared';
-
-const totalPages = 72;
+import type { SalaryPayout } from '@/lib/salaryApi';
+import { formatDateTime, formatMoney } from '@/components/crm/finance/financeShared';
 
 interface SalaryPayoutsTableProps {
-  page: number;
-  setPage: (page: number) => void;
+  payouts: SalaryPayout[];
+  loading: boolean;
 }
 
-const SalaryPayoutsTable = ({ page, setPage }: SalaryPayoutsTableProps) => {
+const SalaryPayoutsTable = ({ payouts, loading }: SalaryPayoutsTableProps) => {
   return (
     <Card className="border-border shadow-none">
       <CardHeader>
@@ -37,66 +30,36 @@ const SalaryPayoutsTable = ({ page, setPage }: SalaryPayoutsTableProps) => {
                 <TableHead className="text-primary-foreground">#</TableHead>
                 <TableHead className="text-primary-foreground">Дата выплаты</TableHead>
                 <TableHead className="text-primary-foreground">Сумма</TableHead>
-                <TableHead className="text-primary-foreground">Название</TableHead>
+                <TableHead className="text-primary-foreground">Сотрудник</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {mockPayouts.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>{p.id}</TableCell>
-                  <TableCell>{p.paidAt}</TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    {formatMoney(p.amount)} <Icon name="Coins" size={12} className="inline" />
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center text-sm text-muted-foreground">
+                    <Icon name="Loader2" size={16} className="mr-2 inline animate-spin" />
+                    Загрузка...
                   </TableCell>
-                  <TableCell>{p.name}</TableCell>
                 </TableRow>
-              ))}
+              ) : payouts.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center text-sm text-muted-foreground">
+                    Выплат пока не было
+                  </TableCell>
+                </TableRow>
+              ) : (
+                payouts.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell>{p.id}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(p.paidAt)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatMoney(p.amount)} ₽</TableCell>
+                    <TableCell>{p.userName}</TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </div>
-
-        <Pagination>
-          <PaginationContent>
-            <PaginationItem>
-              <PaginationLink onClick={() => setPage(Math.max(1, page - 1))} className="cursor-pointer">
-                <Icon name="ChevronLeft" size={16} />
-              </PaginationLink>
-            </PaginationItem>
-            {[1, 2, 3, 4, 5, 6].map((p) => (
-              <PaginationItem key={p}>
-                <PaginationLink
-                  isActive={p === page}
-                  onClick={() => setPage(p)}
-                  className="cursor-pointer"
-                >
-                  {p}
-                </PaginationLink>
-              </PaginationItem>
-            ))}
-            <PaginationItem>
-              <span className="px-2 text-sm text-muted-foreground">...</span>
-            </PaginationItem>
-            {[totalPages - 1, totalPages].map((p) => (
-              <PaginationItem key={p}>
-                <PaginationLink
-                  isActive={p === page}
-                  onClick={() => setPage(p)}
-                  className="cursor-pointer"
-                >
-                  {p}
-                </PaginationLink>
-              </PaginationItem>
-            ))}
-            <PaginationItem>
-              <PaginationLink
-                onClick={() => setPage(Math.min(totalPages, page + 1))}
-                className="cursor-pointer"
-              >
-                <Icon name="ChevronRight" size={16} />
-              </PaginationLink>
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
       </CardContent>
     </Card>
   );

@@ -1,0 +1,93 @@
+import { useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import Icon from '@/components/ui/icon';
+import { roleLabels, type Role } from '@/lib/roles';
+import type { SalaryRate } from '@/lib/salaryApi';
+import { roleRateLabels } from '@/components/crm/finance/financeShared';
+
+interface SalaryRatesCardProps {
+  rates: SalaryRate[];
+  loading: boolean;
+  onUpdate: (id: number, rate: number) => Promise<void>;
+}
+
+const RateRow = ({ rate, onUpdate }: { rate: SalaryRate; onUpdate: (id: number, rate: number) => Promise<void> }) => {
+  const [value, setValue] = useState(String(rate.rate));
+  const [saving, setSaving] = useState(false);
+  const dirty = value !== String(rate.rate);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onUpdate(rate.id, Number(value));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const label = rate.materialName || (rate.width ? `${rate.width} см` : null);
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-border p-2.5">
+      <span className="text-sm">{label || '—'}</span>
+      <div className="flex items-center gap-1.5">
+        <Input
+          type="number"
+          step="0.01"
+          min="0"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className="h-8 w-24"
+        />
+        <span className="text-xs text-muted-foreground">₽</span>
+        {dirty && (
+          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={handleSave} disabled={saving}>
+            {saving ? <Icon name="Loader2" size={14} className="animate-spin" /> : <Icon name="Check" size={14} />}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const SalaryRatesCard = ({ rates, loading, onUpdate }: SalaryRatesCardProps) => {
+  const roleOrder: Role[] = ['cutter', 'sewer', 'packer', 'storekeeper', 'cleaner', 'admin'];
+
+  return (
+    <Card className="border-border shadow-none">
+      <CardHeader>
+        <CardTitle className="text-base">Тарифы по ролям</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Icon name="Loader2" size={16} className="animate-spin" />
+            Загрузка...
+          </div>
+        ) : (
+          roleOrder.map((role) => {
+            const roleRates = rates.filter((r) => r.role === role);
+            if (roleRates.length === 0) return null;
+            return (
+              <div key={role} className="space-y-2">
+                <div>
+                  <p className="text-sm font-semibold">{roleLabels[role]}</p>
+                  <p className="text-xs text-muted-foreground">{roleRateLabels[role]}</p>
+                </div>
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {roleRates.map((rate) => (
+                    <RateRow key={rate.id} rate={rate} onUpdate={onUpdate} />
+                  ))}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+export default SalaryRatesCard;

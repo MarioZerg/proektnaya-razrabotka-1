@@ -1,0 +1,29 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get order without orderNumber fails",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 400
+    },
+    {
+      "name": "Get non-existing order fails",
+      "method": "GET",
+      "path": "/?orderNumber=NON-EXISTING-999",
+      "expectedStatus": 404
+    },
+    {
+      "name": "Close order without orderId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "close_order" },
+      "expectedStatus": 400
+    }
+  ]
+}

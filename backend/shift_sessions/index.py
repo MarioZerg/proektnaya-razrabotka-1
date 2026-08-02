@@ -22,7 +22,9 @@ def handler(event: dict, context) -> dict:
         - открывает смену сотруднику (создаёт запись с closed_at = NULL).
           Если у сотрудника уже есть открытая смена — отклоняется (409)
     POST /  { action: 'close', userId }
-        - закрывает последнюю открытую смену сотрудника (closed_at = now())
+        - закрывает последнюю открытую смену сотрудника (closed_at = now()).
+          Если сотрудник — уборщица (role='cleaner'), начисляет ей оклад за смену
+          (salary_accruals, type='cleaner_shift', ставка из salary_rates role='cleaner')
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -157,8 +159,24 @@ def handler(event: dict, context) -> dict:
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Открытой смены не найдено'})}
+                session_id = row[0]
 
-                cur.execute("UPDATE shift_sessions SET closed_at = now() WHERE id = %s", (row[0],))
+                cur.execute("UPDATE shift_sessions SET closed_at = now() WHERE id = %s", (session_id,))
+
+                # Уборщица получает оклад за смену при её закрытии (salary_rates, role='cleaner')
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(user_id),))
+                user_role_row = cur.fetchone()
+                if user_role_row and user_role_row[0] == 'cleaner':
+                    cur.execute("SELECT rate FROM salary_rates WHERE role = 'cleaner'")
+                    rate_row = cur.fetchone()
+                    rate = float(rate_row[0]) if rate_row else 0
+                    if rate > 0:
+                        cur.execute(
+                            f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
+                            f"VALUES ({int(user_id)}, 'cleaner_shift', {rate}, {session_id}, 'Оклад за смену') "
+                            f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                        )
+
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 

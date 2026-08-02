@@ -44,6 +44,30 @@ const productionNav: NavItem[] = [
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
 ];
 
+const packerNav: NavItem[] = [
+  { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
+  {
+    label: 'Инвентаризация',
+    icon: 'Boxes',
+    children: [{ label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' }],
+  },
+  {
+    label: 'Отгрузки',
+    icon: 'Truck',
+    children: [
+      { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
+      { label: 'Передать брак на склад', path: '/crm/shipments/defect-to-warehouse' },
+    ],
+  },
+  {
+    label: 'Маркетплейсы',
+    icon: 'ShoppingBag',
+    children: [{ label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' }],
+  },
+  { label: 'Терминал стикеровки', icon: 'ScanLine', path: '/crm/kiosk' },
+  { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
+];
+
 const storekeeperNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
   {
@@ -156,7 +180,7 @@ const adminNav: NavItem[] = [
 export const navByRole: Record<Role, NavItem[]> = {
   sewer: productionNav,
   cutter: productionNav,
-  packer: productionNav,
+  packer: packerNav,
   storekeeper: storekeeperNav,
   cleaner: cleanerNav,
   admin: adminNav,
