@@ -27,6 +27,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
@@ -38,6 +48,7 @@ import {
   collectScan,
   shipToWorkshop,
   receiveAtWorkshop,
+  deleteShipment,
   type Shipment,
   type ShipmentDetail,
 } from '@/lib/shipmentsApi';
@@ -65,11 +76,14 @@ const ToWorkshop = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const isProduction = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
+  const isAdmin = user?.role === 'admin';
 
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -201,6 +215,21 @@ const ToWorkshop = () => {
       load();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    setDeleting(true);
+    try {
+      await deleteShipment(deleteId);
+      toast({ title: 'Заявка удалена' });
+      setDeleteId(null);
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -428,7 +457,14 @@ const ToWorkshop = () => {
                   <TableRow key={s.id}>
                     <TableCell>{s.id}</TableCell>
                     <TableCell>
-                      <Badge variant={statusVariant[s.status] || 'secondary'}>{s.status}</Badge>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant={statusVariant[s.status] || 'secondary'}>{s.status}</Badge>
+                        {s.isAutoOrder && (
+                          <Badge variant="outline" className="text-xs text-muted-foreground">
+                            Автозаказ
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>{s.workshopName || '—'}</TableCell>
                     <TableCell>{shiftLabel(s.workshopId, s.shiftNumber)}</TableCell>
@@ -436,16 +472,23 @@ const ToWorkshop = () => {
                     <TableCell>{s.comment || '—'}</TableCell>
                     <TableCell>{formatDate(s.createdAt)}</TableCell>
                     <TableCell>
-                      {!isProduction && s.status === 'Новый' && (
-                        <Button size="sm" variant="outline" onClick={() => openShipment(s.id)}>
-                          Собрать
-                        </Button>
-                      )}
-                      {!isProduction && s.status === 'Отправлено' && (
-                        <Button size="sm" onClick={() => handleReceive(s.id)}>
-                          Принять в цехе
-                        </Button>
-                      )}
+                      <div className="flex justify-end gap-2">
+                        {!isProduction && s.status === 'Новый' && (
+                          <Button size="sm" variant="outline" onClick={() => openShipment(s.id)}>
+                            Собрать
+                          </Button>
+                        )}
+                        {!isProduction && s.status === 'Отправлено' && (
+                          <Button size="sm" onClick={() => handleReceive(s.id)}>
+                            Принять в цехе
+                          </Button>
+                        )}
+                        {isAdmin && (s.status === 'Новый' || s.status === 'Отправлено') && (
+                          <Button size="icon" variant="ghost" onClick={() => setDeleteId(s.id)}>
+                            <Icon name="Trash2" size={14} />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -454,6 +497,26 @@ const ToWorkshop = () => {
           </div>
         )}
       </div>
+
+      <AlertDialog open={deleteId !== null} onOpenChange={(open) => !open && setDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить заявку на отгрузку в цех?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Собранные рулоны (если есть) вернутся на склад. Если это был автозаказ —
+              система не создаст новый автозаказ по этому материалу/цеху/смене, пока
+              следующая заявка на эту же комбинацию не будет принята в цехе. Действие
+              нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} disabled={deleting}>
+              {deleting ? 'Удаление...' : 'Удалить'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </CrmLayout>
   );
 };

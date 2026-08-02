@@ -25,6 +25,7 @@ export interface Shipment {
   requestedByName: string | null;
   createdByName: string | null;
   totalQuantity: number;
+  isAutoOrder: boolean;
 }
 
 export interface ShipmentItem {

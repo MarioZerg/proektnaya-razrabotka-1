@@ -1,0 +1,1 @@
+UPDATE shipments SET is_auto_order = true WHERE id = 55;

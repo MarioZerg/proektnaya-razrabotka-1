@@ -49,7 +49,13 @@ def handler(event: dict, context) -> dict:
         items для return_to_supplier / defect_writeoff: [{rollId, quantity}]
         (для to_workshop используйте action 'request_to_workshop')
     POST /  { action: 'delete', id }
-        - запрещено, если документ уже изменил остатки безвозвратно
+        - запрещено, если документ уже изменил остатки безвозвратно.
+          Для to_workshop разрешено только в статусах "Новый"/"Отправлено" (админ);
+          собранные рулоны возвращаются на склад (status='in_storage'). Если удаляемая
+          заявка была автозаказом (is_auto_order=true) — по этому материалу/цеху/смене
+          создаётся блокировка (auto_order_blocks): автозаказ не будет создавать новые
+          заявки на эту комбинацию, пока следующая заявка (созданная вручную) не дойдёт
+          до статуса "Получено" (action 'receive' снимает блокировку)
 
     Подтверждение поставки от поставщика (только type='from_supplier', статус 'Новый'):
     POST /  { action: 'update_pending_supply', id, items: [...], supplierId? }
@@ -117,7 +123,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT s.id, s.type, s.status, s.supplier_id, sup.name, s.workshop_id, w.name, "
                     "s.shift_number, s.comment, s.created_at, s.completed_at, s.requested_by, u.full_name, "
-                    "s.created_by, cu.full_name "
+                    "s.created_by, cu.full_name, s.is_auto_order "
                     "FROM shipments s "
                     "LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                     "LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -171,6 +177,7 @@ def handler(event: dict, context) -> dict:
                     'requestedByName': row[12],
                     'createdBy': row[13],
                     'createdByName': row[14],
+                    'isAutoOrder': row[15],
                     'items': items,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'shipment': detail})}
@@ -202,7 +209,8 @@ def handler(event: dict, context) -> dict:
                 f"s.shift_number, s.comment, s.created_at, s.completed_at, "
                 f"(SELECT COUNT(*) FROM shipment_items si WHERE si.shipment_id = s.id) as items_count, "
                 f"u.full_name, cu.full_name, "
-                f"(SELECT COALESCE(SUM(si.quantity), 0) FROM shipment_items si WHERE si.shipment_id = s.id) as total_qty "
+                f"(SELECT COALESCE(SUM(si.quantity), 0) FROM shipment_items si WHERE si.shipment_id = s.id) as total_qty, "
+                f"s.is_auto_order "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                 f"LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -228,6 +236,7 @@ def handler(event: dict, context) -> dict:
                     'requestedByName': r[12],
                     'createdByName': r[13],
                     'totalQuantity': float(r[14]) if r[14] is not None else 0.0,
+                    'isAutoOrder': r[15],
                 }
                 for r in cur.fetchall()
             ]
@@ -641,14 +650,32 @@ def handler(event: dict, context) -> dict:
                 if not shipment_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите shipmentId'})}
 
-                cur.execute("SELECT type, status FROM shipments WHERE id = %s", (int(shipment_id),))
+                cur.execute("SELECT type, status, workshop_id, shift_number FROM shipments WHERE id = %s", (int(shipment_id),))
                 sh_row = cur.fetchone()
                 if not sh_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заявка не найдена'})}
                 if sh_row[0] != 'to_workshop' or sh_row[1] != 'Отправлено':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявка ещё не отправлена или уже получена'})}
+                workshop_id, shift_number = sh_row[2], sh_row[3]
 
                 cur.execute(f"UPDATE shipments SET status = 'Получено', completed_at = now() WHERE id = {int(shipment_id)}")
+
+                # Успешное получение этой заявки снимает блокировку автозаказа (если она
+                # была наложена ранее удалением админом предыдущей автозаявки на этот же
+                # материал/цех/смену) — автозаказ снова сможет создавать заявки для этой комбинации.
+                cur.execute(
+                    "SELECT DISTINCT material_id FROM shipment_items WHERE shipment_id = %s",
+                    (int(shipment_id),),
+                )
+                material_ids = [r[0] for r in cur.fetchall()]
+                shift_condition = "shift_number = %s" if shift_number is not None else "shift_number IS NULL"
+                for material_id in material_ids:
+                    query_params = (material_id, workshop_id, shift_number) if shift_number is not None else (material_id, workshop_id)
+                    cur.execute(
+                        f"DELETE FROM auto_order_blocks WHERE material_id = %s AND workshop_id = %s AND {shift_condition}",
+                        query_params,
+                    )
+
                 log_action(
                     cur, actor_id, actor_name, 'receive', 'shipment', shipment_id,
                     f'Принял заявку #{shipment_id} в цехе',
@@ -732,11 +759,59 @@ def handler(event: dict, context) -> dict:
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+                cur.execute(
+                    "SELECT type, status, workshop_id, shift_number, is_auto_order FROM shipments WHERE id = %s",
+                    (int(item_id),),
+                )
+                sh_row = cur.fetchone()
+                if not sh_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Документ не найден'})}
+                sh_type, sh_status, sh_workshop_id, sh_shift_number, sh_is_auto = sh_row
+
+                if sh_type == 'to_workshop' and sh_status not in ('Новый', 'Отправлено'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Удалить можно только заявку в статусе "Новый" или "Отправлено"'}),
+                    }
+
+                # Если отправленная заявка уже собрала рулоны (status='Отправлено' или
+                # они привязаны к цеху) — возвращаем их на склад, чтобы удаление не "теряло" материал.
+                if sh_type == 'to_workshop':
+                    cur.execute(
+                        "SELECT roll_id FROM shipment_items WHERE shipment_id = %s AND roll_id IS NOT NULL",
+                        (int(item_id),),
+                    )
+                    roll_ids = [r[0] for r in cur.fetchall()]
+                    for roll_id in roll_ids:
+                        cur.execute(
+                            f"UPDATE rolls SET status = 'in_storage', workshop_id = NULL, shift_number = NULL "
+                            f"WHERE id = {roll_id}"
+                        )
+
+                    # Удаление админом автозаказа блокирует повторный автозаказ по этому
+                    # материалу/цеху/смене, пока следующая (уже неавтоматическая) заявка на
+                    # эту же комбинацию не дойдёт до статуса "Получено" (снимается в action 'receive').
+                    if sh_is_auto and sh_workshop_id is not None:
+                        cur.execute(
+                            "SELECT DISTINCT material_id FROM shipment_items WHERE shipment_id = %s",
+                            (int(item_id),),
+                        )
+                        material_ids = [r[0] for r in cur.fetchall()]
+                        shift_sql = int(sh_shift_number) if sh_shift_number is not None else 'NULL'
+                        actor_id_sql = int(actor_id) if actor_id not in (None, '') else 'NULL'
+                        for material_id in material_ids:
+                            cur.execute(
+                                f"INSERT INTO auto_order_blocks (material_id, workshop_id, shift_number, blocked_by) "
+                                f"VALUES ({material_id}, {sh_workshop_id}, {shift_sql}, {actor_id_sql})"
+                            )
+
                 cur.execute("DELETE FROM shipment_items WHERE shipment_id = %s", (int(item_id),))
                 cur.execute("DELETE FROM shipments WHERE id = %s", (int(item_id),))
                 log_action(
                     cur, actor_id, actor_name, 'delete_shipment', 'shipment', item_id,
-                    f'Удалил документ отгрузки #{item_id}',
+                    f'Удалил документ отгрузки #{item_id}' + (' (автозаказ)' if sh_is_auto else ''),
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

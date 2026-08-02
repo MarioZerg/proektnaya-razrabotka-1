@@ -34,8 +34,11 @@ def handler(event: dict, context) -> dict:
     Автозаказ: при каждом открытии этой страницы (раз настоящего планировщика/cron в
     платформе нет — проверка встроена сюда) для каждой ячейки "материал-цех-смена" с
     остатком меньше порога auto_order_threshold (system_settings, по умолчанию 100)
-    автоматически создаётся заявка на отгрузку в цех (shipments type='to_workshop'),
-    если по этому материалу/цеху/смене ещё нет незакрытой заявки. Управляется настройкой
+    автоматически создаётся заявка на отгрузку в цех (shipments type='to_workshop',
+    is_auto_order=true), если по этому материалу/цеху/смене ещё нет незакрытой заявки
+    и нет активной блокировки (auto_order_blocks — ставится, если админ вручную удалил
+    предыдущий автозаказ по этой же комбинации; снимается, когда следующая заявка на
+    эту комбинацию дойдёт до статуса "Получено"). Управляется настройкой
     auto_order_enabled, количество в заявке — auto_order_quantity (по умолчанию 300).
 
     GET  /                - сводка по всем цехам сразу: для каждого материала показывает
@@ -207,11 +210,24 @@ def handler(event: dict, context) -> dict:
                     if cur.fetchone():
                         continue
 
+                    # Админ мог удалить предыдущий автозаказ по этой же комбинации —
+                    # блокировка снимается только когда следующая (уже ручная) заявка на
+                    # этот материал/цех/смену дойдёт до статуса "Получено" (см. backend/shipments).
+                    block_shift_condition = "shift_number = %s" if shift is not None else "shift_number IS NULL"
+                    block_query_params = (material_id, wid, shift) if shift is not None else (material_id, wid)
+                    cur.execute(
+                        f"SELECT id FROM auto_order_blocks WHERE material_id = %s AND workshop_id = %s "
+                        f"AND {block_shift_condition} LIMIT 1",
+                        block_query_params,
+                    )
+                    if cur.fetchone():
+                        continue
+
                     shift_sql = int(shift) if shift is not None else 'NULL'
                     comment_esc = f"Автозаказ: остаток {remaining} ниже порога {threshold}"
                     cur.execute(
-                        f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment) "
-                        f"VALUES ('to_workshop', 'Новый', {wid}, {shift_sql}, '{comment_esc}') RETURNING id"
+                        f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment, is_auto_order) "
+                        f"VALUES ('to_workshop', 'Новый', {wid}, {shift_sql}, '{comment_esc}', true) RETURNING id"
                     )
                     new_shipment_id = cur.fetchone()[0]
                     cur.execute(

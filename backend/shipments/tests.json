@@ -18,6 +18,20 @@
       "path": "/",
       "body": { "action": "create" },
       "expectedStatus": 400
+    },
+    {
+      "name": "Delete without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "delete" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Delete non-existing shipment fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "delete", "id": 999999 },
+      "expectedStatus": 404
     }
   ]
 }
