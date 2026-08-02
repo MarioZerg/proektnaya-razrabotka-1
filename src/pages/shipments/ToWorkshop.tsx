@@ -15,7 +15,7 @@ import {
 } from '@/lib/shipmentsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
-import { playScanSound } from '@/lib/scanSound';
+import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import RequestMaterialDialog from '@/components/crm/shipments/RequestMaterialDialog';
 import ToWorkshopTable from '@/components/crm/shipments/ToWorkshopTable';
 import AssembleShipmentView from '@/components/crm/shipments/AssembleShipmentView';
@@ -132,6 +132,7 @@ const ToWorkshop = () => {
       const detail = await fetchShipmentDetail(activeShipment.id);
       setActiveShipment(detail);
     } catch (e) {
+      playScanErrorSound();
       toast({ title: 'Ошибка сканирования', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setScanning(false);

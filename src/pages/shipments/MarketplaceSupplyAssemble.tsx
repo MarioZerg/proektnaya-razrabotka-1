@@ -23,7 +23,7 @@ import {
   marketplaceLogo,
   statusVariant,
 } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
-import { playScanSound } from '@/lib/scanSound';
+import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import SupplyBoxCard from '@/components/crm/marketplaceSupplies/SupplyBoxCard';
 import SupplyCandidatesPanel from '@/components/crm/marketplaceSupplies/SupplyCandidatesPanel';
 import PassStickerCard from '@/components/crm/marketplaceSupplies/PassStickerCard';
@@ -99,6 +99,7 @@ const MarketplaceSupplyAssemble = () => {
       load();
       if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
     } catch (e) {
+      playScanErrorSound();
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
   };

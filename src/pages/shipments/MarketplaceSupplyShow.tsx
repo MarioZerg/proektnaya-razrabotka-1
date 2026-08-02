@@ -15,7 +15,7 @@ import {
   type SupplyDetail,
 } from '@/lib/marketplaceSuppliesApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
-import { playScanSound } from '@/lib/scanSound';
+import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFboApplicationCard';
 import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
 import SupplyFboFieldsCard from '@/components/crm/marketplaceSupplies/SupplyFboFieldsCard';
@@ -82,6 +82,7 @@ const MarketplaceSupplyShow = () => {
       setScanOrderNumber('');
       load();
     } catch (e) {
+      playScanErrorSound();
       toast({ title: 'Ошибка сканирования', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setScanning(false);

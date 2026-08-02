@@ -7,7 +7,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskApi';
-import { playScanSound } from '@/lib/scanSound';
+import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 
 const Kiosk = () => {
   const { toast } = useToast();
@@ -29,6 +29,7 @@ const Kiosk = () => {
       playScanSound();
       setOrder(found);
     } catch (e) {
+      playScanErrorSound();
       toast({ title: 'Заказ не найден', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setSearching(false);
