@@ -110,6 +110,45 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
     }
   };
 
+  // Уникальные стикеры коробов (один trbx-стикер может относиться к нескольким заказам).
+  const boxStickers = Array.from(
+    new Map(
+      supply.wbOrders
+        .filter((o) => o.stickerUrl)
+        .map((o) => [o.wbTrbxId || o.stickerUrl!, { url: o.stickerUrl!, label: o.wbTrbxId || '' }])
+    ).values()
+  );
+
+  const handlePrintStickers = () => {
+    const win = window.open('', '_blank');
+    if (!win) {
+      toast({ title: 'Разрешите всплывающие окна для печати', variant: 'destructive' });
+      return;
+    }
+    const title = `Стикеры коробов — поставка ${supply.wbSupplyId || supply.supplyNumber || supplyId}`;
+    const pages = boxStickers
+      .map(
+        (s) => `<div class="page">
+          ${s.label ? `<div class="label">Короб ${s.label}</div>` : ''}
+          <img src="${s.url}" alt="Стикер короба" />
+        </div>`
+      )
+      .join('');
+    win.document.write(
+      `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: system-ui, sans-serif; }
+        .page { display: flex; flex-direction: column; align-items: center; justify-content: center;
+                min-height: 100vh; page-break-after: always; padding: 16px; }
+        .label { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+        img { max-width: 100%; max-height: 90vh; object-fit: contain; }
+        @media print { .page { min-height: auto; height: 100vh; } }
+      </style></head><body onload="window.print()">${pages}</body></html>`
+    );
+    win.document.close();
+  };
+
   useScannerAutoSubmit(scanValue, handleScan, !scanning && canScan);
 
   return (
@@ -128,12 +167,20 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
             </span>
           )}
         </div>
-        {canDeliver && (
-          <Button onClick={handleDeliver} disabled={delivering} className="bg-emerald-600 hover:bg-emerald-700">
-            <Icon name={delivering ? 'Loader2' : 'Truck'} size={16} className={`mr-1.5 ${delivering ? 'animate-spin' : ''}`} />
-            Отправить в доставку
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {boxStickers.length > 0 && (
+            <Button variant="outline" onClick={handlePrintStickers}>
+              <Icon name="Printer" size={16} className="mr-1.5" />
+              Печать всех стикеров ({boxStickers.length})
+            </Button>
+          )}
+          {canDeliver && (
+            <Button onClick={handleDeliver} disabled={delivering} className="bg-emerald-600 hover:bg-emerald-700">
+              <Icon name={delivering ? 'Loader2' : 'Truck'} size={16} className={`mr-1.5 ${delivering ? 'animate-spin' : ''}`} />
+              Отправить в доставку
+            </Button>
+          )}
+        </div>
       </div>
 
       {!wbCreated && (
