@@ -67,6 +67,8 @@ const esc = (s: string | null | undefined): string =>
 export const printGazelkaLabels = (data: PackingLabelData): void => {
   const { plan, supply, boxesCount } = data;
   const total = Math.max(1, boxesCount);
+  // Абсолютный URL логотипа — окно печати живёт на about:blank, относительный путь не сработает.
+  const logoUrl = `${window.location.origin}/gazelka-logo.jpg`;
 
   const pages = Array.from({ length: total }, (_, i) => {
     const boxNo = i + 1;
@@ -74,8 +76,11 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
     return `
       <div class="label">
         <div class="head">
-          <div class="title">Упаковочный лист</div>
-          <div class="zayavka">№ заявки <b>${esc(String(plan.id))}</b></div>
+          <img class="logo" src="${logoUrl}" alt="Газелька" />
+          <div class="headtext">
+            <div class="title">Упаковочный лист</div>
+            <div class="zayavka">№ заявки <b>${esc(String(plan.id))}</b></div>
+          </div>
         </div>
         <table class="info">
           <tr><td>Дата отгрузки:</td><td><b>${dateHuman(plan.shipDate)}</b></td></tr>
@@ -103,7 +108,9 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
       * { box-sizing: border-box; }
       body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #111; }
       .label { width: 100%; padding: 24px; page-break-after: always; }
-      .head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #111; padding-bottom: 8px; }
+      .head { display: flex; align-items: center; gap: 14px; border-bottom: 2px solid #111; padding-bottom: 8px; }
+      .logo { height: 46px; width: auto; }
+      .headtext { display: flex; flex: 1; justify-content: space-between; align-items: baseline; }
       .title { font-size: 22px; font-weight: 700; }
       .zayavka { font-size: 16px; }
       .info { width: 100%; margin: 14px 0; border-collapse: collapse; font-size: 14px; }
