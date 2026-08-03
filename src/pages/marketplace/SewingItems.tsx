@@ -1,352 +1,118 @@
-import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
-import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/context/AuthContext';
-import {
-  fetchOrders,
-  fetchOrderDetail,
-  updateOrder,
-  cutOrder,
-  takeStack,
-  takeOrder,
-  sendToStickering,
-  cancelOrder,
-  type Order,
-  type OrderDetail,
-  type SewingStatus,
-  type TakenOrder,
-} from '@/lib/ordersApi';
-import { fetchEmployees, type Employee } from '@/lib/usersApi';
-import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
-import { fetchWorkshops, fetchWorkshopDetail, type Workshop } from '@/lib/workshopsApi';
-import { fetchRolls, type Roll } from '@/lib/rollsApi';
-import { printCuttingSheet } from '@/lib/printCuttingSheet';
+import type { SewingStatus } from '@/lib/ordersApi';
 import SewingItemsFilters from '@/components/crm/sewingItems/SewingItemsFilters';
 import SewingItemsTable from '@/components/crm/sewingItems/SewingItemsTable';
 import SewingItemDetailDialog from '@/components/crm/sewingItems/SewingItemDetailDialog';
-import { statusTabs } from '@/components/crm/sewingItems/sewingItemsShared';
-
-const TAKE_ORDER_COOLDOWN_MS = 5000;
+import { useSewingItemsData } from '@/components/crm/sewingItems/useSewingItemsData';
+import { useSewingItemsFilters } from '@/components/crm/sewingItems/useSewingItemsFilters';
+import { useSewingItemOrderDetail } from '@/components/crm/sewingItems/useSewingItemOrderDetail';
+import { useSewingItemsQueueActions } from '@/components/crm/sewingItems/useSewingItemsQueueActions';
 
 const SewingItems = () => {
-  const { toast } = useToast();
-  const { user } = useAuth();
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [materials, setMaterials] = useState<Material[]>([]);
-  const [workshops, setWorkshops] = useState<Workshop[]>([]);
-  const [rolls, setRolls] = useState<Roll[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [takingStack, setTakingStack] = useState(false);
-  const [takingOrder, setTakingOrder] = useState(false);
-  const [takeOrderCooldown, setTakeOrderCooldown] = useState(false);
-  const [printQrCuttingEnabled, setPrintQrCuttingEnabled] = useState(true);
-  const [lastTakenStack, setLastTakenStack] = useState<TakenOrder[]>([]);
+  const {
+    user,
+    orders,
+    employees,
+    materials,
+    workshops,
+    rolls,
+    loading,
+    load,
+    printQrCuttingEnabled,
+    isCutter,
+    isSewer,
+    isPacker,
+    isProductionRole,
+    visibleTabs,
+    effectiveWorkshopId,
+    effectiveShiftNumber,
+  } = useSewingItemsData();
 
-  const isCutter = user?.role === 'cutter';
-  const isSewer = user?.role === 'sewer';
-  const isPacker = user?.role === 'packer';
-  const isProductionRole = isSewer || isCutter || isPacker;
-
-  // Конвейер по ролям:
-  //  - закройщик: На раскрое (свои, берёт стеком) → Раскроено → Готовые
-  //  - швея: НЕТ вкладки "На раскрое" (это этап закройщика) — В работе (свои) →
-  //    Раскроено (очередь, откуда берёт заказ) → Стикеровка (только просмотр, отправила и всё) → Готовые
-  //  - упаковщица: НЕТ вкладки "На раскрое" — видит Раскроено (весь материал всех
-  //    закройщиков), В работе (ВСЕ заказы всех швей), Стикеровка (свой этап), Готовые
-  //  - админ/кладовщик: видят всё, включая "Новый"
-  const visibleTabs = useMemo(() => {
-    if (isSewer || isPacker) return statusTabs.filter((t) => t.value !== 'Новый' && t.value !== 'На раскрое');
-    if (isCutter) return statusTabs.filter((t) => t.value !== 'Новый');
-    return statusTabs;
-  }, [isSewer, isPacker, isCutter]);
-
-  const [activeTab, setActiveTab] = useState<SewingStatus>(visibleTabs[0]?.value || 'Новый');
-
-  const [searchQuery, setSearchQuery] = useState('');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [employeeFilter, setEmployeeFilter] = useState('all');
-  const [materialFilter, setMaterialFilter] = useState('all');
-  const [widthFilter, setWidthFilter] = useState('all');
-  const [heightFilter, setHeightFilter] = useState('all');
-  const [workshopFilter, setWorkshopFilter] = useState('all');
-
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [orderDetail, setOrderDetail] = useState<OrderDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [cutting, setCutting] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-
-  // Цех/смена ТЕКУЩЕЙ открытой рабочей смены (может отличаться от штатных в гостевом
-  // режиме) — именно они используются для взятия стека и фильтрации доступных рулонов,
-  // чтобы сотрудник в гостях работал с материалами той смены, куда зашёл.
-  const effectiveWorkshopId = user?.activeWorkshopId ?? user?.workshopId ?? null;
-  const effectiveShiftNumber = user?.activeShiftNumber ?? user?.shiftNumber ?? null;
-
-  const load = () => {
-    setLoading(true);
-    Promise.all([fetchOrders(), fetchEmployees(), fetchMaterialsData(), fetchWorkshops(), fetchRolls({ status: 'in_workshop' })])
-      .then(([ordersData, employeesData, materialsData, workshopsData, rollsData]) => {
-        setOrders(ordersData);
-        setEmployees(employeesData);
-        setMaterials(materialsData.materials);
-        setWorkshops(workshopsData);
-        setRolls(rollsData);
-      })
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  // Настройка "печать листа закройщика при взятии стека" — читается из настроек ТЕКУЩЕГО
-  // цеха закройщика (переопределение цеха или глобальное значение). По умолчанию включена.
-  useEffect(() => {
-    if (!isCutter || !effectiveWorkshopId) return;
-    fetchWorkshopDetail(effectiveWorkshopId).then((w) => {
-      setPrintQrCuttingEnabled((w.settings.print_qr_cutting?.value ?? w.settings.print_qr_cutting?.global ?? 'enabled') !== 'disabled');
-    });
-  }, [isCutter, effectiveWorkshopId]);
-
-  // Упаковщица весь конвейер видит только для просмотра — реальные действия она выполняет
-  // на отдельном терминале стикеровки (Kiosk), а не на этой странице. Швея не может ничего
-  // делать с заказами на вкладке "Стикеровка" — она их только отправила и ждёт закрытия.
-  const isReadOnlyTab =
-    isPacker || (activeTab === 'Раскроено' && (isSewer || isCutter)) || (activeTab === 'Стикеровка' && isSewer);
-
-  const ordersInTab = orders.filter((o) => o.sewingStatus === activeTab);
-
-  const filteredOrders = ordersInTab.filter((o) => {
-    if (searchQuery.trim() && !o.orderNumber.toLowerCase().includes(searchQuery.trim().toLowerCase())) return false;
-    if (typeFilter !== 'all' && o.orderType !== typeFilter) return false;
-    if (employeeFilter !== 'all' && String(o.assignedUserId) !== employeeFilter) return false;
-    if (materialFilter !== 'all' && o.material !== materials.find((m) => String(m.id) === materialFilter)?.name) return false;
-    if (widthFilter !== 'all' && String(o.width) !== widthFilter) return false;
-    if (heightFilter !== 'all' && String(o.height) !== heightFilter) return false;
-    if (workshopFilter !== 'all' && String(o.workshopId) !== workshopFilter) return false;
-    // Владение по вкладкам: закройщик на "На раскрое" видит только свой стек, швея на
-    // "В работе" — только свои заказы. Упаковщица на "В работе" видит ЗАКАЗЫ ВСЕХ швей
-    // (с именами), поэтому под этот фильтр не попадает.
-    if (activeTab === 'На раскрое' && isCutter && o.assignedUserId !== user?.id) return false;
-    if (activeTab === 'В работе' && isSewer && o.assignedUserId !== user?.id) return false;
-    return true;
+  const {
+    activeTab,
+    setActiveTab,
+    page,
+    setPage,
+    searchQuery,
+    setSearchQuery,
+    typeFilter,
+    setTypeFilter,
+    employeeFilter,
+    setEmployeeFilter,
+    materialFilter,
+    setMaterialFilter,
+    widthFilter,
+    setWidthFilter,
+    heightFilter,
+    setHeightFilter,
+    workshopFilter,
+    setWorkshopFilter,
+    isReadOnlyTab,
+    filteredOrders,
+    totalPages,
+    pagedOrders,
+    totalMeters,
+    totalPieces,
+    countForTab,
+    myUnfinishedCount,
+    myInWorkCount,
+  } = useSewingItemsFilters({
+    orders,
+    materials,
+    visibleTabs,
+    isCutter,
+    isSewer,
+    isPacker,
+    userId: user?.id,
   });
 
-  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / 10));
-  const pagedOrders = filteredOrders.slice((page - 1) * 10, page * 10);
+  const {
+    selectedOrder,
+    orderDetail,
+    detailLoading,
+    dialogOpen,
+    setDialogOpen,
+    saving,
+    cutting,
+    cancelling,
+    openDetail,
+    handleAssignUser,
+    handleAssignWorkshop,
+    handleStatusChange,
+    handleCut,
+    handleSendToStickering,
+    handleCancelOrder,
+    myFabricRolls,
+    myTrimRolls,
+  } = useSewingItemOrderDetail({
+    load,
+    isCutter,
+    rolls,
+    effectiveWorkshopId,
+    effectiveShiftNumber,
+  });
 
-  // Итого по текущему отфильтрованному списку (вся вкладка, не только видимая страница):
-  // ширина (width) хранится в см — переводим в погонные метры (п.м.), quantity — штуки.
-  const totalMeters = filteredOrders.reduce((sum, o) => sum + ((o.width || 0) * o.quantity) / 100, 0);
-  const totalPieces = filteredOrders.reduce((sum, o) => sum + o.quantity, 0);
-
-  const countForTab = (status: SewingStatus) => {
-    if (status === 'На раскрое' && isCutter) {
-      return orders.filter((o) => o.sewingStatus === status && o.assignedUserId === user?.id).length;
-    }
-    if (status === 'В работе' && isSewer) {
-      return orders.filter((o) => o.sewingStatus === status && o.assignedUserId === user?.id).length;
-    }
-    return orders.filter((o) => o.sewingStatus === status).length;
-  };
-
-  const myUnfinishedCount = orders.filter(
-    (o) => o.sewingStatus === 'На раскрое' && o.assignedUserId === user?.id
-  ).length;
-
-  const myInWorkCount = orders.filter(
-    (o) => o.sewingStatus === 'В работе' && o.assignedUserId === user?.id
-  ).length;
-
-  const loadDetail = async (orderId: number) => {
-    setDetailLoading(true);
-    try {
-      const detail = await fetchOrderDetail(orderId);
-      setOrderDetail(detail);
-    } finally {
-      setDetailLoading(false);
-    }
-  };
-
-  const openDetail = (order: Order) => {
-    setSelectedOrder(order);
-    setOrderDetail(null);
-    setDialogOpen(true);
-    loadDetail(order.id);
-  };
-
-  const handleAssignUser = async (userId: string) => {
-    if (!selectedOrder) return;
-    setSaving(true);
-    try {
-      await updateOrder(selectedOrder.id, { assignedUserId: userId === 'none' ? null : Number(userId) });
-      toast({ title: 'Сотрудник назначен' });
-      const updated = { ...selectedOrder, assignedUserId: userId === 'none' ? null : Number(userId) };
-      setSelectedOrder(updated);
-      load();
-      loadDetail(selectedOrder.id);
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleAssignWorkshop = async (workshopId: string) => {
-    if (!selectedOrder) return;
-    setSaving(true);
-    try {
-      await updateOrder(selectedOrder.id, { workshopId: workshopId === 'none' ? null : Number(workshopId) });
-      toast({ title: 'Цех назначен' });
-      const updated = { ...selectedOrder, workshopId: workshopId === 'none' ? null : Number(workshopId) };
-      setSelectedOrder(updated);
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleStatusChange = async (status: string) => {
-    if (!selectedOrder) return;
-    setSaving(true);
-    try {
-      await updateOrder(selectedOrder.id, { sewingStatus: status as SewingStatus });
-      toast({ title: 'Статус обновлён' });
-      setSelectedOrder({ ...selectedOrder, sewingStatus: status });
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleCut = async (rollId?: number) => {
-    if (!selectedOrder) return;
-    setCutting(true);
-    try {
-      await cutOrder(selectedOrder.id, rollId);
-      toast({ title: 'Раскрой выполнен', description: 'Тюль списан, тесьму укажет швея перед стикеровкой' });
-      setSelectedOrder({ ...selectedOrder, sewingStatus: 'Раскроено' });
-      load();
-      loadDetail(selectedOrder.id);
-    } catch (e) {
-      toast({
-        title: 'Не удалось выполнить раскрой',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setCutting(false);
-    }
-  };
-
-  const handleSendToStickering = async (rollId?: number) => {
-    if (!selectedOrder || !rollId) return;
-    setCutting(true);
-    try {
-      await sendToStickering(selectedOrder.id, rollId);
-      toast({ title: 'Заказ отправлен на стикеровку', description: 'Тесьма списана с рулона' });
-      setSelectedOrder({ ...selectedOrder, sewingStatus: 'Стикеровка' });
-      load();
-      loadDetail(selectedOrder.id);
-      setDialogOpen(false);
-    } catch (e) {
-      toast({
-        title: 'Не удалось отправить на стикеровку',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setCutting(false);
-    }
-  };
-
-  const handleCancelOrder = async () => {
-    if (!selectedOrder) return;
-    setCancelling(true);
-    try {
-      await cancelOrder(selectedOrder.id);
-      const targetTab = isCutter ? 'Новый' : 'Раскроено';
-      toast({ title: 'Заказ отменён', description: `Заказ возвращён во вкладку «${targetTab}»` });
-      setDialogOpen(false);
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось отменить заказ',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setCancelling(false);
-    }
-  };
-
-  const handleTakeStack = async () => {
-    if (!effectiveWorkshopId) {
-      toast({ title: 'У вас не указан цех — откройте смену на главной странице', variant: 'destructive' });
-      return;
-    }
-    setTakingStack(true);
-    try {
-      const res = await takeStack(user!.id, effectiveWorkshopId, effectiveShiftNumber);
-      toast({ title: `Взято в работу заказов: ${res.count}` });
-      setActiveTab('На раскрое');
-      load();
-      setLastTakenStack(res.orders);
-    } catch (e) {
-      toast({ title: 'Не удалось взять стек', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setTakingStack(false);
-    }
-  };
-
-  const handlePrintTask = () => {
-    if (lastTakenStack.length === 0) return;
-    printCuttingSheet(lastTakenStack, user?.name || '');
-  };
-
-  const handleTakeOrder = async () => {
-    if (!user) return;
-    setTakingOrder(true);
-    setTakeOrderCooldown(true);
-    try {
-      await takeOrder(user.id);
-      toast({ title: 'Заказ получен' });
-      setActiveTab('В работе');
-      load();
-    } catch (e) {
-      toast({ title: 'Не удалось получить заказ', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setTakingOrder(false);
-      setTimeout(() => setTakeOrderCooldown(false), TAKE_ORDER_COOLDOWN_MS);
-    }
-  };
-
-  const rollsInMyWorkshop = rolls.filter(
-    (r) => r.workshopId === effectiveWorkshopId && (!effectiveShiftNumber || r.shiftNumber === effectiveShiftNumber)
-  );
-
-  // Показываем только рулоны материала, который реально нужен для этого товара
-  // (например, для товара "Сетка 200x265" — только рулоны материала "Сетка", не любой тюль)
-  const myFabricRolls = orderDetail?.requiredFabricMaterialId
-    ? rollsInMyWorkshop.filter((r) => r.materialId === orderDetail.requiredFabricMaterialId)
-    : [];
-
-  const myTrimRolls = orderDetail?.requiredTrimMaterialId
-    ? rollsInMyWorkshop.filter((r) => r.materialId === orderDetail.requiredTrimMaterialId)
-    : [];
+  const {
+    takingStack,
+    takingOrder,
+    takeOrderCooldown,
+    lastTakenStack,
+    handleTakeStack,
+    handlePrintTask,
+    handleTakeOrder,
+  } = useSewingItemsQueueActions({
+    userId: user?.id,
+    userName: user?.name,
+    effectiveWorkshopId,
+    effectiveShiftNumber,
+    load,
+    setActiveTab,
+  });
 
   return (
     <CrmLayout>
