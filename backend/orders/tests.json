@@ -34,6 +34,13 @@
       "expectedStatus": 400
     },
     {
+      "name": "Take stack for workshop with no allowed materials fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "take_stack", "userId": 999999, "workshopId": 999999},
+      "expectedStatus": 409
+    },
+    {
       "name": "Cut without id fails",
       "method": "POST",
       "path": "/",

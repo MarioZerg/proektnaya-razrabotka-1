@@ -404,8 +404,44 @@ def handler(event: dict, context) -> dict:
                     row = cur.fetchone()
                 stack_size = int(row[0]) if row and row[0] else 20
 
+                # Цех берёт в раскрой только заказы на РАЗРЕШЁННЫЕ ему материалы
+                # (workshops.allowed_materials — список id материалов, отмеченных в настройках
+                # цеха галочками). Заказ хранит материал текстом (orders.material), поэтому
+                # сопоставляем через названия материалов из справочника. Так цеха не перебивают
+                # заказы друг у друга: заказ на "Вуаль без утяжелителя" уйдёт только тому цеху,
+                # которому этот материал разрешён.
+                cur.execute(
+                    "SELECT allowed_materials FROM workshops WHERE id = %s", (int(workshop_id),)
+                )
+                aw_row = cur.fetchone()
+                allowed_ids = aw_row[0] if aw_row and aw_row[0] else []
+                if isinstance(allowed_ids, str):
+                    allowed_ids = json.loads(allowed_ids or '[]')
+
+                if not allowed_ids:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Для вашего цеха не выбрано ни одного разрешённого материала — обратитесь к администратору'}),
+                    }
+
+                allowed_ids_csv = ','.join(str(int(i)) for i in allowed_ids)
+                cur.execute(
+                    "SELECT name FROM materials WHERE id IN (" + allowed_ids_csv + ")"
+                )
+                allowed_names = [r[0] for r in cur.fetchall()]
+
+                if not allowed_names:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Нет новых заказов для взятия в работу'}),
+                    }
+
+                names_csv = ','.join("'" + n.replace("'", "''") + "'" for n in allowed_names)
                 cur.execute(
                     "SELECT id FROM orders WHERE sewing_status = 'Новый' "
+                    "AND material IN (" + names_csv + ") "
                     "ORDER BY created_at ASC, id ASC LIMIT %s",
                     (stack_size,),
                 )
@@ -415,7 +451,7 @@ def handler(event: dict, context) -> dict:
                     return {
                         'statusCode': 404,
                         'headers': headers,
-                        'body': json.dumps({'error': 'Нет новых заказов для взятия в работу'}),
+                        'body': json.dumps({'error': 'Нет новых заказов на разрешённые вашему цеху материалы'}),
                     }
 
                 ids_csv = ','.join(str(i) for i in order_ids)
@@ -949,6 +985,16 @@ def handler(event: dict, context) -> dict:
                 orders_priority_setting = get_setting(cur, session_workshop_id, 'orders_priority', 'by_date')
 
                 where_parts = ["sewing_status = 'Раскроено'"]
+                # Швея берёт в работу только заказы, раскроенные в ЕЁ цехе (цех текущей
+                # открытой смены) — цеха изолированы: заказ, раскроенный в цехе №2, швея
+                # цеха №1 взять не может. Без открытой смены цех неизвестен — брать нечего.
+                if not session_workshop_id:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Откройте рабочую смену, чтобы брать заказы в работу'}),
+                    }
+                where_parts.append(f"workshop_id = {int(session_workshop_id)}")
                 if orders_filter_setting == 'fbo':
                     where_parts.append("order_type = 'FBO'")
                 elif orders_filter_setting == 'fbs':
