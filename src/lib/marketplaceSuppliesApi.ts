@@ -85,6 +85,8 @@ export interface SupplyDetail extends Supply {
   ozonSupplyOrderId: number | null;
   /** Тип грузоместа OZON FBO при закрытии коробов: 'BOX' (короб) или 'PALLET' (палета). */
   ozonCargoType: string | null;
+  /** id привязанной заявки в сервисе грузоперевозок Газелька (для печати стикеров коробов). */
+  gazelkaPlanId: number | null;
 }
 
 export interface SupplyFilters {
@@ -212,6 +214,7 @@ export const updateSupply = (
     packagingCount: number | null;
     gazelkaPickup: boolean;
     ozonCargoType: 'BOX' | 'PALLET';
+    gazelkaPlanId: number | null;
   }>
 ) => postAction({ action: 'update', supplyId, ...fields });
 

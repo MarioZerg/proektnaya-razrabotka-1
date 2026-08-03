@@ -19,6 +19,7 @@ import { importOzonFboComposition } from '@/lib/ozonFboApi';
 import { useAuth } from '@/context/AuthContext';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFboApplicationCard';
+import GazelkaShippingCard from '@/components/crm/marketplaceSupplies/GazelkaShippingCard';
 import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
 import SupplyFboFieldsCard from '@/components/crm/marketplaceSupplies/SupplyFboFieldsCard';
 import SupplyItemsSection from '@/components/crm/marketplaceSupplies/SupplyItemsSection';
@@ -267,6 +268,8 @@ const MarketplaceSupplyShow = () => {
             importing={importingFbo}
           />
         )}
+
+        {isOzonFbo && <GazelkaShippingCard supply={supply} onReload={load} />}
 
         {supply.type === 'FBO' && !isOzonFbo && (
           <SupplyFboFieldsCard

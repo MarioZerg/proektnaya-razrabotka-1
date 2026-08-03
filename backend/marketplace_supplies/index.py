@@ -203,7 +203,8 @@ def handler(event: dict, context) -> dict:
                     "s.pass_sticker_url, s.pass_sticker_name, "
                     "s.ozon_delivery_method, s.ozon_application_number, s.ozon_status, "
                     "s.supply_date, s.timeslot, s.shipment_type, s.packaging_type, "
-                    "s.packaging_count, s.gazelka_pickup, s.ozon_supply_order_id, s.ozon_cargo_type "
+                    "s.packaging_count, s.gazelka_pickup, s.ozon_supply_order_id, s.ozon_cargo_type, "
+                    "s.gazelka_plan_id "
                     "FROM marketplace_supplies s "
                     "LEFT JOIN users u ON u.id = s.created_by "
                     "WHERE s.id = %s",
@@ -331,6 +332,7 @@ def handler(event: dict, context) -> dict:
                     'wbReadyCount': wb_ready_count,
                     'ozonSupplyOrderId': row[27],
                     'ozonCargoType': row[28],
+                    'gazelkaPlanId': row[29],
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'supply': detail})}
 
@@ -762,6 +764,9 @@ def handler(event: dict, context) -> dict:
                     if ct not in ('BOX', 'PALLET'):
                         ct = 'BOX'
                     fields.append(f"ozon_cargo_type = '{ct}'")
+                if 'gazelkaPlanId' in body_data:
+                    gp = body_data['gazelkaPlanId']
+                    fields.append(f"gazelka_plan_id = {int(gp)}" if gp not in (None, '') else "gazelka_plan_id = NULL")
 
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нечего обновлять'})}
