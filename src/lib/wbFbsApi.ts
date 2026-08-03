@@ -56,6 +56,15 @@ export const scanWbOrderToSupply = (
     product: string;
   }>;
 
+export const removeWbOrderFromSupply = (
+  supplyId: number,
+  orderId: number
+): Promise<{ success: true; orderNumber: string }> =>
+  post({ action: 'remove_order_from_supply', supplyId, orderId }) as Promise<{
+    success: true;
+    orderNumber: string;
+  }>;
+
 export const deliverWbSupply = (
   supplyId: number
 ): Promise<{ success: true; stickersSaved: number; sandbox: boolean }> =>

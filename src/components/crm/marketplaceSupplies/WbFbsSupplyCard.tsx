@@ -15,7 +15,12 @@ import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
-import { createWbSupply, scanWbOrderToSupply, deliverWbSupply } from '@/lib/wbFbsApi';
+import {
+  createWbSupply,
+  scanWbOrderToSupply,
+  deliverWbSupply,
+  removeWbOrderFromSupply,
+} from '@/lib/wbFbsApi';
 
 interface WbFbsSupplyCardProps {
   supply: SupplyDetail;
@@ -34,9 +39,25 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
   const [delivering, setDelivering] = useState(false);
   const scanRef = useRef<HTMLInputElement>(null);
 
+  const [removingId, setRemovingId] = useState<number | null>(null);
+
   const wbCreated = !!supply.wbSupplyId;
   const canScan = wbCreated && (supply.status === 'Открытая' || supply.status === 'На сборке');
   const canDeliver = wbCreated && supply.wbOrders.length > 0 && supply.status === 'На сборке';
+  const canRemove = supply.status === 'Открытая' || supply.status === 'На сборке';
+
+  const handleRemove = async (orderId: number, orderNumber: string) => {
+    setRemovingId(orderId);
+    try {
+      await removeWbOrderFromSupply(supplyId, orderId);
+      toast({ title: `Заказ ${orderNumber} убран из поставки` });
+      onReload();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setRemovingId(null);
+    }
+  };
 
   const handleCreateSupply = async () => {
     setCreatingSupply(true);
@@ -172,6 +193,7 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
                 <TableHead className="text-primary-foreground">Товар</TableHead>
                 <TableHead className="text-primary-foreground">Короб WB</TableHead>
                 <TableHead className="text-primary-foreground">Стикер короба</TableHead>
+                {canRemove && <TableHead className="text-primary-foreground"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -195,6 +217,19 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
                       '—'
                     )}
                   </TableCell>
+                  {canRemove && (
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleRemove(o.orderId, o.orderNumber)}
+                        disabled={removingId === o.orderId}
+                        title="Убрать заказ из поставки"
+                      >
+                        <Icon name={removingId === o.orderId ? 'Loader2' : 'Trash2'} size={14} className={removingId === o.orderId ? 'animate-spin' : ''} />
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

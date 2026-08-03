@@ -253,6 +253,59 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
     return _resp(200, {'success': True, 'orderId': order_id, 'orderNumber': order_number, 'product': product})
 
 
+def handle_remove_order(cur, conn, body_data, api_key, use_sandbox):
+    """Убирает ошибочно отсканированный заказ из WB FBS-поставки: удаляет сборочное задание
+    из поставки на стороне WB (DELETE /api/v3/supplies/{sid}/orders/{orderId}) и снимает
+    связь у нас. Заказ снова становится готовым к отгрузке. Доступно, пока поставка не
+    передана в доставку."""
+    supply_id = body_data.get('supplyId')
+    order_id = body_data.get('orderId')
+    if not supply_id or not order_id:
+        return _resp(400, {'error': 'Укажите поставку и заказ'})
+
+    cur.execute(
+        "SELECT marketplace, type, status, wb_supply_id FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    s_row = cur.fetchone()
+    if not s_row:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    marketplace, supply_type, s_status, wb_supply_id = s_row
+    if marketplace != 'WB' or supply_type != 'FBS':
+        return _resp(400, {'error': 'Действие доступно только для поставок WB FBS'})
+    if s_status not in ('Открытая', 'На сборке'):
+        return _resp(409, {'error': 'Из этой поставки уже нельзя убрать заказ'})
+
+    cur.execute(
+        "SELECT o.order_number, o.wb_order_id FROM wb_supply_orders wso "
+        "JOIN orders o ON o.id = wso.order_id WHERE wso.supply_id = %s AND wso.order_id = %s",
+        (int(supply_id), int(order_id)),
+    )
+    row = cur.fetchone()
+    if not row:
+        return _resp(404, {'error': 'Заказ не найден в этой поставке'})
+    order_number, wb_order_id = row
+
+    if wb_supply_id and wb_order_id:
+        status_code, data = wb_request(
+            'DELETE', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}', api_key, use_sandbox
+        )
+        # 404 на стороне WB (задание уже не в поставке) считаем успехом — синхронизируем нашу базу.
+        if status_code not in (200, 204, 404):
+            return _resp(502, {'error': f'WB не убрал заказ из поставки ({status_code}): {wb_error_text(status_code, data)}'})
+
+    cur.execute(
+        "DELETE FROM wb_supply_orders WHERE supply_id = %s AND order_id = %s",
+        (int(supply_id), int(order_id)),
+    )
+    # Если это был последний заказ — возвращаем поставку в статус "Открытая".
+    cur.execute("SELECT COUNT(*) FROM wb_supply_orders WHERE supply_id = %s", (int(supply_id),))
+    if cur.fetchone()[0] == 0 and s_status == 'На сборке':
+        cur.execute("UPDATE marketplace_supplies SET status = 'Открытая' WHERE id = %s", (int(supply_id),))
+    conn.commit()
+    return _resp(200, {'success': True, 'orderNumber': order_number})
+
+
 def handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox):
     """Передача поставки в доставку: закрывает поставку на WB (PATCH .../deliver),
     после чего тянет стикеры коробов trbx (PNG) и сохраняет их в нашей системе."""
@@ -339,6 +392,10 @@ def handler(event: dict, context) -> dict:
         - сканирует готовый (sewing_status='Готовые') FBS-заказ WB в поставку: добавляет
           сборочное задание в WB-поставку (PATCH /supplies/{sid}/orders/{orderId}) и пишет
           связь в wb_supply_orders; первый скан переводит поставку в статус "На сборке".
+    POST /  { action: 'remove_order_from_supply', supplyId, orderId }
+        - убирает ошибочно отсканированный заказ из WB FBS-поставки: удаляет сборочное задание
+          из поставки на WB (DELETE /supplies/{sid}/orders/{orderId}) и снимает связь у нас;
+          заказ снова становится готовым к отгрузке. Доступно, пока поставка не в доставке.
     POST /  { action: 'deliver_supply', supplyId }
         - передаёт поставку в доставку на WB (PATCH /supplies/{sid}/deliver), тянет PNG-стикеры
           коробов trbx (POST /supplies/{sid}/trbx/stickers), сохраняет их в S3 и привязывает
@@ -363,7 +420,8 @@ def handler(event: dict, context) -> dict:
     actor_id = body_data.get('actorId')
     actor_name = body_data.get('actorName')
 
-    if action not in ('sync_orders', 'create_supply', 'scan_order_to_supply', 'deliver_supply'):
+    if action not in ('sync_orders', 'create_supply', 'scan_order_to_supply',
+                      'remove_order_from_supply', 'deliver_supply'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -381,6 +439,8 @@ def handler(event: dict, context) -> dict:
             return handle_create_supply(cur, conn, body_data, api_key, use_sandbox)
         if action == 'scan_order_to_supply':
             return handle_scan_order(cur, conn, body_data, api_key, use_sandbox)
+        if action == 'remove_order_from_supply':
+            return handle_remove_order(cur, conn, body_data, api_key, use_sandbox)
         if action == 'deliver_supply':
             return handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox)
 

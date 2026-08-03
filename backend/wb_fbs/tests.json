@@ -32,6 +32,13 @@
       "path": "/",
       "body": {"action": "deliver_supply"},
       "expectedStatus": 400
+    },
+    {
+      "name": "Remove order without ids fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "remove_order_from_supply"},
+      "expectedStatus": 400
     }
   ]
 }
