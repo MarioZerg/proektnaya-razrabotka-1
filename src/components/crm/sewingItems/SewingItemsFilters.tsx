@@ -93,10 +93,10 @@ const SewingItemsFilters = ({
 
       <Select value={materialFilter} onValueChange={setMaterialFilter}>
         <SelectTrigger>
-          <SelectValue placeholder="Все материалы" />
+          <SelectValue placeholder="Все ткани" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">Все материалы</SelectItem>
+          <SelectItem value="all">Все ткани</SelectItem>
           {materials.map((m) => (
             <SelectItem key={m.id} value={String(m.id)}>
               {m.name}

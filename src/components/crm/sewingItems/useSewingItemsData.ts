@@ -49,7 +49,11 @@ export const useSewingItemsData = () => {
       .then(([ordersData, employeesData, materialsData, workshopsData, rollsData]) => {
         setOrders(ordersData);
         setEmployees(employeesData);
-        setMaterials(materialsData.materials);
+        // Фильтр материалов на конвейере — это фильтр по заказам, а заказ всегда шьётся из
+        // ткани (material_types.name === 'Тюль'), поэтому в выпадающем списке нужна только
+        // ткань — тесьма/пакеты/этикетки тут никогда не встретятся и только мешают поиску.
+        const fabricTypeId = materialsData.types.find((t) => t.name === 'Тюль')?.id;
+        setMaterials(fabricTypeId ? materialsData.materials.filter((m) => m.typeId === fabricTypeId) : materialsData.materials);
         setWorkshops(workshopsData);
         setRolls(rollsData);
       })

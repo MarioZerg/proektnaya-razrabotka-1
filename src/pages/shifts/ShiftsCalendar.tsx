@@ -19,6 +19,7 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchShifts, fetchShiftDaysOff, setShiftDayOff, type ShiftListItem } from '@/lib/shiftsApi';
+import { fetchWorkshopDetail } from '@/lib/workshopsApi';
 
 const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -63,6 +64,7 @@ const ShiftsCalendar = () => {
   const [loading, setLoading] = useState(true);
   const [daysOff, setDaysOff] = useState<Set<string>>(new Set());
   const [savingDate, setSavingDate] = useState<string | null>(null);
+  const [isFloatingSchedule, setIsFloatingSchedule] = useState(false);
 
   const today = new Date();
   const [monthOffset, setMonthOffset] = useState(0);
@@ -93,6 +95,19 @@ const ShiftsCalendar = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedShift?.id, viewDate.getFullYear(), viewDate.getMonth()]);
 
+  // У цехов с чередующимся графиком (например 2/2) смена открывается вручную через
+  // дашборд по фактическому графику, а не по заранее отмеченным здесь выходным — поэтому
+  // предупреждаем, что отметки в календаре для такого цеха ни на что не влияют.
+  useEffect(() => {
+    if (!selectedShift) {
+      setIsFloatingSchedule(false);
+      return;
+    }
+    fetchWorkshopDetail(selectedShift.workshopId).then((w) => {
+      setIsFloatingSchedule((w.settings.floating_schedule?.value ?? w.settings.floating_schedule?.global) === 'true');
+    });
+  }, [selectedShift?.workshopId]);
+
   const toggleDayOff = async (date: Date, isCurrentMonth: boolean) => {
     if (!selectedShift || !isCurrentMonth) return;
     const iso = toIsoDate(date);
@@ -122,6 +137,17 @@ const ShiftsCalendar = () => {
           сотрудники смены не смогут открыть смену. Например, для Цеха №2 (график 5/2) вручную
           отмечайте каждую субботу и воскресенье.
         </p>
+
+        {isFloatingSchedule && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <Icon name="TriangleAlert" size={16} className="mt-0.5 shrink-0" />
+            <p>
+              У этого цеха включён плавающий график (например 2/2) — смена открывается вручную
+              через дашборд администратором по фактическому графику. Отметки в этом календаре
+              для такого цеха ни на что не влияют.
+            </p>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1.5">

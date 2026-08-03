@@ -98,4 +98,10 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
     options: marketplaceClusters.map((c) => ({ value: c, label: c })),
   },
   { key: 'max_fabric_rolls_per_shift', label: 'Макс. рулонов ткани на смену', type: 'number' },
+  {
+    key: 'floating_schedule',
+    label: 'Плавающий график (например 2/2)',
+    type: 'select',
+    options: yesNoOptions,
+  },
 ];

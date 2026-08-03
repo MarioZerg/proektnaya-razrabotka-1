@@ -11,6 +11,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -29,7 +39,7 @@ import Icon from '@/components/ui/icon';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
-import { fetchShifts, createShift, type ShiftListItem } from '@/lib/shiftsApi';
+import { fetchShifts, createShift, deleteShift, type ShiftListItem } from '@/lib/shiftsApi';
 
 const ShiftsList = () => {
   const navigate = useNavigate();
@@ -42,6 +52,9 @@ const ShiftsList = () => {
   const [createName, setCreateName] = useState('');
   const [createWorkshopId, setCreateWorkshopId] = useState('');
   const [creating, setCreating] = useState(false);
+
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -82,6 +95,25 @@ const ShiftsList = () => {
       });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    setDeleting(true);
+    try {
+      await deleteShift(deleteId);
+      toast({ title: 'Смена удалена' });
+      setDeleteId(null);
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось удалить смену',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -189,13 +221,18 @@ const ShiftsList = () => {
                     </TableCell>
                     <TableCell>{s.employeesCount}</TableCell>
                     <TableCell>
-                      <Button
-                        size="icon"
-                        className="bg-sky-500 text-white hover:bg-sky-600"
-                        onClick={() => navigate(`/crm/shifts/${s.id}`)}
-                      >
-                        <Icon name="Eye" size={14} />
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          size="icon"
+                          className="bg-sky-500 text-white hover:bg-sky-600"
+                          onClick={() => navigate(`/crm/shifts/${s.id}`)}
+                        >
+                          <Icon name="Eye" size={14} />
+                        </Button>
+                        <Button size="icon" variant="destructive" onClick={() => setDeleteId(s.id)}>
+                          <Icon name="Trash2" size={14} />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -211,6 +248,28 @@ const ShiftsList = () => {
           </p>
         )}
       </div>
+
+      <AlertDialog open={deleteId !== null} onOpenChange={(open) => !open && setDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить смену?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Удаление возможно только если в смене нет сотрудников — если сотрудники есть,
+              сначала переведите их в другую смену. Действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? 'Удаление...' : 'Удалить'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </CrmLayout>
   );
 };
