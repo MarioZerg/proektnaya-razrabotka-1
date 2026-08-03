@@ -12,13 +12,16 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import type { Marketplace, OrderType } from '@/lib/ordersApi';
-import { productOptions, type EditFormState } from '@/components/crm/orders/ordersShared';
+import type { MarketplaceItem } from '@/lib/marketplaceItemsApi';
+import { emptyManualRow, type ManualOrderRow } from '@/components/crm/orders/ordersShared';
+import MarketplaceItemPicker from '@/components/crm/orders/MarketplaceItemPicker';
 
 interface CreateManualOrderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  manualForm: EditFormState;
-  setManualForm: Dispatch<SetStateAction<EditFormState>>;
+  rows: ManualOrderRow[];
+  setRows: Dispatch<SetStateAction<ManualOrderRow[]>>;
+  marketplaceItems: MarketplaceItem[];
   manualSaving: boolean;
   onCreate: () => void;
 }
@@ -26,96 +29,125 @@ interface CreateManualOrderDialogProps {
 const CreateManualOrderDialog = ({
   open,
   onOpenChange,
-  manualForm,
-  setManualForm,
+  rows,
+  setRows,
+  marketplaceItems,
   manualSaving,
   onCreate,
 }: CreateManualOrderDialogProps) => {
+  const updateRow = (key: string, patch: Partial<ManualOrderRow>) =>
+    setRows((r) => r.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+
+  const addRow = () => setRows((r) => [...r, emptyManualRow()]);
+
+  const removeRow = (key: string) => setRows((r) => (r.length > 1 ? r.filter((row) => row.key !== key) : r));
+
+  const canCreate =
+    !manualSaving &&
+    rows.length > 0 &&
+    rows.every((r) => r.orderNumber.trim() && r.marketplaceItemId);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Добавить заказ вручную</DialogTitle>
+          <DialogTitle>Добавить заказы вручную</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Номер заявки</Label>
-            <Input
-              placeholder="Например: 119956630-181"
-              value={manualForm.orderNumber}
-              onChange={(e) => setManualForm((f) => ({ ...f, orderNumber: e.target.value }))}
-            />
-            <p className="text-xs text-muted-foreground">
-              Если такой номер уже есть в системе — заказ не будет создан повторно.
-            </p>
-          </div>
+        <p className="text-xs text-muted-foreground">
+          Каждая строка — отдельный уникальный заказ (1 заказ = 1 заявка). Нажмите «+», чтобы
+          добавить ещё один заказ в этом же окне.
+        </p>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Маркетплейс</Label>
-              <Select
-                value={manualForm.marketplace}
-                onValueChange={(v) => setManualForm((f) => ({ ...f, marketplace: v as Marketplace }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="OZON">OZON</SelectItem>
-                  <SelectItem value="WB">Wildberries</SelectItem>
-                  <SelectItem value="Yandex">Яндекс.Маркет</SelectItem>
-                </SelectContent>
-              </Select>
+        <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
+          {rows.map((row, idx) => (
+            <div key={row.key} className="space-y-2 rounded-md border border-border p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">Заказ #{idx + 1}</span>
+                {rows.length > 1 && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                    onClick={() => removeRow(row.key)}
+                  >
+                    <Icon name="X" size={14} />
+                  </Button>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Номер заявки</Label>
+                <Input
+                  placeholder="Например: 119956630-181"
+                  value={row.orderNumber}
+                  onChange={(e) => updateRow(row.key, { orderNumber: e.target.value })}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Маркетплейс</Label>
+                  <Select
+                    value={row.marketplace}
+                    onValueChange={(v) => updateRow(row.key, { marketplace: v as Marketplace })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="OZON">OZON</SelectItem>
+                      <SelectItem value="WB">Wildberries</SelectItem>
+                      <SelectItem value="Yandex">Яндекс.Маркет</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Тип</Label>
+                  <Select
+                    value={row.orderType}
+                    onValueChange={(v) => updateRow(row.key, { orderType: v as OrderType })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="FBO">FBO</SelectItem>
+                      <SelectItem value="FBS">FBS</SelectItem>
+                      <SelectItem value="Индивидуальный">Индивидуальный</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Материал и размер</Label>
+                <MarketplaceItemPicker
+                  items={marketplaceItems}
+                  value={row.marketplaceItemId}
+                  onChange={(itemId) => updateRow(row.key, { marketplaceItemId: itemId })}
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Тип</Label>
-              <Select
-                value={manualForm.orderType}
-                onValueChange={(v) => setManualForm((f) => ({ ...f, orderType: v as OrderType }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="FBO">FBO</SelectItem>
-                  <SelectItem value="FBS">FBS</SelectItem>
-                  <SelectItem value="Индивидуальный">Индивидуальный</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Товар</Label>
-            <Select
-              value={manualForm.product}
-              onValueChange={(v) => setManualForm((f) => ({ ...f, product: v }))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {productOptions.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {p}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Один заказ — всегда 1 шт. Для нескольких единиц создайте отдельные заказы с разными номерами.
-            </p>
-          </div>
-
-          <Button
-            onClick={onCreate}
-            disabled={manualSaving || !manualForm.orderNumber.trim()}
-            className="w-full bg-blue-600 text-white hover:bg-blue-700"
-          >
-            {manualSaving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Создать заказ'}
-          </Button>
+          ))}
         </div>
+
+        <Button variant="outline" onClick={addRow} className="w-full">
+          <Icon name="Plus" size={16} className="mr-1.5" />
+          Добавить ещё заказ
+        </Button>
+
+        <Button
+          onClick={onCreate}
+          disabled={!canCreate}
+          className="w-full bg-blue-600 text-white hover:bg-blue-700"
+        >
+          {manualSaving ? (
+            <Icon name="Loader2" size={16} className="animate-spin" />
+          ) : (
+            `Создать ${rows.length > 1 ? `заказы (${rows.length})` : 'заказ'}`
+          )}
+        </Button>
       </DialogContent>
     </Dialog>
   );

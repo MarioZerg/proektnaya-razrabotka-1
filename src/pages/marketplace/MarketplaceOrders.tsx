@@ -8,7 +8,8 @@ import {
   deleteOrder,
   type Order,
 } from '@/lib/ordersApi';
-import { emptyManualForm, type EditFormState } from '@/components/crm/orders/ordersShared';
+import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
+import { emptyManualRow, type EditFormState, type ManualOrderRow } from '@/components/crm/orders/ordersShared';
 import OrdersToolbar from '@/components/crm/orders/OrdersToolbar';
 import OrdersTable from '@/components/crm/orders/OrdersTable';
 import EditOrderDialog from '@/components/crm/orders/EditOrderDialog';
@@ -18,13 +19,14 @@ const MarketplaceOrders = () => {
   const { toast } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
 
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [form, setForm] = useState<EditFormState | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [manualOpen, setManualOpen] = useState(false);
-  const [manualForm, setManualForm] = useState<EditFormState>(emptyManualForm);
+  const [manualRows, setManualRows] = useState<ManualOrderRow[]>([emptyManualRow()]);
   const [manualSaving, setManualSaving] = useState(false);
 
   const load = () => {
@@ -36,6 +38,7 @@ const MarketplaceOrders = () => {
 
   useEffect(() => {
     load();
+    fetchMarketplaceItems().then(setMarketplaceItems);
   }, []);
 
   const openEdit = (order: Order) => {
@@ -84,29 +87,46 @@ const MarketplaceOrders = () => {
   };
 
   const openManual = () => {
-    setManualForm(emptyManualForm);
+    setManualRows([emptyManualRow()]);
     setManualOpen(true);
   };
 
+  // Каждая строка формы — отдельный уникальный заказ (1 заказ = 1 заявка), поэтому заказы
+  // создаются последовательно отдельными запросами (не пачкой), чтобы дубль номера или
+  // другая ошибка в одной строке не мешала создать остальные и была понятна пользователю.
   const handleManualCreate = async () => {
-    if (!manualForm.orderNumber.trim()) return;
     setManualSaving(true);
+    const created: string[] = [];
+    const failed: string[] = [];
     try {
-      await createManualOrder({
-        orderNumber: manualForm.orderNumber.trim(),
-        marketplace: manualForm.marketplace,
-        orderType: manualForm.orderType,
-        product: manualForm.product,
-      });
-      setManualOpen(false);
+      for (const row of manualRows) {
+        if (!row.orderNumber.trim() || !row.marketplaceItemId) continue;
+        try {
+          await createManualOrder({
+            orderNumber: row.orderNumber.trim(),
+            marketplace: row.marketplace,
+            orderType: row.orderType,
+            marketplaceItemId: row.marketplaceItemId,
+          });
+          created.push(row.orderNumber.trim());
+        } catch (err) {
+          failed.push(`${row.orderNumber.trim()}: ${err instanceof Error ? err.message : 'ошибка'}`);
+        }
+      }
       load();
-      toast({ title: 'Заказ создан', description: `№ ${manualForm.orderNumber}` });
-    } catch (err) {
-      toast({
-        title: 'Заказ не создан',
-        description: err instanceof Error ? err.message : 'Попробуйте позже',
-        variant: 'destructive',
-      });
+      if (created.length > 0) {
+        toast({ title: `Создано заказов: ${created.length}`, description: created.join(', ') });
+      }
+      if (failed.length > 0) {
+        toast({
+          title: `Не удалось создать: ${failed.length}`,
+          description: failed.join('; '),
+          variant: 'destructive',
+        });
+      }
+      if (failed.length === 0) {
+        setManualOpen(false);
+      }
     } finally {
       setManualSaving(false);
     }
@@ -134,8 +154,9 @@ const MarketplaceOrders = () => {
       <CreateManualOrderDialog
         open={manualOpen}
         onOpenChange={setManualOpen}
-        manualForm={manualForm}
-        setManualForm={setManualForm}
+        rows={manualRows}
+        setRows={setManualRows}
+        marketplaceItems={marketplaceItems}
         manualSaving={manualSaving}
         onCreate={handleManualCreate}
       />

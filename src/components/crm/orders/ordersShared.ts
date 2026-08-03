@@ -40,3 +40,22 @@ export const emptyManualForm: EditFormState = {
   status: 'Новый',
   product: productOptions[0],
 };
+
+/** Одна строка мульти-формы создания заказов вручную — каждая строка это отдельный
+ * будущий заказ (1 заказ = 1 заявка) со своим уникальным номером. */
+export interface ManualOrderRow {
+  key: string;
+  orderNumber: string;
+  marketplace: Marketplace;
+  orderType: OrderType;
+  marketplaceItemId: number | null;
+}
+
+let manualRowSeq = 0;
+export const emptyManualRow = (): ManualOrderRow => ({
+  key: `row-${Date.now()}-${manualRowSeq++}`,
+  orderNumber: '',
+  marketplace: 'OZON',
+  orderType: 'FBO',
+  marketplaceItemId: null,
+});

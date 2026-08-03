@@ -91,7 +91,7 @@ export const createManualOrder = (order: {
   marketplace: Marketplace;
   orderType: OrderType;
   cluster?: string;
-  product: string;
+  marketplaceItemId: number;
 }) => postAction({ action: 'create_manual', ...order });
 
 export const updateOrder = (

@@ -106,7 +106,10 @@ def handler(event: dict, context) -> dict:
                                     requiredTrimMaterialId/Name — конкретный материал тюля и тесьмы,
                                     нужный именно для этого товара (чтобы на фронте показывать
                                     только подходящие рулоны, а не всю категорию)
-    POST /  { action: 'create_manual', orderNumber, marketplace, orderType, cluster?, product }
+    POST /  { action: 'create_manual', orderNumber, marketplace, orderType, cluster?, marketplaceItemId }
+        - marketplaceItemId — id товара из справочника "Товары на маркетплейсе" (marketplace_items);
+          заказ наследует его material/width/height (нужны конвейеру раскроя) и текстовый product
+          формируется автоматически как "{material} {width}x{height}"
     POST /  { action: 'update_order', id, orderNumber?, marketplace?, orderType?, status?, product?,
               sewingStatus?, assignedUserId?, workshopId? }
         - если sewingStatus вручную возвращается на "Новый"/"На раскрое" — снимается
@@ -461,14 +464,28 @@ def handler(event: dict, context) -> dict:
                 marketplace = (body_data.get('marketplace') or '').strip()
                 order_type = (body_data.get('orderType') or 'FBO').strip()
                 cluster = (body_data.get('cluster') or '').strip()
-                product = (body_data.get('product') or '').strip()
+                marketplace_item_id = body_data.get('marketplaceItemId')
 
-                if not order_number or not marketplace or not product:
+                if not order_number or not marketplace or not marketplace_item_id:
                     return {
                         'statusCode': 400,
                         'headers': headers,
                         'body': json.dumps({'error': 'Укажите номер заказа, маркетплейс и товар'}),
                     }
+
+                # Товар выбирается из справочника "Товары на маркетплейсе" — берём его
+                # material/width/height, чтобы заказ сразу попал в очередь раскроя (конвейер
+                # ищет marketplace_items именно по этим трём полям), а не только в текстовый
+                # product для отображения.
+                cur.execute(
+                    "SELECT name, material, width, height FROM marketplace_items WHERE id = %s",
+                    (int(marketplace_item_id),),
+                )
+                item_row = cur.fetchone()
+                if not item_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
+                item_name, item_material, item_width, item_height = item_row
+                product = f"{item_material} {item_width}x{item_height}" if item_material and item_width and item_height else item_name
 
                 order_number_esc = order_number.replace("'", "''")
                 cur.execute(
@@ -488,11 +505,16 @@ def handler(event: dict, context) -> dict:
                 order_type_esc = order_type.replace("'", "''")
                 cluster_esc = cluster.replace("'", "''")
                 product_esc = product.replace("'", "''")
+                material_esc = item_material.replace("'", "''") if item_material else None
+                material_sql = f"'{material_esc}'" if material_esc else 'NULL'
+                width_sql = str(int(item_width)) if item_width else 'NULL'
+                height_sql = str(int(item_height)) if item_height else 'NULL'
 
                 cur.execute(
-                    f"INSERT INTO orders (order_number, marketplace, order_type, status, cluster, product, quantity, source) "
+                    f"INSERT INTO orders (order_number, marketplace, order_type, status, cluster, product, "
+                    f"quantity, source, material, width, height) "
                     f"VALUES ('{order_number_esc}', '{marketplace_esc}', '{order_type_esc}', 'Новый', "
-                    f"'{cluster_esc}', '{product_esc}', 1, 'manual') "
+                    f"'{cluster_esc}', '{product_esc}', 1, 'manual', {material_sql}, {width_sql}, {height_sql}) "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
