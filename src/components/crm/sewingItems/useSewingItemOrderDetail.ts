@@ -126,11 +126,18 @@ export const useSewingItemOrderDetail = ({
   };
 
   const handleSendToStickering = async (rollId?: number) => {
-    if (!selectedOrder || !rollId) return;
+    if (!selectedOrder) return;
+    // Рулон тесьмы обязателен только если товару она нужна (requiredTrimMaterialId задан).
+    // Товары без тесьмы отправляются на стикеровку без выбора рулона — backend это допускает.
+    const trimNeeded = orderDetail?.requiredTrimMaterialId != null;
+    if (trimNeeded && !rollId) return;
     setCutting(true);
     try {
       await sendToStickering(selectedOrder.id, rollId);
-      toast({ title: 'Заказ отправлен на стикеровку', description: 'Тесьма списана с рулона' });
+      toast({
+        title: 'Заказ отправлен на стикеровку',
+        description: trimNeeded ? 'Тесьма списана с рулона' : undefined,
+      });
       setSelectedOrder({ ...selectedOrder, sewingStatus: 'Стикеровка' });
       load();
       loadDetail(selectedOrder.id);

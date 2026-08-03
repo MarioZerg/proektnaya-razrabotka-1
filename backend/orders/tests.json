@@ -55,11 +55,18 @@
       "expectedStatus": 400
     },
     {
-      "name": "Send to stickering without rollId fails",
+      "name": "Send to stickering without id fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "send_to_stickering", "id": 1},
+      "body": {"action": "send_to_stickering"},
       "expectedStatus": 400
+    },
+    {
+      "name": "Send to stickering for non-existent order fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "send_to_stickering", "id": 999999},
+      "expectedStatus": 404
     },
     {
       "name": "Cancel order without id fails",

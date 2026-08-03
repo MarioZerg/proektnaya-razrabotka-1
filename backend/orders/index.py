@@ -147,10 +147,12 @@ def handler(event: dict, context) -> dict:
           исключает дубли при одновременных нажатиях. Назначает заказ на userId, переводит
           в "В работе", фиксирует taken_at.
           Отклоняется (409), если: у швеи уже max_quantity_orders_to_seamstress заказов "В
-          работе"; за текущую смену исчерпан лимит метража (seamstress_daily_limit); не прошло
-          нужное время (timeout_200..800 по ширине последнего взятого заказа) после первых
-          max_quantity_orders_without_timeout взятий без задержки. Лимиты/таймаут действуют
-          только при наличии открытой рабочей смены (shift_sessions) — без неё не применяются
+          работе"; за текущую смену исчерпан лимит метража (seamstress_daily_limit); не прошёл
+          НАКОПЛЕННЫЙ таймаут. Таймаут накопительный: первые max_quantity_orders_without_timeout
+          заказов за смену берутся без задержки, каждый следующий добавляет к общему бюджету
+          времени свой timeout_{ширина}; взять новый заказ можно, когда с момента взятия
+          ПЕРВОГО заказа смены прошло не меньше суммы таймаутов всех заказов сверх лимита.
+          Лимиты/таймаут действуют только при наличии открытой рабочей смены (shift_sessions)
     POST /  { action: 'send_to_stickering', id, rollId }
         - швея указывает рулон тесьмы (должен быть в её цехе/смене), с которого списывается
           тесьма товара, и переводит заказ в статус "Стикеровка". Без указания рулона тесьмы
@@ -953,32 +955,41 @@ def handler(event: dict, context) -> dict:
                                 'body': json.dumps({'error': f'Лимит метража на смену исчерпан: {round(taken_meters, 2)}/{daily_limit} пог.м.'}),
                             }
 
+                    # НАКОПИТЕЛЬНЫЙ таймаут между взятием заказов. Первые
+                    # max_quantity_orders_without_timeout заказов за смену швея берёт без
+                    # задержки — они НЕ входят в сумму. Каждый следующий заказ (сверх лимита)
+                    # добавляет к общему "бюджету времени" свой timeout_{bucket} по ширине.
+                    # Взять новый заказ можно, когда с момента взятия ПЕРВОГО заказа за смену
+                    # прошло не меньше этого накопленного бюджета. Пример: лимит 2, взяли 2
+                    # заказа мгновенно — бюджет 0. Берём 3-й (ширина 500, timeout 12с) — теперь
+                    # бюджет 12с; 4-й станет доступен, когда с первого взятия пройдёт ещё столько,
+                    # чтобы покрыть сумму таймаутов 3-го и 4-го заказов. Так задержки суммируются.
                     without_timeout = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_without_timeout', 0)
                     cur.execute(
-                        "SELECT COUNT(*) FROM orders WHERE assigned_user_id = %s AND taken_at >= %s",
+                        "SELECT width, taken_at, EXTRACT(EPOCH FROM (now() - taken_at))::float "
+                        "FROM orders WHERE assigned_user_id = %s AND taken_at >= %s "
+                        "ORDER BY taken_at ASC, id ASC",
                         (int(user_id), session_opened_at),
                     )
-                    taken_count = cur.fetchone()[0]
-                    if taken_count >= without_timeout:
-                        cur.execute(
-                            "SELECT width, EXTRACT(EPOCH FROM (now() - taken_at))::float FROM orders "
-                            "WHERE assigned_user_id = %s AND taken_at IS NOT NULL "
-                            "ORDER BY taken_at DESC LIMIT 1",
-                            (int(user_id),),
-                        )
-                        last_row = cur.fetchone()
-                        if last_row:
-                            last_width, elapsed_sec = last_row
-                            bucket = nearest_timeout_width(last_width)
-                            if bucket:
-                                timeout_sec = get_setting_int(cur, session_workshop_id, f'timeout_{bucket}', 0)
-                                if timeout_sec > 0 and elapsed_sec < timeout_sec:
-                                    wait_left = round(timeout_sec - elapsed_sec)
-                                    return {
-                                        'statusCode': 409,
-                                        'headers': headers,
-                                        'body': json.dumps({'error': f'Подождите ещё {wait_left} сек. перед взятием следующего заказа'}),
-                                    }
+                    taken_rows = cur.fetchall()
+                    # Требуемый бюджет времени = сумма таймаутов заказов, взятых СВЕРХ лимита
+                    # (первые without_timeout заказов не считаются). Ширина каждого заказа
+                    # округляется до ближайшего порога timeout_200..800.
+                    required_budget = 0
+                    for w in taken_rows[without_timeout:]:
+                        bucket = nearest_timeout_width(w[0])
+                        if bucket:
+                            required_budget += get_setting_int(cur, session_workshop_id, f'timeout_{bucket}', 0)
+
+                    if required_budget > 0 and taken_rows:
+                        elapsed_since_first = taken_rows[0][2]
+                        if elapsed_since_first < required_budget:
+                            wait_left = round(required_budget - elapsed_since_first)
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({'error': f'Подождите ещё {wait_left} сек. перед взятием следующего заказа'}),
+                            }
 
                 # Приоритет и фильтр заказов (по цеху смены): orders_filter — ограничивает
                 # выборку FBO/FBS, orders_cluster_priority — приоритетный FBO-кластер идёт
@@ -1047,11 +1058,13 @@ def handler(event: dict, context) -> dict:
             if action == 'send_to_stickering':
                 item_id = body_data.get('id')
                 roll_id_chosen = body_data.get('rollId')
-                if not item_id or not roll_id_chosen:
+                # rollId обязателен только если товару нужна тесьма — это проверяется ниже,
+                # после определения trim_material_id. Товар без тесьмы отправляется без рулона.
+                if not item_id:
                     return {
                         'statusCode': 400,
                         'headers': headers,
-                        'body': json.dumps({'error': 'Укажите id заказа и rollId рулона тесьмы'}),
+                        'body': json.dumps({'error': 'Укажите id заказа'}),
                     }
 
                 cur.execute(
@@ -1134,6 +1147,14 @@ def handler(event: dict, context) -> dict:
                     )
                     conn.commit()
                     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+                # Тесьма для этого товара нужна — рулон обязателен.
+                if not roll_id_chosen:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Выберите рулон тесьмы'}),
+                    }
 
                 cur.execute(
                     "SELECT id, remaining_quantity, workshop_id, shift_number FROM rolls WHERE id = %s "

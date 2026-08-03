@@ -91,6 +91,9 @@ const SewingItemDetailDialog = ({
 
   const isAlreadyCut = selectedOrder?.sewingStatus === 'Раскроено';
   const isAlreadyStickering = selectedOrder?.sewingStatus === 'Стикеровка';
+  // Тесьма нужна только если у товара задан требуемый материал тесьмы. Товары без тесьмы
+  // швея отправляет на стикеровку без выбора рулона.
+  const trimNeeded = orderDetail?.requiredTrimMaterialId != null;
 
   const canCancel =
     !!onCancelOrder &&
@@ -214,33 +217,39 @@ const SewingItemDetailDialog = ({
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-wrap items-end gap-3">
-                  <div className="w-64 space-y-1.5">
-                    <Label>Рулон тесьмы в вашем цехе/смене</Label>
-                    <Select
-                      value={selectedRollId}
-                      onValueChange={setSelectedRollId}
-                      disabled={cutting || isAlreadyStickering}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Выберите рулон" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableRolls.length === 0 ? (
-                          <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет доступных рулонов</div>
-                        ) : (
-                          availableRolls.map((r) => (
-                            <SelectItem key={r.id} value={String(r.id)}>
-                              {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)} {r.unit}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {trimNeeded ? (
+                    <div className="w-64 space-y-1.5">
+                      <Label>Рулон тесьмы в вашем цехе/смене</Label>
+                      <Select
+                        value={selectedRollId}
+                        onValueChange={setSelectedRollId}
+                        disabled={cutting || isAlreadyStickering}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Выберите рулон" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableRolls.length === 0 ? (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет доступных рулонов</div>
+                          ) : (
+                            availableRolls.map((r) => (
+                              <SelectItem key={r.id} value={String(r.id)}>
+                                {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)} {r.unit}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Для этого товара тесьма не требуется — можно отправлять на стикеровку.
+                    </p>
+                  )}
 
                   <Button
                     onClick={() => onSendToStickering?.(selectedRollId ? Number(selectedRollId) : undefined)}
-                    disabled={cutting || isAlreadyStickering || !selectedRollId}
+                    disabled={cutting || isAlreadyStickering || (trimNeeded && !selectedRollId)}
                   >
                     {cutting ? (
                       <>

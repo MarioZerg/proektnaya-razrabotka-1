@@ -140,7 +140,7 @@ export interface TakeOrderResult {
 export const takeOrder = (userId: number): Promise<TakeOrderResult> =>
   postAction({ action: 'take_order', userId });
 
-export const sendToStickering = (id: number, rollId: number) =>
+export const sendToStickering = (id: number, rollId?: number) =>
   postAction({ action: 'send_to_stickering', id, rollId });
 
 export const cancelOrder = (id: number) => postAction({ action: 'cancel_order', id });
