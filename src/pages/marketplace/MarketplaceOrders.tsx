@@ -10,7 +10,11 @@ import {
 } from '@/lib/ordersApi';
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { emptyManualRow, type EditFormState, type ManualOrderRow } from '@/components/crm/orders/ordersShared';
-import OrdersToolbar from '@/components/crm/orders/OrdersToolbar';
+import OrdersToolbar, {
+  type StatusFilter,
+  type MarketplaceFilter,
+  type TypeFilter,
+} from '@/components/crm/orders/OrdersToolbar';
 import OrdersTable from '@/components/crm/orders/OrdersTable';
 import EditOrderDialog from '@/components/crm/orders/EditOrderDialog';
 import CreateManualOrderDialog from '@/components/crm/orders/CreateManualOrderDialog';
@@ -28,6 +32,10 @@ const MarketplaceOrders = () => {
   const [manualOpen, setManualOpen] = useState(false);
   const [manualRows, setManualRows] = useState<ManualOrderRow[]>([emptyManualRow()]);
   const [manualSaving, setManualSaving] = useState(false);
+
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('new');
+  const [marketplaceFilter, setMarketplaceFilter] = useState<MarketplaceFilter>('all');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
 
   const load = () => {
     setLoading(true);
@@ -132,14 +140,43 @@ const MarketplaceOrders = () => {
     }
   };
 
+  // Этап производства заказа определяется по sewingStatus (поле status почти всегда "Новый"
+  // и реальный прогресс не отражает). Отменённые (status='Отменён') показываются только во
+  // вкладке "Отменённые" и не попадают в остальные — их видно зачёркнутыми.
+  const IN_PROGRESS_STAGES = ['На раскрое', 'Раскроено', 'В работе', 'Стикеровка'];
+  const matchesStatus = (o: Order): boolean => {
+    const cancelled = o.status === 'Отменён';
+    if (statusFilter === 'cancelled') return cancelled;
+    if (cancelled) return false;
+    if (statusFilter === 'new') return o.sewingStatus === 'Новый';
+    if (statusFilter === 'in_progress') return IN_PROGRESS_STAGES.includes(o.sewingStatus);
+    if (statusFilter === 'done') return o.sewingStatus === 'Готовые';
+    return true;
+  };
+
+  const filteredOrders = orders.filter(
+    (o) =>
+      matchesStatus(o) &&
+      (marketplaceFilter === 'all' || o.marketplace === marketplaceFilter) &&
+      (typeFilter === 'all' || o.orderType === typeFilter)
+  );
+
   return (
     <CrmLayout>
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Заказы</h1>
 
-        <OrdersToolbar onOpenManual={openManual} />
+        <OrdersToolbar
+          onOpenManual={openManual}
+          statusFilter={statusFilter}
+          onStatusChange={setStatusFilter}
+          marketplaceFilter={marketplaceFilter}
+          onMarketplaceChange={setMarketplaceFilter}
+          typeFilter={typeFilter}
+          onTypeChange={setTypeFilter}
+        />
 
-        <OrdersTable loading={loading} orders={orders} onEdit={openEdit} onDelete={handleDelete} />
+        <OrdersTable loading={loading} orders={filteredOrders} onEdit={openEdit} onDelete={handleDelete} />
       </div>
 
       <EditOrderDialog

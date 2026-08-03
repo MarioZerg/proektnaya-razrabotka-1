@@ -170,8 +170,9 @@ def handler(event: dict, context) -> dict:
           на сумму cancel_order_penalty из настроек цеха заказа, если она больше 0 — повторный
           штраф за тот же заказ не задваивается (уникальный индекс order_id+type)
     POST /  { action: 'delete_order', id }
-        - удаляет заказ полностью; снимает его невыплаченные начисления зарплаты (уже
-          выплаченные остаются в истории, order_id у них обнуляется)
+        - мягкая отмена заказа админом: помечает status='Отменён' (заказ остаётся в истории,
+          показывается зачёркнутым, не стирается из базы); снимает его невыплаченные начисления
+          зарплаты (уже выплаченные остаются в истории)
 
     Args:
         event: dict с httpMethod, body
@@ -1267,19 +1268,24 @@ def handler(event: dict, context) -> dict:
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
-                # Удаление заказа снимает его невыплаченные начисления зарплаты (закройщику
-                # за раскрой, швее/упаковщице за готовый товар). Уже выплаченные начисления
-                # сохраняются в истории — order_id у них обнуляется, чтобы не нарушать внешний ключ
+                cur.execute("SELECT status FROM orders WHERE id = %s", (int(item_id),))
+                del_row = cur.fetchone()
+                if not del_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
+                # Удаление заказа админом — это МЯГКАЯ отмена: заказ не стирается из базы, а
+                # помечается status='Отменён' (в таблице он показывается зачёркнутым и остаётся
+                # в истории). Так же поступает отмена заказа через API FBS маркетплейса.
+                # Невыплаченные начисления зарплаты по этому заказу снимаются, выплаченные —
+                # остаются в истории (order_id сохраняется, заказ ведь никуда не делся).
                 cur.execute(
                     "DELETE FROM salary_accruals WHERE order_id = %s AND paid_at IS NULL", (int(item_id),)
                 )
                 cur.execute(
-                    "UPDATE salary_accruals SET order_id = NULL WHERE order_id = %s", (int(item_id),)
+                    "UPDATE orders SET status = 'Отменён' WHERE id = %s", (int(item_id),)
                 )
-                cur.execute(f"DELETE FROM orders WHERE id = {int(item_id)}")
                 log_action(
                     cur, actor_id, actor_name, 'delete_order', 'order', item_id,
-                    f'Удалил заказ #{item_id}',
+                    f'Отменил (удалил) заказ #{item_id}',
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

@@ -8,11 +8,29 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 
+export type StatusFilter = 'new' | 'in_progress' | 'done' | 'cancelled';
+export type MarketplaceFilter = 'all' | 'OZON' | 'WB' | 'Yandex';
+export type TypeFilter = 'all' | 'FBO' | 'FBS' | 'Индивидуальный';
+
 interface OrdersToolbarProps {
   onOpenManual: () => void;
+  statusFilter: StatusFilter;
+  onStatusChange: (v: StatusFilter) => void;
+  marketplaceFilter: MarketplaceFilter;
+  onMarketplaceChange: (v: MarketplaceFilter) => void;
+  typeFilter: TypeFilter;
+  onTypeChange: (v: TypeFilter) => void;
 }
 
-const OrdersToolbar = ({ onOpenManual }: OrdersToolbarProps) => {
+const OrdersToolbar = ({
+  onOpenManual,
+  statusFilter,
+  onStatusChange,
+  marketplaceFilter,
+  onMarketplaceChange,
+  typeFilter,
+  onTypeChange,
+}: OrdersToolbarProps) => {
   return (
     <>
       <div className="flex flex-wrap gap-3">
@@ -20,22 +38,10 @@ const OrdersToolbar = ({ onOpenManual }: OrdersToolbarProps) => {
           <Icon name="Plus" size={16} className="mr-1.5" />
           Добавить заказ вручную
         </Button>
-        <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled>
-          <Icon name="RefreshCw" size={16} className="mr-1.5" />
-          Загрузить заказы с API
-        </Button>
-        <Button className="bg-amber-500 text-white hover:bg-amber-600" disabled>
-          <Icon name="Ban" size={16} className="mr-1.5" />
-          Проверить отменённые заказы
-        </Button>
-        <Button className="bg-teal-600 text-white hover:bg-teal-700" disabled>
-          <Icon name="FileSpreadsheet" size={16} className="mr-1.5" />
-          Добавить заказ через Excel
-        </Button>
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <Select defaultValue="new">
+        <Select value={statusFilter} onValueChange={(v) => onStatusChange(v as StatusFilter)}>
           <SelectTrigger className="w-[200px]">
             <SelectValue />
           </SelectTrigger>
@@ -46,24 +52,29 @@ const OrdersToolbar = ({ onOpenManual }: OrdersToolbarProps) => {
             <SelectItem value="cancelled">Отменённые</SelectItem>
           </SelectContent>
         </Select>
-        <Select>
+        <Select
+          value={marketplaceFilter}
+          onValueChange={(v) => onMarketplaceChange(v as MarketplaceFilter)}
+        >
           <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="---" />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="ozon">OZON</SelectItem>
-            <SelectItem value="wb">Wildberries</SelectItem>
-            <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
+            <SelectItem value="all">Все маркетплейсы</SelectItem>
+            <SelectItem value="OZON">OZON</SelectItem>
+            <SelectItem value="WB">Wildberries</SelectItem>
+            <SelectItem value="Yandex">Яндекс.Маркет</SelectItem>
           </SelectContent>
         </Select>
-        <Select>
+        <Select value={typeFilter} onValueChange={(v) => onTypeChange(v as TypeFilter)}>
           <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="---" />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="fbo">FBO</SelectItem>
-            <SelectItem value="fbs">FBS</SelectItem>
-            <SelectItem value="individual">Индивидуальный</SelectItem>
+            <SelectItem value="all">Все типы</SelectItem>
+            <SelectItem value="FBO">FBO</SelectItem>
+            <SelectItem value="FBS">FBS</SelectItem>
+            <SelectItem value="Индивидуальный">Индивидуальный</SelectItem>
           </SelectContent>
         </Select>
       </div>

@@ -56,8 +56,10 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {orders.map((o) => (
-            <TableRow key={o.id}>
+          {orders.map((o) => {
+            const isCancelled = o.status === 'Отменён';
+            return (
+            <TableRow key={o.id} className={isCancelled ? 'text-muted-foreground line-through opacity-70' : ''}>
               <TableCell>{o.id}</TableCell>
               <TableCell>
                 <Badge variant={statusVariant(o.status)}>{o.status}</Badge>
@@ -85,13 +87,16 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
                   <Button size="icon" variant="secondary" onClick={() => onEdit(o)}>
                     <Icon name="Pencil" size={14} />
                   </Button>
-                  <Button size="icon" variant="destructive" onClick={() => onDelete(o.id)}>
-                    <Icon name="Trash2" size={14} />
-                  </Button>
+                  {!isCancelled && (
+                    <Button size="icon" variant="destructive" onClick={() => onDelete(o.id)}>
+                      <Icon name="Trash2" size={14} />
+                    </Button>
+                  )}
                 </div>
               </TableCell>
             </TableRow>
-          ))}
+            );
+          })}
         </TableBody>
       </Table>
     </div>
