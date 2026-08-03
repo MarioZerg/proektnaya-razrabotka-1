@@ -40,6 +40,18 @@ export const fetchOzonFboApplications = async (): Promise<OzonFboApplication[]> 
   return (data.applications || []) as OzonFboApplication[];
 };
 
+export interface OzonFboCompositionCheck {
+  totalItems: number;
+  totalQty: number;
+  matchedItems: number;
+  matchedQty: number;
+  unmatchedItems: number;
+  unmatched: Array<{ ozonSku: number | null; offerId: string | null; name: string | null; quantity: number }>;
+}
+
+export const checkOzonFboComposition = (orderId: number): Promise<OzonFboCompositionCheck> =>
+  post({ action: 'check_composition', orderId }) as Promise<OzonFboCompositionCheck>;
+
 export const importOzonFboComposition = (
   orderId: number,
   actor?: { id?: number | null; name?: string | null }

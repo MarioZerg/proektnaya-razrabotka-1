@@ -19,7 +19,9 @@ import Icon from '@/components/ui/icon';
 import { formatDate } from '@/lib/dateUtils';
 import {
   fetchOzonFboApplications,
+  checkOzonFboComposition,
   type OzonFboApplication,
+  type OzonFboCompositionCheck,
 } from '@/lib/ozonFboApi';
 import type { OzonDeliveryMethod } from '@/lib/marketplaceSuppliesApi';
 
@@ -49,18 +51,45 @@ const CreateOzonFboDialog = ({
   const [error, setError] = useState<string | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [deliveryMethod, setDeliveryMethod] = useState<OzonDeliveryMethod | ''>('');
+  const [check, setCheck] = useState<OzonFboCompositionCheck | null>(null);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setSelectedOrderId('');
     setDeliveryMethod('');
     setError(null);
+    setCheck(null);
     setLoading(true);
     fetchOzonFboApplications()
       .then(setApplications)
       .catch((e) => setError(e instanceof Error ? e.message : 'Не удалось загрузить заявки OZON'))
       .finally(() => setLoading(false));
   }, [open]);
+
+  // При выборе заявки подгружаем её состав и считаем, всё ли сопоставляется с нашими товарами.
+  useEffect(() => {
+    if (!selectedOrderId) {
+      setCheck(null);
+      return;
+    }
+    let cancelled = false;
+    setChecking(true);
+    setCheck(null);
+    checkOzonFboComposition(Number(selectedOrderId))
+      .then((r) => {
+        if (!cancelled) setCheck(r);
+      })
+      .catch(() => {
+        if (!cancelled) setCheck(null);
+      })
+      .finally(() => {
+        if (!cancelled) setChecking(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOrderId]);
 
   const selected = applications.find((a) => String(a.orderId) === selectedOrderId);
 
@@ -120,6 +149,27 @@ const CreateOzonFboDialog = ({
                     {selected.deadline ? formatDate(selected.deadline.slice(0, 10)) : '—'}
                   </span>
                 </div>
+
+                <div className="flex items-center justify-between border-t border-border/60 pt-1.5">
+                  <span className="text-muted-foreground">Распознано товаров</span>
+                  {checking ? (
+                    <Icon name="Loader2" size={14} className="animate-spin text-muted-foreground" />
+                  ) : check ? (
+                    <Badge variant={check.unmatchedItems > 0 ? 'destructive' : 'default'}>
+                      {check.matchedItems} из {check.totalItems} · {check.matchedQty}/{check.totalQty} шт.
+                    </Badge>
+                  ) : (
+                    <span className="font-medium">—</span>
+                  )}
+                </div>
+                {check && check.unmatchedItems > 0 && (
+                  <p className="text-[11px] text-destructive">
+                    Не распознаны артикулы:{' '}
+                    {check.unmatched.map((u) => u.offerId || u.ozonSku).filter(Boolean).join(', ')}.
+                    Их заказы не создадутся — добавьте товары в справочник.
+                  </p>
+                )}
+
                 {selected.supplyId && (
                   <Badge variant="secondary" className="mt-1">Заявка уже загружена в систему</Badge>
                 )}

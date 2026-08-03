@@ -107,23 +107,29 @@ def get_bundle_items(client_id, api_key, bundle_id):
     return items
 
 
-def find_marketplace_item(cur, ozon_sku, offer_id):
-    if ozon_sku:
-        cur.execute(
-            "SELECT material, width, height, name FROM marketplace_items WHERE ozon_sku = %s LIMIT 1",
-            (str(ozon_sku),),
-        )
-        row = cur.fetchone()
-        if row:
-            return row
+def load_item_lookup(cur):
+    """Грузит справочник товаров в память одним запросом. Возвращает два индекса:
+    по ozon_sku и по sku(offer_id) -> (material, width, height, name)."""
+    cur.execute("SELECT ozon_sku, sku, material, width, height, name FROM marketplace_items")
+    by_ozon_sku = {}
+    by_offer = {}
+    for r in cur.fetchall():
+        val = (r[2], r[3], r[4], r[5])
+        if r[0]:
+            by_ozon_sku[str(r[0])] = val
+        if r[1]:
+            by_offer[str(r[1])] = val
+    return by_ozon_sku, by_offer
+
+
+def match_item(by_ozon_sku, by_offer, ozon_sku, offer_id):
+    """Сопоставляет позицию OZON с нашим товаром: сначала по ozon_sku, затем по offer_id."""
+    if ozon_sku is not None:
+        found = by_ozon_sku.get(str(ozon_sku))
+        if found:
+            return found
     if offer_id:
-        cur.execute(
-            "SELECT material, width, height, name FROM marketplace_items WHERE sku = %s LIMIT 1",
-            (str(offer_id),),
-        )
-        row = cur.fetchone()
-        if row:
-            return row
+        return by_offer.get(str(offer_id))
     return None
 
 
@@ -186,6 +192,47 @@ def handle_list_applications(cur, client_id, api_key):
     return _resp(200, {'applications': applications})
 
 
+def handle_check_composition(cur, client_id, api_key, body_data):
+    """Проверяет товарный состав заявки OZON FBO БЕЗ создания заказов: сколько позиций и штук,
+    сколько распознано (есть наш товар) и список нераспознанных артикулов. Нужно, чтобы
+    менеджер до загрузки видел, всё ли сопоставляется."""
+    order_id = body_data.get('orderId')
+    if not order_id:
+        return _resp(400, {'error': 'Укажите orderId заявки'})
+
+    orders = fetch_application_details(client_id, api_key, [int(order_id)])
+    if not orders:
+        return _resp(404, {'error': 'Заявка не найдена в OZON'})
+    supplies = orders[0].get('supplies') or []
+    bundle_id = supplies[0].get('bundle_id') if supplies else None
+    items = get_bundle_items(client_id, api_key, bundle_id) if bundle_id else []
+
+    by_ozon_sku, by_offer = load_item_lookup(cur)
+
+    total_items = len(items)
+    total_qty = 0
+    matched_items = 0
+    matched_qty = 0
+    unmatched = []
+    for it in items:
+        qty = int(it.get('quantity') or 1)
+        total_qty += qty
+        if match_item(by_ozon_sku, by_offer, it.get('sku'), it.get('offer_id')):
+            matched_items += 1
+            matched_qty += qty
+        else:
+            unmatched.append({'ozonSku': it.get('sku'), 'offerId': it.get('offer_id'), 'name': it.get('name'), 'quantity': qty})
+
+    return _resp(200, {
+        'totalItems': total_items,
+        'totalQty': total_qty,
+        'matchedItems': matched_items,
+        'matchedQty': matched_qty,
+        'unmatchedItems': len(unmatched),
+        'unmatched': unmatched[:100],
+    })
+
+
 def handle_import_composition(cur, conn, client_id, api_key, body_data):
     """По заявке OZON FBO создаёт нашу поставку (если ещё нет) и заказы на конвейер из её
     товарного состава. Каждая штука состава → отдельный заказ OZON FBO со статусом «Новый»."""
@@ -236,17 +283,7 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
         )
         supply_id = cur.fetchone()[0]
 
-    # Справочник товаров грузим в память одним запросом (вместо SELECT в цикле по каждой позиции):
-    # ключи — ozon_sku и sku(offer_id) -> (material, width, height, name).
-    cur.execute("SELECT ozon_sku, sku, material, width, height, name FROM marketplace_items")
-    by_ozon_sku = {}
-    by_offer = {}
-    for r in cur.fetchall():
-        val = (r[2], r[3], r[4], r[5])
-        if r[0]:
-            by_ozon_sku[str(r[0])] = val
-        if r[1]:
-            by_offer[str(r[1])] = val
+    by_ozon_sku, by_offer = load_item_lookup(cur)
 
     skipped_no_item = 0
     unmatched = []
@@ -255,11 +292,7 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
         ozon_sku = it.get('sku')
         offer_id = it.get('offer_id')
         qty = int(it.get('quantity') or 1)
-        found = None
-        if ozon_sku is not None:
-            found = by_ozon_sku.get(str(ozon_sku))
-        if not found and offer_id:
-            found = by_offer.get(str(offer_id))
+        found = match_item(by_ozon_sku, by_offer, ozon_sku, offer_id)
         if not found:
             skipped_no_item += 1
             unmatched.append({'ozonSku': ozon_sku, 'offerId': offer_id, 'name': it.get('name')})
@@ -317,6 +350,10 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'list_applications' }
         - список заявок OZON FBO в статусе «Заполнение данных» (ожидают сборки):
           номер заявки, склад, таймслот, дедлайн, и supplyId нашей поставки, если уже импортирована.
+    POST /  { action: 'check_composition', orderId }
+        - проверяет товарный состав заявки БЕЗ создания заказов: сколько позиций/штук всего,
+          сколько распознано (есть наш товар) и список нераспознанных артикулов. Нужно, чтобы
+          менеджер до загрузки видел, всё ли сопоставляется.
     POST /  { action: 'import_composition', orderId, createdBy?, actorId?, actorName? }
         - создаёт (или переиспользует) нашу поставку OZON FBO для заявки и создаёт заказы на
           конвейер из её товарного состава (каждая штука → отдельный заказ order_type='FBO',
@@ -338,7 +375,7 @@ def handler(event: dict, context) -> dict:
 
     body_data = json.loads(event.get('body') or '{}')
     action = body_data.get('action')
-    if action not in ('list_applications', 'import_composition'):
+    if action not in ('list_applications', 'check_composition', 'import_composition'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -353,6 +390,8 @@ def handler(event: dict, context) -> dict:
 
         if action == 'list_applications':
             return handle_list_applications(cur, client_id, api_key)
+        if action == 'check_composition':
+            return handle_check_composition(cur, client_id, api_key, body_data)
         if action == 'import_composition':
             return handle_import_composition(cur, conn, client_id, api_key, body_data)
     finally:
