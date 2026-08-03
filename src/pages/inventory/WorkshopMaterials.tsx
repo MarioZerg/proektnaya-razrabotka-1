@@ -16,8 +16,10 @@ import {
   type WorkshopMaterialColumn,
 } from '@/lib/workshopMaterialsApi';
 import { formatQuantity } from '@/lib/formatQuantity';
+import { useAuth } from '@/context/AuthContext';
 
 const WorkshopMaterials = () => {
+  const { user } = useAuth();
   const [types, setTypes] = useState<WorkshopMaterialType[]>([]);
   const [columns, setColumns] = useState<WorkshopMaterialColumn[]>([]);
   const [activeColumn, setActiveColumn] = useState<{ workshopId: number; shiftNumber: number | null } | null>(null);
@@ -42,6 +44,22 @@ const WorkshopMaterials = () => {
     activeColumn !== null &&
     activeColumn.workshopId === col.workshopId &&
     activeColumn.shiftNumber === col.shiftNumber;
+
+  // Швея/закройщик/упаковщик видят только столбик СВОЕГО цеха и СВОЕЙ текущей смены —
+  // кладовщик и админ видят все цеха и смены без ограничений. Цех/смена берутся из
+  // ТЕКУЩЕЙ открытой рабочей смены (activeWorkshopId/activeShiftNumber), с fallback на
+  // штатные значения профиля, если смена не открыта — аналогично ToWorkshop.tsx.
+  const isProduction = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
+  const effectiveWorkshopId = user?.activeWorkshopId ?? user?.workshopId ?? null;
+  const effectiveShiftNumber = user?.activeShiftNumber ?? user?.shiftNumber ?? null;
+
+  const visibleColumns = isProduction
+    ? columns.filter(
+        (col) =>
+          col.workshopId === effectiveWorkshopId &&
+          (col.shiftNumber === null || col.shiftNumber === effectiveShiftNumber)
+      )
+    : columns;
 
   return (
     <CrmLayout>
@@ -72,7 +90,7 @@ const WorkshopMaterials = () => {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-56">Материал</TableHead>
-                      {columns.map((col) => (
+                      {visibleColumns.map((col) => (
                         <TableHead
                           key={`${col.workshopId}-${col.shiftNumber}`}
                           className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''}`}
@@ -92,7 +110,7 @@ const WorkshopMaterials = () => {
                     {type.materials.map((m) => (
                       <TableRow key={m.materialId}>
                         <TableCell className="font-medium">{m.materialName}</TableCell>
-                        {columns.map((col) => {
+                        {visibleColumns.map((col) => {
                           const cell = m.cells.find(
                             (c) => c.workshopId === col.workshopId && c.shiftNumber === col.shiftNumber
                           );
@@ -106,7 +124,21 @@ const WorkshopMaterials = () => {
                           );
                         })}
                         <TableCell className="text-center font-semibold">
-                          {formatQuantity(m.totalQuantity)} {m.unit}, {m.totalRolls} рул.
+                          {/* Работнику цеха "Итого" считаем только по его видимой смене (иначе
+                              общая цифра компании выдавала бы остатки других смен/цехов),
+                              кладовщику и админу — общий итог по всем цехам и сменам как есть. */}
+                          {isProduction
+                            ? (() => {
+                                const own = m.cells.find(
+                                  (c) =>
+                                    c.workshopId === effectiveWorkshopId &&
+                                    (c.shiftNumber === null || c.shiftNumber === effectiveShiftNumber)
+                                );
+                                return own
+                                  ? `${formatQuantity(own.quantity)} ${m.unit}, ${own.rollCount} рул.`
+                                  : `0 ${m.unit}, 0 рул.`;
+                              })()
+                            : `${formatQuantity(m.totalQuantity)} ${m.unit}, ${m.totalRolls} рул.`}
                         </TableCell>
                       </TableRow>
                     ))}
