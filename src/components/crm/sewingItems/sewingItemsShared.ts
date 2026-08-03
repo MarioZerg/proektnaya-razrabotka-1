@@ -1,4 +1,4 @@
-import type { SewingStatus } from '@/lib/ordersApi';
+import type { SewingStatus, Marketplace } from '@/lib/ordersApi';
 
 export const widthOptions = ['200', '300', '400', '500', '600', '700', '800'];
 export const heightOptions = [
@@ -25,6 +25,8 @@ export const marketplaceLogo: Record<string, { label: string; className: string 
   WB: { label: 'Wildberries', className: 'text-[#CB11AB] font-bold' },
   Yandex: { label: 'Яндекс.Маркет', className: 'text-[#FFCC00] font-bold' },
 };
+
+export const marketplaceOptions: Marketplace[] = ['OZON', 'WB', 'Yandex'];
 
 /** Сокращает ФИО до "Фамилия И.О." — например "Коротаева Наталья Александровна" → "Коротаева Н.А.". */
 export const shortFio = (fullName: string): string => {

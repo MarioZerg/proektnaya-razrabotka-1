@@ -34,6 +34,7 @@ export const useSewingItemsFilters = ({
   const [widthFilter, setWidthFilter] = useState('all');
   const [heightFilter, setHeightFilter] = useState('all');
   const [workshopFilter, setWorkshopFilter] = useState('all');
+  const [marketplaceFilter, setMarketplaceFilter] = useState('all');
 
   // Упаковщица весь конвейер видит только для просмотра — реальные действия она выполняет
   // на отдельном терминале стикеровки (Kiosk), а не на этой странице. Швея не может ничего
@@ -51,6 +52,7 @@ export const useSewingItemsFilters = ({
     if (widthFilter !== 'all' && String(o.width) !== widthFilter) return false;
     if (heightFilter !== 'all' && String(o.height) !== heightFilter) return false;
     if (workshopFilter !== 'all' && String(o.workshopId) !== workshopFilter) return false;
+    if (marketplaceFilter !== 'all' && o.marketplace !== marketplaceFilter) return false;
     // Владение по вкладкам: закройщик на "На раскрое" видит только свой стек, швея на
     // "В работе" — только свои заказы. Упаковщица на "В работе" видит ЗАКАЗЫ ВСЕХ швей
     // (с именами), поэтому под этот фильтр не попадает.
@@ -104,6 +106,8 @@ export const useSewingItemsFilters = ({
     setHeightFilter,
     workshopFilter,
     setWorkshopFilter,
+    marketplaceFilter,
+    setMarketplaceFilter,
     isReadOnlyTab,
     filteredOrders,
     totalPages,

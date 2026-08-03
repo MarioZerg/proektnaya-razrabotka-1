@@ -11,7 +11,7 @@ import Icon from '@/components/ui/icon';
 import type { Employee } from '@/lib/usersApi';
 import type { Material } from '@/lib/materialsApi';
 import type { Workshop } from '@/lib/workshopsApi';
-import { widthOptions, heightOptions } from '@/components/crm/sewingItems/sewingItemsShared';
+import { widthOptions, heightOptions, marketplaceOptions, marketplaceLogo } from '@/components/crm/sewingItems/sewingItemsShared';
 
 interface SewingItemsFiltersProps {
   employees: Employee[];
@@ -29,6 +29,11 @@ interface SewingItemsFiltersProps {
   setHeightFilter: (v: string) => void;
   workshopFilter: string;
   setWorkshopFilter: (v: string) => void;
+  marketplaceFilter: string;
+  setMarketplaceFilter: (v: string) => void;
+  /** Закройщик/швея видят только заказы, назначенные на себя — выбирать другого
+   * сотрудника им незачем, поэтому фильтр сотрудников для них скрыт. */
+  showEmployeeFilter?: boolean;
 }
 
 const SewingItemsFilters = ({
@@ -47,8 +52,14 @@ const SewingItemsFilters = ({
   setHeightFilter,
   workshopFilter,
   setWorkshopFilter,
+  marketplaceFilter,
+  setMarketplaceFilter,
+  showEmployeeFilter = true,
 }: SewingItemsFiltersProps) => {
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Список цехов для фильтра — только активные (удалённые/выключенные цеха не должны
+  // засорять выпадающий список, ведь заказов с их workshopId уже быть не может).
+  const activeWorkshops = workshops.filter((w) => w.isActive);
 
   return (
     <div>
@@ -65,7 +76,7 @@ const SewingItemsFilters = ({
         <Icon name={mobileOpen ? 'ChevronUp' : 'ChevronDown'} size={14} />
       </Button>
 
-      <div className={`grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6 ${mobileOpen ? 'mt-3 grid' : 'hidden'} sm:mt-0 sm:grid`}>
+      <div className={`grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 ${mobileOpen ? 'mt-3 grid' : 'hidden'} sm:mt-0 sm:grid`}>
       <Select value={typeFilter} onValueChange={setTypeFilter}>
         <SelectTrigger>
           <SelectValue placeholder="Все типы" />
@@ -77,19 +88,21 @@ const SewingItemsFilters = ({
         </SelectContent>
       </Select>
 
-      <Select value={employeeFilter} onValueChange={setEmployeeFilter}>
-        <SelectTrigger>
-          <SelectValue placeholder="Все сотрудники" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">Все сотрудники</SelectItem>
-          {employees.map((e) => (
-            <SelectItem key={e.id} value={String(e.id)}>
-              {e.fullName}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {showEmployeeFilter && (
+        <Select value={employeeFilter} onValueChange={setEmployeeFilter}>
+          <SelectTrigger>
+            <SelectValue placeholder="Все сотрудники" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все сотрудники</SelectItem>
+            {employees.map((e) => (
+              <SelectItem key={e.id} value={String(e.id)}>
+                {e.fullName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
 
       <Select value={materialFilter} onValueChange={setMaterialFilter}>
         <SelectTrigger>
@@ -139,9 +152,23 @@ const SewingItemsFilters = ({
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Все цеха</SelectItem>
-          {workshops.map((w) => (
+          {activeWorkshops.map((w) => (
             <SelectItem key={w.id} value={String(w.id)}>
               {w.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Select value={marketplaceFilter} onValueChange={setMarketplaceFilter}>
+        <SelectTrigger>
+          <SelectValue placeholder="Все маркетплейсы" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">Все маркетплейсы</SelectItem>
+          {marketplaceOptions.map((mp) => (
+            <SelectItem key={mp} value={mp}>
+              {marketplaceLogo[mp]?.label || mp}
             </SelectItem>
           ))}
         </SelectContent>

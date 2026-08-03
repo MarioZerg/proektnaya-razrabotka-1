@@ -52,6 +52,8 @@ const SewingItems = () => {
     setHeightFilter,
     workshopFilter,
     setWorkshopFilter,
+    marketplaceFilter,
+    setMarketplaceFilter,
     isReadOnlyTab,
     filteredOrders,
     totalPages,
@@ -156,6 +158,9 @@ const SewingItems = () => {
           setHeightFilter={setHeightFilter}
           workshopFilter={workshopFilter}
           setWorkshopFilter={setWorkshopFilter}
+          marketplaceFilter={marketplaceFilter}
+          setMarketplaceFilter={setMarketplaceFilter}
+          showEmployeeFilter={!isCutter && !isSewer}
         />
 
         {(isCutter || isSewer) && (
