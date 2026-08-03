@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import type { ShipmentDetail } from '@/lib/shipmentsApi';
+import { formatQuantity } from '@/lib/formatQuantity';
 
 interface ReceiveConfirmDialogProps {
   shipment: ShipmentDetail | null;
@@ -82,7 +83,7 @@ const ReceiveConfirmDialog = ({ shipment, onOpenChange, saving, onAccept, onReje
                       <TableCell className="font-mono-tech">{i.rollBarcode}</TableCell>
                       <TableCell>{i.materialName}</TableCell>
                       <TableCell>
-                        {i.quantity} {i.unit}
+                        {formatQuantity(i.quantity)} {i.unit}
                       </TableCell>
                     </TableRow>
                   ))}

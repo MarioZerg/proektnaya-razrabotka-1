@@ -39,6 +39,7 @@ import type { Workshop } from '@/lib/workshopsApi';
 import type { Roll } from '@/lib/rollsApi';
 import { marketplaceLogo, formatDate, timeAgo, statusOptions } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
+import { formatQuantity } from '@/lib/formatQuantity';
 
 interface SewingItemDetailDialogProps {
   dialogOpen: boolean;
@@ -172,7 +173,7 @@ const SewingItemDetailDialog = ({
                         ) : (
                           availableRolls.map((r) => (
                             <SelectItem key={r.id} value={String(r.id)}>
-                              {r.materialName} #{r.barcode} — {r.remainingQuantity} {r.unit}
+                              {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)} {r.unit}
                             </SelectItem>
                           ))
                         )}
@@ -229,7 +230,7 @@ const SewingItemDetailDialog = ({
                         ) : (
                           availableRolls.map((r) => (
                             <SelectItem key={r.id} value={String(r.id)}>
-                              {r.materialName} #{r.barcode} — {r.remainingQuantity} {r.unit}
+                              {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)} {r.unit}
                             </SelectItem>
                           ))
                         )}
@@ -393,7 +394,7 @@ const SewingItemDetailDialog = ({
                         <div className="mb-1 flex items-center justify-between">
                           <span className="font-semibold">{mu.materialName}</span>
                           <span className="text-sm text-muted-foreground">
-                            {mu.quantity} {mu.unit}
+                            {formatQuantity(mu.quantity)} {mu.unit}
                           </span>
                         </div>
                         {mu.rollBarcode && (

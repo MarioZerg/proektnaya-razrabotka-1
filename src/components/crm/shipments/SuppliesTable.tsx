@@ -27,6 +27,7 @@ import Icon from '@/components/ui/icon';
 import type { Shipment, ShipmentDetail } from '@/lib/shipmentsApi';
 import { printBarcodes } from '@/lib/printBarcodes';
 import { formatDate, statusVariant } from '@/components/crm/shipments/fromSupplierShared';
+import { formatQuantity } from '@/lib/formatQuantity';
 
 interface SuppliesTableProps {
   loading: boolean;
@@ -122,7 +123,7 @@ const SuppliesTable = ({
                               <div key={item.id} className="flex items-center gap-1.5 text-xs">
                                 <span className="font-medium">{item.materialName}</span>
                                 <span className="text-muted-foreground">
-                                  — {item.quantity} {item.unit}
+                                  — {formatQuantity(item.quantity)} {item.unit}
                                 </span>
                                 {item.barcode && (
                                   <>
@@ -130,7 +131,7 @@ const SuppliesTable = ({
                                       variant="outline"
                                       size="icon"
                                       className="h-5 w-5"
-                                      onClick={() => printBarcodes([{ code: item.barcode as string, label: `${item.materialName} — ${item.quantity} ${item.unit || ''}` }], item.barcode as string)}
+                                      onClick={() => printBarcodes([{ code: item.barcode as string, label: `${item.materialName} — ${formatQuantity(item.quantity)} ${item.unit || ''}` }], item.barcode as string)}
                                     >
                                       <Icon name="Barcode" size={11} />
                                     </Button>

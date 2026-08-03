@@ -767,7 +767,8 @@ def handler(event: dict, context) -> dict:
                             cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
                             mat_name, mat_unit = cur.fetchone()
                             shortages.append(
-                                f"{mat_name}: нужно {qty_needed} {mat_unit}, в рулоне осталось {roll_remaining} {mat_unit}"
+                                f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, "
+                                f"в рулоне осталось {round(roll_remaining, 2)} {mat_unit}"
                             )
                             continue
                         write_offs.append((roll_row[0], material_id, qty_needed))
@@ -785,7 +786,8 @@ def handler(event: dict, context) -> dict:
                         cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
                         mat_name, mat_unit = cur.fetchone()
                         shortages.append(
-                            f"{mat_name}: нужно {qty_needed} {mat_unit}, доступно {total_available} {mat_unit}"
+                            f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, "
+                            f"доступно {round(total_available, 2)} {mat_unit}"
                         )
                         continue
 
@@ -1111,7 +1113,8 @@ def handler(event: dict, context) -> dict:
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps(
-                            {'error': f'{mat_name}: нужно {trim_qty_needed} {mat_unit}, в рулоне осталось {roll_remaining} {mat_unit}'}
+                            {'error': f'{mat_name}: нужно {round(trim_qty_needed, 2)} {mat_unit}, '
+                                      f'в рулоне осталось {round(roll_remaining, 2)} {mat_unit}'}
                         ),
                     }
 

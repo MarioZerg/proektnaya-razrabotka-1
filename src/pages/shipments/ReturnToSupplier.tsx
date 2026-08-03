@@ -33,6 +33,7 @@ import { fetchShipments, createShipmentReturnToSupplier, type Shipment } from '@
 import { fetchSuppliers, type Supplier } from '@/lib/suppliersApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { formatDateTime as formatDate } from '@/lib/dateUtils';
+import { formatQuantity } from '@/lib/formatQuantity';
 
 interface ItemRow {
   rollId: string;
@@ -161,7 +162,7 @@ const ReturnToSupplier = () => {
                         <SelectContent>
                           {rolls.map((r) => (
                             <SelectItem key={r.id} value={String(r.id)}>
-                              {r.barcode} · {r.materialName} (ост. {r.remainingQuantity} {r.unit})
+                              {r.barcode} · {r.materialName} (ост. {formatQuantity(r.remainingQuantity)} {r.unit})
                             </SelectItem>
                           ))}
                         </SelectContent>

@@ -15,6 +15,7 @@ import {
   type WorkshopMaterialType,
   type WorkshopMaterialColumn,
 } from '@/lib/workshopMaterialsApi';
+import { formatQuantity } from '@/lib/formatQuantity';
 
 const WorkshopMaterials = () => {
   const [types, setTypes] = useState<WorkshopMaterialType[]>([]);
@@ -100,7 +101,7 @@ const WorkshopMaterials = () => {
                               key={`${col.workshopId}-${col.shiftNumber}`}
                               className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''} ${cell ? 'bg-emerald-50' : ''}`}
                             >
-                              {cell ? `${cell.quantity} ${m.unit}, ${cell.rollCount} рул.` : '—'}
+                              {cell ? `${formatQuantity(cell.quantity)} ${m.unit}, ${cell.rollCount} рул.` : '—'}
                             </TableCell>
                           );
                         })}

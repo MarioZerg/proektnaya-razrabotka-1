@@ -32,6 +32,7 @@ import { fetchRolls, createRoll, type Roll, type RollStatus } from '@/lib/rollsA
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { formatDateTime as formatDate } from '@/lib/dateUtils';
+import { formatQuantity } from '@/lib/formatQuantity';
 import { shiftLabel } from '@/components/crm/shipments/toWorkshopShared';
 
 const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | 'default' | 'outline' }> = {
@@ -297,7 +298,7 @@ const Rolls = () => {
                     <TableCell>{r.workshopName || '—'}</TableCell>
                     <TableCell>{shiftLabel(workshops, r.workshopId, r.shiftNumber)}</TableCell>
                     <TableCell>
-                      {r.remainingQuantity} из {r.initialQuantity} {r.unit}
+                      {formatQuantity(r.remainingQuantity)} из {formatQuantity(r.initialQuantity)} {r.unit}
                     </TableCell>
                     <TableCell>{formatDate(r.createdAt)}</TableCell>
                     <TableCell>{r.completedAt ? formatDate(r.completedAt) : '—'}</TableCell>

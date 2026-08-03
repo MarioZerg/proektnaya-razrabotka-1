@@ -18,6 +18,7 @@ import { fetchSuppliers, type Supplier } from '@/lib/suppliersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { printBarcodes } from '@/lib/printBarcodes';
 import { emptyRow, type ItemRow } from '@/components/crm/shipments/fromSupplierShared';
+import { formatQuantity } from '@/lib/formatQuantity';
 import CreateSupplyDialog from '@/components/crm/shipments/CreateSupplyDialog';
 import SuppliesFilters from '@/components/crm/shipments/SuppliesFilters';
 import SuppliesTable from '@/components/crm/shipments/SuppliesTable';
@@ -157,7 +158,7 @@ const FromSupplier = () => {
     }
     const items = detail.items
       .filter((i) => i.barcode)
-      .map((i) => ({ code: i.barcode as string, label: `${i.materialName} — ${i.quantity} ${i.unit || ''}` }));
+      .map((i) => ({ code: i.barcode as string, label: `${i.materialName} — ${formatQuantity(i.quantity)} ${i.unit || ''}` }));
     printBarcodes(items, `Приёмка #${shipmentId}`);
   };
 

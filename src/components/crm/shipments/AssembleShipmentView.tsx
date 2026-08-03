@@ -13,6 +13,7 @@ import {
 import Icon from '@/components/ui/icon';
 import type { ShipmentDetail } from '@/lib/shipmentsApi';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
+import { formatQuantity } from '@/lib/formatQuantity';
 
 interface AssembleShipmentViewProps {
   activeShipment: ShipmentDetail;
@@ -110,7 +111,7 @@ const AssembleShipmentView = ({
                   <TableCell className="font-mono-tech">{i.rollBarcode}</TableCell>
                   <TableCell>{i.materialName}</TableCell>
                   <TableCell>
-                    {i.quantity} {i.unit}
+                    {formatQuantity(i.quantity)} {i.unit}
                   </TableCell>
                   <TableCell>
                     <Button variant="ghost" size="icon" onClick={() => onRemoveRoll(i.id)}>

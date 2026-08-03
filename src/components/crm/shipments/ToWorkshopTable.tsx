@@ -28,6 +28,7 @@ import type { Shipment, ShipmentDetail } from '@/lib/shipmentsApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { AccessZone } from '@/lib/roles';
 import { formatDate, statusVariant, shiftLabel } from '@/components/crm/shipments/toWorkshopShared';
+import { formatQuantity } from '@/lib/formatQuantity';
 
 interface ToWorkshopTableProps {
   loading: boolean;
@@ -137,7 +138,7 @@ const ToWorkshopTable = ({
                                   <span className="font-mono-tech font-medium">{item.rollBarcode}</span>
                                   <span className="text-muted-foreground">
                                     {' '}
-                                    — {item.materialName}, {item.quantity} {item.unit}
+                                    — {item.materialName}, {formatQuantity(item.quantity)} {item.unit}
                                   </span>
                                 </div>
                               ))}
