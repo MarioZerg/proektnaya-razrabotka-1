@@ -34,6 +34,7 @@ import ShiftsCalendar from "./pages/shifts/ShiftsCalendar";
 import SystemSettings from "./pages/settings/SystemSettings";
 import SuppliersSettings from "./pages/settings/SuppliersSettings";
 import MarketplaceItemsSettings from "./pages/settings/MarketplaceItemsSettings";
+import MarketplaceIntegrationsSettings from "./pages/settings/MarketplaceIntegrationsSettings";
 import Kiosk from "./pages/Kiosk";
 import { AuthProvider } from "@/context/AuthContext";
 
@@ -76,6 +77,7 @@ const App = () => (
             <Route path="/crm/settings/system" element={<SystemSettings />} />
             <Route path="/crm/settings/suppliers" element={<SuppliersSettings />} />
             <Route path="/crm/settings/marketplace-items" element={<MarketplaceItemsSettings />} />
+            <Route path="/crm/settings/marketplace-integrations" element={<MarketplaceIntegrationsSettings />} />
             <Route path="/crm/kiosk" element={<Kiosk />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

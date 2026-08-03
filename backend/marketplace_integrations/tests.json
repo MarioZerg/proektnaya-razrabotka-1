@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get integrations list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Update unknown marketplace fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "update", "marketplaceCode": "unknown", "isEnabled": true },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Update without fields fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "update", "marketplaceCode": "ozon" },
+      "expectedStatus": 400
+    }
+  ]
+}
