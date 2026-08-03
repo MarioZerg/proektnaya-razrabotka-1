@@ -112,6 +112,8 @@ const SewingItems = () => {
     effectiveShiftNumber,
     load,
     setActiveTab,
+    myUnfinishedCount,
+    ordersLoading: loading,
   });
 
   return (
