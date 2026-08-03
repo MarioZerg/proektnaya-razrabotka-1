@@ -20,6 +20,7 @@ import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFbo
 import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
 import SupplyFboFieldsCard from '@/components/crm/marketplaceSupplies/SupplyFboFieldsCard';
 import SupplyItemsSection from '@/components/crm/marketplaceSupplies/SupplyItemsSection';
+import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCard';
 
 const MarketplaceSupplyShow = () => {
   const { id } = useParams();
@@ -199,7 +200,12 @@ const MarketplaceSupplyShow = () => {
     );
   }
 
-  const nextStatus = supplyStatusFlow[supplyStatusFlow.indexOf(supply.status) + 1];
+  const isWbFbs = supply.marketplace === 'WB' && supply.type === 'FBS';
+  // Для WB FBS сборка и передача в доставку выполняются кнопками на карточке WB (они
+  // синхронизируются с WildBerries), поэтому ручной переход статуса в шапке скрыт —
+  // остаётся только финальное «Отметить выполненной» после отгрузки.
+  const rawNextStatus = supplyStatusFlow[supplyStatusFlow.indexOf(supply.status) + 1];
+  const nextStatus = isWbFbs && rawNextStatus !== 'Выполнена' ? undefined : rawNextStatus;
   const canEditItems = supply.status === 'Открытая' || supply.status === 'На сборке';
   const isOzonFbo = supply.marketplace === 'OZON' && supply.type === 'FBO';
 
@@ -253,19 +259,23 @@ const MarketplaceSupplyShow = () => {
           />
         )}
 
-        <SupplyItemsSection
-          supply={supply}
-          supplyId={supplyId}
-          canEditItems={canEditItems}
-          readyGoods={readyGoods}
-          scanOrderNumber={scanOrderNumber}
-          setScanOrderNumber={setScanOrderNumber}
-          scanning={scanning}
-          scanInputRef={scanInputRef}
-          onScanOrder={handleScanOrder}
-          onRemoveItem={handleRemoveItem}
-          onNavigateAssemble={() => navigate(`/crm/shipments/to-marketplace/${supplyId}/assemble`)}
-        />
+        {isWbFbs ? (
+          <WbFbsSupplyCard supply={supply} supplyId={supplyId} onReload={load} />
+        ) : (
+          <SupplyItemsSection
+            supply={supply}
+            supplyId={supplyId}
+            canEditItems={canEditItems}
+            readyGoods={readyGoods}
+            scanOrderNumber={scanOrderNumber}
+            setScanOrderNumber={setScanOrderNumber}
+            scanning={scanning}
+            scanInputRef={scanInputRef}
+            onScanOrder={handleScanOrder}
+            onRemoveItem={handleRemoveItem}
+            onNavigateAssemble={() => navigate(`/crm/shipments/to-marketplace/${supplyId}/assemble`)}
+          />
+        )}
       </div>
     </CrmLayout>
   );

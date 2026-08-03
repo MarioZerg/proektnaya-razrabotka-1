@@ -1,8 +1,11 @@
+import base64
 import json
 import os
+import uuid
 import urllib.request
 import urllib.error
 
+import boto3
 import psycopg2
 
 # Боевой контур WB Marketplace API. Тестовый (sandbox) контур WB использует поддомен
@@ -62,6 +65,36 @@ def wb_get(path, api_key, use_sandbox):
         return 0, str(e)
 
 
+def wb_request(method, path, api_key, use_sandbox, payload=None):
+    """Универсальный запрос к WB Marketplace API (GET/POST/PATCH).
+    Возвращает (status_code, parsed_json_or_text). Для пустого тела ответа — {}."""
+    base = WB_API_SANDBOX_BASE if use_sandbox else WB_API_BASE
+    body = json.dumps(payload).encode('utf-8') if payload is not None else None
+    req = urllib.request.Request(base + path, method=method, data=body)
+    req.add_header('Authorization', api_key)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = r.read().decode('utf-8')
+            return r.status, (json.loads(data) if data else {})
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode('utf-8', errors='replace')
+        try:
+            detail = json.loads(detail)
+        except Exception:
+            pass
+        return e.code, detail
+    except Exception as e:
+        return 0, str(e)
+
+
+def wb_error_text(status_code, data):
+    """Достаёт человекочитаемое сообщение об ошибке из ответа WB."""
+    if isinstance(data, dict):
+        return data.get('message') or data.get('detail') or data.get('title') or json.dumps(data, ensure_ascii=False)
+    return str(data)
+
+
 def find_marketplace_item(cur, nm_id, skus, article):
     """Ищет товар в marketplace_items: сначала по wb_sku (nmId), затем по любому баркоду
     из skus, затем по sku (артикул продавца). Возвращает (material, width, height, name) или None."""
@@ -108,6 +141,181 @@ def log_action(cur, actor_id, actor_name, action, entity_id, description):
     )
 
 
+def upload_sticker_png(base64_data: str, name: str) -> str:
+    """Загружает PNG-стикер короба WB в S3, возвращает публичный CDN URL."""
+    binary = base64.b64decode(base64_data)
+    s3 = boto3.client(
+        's3',
+        endpoint_url='https://bucket.poehali.dev',
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    )
+    key = f'wb-trbx-stickers/{uuid.uuid4().hex}-{name}.png'
+    s3.put_object(Bucket='files', Key=key, Body=binary, ContentType='image/png')
+    return f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
+
+
+def handle_create_supply(cur, conn, body_data, api_key, use_sandbox):
+    """Создаёт поставку FBS на стороне WB (POST /api/v3/supplies) и привязывает её
+    WB-идентификатор к нашей поставке (marketplace_supplies.wb_supply_id)."""
+    supply_id = body_data.get('supplyId')
+    if not supply_id:
+        return _resp(400, {'error': 'Укажите supplyId'})
+
+    cur.execute(
+        "SELECT marketplace, type, wb_supply_id, supply_number FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    marketplace, supply_type, wb_supply_id, supply_number = row
+    if marketplace != 'WB' or supply_type != 'FBS':
+        return _resp(400, {'error': 'Действие доступно только для поставок WB FBS'})
+    if wb_supply_id:
+        return _resp(200, {'wbSupplyId': wb_supply_id, 'alreadyCreated': True})
+
+    name = (supply_number or f'Поставка #{supply_id}')[:128]
+    status_code, data = wb_request('POST', '/api/v3/supplies', api_key, use_sandbox, {'name': name})
+    if status_code not in (200, 201):
+        return _resp(502, {'error': f'WB не создал поставку ({status_code}): {wb_error_text(status_code, data)}'})
+    wb_supply_id = data.get('id') if isinstance(data, dict) else None
+    if not wb_supply_id:
+        return _resp(502, {'error': 'WB не вернул идентификатор поставки'})
+
+    cur.execute(
+        "UPDATE marketplace_supplies SET wb_supply_id = %s WHERE id = %s",
+        (wb_supply_id, int(supply_id)),
+    )
+    conn.commit()
+    return _resp(200, {'wbSupplyId': wb_supply_id})
+
+
+def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
+    """Сканирование готового FBS-заказа WB в поставку: добавляет сборочное задание в
+    WB-поставку (PATCH /api/v3/supplies/{sid}/orders/{orderId}) и фиксирует связь у нас."""
+    supply_id = body_data.get('supplyId')
+    order_number = (body_data.get('orderNumber') or '').strip()
+    if not supply_id or not order_number:
+        return _resp(400, {'error': 'Укажите поставку и номер заказа'})
+
+    cur.execute(
+        "SELECT marketplace, type, status, wb_supply_id FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    s_row = cur.fetchone()
+    if not s_row:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    marketplace, supply_type, s_status, wb_supply_id = s_row
+    if marketplace != 'WB' or supply_type != 'FBS':
+        return _resp(400, {'error': 'Действие доступно только для поставок WB FBS'})
+    if s_status not in ('Открытая', 'На сборке'):
+        return _resp(409, {'error': 'В эту поставку уже нельзя добавлять заказы'})
+    if not wb_supply_id:
+        return _resp(409, {'error': 'Поставка ещё не создана на стороне WB'})
+
+    # Ищем готовый (после стикеровки) FBS-заказ WB по номеру заказа.
+    cur.execute(
+        "SELECT id, wb_order_id, sewing_status, product FROM orders "
+        "WHERE order_number = %s AND marketplace = 'WB' AND order_type = 'FBS'",
+        (order_number,),
+    )
+    o_row = cur.fetchone()
+    if not o_row:
+        return _resp(404, {'error': f'Заказ {order_number} не найден среди WB FBS заказов'})
+    order_id, wb_order_id, sewing_status, product = o_row
+    if sewing_status != 'Готовые':
+        return _resp(409, {'error': f'Заказ {order_number} ещё не готов (статус: {sewing_status})'})
+    if not wb_order_id:
+        return _resp(409, {'error': f'У заказа {order_number} нет идентификатора сборочного задания WB'})
+
+    cur.execute("SELECT supply_id FROM wb_supply_orders WHERE order_id = %s", (order_id,))
+    ex = cur.fetchone()
+    if ex:
+        if ex[0] == int(supply_id):
+            return _resp(409, {'error': f'Заказ {order_number} уже в этой поставке'})
+        return _resp(409, {'error': f'Заказ {order_number} уже добавлен в другую поставку'})
+
+    status_code, data = wb_request(
+        'PATCH', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}', api_key, use_sandbox
+    )
+    if status_code not in (200, 204):
+        return _resp(502, {'error': f'WB не принял заказ в поставку ({status_code}): {wb_error_text(status_code, data)}'})
+
+    cur.execute(
+        "INSERT INTO wb_supply_orders (supply_id, order_id) VALUES (%s, %s)",
+        (int(supply_id), order_id),
+    )
+    # Первый скан переводит поставку в статус "На сборке".
+    if s_status == 'Открытая':
+        cur.execute("UPDATE marketplace_supplies SET status = 'На сборке' WHERE id = %s", (int(supply_id),))
+    conn.commit()
+    return _resp(200, {'success': True, 'orderId': order_id, 'orderNumber': order_number, 'product': product})
+
+
+def handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox):
+    """Передача поставки в доставку: закрывает поставку на WB (PATCH .../deliver),
+    после чего тянет стикеры коробов trbx (PNG) и сохраняет их в нашей системе."""
+    supply_id = body_data.get('supplyId')
+    if not supply_id:
+        return _resp(400, {'error': 'Укажите supplyId'})
+
+    cur.execute(
+        "SELECT marketplace, type, wb_supply_id FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    s_row = cur.fetchone()
+    if not s_row:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    marketplace, supply_type, wb_supply_id = s_row
+    if marketplace != 'WB' or supply_type != 'FBS':
+        return _resp(400, {'error': 'Действие доступно только для поставок WB FBS'})
+    if not wb_supply_id:
+        return _resp(409, {'error': 'Поставка не создана на стороне WB'})
+
+    # Передаём поставку в доставку (эквивалент "отгрузить" на WB — уходит в статус "на сборке"/доставку).
+    status_code, data = wb_request('PATCH', f'/api/v3/supplies/{wb_supply_id}/deliver', api_key, use_sandbox)
+    if status_code not in (200, 204):
+        return _resp(502, {'error': f'WB не принял поставку в доставку ({status_code}): {wb_error_text(status_code, data)}'})
+
+    # Тянем стикеры коробов trbx этой поставки (PNG). Если коробов нет — не критично.
+    stickers_saved = 0
+    tr_status, tr_data = wb_request('GET', f'/api/v3/supplies/{wb_supply_id}/trbx', api_key, use_sandbox)
+    trbx_ids = []
+    if tr_status == 200 and isinstance(tr_data, dict):
+        trbx_ids = [b.get('id') for b in (tr_data.get('trbxes') or tr_data.get('trbx') or []) if b.get('id')]
+
+    if trbx_ids:
+        st_status, st_data = wb_request(
+            'POST', f'/api/v3/supplies/{wb_supply_id}/trbx/stickers?type=png',
+            api_key, use_sandbox, {'trbxIds': trbx_ids},
+        )
+        if st_status == 200 and isinstance(st_data, dict):
+            for st in (st_data.get('stickers') or []):
+                trbx_id = st.get('trbxId') or st.get('id')
+                b64 = (st.get('file') or st.get('image') or '')
+                if not trbx_id or not b64:
+                    continue
+                url = upload_sticker_png(b64, str(trbx_id))
+                # Стикер короба привязываем ко всем заказам этого короба (или ко всей поставке,
+                # если разбиения по коробам нет — тогда trbx_id один на всё).
+                cur.execute(
+                    "UPDATE wb_supply_orders SET wb_trbx_id = %s, sticker_url = %s, sticker_name = %s "
+                    "WHERE supply_id = %s AND (wb_trbx_id = %s OR wb_trbx_id IS NULL)",
+                    (str(trbx_id), url, f'trbx-{trbx_id}', int(supply_id), str(trbx_id)),
+                )
+                stickers_saved += 1
+
+    cur.execute(
+        "UPDATE marketplace_supplies SET status = 'Отгрузка', "
+        "ship_to_gazelka_at = COALESCE(ship_to_gazelka_at, now()), "
+        "ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now()) WHERE id = %s",
+        (int(supply_id),),
+    )
+    conn.commit()
+    return _resp(200, {'success': True, 'stickersSaved': stickers_saved, 'sandbox': use_sandbox})
+
+
 def handler(event: dict, context) -> dict:
     """Интеграция с WildBerries FBS (Marketplace API v3).
 
@@ -123,6 +331,18 @@ def handler(event: dict, context) -> dict:
           sewing_status='Новый', source='api'. Повторная синхронизация не создаёт дублей
           (защита по wb_order_id). Возвращает счётчики: created / skipped_existing /
           skipped_no_item, и список нераспознанных артикулов для настройки товаров.
+
+    POST /  { action: 'create_supply', supplyId }
+        - создаёт поставку FBS на стороне WB (POST /api/v3/supplies) для нашей поставки
+          WB FBS и сохраняет её WB-идентификатор (marketplace_supplies.wb_supply_id).
+    POST /  { action: 'scan_order_to_supply', supplyId, orderNumber }
+        - сканирует готовый (sewing_status='Готовые') FBS-заказ WB в поставку: добавляет
+          сборочное задание в WB-поставку (PATCH /supplies/{sid}/orders/{orderId}) и пишет
+          связь в wb_supply_orders; первый скан переводит поставку в статус "На сборке".
+    POST /  { action: 'deliver_supply', supplyId }
+        - передаёт поставку в доставку на WB (PATCH /supplies/{sid}/deliver), тянет PNG-стикеры
+          коробов trbx (POST /supplies/{sid}/trbx/stickers), сохраняет их в S3 и привязывает
+          к заказам поставки; переводит поставку в статус "Отгрузка".
 
     Args:
         event: dict с httpMethod, body
@@ -143,7 +363,7 @@ def handler(event: dict, context) -> dict:
     actor_id = body_data.get('actorId')
     actor_name = body_data.get('actorName')
 
-    if action != 'sync_orders':
+    if action not in ('sync_orders', 'create_supply', 'scan_order_to_supply', 'deliver_supply'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -157,6 +377,14 @@ def handler(event: dict, context) -> dict:
         if not api_key:
             return _resp(400, {'error': 'Не указан API-ключ WildBerries. Добавьте его в разделе «Интеграции маркетплейсов».'})
 
+        if action == 'create_supply':
+            return handle_create_supply(cur, conn, body_data, api_key, use_sandbox)
+        if action == 'scan_order_to_supply':
+            return handle_scan_order(cur, conn, body_data, api_key, use_sandbox)
+        if action == 'deliver_supply':
+            return handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox)
+
+        # action == 'sync_orders'
         status_code, data = wb_get('/api/v3/orders/new', api_key, use_sandbox)
         if status_code == 401:
             return _resp(400, {'error': 'WildBerries отклонил API-ключ (401). Проверьте ключ в настройках интеграции.'})

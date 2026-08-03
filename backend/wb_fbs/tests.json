@@ -18,6 +18,20 @@
       "method": "GET",
       "path": "/",
       "expectedStatus": 405
+    },
+    {
+      "name": "Create supply without supplyId fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create_supply"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Deliver supply without supplyId fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "deliver_supply"},
+      "expectedStatus": 400
     }
   ]
 }

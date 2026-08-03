@@ -17,18 +17,50 @@ export interface WbSyncResult {
   sandbox: boolean;
 }
 
+const post = async (payload: Record<string, unknown>) => {
+  const res = await fetch(WB_FBS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Ошибка WildBerries');
+  }
+  return data;
+};
+
 export const syncWbOrders = async (actor?: {
   id?: number | null;
   name?: string | null;
 }): Promise<WbSyncResult> => {
-  const res = await fetch(WB_FBS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'sync_orders', actorId: actor?.id, actorName: actor?.name }),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'Не удалось загрузить заказы с WildBerries');
-  }
+  const data = await post({ action: 'sync_orders', actorId: actor?.id, actorName: actor?.name });
   return data as WbSyncResult;
 };
+
+export interface WbCreateSupplyResult {
+  wbSupplyId: string;
+  alreadyCreated?: boolean;
+}
+
+export const createWbSupply = (supplyId: number): Promise<WbCreateSupplyResult> =>
+  post({ action: 'create_supply', supplyId }) as Promise<WbCreateSupplyResult>;
+
+export const scanWbOrderToSupply = (
+  supplyId: number,
+  orderNumber: string
+): Promise<{ success: true; orderNumber: string; product: string }> =>
+  post({ action: 'scan_order_to_supply', supplyId, orderNumber }) as Promise<{
+    success: true;
+    orderNumber: string;
+    product: string;
+  }>;
+
+export const deliverWbSupply = (
+  supplyId: number
+): Promise<{ success: true; stickersSaved: number; sandbox: boolean }> =>
+  post({ action: 'deliver_supply', supplyId }) as Promise<{
+    success: true;
+    stickersSaved: number;
+    sandbox: boolean;
+  }>;

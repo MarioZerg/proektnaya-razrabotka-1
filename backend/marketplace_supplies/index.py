@@ -254,6 +254,43 @@ def handler(event: dict, context) -> dict:
                     for r in cur.fetchall()
                 ]
 
+                # WB FBS-специфичные данные: id поставки на WB, отсканированные готовые
+                # заказы WB (со стикерами коробов), и счётчик готовых кандидатов на складе
+                # производства (готовые WB FBS-заказы, ещё не в поставке).
+                cur.execute("SELECT wb_supply_id FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
+                wb_supply_id = (cur.fetchone() or [None])[0]
+
+                wb_orders = []
+                wb_ready_count = 0
+                if row[1] == 'WB' and row[2] == 'FBS':
+                    cur.execute(
+                        "SELECT wso.id, wso.order_id, o.order_number, o.product, "
+                        "wso.wb_trbx_id, wso.sticker_url, wso.sticker_name, wso.scanned_at "
+                        "FROM wb_supply_orders wso JOIN orders o ON o.id = wso.order_id "
+                        "WHERE wso.supply_id = %s ORDER BY wso.scanned_at",
+                        (int(supply_id),),
+                    )
+                    wb_orders = [
+                        {
+                            'id': r[0],
+                            'orderId': r[1],
+                            'orderNumber': r[2],
+                            'product': r[3],
+                            'wbTrbxId': r[4],
+                            'stickerUrl': r[5],
+                            'stickerName': r[6],
+                            'scannedAt': (r[7].isoformat() + 'Z') if r[7] else None,
+                        }
+                        for r in cur.fetchall()
+                    ]
+                    # Готовые к отгрузке: готовые FBS-заказы WB, не привязанные ни к одной поставке.
+                    cur.execute(
+                        "SELECT COUNT(*) FROM orders o "
+                        "WHERE o.marketplace = 'WB' AND o.order_type = 'FBS' AND o.sewing_status = 'Готовые' "
+                        "AND NOT EXISTS (SELECT 1 FROM wb_supply_orders w WHERE w.order_id = o.id)"
+                    )
+                    wb_ready_count = cur.fetchone()[0]
+
                 detail = {
                     'id': row[0],
                     'marketplace': row[1],
@@ -284,6 +321,9 @@ def handler(event: dict, context) -> dict:
                     'gazelkaPickup': row[26],
                     'items': items,
                     'boxes': boxes,
+                    'wbSupplyId': wb_supply_id,
+                    'wbOrders': wb_orders,
+                    'wbReadyCount': wb_ready_count,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'supply': detail})}
 
@@ -843,6 +883,7 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE supply_id = {int(item_id)}")
                 cur.execute(f"DELETE FROM marketplace_supply_boxes WHERE supply_id = {int(item_id)}")
+                cur.execute(f"DELETE FROM wb_supply_orders WHERE supply_id = {int(item_id)}")
                 cur.execute(f"DELETE FROM marketplace_supplies WHERE id = {int(item_id)}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

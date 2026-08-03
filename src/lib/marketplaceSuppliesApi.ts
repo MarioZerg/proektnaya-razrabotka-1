@@ -49,6 +49,17 @@ export interface SupplyBox {
   items: SupplyItem[];
 }
 
+export interface WbSupplyOrder {
+  id: number;
+  orderId: number;
+  orderNumber: string;
+  product: string | null;
+  wbTrbxId: string | null;
+  stickerUrl: string | null;
+  stickerName: string | null;
+  scannedAt: string | null;
+}
+
 export interface SupplyDetail extends Supply {
   items: SupplyItem[];
   boxes: SupplyBox[];
@@ -62,6 +73,9 @@ export interface SupplyDetail extends Supply {
   packagingType: PackagingType | null;
   packagingCount: number | null;
   gazelkaPickup: boolean;
+  wbSupplyId: string | null;
+  wbOrders: WbSupplyOrder[];
+  wbReadyCount: number;
 }
 
 export interface SupplyFilters {

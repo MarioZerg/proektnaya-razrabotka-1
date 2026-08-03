@@ -1,0 +1,208 @@
+import { useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import Icon from '@/components/ui/icon';
+import { useToast } from '@/hooks/use-toast';
+import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
+import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
+import { createWbSupply, scanWbOrderToSupply, deliverWbSupply } from '@/lib/wbFbsApi';
+
+interface WbFbsSupplyCardProps {
+  supply: SupplyDetail;
+  supplyId: number;
+  onReload: () => void;
+}
+
+/** Карточка сборки WB FBS-поставки: создание поставки на стороне WildBerries, сканирование
+ * готовых заказов в поставку (со счётчиками готово/отсканировано), передача в доставку и
+ * отображение стикеров коробов, которые WB возвращает при закрытии. */
+const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) => {
+  const { toast } = useToast();
+  const [creatingSupply, setCreatingSupply] = useState(false);
+  const [scanValue, setScanValue] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [delivering, setDelivering] = useState(false);
+  const scanRef = useRef<HTMLInputElement>(null);
+
+  const wbCreated = !!supply.wbSupplyId;
+  const canScan = wbCreated && (supply.status === 'Открытая' || supply.status === 'На сборке');
+  const canDeliver = wbCreated && supply.wbOrders.length > 0 && supply.status === 'На сборке';
+
+  const handleCreateSupply = async () => {
+    setCreatingSupply(true);
+    try {
+      const r = await createWbSupply(supplyId);
+      toast({
+        title: r.alreadyCreated ? 'Поставка уже создана на WB' : 'Поставка создана на WildBerries',
+        description: `ID поставки WB: ${r.wbSupplyId}`,
+      });
+      onReload();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setCreatingSupply(false);
+    }
+  };
+
+  const handleScan = async () => {
+    const orderNumber = scanValue.trim();
+    if (!orderNumber) return;
+    setScanValue('');
+    setScanning(true);
+    try {
+      await scanWbOrderToSupply(supplyId, orderNumber);
+      playScanSound();
+      toast({ title: `Заказ ${orderNumber} добавлен в поставку` });
+      onReload();
+    } catch (e) {
+      playScanErrorSound();
+      toast({ title: 'Ошибка сканирования', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setScanning(false);
+      setTimeout(() => scanRef.current?.focus(), 0);
+    }
+  };
+
+  const handleDeliver = async () => {
+    setDelivering(true);
+    try {
+      const r = await deliverWbSupply(supplyId);
+      toast({
+        title: r.sandbox ? 'WB (тест): поставка передана в доставку' : 'Поставка передана в доставку',
+        description: r.stickersSaved > 0 ? `Стикеров коробов получено: ${r.stickersSaved}` : 'Стикеры коробов появятся в строках заказов',
+      });
+      onReload();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setDelivering(false);
+    }
+  };
+
+  useScannerAutoSubmit(scanValue, handleScan, !scanning && canScan);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-4 text-sm">
+          <span>
+            Готово на производстве: <b>{supply.wbReadyCount}</b>
+          </span>
+          <span>
+            Отсканировано в поставку: <b>{supply.wbOrders.length}</b>
+          </span>
+          {supply.wbSupplyId && (
+            <span className="text-muted-foreground">
+              WB: <b className="font-mono-tech">{supply.wbSupplyId}</b>
+            </span>
+          )}
+        </div>
+        {canDeliver && (
+          <Button onClick={handleDeliver} disabled={delivering} className="bg-emerald-600 hover:bg-emerald-700">
+            <Icon name={delivering ? 'Loader2' : 'Truck'} size={16} className={`mr-1.5 ${delivering ? 'animate-spin' : ''}`} />
+            Отправить в доставку
+          </Button>
+        )}
+      </div>
+
+      {!wbCreated && (
+        <Card className="border-primary/30 bg-primary/5 shadow-none">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
+            <div className="text-sm text-muted-foreground">
+              Создайте поставку на стороне WildBerries — после этого можно сканировать готовые заказы в неё.
+            </div>
+            <Button onClick={handleCreateSupply} disabled={creatingSupply}>
+              <Icon name={creatingSupply ? 'Loader2' : 'PackagePlus'} size={16} className={`mr-1.5 ${creatingSupply ? 'animate-spin' : ''}`} />
+              Создать поставку на WB
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {canScan && (
+        <Card className="border-primary/30 bg-primary/5 shadow-none">
+          <CardContent
+            className="space-y-2 pt-6"
+            onClick={(e) => {
+              if (!(e.target as HTMLElement).closest('input, button, a')) scanRef.current?.focus();
+            }}
+          >
+            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <Icon name="ScanLine" size={18} />
+              Отсканируйте стикер готового заказа WB FBS (номер заказа)
+            </div>
+            <div className="flex gap-2">
+              <Input
+                ref={scanRef}
+                autoFocus
+                placeholder="Номер заказа WB"
+                value={scanValue}
+                onChange={(e) => setScanValue(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleScan()}
+                disabled={scanning}
+                className="font-mono-tech"
+              />
+              <Button onClick={handleScan} disabled={scanning || !scanValue.trim()}>
+                {scanning ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Добавить'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <h3 className="pt-2 text-sm font-semibold">В поставке ({supply.wbOrders.length})</h3>
+      {supply.wbOrders.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Заказов в поставке пока нет</p>
+      ) : (
+        <div className="rounded-md border border-border">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-primary hover:bg-primary">
+                <TableHead className="text-primary-foreground">Заказ</TableHead>
+                <TableHead className="text-primary-foreground">Товар</TableHead>
+                <TableHead className="text-primary-foreground">Короб WB</TableHead>
+                <TableHead className="text-primary-foreground">Стикер короба</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {supply.wbOrders.map((o) => (
+                <TableRow key={o.id}>
+                  <TableCell className="font-medium">{o.orderNumber}</TableCell>
+                  <TableCell>{o.product || '—'}</TableCell>
+                  <TableCell className="font-mono-tech">{o.wbTrbxId || '—'}</TableCell>
+                  <TableCell>
+                    {o.stickerUrl ? (
+                      <a
+                        href={o.stickerUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-primary hover:underline"
+                      >
+                        <Icon name="QrCode" size={16} />
+                        Открыть
+                      </a>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default WbFbsSupplyCard;
