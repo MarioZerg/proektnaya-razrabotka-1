@@ -380,18 +380,19 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     состава каждого короба (группировка по ozon_sku), затем получает PDF-этикетки коробов и
     сохраняет их. Действует на реальной заявке OZON."""
     supply_id = body_data.get('supplyId')
-    cargo_type = (body_data.get('cargoType') or 'BOX').strip()
     if not supply_id:
         return _resp(400, {'error': 'Укажите supplyId'})
 
     cur.execute(
-        "SELECT marketplace, type, ozon_supply_order_id FROM marketplace_supplies WHERE id = %s",
+        "SELECT marketplace, type, ozon_supply_order_id, ozon_cargo_type FROM marketplace_supplies WHERE id = %s",
         (int(supply_id),),
     )
     s_row = cur.fetchone()
     if not s_row:
         return _resp(404, {'error': 'Поставка не найдена'})
-    marketplace, supply_type, ozon_order_id = s_row
+    marketplace, supply_type, ozon_order_id, cargo_type_db = s_row
+    # Тип грузоместа: явный из запроса имеет приоритет, иначе из настройки поставки, иначе BOX.
+    cargo_type = (body_data.get('cargoType') or cargo_type_db or 'BOX').strip()
     if marketplace != 'OZON' or supply_type != 'FBO':
         return _resp(400, {'error': 'Действие доступно только для поставок OZON FBO'})
     if not ozon_order_id:

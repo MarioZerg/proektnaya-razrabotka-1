@@ -203,7 +203,7 @@ def handler(event: dict, context) -> dict:
                     "s.pass_sticker_url, s.pass_sticker_name, "
                     "s.ozon_delivery_method, s.ozon_application_number, s.ozon_status, "
                     "s.supply_date, s.timeslot, s.shipment_type, s.packaging_type, "
-                    "s.packaging_count, s.gazelka_pickup, s.ozon_supply_order_id "
+                    "s.packaging_count, s.gazelka_pickup, s.ozon_supply_order_id, s.ozon_cargo_type "
                     "FROM marketplace_supplies s "
                     "LEFT JOIN users u ON u.id = s.created_by "
                     "WHERE s.id = %s",
@@ -330,6 +330,7 @@ def handler(event: dict, context) -> dict:
                     'wbOrders': wb_orders,
                     'wbReadyCount': wb_ready_count,
                     'ozonSupplyOrderId': row[27],
+                    'ozonCargoType': row[28],
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'supply': detail})}
 
@@ -755,6 +756,12 @@ def handler(event: dict, context) -> dict:
                     fields.append(f"packaging_count = {int(pc)}" if pc not in (None, '') else "packaging_count = NULL")
                 if 'gazelkaPickup' in body_data:
                     fields.append(f"gazelka_pickup = {'true' if body_data['gazelkaPickup'] else 'false'}")
+                if 'ozonCargoType' in body_data:
+                    # Тип грузоместа OZON FBO: только BOX или PALLET (защита от произвольных значений).
+                    ct = (body_data['ozonCargoType'] or 'BOX').strip().upper()
+                    if ct not in ('BOX', 'PALLET'):
+                        ct = 'BOX'
+                    fields.append(f"ozon_cargo_type = '{ct}'")
 
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нечего обновлять'})}

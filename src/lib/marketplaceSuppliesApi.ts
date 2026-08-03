@@ -83,6 +83,8 @@ export interface SupplyDetail extends Supply {
   wbReadyCount: number;
   /** id заявки OZON FBO на стороне OZON (для повторной загрузки товарного состава). */
   ozonSupplyOrderId: number | null;
+  /** Тип грузоместа OZON FBO при закрытии коробов: 'BOX' (короб) или 'PALLET' (палета). */
+  ozonCargoType: string | null;
 }
 
 export interface SupplyFilters {
@@ -209,6 +211,7 @@ export const updateSupply = (
     packagingType: PackagingType | '';
     packagingCount: number | null;
     gazelkaPickup: boolean;
+    ozonCargoType: 'BOX' | 'PALLET';
   }>
 ) => postAction({ action: 'update', supplyId, ...fields });
 

@@ -5,6 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -46,6 +53,7 @@ const MarketplaceSupplyAssemble = () => {
   const [totalQuantity, setTotalQuantity] = useState('');
   const [savingQuantity, setSavingQuantity] = useState(false);
   const [closingBoxes, setClosingBoxes] = useState(false);
+  const [cargoType, setCargoType] = useState<'BOX' | 'PALLET'>('BOX');
 
   const load = () => {
     setLoading(true);
@@ -53,6 +61,7 @@ const MarketplaceSupplyAssemble = () => {
       .then((data) => {
         setSupply(data);
         setTotalQuantity(data.totalQuantityMarketplace != null ? String(data.totalQuantityMarketplace) : '');
+        setCargoType(data.ozonCargoType === 'PALLET' ? 'PALLET' : 'BOX');
       })
       .finally(() => setLoading(false));
   };
@@ -129,6 +138,16 @@ const MarketplaceSupplyAssemble = () => {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setSavingQuantity(false);
+    }
+  };
+
+  // Тип грузоместа (короб/палета) сохраняется в поставку и используется при закрытии коробов.
+  const handleCargoTypeChange = async (value: 'BOX' | 'PALLET') => {
+    setCargoType(value);
+    try {
+      await updateSupply(supplyId, { ozonCargoType: value });
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
   };
 
@@ -247,7 +266,18 @@ const MarketplaceSupplyAssemble = () => {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Короба ({supply.boxes.length})</h2>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {isOzonFbo && (
+                <Select value={cargoType} onValueChange={(v) => handleCargoTypeChange(v as 'BOX' | 'PALLET')}>
+                  <SelectTrigger className="h-9 w-[150px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="BOX">Короб</SelectItem>
+                    <SelectItem value="PALLET">Палета</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
               {canCloseBoxes && (
                 <Button
                   size="sm"
