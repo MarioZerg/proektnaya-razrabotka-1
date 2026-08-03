@@ -29,6 +29,14 @@ export interface Order {
    * при take_order. Заполняется в момент раскроя (action 'cut') и дальше не меняется. */
   cutterUserId: number | null;
   cutterUserName: string | null;
+  /** Кто отшил заказ — заполняется при отправке на стикеровку (action 'send_to_stickering')
+   * и дальше не меняется, аналогично cutterUserId. */
+  sewerUserId: number | null;
+  sewerUserName: string | null;
+  /** Кто упаковал (закрыл) заказ на терминале стикеровки — заполняется при закрытии
+   * заказа (backend/kiosk, action 'close_order') и дальше не меняется. */
+  packerUserId: number | null;
+  packerUserName: string | null;
   /** Номер вешалки, на которую подвешен раскроенный товар. 0 = не назначена (заполняется
    * через отдельную вкладку "Вешалки", ещё не реализована). */
   hangerNumber: number;

@@ -42,7 +42,9 @@ def handler(event: dict, context) -> dict:
                                статусе "Стикеровка"
 
     POST /  { action: 'close_order', orderId, packerId }
-        - переводит заказ в статус "Готовые", создаёт начисления швее и упаковщице
+        - переводит заказ в статус "Готовые", создаёт начисления швее и упаковщице.
+          Фиксирует packer_user_id = packerId — отдельное поле на заказе, аналогично
+          cutter_user_id/sewer_user_id, чтобы история "кто упаковал" была видна на карточке
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -141,8 +143,13 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': f'Заказ не на стикеровке (статус: {sewing_status})'}),
                     }
 
+                # packer_user_id фиксирует, КТО именно закрыл заказ (упаковщица) — отдельное
+                # поле, аналогично cutter_user_id/sewer_user_id, чтобы история исполнителей на
+                # каждом этапе была видна на карточке товара (раньше сохранялось только в
+                # salary_accruals для зарплаты и нигде на самом заказе не фиксировалось).
                 cur.execute(
-                    f"UPDATE orders SET sewing_status = 'Готовые' WHERE id = {int(order_id)}"
+                    f"UPDATE orders SET sewing_status = 'Готовые', packer_user_id = {int(packer_id)} "
+                    f"WHERE id = {int(order_id)}"
                 )
 
                 # Швея получает фиксированную ставку за штуку по ширине товара — именно сейчас,

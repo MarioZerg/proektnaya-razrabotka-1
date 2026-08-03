@@ -38,6 +38,7 @@ import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { Roll } from '@/lib/rollsApi';
 import { marketplaceLogo, formatDate, timeAgo, statusOptions } from '@/components/crm/sewingItems/sewingItemsShared';
+import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 
 interface SewingItemDetailDialogProps {
   dialogOpen: boolean;
@@ -414,21 +415,18 @@ const SewingItemDetailDialog = ({
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm">Сотрудники</CardTitle>
                 </CardHeader>
-                <CardContent className="p-0">
+                <CardContent className="space-y-3">
+                  <OrderStagesDiagram order={selectedOrder} />
                   <Table>
                     <TableBody>
-                      {selectedOrder.assignedUserName ? (
-                        <TableRow>
-                          <TableCell className="font-medium text-muted-foreground">Назначен</TableCell>
-                          <TableCell>{selectedOrder.assignedUserName}</TableCell>
-                        </TableRow>
-                      ) : (
-                        <TableRow>
-                          <TableCell colSpan={2} className="text-center text-muted-foreground">
-                            Сотрудники не назначены
-                          </TableCell>
-                        </TableRow>
-                      )}
+                      <TableRow>
+                        <TableCell className="font-medium text-muted-foreground">Назначен сейчас</TableCell>
+                        <TableCell>{selectedOrder.assignedUserName || '—'}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell className="font-medium text-muted-foreground">Вешалка</TableCell>
+                        <TableCell>{selectedOrder.hangerNumber > 0 ? `№ ${selectedOrder.hangerNumber}` : '—'}</TableCell>
+                      </TableRow>
                     </TableBody>
                   </Table>
                 </CardContent>

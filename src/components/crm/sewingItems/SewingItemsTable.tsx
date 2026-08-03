@@ -17,8 +17,9 @@ import {
 } from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
-import { marketplaceLogo, formatDate, timeAgo, shortFio } from '@/components/crm/sewingItems/sewingItemsShared';
+import { marketplaceLogo, formatDate, timeAgo } from '@/components/crm/sewingItems/sewingItemsShared';
 import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
+import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 
 interface SewingItemsTableProps {
   loading: boolean;
@@ -76,7 +77,8 @@ const SewingItemsTable = ({
               <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
               <TableHead className="text-primary-foreground">Тип</TableHead>
               <TableHead className="text-primary-foreground">Сотрудники</TableHead>
-              <TableHead className="text-primary-foreground">Кроил / Вешалка</TableHead>
+              <TableHead className="text-primary-foreground">Этапы</TableHead>
+              <TableHead className="text-primary-foreground">Вешалка</TableHead>
               <TableHead className="text-primary-foreground">Создан</TableHead>
               <TableHead className="text-primary-foreground">Выполнен</TableHead>
               <TableHead className="text-primary-foreground" />
@@ -102,15 +104,9 @@ const SewingItemsTable = ({
                 <TableCell>{o.orderType}</TableCell>
                 <TableCell>{o.assignedUserName || '—'}</TableCell>
                 <TableCell>
-                  {o.cutterUserName ? (
-                    <>
-                      <div className="whitespace-nowrap">{shortFio(o.cutterUserName)}</div>
-                      <div className="text-xs text-muted-foreground">№ {o.hangerNumber}</div>
-                    </>
-                  ) : (
-                    '—'
-                  )}
+                  <OrderStagesDiagram order={o} />
                 </TableCell>
+                <TableCell>{o.hangerNumber > 0 ? `№ ${o.hangerNumber}` : '—'}</TableCell>
                 <TableCell>
                   <div className="whitespace-nowrap">{formatDate(o.createdAt)}</div>
                   <Badge variant="destructive" className="mt-1 font-normal">

@@ -149,7 +149,9 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'send_to_stickering', id, rollId }
         - швея указывает рулон тесьмы (должен быть в её цехе/смене), с которого списывается
           тесьма товара, и переводит заказ в статус "Стикеровка". Без указания рулона тесьмы
-          перевод недоступен
+          перевод недоступен. Фиксирует sewer_user_id = текущий assigned_user_id (швея) —
+          отдельное поле от assigned_user_id, аналогично cutter_user_id, чтобы история
+          "кто отшил" осталась видна на карточке товара
     POST /  { action: 'cancel_order', id }
         - отмена заказа закройщиком (статус "На раскрое") или швеёй (статус "В работе").
           Заказ НЕ удаляется из системы: снимается назначенный сотрудник, и заказ возвращается
@@ -201,11 +203,14 @@ def handler(event: dict, context) -> dict:
                     "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
                     "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
                     "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
-                    "o.cutter_user_id, cu.full_name, o.hanger_number "
+                    "o.cutter_user_id, cu.full_name, o.hanger_number, "
+                    "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name "
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
                     "LEFT JOIN workshops w ON w.id = o.workshop_id "
                     "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+                    "LEFT JOIN users su ON su.id = o.sewer_user_id "
+                    "LEFT JOIN users pu ON pu.id = o.packer_user_id "
                     "WHERE o.id = %s",
                     (int(order_id),),
                 )
@@ -285,6 +290,10 @@ def handler(event: dict, context) -> dict:
                     'cutterUserId': row[19],
                     'cutterUserName': row[20],
                     'hangerNumber': row[21],
+                    'sewerUserId': row[22],
+                    'sewerUserName': row[23],
+                    'packerUserId': row[24],
+                    'packerUserName': row[25],
                     'materialUsage': materialUsage,
                     'requiredFabricMaterialId': required_fabric_material_id,
                     'requiredFabricMaterialName': required_fabric_material_name,
@@ -297,11 +306,14 @@ def handler(event: dict, context) -> dict:
                 "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
                 "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
-                "o.cutter_user_id, cu.full_name, o.hanger_number "
+                "o.cutter_user_id, cu.full_name, o.hanger_number, "
+                "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
                 "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+                "LEFT JOIN users su ON su.id = o.sewer_user_id "
+                "LEFT JOIN users pu ON pu.id = o.packer_user_id "
                 "ORDER BY o.created_at DESC, o.id DESC"
             )
             orders = [
@@ -328,6 +340,10 @@ def handler(event: dict, context) -> dict:
                     'cutterUserId': r[19],
                     'cutterUserName': r[20],
                     'hangerNumber': r[21],
+                    'sewerUserId': r[22],
+                    'sewerUserName': r[23],
+                    'packerUserId': r[24],
+                    'packerUserName': r[25],
                 }
                 for r in cur.fetchall()
             ]
@@ -1022,8 +1038,12 @@ def handler(event: dict, context) -> dict:
                             break
 
                 if not trim_material_id:
+                    # sewer_user_id фиксирует, КТО именно отшил заказ — отдельно от
+                    # assigned_user_id, которое дальше будет использовано упаковщицей
+                    # только для начисления зарплаты, а сама привязка на orders не меняется.
+                    sewer_sql = f", sewer_user_id = {order_assigned_user_id}" if order_assigned_user_id else ""
                     cur.execute(
-                        f"UPDATE orders SET sewing_status = 'Стикеровка' WHERE id = {int(item_id)}"
+                        f"UPDATE orders SET sewing_status = 'Стикеровка'{sewer_sql} WHERE id = {int(item_id)}"
                     )
                     log_action(
                         cur, actor_id, actor_name, 'send_to_stickering', 'order', item_id,
@@ -1077,8 +1097,9 @@ def handler(event: dict, context) -> dict:
                     f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
                     f"VALUES ({int(item_id)}, {trim_material_id}, {roll_row[0]}, {trim_qty_needed})"
                 )
+                sewer_sql = f", sewer_user_id = {order_assigned_user_id}" if order_assigned_user_id else ""
                 cur.execute(
-                    f"UPDATE orders SET sewing_status = 'Стикеровка' WHERE id = {int(item_id)}"
+                    f"UPDATE orders SET sewing_status = 'Стикеровка'{sewer_sql} WHERE id = {int(item_id)}"
                 )
                 log_action(
                     cur, actor_id, actor_name, 'send_to_stickering', 'order', item_id,
