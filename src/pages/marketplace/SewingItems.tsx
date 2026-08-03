@@ -19,6 +19,7 @@ import {
   type Order,
   type OrderDetail,
   type SewingStatus,
+  type TakenOrder,
 } from '@/lib/ordersApi';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
@@ -46,15 +47,25 @@ const SewingItems = () => {
   const [takingOrder, setTakingOrder] = useState(false);
   const [takeOrderCooldown, setTakeOrderCooldown] = useState(false);
   const [printQrCuttingEnabled, setPrintQrCuttingEnabled] = useState(true);
+  const [lastTakenStack, setLastTakenStack] = useState<TakenOrder[]>([]);
 
   const isCutter = user?.role === 'cutter';
   const isSewer = user?.role === 'sewer';
-  const isProductionRole = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
+  const isPacker = user?.role === 'packer';
+  const isProductionRole = isSewer || isCutter || isPacker;
 
-  const visibleTabs = useMemo(
-    () => (isProductionRole ? statusTabs.filter((t) => t.value !== 'Новый') : statusTabs),
-    [isProductionRole]
-  );
+  // Конвейер по ролям:
+  //  - закройщик: На раскрое (свои, берёт стеком) → Раскроено → Готовые
+  //  - швея: НЕТ вкладки "На раскрое" (это этап закройщика) — В работе (свои) →
+  //    Раскроено (очередь, откуда берёт заказ) → Стикеровка (только просмотр, отправила и всё) → Готовые
+  //  - упаковщица: НЕТ вкладки "На раскрое" — видит Раскроено (весь материал всех
+  //    закройщиков), В работе (ВСЕ заказы всех швей), Стикеровка (свой этап), Готовые
+  //  - админ/кладовщик: видят всё, включая "Новый"
+  const visibleTabs = useMemo(() => {
+    if (isSewer || isPacker) return statusTabs.filter((t) => t.value !== 'Новый' && t.value !== 'На раскрое');
+    if (isCutter) return statusTabs.filter((t) => t.value !== 'Новый');
+    return statusTabs;
+  }, [isSewer, isPacker, isCutter]);
 
   const [activeTab, setActiveTab] = useState<SewingStatus>(visibleTabs[0]?.value || 'Новый');
 
@@ -106,7 +117,11 @@ const SewingItems = () => {
     });
   }, [isCutter, effectiveWorkshopId]);
 
-  const isReadOnlyTab = activeTab === 'Раскроено' && (user?.role === 'sewer' || user?.role === 'cutter');
+  // Упаковщица весь конвейер видит только для просмотра — реальные действия она выполняет
+  // на отдельном терминале стикеровки (Kiosk), а не на этой странице. Швея не может ничего
+  // делать с заказами на вкладке "Стикеровка" — она их только отправила и ждёт закрытия.
+  const isReadOnlyTab =
+    isPacker || (activeTab === 'Раскроено' && (isSewer || isCutter)) || (activeTab === 'Стикеровка' && isSewer);
 
   const ordersInTab = orders.filter((o) => o.sewingStatus === activeTab);
 
@@ -118,13 +133,11 @@ const SewingItems = () => {
     if (widthFilter !== 'all' && String(o.width) !== widthFilter) return false;
     if (heightFilter !== 'all' && String(o.height) !== heightFilter) return false;
     if (workshopFilter !== 'all' && String(o.workshopId) !== workshopFilter) return false;
-    if (
-      (activeTab === 'В работе' || activeTab === 'На раскрое') &&
-      isProductionRole &&
-      o.assignedUserId !== user?.id
-    ) {
-      return false;
-    }
+    // Владение по вкладкам: закройщик на "На раскрое" видит только свой стек, швея на
+    // "В работе" — только свои заказы. Упаковщица на "В работе" видит ЗАКАЗЫ ВСЕХ швей
+    // (с именами), поэтому под этот фильтр не попадает.
+    if (activeTab === 'На раскрое' && isCutter && o.assignedUserId !== user?.id) return false;
+    if (activeTab === 'В работе' && isSewer && o.assignedUserId !== user?.id) return false;
     return true;
   });
 
@@ -137,7 +150,10 @@ const SewingItems = () => {
   const totalPieces = filteredOrders.reduce((sum, o) => sum + o.quantity, 0);
 
   const countForTab = (status: SewingStatus) => {
-    if ((status === 'В работе' || status === 'На раскрое') && isProductionRole) {
+    if (status === 'На раскрое' && isCutter) {
+      return orders.filter((o) => o.sewingStatus === status && o.assignedUserId === user?.id).length;
+    }
+    if (status === 'В работе' && isSewer) {
       return orders.filter((o) => o.sewingStatus === status && o.assignedUserId === user?.id).length;
     }
     return orders.filter((o) => o.sewingStatus === status).length;
@@ -288,14 +304,17 @@ const SewingItems = () => {
       toast({ title: `Взято в работу заказов: ${res.count}` });
       setActiveTab('На раскрое');
       load();
-      if (printQrCuttingEnabled && res.orders.length > 0) {
-        printCuttingSheet(res.orders, user?.name || '');
-      }
+      setLastTakenStack(res.orders);
     } catch (e) {
       toast({ title: 'Не удалось взять стек', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setTakingStack(false);
     }
+  };
+
+  const handlePrintTask = () => {
+    if (lastTakenStack.length === 0) return;
+    printCuttingSheet(lastTakenStack, user?.name || '');
   };
 
   const handleTakeOrder = async () => {
@@ -374,19 +393,27 @@ const SewingItems = () => {
         {(isCutter || isSewer) && (
           <div className="flex flex-col gap-2">
             {isCutter && (
-              <Button onClick={handleTakeStack} disabled={takingStack || myUnfinishedCount > 0} className="w-full sm:w-auto">
-                {takingStack ? (
-                  <>
-                    <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
-                    Берём заказы...
-                  </>
-                ) : (
-                  <>
-                    <Icon name="Layers" size={16} className="mr-2" />
-                    Взять стек заказов
-                  </>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={handleTakeStack} disabled={takingStack || myUnfinishedCount > 0} className="w-full sm:w-auto">
+                  {takingStack ? (
+                    <>
+                      <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                      Берём заказы...
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="Layers" size={16} className="mr-2" />
+                      Взять стек заказов
+                    </>
+                  )}
+                </Button>
+                {printQrCuttingEnabled && lastTakenStack.length > 0 && (
+                  <Button variant="outline" onClick={handlePrintTask} className="w-full sm:w-auto">
+                    <Icon name="Printer" size={16} className="mr-2" />
+                    Распечатать задание
+                  </Button>
                 )}
-              </Button>
+              </div>
             )}
             {isSewer && (
               <Button onClick={handleTakeOrder} disabled={takingOrder || takeOrderCooldown} className="w-full sm:w-auto">
