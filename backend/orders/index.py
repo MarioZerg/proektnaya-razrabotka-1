@@ -138,11 +138,12 @@ def handler(event: dict, context) -> dict:
           метража (cutter_daily_limit) или число уникальных рулонов тюля (max_fabric_rolls_per_shift)
           из настроек цеха — оба лимита считаются только в пределах текущей смены
     POST /  { action: 'take_order', userId }
-        - швея получает в работу заказ из "Раскроено". Порядок выборки зависит от настроек
-          ЦЕХА текущей открытой смены швеи: orders_filter (all/fbo/fbs — ограничивает выборку),
+        - швея получает в работу заказ из "Раскроено". Порядок выборки: FBS-заказы ВСЕГДА
+          идут первыми (жёсткое правило, важнее настроек цеха). Далее — по настройкам ЦЕХА
+          текущей открытой смены швеи: orders_filter (all/fbo/fbs — ограничивает выборку),
           orders_cluster_priority (приоритетный FBO-кластер идёт первым), orders_priority
-          (ozon_first/wb_first — соответствующий маркетплейс идёт первым), при равенстве —
-          FIFO по времени раскроя (cut_at). Атомарная операция (FOR UPDATE SKIP LOCKED)
+          (ozon_first/wb_first/yandex_first — соответствующий маркетплейс идёт первым), при
+          равенстве — FIFO по времени раскроя (cut_at). Атомарная операция (FOR UPDATE SKIP LOCKED)
           исключает дубли при одновременных нажатиях. Назначает заказ на userId, переводит
           в "В работе", фиксирует taken_at.
           Отклоняется (409), если: у швеи уже max_quantity_orders_to_seamstress заказов "В
@@ -439,10 +440,12 @@ def handler(event: dict, context) -> dict:
                     }
 
                 names_csv = ','.join("'" + n.replace("'", "''") + "'" for n in allowed_names)
+                # FBS-заказы раскраиваются первыми (жёсткое правило по всему конвейеру —
+                # сжатые сроки отгрузки), при равенстве — FIFO по дате попадания в систему.
                 cur.execute(
                     "SELECT id FROM orders WHERE sewing_status = 'Новый' "
                     "AND material IN (" + names_csv + ") "
-                    "ORDER BY created_at ASC, id ASC LIMIT %s",
+                    "ORDER BY (order_type = 'FBS') DESC, created_at ASC, id ASC LIMIT %s",
                     (stack_size,),
                 )
                 order_ids = [r[0] for r in cur.fetchall()]
@@ -1001,6 +1004,9 @@ def handler(event: dict, context) -> dict:
                     where_parts.append("order_type = 'FBS'")
 
                 order_parts = []
+                # FBS-заказы ВСЕГДА идут первыми в очереди — это жёсткое правило, оно важнее
+                # любых настроек приоритета цеха (у FBS сжатые сроки отгрузки на маркетплейс).
+                order_parts.append("(order_type = 'FBS') DESC")
                 if cluster_priority:
                     cluster_esc = cluster_priority.replace("'", "''")
                     order_parts.append(f"(cluster = '{cluster_esc}') DESC")
@@ -1008,6 +1014,8 @@ def handler(event: dict, context) -> dict:
                     order_parts.append("(marketplace = 'OZON') DESC")
                 elif orders_priority_setting == 'wb_first':
                     order_parts.append("(marketplace = 'WB') DESC")
+                elif orders_priority_setting == 'yandex_first':
+                    order_parts.append("(marketplace = 'Yandex') DESC")
                 order_parts.append("cut_at ASC NULLS LAST")
                 order_parts.append("id ASC")
 

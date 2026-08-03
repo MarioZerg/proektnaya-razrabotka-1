@@ -34,6 +34,7 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
     options: [
       { value: 'ozon_first', label: 'Сначала OZON' },
       { value: 'wb_first', label: 'Сначала WB' },
+      { value: 'yandex_first', label: 'Сначала Яндекс.Маркет' },
       { value: 'by_date', label: 'По дате заказа' },
     ],
   },
