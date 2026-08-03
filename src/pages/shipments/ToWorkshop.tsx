@@ -46,6 +46,8 @@ const ToWorkshop = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabValue>('new');
   const [materialFilter, setMaterialFilter] = useState('all');
+  const [workshopFilter, setWorkshopFilter] = useState('all');
+  const [shiftFilter, setShiftFilter] = useState('all');
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -84,6 +86,12 @@ const ToWorkshop = () => {
     if (activeShipment) scanInputRef.current?.focus();
   }, [activeShipment]);
 
+  // При смене цеха в фильтре сбрасываем выбранную смену — иначе можно было бы оставить
+  // смену от предыдущего цеха, невалидную для нового.
+  useEffect(() => {
+    setShiftFilter('all');
+  }, [workshopFilter]);
+
   // Цех/смена ТЕКУЩЕЙ открытой рабочей смены (может отличаться от штатных в гостевом
   // режиме) — сотрудник в гостях запрашивает и видит заявки именно той смены, куда зашёл.
   const effectiveWorkshopId = user?.activeWorkshopId ?? user?.workshopId ?? null;
@@ -108,10 +116,30 @@ const ToWorkshop = () => {
     activeTab === 'new' ? !isCompletedStatus(s.status) : isCompletedStatus(s.status)
   );
 
-  const visibleShipments =
-    materialFilter === 'all'
-      ? tabFilteredShipments
-      : tabFilteredShipments.filter((s) => String(s.materialId) === materialFilter);
+  const visibleShipments = tabFilteredShipments.filter((s) => {
+    if (materialFilter !== 'all' && String(s.materialId) !== materialFilter) return false;
+    if (workshopFilter !== 'all' && String(s.workshopId) !== workshopFilter) return false;
+    if (shiftFilter !== 'all' && String(s.shiftNumber) !== shiftFilter) return false;
+    return true;
+  });
+
+  // Список смен для выбора в фильтре — зависит от выбранного цеха (у каждого цеха своё
+  // число смен и свои названия смен), при "Все цеха" берём максимум смен среди всех цехов.
+  const shiftOptions =
+    workshopFilter === 'all'
+      ? Array.from({ length: Math.max(0, ...workshops.map((w) => w.shiftsCount)) }, (_, i) => i + 1)
+      : Array.from(
+          { length: workshops.find((w) => String(w.id) === workshopFilter)?.shiftsCount || 0 },
+          (_, i) => i + 1
+        );
+
+  const shiftOptionLabel = (shiftNumber: number) => {
+    if (workshopFilter !== 'all') {
+      const w = workshops.find((wk) => String(wk.id) === workshopFilter);
+      return w?.shiftNames?.[shiftNumber - 1] || `Смена № ${shiftNumber}`;
+    }
+    return `Смена № ${shiftNumber}`;
+  };
 
   const newCount = shiftFilteredShipments.filter((s) => !isCompletedStatus(s.status)).length;
   const completedCount = shiftFilteredShipments.filter((s) => isCompletedStatus(s.status)).length;
@@ -331,19 +359,56 @@ const ToWorkshop = () => {
           </TabsList>
         </Tabs>
 
-        <Select value={materialFilter} onValueChange={setMaterialFilter}>
-          <SelectTrigger className="sm:w-64">
-            <SelectValue placeholder="Все материалы" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все материалы</SelectItem>
-            {materials.map((m) => (
-              <SelectItem key={m.id} value={String(m.id)}>
-                {m.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex flex-wrap gap-3">
+          <Select value={materialFilter} onValueChange={setMaterialFilter}>
+            <SelectTrigger className="sm:w-64">
+              <SelectValue placeholder="Все материалы" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все материалы</SelectItem>
+              {materials.map((m) => (
+                <SelectItem key={m.id} value={String(m.id)}>
+                  {m.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Фильтр по цеху/смене нужен только админу и кладовщику — сотрудники цеха
+              (швея/закройщик/упаковщик) и так видят только заявки своего цеха и смены,
+              им выбирать нечего. */}
+          {!isProduction && (
+            <>
+              <Select value={workshopFilter} onValueChange={setWorkshopFilter}>
+                <SelectTrigger className="sm:w-56">
+                  <SelectValue placeholder="Все цеха" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Все цеха</SelectItem>
+                  {workshops.map((w) => (
+                    <SelectItem key={w.id} value={String(w.id)}>
+                      {w.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={shiftFilter} onValueChange={setShiftFilter}>
+                <SelectTrigger className="sm:w-56">
+                  <SelectValue placeholder="Все смены" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Все смены</SelectItem>
+                  {shiftOptions.map((num) => (
+                    <SelectItem key={num} value={String(num)}>
+                      {shiftOptionLabel(num)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          )}
+        </div>
 
         <ToWorkshopTable
           loading={loading}
