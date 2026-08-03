@@ -81,6 +81,7 @@ const OzonFboApplicationCard = ({
   };
 
   const packagingLabel = supply.packagingType === 'pallets' ? 'палет' : 'коробов';
+  const closedBoxes = supply.boxes.filter((b) => b.closedAt).length;
 
   return (
     <Card className="border-border shadow-none">
@@ -137,6 +138,24 @@ const OzonFboApplicationCard = ({
           <Badge variant={supply.ozonStatus === 'Сформирована' ? 'default' : 'secondary'}>
             {supply.ozonStatus || 'Заполнение данных'}
           </Badge>
+        </div>
+        <div className="flex items-center justify-between border-b border-border pb-2">
+          <span className="text-muted-foreground">Тип грузоместа</span>
+          <span className="font-medium">
+            {supply.ozonCargoType === 'PALLET' ? 'Палета' : 'Короб'}
+          </span>
+        </div>
+        <div className="flex items-center justify-between border-b border-border pb-2">
+          <span className="text-muted-foreground">Короба</span>
+          {supply.boxes.length === 0 ? (
+            <span className="font-medium">—</span>
+          ) : closedBoxes === supply.boxes.length ? (
+            <Badge>Закрыты все {supply.boxes.length}</Badge>
+          ) : (
+            <span className="font-medium">
+              Закрыто {closedBoxes} из {supply.boxes.length}
+            </span>
+          )}
         </div>
         <div className="flex items-center justify-between border-b border-border pb-2">
           <span className="text-muted-foreground">ID отгрузки в Газельку</span>
