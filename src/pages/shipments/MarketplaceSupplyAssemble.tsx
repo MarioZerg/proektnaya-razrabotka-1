@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import {
   Select,
@@ -50,8 +48,6 @@ const MarketplaceSupplyAssemble = () => {
   const [candidates, setCandidates] = useState<SupplyCandidate[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(false);
 
-  const [totalQuantity, setTotalQuantity] = useState('');
-  const [savingQuantity, setSavingQuantity] = useState(false);
   const [closingBoxes, setClosingBoxes] = useState(false);
   const [cargoType, setCargoType] = useState<'BOX' | 'PALLET'>('BOX');
 
@@ -60,7 +56,6 @@ const MarketplaceSupplyAssemble = () => {
     fetchSupplyDetail(supplyId)
       .then((data) => {
         setSupply(data);
-        setTotalQuantity(data.totalQuantityMarketplace != null ? String(data.totalQuantityMarketplace) : '');
         setCargoType(data.ozonCargoType === 'PALLET' ? 'PALLET' : 'BOX');
       })
       .finally(() => setLoading(false));
@@ -123,21 +118,6 @@ const MarketplaceSupplyAssemble = () => {
       if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    }
-  };
-
-  const handleSaveQuantity = async () => {
-    setSavingQuantity(true);
-    try {
-      await updateSupply(supplyId, {
-        totalQuantityMarketplace: totalQuantity.trim() ? Number(totalQuantity) : null,
-      });
-      toast({ title: 'Количество сохранено' });
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSavingQuantity(false);
     }
   };
 
@@ -223,38 +203,14 @@ const MarketplaceSupplyAssemble = () => {
           </p>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-2">
-          <div className="space-y-4 rounded-md border border-border p-4">
-            <h2 className="font-semibold">Количество товаров</h2>
-            <div className="space-y-1.5">
-              <Label>Общее кол-во добавленных в поставку на маркетплейсе</Label>
-              <div className="flex gap-2">
-                <Input
-                  type="number"
-                  value={totalQuantity}
-                  onChange={(e) => setTotalQuantity(e.target.value)}
-                  placeholder="Подгрузится через API"
-                  disabled={!canEdit}
-                />
-                <Button onClick={handleSaveQuantity} disabled={savingQuantity || !canEdit}>
-                  {savingQuantity ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить'}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Собрано в коробах: {totalBoxedItems} из {supply.totalQuantityMarketplace ?? '—'}
-              </p>
-            </div>
-          </div>
-
-          {supply.marketplace === 'WB' && (
-            <PassStickerCard
-              passStickerUrl={supply.passStickerUrl}
-              passStickerName={supply.passStickerName}
-              saving={!canEdit}
-              onUpload={handleUploadSticker}
-            />
-          )}
-        </div>
+        {supply.marketplace === 'WB' && (
+          <PassStickerCard
+            passStickerUrl={supply.passStickerUrl}
+            passStickerName={supply.passStickerName}
+            saving={!canEdit}
+            onUpload={handleUploadSticker}
+          />
+        )}
 
         <SupplyCandidatesPanel
           open={candidatesOpen}
