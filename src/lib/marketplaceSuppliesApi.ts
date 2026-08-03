@@ -26,6 +26,7 @@ export interface Supply {
   ozonDeliveryMethod: OzonDeliveryMethod | null;
   ozonApplicationNumber: string | null;
   ozonStatus: string | null;
+  wbOrdersCount?: number;
 }
 
 export interface SupplyItem {

@@ -264,6 +264,7 @@ const ToMarketplace = () => {
                   <TableHead className="text-primary-foreground">id Газельки</TableHead>
                   <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
                   <TableHead className="text-primary-foreground">Тип</TableHead>
+                  <TableHead className="text-primary-foreground">Товаров</TableHead>
                   <TableHead className="text-primary-foreground">Создан</TableHead>
                   <TableHead className="text-primary-foreground">Отгрузка в Газельку</TableHead>
                   <TableHead className="text-primary-foreground">Отгрузка в маркетплейс</TableHead>
@@ -298,6 +299,15 @@ const ToMarketplace = () => {
                       </span>
                     </TableCell>
                     <TableCell>{s.type}</TableCell>
+                    <TableCell>
+                      {s.marketplace === 'WB' && s.type === 'FBS' ? (
+                        <Badge variant={s.itemsCount > 0 ? 'default' : 'outline'}>
+                          {s.itemsCount} шт.
+                        </Badge>
+                      ) : (
+                        `${s.itemsCount} шт.`
+                      )}
+                    </TableCell>
                     <TableCell>{formatDateTime(s.createdAt)}</TableCell>
                     <TableCell>{s.shipToGazelkaAt ? formatDate(s.shipToGazelkaAt) : '—'}</TableCell>
                     <TableCell>{s.shipToMarketplaceAt ? formatDate(s.shipToMarketplaceAt) : '—'}</TableCell>

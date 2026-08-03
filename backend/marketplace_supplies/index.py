@@ -362,7 +362,8 @@ def handler(event: dict, context) -> dict:
                 f"s.supply_number, s.supply_barcode, s.cluster, s.gazelka_id, "
                 f"s.ship_to_gazelka_at, s.ship_to_marketplace_at, s.completed_at, "
                 f"(SELECT COUNT(*) FROM marketplace_supply_items msi WHERE msi.supply_id = s.id), "
-                f"u.full_name, s.ozon_delivery_method, s.ozon_application_number, s.ozon_status "
+                f"u.full_name, s.ozon_delivery_method, s.ozon_application_number, s.ozon_status, "
+                f"(SELECT COUNT(*) FROM wb_supply_orders wso WHERE wso.supply_id = s.id) "
                 f"FROM marketplace_supplies s "
                 f"LEFT JOIN users u ON u.id = s.created_by "
                 f"{where_clause} "
@@ -383,11 +384,14 @@ def handler(event: dict, context) -> dict:
                     'shipToGazelkaAt': (r[10].isoformat() + 'Z') if r[10] else None,
                     'shipToMarketplaceAt': (r[11].isoformat() + 'Z') if r[11] else None,
                     'completedAt': (r[12].isoformat() + 'Z') if r[12] else None,
-                    'itemsCount': r[13],
+                    # Для WB FBS заказы лежат в wb_supply_orders (не в supply_items),
+                    # поэтому в itemsCount отдаём именно их количество.
+                    'itemsCount': (r[18] if (r[1] == 'WB' and r[2] == 'FBS') else r[13]),
                     'createdByName': r[14],
                     'ozonDeliveryMethod': r[15],
                     'ozonApplicationNumber': r[16],
                     'ozonStatus': r[17],
+                    'wbOrdersCount': r[18],
                 }
                 for r in cur.fetchall()
             ]
