@@ -131,8 +131,9 @@ def handler(event: dict, context) -> dict:
           поле от assigned_user_id, которое дальше будет перезаписано на швею при take_order,
           так что именно cutter_user_id остаётся источником "кто раскроил" на карточке товара.
           Начисляет закройщику зарплату (salary_accruals, type='cutter_cut'): ставка за 1 пог.м.
-          материала тюля (salary_rates, role='cutter', тарифы цеха заказа workshop_id) ×
-          фактический расход материала на товар.
+          по материалу И ширине товара (salary_rates, role='cutter', material_id+width, тарифы
+          цеха заказа workshop_id) × чистая ширина товара (width/100), а не технологический
+          расход ткани со склада (тот включает запас на подгибку и не годится для оплаты).
           Отклоняется (409), если за текущую открытую смену закройщика уже исчерпан лимит
           метража (cutter_daily_limit) или число уникальных рулонов тюля (max_fabric_rolls_per_shift)
           из настроек цеха — оба лимита считаются только в пределах текущей смены
@@ -827,30 +828,34 @@ def handler(event: dict, context) -> dict:
                     f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now(){cutter_sql} WHERE id = {int(item_id)}"
                 )
 
-                # Начисление закройщику: ставка за 1 пог.м. по материалу тюля (salary_rates,
-                # role='cutter'), берётся из тарифов цеха, в котором выполняется заказ
-                # (order_workshop_id) — тарифы полностью раздельные по цехам. Если заказ позже
-                # удалят из раскроя (cancel_order/delete_order), начисление снимается там же.
-                if fabric_material_id and order_assigned_user_id and order_workshop_id:
-                    fabric_qty = next((q for m, q in needed if m == fabric_material_id), None)
-                    if fabric_qty:
+                # Начисление закройщику: ставка за 1 пог.м. по материалу И ширине товара
+                # (salary_rates, role='cutter', material_id+width), берётся из тарифов цеха,
+                # в котором выполняется заказ (order_workshop_id) — тарифы полностью раздельные
+                # по цехам. Метраж для оплаты — ЧИСТАЯ ширина товара (width/100 пог.м.), а НЕ
+                # технологический расход ткани со склада (marketplace_item_materials.quantity,
+                # который включает запас на подгибку и используется только для списания со
+                # склада) — иначе оплата некорректно завышалась/дробилась на копейки запаса.
+                # Если заказ позже удалят из раскроя (cancel_order/delete_order), начисление
+                # снимается там же.
+                if fabric_material_id and order_assigned_user_id and order_workshop_id and width:
+                    cur.execute(
+                        "SELECT rate FROM salary_rates WHERE role = 'cutter' AND material_id = %s "
+                        "AND width = %s AND workshop_id = %s",
+                        (fabric_material_id, int(width), order_workshop_id),
+                    )
+                    rate_row = cur.fetchone()
+                    rate = float(rate_row[0]) if rate_row else 0
+                    if rate > 0:
+                        cur.execute("SELECT name FROM materials WHERE id = %s", (fabric_material_id,))
+                        mat_name = cur.fetchone()[0]
+                        pay_meters = round(float(width) / 100, 2)
+                        amount = round(pay_meters * rate, 2)
                         cur.execute(
-                            "SELECT rate FROM salary_rates WHERE role = 'cutter' AND material_id = %s "
-                            "AND workshop_id = %s",
-                            (fabric_material_id, order_workshop_id),
+                            f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                            f"VALUES ({order_assigned_user_id}, 'cutter_cut', {amount}, {int(item_id)}, "
+                            f"'Раскрой заказа #{item_id} ({mat_name} {int(width)} см) - {pay_meters} пог.м.') "
+                            f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
                         )
-                        rate_row = cur.fetchone()
-                        rate = float(rate_row[0]) if rate_row else 0
-                        if rate > 0:
-                            cur.execute("SELECT name FROM materials WHERE id = %s", (fabric_material_id,))
-                            mat_name = cur.fetchone()[0]
-                            amount = round(float(fabric_qty) * rate, 2)
-                            cur.execute(
-                                f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
-                                f"VALUES ({order_assigned_user_id}, 'cutter_cut', {amount}, {int(item_id)}, "
-                                f"'Раскрой заказа #{item_id} ({mat_name}) - {fabric_qty} пог.м.') "
-                                f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
-                            )
 
                 log_action(
                     cur, actor_id, actor_name, 'cut', 'order', item_id,

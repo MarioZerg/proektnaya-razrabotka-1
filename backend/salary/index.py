@@ -61,7 +61,11 @@ def handler(event: dict, context) -> dict:
     GET  /?rates=1&workshopId=1               - список тарифов (salary_rates) конкретного цеха
                                                (workshopId обязателен для корректной фильтрации;
                                                без него возвращаются тарифы всех цехов подряд)
-                                               с названиями материалов и названием цеха
+                                               с названиями материалов и названием цеха.
+                                               Перед выборкой автоматически создаёт (ставка 0)
+                                               недостающие тарифы закройщика для каждой новой
+                                               комбинации материал+ширина среди товаров на
+                                               маркетплейсе — аналогично дневному окладу админа
     GET  /?payouts=1&userId=1                 - история выплат (все или по сотруднику)
     GET  /?cashBox=1                          - касса компании: текущий баланс (сумма всех
                                                операций cash_box_transactions) и последние
@@ -159,6 +163,32 @@ def handler(event: dict, context) -> dict:
 
             if params.get('rates'):
                 workshop_id_filter = params.get('workshopId')
+
+                # Автосоздание недостающих тарифов закройщика (role='cutter') для каждой
+                # реально существующей комбинации материал+ширина среди товаров на
+                # маркетплейсе (marketplace_items, только материалы типа "Тюль") — так же,
+                # как автоматически создаётся дневной оклад администратора выше. Новая ставка
+                # создаётся со значением 0 — admin сам вписывает нужную сумму на этой странице,
+                # раскрой при этом не блокируется (0 просто не начисляется).
+                if workshop_id_filter:
+                    cur.execute(
+                        "SELECT DISTINCT mim.material_id, mi.width FROM marketplace_items mi "
+                        "JOIN marketplace_item_materials mim ON mim.marketplace_item_id = mi.id "
+                        "JOIN materials m ON m.id = mim.material_id "
+                        "JOIN material_types mt ON mt.id = m.type_id "
+                        "WHERE mt.name = 'Тюль' AND mi.width IS NOT NULL"
+                    )
+                    needed_combos = cur.fetchall()
+                    for material_id, width in needed_combos:
+                        cur.execute(
+                            "INSERT INTO salary_rates (role, material_id, width, rate, workshop_id) "
+                            "VALUES ('cutter', %s, %s, 0, %s) "
+                            "ON CONFLICT (workshop_id, role, COALESCE(material_id, 0), COALESCE(width, 0)) DO NOTHING",
+                            (material_id, width, int(workshop_id_filter)),
+                        )
+                    if needed_combos:
+                        conn.commit()
+
                 where_clause = f"WHERE sr.workshop_id = {int(workshop_id_filter)}" if workshop_id_filter else ""
                 cur.execute(
                     f"SELECT sr.id, sr.role, sr.material_id, m.name, sr.width, sr.rate, sr.workshop_id, w.name "
