@@ -36,6 +36,7 @@ const GazelkaShippingCard = ({ supply, onReload }: GazelkaShippingCardProps) => 
   const [ids, setIds] = useState(String(supply.gazelkaIds ?? 0));
   const [idm, setIdm] = useState(String(supply.gazelkaIdm ?? 0));
   const [savingIds, setSavingIds] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -73,6 +74,30 @@ const GazelkaShippingCard = ({ supply, onReload }: GazelkaShippingCardProps) => 
     }
   };
 
+  // Подтягивает данные привязанной заявки Газельки в поля поставки: ID отгрузки (№ заявки),
+  // дату отгрузки (route.date), забор Газелькой (cargo_pickup) и количество коробов.
+  const handleSyncFromGazelka = async () => {
+    if (!linkedPlan) return;
+    setSyncing(true);
+    try {
+      await updateSupply(supply.id, {
+        gazelkaId: String(linkedPlan.id),
+        shipToGazelkaAt: linkedPlan.shipDate ? `${linkedPlan.shipDate.slice(0, 10)}T00:00:00` : '',
+        gazelkaPickup: !!linkedPlan.cargoPickup,
+        packagingCount: linkedPlan.boxes ?? null,
+      });
+      toast({
+        title: 'Данные из Газельки подтянуты',
+        description: `ID отгрузки, дата, забор и ${linkedPlan.boxes ?? 0} коробов обновлены.`,
+      });
+      onReload();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handlePrintOurLabels = () => {
     if (!linkedPlan) return;
     const boxesCount = linkedPlan.boxes || supply.boxes.length || 1;
@@ -85,6 +110,14 @@ const GazelkaShippingCard = ({ supply, onReload }: GazelkaShippingCardProps) => 
         <CardTitle className="text-base">Грузоперевозка Газелька</CardTitle>
         {supply.gazelkaPlanId && (
           <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" onClick={handleSyncFromGazelka} disabled={syncing || !linkedPlan}>
+              <Icon
+                name={syncing ? 'Loader2' : 'RefreshCw'}
+                size={14}
+                className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
+              />
+              Синхронизировать данные
+            </Button>
             <Button
               size="sm"
               className="bg-[#004cdb] text-white hover:bg-[#003bb0]"

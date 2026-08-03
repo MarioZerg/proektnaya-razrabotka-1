@@ -132,8 +132,6 @@ const MarketplaceSupplyShow = () => {
   const handleSaveOzonFboFields = async (fields: {
     gazelkaId: string;
     shipToGazelkaAt: string;
-    packagingType: 'boxes' | 'pallets' | '';
-    packagingCount: string;
     gazelkaPickup: boolean;
   }) => {
     setSaving(true);
@@ -141,8 +139,6 @@ const MarketplaceSupplyShow = () => {
       await updateSupply(supplyId, {
         gazelkaId: fields.gazelkaId,
         shipToGazelkaAt: fields.shipToGazelkaAt,
-        packagingType: fields.packagingType,
-        packagingCount: fields.packagingCount ? Number(fields.packagingCount) : null,
         gazelkaPickup: fields.gazelkaPickup,
       });
       toast({ title: 'Данные заявки сохранены' });

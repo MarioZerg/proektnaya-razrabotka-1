@@ -11,15 +11,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
-import type { SupplyDetail, PackagingType } from '@/lib/marketplaceSuppliesApi';
+import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { formatDateTime } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import { formatDate } from '@/lib/dateUtils';
 
@@ -31,8 +24,6 @@ const deliveryMethodLabels: Record<string, string> = {
 interface OzonFboEditFields {
   gazelkaId: string;
   shipToGazelkaAt: string;
-  packagingType: PackagingType | '';
-  packagingCount: string;
   gazelkaPickup: boolean;
 }
 
@@ -56,15 +47,11 @@ const OzonFboApplicationCard = ({
   const [editOpen, setEditOpen] = useState(false);
   const [gazelkaId, setGazelkaId] = useState('');
   const [shipToGazelkaAt, setShipToGazelkaAt] = useState('');
-  const [packagingType, setPackagingType] = useState<PackagingType | ''>('');
-  const [packagingCount, setPackagingCount] = useState('');
   const [gazelkaPickup, setGazelkaPickup] = useState(false);
 
   const openEdit = () => {
     setGazelkaId(supply.gazelkaId || '');
     setShipToGazelkaAt(supply.shipToGazelkaAt ? supply.shipToGazelkaAt.slice(0, 10) : '');
-    setPackagingType(supply.packagingType || '');
-    setPackagingCount(supply.packagingCount != null ? String(supply.packagingCount) : '');
     setGazelkaPickup(supply.gazelkaPickup);
     setEditOpen(true);
   };
@@ -73,14 +60,11 @@ const OzonFboApplicationCard = ({
     await onSave({
       gazelkaId,
       shipToGazelkaAt: shipToGazelkaAt ? `${shipToGazelkaAt}T00:00:00` : '',
-      packagingType,
-      packagingCount,
       gazelkaPickup,
     });
     setEditOpen(false);
   };
 
-  const packagingLabel = supply.packagingType === 'pallets' ? 'палет' : 'коробов';
   const closedBoxes = supply.boxes.filter((b) => b.closedAt).length;
 
   return (
@@ -167,13 +151,6 @@ const OzonFboApplicationCard = ({
             {supply.shipToGazelkaAt ? formatDateTime(supply.shipToGazelkaAt) : '—'}
           </span>
         </div>
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">Тип поставки (упаковка)</span>
-          <span className="font-medium">
-            {supply.packagingType === 'boxes' ? 'Короба' : supply.packagingType === 'pallets' ? 'Палеты' : '—'}
-            {supply.packagingCount != null ? ` · ${supply.packagingCount} ${packagingLabel}` : ''}
-          </span>
-        </div>
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground">Забор Газелькой</span>
           {supply.gazelkaPickup ? (
@@ -198,18 +175,6 @@ const OzonFboApplicationCard = ({
               <Label>Дата отгрузки в Газельку</Label>
               <Input type="date" value={shipToGazelkaAt} onChange={(e) => setShipToGazelkaAt(e.target.value)} />
             </div>
-            <div className="space-y-1.5">
-              <Label>Тип поставки</Label>
-              <Select value={packagingType} onValueChange={(v) => setPackagingType(v as PackagingType)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="-- Короба или палеты --" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="boxes">Короба</SelectItem>
-                  <SelectItem value="pallets">Палеты</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
             <div className="flex items-center justify-between rounded-md border border-border p-3">
               <Label htmlFor="gazelka-pickup" className="cursor-pointer">
                 Забор Газелькой
@@ -221,16 +186,6 @@ const OzonFboApplicationCard = ({
                 На заявке будет отмечено: «Забор Газелькой со склада»
               </p>
             )}
-            <div className="space-y-1.5">
-              <Label>Кол-во {packagingType === 'pallets' ? 'палет' : 'коробов'}</Label>
-              <Input
-                type="number"
-                min="0"
-                value={packagingCount}
-                onChange={(e) => setPackagingCount(e.target.value)}
-                disabled={!packagingType}
-              />
-            </div>
             <Button className="w-full" onClick={handleSave} disabled={saving}>
               {saving ? 'Сохранение...' : 'Сохранить'}
             </Button>
