@@ -547,6 +547,8 @@ def handler(event: dict, context) -> dict:
 
                 if not workshop_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Не определён цех — обратитесь к администратору'})}
+                if not shift_number:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Не определена смена — откройте смену на главной странице'})}
                 if not material_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите материал'})}
 
@@ -562,16 +564,15 @@ def handler(event: dict, context) -> dict:
 
                 # 1 материал = 1 незакрытая заявка на смену: пока предыдущая заявка на этот же
                 # материал/цех/смену не дошла до статуса "Получено" (отгружена кладовщиком И
-                # подтверждена сотрудником цеха) — новую создать нельзя.
-                shift_condition = "s.shift_number = %s" if shift_number not in (None, '') else "s.shift_number IS NULL"
-                query_params = (int(workshop_id), shift_number, int(material_id)) if shift_number not in (None, '') else (int(workshop_id), int(material_id))
+                # подтверждена сотрудником цеха) — новую создать нельзя. shift_number здесь
+                # уже гарантированно указан (проверено выше).
                 cur.execute(
-                    f"SELECT s.id FROM shipments s "
-                    f"JOIN shipment_items si ON si.shipment_id = s.id "
-                    f"WHERE s.type = 'to_workshop' AND s.workshop_id = %s AND {shift_condition} "
-                    f"AND si.material_id = %s AND s.status != 'Получено' "
-                    f"LIMIT 1",
-                    query_params,
+                    "SELECT s.id FROM shipments s "
+                    "JOIN shipment_items si ON si.shipment_id = s.id "
+                    "WHERE s.type = 'to_workshop' AND s.workshop_id = %s AND s.shift_number = %s "
+                    "AND si.material_id = %s AND s.status != 'Получено' "
+                    "LIMIT 1",
+                    (int(workshop_id), int(shift_number), int(material_id)),
                 )
                 if cur.fetchone():
                     return {
@@ -580,13 +581,12 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'По этому материалу уже есть незакрытая заявка на вашу смену — дождитесь отгрузки и подтверждения'}),
                     }
 
-                shift_sql = int(shift_number) if shift_number not in (None, '') else 'NULL'
                 requested_by_sql = int(requested_by) if requested_by not in (None, '') else 'NULL'
                 comment_esc = comment.replace("'", "''")
 
                 cur.execute(
                     f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment, requested_by) "
-                    f"VALUES ('to_workshop', 'Новый', {int(workshop_id)}, {shift_sql}, '{comment_esc}', {requested_by_sql}) "
+                    f"VALUES ('to_workshop', 'Новый', {int(workshop_id)}, {int(shift_number)}, '{comment_esc}', {requested_by_sql}) "
                     f"RETURNING id"
                 )
                 shipment_id = cur.fetchone()[0]
@@ -741,6 +741,16 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заявку нельзя отправить в текущем статусе'})}
                 workshop_id, shift_number = sh_row[2], sh_row[3]
 
+                # Рулон в цехе обязан принадлежать смене (CHECK-ограничение БД) — заявки без
+                # смены больше не создаются (см. request_to_workshop), но на всякий случай
+                # не даём отправить в цех рулоны по старой заявке без смены с понятной ошибкой.
+                if not workshop_id or not shift_number:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'В заявке не указана смена — обратитесь к администратору'}),
+                    }
+
                 cur.execute(
                     "SELECT roll_id FROM shipment_items WHERE shipment_id = %s AND roll_id IS NOT NULL",
                     (int(shipment_id),),
@@ -749,11 +759,10 @@ def handler(event: dict, context) -> dict:
                 if not roll_ids:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Соберите хотя бы один рулон перед отправкой'})}
 
-                shift_sql = shift_number if shift_number is not None else 'NULL'
                 for roll_id in roll_ids:
                     cur.execute(
-                        f"UPDATE rolls SET status = 'in_workshop', workshop_id = {workshop_id}, "
-                        f"shift_number = {shift_sql} WHERE id = {roll_id}"
+                        f"UPDATE rolls SET status = 'in_workshop', workshop_id = {int(workshop_id)}, "
+                        f"shift_number = {int(shift_number)} WHERE id = {roll_id}"
                     )
 
                 cur.execute(

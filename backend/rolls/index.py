@@ -11,10 +11,17 @@ def handler(event: dict, context) -> dict:
     и текущий остаток (в единицах материала: п.м. или шт.), статус и привязка к смене/цеху.
     При списании через раскрой заказа остаток рулона уменьшается автоматически.
 
+    Обязательное правило: рулон в статусе 'in_workshop' (в цехе) ДОЛЖЕН иметь и цех,
+    и смену — "ничейных" рулонов в цехе быть не может (гарантируется CHECK-ограничением
+    БД rolls_workshop_requires_shift + валидацией здесь). На складе (in_storage) цех и
+    смена не нужны — это нормальная часть склада.
+
     GET  /                                 - список рулонов
     GET  /?material_id=1&status=in_storage - список рулонов с фильтром
     POST /  { action: 'create', barcode, materialId, initialQuantity, workshopId?, shiftNumber? }
+        - если указан workshopId, shiftNumber обязателен
     POST /  { action: 'update', id, status?, workshopId?, shiftNumber? }
+        - если итоговый статус 'in_workshop', итоговые цех и смена обязательны
     POST /  { action: 'write_off', id, quantity, orderId? }
         - списывает quantity с остатка рулона, создаёт запись в order_material_usage если указан orderId
         - если остаток становится <= 0, статус рулона переводится в 'completed'
@@ -115,6 +122,15 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'Укажите штрихкод, материал и начальное количество'}),
                     }
 
+                # Рулон, отправленный сразу в цех, обязан принадлежать конкретной смене —
+                # "ничейных" рулонов в цехе быть не должно (проверяется и на уровне БД).
+                if workshop_id not in (None, '') and shift_number in (None, ''):
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'При выборе цеха укажите смену'}),
+                    }
+
                 barcode_esc = barcode.replace("'", "''")
                 cur.execute(f"SELECT id FROM rolls WHERE barcode = '{barcode_esc}'")
                 if cur.fetchone():
@@ -143,6 +159,28 @@ def handler(event: dict, context) -> dict:
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+                cur.execute(
+                    "SELECT status, workshop_id, shift_number FROM rolls WHERE id = %s", (int(item_id),)
+                )
+                current_row = cur.fetchone()
+                if not current_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+                cur_status, cur_workshop_id, cur_shift_number = current_row
+
+                new_status = body_data.get('status', cur_status)
+                new_workshop_id = body_data['workshopId'] if 'workshopId' in body_data else cur_workshop_id
+                new_shift_number = body_data['shiftNumber'] if 'shiftNumber' in body_data else cur_shift_number
+
+                # Рулон в статусе "в цехе" обязан иметь и цех, и смену — та же гарантия,
+                # что и на уровне БД (rolls_workshop_requires_shift), проверяем заранее,
+                # чтобы вернуть понятную ошибку вместо сырого исключения psycopg2.
+                if new_status == 'in_workshop' and (new_workshop_id in (None, '') or new_shift_number in (None, '')):
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Для статуса "в цехе" укажите и цех, и смену'}),
+                    }
 
                 fields = []
                 if 'status' in body_data:

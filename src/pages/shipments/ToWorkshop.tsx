@@ -99,6 +99,12 @@ const ToWorkshop = () => {
       toast({ title: 'За вами не закреплён цех — откройте смену на главной странице', variant: 'destructive' });
       return;
     }
+    // Рулон, который в итоге попадёт в цех по этой заявке, обязан принадлежать смене —
+    // без открытой смены заявку создать нельзя (проверяется и на сервере).
+    if (!effectiveShiftNumber) {
+      toast({ title: 'За вами не закреплена смена — откройте смену на главной странице', variant: 'destructive' });
+      return;
+    }
     if (!reqMaterialId) {
       toast({ title: 'Выберите материал', variant: 'destructive' });
       return;

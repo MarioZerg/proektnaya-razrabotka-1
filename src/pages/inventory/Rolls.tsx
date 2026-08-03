@@ -32,6 +32,7 @@ import { fetchRolls, createRoll, type Roll, type RollStatus } from '@/lib/rollsA
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { formatDateTime as formatDate } from '@/lib/dateUtils';
+import { shiftLabel } from '@/components/crm/shipments/toWorkshopShared';
 
 const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | 'default' | 'outline' }> = {
   in_storage: { label: 'На складе', variant: 'secondary' },
@@ -57,6 +58,7 @@ const Rolls = () => {
     materialId: '',
     initialQuantity: '',
     workshopId: '',
+    shiftNumber: '',
   });
 
   const load = () => {
@@ -82,12 +84,20 @@ const Rolls = () => {
   });
 
   const openCreate = () => {
-    setForm({ barcode: '', materialId: '', initialQuantity: '', workshopId: '' });
+    setForm({ barcode: '', materialId: '', initialQuantity: '', workshopId: '', shiftNumber: '' });
     setDialogOpen(true);
   };
 
+  const selectedWorkshop = workshops.find((w) => String(w.id) === form.workshopId);
+
   const handleSave = async () => {
     if (!form.barcode.trim() || !form.materialId || !form.initialQuantity) return;
+    // Рулон, отправляемый сразу в цех, обязан принадлежать конкретной смене — "ничейных"
+    // рулонов в цехе быть не может (проверяется и на сервере, и на уровне БД).
+    if (form.workshopId && !form.shiftNumber) {
+      toast({ title: 'Укажите смену', description: 'При выборе цеха смена обязательна', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
       await createRoll({
@@ -95,6 +105,7 @@ const Rolls = () => {
         materialId: Number(form.materialId),
         initialQuantity: Number(form.initialQuantity),
         workshopId: form.workshopId ? Number(form.workshopId) : undefined,
+        shiftNumber: form.workshopId && form.shiftNumber ? Number(form.shiftNumber) : undefined,
       });
       toast({ title: 'Рулон добавлен' });
       setDialogOpen(false);
@@ -167,7 +178,9 @@ const Rolls = () => {
                   <Label>Цех (необязательно)</Label>
                   <Select
                     value={form.workshopId || 'none'}
-                    onValueChange={(v) => setForm((f) => ({ ...f, workshopId: v === 'none' ? '' : v }))}
+                    onValueChange={(v) =>
+                      setForm((f) => ({ ...f, workshopId: v === 'none' ? '' : v, shiftNumber: '' }))
+                    }
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Склад" />
@@ -182,6 +195,29 @@ const Rolls = () => {
                     </SelectContent>
                   </Select>
                 </div>
+                {form.workshopId && (
+                  <div className="space-y-1.5">
+                    <Label>Смена</Label>
+                    <Select
+                      value={form.shiftNumber}
+                      onValueChange={(v) => setForm((f) => ({ ...f, shiftNumber: v }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите смену" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(selectedWorkshop?.shiftNames || []).map((name, idx) => (
+                          <SelectItem key={idx + 1} value={String(idx + 1)}>
+                            {name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Рулон в цехе обязательно должен принадлежать смене
+                    </p>
+                  </div>
+                )}
                 <Button className="w-full" onClick={handleSave} disabled={saving}>
                   {saving ? 'Сохранение...' : 'Сохранить'}
                 </Button>
@@ -241,6 +277,7 @@ const Rolls = () => {
                   <TableHead className="text-primary-foreground">Штрихкод</TableHead>
                   <TableHead className="text-primary-foreground">Материал</TableHead>
                   <TableHead className="text-primary-foreground">Цех</TableHead>
+                  <TableHead className="text-primary-foreground">Смена</TableHead>
                   <TableHead className="text-primary-foreground">Остаток</TableHead>
                   <TableHead className="text-primary-foreground">Создан</TableHead>
                   <TableHead className="text-primary-foreground">Завершён</TableHead>
@@ -258,6 +295,7 @@ const Rolls = () => {
                     <TableCell className="font-mono-tech">{r.barcode}</TableCell>
                     <TableCell>{r.materialName || '—'}</TableCell>
                     <TableCell>{r.workshopName || '—'}</TableCell>
+                    <TableCell>{shiftLabel(workshops, r.workshopId, r.shiftNumber)}</TableCell>
                     <TableCell>
                       {r.remainingQuantity} из {r.initialQuantity} {r.unit}
                     </TableCell>
