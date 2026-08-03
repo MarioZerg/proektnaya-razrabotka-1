@@ -35,8 +35,12 @@ const buildMonthGrid = (year: number, month: number) => {
   for (let d = 1; d <= daysInMonth; d++) {
     cells.push(new Date(year, month, d));
   }
+  // Хвост недели заполняем днями СЛЕДУЮЩЕГО месяца (1, 2, 3...), а не текущего —
+  // иначе последние числа месяца дублировались бы в последней строке.
+  let nextMonthDay = 1;
   while (cells.length % 7 !== 0) {
-    cells.push(new Date(year, month, daysInMonth + (cells.length % 7) - startOffset + 1));
+    cells.push(new Date(year, month + 1, nextMonthDay));
+    nextMonthDay += 1;
   }
 
   const weeks: Date[][] = [];
