@@ -190,7 +190,7 @@ const adminNav: NavItem[] = [
       { label: 'Материалы', path: '/crm/settings/materials' },
       { label: 'Поставщики', path: '/crm/settings/suppliers' },
       { label: 'Товары на маркетплейсе', path: '/crm/settings/marketplace-items' },
-      { label: 'Интеграции с маркетплейсами', path: '/crm/settings/marketplace-integrations' },
+      { label: 'Интеграции маркетплейсов', path: '/crm/settings/marketplace-integrations' },
       { label: 'Стикеры товаров', path: '/crm/settings/item-stickers' },
       { label: 'Полки на складе', path: '/crm/settings/shelves' },
       { label: 'Вешалки', path: '/crm/settings/hangers' },

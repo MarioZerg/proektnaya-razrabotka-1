@@ -139,7 +139,9 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                                 asChild
                                 isActive={location.pathname === child.path}
                               >
-                                <Link to={child.path}>{child.label}</Link>
+                                <Link to={child.path}>
+                                  <span>{child.label}</span>
+                                </Link>
                               </SidebarMenuSubButton>
                             </SidebarMenuSubItem>
                           ))}
