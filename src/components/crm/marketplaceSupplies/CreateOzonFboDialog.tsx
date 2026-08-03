@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -15,17 +16,19 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
+import { formatDate } from '@/lib/dateUtils';
 import {
-  fetchSupplies,
-  type Supply,
-  type OzonDeliveryMethod,
-} from '@/lib/marketplaceSuppliesApi';
+  fetchOzonFboApplications,
+  type OzonFboApplication,
+} from '@/lib/ozonFboApi';
+import type { OzonDeliveryMethod } from '@/lib/marketplaceSuppliesApi';
 
 interface CreateOzonFboDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   creating: boolean;
-  onSelectExisting: (supplyId: number) => void;
+  /** Импорт выбранной заявки OZON: создаёт поставку + заказы на конвейер и открывает её. */
+  onImportApplication: (orderId: number) => void;
   onCreateDraft: (deliveryMethod: OzonDeliveryMethod) => void;
 }
 
@@ -38,68 +41,106 @@ const CreateOzonFboDialog = ({
   open,
   onOpenChange,
   creating,
-  onSelectExisting,
+  onImportApplication,
   onCreateDraft,
 }: CreateOzonFboDialogProps) => {
-  const [existingSupplies, setExistingSupplies] = useState<Supply[]>([]);
-  const [loadingExisting, setLoadingExisting] = useState(false);
-  const [selectedSupplyId, setSelectedSupplyId] = useState('');
+  const [applications, setApplications] = useState<OzonFboApplication[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState('');
   const [deliveryMethod, setDeliveryMethod] = useState<OzonDeliveryMethod | ''>('');
 
   useEffect(() => {
     if (!open) return;
-    setSelectedSupplyId('');
+    setSelectedOrderId('');
     setDeliveryMethod('');
-    setLoadingExisting(true);
-    fetchSupplies({ marketplace: 'OZON', type: 'FBO' })
-      .then((data) => setExistingSupplies(data.filter((s) => s.ozonStatus === 'Заполнение данных')))
-      .finally(() => setLoadingExisting(false));
+    setError(null);
+    setLoading(true);
+    fetchOzonFboApplications()
+      .then(setApplications)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Не удалось загрузить заявки OZON'))
+      .finally(() => setLoading(false));
   }, [open]);
+
+  const selected = applications.find((a) => String(a.orderId) === selectedOrderId);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Поставка для маркетплейса OZON</DialogTitle>
+          <DialogTitle>Заявка на поставку OZON FBO</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">
           <div className="space-y-3 rounded-md border border-border p-4">
-            <h3 className="text-sm font-semibold">Загрузить из существующей заявки</h3>
+            <h3 className="text-sm font-semibold">Заявки OZON, ожидающие сборки</h3>
             <div className="space-y-1.5">
-              <Label>Заявка на поставку из OZON</Label>
-              <Select value={selectedSupplyId} onValueChange={setSelectedSupplyId} disabled={loadingExisting}>
+              <Label>Выберите заявку из OZON</Label>
+              <Select value={selectedOrderId} onValueChange={setSelectedOrderId} disabled={loading}>
                 <SelectTrigger>
-                  <SelectValue placeholder={loadingExisting ? 'Загрузка...' : '-- Выберите заявку --'} />
+                  <SelectValue placeholder={loading ? 'Загрузка заявок из OZON...' : '-- Выберите заявку --'} />
                 </SelectTrigger>
                 <SelectContent>
-                  {existingSupplies.length === 0 ? (
+                  {error ? (
+                    <div className="px-2 py-1.5 text-sm text-destructive">{error}</div>
+                  ) : applications.length === 0 && !loading ? (
                     <div className="px-2 py-1.5 text-sm text-muted-foreground">
                       Нет заявок в статусе «Заполнение данных»
                     </div>
                   ) : (
-                    existingSupplies.map((s) => (
-                      <SelectItem key={s.id} value={String(s.id)}>
-                        #{s.id} {s.ozonApplicationNumber ? `— ${s.ozonApplicationNumber}` : ''}
+                    applications.map((a) => (
+                      <SelectItem key={a.orderId} value={String(a.orderId)}>
+                        №{a.orderNumber} · {a.warehouse || 'склад —'}
+                        {a.supplyId ? ' (уже загружена)' : ''}
                       </SelectItem>
                     ))
                   )}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Список актуальных заявок в статусе «Заполнение данных» подгрузится через API OZON
+                Список актуальных заявок подгружается напрямую из OZON по API
               </p>
             </div>
+
+            {selected && (
+              <div className="space-y-1 rounded-md bg-muted/40 p-3 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Склад OZON</span>
+                  <span className="font-medium">{selected.warehouse || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Дата поставки</span>
+                  <span className="font-medium">
+                    {selected.timeslotFrom ? formatDate(selected.timeslotFrom.slice(0, 10)) : '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Заполнить до</span>
+                  <span className="font-medium">
+                    {selected.deadline ? formatDate(selected.deadline.slice(0, 10)) : '—'}
+                  </span>
+                </div>
+                {selected.supplyId && (
+                  <Badge variant="secondary" className="mt-1">Заявка уже загружена в систему</Badge>
+                )}
+              </div>
+            )}
+
             <Button
-              disabled={!selectedSupplyId || creating}
-              onClick={() => onSelectExisting(Number(selectedSupplyId))}
+              disabled={!selectedOrderId || creating}
+              onClick={() => onImportApplication(Number(selectedOrderId))}
             >
-              Выбрать
+              {creating ? (
+                <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+              ) : (
+                <Icon name="Download" size={16} className="mr-2" />
+              )}
+              {selected?.supplyId ? 'Открыть поставку' : 'Загрузить заявку в систему'}
             </Button>
           </div>
 
           <div className="space-y-3 rounded-md border border-border p-4">
-            <h3 className="text-sm font-semibold">Параметры черновика</h3>
+            <h3 className="text-sm font-semibold">Или создать пустой черновик</h3>
             <div className="space-y-1.5">
               <Label>Тип поставки</Label>
               <Select value={deliveryMethod} onValueChange={(v) => setDeliveryMethod(v as OzonDeliveryMethod)}>
@@ -116,14 +157,11 @@ const CreateOzonFboDialog = ({
               </Select>
             </div>
             <Button
+              variant="outline"
               disabled={!deliveryMethod || creating}
               onClick={() => deliveryMethod && onCreateDraft(deliveryMethod)}
             >
-              {creating ? (
-                <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
-              ) : (
-                <Icon name="Plus" size={16} className="mr-2" />
-              )}
+              <Icon name="Plus" size={16} className="mr-2" />
               Создать черновик
             </Button>
           </div>

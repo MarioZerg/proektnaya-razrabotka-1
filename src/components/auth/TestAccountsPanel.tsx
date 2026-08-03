@@ -10,6 +10,7 @@ const roleIcons: Record<TestAccount['role'], string> = {
   cutter: 'Scissors',
   packer: 'PackageCheck',
   cleaner: 'Sparkles',
+  manager: 'Briefcase',
 };
 
 interface TestAccountsPanelProps {

@@ -15,6 +15,8 @@ import {
   type SupplyDetail,
 } from '@/lib/marketplaceSuppliesApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import { importOzonFboComposition } from '@/lib/ozonFboApi';
+import { useAuth } from '@/context/AuthContext';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFboApplicationCard';
 import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
@@ -27,6 +29,8 @@ const MarketplaceSupplyShow = () => {
   const supplyId = Number(id);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user } = useAuth();
+  const [importingFbo, setImportingFbo] = useState(false);
 
   const [supply, setSupply] = useState<SupplyDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -179,6 +183,27 @@ const MarketplaceSupplyShow = () => {
     }
   };
 
+  // Загрузка/обновление товарного состава заявки OZON FBO: создаёт недостающие заказы на
+  // конвейер из состава заявки на стороне OZON (только чтение состава, ничего не двигает на OZON).
+  const handleImportFboComposition = async () => {
+    if (!supply?.ozonSupplyOrderId) return;
+    setImportingFbo(true);
+    try {
+      const res = await importOzonFboComposition(supply.ozonSupplyOrderId, { id: user?.id, name: user?.name });
+      const parts = [`создано заказов: ${res.created}`];
+      if (res.skippedNoItem) parts.push(`без товара: ${res.skippedNoItem}`);
+      toast({
+        title: 'Товарный состав загружен',
+        description: `Товаров в заявке: ${res.totalItems}. ${parts.join(', ')}.`,
+      });
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setImportingFbo(false);
+    }
+  };
+
   const handleDelete = async () => {
     try {
       await deleteSupply(supplyId);
@@ -238,6 +263,8 @@ const MarketplaceSupplyShow = () => {
             canEdit={canEditItems}
             saving={saving}
             onSave={handleSaveOzonFboFields}
+            onImportComposition={handleImportFboComposition}
+            importing={importingFbo}
           />
         )}
 

@@ -203,7 +203,7 @@ def handler(event: dict, context) -> dict:
                     "s.pass_sticker_url, s.pass_sticker_name, "
                     "s.ozon_delivery_method, s.ozon_application_number, s.ozon_status, "
                     "s.supply_date, s.timeslot, s.shipment_type, s.packaging_type, "
-                    "s.packaging_count, s.gazelka_pickup "
+                    "s.packaging_count, s.gazelka_pickup, s.ozon_supply_order_id "
                     "FROM marketplace_supplies s "
                     "LEFT JOIN users u ON u.id = s.created_by "
                     "WHERE s.id = %s",
@@ -324,6 +324,7 @@ def handler(event: dict, context) -> dict:
                     'wbSupplyId': wb_supply_id,
                     'wbOrders': wb_orders,
                     'wbReadyCount': wb_ready_count,
+                    'ozonSupplyOrderId': row[27],
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'supply': detail})}
 

@@ -77,6 +77,8 @@ export interface SupplyDetail extends Supply {
   wbSupplyId: string | null;
   wbOrders: WbSupplyOrder[];
   wbReadyCount: number;
+  /** id заявки OZON FBO на стороне OZON (для повторной загрузки товарного состава). */
+  ozonSupplyOrderId: number | null;
 }
 
 export interface SupplyFilters {

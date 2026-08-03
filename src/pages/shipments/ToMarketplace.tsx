@@ -37,6 +37,7 @@ import {
   type OzonDeliveryMethod,
 } from '@/lib/marketplaceSuppliesApi';
 import CreateOzonFboDialog from '@/components/crm/marketplaceSupplies/CreateOzonFboDialog';
+import { importOzonFboComposition } from '@/lib/ozonFboApi';
 import { formatDate, formatDateTime } from '@/lib/dateUtils';
 
 const marketplaceLogo: Record<string, { label: string; className: string }> = {
@@ -120,9 +121,26 @@ const ToMarketplace = () => {
     }
   };
 
-  const handleSelectExistingOzonSupply = (supplyId: number) => {
-    setOzonFboDialogOpen(false);
-    navigate(`/crm/shipments/to-marketplace/${supplyId}`);
+  // Импорт выбранной заявки OZON FBO: создаёт нашу поставку и заказы на конвейер из
+  // товарного состава заявки, затем открывает поставку. Если заявка уже загружена — просто
+  // открывает существующую поставку (backend переиспользует её).
+  const handleImportOzonApplication = async (orderId: number) => {
+    setCreating(true);
+    try {
+      const res = await importOzonFboComposition(orderId, { id: user?.id, name: user?.name });
+      const parts = [`создано заказов: ${res.created}`];
+      if (res.skippedNoItem) parts.push(`без товара: ${res.skippedNoItem}`);
+      toast({
+        title: `Заявка ${res.orderNumber || ''} загружена`,
+        description: `Товаров в заявке: ${res.totalItems}. ${parts.join(', ')}.`,
+      });
+      setOzonFboDialogOpen(false);
+      navigate(`/crm/shipments/to-marketplace/${res.supplyId}`);
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleCreateOzonDraft = async (deliveryMethod: OzonDeliveryMethod) => {
@@ -333,7 +351,7 @@ const ToMarketplace = () => {
         open={ozonFboDialogOpen}
         onOpenChange={setOzonFboDialogOpen}
         creating={creating}
-        onSelectExisting={handleSelectExistingOzonSupply}
+        onImportApplication={handleImportOzonApplication}
         onCreateDraft={handleCreateOzonDraft}
       />
     </CrmLayout>

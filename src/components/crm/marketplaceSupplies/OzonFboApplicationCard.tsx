@@ -41,9 +41,18 @@ interface OzonFboApplicationCardProps {
   canEdit: boolean;
   saving: boolean;
   onSave: (fields: OzonFboEditFields) => Promise<void>;
+  onImportComposition?: () => void;
+  importing?: boolean;
 }
 
-const OzonFboApplicationCard = ({ supply, canEdit, saving, onSave }: OzonFboApplicationCardProps) => {
+const OzonFboApplicationCard = ({
+  supply,
+  canEdit,
+  saving,
+  onSave,
+  onImportComposition,
+  importing,
+}: OzonFboApplicationCardProps) => {
   const [editOpen, setEditOpen] = useState(false);
   const [gazelkaId, setGazelkaId] = useState('');
   const [shipToGazelkaAt, setShipToGazelkaAt] = useState('');
@@ -77,12 +86,24 @@ const OzonFboApplicationCard = ({ supply, canEdit, saving, onSave }: OzonFboAppl
     <Card className="border-border shadow-none">
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base">Данные поставки OZON FBO</CardTitle>
-        {canEdit && (
-          <Button variant="outline" size="sm" onClick={openEdit}>
-            <Icon name="Pencil" size={14} className="mr-1.5" />
-            Редактировать
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {supply.ozonSupplyOrderId && onImportComposition && (
+            <Button size="sm" onClick={onImportComposition} disabled={importing}>
+              <Icon
+                name={importing ? 'Loader2' : 'Download'}
+                size={14}
+                className={`mr-1.5 ${importing ? 'animate-spin' : ''}`}
+              />
+              {importing ? 'Загрузка...' : 'Загрузить товарный состав'}
+            </Button>
+          )}
+          {canEdit && (
+            <Button variant="outline" size="sm" onClick={openEdit}>
+              <Icon name="Pencil" size={14} className="mr-1.5" />
+              Редактировать
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         <div className="flex items-center justify-between border-b border-border pb-2">

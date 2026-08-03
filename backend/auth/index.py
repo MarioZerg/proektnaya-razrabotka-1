@@ -4,7 +4,7 @@ import os
 import psycopg2
 
 
-ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'cleaner', 'admin'}
+ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'cleaner', 'admin', 'manager'}
 
 
 def handler(event: dict, context) -> dict:

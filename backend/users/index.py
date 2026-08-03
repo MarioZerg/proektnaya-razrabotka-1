@@ -10,7 +10,7 @@ import boto3
 import psycopg2
 
 
-ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'cleaner', 'admin'}
+ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'cleaner', 'admin', 'manager'}
 
 
 def hash_password(password: str, salt: str) -> str:

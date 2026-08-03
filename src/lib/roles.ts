@@ -1,4 +1,4 @@
-export type Role = 'sewer' | 'cutter' | 'packer' | 'storekeeper' | 'cleaner' | 'admin';
+export type Role = 'sewer' | 'cutter' | 'packer' | 'storekeeper' | 'cleaner' | 'admin' | 'manager';
 
 /**
  * Зона доступа — укрупнённая группировка ролей, используется для разграничения прав
@@ -14,7 +14,8 @@ export type AccessZone = 'admin' | 'warehouse' | 'workshop' | 'none';
 
 export const getAccessZone = (role: Role | undefined | null): AccessZone => {
   if (role === 'admin') return 'admin';
-  if (role === 'storekeeper') return 'warehouse';
+  // Менеджер работает с поставками маркетплейса — относим к складской зоне (доступ к отгрузкам).
+  if (role === 'storekeeper' || role === 'manager') return 'warehouse';
   if (role === 'sewer' || role === 'cutter' || role === 'packer') return 'workshop';
   return 'none';
 };
@@ -38,6 +39,7 @@ export const roleLabels: Record<Role, string> = {
   storekeeper: 'Кладовщик',
   cleaner: 'Уборщица',
   admin: 'Администратор',
+  manager: 'Менеджер',
 };
 
 const productionNav: NavItem[] = [
@@ -134,6 +136,25 @@ const storekeeperNav: NavItem[] = [
 
 const cleanerNav: NavItem[] = [{ label: 'Главная', icon: 'LayoutDashboard', path: '/crm' }];
 
+// Менеджер: работа с заказами и поставками маркетплейса (в т.ч. заявки OZON FBO).
+const managerNav: NavItem[] = [
+  { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
+  {
+    label: 'Отгрузки',
+    icon: 'Truck',
+    children: [{ label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' }],
+  },
+  {
+    label: 'Маркетплейсы',
+    icon: 'ShoppingBag',
+    children: [
+      { label: 'Заказы с маркетплейса', path: '/crm/marketplace/orders' },
+      { label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' },
+      { label: 'Печать стикеров FBO', path: '/crm/marketplace/fbo-stickers' },
+    ],
+  },
+];
+
 const adminNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
   {
@@ -206,4 +227,5 @@ export const navByRole: Record<Role, NavItem[]> = {
   storekeeper: storekeeperNav,
   cleaner: cleanerNav,
   admin: adminNav,
+  manager: managerNav,
 };
