@@ -30,9 +30,14 @@ import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
 import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
+import { useWbAutoSync } from '@/hooks/useWbAutoSync';
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
   const { user, login, logout, switchRole } = useAuth();
+
+  // Автоподгрузка новых FBS-заказов с WildBerries каждые 15 минут — только для
+  // управляющей роли (администратор), которая работает с заказами.
+  useWbAutoSync(user?.role === 'admin', { id: user?.id, name: user?.name });
   const navigate = useNavigate();
   const location = useLocation();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
