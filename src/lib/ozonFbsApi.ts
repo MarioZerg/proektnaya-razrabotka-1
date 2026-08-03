@@ -41,3 +41,14 @@ export const refreshOzonStatus = (
     postingNumber: string;
     ozonStatus: string | null;
   }>;
+
+export const refreshAllOzonStatuses = (): Promise<{
+  updated: number;
+  checked: number;
+  known: number;
+}> =>
+  post({ action: 'refresh_all_statuses' }) as Promise<{
+    updated: number;
+    checked: number;
+    known: number;
+  }>;

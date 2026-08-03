@@ -10,7 +10,7 @@ import {
 } from '@/lib/ordersApi';
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { syncWbOrders } from '@/lib/wbFbsApi';
-import { syncOzonOrders } from '@/lib/ozonFbsApi';
+import { syncOzonOrders, refreshAllOzonStatuses } from '@/lib/ozonFbsApi';
 import { useAuth } from '@/context/AuthContext';
 import { emptyManualRow, type EditFormState, type ManualOrderRow } from '@/components/crm/orders/ordersShared';
 import OrdersToolbar, {
@@ -28,6 +28,7 @@ const MarketplaceOrders = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncingOzon, setSyncingOzon] = useState(false);
+  const [refreshingOzon, setRefreshingOzon] = useState(false);
   const [loading, setLoading] = useState(true);
   const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
 
@@ -167,6 +168,28 @@ const MarketplaceOrders = () => {
     }
   };
 
+  // Разом обновляет статусы всех OZON-заказов (сборка/отгрузка/доставка/доставлен) — читает
+  // актуальные статусы с OZON, ничего не двигая на его стороне.
+  const handleRefreshOzonStatuses = async () => {
+    setRefreshingOzon(true);
+    try {
+      const r = await refreshAllOzonStatuses();
+      toast({
+        title: 'Статусы OZON обновлены',
+        description: `Проверено заказов: ${r.checked}, изменилось статусов: ${r.updated}.`,
+      });
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось обновить статусы OZON',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setRefreshingOzon(false);
+    }
+  };
+
   const openManual = () => {
     setManualRows([emptyManualRow()]);
     setManualOpen(true);
@@ -245,6 +268,8 @@ const MarketplaceOrders = () => {
           syncing={syncing}
           onSyncOzon={handleSyncOzon}
           syncingOzon={syncingOzon}
+          onRefreshOzonStatuses={handleRefreshOzonStatuses}
+          refreshingOzon={refreshingOzon}
           statusFilter={statusFilter}
           onStatusChange={setStatusFilter}
           marketplaceFilter={marketplaceFilter}

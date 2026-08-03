@@ -2,6 +2,7 @@ import json
 import os
 import urllib.request
 import urllib.error
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 
@@ -226,6 +227,91 @@ def handle_refresh_status(cur, conn, client_id, api_key, body_data):
     return _resp(200, {'postingNumber': posting_number, 'ozonStatus': ozon_status})
 
 
+def handle_refresh_all(cur, conn, client_id, api_key):
+    """Разом обновляет статусы всех OZON FBS-заказов в системе. Проходит по списку
+    отправлений OZON (/v3/posting/fbs/list, ТОЛЬКО чтение) постранично и для каждого
+    отправления, которое есть у нас, сохраняет актуальный ozon_status. Заказы на стороне
+    OZON не двигаются."""
+    # Множество номеров отправлений, которые есть в нашей системе — обновляем только их.
+    cur.execute(
+        "SELECT DISTINCT ozon_posting_number FROM orders "
+        "WHERE marketplace = 'OZON' AND ozon_posting_number IS NOT NULL"
+    )
+    known = {r[0] for r in cur.fetchall()}
+    if not known:
+        return _resp(200, {'updated': 0, 'checked': 0})
+
+    page_limit = 1000
+    found = {}  # posting_number -> status (накапливаем в память, БД обновим одним разом)
+
+    # OZON ограничивает длину периода выборки (PERIOD_IS_TOO_LONG), поэтому идём окнами.
+    # Загруженные FBS-заказы свежие, поэтому смотрим недалеко в прошлое: 3 окна по 45 дней.
+    # Отправления отсортированы по дате (DESC), поэтому свежие заказы находятся быстро —
+    # как только нашли все известные, выходим (ранний выход экономит таймаут).
+    now = datetime.now(timezone.utc)
+    window_days = 45
+    windows = 3
+    max_pages_per_window = 5
+    for w in range(windows):
+        to_dt = now - timedelta(days=window_days * w)
+        since_dt = now - timedelta(days=window_days * (w + 1))
+        offset = 0
+        for _ in range(max_pages_per_window):
+            status_code, data = ozon_post(
+                '/v3/posting/fbs/list', client_id, api_key,
+                {
+                    'dir': 'DESC',
+                    'filter': {
+                        'since': since_dt.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                        'to': to_dt.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    },
+                    'limit': page_limit,
+                    'offset': offset,
+                    'with': {},
+                },
+            )
+            if status_code in (401, 403):
+                return _resp(400, {'error': 'OZON отклонил ключ (проверьте Client ID и API-ключ).'})
+            if status_code != 200:
+                return _resp(502, {'error': f'OZON вернул ошибку ({status_code}): {ozon_error_text(status_code, data)}'})
+
+            result = data.get('result', {}) if isinstance(data, dict) else {}
+            postings = result.get('postings', []) or []
+            if not postings:
+                break
+
+            for p in postings:
+                pn = p.get('posting_number')
+                st = p.get('status')
+                if pn in known and st and pn not in found:
+                    found[pn] = st
+
+            if len(found) >= len(known) or not result.get('has_next'):
+                break
+            offset += page_limit
+
+        if len(found) >= len(known):
+            break
+
+    # Пакетное обновление одним запросом (VALUES + UPDATE ... FROM) — быстро даже для сотен строк.
+    updated = 0
+    if found:
+        values_sql = ', '.join(
+            "('" + pn.replace("'", "''") + "', '" + st.replace("'", "''") + "')"
+            for pn, st in found.items()
+        )
+        cur.execute(
+            f"UPDATE orders o SET ozon_status = v.status "
+            f"FROM (VALUES {values_sql}) AS v(posting, status) "
+            f"WHERE o.ozon_posting_number = v.posting AND o.ozon_status IS DISTINCT FROM v.status "
+            f"RETURNING o.id"
+        )
+        updated = len(cur.fetchall())
+
+    conn.commit()
+    return _resp(200, {'updated': updated, 'checked': len(found), 'known': len(known)})
+
+
 def handler(event: dict, context) -> dict:
     """Интеграция с OZON FBS (Seller API) — РЕЖИМ ТОЛЬКО ЧТЕНИЕ.
 
@@ -242,6 +328,10 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'refresh_status', postingNumber }
         - читает актуальный статус отправления OZON (/v3/posting/fbs/get) и сохраняет его
           у соответствующих заказов. Статус на стороне OZON не меняется.
+    POST /  { action: 'refresh_all_statuses' }
+        - разом обновляет статусы всех OZON FBS-заказов системы: постранично читает список
+          отправлений OZON (/v3/posting/fbs/list) и сохраняет актуальный статус тем заказам,
+          чьё отправление есть в системе. Только чтение — заказы на OZON не двигаются.
 
     Args:
         event: dict с httpMethod, body
@@ -261,7 +351,7 @@ def handler(event: dict, context) -> dict:
     actor_id = body_data.get('actorId')
     actor_name = body_data.get('actorName')
 
-    if action not in ('sync_orders', 'refresh_status'):
+    if action not in ('sync_orders', 'refresh_status', 'refresh_all_statuses'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -279,5 +369,7 @@ def handler(event: dict, context) -> dict:
             return handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name)
         if action == 'refresh_status':
             return handle_refresh_status(cur, conn, client_id, api_key, body_data)
+        if action == 'refresh_all_statuses':
+            return handle_refresh_all(cur, conn, client_id, api_key)
     finally:
         conn.close()
