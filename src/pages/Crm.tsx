@@ -130,7 +130,9 @@ const CrmDashboard = () => {
       if (employee.isOpen) {
         await closeShift(employee.id);
       } else {
-        await openShift(employee.id);
+        // Администратор открывает смену ЗА сотрудника с дашборда — штраф за опоздание
+        // не начисляется (сотрудник не виноват, что за него открыл админ).
+        await openShift(employee.id, undefined, undefined, true);
       }
       loadShifts();
     } catch (e) {

@@ -82,7 +82,9 @@ def handler(event: dict, context) -> dict:
           из профиля сотрудника (не выбираются вручную). Сотрудник только выбирает
           материал, requestedQuantity необязателен (кладовщик сам определит, сколько и
           какие рулоны собрать). Если по этому материалу на эту же смену/цех уже есть
-          незакрытая заявка (статус != 'Получено') — отклоняется (409)
+          незакрытая заявка (статус != 'Получено') — отклоняется (409). Материала
+          физически не должно быть 0 на складе (сумма остатков rolls in_storage по
+          материалу) — иначе заявку создать нельзя (409)
     POST /  { action: 'collect_scan', shipmentId, barcode }
         - сканирование штрихкода рулона на складе, добавляет его целиком в заявку.
           Рулон должен быть в статусе in_storage и НЕ закреплён за другим цехом/сменой
@@ -244,6 +246,7 @@ def handler(event: dict, context) -> dict:
                 f"s.is_auto_order, "
                 f"(SELECT STRING_AGG(DISTINCT m.name, ', ') FROM shipment_items si "
                 f"JOIN materials m ON m.id = si.material_id WHERE si.shipment_id = s.id) as material_names, "
+                f"(SELECT MIN(si.material_id) FROM shipment_items si WHERE si.shipment_id = s.id) as material_id, "
                 f"s.reject_reason "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
@@ -272,7 +275,8 @@ def handler(event: dict, context) -> dict:
                     'totalQuantity': float(r[14]) if r[14] is not None else 0.0,
                     'isAutoOrder': r[15],
                     'materialNames': r[16],
-                    'rejectReason': r[17],
+                    'materialId': r[17],
+                    'rejectReason': r[18],
                 }
                 for r in cur.fetchall()
             ]
@@ -579,6 +583,24 @@ def handler(event: dict, context) -> dict:
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({'error': 'По этому материалу уже есть незакрытая заявка на вашу смену — дождитесь отгрузки и подтверждения'}),
+                    }
+
+                # Нельзя запросить материал, которого физически нет на складе — иначе
+                # кладовщик получит заявку, которую невозможно собрать.
+                cur.execute(
+                    "SELECT COALESCE(SUM(remaining_quantity), 0), m.name FROM materials m "
+                    "LEFT JOIN rolls r ON r.material_id = m.id AND r.status = 'in_storage' "
+                    "WHERE m.id = %s GROUP BY m.name",
+                    (int(material_id),),
+                )
+                stock_row = cur.fetchone()
+                warehouse_qty = float(stock_row[0]) if stock_row else 0
+                material_name = stock_row[1] if stock_row else None
+                if warehouse_qty <= 0:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Материала "{material_name or "—"}" нет на складе — заявку создать нельзя'}),
                     }
 
                 requested_by_sql = int(requested_by) if requested_by not in (None, '') else 'NULL'

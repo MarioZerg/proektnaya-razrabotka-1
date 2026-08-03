@@ -76,7 +76,7 @@ def handler(event: dict, context) -> dict:
                                       смена + сегодня не отмечено выходным в календаре).
                                       Если у userId штатная смена ещё рабочая — она тоже
                                       входит в список, помечена isHome=true
-    POST /  { action: 'open', userId, workshopId?, shiftNumber? }
+    POST /  { action: 'open', userId, workshopId?, shiftNumber?, openedByAdmin? }
         - открывает смену сотруднику (создаёт запись с closed_at = NULL).
           Если у сотрудника уже есть открытая смена — отклоняется (409).
           Если сотрудник жёстко привязан (shift_free=false) и его штатная смена/цех активны
@@ -86,8 +86,10 @@ def handler(event: dict, context) -> dict:
           указывать на активный цех + активную смену, не отмеченную выходным на сегодня.
           Опоздание (is_late в shift_sessions) определяется сравнением текущего времени с
           shift_from сотрудника (если задан) либо working_day_start настроек цеха. При
-          опоздании сразу начисляется автоштраф (salary_accruals, type='penalty') на сумму
-          late_opened_shift_penalty из настроек цеха, если она больше 0
+          опоздании начисляется автоштраф (salary_accruals, type='penalty') на сумму
+          late_opened_shift_penalty из настроек цеха, если она больше 0 — КРОМЕ случая,
+          когда openedByAdmin=true (администратор открыл смену ЗА сотрудника с дашборда —
+          сотрудник не виноват в моменте открытия, штраф не начисляется)
     POST /  { action: 'close', userId }
         - закрывает последнюю открытую смену сотрудника (closed_at = now()).
           Если сотрудник — уборщица (role='cleaner'), начисляет ей оклад за смену
@@ -230,6 +232,7 @@ def handler(event: dict, context) -> dict:
                 user_id = body_data.get('userId')
                 req_workshop_id = body_data.get('workshopId')
                 req_shift_number = body_data.get('shiftNumber')
+                opened_by_admin = bool(body_data.get('openedByAdmin'))
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
 
@@ -336,8 +339,10 @@ def handler(event: dict, context) -> dict:
 
                 # Автоштраф за опоздание (late_opened_shift_penalty из настроек цеха) —
                 # начисляется сразу при открытии, защищён от дубля уникальным индексом
-                # (shift_session_id, type) на случай повторного вызова.
-                if is_late:
+                # (shift_session_id, type) на случай повторного вызова. Если смену открыл
+                # администратор ЗА сотрудника (с дашборда) — сотрудник не виноват в том,
+                # когда именно за него открыли смену, поэтому штраф не начисляется.
+                if is_late and not opened_by_admin:
                     penalty = get_setting(cur, workshop_id, 'late_opened_shift_penalty')
                     try:
                         penalty_amount = float(penalty) if penalty not in (None, '') else 0

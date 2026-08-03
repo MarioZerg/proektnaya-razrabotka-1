@@ -131,6 +131,11 @@ const SewingItems = () => {
   const totalPages = Math.max(1, Math.ceil(filteredOrders.length / 10));
   const pagedOrders = filteredOrders.slice((page - 1) * 10, page * 10);
 
+  // Итого по текущему отфильтрованному списку (вся вкладка, не только видимая страница):
+  // ширина (width) хранится в см — переводим в погонные метры (п.м.), quantity — штуки.
+  const totalMeters = filteredOrders.reduce((sum, o) => sum + ((o.width || 0) * o.quantity) / 100, 0);
+  const totalPieces = filteredOrders.reduce((sum, o) => sum + o.quantity, 0);
+
   const countForTab = (status: SewingStatus) => {
     if ((status === 'В работе' || status === 'На раскрое') && isProductionRole) {
       return orders.filter((o) => o.sewingStatus === status && o.assignedUserId === user?.id).length;
@@ -433,6 +438,12 @@ const SewingItems = () => {
             ))}
           </TabsList>
         </Tabs>
+
+        {!loading && (
+          <p className="text-sm text-muted-foreground">
+            Итого на странице: {totalMeters.toFixed(2)} п.м. ({totalPieces} шт.)
+          </p>
+        )}
 
         <SewingItemsTable
           loading={loading}

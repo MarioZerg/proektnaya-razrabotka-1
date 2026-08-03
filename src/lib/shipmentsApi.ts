@@ -27,6 +27,7 @@ export interface Shipment {
   totalQuantity: number;
   isAutoOrder: boolean;
   materialNames: string | null;
+  materialId: number | null;
   /** Причина отказа сотрудника цеха в приёме — заявка при этом остаётся в статусе "Отправлено". */
   rejectReason: string | null;
 }

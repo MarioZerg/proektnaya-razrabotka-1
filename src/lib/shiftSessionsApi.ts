@@ -71,7 +71,9 @@ export interface OpenShiftResult {
 export const openShift = (
   userId: number,
   workshopId?: number | null,
-  shiftNumber?: number | null
-): Promise<OpenShiftResult> => postAction({ action: 'open', userId, workshopId, shiftNumber });
+  shiftNumber?: number | null,
+  openedByAdmin?: boolean
+): Promise<OpenShiftResult> =>
+  postAction({ action: 'open', userId, workshopId, shiftNumber, openedByAdmin });
 
 export const closeShift = (userId: number) => postAction({ action: 'close', userId });

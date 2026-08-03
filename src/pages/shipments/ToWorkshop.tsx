@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -24,6 +32,8 @@ import ToWorkshopTable from '@/components/crm/shipments/ToWorkshopTable';
 import AssembleShipmentView from '@/components/crm/shipments/AssembleShipmentView';
 import ReceiveConfirmDialog from '@/components/crm/shipments/ReceiveConfirmDialog';
 
+type TabValue = 'new' | 'completed';
+
 const ToWorkshop = () => {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -34,6 +44,8 @@ const ToWorkshop = () => {
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<TabValue>('new');
+  const [materialFilter, setMaterialFilter] = useState('all');
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -80,13 +92,29 @@ const ToWorkshop = () => {
   // Швея/закройщик/упаковщик видит только заявки СВОЕГО цеха и смены — не весь список.
   // Заявка без указанной смены (shiftNumber === null) относится ко всем сменам этого цеха.
   // Кладовщик и админ видят полный список, как и раньше.
-  const visibleShipments = isProduction
+  const shiftFilteredShipments = isProduction
     ? shipments.filter(
         (s) =>
           s.workshopId === effectiveWorkshopId &&
           (s.shiftNumber === null || s.shiftNumber === effectiveShiftNumber)
       )
     : shipments;
+
+  // Вкладки: "Новые" — заявки в процессе (Новый/Отправлено), "Завершённые" — уже
+  // закрытые (Получено/Выполнена — старые тестовые записи). Страница всегда
+  // открывается на вкладке "Новые".
+  const isCompletedStatus = (status: string) => status === 'Получено' || status === 'Выполнена';
+  const tabFilteredShipments = shiftFilteredShipments.filter((s) =>
+    activeTab === 'new' ? !isCompletedStatus(s.status) : isCompletedStatus(s.status)
+  );
+
+  const visibleShipments =
+    materialFilter === 'all'
+      ? tabFilteredShipments
+      : tabFilteredShipments.filter((s) => String(s.materialId) === materialFilter);
+
+  const newCount = shiftFilteredShipments.filter((s) => !isCompletedStatus(s.status)).length;
+  const completedCount = shiftFilteredShipments.filter((s) => isCompletedStatus(s.status)).length;
 
   const openCreate = () => {
     setReqComment('');
@@ -295,6 +323,27 @@ const ToWorkshop = () => {
             />
           )}
         </div>
+
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)}>
+          <TabsList>
+            <TabsTrigger value="new">Новые заявки ({newCount})</TabsTrigger>
+            <TabsTrigger value="completed">Завершённые заявки ({completedCount})</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <Select value={materialFilter} onValueChange={setMaterialFilter}>
+          <SelectTrigger className="sm:w-64">
+            <SelectValue placeholder="Все материалы" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все материалы</SelectItem>
+            {materials.map((m) => (
+              <SelectItem key={m.id} value={String(m.id)}>
+                {m.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         <ToWorkshopTable
           loading={loading}
