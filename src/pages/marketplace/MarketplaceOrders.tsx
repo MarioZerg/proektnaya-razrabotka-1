@@ -9,6 +9,8 @@ import {
   type Order,
 } from '@/lib/ordersApi';
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
+import { syncWbOrders } from '@/lib/wbFbsApi';
+import { useAuth } from '@/context/AuthContext';
 import { emptyManualRow, type EditFormState, type ManualOrderRow } from '@/components/crm/orders/ordersShared';
 import OrdersToolbar, {
   type StatusFilter,
@@ -21,7 +23,9 @@ import CreateManualOrderDialog from '@/components/crm/orders/CreateManualOrderDi
 
 const MarketplaceOrders = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
 
@@ -92,6 +96,40 @@ const MarketplaceOrders = () => {
   const handleDelete = async (id: number) => {
     await deleteOrder(id);
     load();
+  };
+
+  // Загрузка новых FBS-заказов с WildBerries через API. Создаёт их в системе со статусом
+  // «Новые», чтобы конвейер производства их подхватил. Нераспознанные артикулы (нет товара
+  // в справочнике) показываем отдельным предупреждением.
+  const handleSyncWb = async () => {
+    setSyncing(true);
+    try {
+      const r = await syncWbOrders({ id: user?.id, name: user?.name });
+      const parts = [`создано ${r.created}`];
+      if (r.skippedExisting) parts.push(`уже были ${r.skippedExisting}`);
+      if (r.skippedNoItem) parts.push(`без товара ${r.skippedNoItem}`);
+      toast({
+        title: r.sandbox ? 'WB (тестовый режим): загрузка завершена' : 'Заказы WB загружены',
+        description: `Получено с WB: ${r.totalFromWb}. ${parts.join(', ')}.`,
+      });
+      if (r.skippedNoItem > 0) {
+        const arts = r.unmatched.map((u) => u.article || u.nmId).filter(Boolean).join(', ');
+        toast({
+          title: `Не распознано товаров: ${r.skippedNoItem}`,
+          description: `Добавьте артикулы в справочник товаров: ${arts}`,
+          variant: 'destructive',
+        });
+      }
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось загрузить заказы с WildBerries',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const openManual = () => {
@@ -168,6 +206,8 @@ const MarketplaceOrders = () => {
 
         <OrdersToolbar
           onOpenManual={openManual}
+          onSyncWb={handleSyncWb}
+          syncing={syncing}
           statusFilter={statusFilter}
           onStatusChange={setStatusFilter}
           marketplaceFilter={marketplaceFilter}

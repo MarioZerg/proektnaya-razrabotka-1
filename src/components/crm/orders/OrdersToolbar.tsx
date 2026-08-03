@@ -14,6 +14,8 @@ export type TypeFilter = 'all' | 'FBO' | 'FBS' | 'Индивидуальный';
 
 interface OrdersToolbarProps {
   onOpenManual: () => void;
+  onSyncWb: () => void;
+  syncing: boolean;
   statusFilter: StatusFilter;
   onStatusChange: (v: StatusFilter) => void;
   marketplaceFilter: MarketplaceFilter;
@@ -24,6 +26,8 @@ interface OrdersToolbarProps {
 
 const OrdersToolbar = ({
   onOpenManual,
+  onSyncWb,
+  syncing,
   statusFilter,
   onStatusChange,
   marketplaceFilter,
@@ -37,6 +41,18 @@ const OrdersToolbar = ({
         <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={onOpenManual}>
           <Icon name="Plus" size={16} className="mr-1.5" />
           Добавить заказ вручную
+        </Button>
+        <Button
+          className="bg-emerald-600 text-white hover:bg-emerald-700"
+          onClick={onSyncWb}
+          disabled={syncing}
+        >
+          <Icon
+            name={syncing ? 'Loader2' : 'RefreshCw'}
+            size={16}
+            className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
+          />
+          {syncing ? 'Загружаем...' : 'Загрузить заказы с API (WB FBS)'}
         </Button>
       </div>
 
