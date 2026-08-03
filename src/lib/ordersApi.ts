@@ -25,6 +25,13 @@ export interface Order {
   assignedUserName: string | null;
   workshopId: number | null;
   workshopName: string | null;
+  /** Кто раскроил заказ — отдельно от assignedUserId, который перезаписывается на швею
+   * при take_order. Заполняется в момент раскроя (action 'cut') и дальше не меняется. */
+  cutterUserId: number | null;
+  cutterUserName: string | null;
+  /** Номер вешалки, на которую подвешен раскроенный товар. 0 = не назначена (заполняется
+   * через отдельную вкладку "Вешалки", ещё не реализована). */
+  hangerNumber: number;
 }
 
 export interface OrderMaterialUsage {
@@ -97,10 +104,21 @@ export const cutOrder = (id: number, rollId?: number) => postAction({ action: 'c
 
 export const deleteOrder = (id: number) => postAction({ action: 'delete_order', id });
 
+export interface TakenOrder {
+  id: number;
+  orderNumber: string;
+  orderType: OrderType;
+  marketplace: Marketplace;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+}
+
 export interface TakeStackResult {
   success: true;
   count: number;
   orderIds: number[];
+  orders: TakenOrder[];
 }
 
 export const takeStack = (userId: number, workshopId: number, shiftNumber?: number | null): Promise<TakeStackResult> =>

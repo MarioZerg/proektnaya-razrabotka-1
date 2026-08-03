@@ -97,8 +97,8 @@ const SewingItems = () => {
     load();
   }, []);
 
-  // Настройка "печать QR на листе закройщика" — читается из настроек ТЕКУЩЕГО цеха
-  // закройщика (переопределение цеха или глобальное значение). По умолчанию включена.
+  // Настройка "печать листа закройщика при взятии стека" — читается из настроек ТЕКУЩЕГО
+  // цеха закройщика (переопределение цеха или глобальное значение). По умолчанию включена.
   useEffect(() => {
     if (!isCutter || !effectiveWorkshopId) return;
     fetchWorkshopDetail(effectiveWorkshopId).then((w) => {
@@ -257,11 +257,6 @@ const SewingItems = () => {
     }
   };
 
-  const handlePrintCuttingSheet = () => {
-    if (!selectedOrder) return;
-    printCuttingSheet(selectedOrder.id, selectedOrder.orderNumber);
-  };
-
   const handleCancelOrder = async () => {
     if (!selectedOrder) return;
     setCancelling(true);
@@ -293,6 +288,9 @@ const SewingItems = () => {
       toast({ title: `Взято в работу заказов: ${res.count}` });
       setActiveTab('На раскрое');
       load();
+      if (printQrCuttingEnabled && res.orders.length > 0) {
+        printCuttingSheet(res.orders, user?.name || '');
+      }
     } catch (e) {
       toast({ title: 'Не удалось взять стек', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
@@ -476,7 +474,6 @@ const SewingItems = () => {
           onSendToStickering={handleSendToStickering}
           onCancelOrder={handleCancelOrder}
           cancelling={cancelling}
-          onPrintCuttingSheet={isCutter && printQrCuttingEnabled ? handlePrintCuttingSheet : undefined}
         />
       </div>
     </CrmLayout>

@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
-import { marketplaceLogo, formatDate, timeAgo } from '@/components/crm/sewingItems/sewingItemsShared';
+import { marketplaceLogo, formatDate, timeAgo, shortFio } from '@/components/crm/sewingItems/sewingItemsShared';
 
 interface SewingItemsCardsProps {
   loading: boolean;
@@ -83,6 +83,8 @@ const SewingItemsCards = ({
               <div className="space-y-1 text-sm text-muted-foreground">
                 <p>Создан: {formatDate(o.createdAt)}</p>
                 {o.assignedUserName && <p>Сотрудник: {o.assignedUserName}</p>}
+                {o.cutterUserName && <p>Кроил: {shortFio(o.cutterUserName)}</p>}
+                {o.cutterUserName && <p>Вешалка: № {o.hangerNumber}</p>}
               </div>
 
               <Badge variant="secondary" className="bg-emerald-100 font-normal text-emerald-700 hover:bg-emerald-100">

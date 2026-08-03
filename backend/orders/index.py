@@ -117,11 +117,16 @@ def handler(event: dict, context) -> dict:
           цеха max_quantity_orders_to_cutter (или глобальной system_settings, по умолчанию 20).
           Заказы назначаются на userId, переводятся в "На раскрое" и получают workshopId.
           Если у закройщика уже есть незавершённые заказы в "На раскрое" — отклоняется (409).
+          Возвращает orders — полные данные взятых заказов (orderNumber, orderType, material,
+          width, height), отсортированные по материалу — для немедленной печати листа закройщика
     POST /  { action: 'cut', id, rollId }
         - переводит заказ в статус "Раскроено". Тюль списывается с указанного закройщиком
           рулона rollId (должен быть в его цехе/смене), упаковка (этикетки, пакеты) списывается
           автоматически по FIFO со склада. Тесьма (Аксессуары) НЕ списывается на этом этапе —
           её позже указывает швея перед отправкой на стикеровку.
+          Фиксирует cutter_user_id = текущий assigned_user_id (закройщик) — это отдельное
+          поле от assigned_user_id, которое дальше будет перезаписано на швею при take_order,
+          так что именно cutter_user_id остаётся источником "кто раскроил" на карточке товара.
           Начисляет закройщику зарплату (salary_accruals, type='cutter_cut'): ставка за 1 пог.м.
           материала тюля (salary_rates, role='cutter', тарифы цеха заказа workshop_id) ×
           фактический расход материала на товар.
@@ -195,10 +200,12 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
                     "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
-                    "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name "
+                    "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
+                    "o.cutter_user_id, cu.full_name, o.hanger_number "
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
                     "LEFT JOIN workshops w ON w.id = o.workshop_id "
+                    "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                     "WHERE o.id = %s",
                     (int(order_id),),
                 )
@@ -275,6 +282,9 @@ def handler(event: dict, context) -> dict:
                     'assignedUserName': row[16],
                     'workshopId': row[17],
                     'workshopName': row[18],
+                    'cutterUserId': row[19],
+                    'cutterUserName': row[20],
+                    'hangerNumber': row[21],
                     'materialUsage': materialUsage,
                     'requiredFabricMaterialId': required_fabric_material_id,
                     'requiredFabricMaterialName': required_fabric_material_name,
@@ -286,10 +296,12 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
                 "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
-                "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name "
+                "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
+                "o.cutter_user_id, cu.full_name, o.hanger_number "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
+                "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                 "ORDER BY o.created_at DESC, o.id DESC"
             )
             orders = [
@@ -313,6 +325,9 @@ def handler(event: dict, context) -> dict:
                     'assignedUserName': r[16],
                     'workshopId': r[17],
                     'workshopName': r[18],
+                    'cutterUserId': r[19],
+                    'cutterUserName': r[20],
+                    'hangerNumber': r[21],
                 }
                 for r in cur.fetchall()
             ]
@@ -393,11 +408,36 @@ def handler(event: dict, context) -> dict:
                     f'Взял в раскрой стек из {len(order_ids)} заказов',
                     {'orderIds': order_ids, 'workshopId': workshop_id, 'shiftNumber': shift_number},
                 )
+
+                # Полные данные взятых заказов — фронтенду нужны для немедленной печати
+                # "листа закройщика" (чек-лист + QR-лист) сразу после взятия стека.
+                cur.execute(
+                    f"SELECT id, order_number, order_type, marketplace, material, width, height "
+                    f"FROM orders WHERE id IN ({ids_csv}) ORDER BY material, id"
+                )
+                taken_orders = [
+                    {
+                        'id': r[0],
+                        'orderNumber': r[1],
+                        'orderType': r[2],
+                        'marketplace': r[3],
+                        'material': r[4],
+                        'width': r[5],
+                        'height': r[6],
+                    }
+                    for r in cur.fetchall()
+                ]
+
                 conn.commit()
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'success': True, 'count': len(order_ids), 'orderIds': order_ids}),
+                    'body': json.dumps({
+                        'success': True,
+                        'count': len(order_ids),
+                        'orderIds': order_ids,
+                        'orders': taken_orders,
+                    }),
                 }
 
             if action == 'create_manual':
@@ -741,8 +781,12 @@ def handler(event: dict, context) -> dict:
                         f"VALUES ({int(item_id)}, {material_id}, {roll_id}, {take})"
                     )
 
+                # cutter_user_id фиксирует, КТО именно раскроил заказ, отдельно от
+                # assigned_user_id — последний будет перезаписан на швею при take_order,
+                # а история "кто кроил" должна остаться видна на карточке товара.
+                cutter_sql = f", cutter_user_id = {order_assigned_user_id}" if order_assigned_user_id else ""
                 cur.execute(
-                    f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now() WHERE id = {int(item_id)}"
+                    f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now(){cutter_sql} WHERE id = {int(item_id)}"
                 )
 
                 # Начисление закройщику: ставка за 1 пог.м. по материалу тюля (salary_rates,

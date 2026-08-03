@@ -26,4 +26,13 @@ export const marketplaceLogo: Record<string, { label: string; className: string 
   Yandex: { label: 'Яндекс.Маркет', className: 'text-[#FFCC00] font-bold' },
 };
 
+/** Сокращает ФИО до "Фамилия И.О." — например "Коротаева Наталья Александровна" → "Коротаева Н.А.". */
+export const shortFio = (fullName: string): string => {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  const [last, first, middle] = parts;
+  const initials = [first, middle].filter(Boolean).map((p) => `${p[0].toUpperCase()}.`).join('');
+  return initials ? `${last} ${initials}` : last;
+};
+
 export { formatDateTime as formatDate, timeAgo } from '@/lib/dateUtils';

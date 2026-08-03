@@ -60,9 +60,6 @@ interface SewingItemDetailDialogProps {
   onSendToStickering?: (rollId?: number) => void;
   onCancelOrder?: () => void;
   cancelling?: boolean;
-  /** Печать листа закройщика (номер + QR) — передаётся только если у закройщика включена
-   * настройка цеха print_qr_cutting (не 'disabled'), иначе кнопка не показывается вовсе. */
-  onPrintCuttingSheet?: () => void;
 }
 
 const SewingItemDetailDialog = ({
@@ -86,7 +83,6 @@ const SewingItemDetailDialog = ({
   onSendToStickering,
   onCancelOrder,
   cancelling = false,
-  onPrintCuttingSheet,
 }: SewingItemDetailDialogProps) => {
   const [selectedRollId, setSelectedRollId] = useState<string>('');
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
@@ -110,12 +106,6 @@ const SewingItemDetailDialog = ({
             {selectedOrder && <Badge variant="secondary">{selectedOrder.sewingStatus}</Badge>}
           </div>
           <div className="mt-1 flex flex-wrap gap-2">
-            {onPrintCuttingSheet && isAlreadyCut && (
-              <Button variant="outline" size="sm" className="w-fit" onClick={onPrintCuttingSheet}>
-                <Icon name="Printer" size={14} className="mr-1.5" />
-                Печать листа закройщика
-              </Button>
-            )}
             {canCancel && (
               <Button
                 variant="outline"
