@@ -1,0 +1,283 @@
+import json
+import os
+import urllib.request
+import urllib.error
+
+import psycopg2
+
+# OZON Seller API. Тестового контура у OZON нет — ключ боевой, поэтому функция работает
+# ТОЛЬКО НА ЧТЕНИЕ: тянет новые FBS-заказы и читает статусы отправлений, но НЕ двигает
+# заказы на стороне OZON (не собирает и не отгружает).
+OZON_API_BASE = 'https://api-seller.ozon.ru'
+
+# Только заказы, требующие сборки, попадают на конвейер производства.
+OZON_NEW_STATUS = 'awaiting_packaging'
+
+CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, X-Auth-Token, X-Session-Id',
+    'Access-Control-Max-Age': '86400',
+}
+
+
+def _resp(status, body):
+    return {
+        'statusCode': status,
+        'headers': {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'},
+        'body': json.dumps(body),
+    }
+
+
+def get_ozon_credentials(cur):
+    """Возвращает (client_id, api_key, is_enabled) для OZON из marketplace_integrations."""
+    cur.execute(
+        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon'"
+    )
+    row = cur.fetchone()
+    if not row:
+        return None, None, False
+    is_enabled = bool(row[0])
+    creds = row[1] if isinstance(row[1], dict) else json.loads(row[1] or '{}')
+    client_id = (creds.get('clientId') or '').strip()
+    api_key = (creds.get('apiKey') or '').strip()
+    return client_id, api_key, is_enabled
+
+
+def ozon_post(path, client_id, api_key, payload):
+    """POST-запрос к OZON Seller API. Возвращает (status_code, parsed_json_or_text).
+    Используется только для чтения (list/get) — статусы заказов не меняются."""
+    body = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(OZON_API_BASE + path, method='POST', data=body)
+    req.add_header('Client-Id', client_id)
+    req.add_header('Api-Key', api_key)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = r.read().decode('utf-8')
+            return r.status, (json.loads(data) if data else {})
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode('utf-8', errors='replace')
+        try:
+            detail = json.loads(detail)
+        except Exception:
+            pass
+        return e.code, detail
+    except Exception as e:
+        return 0, str(e)
+
+
+def ozon_error_text(status_code, data):
+    if isinstance(data, dict):
+        return data.get('message') or data.get('error') or json.dumps(data, ensure_ascii=False)
+    return str(data)
+
+
+def find_marketplace_item(cur, ozon_sku, offer_id):
+    """Ищет товар: сначала по ozon_sku (числовой sku OZON), затем по offer_id=sku (артикул
+    продавца). Возвращает (material, width, height, name) или None."""
+    if ozon_sku:
+        cur.execute(
+            "SELECT material, width, height, name FROM marketplace_items WHERE ozon_sku = %s LIMIT 1",
+            (str(ozon_sku),),
+        )
+        row = cur.fetchone()
+        if row:
+            return row
+    if offer_id:
+        cur.execute(
+            "SELECT material, width, height, name FROM marketplace_items WHERE sku = %s LIMIT 1",
+            (str(offer_id),),
+        )
+        row = cur.fetchone()
+        if row:
+            return row
+    return None
+
+
+def log_action(cur, actor_id, actor_name, action, description):
+    cur.execute(
+        "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, entity_id, description) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            'integration',
+            action,
+            'order',
+            None,
+            description,
+        ),
+    )
+
+
+def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
+    """Тянет новые FBS-заказы OZON (status=awaiting_packaging) и создаёт их в системе."""
+    payload = {
+        'dir': 'ASC',
+        'filter': {
+            'cutoff_from': '2020-01-01T00:00:00Z',
+            'cutoff_to': '2030-01-01T00:00:00Z',
+            'status': OZON_NEW_STATUS,
+        },
+        'limit': 100,
+        'offset': 0,
+        'with': {},
+    }
+    status_code, data = ozon_post('/v3/posting/fbs/unfulfilled/list', client_id, api_key, payload)
+    if status_code in (401, 403):
+        return _resp(400, {'error': 'OZON отклонил ключ (проверьте Client ID и API-ключ в настройках интеграции).'})
+    if status_code != 200:
+        return _resp(502, {'error': f'OZON вернул ошибку ({status_code}): {ozon_error_text(status_code, data)}'})
+
+    postings = (data.get('result', {}) or {}).get('postings', []) if isinstance(data, dict) else []
+
+    created = 0
+    skipped_existing = 0
+    skipped_no_item = 0
+    unmatched = []
+    created_numbers = []
+
+    for p in postings:
+        posting_number = p.get('posting_number')
+        ozon_status = p.get('status')
+        if not posting_number:
+            continue
+
+        cur.execute("SELECT id FROM orders WHERE ozon_posting_number = %s", (posting_number,))
+        if cur.fetchone():
+            skipped_existing += 1
+            continue
+
+        # Каждый товар отправления = отдельная штука на конвейере (1 заказ = 1 штука),
+        # с учётом количества.
+        products = p.get('products', []) or []
+        made_any = False
+        for pr in products:
+            ozon_sku = pr.get('sku')
+            offer_id = pr.get('offer_id')
+            qty = int(pr.get('quantity') or 1)
+            item = find_marketplace_item(cur, ozon_sku, offer_id)
+            if not item:
+                skipped_no_item += 1
+                unmatched.append({'postingNumber': posting_number, 'ozonSku': ozon_sku, 'offerId': offer_id})
+                continue
+            material, width, height, item_name = item
+            product = f"{material} {width}x{height}" if material and width and height else item_name
+            for _ in range(qty):
+                cur.execute(
+                    "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
+                    "quantity, source, material, width, height, ozon_posting_number, ozon_status) "
+                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s)",
+                    (
+                        posting_number,
+                        product,
+                        material,
+                        int(width) if width else None,
+                        int(height) if height else None,
+                        posting_number,
+                        ozon_status,
+                    ),
+                )
+                made_any = True
+                created += 1
+        if made_any:
+            created_numbers.append(posting_number)
+
+    if created > 0:
+        log_action(
+            cur, actor_id, actor_name, 'ozon_sync_orders',
+            f'Загрузка заказов OZON FBS: создано {created}, пропущено (уже есть) {skipped_existing}, '
+            f'без товара {skipped_no_item}',
+        )
+    conn.commit()
+
+    return _resp(200, {
+        'created': created,
+        'skippedExisting': skipped_existing,
+        'skippedNoItem': skipped_no_item,
+        'totalFromOzon': len(postings),
+        'unmatched': unmatched[:50],
+        'createdNumbers': created_numbers[:50],
+    })
+
+
+def handle_refresh_status(cur, conn, client_id, api_key, body_data):
+    """Читает актуальный статус отправления OZON и сохраняет его у заказов (ТОЛЬКО чтение —
+    статус на стороне OZON не меняется)."""
+    posting_number = (body_data.get('postingNumber') or '').strip()
+    if not posting_number:
+        return _resp(400, {'error': 'Укажите postingNumber'})
+
+    status_code, data = ozon_post(
+        '/v3/posting/fbs/get', client_id, api_key,
+        {'posting_number': posting_number, 'with': {}},
+    )
+    if status_code != 200:
+        return _resp(502, {'error': f'OZON вернул ошибку ({status_code}): {ozon_error_text(status_code, data)}'})
+
+    ozon_status = (data.get('result', {}) or {}).get('status') if isinstance(data, dict) else None
+    if ozon_status:
+        cur.execute(
+            "UPDATE orders SET ozon_status = %s WHERE ozon_posting_number = %s",
+            (ozon_status, posting_number),
+        )
+        conn.commit()
+    return _resp(200, {'postingNumber': posting_number, 'ozonStatus': ozon_status})
+
+
+def handler(event: dict, context) -> dict:
+    """Интеграция с OZON FBS (Seller API) — РЕЖИМ ТОЛЬКО ЧТЕНИЕ.
+
+    Тянет новые FBS-заказы OZON на конвейер производства и читает статусы отправлений.
+    Ключ OZON боевой (тестового контура у OZON нет), поэтому функция НЕ двигает заказы на
+    стороне OZON — не собирает и не отгружает. Client-Id и Api-Key берутся из настроек
+    интеграции (marketplace_integrations, marketplace_code='ozon').
+
+    POST /  { action: 'sync_orders', actorId?, actorName? }
+        - вызывает OZON /v3/posting/fbs/unfulfilled/list со status=awaiting_packaging
+          (только новые, требующие сборки), сопоставляет товар по ozon_sku (фолбэк offer_id=sku)
+          и создаёт заказы: marketplace='OZON', order_type='FBS', status='Новый',
+          sewing_status='Новый', source='api'. Дубли исключаются по ozon_posting_number.
+    POST /  { action: 'refresh_status', postingNumber }
+        - читает актуальный статус отправления OZON (/v3/posting/fbs/get) и сохраняет его
+          у соответствующих заказов. Статус на стороне OZON не меняется.
+
+    Args:
+        event: dict с httpMethod, body
+        context: объект с request_id
+
+    Returns:
+        dict: HTTP-ответ с результатом синхронизации
+    """
+    method = event.get('httpMethod', 'GET')
+    if method == 'OPTIONS':
+        return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
+    if method != 'POST':
+        return _resp(405, {'error': 'Method not allowed'})
+
+    body_data = json.loads(event.get('body') or '{}')
+    action = body_data.get('action')
+    actor_id = body_data.get('actorId')
+    actor_name = body_data.get('actorName')
+
+    if action not in ('sync_orders', 'refresh_status'):
+        return _resp(400, {'error': 'Неизвестное действие'})
+
+    dsn = os.environ['DATABASE_URL']
+    conn = psycopg2.connect(dsn)
+    try:
+        cur = conn.cursor()
+
+        client_id, api_key, is_enabled = get_ozon_credentials(cur)
+        if not is_enabled:
+            return _resp(400, {'error': 'Интеграция с OZON выключена. Включите её в разделе «Интеграции маркетплейсов».'})
+        if not client_id or not api_key:
+            return _resp(400, {'error': 'Не указаны Client ID или API-ключ OZON. Добавьте их в разделе «Интеграции маркетплейсов».'})
+
+        if action == 'sync_orders':
+            return handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name)
+        if action == 'refresh_status':
+            return handle_refresh_status(cur, conn, client_id, api_key, body_data)
+    finally:
+        conn.close()

@@ -16,6 +16,8 @@ interface OrdersToolbarProps {
   onOpenManual: () => void;
   onSyncWb: () => void;
   syncing: boolean;
+  onSyncOzon: () => void;
+  syncingOzon: boolean;
   statusFilter: StatusFilter;
   onStatusChange: (v: StatusFilter) => void;
   marketplaceFilter: MarketplaceFilter;
@@ -28,6 +30,8 @@ const OrdersToolbar = ({
   onOpenManual,
   onSyncWb,
   syncing,
+  onSyncOzon,
+  syncingOzon,
   statusFilter,
   onStatusChange,
   marketplaceFilter,
@@ -53,6 +57,18 @@ const OrdersToolbar = ({
             className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
           />
           {syncing ? 'Загружаем...' : 'Загрузить заказы с API (WB FBS)'}
+        </Button>
+        <Button
+          className="bg-[#005BFF] text-white hover:bg-[#0047cc]"
+          onClick={onSyncOzon}
+          disabled={syncingOzon}
+        >
+          <Icon
+            name={syncingOzon ? 'Loader2' : 'RefreshCw'}
+            size={16}
+            className={`mr-1.5 ${syncingOzon ? 'animate-spin' : ''}`}
+          />
+          {syncingOzon ? 'Загружаем...' : 'Загрузить заказы с API (OZON FBS)'}
         </Button>
       </div>
 

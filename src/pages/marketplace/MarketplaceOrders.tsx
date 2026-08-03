@@ -10,6 +10,7 @@ import {
 } from '@/lib/ordersApi';
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { syncWbOrders } from '@/lib/wbFbsApi';
+import { syncOzonOrders } from '@/lib/ozonFbsApi';
 import { useAuth } from '@/context/AuthContext';
 import { emptyManualRow, type EditFormState, type ManualOrderRow } from '@/components/crm/orders/ordersShared';
 import OrdersToolbar, {
@@ -26,6 +27,7 @@ const MarketplaceOrders = () => {
   const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [syncing, setSyncing] = useState(false);
+  const [syncingOzon, setSyncingOzon] = useState(false);
   const [loading, setLoading] = useState(true);
   const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
 
@@ -132,6 +134,39 @@ const MarketplaceOrders = () => {
     }
   };
 
+  // Загрузка новых FBS-заказов с OZON (только новые, требующие сборки). Работает в режиме
+  // чтения — статусы на OZON не меняются. Нераспознанные артикулы показываем предупреждением.
+  const handleSyncOzon = async () => {
+    setSyncingOzon(true);
+    try {
+      const r = await syncOzonOrders({ id: user?.id, name: user?.name });
+      const parts = [`создано ${r.created}`];
+      if (r.skippedExisting) parts.push(`уже были ${r.skippedExisting}`);
+      if (r.skippedNoItem) parts.push(`без товара ${r.skippedNoItem}`);
+      toast({
+        title: 'Заказы OZON загружены',
+        description: `Новых отправлений с OZON: ${r.totalFromOzon}. ${parts.join(', ')}.`,
+      });
+      if (r.skippedNoItem > 0) {
+        const arts = r.unmatched.map((u) => u.ozonSku || u.offerId).filter(Boolean).join(', ');
+        toast({
+          title: `Не распознано товаров: ${r.skippedNoItem}`,
+          description: `Добавьте артикулы в справочник товаров: ${arts}`,
+          variant: 'destructive',
+        });
+      }
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось загрузить заказы с OZON',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setSyncingOzon(false);
+    }
+  };
+
   const openManual = () => {
     setManualRows([emptyManualRow()]);
     setManualOpen(true);
@@ -208,6 +243,8 @@ const MarketplaceOrders = () => {
           onOpenManual={openManual}
           onSyncWb={handleSyncWb}
           syncing={syncing}
+          onSyncOzon={handleSyncOzon}
+          syncingOzon={syncingOzon}
           statusFilter={statusFilter}
           onStatusChange={setStatusFilter}
           marketplaceFilter={marketplaceFilter}
