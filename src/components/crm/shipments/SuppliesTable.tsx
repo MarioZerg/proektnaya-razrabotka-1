@@ -98,7 +98,7 @@ const SuppliesTable = ({
                     <TableCell>{s.id}</TableCell>
                     <TableCell>
                       <div className="mb-1 font-semibold">
-                        Итого: {s.itemsCount} поз., {s.totalQuantity} метр/шт
+                        Итого: {s.itemsCount} поз., {formatQuantity(s.totalQuantity)} метр/шт
                       </div>
                       {!isPending && (
                         <Collapsible open={isExpanded}>

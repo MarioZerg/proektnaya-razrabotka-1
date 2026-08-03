@@ -106,7 +106,7 @@ const WorkshopMaterials = () => {
                           );
                         })}
                         <TableCell className="text-center font-semibold">
-                          {m.totalQuantity} {m.unit}, {m.totalRolls} рул.
+                          {formatQuantity(m.totalQuantity)} {m.unit}, {m.totalRolls} рул.
                         </TableCell>
                       </TableRow>
                     ))}
