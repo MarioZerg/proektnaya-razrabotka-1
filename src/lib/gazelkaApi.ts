@@ -12,6 +12,10 @@ export interface GazelkaPlan {
   boxes: number | null;
   pallets: number | null;
   cargoPickup: boolean | null;
+  onBehalf: number | null;
+  payer: number | null;
+  palleting: number | null;
+  shipDate: string | null;
   printUrl: string | null;
 }
 

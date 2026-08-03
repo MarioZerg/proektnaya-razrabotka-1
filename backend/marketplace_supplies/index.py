@@ -204,7 +204,7 @@ def handler(event: dict, context) -> dict:
                     "s.ozon_delivery_method, s.ozon_application_number, s.ozon_status, "
                     "s.supply_date, s.timeslot, s.shipment_type, s.packaging_type, "
                     "s.packaging_count, s.gazelka_pickup, s.ozon_supply_order_id, s.ozon_cargo_type, "
-                    "s.gazelka_plan_id "
+                    "s.gazelka_plan_id, s.gazelka_ids, s.gazelka_idm "
                     "FROM marketplace_supplies s "
                     "LEFT JOIN users u ON u.id = s.created_by "
                     "WHERE s.id = %s",
@@ -333,7 +333,16 @@ def handler(event: dict, context) -> dict:
                     'ozonSupplyOrderId': row[27],
                     'ozonCargoType': row[28],
                     'gazelkaPlanId': row[29],
+                    'gazelkaIds': row[30],
+                    'gazelkaIdm': row[31],
                 }
+                # Реквизиты клиента для упаковочного листа Газельки — общие настройки.
+                cur.execute(
+                    "SELECT key, value FROM system_settings WHERE key IN ('gazelka_client_name', 'gazelka_client_phone')"
+                )
+                gz_settings = {r[0]: r[1] for r in cur.fetchall()}
+                detail['gazelkaClientName'] = gz_settings.get('gazelka_client_name') or ''
+                detail['gazelkaClientPhone'] = gz_settings.get('gazelka_client_phone') or ''
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'supply': detail})}
 
             status_filter = params.get('status')
@@ -767,6 +776,12 @@ def handler(event: dict, context) -> dict:
                 if 'gazelkaPlanId' in body_data:
                     gp = body_data['gazelkaPlanId']
                     fields.append(f"gazelka_plan_id = {int(gp)}" if gp not in (None, '') else "gazelka_plan_id = NULL")
+                if 'gazelkaIds' in body_data:
+                    gi = body_data['gazelkaIds']
+                    fields.append(f"gazelka_ids = {int(gi)}" if gi not in (None, '') else "gazelka_ids = 0")
+                if 'gazelkaIdm' in body_data:
+                    gm = body_data['gazelkaIdm']
+                    fields.append(f"gazelka_idm = {int(gm)}" if gm not in (None, '') else "gazelka_idm = 0")
 
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нечего обновлять'})}

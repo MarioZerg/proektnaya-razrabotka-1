@@ -104,6 +104,7 @@ def handler(event: dict, context) -> dict:
         plan_id = p.get('id')
         st = str(p.get('status'))
         mp = str(p.get('marketplace_id'))
+        route = p.get('route') if isinstance(p.get('route'), dict) else {}
         plans.append({
             'id': plan_id,
             'applicationDate': p.get('application_date'),
@@ -116,6 +117,11 @@ def handler(event: dict, context) -> dict:
             'boxes': p.get('boxes'),
             'pallets': p.get('pallets'),
             'cargoPickup': p.get('cargo_pickup'),
+            # Данные для генерации собственного упаковочного листа (штрихкод Code128):
+            'onBehalf': p.get('on_behalf'),   # IDO — id организации
+            'payer': p.get('payer'),
+            'palleting': 1 if p.get('pallets') else 0,  # PLT — паллетирование
+            'shipDate': route.get('date'),    # DTS — дата отгрузки (из маршрута)
             'printUrl': f'https://gazelka.space/print-labels?ids[]={plan_id}' if plan_id else None,
         })
 

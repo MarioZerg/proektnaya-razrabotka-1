@@ -87,6 +87,12 @@ export interface SupplyDetail extends Supply {
   ozonCargoType: string | null;
   /** id привязанной заявки в сервисе грузоперевозок Газелька (для печати стикеров коробов). */
   gazelkaPlanId: number | null;
+  /** IDS (id склада поставки) и IDM для штрихкода упаковочного листа Газельки (ручной ввод). */
+  gazelkaIds: number;
+  gazelkaIdm: number;
+  /** Реквизиты клиента-отправителя для упаковочного листа (общие настройки). */
+  gazelkaClientName: string;
+  gazelkaClientPhone: string;
 }
 
 export interface SupplyFilters {
@@ -215,6 +221,8 @@ export const updateSupply = (
     gazelkaPickup: boolean;
     ozonCargoType: 'BOX' | 'PALLET';
     gazelkaPlanId: number | null;
+    gazelkaIds: number;
+    gazelkaIdm: number;
   }>
 ) => postAction({ action: 'update', supplyId, ...fields });
 
