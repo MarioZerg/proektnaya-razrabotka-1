@@ -239,7 +239,8 @@ def handler(event: dict, context) -> dict:
                 ]
 
                 cur.execute(
-                    "SELECT id, box_number, barcode, created_at FROM marketplace_supply_boxes "
+                    "SELECT id, box_number, barcode, created_at, ozon_cargo_id, closed_at, "
+                    "sticker_url, sticker_name FROM marketplace_supply_boxes "
                     "WHERE supply_id = %s ORDER BY box_number",
                     (int(supply_id),),
                 )
@@ -249,6 +250,10 @@ def handler(event: dict, context) -> dict:
                         'boxNumber': r[1],
                         'barcode': r[2],
                         'createdAt': r[3].isoformat() + 'Z',
+                        'ozonCargoId': r[4],
+                        'closedAt': (r[5].isoformat() + 'Z') if r[5] else None,
+                        'stickerUrl': r[6],
+                        'stickerName': r[7],
                         'items': [it for it in items if it['boxId'] == r[0]],
                     }
                     for r in cur.fetchall()

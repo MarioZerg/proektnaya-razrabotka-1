@@ -63,3 +63,12 @@ export const importOzonFboComposition = (
     actorId: actor?.id,
     actorName: actor?.name,
   }) as Promise<OzonFboImportResult>;
+
+export interface OzonCloseBoxesResult {
+  closedBoxes: number;
+  stickersSaved: number;
+  note: string | null;
+}
+
+export const closeOzonBoxes = (supplyId: number): Promise<OzonCloseBoxesResult> =>
+  post({ action: 'close_boxes', supplyId }) as Promise<OzonCloseBoxesResult>;

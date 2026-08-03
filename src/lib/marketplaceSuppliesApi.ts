@@ -48,6 +48,10 @@ export interface SupplyBox {
   barcode: string;
   createdAt: string;
   items: SupplyItem[];
+  ozonCargoId?: number | null;
+  closedAt?: string | null;
+  stickerUrl?: string | null;
+  stickerName?: string | null;
 }
 
 export interface WbSupplyOrder {

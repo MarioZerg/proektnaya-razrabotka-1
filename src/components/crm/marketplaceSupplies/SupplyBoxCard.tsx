@@ -45,8 +45,11 @@ const SupplyBoxCard = ({ box, canEdit, onAddOrder, onRemoveItem, onDeleteBox }: 
         <CardTitle className="text-sm">
           Короб №{box.boxNumber}{' '}
           <span className="font-mono-tech text-xs font-normal text-muted-foreground">({box.barcode})</span>
+          {box.closedAt && (
+            <Badge variant="secondary" className="ml-2 align-middle text-[10px]">Закрыт</Badge>
+          )}
         </CardTitle>
-        {canEdit && box.items.length === 0 && (
+        {canEdit && box.items.length === 0 && !box.closedAt && (
           <Button variant="ghost" size="icon" onClick={() => onDeleteBox(box.id)}>
             <Icon name="Trash2" size={14} />
           </Button>
@@ -95,6 +98,18 @@ const SupplyBoxCard = ({ box, canEdit, onAddOrder, onRemoveItem, onDeleteBox }: 
               </div>
             ))}
           </div>
+        )}
+
+        {box.stickerUrl && (
+          <a
+            href={box.stickerUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+          >
+            <Icon name="FileText" size={14} />
+            Стикер короба (PDF)
+          </a>
         )}
       </CardContent>
     </Card>

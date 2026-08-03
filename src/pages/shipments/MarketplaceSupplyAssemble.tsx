@@ -23,6 +23,7 @@ import {
   marketplaceLogo,
   statusVariant,
 } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import { closeOzonBoxes } from '@/lib/ozonFboApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import SupplyBoxCard from '@/components/crm/marketplaceSupplies/SupplyBoxCard';
 import SupplyCandidatesPanel from '@/components/crm/marketplaceSupplies/SupplyCandidatesPanel';
@@ -44,6 +45,7 @@ const MarketplaceSupplyAssemble = () => {
 
   const [totalQuantity, setTotalQuantity] = useState('');
   const [savingQuantity, setSavingQuantity] = useState(false);
+  const [closingBoxes, setClosingBoxes] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -130,6 +132,24 @@ const MarketplaceSupplyAssemble = () => {
     }
   };
 
+  // Закрытие коробов OZON FBO: создаёт грузоместа на OZON из состава каждого короба и тянет
+  // PDF-этикетки. Действует на реальной заявке OZON.
+  const handleCloseBoxes = async () => {
+    setClosingBoxes(true);
+    try {
+      const r = await closeOzonBoxes(supplyId);
+      toast({
+        title: `Коробов закрыто: ${r.closedBoxes}`,
+        description: r.note || `Стикеров получено: ${r.stickersSaved}. PDF-этикетки доступны в коробах.`,
+      });
+      load();
+    } catch (e) {
+      toast({ title: 'Не удалось закрыть короба', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setClosingBoxes(false);
+    }
+  };
+
   const handleUploadSticker = async (base64: string, fileName: string) => {
     try {
       await updateSupply(supplyId, { passStickerBase64: base64, passStickerName: fileName });
@@ -153,6 +173,9 @@ const MarketplaceSupplyAssemble = () => {
 
   const canEdit = supply.status === 'Открытая' || supply.status === 'На сборке';
   const totalBoxedItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
+  const isOzonFbo = supply.marketplace === 'OZON' && supply.type === 'FBO';
+  // Закрывать короба можно, когда есть непустые короба (у OZON FBO это создаёт грузоместа на OZON).
+  const canCloseBoxes = isOzonFbo && totalBoxedItems > 0;
 
   return (
     <CrmLayout>
@@ -224,16 +247,33 @@ const MarketplaceSupplyAssemble = () => {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Короба ({supply.boxes.length})</h2>
-            {canEdit && (
-              <Button size="sm" onClick={handleAddBox} disabled={addingBox}>
-                {addingBox ? (
-                  <Icon name="Loader2" size={14} className="mr-1 animate-spin" />
-                ) : (
-                  <Icon name="PackagePlus" size={14} className="mr-1" />
-                )}
-                Добавить короб
-              </Button>
-            )}
+            <div className="flex gap-2">
+              {canCloseBoxes && (
+                <Button
+                  size="sm"
+                  className="bg-[#005BFF] text-white hover:bg-[#0047cc]"
+                  onClick={handleCloseBoxes}
+                  disabled={closingBoxes}
+                >
+                  <Icon
+                    name={closingBoxes ? 'Loader2' : 'PackageCheck'}
+                    size={14}
+                    className={`mr-1 ${closingBoxes ? 'animate-spin' : ''}`}
+                  />
+                  Закрыть короба и получить стикеры
+                </Button>
+              )}
+              {canEdit && (
+                <Button size="sm" onClick={handleAddBox} disabled={addingBox}>
+                  {addingBox ? (
+                    <Icon name="Loader2" size={14} className="mr-1 animate-spin" />
+                  ) : (
+                    <Icon name="PackagePlus" size={14} className="mr-1" />
+                  )}
+                  Добавить короб
+                </Button>
+              )}
+            </div>
           </div>
 
           {supply.boxes.length === 0 ? (
