@@ -40,6 +40,9 @@ export interface Order {
   /** Номер вешалки, на которую подвешен раскроенный товар. 0 = не назначена (заполняется
    * через отдельную вкладку "Вешалки", ещё не реализована). */
   hangerNumber: number;
+  /** Статус отправления на стороне OZON (только чтение, для FBS-заказов OZON). */
+  ozonStatus?: string | null;
+  ozonPostingNumber?: string | null;
 }
 
 export interface OrderMaterialUsage {

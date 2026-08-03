@@ -17,6 +17,25 @@ import {
   timeAgo,
 } from '@/components/crm/orders/ordersShared';
 
+// Человекочитаемые подписи статусов отправления OZON (только для отображения).
+const OZON_STATUS_LABELS: Record<string, string> = {
+  awaiting_registration: 'Ожидает регистрации',
+  acceptance_in_progress: 'Идёт приёмка',
+  awaiting_approve: 'Ожидает подтверждения',
+  awaiting_packaging: 'Ожидает сборки',
+  awaiting_deliver: 'Ожидает отгрузки',
+  arbitration: 'Арбитраж',
+  client_arbitration: 'Клиентский арбитраж',
+  delivering: 'В доставке',
+  driver_pickup: 'У водителя',
+  delivered: 'Доставлен',
+  cancelled: 'Отменён',
+  not_accepted: 'Не принят',
+  sent_by_seller: 'Отправлен продавцом',
+};
+
+const ozonStatusLabel = (s?: string | null) => (s ? OZON_STATUS_LABELS[s] || s : null);
+
 interface OrdersTableProps {
   loading: boolean;
   orders: Order[];
@@ -48,6 +67,7 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
             <TableHead className="text-primary-foreground">Номер заказа</TableHead>
             <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
             <TableHead className="text-primary-foreground">Тип</TableHead>
+            <TableHead className="text-primary-foreground">Статус OZON</TableHead>
             <TableHead className="text-primary-foreground">Кластер</TableHead>
             <TableHead className="text-primary-foreground">Товары</TableHead>
             <TableHead className="text-primary-foreground">Создан</TableHead>
@@ -71,6 +91,15 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
                 </span>
               </TableCell>
               <TableCell>{o.orderType}</TableCell>
+              <TableCell>
+                {ozonStatusLabel(o.ozonStatus) ? (
+                  <Badge variant="outline" className="font-normal">
+                    {ozonStatusLabel(o.ozonStatus)}
+                  </Badge>
+                ) : (
+                  '—'
+                )}
+              </TableCell>
               <TableCell>{o.cluster || '—'}</TableCell>
               <TableCell>
                 {o.product} - {o.quantity} шт.
