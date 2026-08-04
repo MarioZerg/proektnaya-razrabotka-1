@@ -55,6 +55,13 @@
       "expectedStatus": 400
     },
     {
+      "name": "Close box without boxId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "close_box" },
+      "expectedStatus": 400
+    },
+    {
       "name": "Add order to box without boxId fails",
       "method": "POST",
       "path": "/",

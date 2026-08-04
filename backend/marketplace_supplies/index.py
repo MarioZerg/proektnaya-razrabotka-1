@@ -631,6 +631,29 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            if action == 'close_box':
+                # Закрытие короба внутри нашей системы (для WB FBO): фиксируем факт закрытия,
+                # после чего кладовщик печатает стикер короба. Короб должен быть непустым.
+                box_id = body_data.get('boxId')
+                if not box_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите boxId'})}
+
+                cur.execute(
+                    "SELECT COUNT(*) FROM marketplace_supply_items WHERE box_id = %s", (int(box_id),)
+                )
+                if cur.fetchone()[0] == 0:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Короб пустой — сначала добавьте товары'})}
+
+                cur.execute(
+                    "UPDATE marketplace_supply_boxes SET closed_at = NOW() "
+                    "WHERE id = %s AND closed_at IS NULL RETURNING closed_at",
+                    (int(box_id),),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                closed_at = (row[0].isoformat() + 'Z') if row and row[0] else None
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'closedAt': closed_at})}
+
             if action == 'add_order_to_box':
                 box_id = body_data.get('boxId')
                 order_number = (body_data.get('orderNumber') or '').strip()

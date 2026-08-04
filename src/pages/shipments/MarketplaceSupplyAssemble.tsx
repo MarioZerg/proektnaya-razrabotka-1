@@ -17,6 +17,7 @@ import {
   fetchSupplyCandidates,
   createSupplyBox,
   deleteSupplyBox,
+  closeSupplyBox,
   addOrderToBox,
   removeBoxItem,
   updateSupply,
@@ -110,6 +111,17 @@ const MarketplaceSupplyAssemble = () => {
     }
   };
 
+  // WB FBO: закрываем короб в нашей системе (фиксируем closed_at), стикер печатается на фронте.
+  const handleCloseBox = async (boxId: number) => {
+    try {
+      await closeSupplyBox(boxId);
+      toast({ title: 'Короб закрыт', description: 'Печать стикера начнётся автоматически.' });
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
   const handleRemoveItem = async (itemId: number) => {
     try {
       await removeBoxItem(itemId);
@@ -173,6 +185,7 @@ const MarketplaceSupplyAssemble = () => {
   const canEdit = supply.status === 'Открытая' || supply.status === 'На сборке';
   const totalBoxedItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
   const isOzonFbo = supply.marketplace === 'OZON' && supply.type === 'FBO';
+  const isWbFbo = supply.marketplace === 'WB' && supply.type === 'FBO';
   // Закрывать короба можно, когда есть непустые короба (у OZON FBO это создаёт грузоместа на OZON).
   const canCloseBoxes = isOzonFbo && totalBoxedItems > 0;
 
@@ -272,10 +285,13 @@ const MarketplaceSupplyAssemble = () => {
                 <SupplyBoxCard
                   key={box.id}
                   box={box}
+                  supply={supply}
                   canEdit={canEdit}
+                  isWbFbo={isWbFbo}
                   onAddOrder={handleAddOrderToBox}
                   onRemoveItem={handleRemoveItem}
                   onDeleteBox={handleDeleteBox}
+                  onCloseBox={handleCloseBox}
                 />
               ))}
             </div>

@@ -4,21 +4,46 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
-import type { SupplyBox } from '@/lib/marketplaceSuppliesApi';
+import type { SupplyBox, SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
+import { printWbBoxLabel } from '@/lib/wbBoxLabel';
 
 interface SupplyBoxCardProps {
   box: SupplyBox;
+  supply: SupplyDetail;
   canEdit: boolean;
+  /** WB FBO: закрыть короб в нашей системе и напечатать стикер WB. */
+  isWbFbo: boolean;
   onAddOrder: (boxId: number, orderNumber: string) => Promise<void>;
   onRemoveItem: (itemId: number) => void;
   onDeleteBox: (boxId: number) => void;
+  onCloseBox: (boxId: number) => Promise<void>;
 }
 
-const SupplyBoxCard = ({ box, canEdit, onAddOrder, onRemoveItem, onDeleteBox }: SupplyBoxCardProps) => {
+const SupplyBoxCard = ({
+  box,
+  supply,
+  canEdit,
+  isWbFbo,
+  onAddOrder,
+  onRemoveItem,
+  onDeleteBox,
+  onCloseBox,
+}: SupplyBoxCardProps) => {
   const [orderNumber, setOrderNumber] = useState('');
   const [scanning, setScanning] = useState(false);
+  const [closing, setClosing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleCloseAndPrint = async () => {
+    setClosing(true);
+    try {
+      await onCloseBox(box.id);
+      await printWbBoxLabel(supply, box);
+    } finally {
+      setClosing(false);
+    }
+  };
 
   const handleAdd = async () => {
     const value = orderNumber.trim();
@@ -98,6 +123,34 @@ const SupplyBoxCard = ({ box, canEdit, onAddOrder, onRemoveItem, onDeleteBox }: 
               </div>
             ))}
           </div>
+        )}
+
+        {isWbFbo && box.items.length > 0 && !box.closedAt && (
+          <Button
+            size="sm"
+            className="w-full bg-[#CB11AB] text-white hover:bg-[#a60d8b]"
+            onClick={handleCloseAndPrint}
+            disabled={closing}
+          >
+            <Icon
+              name={closing ? 'Loader2' : 'PackageCheck'}
+              size={14}
+              className={`mr-1.5 ${closing ? 'animate-spin' : ''}`}
+            />
+            Закрыть короб и печать стикера
+          </Button>
+        )}
+
+        {isWbFbo && box.closedAt && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => printWbBoxLabel(supply, box)}
+          >
+            <Icon name="Printer" size={14} className="mr-1.5" />
+            Печать стикера короба
+          </Button>
         )}
 
         {box.stickerUrl && (

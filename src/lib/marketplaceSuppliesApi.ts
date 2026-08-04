@@ -187,6 +187,14 @@ export const createSupplyBox = (supplyId: number): Promise<CreateBoxResult> =>
 
 export const deleteSupplyBox = (boxId: number) => postAction({ action: 'delete_box', boxId });
 
+export interface CloseBoxResult {
+  success: true;
+  closedAt: string | null;
+}
+
+export const closeSupplyBox = (boxId: number): Promise<CloseBoxResult> =>
+  postAction({ action: 'close_box', boxId });
+
 export interface AddOrderToBoxResult {
   success: true;
   itemId: number;
