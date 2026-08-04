@@ -51,6 +51,7 @@ const FboStickerCard = ({ order, orderDetail, onSaved }: FboStickerCardProps) =>
 
   const selectedItemId = orderDetail?.marketplaceItemId ?? null;
   const barcode = order.productBarcode || null;
+  const selectedItem = selectedItemId ? items.find((i) => i.id === selectedItemId) ?? null : null;
 
   const handleSelect = async (value: string) => {
     setSaving(true);
@@ -73,30 +74,42 @@ const FboStickerCard = ({ order, orderDetail, onSaved }: FboStickerCardProps) =>
       <CardContent className="space-y-3">
         <div className="space-y-1.5">
           <Label>Товар маркетплейса (определяет штрихкод)</Label>
-          <Select
-            value={selectedItemId ? String(selectedItemId) : ''}
-            onValueChange={handleSelect}
-            disabled={saving}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Выберите товар" />
-            </SelectTrigger>
-            <SelectContent>
-              {candidates.length === 0 ? (
-                <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                  Нет подходящих товаров в справочнике
-                </div>
+          {selectedItemId ? (
+            // Товар уже привязан — менять его нельзя, показываем как есть.
+            <div className="rounded border border-border px-3 py-2 text-sm">
+              {selectedItem ? (
+                <>
+                  {selectedItem.ozonSku && (
+                    <span className="text-muted-foreground">OZON {selectedItem.ozonSku} · </span>
+                  )}
+                  {selectedItem.name}
+                </>
               ) : (
-                candidates.map((i) => (
-                  <SelectItem key={i.id} value={String(i.id)}>
-                    {i.barcode ? `${i.barcode} — ` : ''}
-                    {i.ozonSku ? `OZON ${i.ozonSku} · ` : ''}
-                    {i.name}
-                  </SelectItem>
-                ))
+                <span className="text-muted-foreground">Товар привязан</span>
               )}
-            </SelectContent>
-          </Select>
+            </div>
+          ) : (
+            <Select value="" onValueChange={handleSelect} disabled={saving}>
+              <SelectTrigger>
+                <SelectValue placeholder="Выберите товар" />
+              </SelectTrigger>
+              <SelectContent>
+                {candidates.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                    Нет подходящих товаров в справочнике
+                  </div>
+                ) : (
+                  candidates.map((i) => (
+                    <SelectItem key={i.id} value={String(i.id)}>
+                      {i.barcode ? `${i.barcode} — ` : ''}
+                      {i.ozonSku ? `OZON ${i.ozonSku} · ` : ''}
+                      {i.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          )}
         </div>
 
         {barcode ? (

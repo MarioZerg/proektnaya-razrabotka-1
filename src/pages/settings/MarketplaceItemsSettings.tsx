@@ -5,12 +5,9 @@ import { useToast } from '@/hooks/use-toast';
 import {
   fetchMarketplaceItems,
   createMarketplaceItem,
-  updateMarketplaceItem,
   deleteMarketplaceItem,
-  fetchMarketplaceItemDetail,
   setMarketplaceItemMaterials,
   type MarketplaceItem,
-  type MarketplaceItemMaterial,
 } from '@/lib/marketplaceItemsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import {
@@ -35,7 +32,6 @@ const MarketplaceItemsSettings = () => {
   const [page, setPage] = useState(1);
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ItemFormState>(emptyForm);
   const [materialRows, setMaterialRows] = useState<MaterialRow[]>([]);
   const [saving, setSaving] = useState(false);
@@ -56,31 +52,9 @@ const MarketplaceItemsSettings = () => {
   }, []);
 
   const openCreate = () => {
-    setEditingId(null);
     setForm(emptyForm);
     setMaterialRows([{ materialId: '', quantity: '' }]);
     setDialogOpen(true);
-  };
-
-  const openEdit = async (item: MarketplaceItem) => {
-    setEditingId(item.id);
-    setForm({
-      name: item.name,
-      width: item.width ? String(item.width) : '',
-      height: item.height ? String(item.height) : '',
-      article: item.article || '',
-      ozonSku: item.ozonSku || '',
-      wbSku: item.wbSku || '',
-      material: item.material || '',
-      barcode: item.barcode || '',
-    });
-    setDialogOpen(true);
-    const detail = await fetchMarketplaceItemDetail(item.id);
-    const rows = detail.materials.map((m: MarketplaceItemMaterial) => ({
-      materialId: m.materialId ? String(m.materialId) : '',
-      quantity: String(m.quantity),
-    }));
-    setMaterialRows(rows.length > 0 ? rows : [{ materialId: '', quantity: '' }]);
   };
 
   const addMaterialRow = () => {
@@ -110,13 +84,8 @@ const MarketplaceItemsSettings = () => {
         height: form.height ? Number(form.height) : undefined,
       };
 
-      let itemId = editingId;
-      if (editingId) {
-        await updateMarketplaceItem(editingId, payload);
-      } else {
-        const res = await createMarketplaceItem(payload);
-        itemId = res.id;
-      }
+      const res = await createMarketplaceItem(payload);
+      const itemId = res.id;
 
       if (itemId) {
         await setMarketplaceItemMaterials(
@@ -131,11 +100,10 @@ const MarketplaceItemsSettings = () => {
       }
 
       setDialogOpen(false);
-      setEditingId(null);
       setForm(emptyForm);
       setMaterialRows([]);
       load();
-      toast({ title: editingId ? 'Товар сохранён' : 'Товар создан' });
+      toast({ title: 'Товар создан' });
     } catch (err) {
       toast({
         title: 'Не удалось сохранить',
@@ -201,12 +169,11 @@ const MarketplaceItemsSettings = () => {
             onOpenChange={(open) => {
               setDialogOpen(open);
               if (!open) {
-                setEditingId(null);
                 setForm(emptyForm);
                 setMaterialRows([]);
               }
             }}
-            editingId={editingId}
+            editingId={null}
             form={form}
             setForm={setForm}
             materials={materials}
@@ -240,7 +207,6 @@ const MarketplaceItemsSettings = () => {
           currentPage={currentPage}
           totalPages={totalPages}
           setPage={setPage}
-          onEdit={openEdit}
           deleteId={deleteId}
           setDeleteId={setDeleteId}
           onDelete={handleDelete}
