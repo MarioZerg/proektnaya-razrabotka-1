@@ -12,6 +12,7 @@ import KioskMenu, { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
 import KioskOrdersScreen from '@/components/crm/kiosk/KioskOrdersScreen';
 import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
+import KioskIdleTimer from '@/components/crm/kiosk/KioskIdleTimer';
 
 /** Терминал цеха (киоск). Полноэкранный экран для планшета в цехе: сотрудник входит
  * сканированием личного QR-кода с бейджа (формат "{id}-{смена}-{дата}"), пароль не нужен.
@@ -155,6 +156,8 @@ const KioskTerminal = () => {
   if (user) {
     return (
       <div className="min-h-screen bg-background">
+        {/* Автовыход из профиля при бездействии: предупреждение через минуту, отсчёт 30 сек. */}
+        <KioskIdleTimer onTimeout={handleLogout} />
         <div className="flex flex-wrap items-center gap-3 bg-emerald-100 px-4 py-3">
           <p className="text-xl font-semibold text-emerald-900">Приветствую, {user.name}!</p>
           <Badge variant="secondary" className="text-base">
@@ -230,7 +233,10 @@ const KioskTerminal = () => {
 
           {screen === 'rolls' && (
             <div className="mx-auto max-w-xl">
-              <KioskRollsScreen workshopId={Number(workshopId) || 1} />
+              <KioskRollsScreen
+                workshopId={Number(workshopId) || 1}
+                shiftNumber={shift?.shiftNumber ?? user.shiftFromCode ?? null}
+              />
             </div>
           )}
         </div>

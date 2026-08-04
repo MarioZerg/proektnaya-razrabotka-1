@@ -5,17 +5,23 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchRolls, closeRoll, type Roll } from '@/lib/rollsApi';
+import { fetchMaterialsData, type Material, type MaterialType } from '@/lib/materialsApi';
 import { formatQuantity } from '@/lib/formatQuantity';
 
 interface KioskRollsScreenProps {
   workshopId: number;
+  /** Смена сотрудника — показываем рулоны только его смены. */
+  shiftNumber: number | null;
 }
 
 /** Экран работы с рулонами на терминале: закройщик закрывает рулоны, у которых закончился
  * метраж. Если ткань кончилась раньше — указывает недостачу цифровой клавиатурой. */
-const KioskRollsScreen = ({ workshopId }: KioskRollsScreenProps) => {
+const KioskRollsScreen = ({ workshopId, shiftNumber }: KioskRollsScreenProps) => {
   const { toast } = useToast();
   const [rolls, setRolls] = useState<Roll[]>([]);
+  const [materials, setMaterials] = useState<Material[]>([]);
+  const [types, setTypes] = useState<MaterialType[]>([]);
+  const [typeFilter, setTypeFilter] = useState<number | 'all'>('all');
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Roll | null>(null);
   const [shortage, setShortage] = useState('');
@@ -23,15 +29,32 @@ const KioskRollsScreen = ({ workshopId }: KioskRollsScreenProps) => {
 
   const load = () => {
     setLoading(true);
-    fetchRolls({ status: 'in_workshop' })
-      .then((list) => setRolls(list.filter((r) => r.workshopId === workshopId)))
+    Promise.all([fetchRolls({ status: 'in_workshop' }), fetchMaterialsData()])
+      .then(([list, matData]) => {
+        // Показываем рулоны только своего цеха и только своей смены.
+        setRolls(
+          list.filter(
+            (r) =>
+              r.workshopId === workshopId &&
+              (shiftNumber == null || r.shiftNumber === shiftNumber)
+          )
+        );
+        setMaterials(matData.materials);
+        setTypes(matData.types);
+      })
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workshopId]);
+  }, [workshopId, shiftNumber]);
+
+  const typeIdByMaterial = new Map(materials.map((m) => [m.id, m.typeId]));
+  const visibleRolls =
+    typeFilter === 'all'
+      ? rolls
+      : rolls.filter((r) => typeIdByMaterial.get(r.materialId) === typeFilter);
 
   const handleClose = async (withShortage: boolean) => {
     if (!selected) return;
@@ -126,17 +149,38 @@ const KioskRollsScreen = ({ workshopId }: KioskRollsScreenProps) => {
 
   return (
     <div className="space-y-3">
+      {/* Фильтр по типу материала: Ткань (Тюль), Аксессуары, Упаковка */}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant={typeFilter === 'all' ? 'default' : 'outline'}
+          className="h-12 text-base"
+          onClick={() => setTypeFilter('all')}
+        >
+          Все
+        </Button>
+        {types.map((t) => (
+          <Button
+            key={t.id}
+            variant={typeFilter === t.id ? 'default' : 'outline'}
+            className="h-12 text-base"
+            onClick={() => setTypeFilter(t.id)}
+          >
+            {t.name}
+          </Button>
+        ))}
+      </div>
+
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
           <Icon name="Loader2" size={24} className="animate-spin" />
           Загрузка…
         </div>
-      ) : rolls.length === 0 ? (
+      ) : visibleRolls.length === 0 ? (
         <p className="py-10 text-center text-lg text-muted-foreground">
-          В вашем цехе нет открытых рулонов
+          В вашей смене нет открытых рулонов
         </p>
       ) : (
-        rolls.map((r) => (
+        visibleRolls.map((r) => (
           <button
             key={r.id}
             onClick={() => setSelected(r)}
