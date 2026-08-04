@@ -33,7 +33,6 @@ import WorkshopEdit from "./pages/shifts/WorkshopEdit";
 import ShiftsList from "./pages/shifts/ShiftsList";
 import ShiftDetail from "./pages/shifts/ShiftDetail";
 import ShiftsCalendar from "./pages/shifts/ShiftsCalendar";
-import SystemSettings from "./pages/settings/SystemSettings";
 import SuppliersSettings from "./pages/settings/SuppliersSettings";
 import MarketplaceItemsSettings from "./pages/settings/MarketplaceItemsSettings";
 import MarketplaceIntegrationsSettings from "./pages/settings/MarketplaceIntegrationsSettings";
@@ -78,7 +77,6 @@ const App = () => (
             <Route path="/crm/shifts/list" element={<ShiftsList />} />
             <Route path="/crm/shifts/:id" element={<ShiftDetail />} />
             <Route path="/crm/shifts/calendar" element={<ShiftsCalendar />} />
-            <Route path="/crm/settings/system" element={<SystemSettings />} />
             <Route path="/crm/settings/suppliers" element={<SuppliersSettings />} />
             <Route path="/crm/settings/marketplace-items" element={<MarketplaceItemsSettings />} />
             <Route path="/crm/settings/marketplace-integrations" element={<MarketplaceIntegrationsSettings />} />
