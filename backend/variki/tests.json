@@ -1,0 +1,36 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Players list",
+      "method": "GET",
+      "path": "/?players=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Balance without userId fails",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 400
+    },
+    {
+      "name": "Debit without admin fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "debit", "userId": 1, "amount": 10 },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "nope" },
+      "expectedStatus": 400
+    }
+  ]
+}

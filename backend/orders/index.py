@@ -1,7 +1,21 @@
 import json
 import os
+import random
 
 import psycopg2
+
+
+def award_variki(cur, user_id):
+    """Начисляет швее случайное число вариков (1-12) за отшитый заказ — внутренняя игровая
+    валюта (не финансы). Возвращает начисленное количество."""
+    if not user_id:
+        return 0
+    amount = random.randint(1, 12)
+    cur.execute(
+        "UPDATE users SET variki = COALESCE(variki, 0) + %s WHERE id = %s",
+        (amount, int(user_id)),
+    )
+    return amount
 
 
 def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
@@ -1305,6 +1319,8 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         f"UPDATE orders SET sewing_status = 'Стикеровка'{sewer_sql} WHERE id = {int(item_id)}"
                     )
+                    # Швея получает случайные варики (внутренняя игровая валюта, не финансы).
+                    award_variki(cur, order_assigned_user_id)
                     log_action(
                         cur, actor_id, actor_name, 'send_to_stickering', 'order', item_id,
                         f'Отправил заказ #{item_id} на стикеровку',
@@ -1370,6 +1386,8 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     f"UPDATE orders SET sewing_status = 'Стикеровка'{sewer_sql} WHERE id = {int(item_id)}"
                 )
+                # Швея получает случайные варики (внутренняя игровая валюта, не финансы).
+                award_variki(cur, order_assigned_user_id)
                 log_action(
                     cur, actor_id, actor_name, 'send_to_stickering', 'order', item_id,
                     f'Отправил заказ #{item_id} на стикеровку',

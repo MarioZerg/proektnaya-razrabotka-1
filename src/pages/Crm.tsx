@@ -20,6 +20,7 @@ import { fetchShifts, type ShiftListItem } from '@/lib/shiftsApi';
 import DashboardWidgetsGrid from '@/components/crm/dashboard/DashboardWidgetsGrid';
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
+import LototronCard from '@/components/crm/dashboard/LototronCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
 import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 
@@ -254,6 +255,7 @@ const CrmDashboard = () => {
               onSelectDate={setSelectedDate}
               days={calendarDays}
             />
+            <LototronCard actorId={user?.id} />
           </>
         ) : canSeeShiftCalendar ? (
           // Кладовщик и менеджер: график смен по календарю (какие смены сегодня работают).
