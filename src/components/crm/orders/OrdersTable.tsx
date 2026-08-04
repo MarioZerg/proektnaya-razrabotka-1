@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
+import OrdersCards from '@/components/crm/orders/OrdersCards';
 
 const PAGE_SIZE = 50;
 
@@ -96,7 +97,15 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
 
   return (
     <div className="space-y-4">
-    <div className="overflow-x-auto rounded-md border border-border">
+    <div className="md:hidden">
+      <OrdersCards
+        orders={pagedOrders}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        ozonStatusLabel={ozonStatusLabel}
+      />
+    </div>
+    <div className="hidden overflow-x-auto rounded-md border border-border md:block">
       <Table>
         <TableHeader>
           <TableRow className="bg-primary hover:bg-primary">
