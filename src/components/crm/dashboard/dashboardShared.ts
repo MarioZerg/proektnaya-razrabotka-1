@@ -12,7 +12,8 @@ export const toneStyles: Record<string, string> = {
   urgent: 'text-destructive',
 };
 
-export const ROLL_LOW_STOCK_THRESHOLD = 100;
+/** Порог малого остатка рулона для виджета дашборда — меньше 20 пог.м. (только рулоны в п.м.). */
+export const ROLL_LOW_STOCK_THRESHOLD = 20;
 
 export { formatDateTime, formatTime } from '@/lib/dateUtils';
 

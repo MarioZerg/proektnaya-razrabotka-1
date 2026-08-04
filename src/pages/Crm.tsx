@@ -215,7 +215,14 @@ const CrmDashboard = () => {
     ];
 
     if (canSeeWarehouseWidgets) {
-      const lowStockRolls = rolls.filter((r) => r.remainingQuantity < ROLL_LOW_STOCK_THRESHOLD).length;
+      // Малый остаток считаем только по рулонам в погонных метрах и только среди активных
+      // (не завершённых) — меньше 20 пог.м.
+      const lowStockRolls = rolls.filter(
+        (r) =>
+          r.status !== 'completed' &&
+          r.unit === 'п.м.' &&
+          r.remainingQuantity < ROLL_LOW_STOCK_THRESHOLD
+      ).length;
       list.splice(4, 0, {
         label: 'Товары к подбору со склада',
         value: goodsItems.length,
