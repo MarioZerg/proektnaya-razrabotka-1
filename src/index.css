@@ -97,8 +97,31 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: "Zen Kaku Gothic New", system-ui, sans-serif;
+    font-family: Arial, Helvetica, sans-serif;
     -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Мобильная адаптация: на телефонах увеличиваем базовый шрифт и удобство нажатий,
+   чтобы интерфейс не был мелким. Настольная вёрстка не меняется. */
+@media (max-width: 767px) {
+  html {
+    font-size: 17px;
+  }
+  /* Тап-таргеты: кнопки, поля ввода и элементы выпадающих списков — крупнее и легче нажимать. */
+  button,
+  [role='button'],
+  a[role='menuitem'],
+  input,
+  select,
+  textarea,
+  [data-radix-collection-item] {
+    min-height: 40px;
+  }
+  /* Иконочные кнопки не растягиваем в ширину — только по высоте. */
+  button.h-8,
+  button.h-9 {
+    min-height: 40px;
   }
 }
 

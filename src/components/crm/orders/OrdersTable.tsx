@@ -96,7 +96,7 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
 
   return (
     <div className="space-y-4">
-    <div className="rounded-md border border-border">
+    <div className="overflow-x-auto rounded-md border border-border">
       <Table>
         <TableHeader>
           <TableRow className="bg-primary hover:bg-primary">
