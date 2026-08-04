@@ -46,51 +46,74 @@ const chunk = <T,>(arr: T[], size: number): T[][] => {
 
 const sizeLabel = (o: TakenOrder) => `${o.material || '—'} ${o.width ?? '—'} × ${o.height ?? '—'}`;
 
-const buildChecklistPageHtml = (pageOrders: TakenOrder[], cutterName: string, date: string) => {
-  const cells = pageOrders
-    .map(
-      (o) => `
-      <div style="border:1px solid #000;display:flex;align-items:center;justify-content:space-between;padding:8px 12px;height:64px;box-sizing:border-box;">
-        <div>
-          <div style="font-size:16px;font-weight:700;">${sizeLabel(o)}</div>
-          <div style="font-size:10px;color:#333;margin-top:2px;">${o.marketplace} ${o.orderNumber}</div>
-        </div>
-        <div style="width:18px;height:18px;border:1px solid #000;flex-shrink:0;"></div>
-      </div>`
-    )
-    .join('');
+// Ячейка одной позиции: слева крупно материал+размер и мелко маркетплейс+номер (+ID закройщика
+// на QR-листе), справа узкая колонка (пустая — под галочку/крепление бирки), как в образце.
+const cell = (inner: string) =>
+  `<div style="display:grid;grid-template-columns:1fr 44px;border:1px solid #000;box-sizing:border-box;">
+     ${inner}
+     <div style="border-left:1px solid #000;"></div>
+   </div>`;
 
-  return `
-    <div style="width:${A4_WIDTH_PX}px;height:${A4_HEIGHT_PX}px;box-sizing:border-box;padding:20px;font-family:sans-serif;background:#fff;">
-      <div style="border:1px solid #000;padding:6px 12px;font-size:11px;font-weight:700;display:flex;justify-content:space-between;margin-bottom:12px;">
-        <span>${cutterName}</span>
-        <span>${date}</span>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">${cells}</div>
-    </div>`;
+/** Сетка позиций, сгруппированная по материалу: между группами материала — визуальный отступ. */
+const groupedGrid = (pageOrders: TakenOrder[], renderInner: (o: TakenOrder) => string) => {
+  const blocks: string[] = [];
+  let current: string | null = null;
+  let rows: string[] = [];
+  const flush = () => {
+    if (rows.length) {
+      blocks.push(`<div style="display:grid;grid-template-columns:1fr 1fr;">${rows.join('')}</div>`);
+      rows = [];
+    }
+  };
+  for (const o of pageOrders) {
+    const key = o.material || '—';
+    if (current !== null && key !== current) flush();
+    current = key;
+    rows.push(cell(renderInner(o)));
+  }
+  flush();
+  return `<div style="display:flex;flex-direction:column;gap:10px;">${blocks.join('')}</div>`;
 };
 
-const buildQrPageHtml = (pageOrders: TakenOrder[], qrDataUrls: Record<number, string>) => {
-  const cells = pageOrders
-    .map(
-      (o) => `
-      <div style="border:1px solid #000;display:flex;align-items:center;gap:10px;padding:8px 12px;height:64px;box-sizing:border-box;">
-        <img src="${qrDataUrls[o.id]}" style="width:48px;height:48px;flex-shrink:0;" />
-        <div>
-          <div style="font-size:15px;font-weight:700;">${sizeLabel(o)}</div>
-          <div style="font-size:10px;color:#333;margin-top:2px;display:flex;gap:6px;align-items:center;">
-            <span>${o.marketplace} ${o.orderNumber} [${o.orderType}]</span>
-            <span style="font-weight:700;">ID: ${o.id}</span>
+const page = (inner: string) =>
+  `<div style="width:${A4_WIDTH_PX}px;height:${A4_HEIGHT_PX}px;box-sizing:border-box;padding:24px;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;">${inner}</div>`;
+
+const buildChecklistPageHtml = (pageOrders: TakenOrder[], cutterName: string, date: string) => {
+  const header = `
+    <div style="display:flex;justify-content:space-between;align-items:stretch;margin-bottom:14px;">
+      <div style="border:1px solid #000;padding:6px 14px;font-size:13px;font-weight:700;">${cutterName}</div>
+      <div style="border:1px solid #000;padding:6px 14px;font-size:13px;font-weight:700;">${date}</div>
+    </div>`;
+  const grid = groupedGrid(
+    pageOrders,
+    (o) => `
+      <div style="padding:8px 12px;text-align:center;">
+        <div style="font-size:18px;font-weight:700;line-height:1.15;">${sizeLabel(o)}</div>
+        <div style="font-size:11px;color:#222;margin-top:3px;">${o.marketplace} ${o.orderNumber}</div>
+      </div>`
+  );
+  return page(header + grid);
+};
+
+const buildQrPageHtml = (
+  pageOrders: TakenOrder[],
+  qrDataUrls: Record<number, string>,
+  cutterId: number | null
+) => {
+  const grid = groupedGrid(
+    pageOrders,
+    (o) => `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;">
+        <img src="${qrDataUrls[o.id]}" style="width:52px;height:52px;flex-shrink:0;" />
+        <div style="min-width:0;text-align:center;flex:1;">
+          <div style="font-size:17px;font-weight:700;line-height:1.15;">${sizeLabel(o)}</div>
+          <div style="font-size:11px;color:#222;margin-top:3px;">
+            ${o.marketplace} ${o.orderNumber} [${o.orderType}]${cutterId != null ? ` ID: ${cutterId}` : ''}
           </div>
         </div>
       </div>`
-    )
-    .join('');
-
-  return `
-    <div style="width:${A4_WIDTH_PX}px;height:${A4_HEIGHT_PX}px;box-sizing:border-box;padding:20px;font-family:sans-serif;background:#fff;">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">${cells}</div>
-    </div>`;
+  );
+  return page(grid);
 };
 
 const renderPageToPdf = async (pdf: jsPDF, html: string, isFirstPage: boolean) => {
@@ -110,7 +133,11 @@ const renderPageToPdf = async (pdf: jsPDF, html: string, isFirstPage: boolean) =
   }
 };
 
-export const printCuttingSheet = async (orders: TakenOrder[], cutterName: string) => {
+export const printCuttingSheet = async (
+  orders: TakenOrder[],
+  cutterName: string,
+  cutterId: number | null = null
+) => {
   if (orders.length === 0) return;
 
   const grouped = groupByMaterial(orders);
@@ -131,7 +158,7 @@ export const printCuttingSheet = async (orders: TakenOrder[], cutterName: string
     isFirstPage = false;
   }
   for (const pageOrders of qrPages) {
-    await renderPageToPdf(pdf, buildQrPageHtml(pageOrders, qrDataUrls), isFirstPage);
+    await renderPageToPdf(pdf, buildQrPageHtml(pageOrders, qrDataUrls, cutterId), isFirstPage);
     isFirstPage = false;
   }
 

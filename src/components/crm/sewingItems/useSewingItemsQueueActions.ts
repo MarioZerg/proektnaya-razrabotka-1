@@ -92,7 +92,9 @@ export const useSewingItemsQueueActions = ({
 
   const handlePrintTask = () => {
     if (lastTakenStack.length === 0) return;
-    printCuttingSheet(lastTakenStack, userName || '');
+    // ID закройщика (внутренний id пользователя) печатается на листе — по нему швея находит
+    // крои закройщика на вешалках в цехе.
+    printCuttingSheet(lastTakenStack, userName || '', userId ?? null);
   };
 
   const handleTakeOrder = async () => {
