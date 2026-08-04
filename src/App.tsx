@@ -10,6 +10,7 @@ import NotFoundRedirect from "./pages/NotFoundRedirect";
 import WarehouseMaterials from "./pages/inventory/WarehouseMaterials";
 import WorkshopMaterials from "./pages/inventory/WorkshopMaterials";
 import Rolls from "./pages/inventory/Rolls";
+import RollShow from "./pages/inventory/RollShow";
 import FromSupplier from "./pages/shipments/FromSupplier";
 import ToWorkshop from "./pages/shipments/ToWorkshop";
 import ReturnToSupplier from "./pages/shipments/ReturnToSupplier";
@@ -53,6 +54,7 @@ const App = () => (
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
             <Route path="/crm/inventory/workshop-materials" element={<WorkshopMaterials />} />
             <Route path="/crm/inventory/rolls" element={<Rolls />} />
+            <Route path="/crm/inventory/rolls/:id" element={<RollShow />} />
             <Route path="/crm/shipments/from-supplier" element={<FromSupplier />} />
             <Route path="/crm/shipments/to-workshop" element={<ToWorkshop />} />
             <Route path="/crm/shipments/return-to-supplier" element={<ReturnToSupplier />} />

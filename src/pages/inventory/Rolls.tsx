@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +44,7 @@ const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | '
 
 const Rolls = () => {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
@@ -286,7 +288,11 @@ const Rolls = () => {
               </TableHeader>
               <TableBody>
                 {filtered.map((r) => (
-                  <TableRow key={r.id}>
+                  <TableRow
+                    key={r.id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/crm/inventory/rolls/${r.id}`)}
+                  >
                     <TableCell>{r.id}</TableCell>
                     <TableCell>
                       <Badge variant={statusLabels[r.status].variant}>

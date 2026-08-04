@@ -13,6 +13,12 @@
       "expectedStatus": 200
     },
     {
+      "name": "Roll detail not found",
+      "method": "GET",
+      "path": "/?id=999999999",
+      "expectedStatus": 404
+    },
+    {
       "name": "Create roll without barcode fails",
       "method": "POST",
       "path": "/",

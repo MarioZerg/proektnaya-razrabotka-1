@@ -55,6 +55,82 @@ def handler(event: dict, context) -> dict:
         params = event.get('queryStringParameters') or {}
         material_id = params.get('material_id')
         status = params.get('status')
+        roll_id = params.get('id')
+
+        # Детальная карточка рулона: сам рулон + история движений (расход на заказы и
+        # списание брака). Позволяет "провалиться" в рулон и увидеть, сколько осталось,
+        # кто и когда использовал материал, включая списания брака (в т.ч. с терминала).
+        if roll_id:
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT r.id, r.barcode, r.material_id, m.name, m.unit, r.workshop_id, w.name, "
+                    "r.shift_number, r.initial_quantity, r.remaining_quantity, r.status, "
+                    "r.created_at, r.completed_at "
+                    "FROM rolls r "
+                    "LEFT JOIN materials m ON m.id = r.material_id "
+                    "LEFT JOIN workshops w ON w.id = r.workshop_id "
+                    "WHERE r.id = %s",
+                    (int(roll_id),),
+                )
+                r = cur.fetchone()
+                if not r:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+                roll = {
+                    'id': r[0], 'barcode': r[1], 'materialId': r[2], 'materialName': r[3],
+                    'unit': r[4], 'workshopId': r[5], 'workshopName': r[6], 'shiftNumber': r[7],
+                    'initialQuantity': float(r[8]), 'remainingQuantity': float(r[9]),
+                    'status': r[10], 'createdAt': r[11].isoformat() + 'Z',
+                    'completedAt': (r[12].isoformat() + 'Z') if r[12] else None,
+                }
+
+                history = []
+                # Расход на заказы (раскрой / стикеровка). "Кто" — закройщик или швея заказа.
+                cur.execute(
+                    "SELECT omu.quantity, omu.created_at, o.order_number, "
+                    "COALESCE(cu.full_name, su.full_name) "
+                    "FROM order_material_usage omu "
+                    "JOIN orders o ON o.id = omu.order_id "
+                    "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+                    "LEFT JOIN users su ON su.id = o.sewer_user_id "
+                    "WHERE omu.roll_id = %s",
+                    (int(roll_id),),
+                )
+                for row in cur.fetchall():
+                    history.append({
+                        'kind': 'order',
+                        'quantity': float(row[0]),
+                        'createdAt': row[1].isoformat() + 'Z',
+                        'orderNumber': row[2],
+                        'userName': row[3],
+                        'comment': None,
+                    })
+
+                # Списание брака (документы defect_writeoff). "Кто" — создатель документа.
+                cur.execute(
+                    "SELECT si.quantity, s.created_at, s.comment, cu.full_name, s.type "
+                    "FROM shipment_items si "
+                    "JOIN shipments s ON s.id = si.shipment_id "
+                    "LEFT JOIN users cu ON cu.id = s.created_by "
+                    "WHERE si.roll_id = %s AND s.type IN ('defect_writeoff', 'return_to_supplier', 'workshop_writeoff')",
+                    (int(roll_id),),
+                )
+                for row in cur.fetchall():
+                    history.append({
+                        'kind': 'defect' if row[4] == 'defect_writeoff' else row[4],
+                        'quantity': float(row[0]) if row[0] is not None else 0.0,
+                        'createdAt': row[1].isoformat() + 'Z',
+                        'orderNumber': None,
+                        'userName': row[3],
+                        'comment': row[2],
+                    })
+
+                history.sort(key=lambda h: h['createdAt'], reverse=True)
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'roll': roll, 'history': history})}
+            finally:
+                conn.close()
 
         conn = psycopg2.connect(dsn)
         try:
