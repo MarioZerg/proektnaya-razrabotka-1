@@ -67,9 +67,10 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT r.id, r.barcode, r.material_id, m.name, m.unit, r.workshop_id, w.name, "
                     "r.shift_number, r.initial_quantity, r.remaining_quantity, r.status, "
-                    "r.created_at, r.completed_at "
+                    "r.created_at, r.completed_at, mt.name "
                     "FROM rolls r "
                     "LEFT JOIN materials m ON m.id = r.material_id "
+                    "LEFT JOIN material_types mt ON mt.id = m.type_id "
                     "LEFT JOIN workshops w ON w.id = r.workshop_id "
                     "WHERE r.id = %s",
                     (int(roll_id),),
@@ -77,37 +78,57 @@ def handler(event: dict, context) -> dict:
                 r = cur.fetchone()
                 if not r:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+                material_type = r[13]
+                # Тип материала рулона: "Тюль" — это ткань (за брак отвечает закройщик), всё
+                # остальное (Аксессуары/тесьма и т.п.) — за брак отвечает швея.
+                is_fabric = (material_type == 'Тюль')
                 roll = {
                     'id': r[0], 'barcode': r[1], 'materialId': r[2], 'materialName': r[3],
                     'unit': r[4], 'workshopId': r[5], 'workshopName': r[6], 'shiftNumber': r[7],
                     'initialQuantity': float(r[8]), 'remainingQuantity': float(r[9]),
                     'status': r[10], 'createdAt': r[11].isoformat() + 'Z',
                     'completedAt': (r[12].isoformat() + 'Z') if r[12] else None,
+                    'materialType': material_type,
+                    'kind': 'fabric' if is_fabric else 'trim',
                 }
 
                 history = []
-                # Расход на заказы (раскрой / стикеровка). "Кто" — закройщик или швея заказа.
+                # Расход на заказы (раскрой / стикеровка). Для каждого движения строим «лесенку»
+                # этапов заказа: кто раскроил → кто сшил → кто упаковал.
                 cur.execute(
                     "SELECT omu.quantity, omu.created_at, o.order_number, "
-                    "COALESCE(cu.full_name, su.full_name) "
+                    "cu.full_name, su.full_name, pu.full_name, o.cut_at "
                     "FROM order_material_usage omu "
                     "JOIN orders o ON o.id = omu.order_id "
                     "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                     "LEFT JOIN users su ON su.id = o.sewer_user_id "
+                    "LEFT JOIN users pu ON pu.id = o.packer_user_id "
                     "WHERE omu.roll_id = %s",
                     (int(roll_id),),
                 )
                 for row in cur.fetchall():
+                    stages = [
+                        {'role': 'cutter', 'label': 'Раскрой',
+                         'userName': row[3],
+                         'at': (row[6].isoformat() + 'Z') if row[6] else None},
+                        {'role': 'sewer', 'label': 'Пошив', 'userName': row[4], 'at': None},
+                        {'role': 'packer', 'label': 'Упаковка', 'userName': row[5], 'at': None},
+                    ]
                     history.append({
                         'kind': 'order',
                         'quantity': float(row[0]),
                         'createdAt': row[1].isoformat() + 'Z',
                         'orderNumber': row[2],
-                        'userName': row[3],
+                        'userName': row[3] or row[4],
                         'comment': None,
+                        'stages': stages,
                     })
 
-                # Списание брака (документы defect_writeoff). "Кто" — создатель документа.
+                # Списание брака. Роль исполнителя брака зависит от типа рулона: ткань → закройщик,
+                # тесьма → швея. Пока конкретного исполнителя нет — показываем создателя документа
+                # (в дальнейшем при логине по штрих-коду на терминале подтянется реальный сотрудник).
+                defect_role = 'cutter' if is_fabric else 'sewer'
+                defect_role_label = 'закройщик' if is_fabric else 'швея'
                 cur.execute(
                     "SELECT si.quantity, s.created_at, s.comment, cu.full_name, s.type "
                     "FROM shipment_items si "
@@ -117,13 +138,17 @@ def handler(event: dict, context) -> dict:
                     (int(roll_id),),
                 )
                 for row in cur.fetchall():
+                    is_defect = (row[4] == 'defect_writeoff')
                     history.append({
-                        'kind': 'defect' if row[4] == 'defect_writeoff' else row[4],
+                        'kind': 'defect' if is_defect else row[4],
                         'quantity': float(row[0]) if row[0] is not None else 0.0,
                         'createdAt': row[1].isoformat() + 'Z',
                         'orderNumber': None,
                         'userName': row[3],
                         'comment': row[2],
+                        'defectRole': defect_role if is_defect else None,
+                        'defectRoleLabel': defect_role_label if is_defect else None,
+                        'stages': None,
                     })
 
                 history.sort(key=lambda h: h['createdAt'], reverse=True)

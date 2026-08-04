@@ -4,14 +4,6 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import { fetchRollDetail, type RollDetail, type RollMovement, type RollStatus } from '@/lib/rollsApi';
 import { formatDateTime } from '@/lib/dateUtils';
@@ -24,10 +16,16 @@ const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | '
 };
 
 const movementMeta: Record<RollMovement['kind'], { label: string; icon: string; className: string }> = {
-  order: { label: 'Раскрой / пошив заказа', icon: 'Scissors', className: 'text-sky-600' },
+  order: { label: 'Заказ', icon: 'Scissors', className: 'text-sky-600' },
   defect: { label: 'Списание брака', icon: 'TriangleAlert', className: 'text-red-600' },
   return_to_supplier: { label: 'Возврат поставщику', icon: 'Undo2', className: 'text-amber-600' },
   workshop_writeoff: { label: 'Списание в цехе', icon: 'PackageMinus', className: 'text-amber-600' },
+};
+
+const stageIcon: Record<string, string> = {
+  cutter: 'Scissors',
+  sewer: 'Shirt',
+  packer: 'Package',
 };
 
 const RollShow = () => {
@@ -90,9 +88,13 @@ const RollShow = () => {
             <h1 className="text-xl font-bold">Рулон #{roll.id}</h1>
             <span className="font-mono-tech text-sm text-muted-foreground">{roll.barcode}</span>
             <Badge variant={statusLabels[roll.status].variant}>{statusLabels[roll.status].label}</Badge>
+            <Badge variant="outline">
+              {roll.kind === 'fabric' ? 'Ткань · брак закройщика' : 'Тесьма · брак швеи'}
+            </Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             {roll.materialName || 'Материал —'}
+            {roll.materialType ? ` · ${roll.materialType}` : ''}
             {roll.workshopName ? ` · ${roll.workshopName}` : ''}
           </p>
         </div>
@@ -152,45 +154,68 @@ const RollShow = () => {
           {history.length === 0 ? (
             <p className="text-sm text-muted-foreground">Из этого рулона ещё не списывали материал</p>
           ) : (
-            <div className="rounded-md border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-primary hover:bg-primary">
-                    <TableHead className="text-primary-foreground">Операция</TableHead>
-                    <TableHead className="text-primary-foreground">Кто</TableHead>
-                    <TableHead className="text-primary-foreground">Заказ / комментарий</TableHead>
-                    <TableHead className="text-primary-foreground text-right">Списано</TableHead>
-                    <TableHead className="text-primary-foreground">Когда</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {history.map((m, i) => {
-                    const meta = movementMeta[m.kind] || movementMeta.order;
-                    return (
-                      <TableRow key={i}>
-                        <TableCell>
-                          <span className="flex items-center gap-1.5">
-                            <Icon name={meta.icon} size={15} className={meta.className} />
-                            {meta.label}
-                          </span>
-                        </TableCell>
-                        <TableCell>{m.userName || '—'}</TableCell>
-                        <TableCell>
-                          {m.orderNumber ? (
-                            <span className="font-medium">Заказ {m.orderNumber}</span>
-                          ) : (
-                            m.comment || '—'
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          -{formatQuantity(m.quantity)} {unit}
-                        </TableCell>
-                        <TableCell>{formatDateTime(m.createdAt)}</TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+            <div className="space-y-3">
+              {history.map((m, i) => {
+                const meta = movementMeta[m.kind] || movementMeta.order;
+                return (
+                  <div key={i} className="rounded-md border border-border p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 font-medium">
+                        <Icon name={meta.icon} size={16} className={meta.className} />
+                        {m.kind === 'order' && m.orderNumber ? `Заказ ${m.orderNumber}` : meta.label}
+                        {m.kind === 'defect' && m.defectRoleLabel && (
+                          <Badge variant="outline" className="ml-1 capitalize">{m.defectRoleLabel}</Badge>
+                        )}
+                      </span>
+                      <span className="flex items-center gap-3 text-sm">
+                        <span className="font-semibold text-red-600">-{formatQuantity(m.quantity)} {unit}</span>
+                        <span className="text-muted-foreground">{formatDateTime(m.createdAt)}</span>
+                      </span>
+                    </div>
+
+                    {/* Лесенка этапов заказа: кто раскроил → сшил → упаковал */}
+                    {m.kind === 'order' && m.stages && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {m.stages.map((s, si) => (
+                          <div key={s.role} className="flex items-center gap-2">
+                            <div
+                              className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${
+                                s.userName ? 'border-border bg-muted/40' : 'border-dashed border-border/60'
+                              }`}
+                            >
+                              <Icon
+                                name={stageIcon[s.role] || 'User'}
+                                size={15}
+                                className={s.userName ? 'text-sky-600' : 'text-muted-foreground'}
+                              />
+                              <div className="leading-tight">
+                                <div className="text-[11px] text-muted-foreground">{s.label}</div>
+                                <div className={`text-sm ${s.userName ? 'font-medium' : 'text-muted-foreground'}`}>
+                                  {s.userName || '—'}
+                                </div>
+                                {s.at && (
+                                  <div className="text-[10px] text-muted-foreground">{formatDateTime(s.at)}</div>
+                                )}
+                              </div>
+                            </div>
+                            {si < m.stages!.length - 1 && (
+                              <Icon name="ChevronRight" size={16} className="text-muted-foreground" />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Брак / прочие списания: кто зафиксировал и комментарий */}
+                    {m.kind !== 'order' && (
+                      <div className="mt-2 text-sm text-muted-foreground">
+                        {m.userName ? <span>Зафиксировал: <span className="text-foreground">{m.userName}</span></span> : null}
+                        {m.comment ? <span className="ml-2">· {m.comment}</span> : null}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

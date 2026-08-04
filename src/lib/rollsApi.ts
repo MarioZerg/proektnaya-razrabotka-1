@@ -20,6 +20,14 @@ export interface Roll {
 
 export type RollMovementKind = 'order' | 'defect' | 'return_to_supplier' | 'workshop_writeoff';
 
+/** Этап выполнения заказа: кто раскроил / сшил / упаковал. */
+export interface RollOrderStage {
+  role: 'cutter' | 'sewer' | 'packer';
+  label: string;
+  userName: string | null;
+  at: string | null;
+}
+
 export interface RollMovement {
   kind: RollMovementKind;
   quantity: number;
@@ -27,10 +35,21 @@ export interface RollMovement {
   orderNumber: string | null;
   userName: string | null;
   comment: string | null;
+  /** Лесенка этапов заказа (только для движений kind='order'). */
+  stages?: RollOrderStage[] | null;
+  /** Роль исполнителя брака: 'cutter' для ткани, 'sewer' для тесьмы. */
+  defectRole?: 'cutter' | 'sewer' | null;
+  defectRoleLabel?: string | null;
+}
+
+/** Рулон в деталях: тип материала (ткань/тесьма) для правильной атрибуции брака. */
+export interface RollDetailInfo extends Roll {
+  materialType: string | null;
+  kind: 'fabric' | 'trim';
 }
 
 export interface RollDetail {
-  roll: Roll;
+  roll: RollDetailInfo;
   history: RollMovement[];
 }
 
