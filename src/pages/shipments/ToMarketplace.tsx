@@ -79,7 +79,7 @@ const ToMarketplace = () => {
   const load = () => {
     setLoading(true);
     fetchSupplies({
-      status: statusFilter === 'open' ? undefined : statusFilter === 'closed' ? 'Выполнена' : statusFilter,
+      status: statusFilter === 'open' ? undefined : statusFilter,
       type: typeFilter !== 'all' ? (typeFilter as SupplyType) : undefined,
       marketplace: marketplaceFilter !== 'all' ? marketplaceFilter : undefined,
       dateFrom: dateFrom || undefined,
@@ -205,8 +205,7 @@ const ToMarketplace = () => {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="open">Открытые</SelectItem>
-                <SelectItem value="closed">Закрытые</SelectItem>
+                <SelectItem value="open">Все активные</SelectItem>
                 <SelectItem value="Открытая">Открытая</SelectItem>
                 <SelectItem value="На сборке">На сборке</SelectItem>
                 <SelectItem value="Отгрузка">Отгрузка</SelectItem>
