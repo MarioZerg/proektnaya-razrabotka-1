@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import {
   fetchMarketplaceItems,
@@ -9,6 +11,7 @@ import {
   deleteMarketplaceItem,
   fetchMarketplaceItemDetail,
   setMarketplaceItemMaterials,
+  syncMarketplaceItems,
   type MarketplaceItem,
   type MarketplaceItemMaterial,
 } from '@/lib/marketplaceItemsApi';
@@ -40,6 +43,7 @@ const MarketplaceItemsSettings = () => {
   const [materialRows, setMaterialRows] = useState<MaterialRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -163,6 +167,29 @@ const MarketplaceItemsSettings = () => {
     }
   };
 
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const res = await syncMarketplaceItems();
+      const warn = res.warnings.length ? ` Предупреждения: ${res.warnings.join('; ')}` : '';
+      toast({
+        title: `Синхронизация завершена`,
+        description:
+          `Добавлено новых: ${res.created}. Всего карточек с площадок: ${res.totalArticles} ` +
+          `(OZON ${res.ozonCards}, WB ${res.wbCards}).` + warn,
+      });
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось синхронизировать',
+        description: err instanceof Error ? err.message : 'Проверьте ключи OZON/WB в интеграциях',
+        variant: 'destructive',
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const materialOptions = Array.from(
     new Set(items.map((i) => i.material).filter((m): m is string => !!m))
   ).sort((a, b) => a.localeCompare(b));
@@ -196,6 +223,16 @@ const MarketplaceItemsSettings = () => {
             )}
           </div>
 
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={handleSync} disabled={syncing}>
+              <Icon
+                name={syncing ? 'Loader2' : 'RefreshCw'}
+                size={16}
+                className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
+              />
+              {syncing ? 'Синхронизация…' : 'Синхронизировать карточки'}
+            </Button>
+
           <ItemFormDialog
             open={dialogOpen}
             onOpenChange={(open) => {
@@ -218,6 +255,7 @@ const MarketplaceItemsSettings = () => {
             onOpenCreate={openCreate}
             onSave={handleSave}
           />
+          </div>
         </div>
 
         {!loading && items.length > 0 && (
