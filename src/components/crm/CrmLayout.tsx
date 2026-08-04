@@ -230,14 +230,6 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
               </DropdownMenu>
             )}
             <button
-              onClick={() => setQrOpen(true)}
-              className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
-              aria-label="QR-код для открытия смены"
-              title="QR-код для открытия смены"
-            >
-              <Icon name="QrCode" size={16} />
-            </button>
-            <button
               onClick={handleLogout}
               className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
               aria-label="Выйти"
@@ -251,8 +243,17 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
       <ShiftQrDialog open={qrOpen} onOpenChange={setQrOpen} />
 
       <main className="flex-1 overflow-x-hidden">
-        <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
           <SidebarTrigger />
+          {/* Персональный QR сотрудника — рядом с меню, чтобы быстро показать его сканеру. */}
+          <button
+            onClick={() => setQrOpen(true)}
+            className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Мой QR-код"
+            title="Мой QR-код"
+          >
+            <Icon name="QrCode" size={20} />
+          </button>
           <div className="ml-auto">
             <HeaderSalaryWidget />
           </div>

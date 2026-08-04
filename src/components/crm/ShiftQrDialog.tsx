@@ -38,23 +38,12 @@ const ShiftQrDialog = ({ open, onOpenChange }: ShiftQrDialogProps) => {
       >
         <DialogTitle className="sr-only">QR-код для открытия смены</DialogTitle>
         <div className="flex flex-1 flex-col items-center justify-center gap-6 p-6">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Icon name="ScanLine" size={20} />
-            <p className="text-lg font-medium">Поднесите к сканеру терминала, чтобы открыть смену</p>
-          </div>
+          <p className="text-center text-2xl font-semibold">Отсканируйте свой QR-код</p>
           {qrDataUrl ? (
             <img src={qrDataUrl} alt="Персональный QR-код сотрудника" className="h-auto w-full max-w-md" />
           ) : (
             <div className="flex h-64 w-64 items-center justify-center">
               <Icon name="Loader2" size={32} className="animate-spin text-muted-foreground" />
-            </div>
-          )}
-          {user && (
-            <div className="max-w-full text-center">
-              <p className="text-lg font-semibold">{user.name}</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Цех {user.workshopId ?? 1} · Смена {user.shiftNumber ?? '—'}
-              </p>
             </div>
           )}
         </div>
