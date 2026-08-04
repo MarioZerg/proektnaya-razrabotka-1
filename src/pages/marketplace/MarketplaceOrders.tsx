@@ -19,6 +19,7 @@ import OrdersToolbar, {
   type TypeFilter,
 } from '@/components/crm/orders/OrdersToolbar';
 import OrdersTable from '@/components/crm/orders/OrdersTable';
+import OrdersSummary from '@/components/crm/orders/OrdersSummary';
 import EditOrderDialog from '@/components/crm/orders/EditOrderDialog';
 import CreateManualOrderDialog from '@/components/crm/orders/CreateManualOrderDialog';
 
@@ -261,6 +262,8 @@ const MarketplaceOrders = () => {
     <CrmLayout>
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Заказы</h1>
+
+        {!loading && <OrdersSummary orders={orders} />}
 
         <OrdersToolbar
           onOpenManual={openManual}
