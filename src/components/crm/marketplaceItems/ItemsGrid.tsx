@@ -43,13 +43,33 @@ const ItemsGrid = ({
   const { toast } = useToast();
 
   // Копирует код OZON (OZN + ozon_sku) в буфер — им товар добавляют в поставку FBO.
+  // navigator.clipboard доступен только на HTTPS/localhost, поэтому есть запасной способ
+  // через скрытое поле и execCommand — работает и без защищённого контекста.
   const copyOzonCode = async (ozonSku: string) => {
     const code = `OZN${ozonSku}`;
+    let ok = false;
     try {
-      await navigator.clipboard.writeText(code);
-      toast({ title: 'Код скопирован', description: code });
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(code);
+        ok = true;
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = code;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ok = document.execCommand('copy');
+        ta.remove();
+      }
     } catch {
-      toast({ title: 'Не удалось скопировать', variant: 'destructive' });
+      ok = false;
+    }
+    if (ok) {
+      toast({ title: 'Код скопирован', description: code });
+    } else {
+      toast({ title: 'Не удалось скопировать', description: code, variant: 'destructive' });
     }
   };
 
