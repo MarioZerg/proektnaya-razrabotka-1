@@ -12,11 +12,13 @@ interface KioskRollsScreenProps {
   workshopId: number;
   /** Смена сотрудника — показываем рулоны только его смены. */
   shiftNumber: number | null;
+  /** Сотрудник терминала — по нему определяем движение материала в текущей смене. */
+  userId: number;
 }
 
 /** Экран работы с рулонами на терминале: закройщик закрывает рулоны, у которых закончился
  * метраж. Если ткань кончилась раньше — указывает недостачу цифровой клавиатурой. */
-const KioskRollsScreen = ({ workshopId, shiftNumber }: KioskRollsScreenProps) => {
+const KioskRollsScreen = ({ workshopId, shiftNumber, userId }: KioskRollsScreenProps) => {
   const { toast } = useToast();
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -29,7 +31,10 @@ const KioskRollsScreen = ({ workshopId, shiftNumber }: KioskRollsScreenProps) =>
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchRolls({ status: 'in_workshop' }), fetchMaterialsData()])
+    Promise.all([
+      fetchRolls({ status: 'in_workshop', usedSinceUserId: userId }),
+      fetchMaterialsData(),
+    ])
       .then(([list, matData]) => {
         // Показываем рулоны только своего цеха и только своей смены.
         setRolls(
@@ -48,7 +53,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber }: KioskRollsScreenProps) =>
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workshopId, shiftNumber]);
+  }, [workshopId, shiftNumber, userId]);
 
   const typeIdByMaterial = new Map(materials.map((m) => [m.id, m.typeId]));
   const visibleRolls =
@@ -180,21 +185,31 @@ const KioskRollsScreen = ({ workshopId, shiftNumber }: KioskRollsScreenProps) =>
           В вашей смене нет открытых рулонов
         </p>
       ) : (
-        visibleRolls.map((r) => (
-          <button
-            key={r.id}
-            onClick={() => setSelected(r)}
-            className="flex w-full items-center justify-between gap-3 rounded-lg border border-border p-4 text-left hover:bg-accent"
-          >
-            <div className="min-w-0">
-              <div className="font-mono-tech text-lg font-bold">#{r.barcode}</div>
-              <div className="text-muted-foreground">{r.materialName}</div>
-            </div>
-            <Badge variant="secondary" className="shrink-0 text-base">
-              {formatQuantity(r.remainingQuantity)} {r.unit}
-            </Badge>
-          </button>
-        ))
+        visibleRolls.map((r) => {
+          // Рулон доступен, только если по нему уже было движение материала в этой смене.
+          const active = !!r.usedInShift;
+          return (
+            <button
+              key={r.id}
+              onClick={() => active && setSelected(r)}
+              disabled={!active}
+              className={`flex w-full items-center justify-between gap-3 rounded-lg border border-border p-4 text-left ${
+                active ? 'hover:bg-accent' : 'cursor-not-allowed opacity-40 grayscale'
+              }`}
+            >
+              <div className="min-w-0">
+                <div className="font-mono-tech text-lg font-bold">#{r.barcode}</div>
+                <div className="text-muted-foreground">{r.materialName}</div>
+                {!active && (
+                  <div className="text-xs text-muted-foreground">Нет движения в смене</div>
+                )}
+              </div>
+              <Badge variant="secondary" className="shrink-0 text-base">
+                {formatQuantity(r.remainingQuantity)} {r.unit}
+              </Badge>
+            </button>
+          );
+        })
       )}
     </div>
   );

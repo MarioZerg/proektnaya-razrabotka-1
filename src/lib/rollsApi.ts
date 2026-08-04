@@ -16,6 +16,8 @@ export interface Roll {
   status: RollStatus;
   createdAt: string;
   completedAt: string | null;
+  /** По рулону было движение материала в текущей смене (заполняется при запросе с usedSinceUserId). */
+  usedInShift?: boolean;
 }
 
 export type RollMovementKind = 'order' | 'defect' | 'return_to_supplier' | 'workshop_writeoff';
@@ -62,10 +64,16 @@ export const fetchRollDetail = async (id: number): Promise<RollDetail> => {
   return data as RollDetail;
 };
 
-export const fetchRolls = async (filters?: { materialId?: number; status?: string }): Promise<Roll[]> => {
+export const fetchRolls = async (filters?: {
+  materialId?: number;
+  status?: string;
+  /** Отметить рулоны, по которым было движение в текущей смене этого сотрудника. */
+  usedSinceUserId?: number;
+}): Promise<Roll[]> => {
   const params = new URLSearchParams();
   if (filters?.materialId) params.set('material_id', String(filters.materialId));
   if (filters?.status) params.set('status', filters.status);
+  if (filters?.usedSinceUserId) params.set('usedSinceUserId', String(filters.usedSinceUserId));
   const qs = params.toString();
   const res = await fetch(qs ? `${ROLLS_URL}?${qs}` : ROLLS_URL);
   const data = await res.json();

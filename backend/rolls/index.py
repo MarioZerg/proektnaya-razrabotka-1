@@ -168,6 +168,26 @@ def handler(event: dict, context) -> dict:
                 conditions.append(f"r.status = '{status_esc}'")
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
+            # Если передан usedSinceUserId — отмечаем, по каким рулонам было движение материала
+            # в ТЕКУЩЕЙ открытой смене этого сотрудника (терминал показывает такие рулоны
+            # активными, а остальные — затуманенными, пока с ними не начали работать).
+            used_roll_ids = set()
+            used_since_user_id = (event.get('queryStringParameters') or {}).get('usedSinceUserId')
+            if used_since_user_id:
+                cur.execute(
+                    "SELECT opened_at FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "ORDER BY opened_at DESC LIMIT 1",
+                    (int(used_since_user_id),),
+                )
+                s_row = cur.fetchone()
+                if s_row:
+                    cur.execute(
+                        "SELECT DISTINCT roll_id FROM order_material_usage "
+                        "WHERE roll_id IS NOT NULL AND created_at >= %s",
+                        (s_row[0],),
+                    )
+                    used_roll_ids = {r[0] for r in cur.fetchall()}
+
             cur.execute(
                 f"SELECT r.id, r.barcode, r.material_id, m.name, m.unit, r.workshop_id, w.name, "
                 f"r.shift_number, r.initial_quantity, r.remaining_quantity, r.status, "
@@ -193,6 +213,7 @@ def handler(event: dict, context) -> dict:
                     'status': r[10],
                     'createdAt': r[11].isoformat() + 'Z',
                     'completedAt': (r[12].isoformat() + 'Z') if r[12] else None,
+                    'usedInShift': r[0] in used_roll_ids,
                 }
                 for r in cur.fetchall()
             ]

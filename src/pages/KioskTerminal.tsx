@@ -303,6 +303,7 @@ const KioskTerminal = () => {
               <KioskRollsScreen
                 workshopId={Number(workshopId) || 1}
                 shiftNumber={shift?.shiftNumber ?? user.shiftFromCode ?? null}
+                userId={user.id}
               />
             </div>
           )}
