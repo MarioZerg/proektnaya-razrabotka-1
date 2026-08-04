@@ -16,10 +16,15 @@ import {
   PaginationLink,
 } from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { Order } from '@/lib/ordersApi';
 import { marketplaceLogo, formatDate, timeAgo } from '@/components/crm/sewingItems/sewingItemsShared';
 import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
+import { printFboSticker } from '@/lib/printFboSticker';
+
+/** Стикер FBO можно печатать для готового FBO-товара — прямо у номера заказа. */
+const canPrintFboSticker = (o: Order) => o.orderType === 'FBO' && o.sewingStatus === 'Готовые';
 
 interface SewingItemsTableProps {
   loading: boolean;
@@ -91,7 +96,29 @@ const SewingItemsTable = ({
                 <TableCell>
                   <Badge variant="secondary">{o.sewingStatus}</Badge>
                 </TableCell>
-                <TableCell className="font-medium">{o.orderNumber}</TableCell>
+                <TableCell className="font-medium">
+                  <span className="flex items-center gap-1.5">
+                    {o.orderNumber}
+                    {canPrintFboSticker(o) && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              printFboSticker(o);
+                            }}
+                            className="text-muted-foreground hover:text-blue-600"
+                            aria-label="Печать стикера FBO"
+                          >
+                            <Icon name="Printer" size={15} />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>Печать стикера FBO</TooltipContent>
+                      </Tooltip>
+                    )}
+                  </span>
+                </TableCell>
                 <TableCell>{o.cluster || '—'}</TableCell>
                 <TableCell>{o.material || '—'}</TableCell>
                 <TableCell>{o.width ?? '—'}</TableCell>

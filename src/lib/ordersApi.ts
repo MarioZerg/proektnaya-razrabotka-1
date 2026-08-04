@@ -43,6 +43,9 @@ export interface Order {
   /** Статус отправления на стороне OZON (только чтение, для FBS-заказов OZON). */
   ozonStatus?: string | null;
   ozonPostingNumber?: string | null;
+  /** Штрихкод товара маркетплейса (из справочника, фиксируется при импорте OZON FBO) —
+   * печатается на стикере FBO сшитого товара. */
+  productBarcode?: string | null;
 }
 
 export interface OrderMaterialUsage {

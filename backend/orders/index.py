@@ -212,7 +212,7 @@ def handler(event: dict, context) -> dict:
                     "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
                     "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                     "o.cutter_user_id, cu.full_name, o.hanger_number, "
-                    "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name "
+                    "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, o.product_barcode "
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
                     "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -302,6 +302,7 @@ def handler(event: dict, context) -> dict:
                     'sewerUserName': row[23],
                     'packerUserId': row[24],
                     'packerUserName': row[25],
+                    'productBarcode': row[26],
                     'materialUsage': materialUsage,
                     'requiredFabricMaterialId': required_fabric_material_id,
                     'requiredFabricMaterialName': required_fabric_material_name,
@@ -316,7 +317,7 @@ def handler(event: dict, context) -> dict:
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                 "o.cutter_user_id, cu.full_name, o.hanger_number, "
                 "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
-                "o.ozon_status, o.ozon_posting_number "
+                "o.ozon_status, o.ozon_posting_number, o.product_barcode "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -355,6 +356,7 @@ def handler(event: dict, context) -> dict:
                     'packerUserName': r[25],
                     'ozonStatus': r[26],
                     'ozonPostingNumber': r[27],
+                    'productBarcode': r[28],
                 }
                 for r in cur.fetchall()
             ]

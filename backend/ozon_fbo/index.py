@@ -131,12 +131,12 @@ def get_bundle_items(client_id, api_key, bundle_id):
 
 def load_item_lookup(cur):
     """Грузит справочник товаров в память одним запросом. Возвращает два индекса:
-    по ozon_sku и по sku(offer_id) -> (material, width, height, name)."""
-    cur.execute("SELECT ozon_sku, sku, material, width, height, name FROM marketplace_items")
+    по ozon_sku и по sku(offer_id) -> (material, width, height, name, barcode)."""
+    cur.execute("SELECT ozon_sku, sku, material, width, height, name, barcode FROM marketplace_items")
     by_ozon_sku = {}
     by_offer = {}
     for r in cur.fetchall():
-        val = (r[2], r[3], r[4], r[5])
+        val = (r[2], r[3], r[4], r[5], r[6])
         if r[0]:
             by_ozon_sku[str(r[0])] = val
         if r[1]:
@@ -319,7 +319,7 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
             skipped_no_item += 1
             unmatched.append({'ozonSku': ozon_sku, 'offerId': offer_id, 'name': it.get('name')})
             continue
-        material, width, height, item_name = found
+        material, width, height, item_name, barcode = found
         product = f"{material} {width}x{height}" if material and width and height else item_name
         for n in range(1, qty + 1):
             # order_number уникален (индекс в БД), поэтому каждой штуке даём отдельный номер:
@@ -331,6 +331,7 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
                 int(width) if width else None,
                 int(height) if height else None,
                 warehouse,
+                barcode or None,
             ))
 
     created = 0
@@ -338,10 +339,10 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
         result = execute_values(
             cur,
             "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
-            "quantity, source, material, width, height, cluster) VALUES %s "
+            "quantity, source, material, width, height, cluster, product_barcode) VALUES %s "
             "ON CONFLICT (order_number) DO NOTHING RETURNING id",
             rows,
-            template="(%s, 'OZON', 'FBO', 'Новый', %s, 1, 'api', %s, %s, %s, %s)",
+            template="(%s, 'OZON', 'FBO', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s)",
             fetch=True,
         )
         created = len(result)

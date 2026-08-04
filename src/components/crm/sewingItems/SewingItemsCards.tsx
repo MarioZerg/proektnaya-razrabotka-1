@@ -6,6 +6,7 @@ import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
 import { marketplaceLogo, formatDate, timeAgo } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
+import { printFboSticker } from '@/lib/printFboSticker';
 
 interface SewingItemsCardsProps {
   loading: boolean;
@@ -71,8 +72,21 @@ const SewingItemsCards = ({
             </div>
 
             <CardContent className="space-y-2.5 pt-6">
-              <p className="pr-6 font-mono-tech text-sm font-semibold">
+              <p className="flex items-center gap-1.5 pr-6 font-mono-tech text-sm font-semibold">
                 {o.orderNumber} {o.orderType}
+                {o.orderType === 'FBO' && o.sewingStatus === 'Готовые' && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      printFboSticker(o);
+                    }}
+                    className="text-muted-foreground hover:text-blue-600"
+                    aria-label="Печать стикера FBO"
+                  >
+                    <Icon name="Printer" size={15} />
+                  </button>
+                )}
               </p>
 
               <Badge className={statusBadgeClass[o.sewingStatus] || ''}>{o.sewingStatus}</Badge>
