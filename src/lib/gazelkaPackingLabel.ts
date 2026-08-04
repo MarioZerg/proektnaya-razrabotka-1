@@ -50,11 +50,13 @@ export const buildBarcodeValue = (data: PackingLabelData, boxNumber: number): st
 
 const svgBarcode = (value: string): string => {
   const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  // Узкие бары, чтобы длинная строка кода уместилась по ширине этикетки 75 мм.
+  // Штрихкод печатается ВЕРТИКАЛЬНО (повёрнут на 90° в вёрстке), поэтому «длина» кода идёт
+  // вдоль высоты этикетки (120 мм), а бары — толстые (width) и высокие (height), чтобы код
+  // был крупным и уверенно считывался сканером.
   JsBarcode(el, value, {
     format: 'CODE128',
-    width: 1,
-    height: 45,
+    width: 2,
+    height: 180,
     displayValue: false,
     margin: 0,
   });
@@ -76,27 +78,30 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
     const bc = buildBarcodeValue(data, boxNo);
     return `
       <div class="label">
-        <div class="head">
-          <img class="logo" src="${logoUrl}" alt="Газелька" />
-          <div class="headtext">
-            <div class="title">Упаковочный лист</div>
-            <div class="zayavka">№ заявки <b>${esc(String(plan.id))}</b></div>
+        <div class="top">
+          <div class="head">
+            <img class="logo" src="${logoUrl}" alt="Газелька" />
+            <div class="headtext">
+              <div class="title">Упаковочный лист</div>
+              <div class="zayavka">№ заявки <b>${esc(String(plan.id))}</b></div>
+            </div>
+          </div>
+          <table class="info">
+            <tr><td>Дата отгрузки:</td><td><b>${dateHuman(plan.shipDate)}</b></td></tr>
+            <tr><td>Склад поставки:</td><td><b>${esc(plan.deliveryAddress)}</b></td></tr>
+            <tr><td>Дата поставки:</td><td><b>${dateHuman(plan.deliveryDate)}</b></td></tr>
+            <tr><td>Маркетплейс:</td><td><b>${esc(plan.marketplaceLabel)}</b></td></tr>
+            <tr><td>№ пост.:</td><td><b>${esc(supply.supplyNumber)}</b></td></tr>
+            <tr><td>Клиент:</td><td><b>${esc(supply.gazelkaClientName)}</b></td></tr>
+            <tr><td>Телефон:</td><td><b>${esc(supply.gazelkaClientPhone)}</b></td></tr>
+          </table>
+          <div class="boxno">
+            Короб <b>${boxNo} / ${total}</b>
+            <span>Всего: ${esc(String(plan.pallets ?? 0))} паллет, ${total} коробов</span>
           </div>
         </div>
-        <table class="info">
-          <tr><td>Дата отгрузки:</td><td><b>${dateHuman(plan.shipDate)}</b></td></tr>
-          <tr><td>Склад поставки:</td><td><b>${esc(plan.deliveryAddress)}</b></td></tr>
-          <tr><td>Дата поставки:</td><td><b>${dateHuman(plan.deliveryDate)}</b></td></tr>
-          <tr><td>Маркетплейс:</td><td><b>${esc(plan.marketplaceLabel)}</b></td></tr>
-          <tr><td>№ пост. на маркетплейсе:</td><td><b>${esc(supply.supplyNumber)}</b></td></tr>
-          <tr><td>Клиент:</td><td><b>${esc(supply.gazelkaClientName)}</b></td></tr>
-          <tr><td>Телефон:</td><td><b>${esc(supply.gazelkaClientPhone)}</b></td></tr>
-        </table>
-        <div class="barcode">${svgBarcode(bc)}</div>
-        <div class="bcval">${esc(bc)}</div>
-        <div class="boxno">
-          Порядковый номер короба: <b>${boxNo} / ${total}</b>
-          <span>(Всего: ${esc(String(plan.pallets ?? 0))} паллет, ${total} коробов)</span>
+        <div class="barwrap">
+          <div class="barcode">${svgBarcode(bc)}</div>
         </div>
       </div>`;
   }).join('');
@@ -113,24 +118,29 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
       html, body { margin: 0; padding: 0; }
       body { font-family: Arial, Helvetica, sans-serif; color: #000; }
       .label {
-        width: 75mm; height: 120mm; padding: 3mm 3.5mm;
+        width: 75mm; height: 120mm; padding: 2.5mm;
         page-break-after: always; overflow: hidden;
-        display: flex; flex-direction: column;
+        display: flex; gap: 1.5mm;
       }
       .label:last-child { page-break-after: auto; }
-      .head { display: flex; align-items: center; gap: 2mm; border-bottom: 0.5mm solid #000; padding-bottom: 1.5mm; }
-      .logo { height: 8mm; width: auto; }
+      /* Левая колонка — весь текст, вертикально. Правая колонка — крупный штрихкод, повёрнутый
+         на 90° во всю высоту этикетки. */
+      .top { width: 46mm; display: flex; flex-direction: column; }
+      .head { display: flex; align-items: center; gap: 1.5mm; border-bottom: 0.5mm solid #000; padding-bottom: 1.2mm; }
+      .logo { height: 7mm; width: auto; }
       .headtext { display: flex; flex: 1; flex-direction: column; }
-      .title { font-size: 11pt; font-weight: 700; line-height: 1.1; }
-      .zayavka { font-size: 9pt; }
-      .info { width: 100%; margin: 2mm 0; border-collapse: collapse; font-size: 7.5pt; }
-      .info td { padding: 0.6mm 1mm; vertical-align: top; line-height: 1.15; }
-      .info td:first-child { color: #333; width: 42%; }
-      .barcode { text-align: center; margin-top: auto; }
-      .barcode svg { width: 100%; height: auto; }
-      .bcval { text-align: center; font-family: monospace; font-size: 6pt; word-break: break-all; margin: 1mm 0; }
-      .boxno { font-size: 9pt; font-weight: 700; text-align: center; border-top: 0.3mm solid #000; padding-top: 1.5mm; }
-      .boxno span { display: block; color: #333; font-size: 7pt; font-weight: 400; }
+      .title { font-size: 10pt; font-weight: 700; line-height: 1.05; }
+      .zayavka { font-size: 8pt; }
+      .info { width: 100%; margin: 1.5mm 0; border-collapse: collapse; font-size: 7pt; }
+      .info td { padding: 0.5mm 0.8mm; vertical-align: top; line-height: 1.12; }
+      .info td:first-child { color: #333; width: 40%; }
+      .boxno { margin-top: auto; font-size: 9pt; font-weight: 700; border-top: 0.3mm solid #000; padding-top: 1mm; }
+      .boxno span { display: block; color: #333; font-size: 6.5pt; font-weight: 400; }
+      /* Штрихкод: SVG рисуется горизонтально, поворачиваем на 90° — код идёт по высоте
+         этикетки (120 мм), поэтому получается большим и легко сканируется. */
+      .barwrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+      .barcode { transform: rotate(90deg); transform-origin: center; line-height: 0; }
+      .barcode svg { display: block; height: 22mm; width: 112mm; }
     </style></head><body onload="window.print()">${pages}</body></html>`);
   win.document.close();
 };
