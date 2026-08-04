@@ -41,6 +41,11 @@ def handler(event: dict, context) -> dict:
                                возвращает базовую информацию, только если заказ в
                                статусе "Стикеровка"
 
+    POST /  { action: 'login_by_code', code }
+        - вход на терминал по личному QR-коду сотрудника формата
+          "{userId}-{shiftNumber}-{ГГГГММДД}" (например 3-20-20250513). Возвращает сотрудника
+          и состояние его смены (открыта/закрыта) — пароль на терминале не нужен
+
     POST /  { action: 'close_order', orderId, packerId }
         - переводит заказ в статус "Готовые", создаёт начисления швее и упаковщице.
           Фиксирует packer_user_id = packerId — отдельное поле на заказе, аналогично
@@ -121,6 +126,53 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            # Вход на терминал по QR-коду сотрудника формата "{userId}-{shiftNumber}-{ГГГГММДД}"
+            # (например 3-20-20250513). Пароль не нужен — терминал стоит в цехе, вход по личному
+            # QR с бейджа. Возвращаем сотрудника и состояние его смены.
+            if action == 'login_by_code':
+                code = (body_data.get('code') or '').strip()
+                parts = code.split('-')
+                if len(parts) < 1 or not parts[0].isdigit():
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неверный код сотрудника'})}
+                user_id = int(parts[0])
+                shift_from_code = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+
+                cur.execute(
+                    "SELECT id, full_name, role, is_active FROM users WHERE id = %s",
+                    (user_id,),
+                )
+                u_row = cur.fetchone()
+                if not u_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник не найден'})}
+                if not u_row[3]:
+                    return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник неактивен'})}
+
+                cur.execute(
+                    "SELECT id, opened_at, workshop_id, shift_number FROM shift_sessions "
+                    "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+                    (user_id,),
+                )
+                s_row = cur.fetchone()
+
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'user': {
+                            'id': u_row[0],
+                            'name': u_row[1],
+                            'role': u_row[2],
+                            'shiftFromCode': shift_from_code,
+                        },
+                        'shift': {
+                            'isOpen': bool(s_row),
+                            'openedAt': (s_row[1].isoformat() + 'Z') if s_row else None,
+                            'workshopId': s_row[2] if s_row else None,
+                            'shiftNumber': s_row[3] if s_row else None,
+                        },
+                    }),
+                }
 
             if action == 'close_order':
                 order_id = body_data.get('orderId')

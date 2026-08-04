@@ -38,6 +38,7 @@ import SuppliersSettings from "./pages/settings/SuppliersSettings";
 import MarketplaceItemsSettings from "./pages/settings/MarketplaceItemsSettings";
 import MarketplaceIntegrationsSettings from "./pages/settings/MarketplaceIntegrationsSettings";
 import Kiosk from "./pages/Kiosk";
+import KioskTerminal from "./pages/KioskTerminal";
 import { AuthProvider } from "@/context/AuthContext";
 
 const queryClient = new QueryClient();
@@ -51,6 +52,8 @@ const App = () => (
         <AuthProvider>
           <Routes>
             <Route path="/" element={<Index />} />
+            {/* Терминал цеха: вход по личному QR-коду сотрудника, без пароля. */}
+            <Route path="/kiosk/:workshopId" element={<KioskTerminal />} />
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
             <Route path="/crm/inventory/workshop-materials" element={<WorkshopMaterials />} />

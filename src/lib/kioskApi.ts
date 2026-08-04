@@ -21,6 +21,36 @@ export const fetchKioskOrder = async (orderNumber: string): Promise<KioskOrder> 
   return data.order;
 };
 
+export interface KioskUser {
+  id: number;
+  name: string;
+  role: string;
+  shiftFromCode: number | null;
+}
+
+export interface KioskShift {
+  isOpen: boolean;
+  openedAt: string | null;
+  workshopId: number | null;
+  shiftNumber: number | null;
+}
+
+/** Вход на терминал по личному QR-коду сотрудника (формат "{id}-{смена}-{дата}"). */
+export const kioskLoginByCode = async (
+  code: string
+): Promise<{ user: KioskUser; shift: KioskShift }> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'login_by_code', code }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Не удалось войти');
+  }
+  return data;
+};
+
 export const closeKioskOrder = async (
   orderId: number,
   packerId: number,
