@@ -42,6 +42,8 @@ export const printFboSticker = (order: Order): void => {
   const barcodeSvg = barcode ? svgBarcode(barcode) : '';
   const productName = order.material || order.product || '—';
   const stickerNumber = shortOrderNumber(order.orderNumber);
+  // На стикере OZON под штрихкодом печатается приставка "OZN" (сам штрихкод остаётся числовым).
+  const barcodeText = order.marketplace === 'OZON' ? `OZN${barcode}` : barcode;
 
   const html = `<!doctype html><html><head><meta charset="utf-8">
     <title>Стикер FBO — ${esc(order.orderNumber)}</title>
@@ -71,7 +73,7 @@ export const printFboSticker = (order: Order): void => {
       ${
         barcode
           ? `<div class="bc">${barcodeSvg}</div>
-             <div class="bcval">${esc(barcode)}</div>`
+             <div class="bcval">${esc(barcodeText)}</div>`
           : `<div class="nobc">Штрихкод товара не загружен из OZON</div>`
       }
       <div class="body">
