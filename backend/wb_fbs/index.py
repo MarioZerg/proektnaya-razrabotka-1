@@ -95,6 +95,50 @@ def wb_error_text(status_code, data):
     return str(data)
 
 
+# Список складов приёмки FBO WB отдаёт отдельный Supplies API (другой хост, не marketplace-api).
+WB_SUPPLIES_API_BASE = 'https://supplies-api.wildberries.ru'
+
+
+def wb_supplies_get(path, api_key):
+    """GET-запрос к WB Supplies API (склады FBO). Возвращает (status_code, parsed_json_or_text)."""
+    req = urllib.request.Request(WB_SUPPLIES_API_BASE + path, method='GET')
+    req.add_header('Authorization', api_key)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = r.read().decode('utf-8')
+            return r.status, (json.loads(data) if data else {})
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode('utf-8', errors='replace')
+        try:
+            detail = json.loads(detail)
+        except Exception:
+            pass
+        return e.code, detail
+    except Exception as e:
+        return 0, str(e)
+
+
+def handle_list_warehouses(api_key):
+    """Возвращает список складов приёмки FBO WildBerries для выпадающего списка."""
+    status_code, data = wb_supplies_get('/api/v1/warehouses', api_key)
+    if status_code == 401:
+        return _resp(400, {'error': 'WildBerries отклонил API-ключ (401). Проверьте ключ в настройках интеграции.'})
+    if status_code != 200 or not isinstance(data, list):
+        return _resp(502, {'error': f'WildBerries вернул ошибку ({status_code}): {wb_error_text(status_code, data)}'})
+    warehouses = [
+        {
+            'id': w.get('ID') if isinstance(w, dict) else None,
+            'name': (w.get('name') if isinstance(w, dict) else None) or '',
+            'address': (w.get('address') if isinstance(w, dict) else None) or '',
+        }
+        for w in data
+    ]
+    warehouses = [w for w in warehouses if w['name']]
+    warehouses.sort(key=lambda w: w['name'])
+    return _resp(200, {'warehouses': warehouses})
+
+
 def find_marketplace_item(cur, nm_id, skus, article):
     """Ищет товар в marketplace_items: сначала по wb_sku (nmId), затем по любому баркоду
     из skus, затем по sku (артикул продавца). Возвращает (material, width, height, name) или None."""
@@ -421,7 +465,7 @@ def handler(event: dict, context) -> dict:
     actor_name = body_data.get('actorName')
 
     if action not in ('sync_orders', 'create_supply', 'scan_order_to_supply',
-                      'remove_order_from_supply', 'deliver_supply'):
+                      'remove_order_from_supply', 'deliver_supply', 'list_warehouses'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -435,6 +479,8 @@ def handler(event: dict, context) -> dict:
         if not api_key:
             return _resp(400, {'error': 'Не указан API-ключ WildBerries. Добавьте его в разделе «Интеграции маркетплейсов».'})
 
+        if action == 'list_warehouses':
+            return handle_list_warehouses(api_key)
         if action == 'create_supply':
             return handle_create_supply(cur, conn, body_data, api_key, use_sandbox)
         if action == 'scan_order_to_supply':

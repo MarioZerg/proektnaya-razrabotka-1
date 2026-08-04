@@ -24,6 +24,7 @@ import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
 import SupplyFboFieldsCard from '@/components/crm/marketplaceSupplies/SupplyFboFieldsCard';
 import SupplyItemsSection from '@/components/crm/marketplaceSupplies/SupplyItemsSection';
 import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCard';
+import WbFboSupplyCard from '@/components/crm/marketplaceSupplies/WbFboSupplyCard';
 
 const MarketplaceSupplyShow = () => {
   const { id } = useParams();
@@ -249,7 +250,9 @@ const MarketplaceSupplyShow = () => {
           />
         )}
 
-        {supply.type === 'FBO' && !isOzonFbo && (
+        {isWbFbo && <WbFboSupplyCard supply={supply} onReload={load} isManager={isManager} />}
+
+        {supply.type === 'FBO' && !isOzonFbo && !isWbFbo && (
           <SupplyFboFieldsCard
             supply={supply}
             supplyNumber={supplyNumber}
