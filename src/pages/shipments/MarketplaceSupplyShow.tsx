@@ -209,6 +209,9 @@ const MarketplaceSupplyShow = () => {
   const nextStatus = isWbFbs && rawNextStatus !== 'Выполнена' ? undefined : rawNextStatus;
   const canEditItems = supply.status === 'Открытая' || supply.status === 'На сборке';
   const isOzonFbo = supply.marketplace === 'OZON' && supply.type === 'FBO';
+  // WB FBO: данные поставки заполняются вручную (у WB нет API заявок FBO), но грузоперевозку
+  // так же везём через Газельку — поэтому показываем тот же блок Газельки, что и у OZON FBO.
+  const isWbFbo = supply.marketplace === 'WB' && supply.type === 'FBO';
   // Права по ролям для OZON FBO: менеджер (и админ) управляет заявкой Газельки, синхронизацией
   // и загрузкой товарного состава в пошив. Кладовщик — только печать стикеров, и только после
   // того как менеджер выбрал заявку Газельки и синхронизировал данные (появился ID отгрузки).
@@ -246,10 +249,6 @@ const MarketplaceSupplyShow = () => {
           />
         )}
 
-        {isOzonFbo && (
-          <GazelkaShippingCard supply={supply} onReload={load} isManager={isManager} gazelkaReady={gazelkaReady} />
-        )}
-
         {supply.type === 'FBO' && !isOzonFbo && (
           <SupplyFboFieldsCard
             supply={supply}
@@ -266,6 +265,10 @@ const MarketplaceSupplyShow = () => {
             saving={saving}
             onSave={handleSaveFields}
           />
+        )}
+
+        {(isOzonFbo || isWbFbo) && (
+          <GazelkaShippingCard supply={supply} onReload={load} isManager={isManager} gazelkaReady={gazelkaReady} />
         )}
 
         {isWbFbs ? (
