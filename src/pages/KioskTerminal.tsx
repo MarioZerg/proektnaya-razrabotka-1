@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
@@ -9,8 +8,10 @@ import { kioskLoginByCode, type KioskUser, type KioskShift } from '@/lib/kioskAp
 import { openShift, closeShift } from '@/lib/shiftSessionsApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import { roleLabels } from '@/lib/roles';
-import type { Role } from '@/lib/roles';
+import KioskMenu, { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
+import KioskOrdersScreen from '@/components/crm/kiosk/KioskOrdersScreen';
+import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
+import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
 
 /** Терминал цеха (киоск). Полноэкранный экран для планшета в цехе: сотрудник входит
  * сканированием личного QR-кода с бейджа (формат "{id}-{смена}-{дата}"), пароль не нужен.
@@ -25,6 +26,7 @@ const KioskTerminal = () => {
   const [user, setUser] = useState<KioskUser | null>(null);
   const [shift, setShift] = useState<KioskShift | null>(null);
   const [shiftSaving, setShiftSaving] = useState(false);
+  const [screen, setScreen] = useState<KioskScreen>('menu');
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Сканер может ввести чистый код (1-1-20260804) или всю ссылку из QR. Причём если на
@@ -94,6 +96,7 @@ const KioskTerminal = () => {
   const handleLogout = () => {
     setUser(null);
     setShift(null);
+    setScreen('menu');
     setCode('');
     setTimeout(() => inputRef.current?.focus(), 0);
   };
@@ -148,82 +151,49 @@ const KioskTerminal = () => {
     }
   };
 
-  return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-6">
-      <div className="w-full max-w-xl space-y-6">
-        <div className="text-center">
-          <h1 className="text-4xl font-bold">Цех №{workshopId}</h1>
-          {user && <p className="mt-2 text-muted-foreground">Вы вошли в систему</p>}
+  // После входа сотрудник попадает в меню терминала с крупными плитками.
+  if (user) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="flex flex-wrap items-center gap-3 bg-emerald-100 px-4 py-3">
+          <p className="text-xl font-semibold text-emerald-900">Приветствую, {user.name}!</p>
+          <Badge variant="secondary" className="text-base">
+            Цех №{workshopId}
+          </Badge>
+          {shift?.isOpen ? (
+            <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Смена открыта</Badge>
+          ) : (
+            <Badge variant="secondary">Смена закрыта</Badge>
+          )}
+          <div className="ml-auto flex gap-2">
+            {screen !== 'menu' && (
+              <Button variant="outline" onClick={() => setScreen('menu')}>
+                <Icon name="ArrowLeft" size={16} className="mr-1.5" />
+                В меню
+              </Button>
+            )}
+            <Button variant="destructive" onClick={handleLogout}>
+              Выход
+            </Button>
+          </div>
         </div>
 
-        {!user ? (
-          <div className="flex flex-col items-center gap-6 py-6">
-            <Icon
-              name={loading ? 'Loader2' : 'ScanLine'}
-              size={72}
-              className={`text-muted-foreground ${loading ? 'animate-spin' : ''}`}
-            />
-            <p className="text-center text-2xl font-semibold">
-              {loading ? 'Проверяем код…' : 'Отсканируйте свой QR-код сотрудника'}
-            </p>
-            {/* Поле ввода скрыто: сканер печатает в него незаметно для сотрудника. */}
-            <input
-              ref={inputRef}
-              autoFocus
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              onBlur={() => setTimeout(() => inputRef.current?.focus(), 50)}
-              className="pointer-events-none absolute h-px w-px border-0 p-0 opacity-0"
-              aria-hidden="true"
-              tabIndex={-1}
-            />
-          </div>
-        ) : (
-          <Card className="border-border shadow-none">
-            <CardContent className="space-y-4 pt-6">
-              <div className="flex items-center gap-3">
-                <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-primary text-lg font-bold text-primary-foreground">
-                  {user.name
-                    .split(' ')
-                    .map((p) => p[0])
-                    .join('')
-                    .slice(0, 2)
-                    .toUpperCase()}
-                </span>
-                <div className="min-w-0">
-                  <p className="truncate text-xl font-bold">{user.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {roleLabels[user.role as Role] || user.role}
-                  </p>
-                </div>
-              </div>
+        <div className="p-4">
+          {screen === 'menu' && <KioskMenu onSelect={setScreen} />}
 
-              <div className="flex flex-wrap items-center gap-2 rounded-md border border-border p-3">
-                <span className="text-sm text-muted-foreground">Смена:</span>
-                {shift?.isOpen ? (
-                  <>
-                    <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Открыта</Badge>
-                    {shift.shiftNumber != null && (
-                      <span className="text-sm">Смена №{shift.shiftNumber}</span>
-                    )}
-                  </>
-                ) : (
-                  <Badge variant="secondary">Закрыта</Badge>
-                )}
-              </div>
-
+          {screen === 'shift' && (
+            <div className="mx-auto max-w-xl space-y-4">
               {shift?.isOpen ? (
                 <Button
                   size="lg"
                   variant="destructive"
-                  className="h-14 w-full text-base"
+                  className="h-20 w-full text-xl"
                   onClick={handleCloseShift}
                   disabled={shiftSaving}
                 >
                   <Icon
                     name={shiftSaving ? 'Loader2' : 'LogOut'}
-                    size={20}
+                    size={28}
                     className={`mr-2 ${shiftSaving ? 'animate-spin' : ''}`}
                   />
                   Закрыть смену
@@ -231,26 +201,72 @@ const KioskTerminal = () => {
               ) : (
                 <Button
                   size="lg"
-                  className="h-14 w-full bg-emerald-600 text-base text-white hover:bg-emerald-700"
+                  className="h-20 w-full bg-emerald-600 text-xl text-white hover:bg-emerald-700"
                   onClick={handleOpenShift}
                   disabled={shiftSaving}
                 >
                   <Icon
                     name={shiftSaving ? 'Loader2' : 'Play'}
-                    size={20}
+                    size={28}
                     className={`mr-2 ${shiftSaving ? 'animate-spin' : ''}`}
                   />
                   Открыть смену
                 </Button>
               )}
+            </div>
+          )}
 
-              <Button variant="outline" size="lg" className="w-full" onClick={handleLogout}>
-                <Icon name="LogOut" size={18} className="mr-2" />
-                Выйти
-              </Button>
-            </CardContent>
-          </Card>
-        )}
+          {screen === 'orders' && (
+            <div className="mx-auto max-w-xl">
+              <KioskOrdersScreen packerId={user.id} packerName={user.name} />
+            </div>
+          )}
+
+          {screen === 'reviews' && (
+            <div className="mx-auto max-w-3xl">
+              <KioskReviewsScreen />
+            </div>
+          )}
+
+          {screen === 'rolls' && (
+            <div className="mx-auto max-w-xl">
+              <KioskRollsScreen workshopId={Number(workshopId) || 1} />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-6">
+      <div className="w-full max-w-xl space-y-6">
+        <div className="text-center">
+          <h1 className="text-4xl font-bold">Цех №{workshopId}</h1>
+        </div>
+
+        <div className="flex flex-col items-center gap-6 py-6">
+          <Icon
+            name={loading ? 'Loader2' : 'ScanLine'}
+            size={72}
+            className={`text-muted-foreground ${loading ? 'animate-spin' : ''}`}
+          />
+          <p className="text-center text-2xl font-semibold">
+            {loading ? 'Проверяем код…' : 'Отсканируйте свой QR-код сотрудника'}
+          </p>
+          {/* Поле ввода скрыто: сканер печатает в него незаметно для сотрудника. */}
+          <input
+            ref={inputRef}
+            autoFocus
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+            onBlur={() => setTimeout(() => inputRef.current?.focus(), 50)}
+            className="pointer-events-none absolute h-px w-px border-0 p-0 opacity-0"
+            aria-hidden="true"
+            tabIndex={-1}
+          />
+        </div>
       </div>
     </div>
   );

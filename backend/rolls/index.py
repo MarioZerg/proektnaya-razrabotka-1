@@ -336,6 +336,41 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'remainingQuantity': new_remaining})}
 
+            # Закрытие рулона в цехе (терминал): рулон физически закончился. Остаток списывается
+            # полностью, а если ткани не хватило — дополнительно фиксируется недостача (метраж,
+            # которого не оказалось в рулоне). Рулон переводится в статус completed.
+            if action == 'close_roll':
+                item_id = body_data.get('id')
+                shortage = body_data.get('shortage') or 0
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                try:
+                    shortage = float(shortage)
+                except (TypeError, ValueError):
+                    shortage = 0.0
+
+                cur.execute(
+                    "SELECT remaining_quantity, status FROM rolls WHERE id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+                if row[1] == 'completed':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Рулон уже закрыт'})}
+
+                cur.execute(
+                    "UPDATE rolls SET remaining_quantity = 0, status = 'completed', completed_at = now(), "
+                    "shortage_quantity = %s WHERE id = %s",
+                    (shortage, int(item_id)),
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'shortage': shortage}),
+                }
+
             if action == 'delete':
                 item_id = body_data.get('id')
                 if not item_id:

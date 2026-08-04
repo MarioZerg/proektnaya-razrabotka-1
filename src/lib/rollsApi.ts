@@ -102,3 +102,7 @@ export const writeOffRoll = (id: number, quantity: number, orderId?: number) =>
   postAction({ action: 'write_off', id, quantity, orderId });
 
 export const deleteRoll = (id: number) => postAction({ action: 'delete', id });
+
+/** Закрытие рулона в цехе: рулон закончился. Если ткани не хватило — передаётся недостача. */
+export const closeRoll = (id: number, shortage = 0) =>
+  postAction({ action: 'close_roll', id, shortage });
