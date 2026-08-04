@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { kioskLoginByCode, type KioskUser, type KioskShift } from '@/lib/kioskApi';
+import { openShift, closeShift } from '@/lib/shiftSessionsApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { roleLabels } from '@/lib/roles';
@@ -24,6 +25,7 @@ const KioskTerminal = () => {
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState<KioskUser | null>(null);
   const [shift, setShift] = useState<KioskShift | null>(null);
+  const [shiftSaving, setShiftSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const loginWithCode = useCallback(
@@ -75,6 +77,56 @@ const KioskTerminal = () => {
     setShift(null);
     setCode('');
     setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  // Открытие/закрытие смены прямо на терминале: цех берётся из адреса киоска, смена — из
+  // персонального QR-кода сотрудника (или из его профиля, если в коде её нет).
+  const handleOpenShift = async () => {
+    if (!user) return;
+    setShiftSaving(true);
+    try {
+      const res = await openShift(user.id, Number(workshopId) || null, user.shiftFromCode ?? null);
+      playScanSound();
+      setShift({
+        isOpen: true,
+        openedAt: res.openedAt,
+        workshopId: res.workshopId,
+        shiftNumber: res.shiftNumber,
+      });
+      toast({
+        title: 'Смена открыта',
+        description: res.isLate ? 'Отмечено опоздание' : `Смена №${res.shiftNumber ?? '—'}`,
+      });
+    } catch (e) {
+      playScanErrorSound();
+      toast({
+        title: 'Не удалось открыть смену',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setShiftSaving(false);
+    }
+  };
+
+  const handleCloseShift = async () => {
+    if (!user) return;
+    setShiftSaving(true);
+    try {
+      await closeShift(user.id);
+      playScanSound();
+      setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null });
+      toast({ title: 'Смена закрыта' });
+    } catch (e) {
+      playScanErrorSound();
+      toast({
+        title: 'Не удалось закрыть смену',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setShiftSaving(false);
+    }
   };
 
   return (
@@ -144,6 +196,37 @@ const KioskTerminal = () => {
                   <Badge variant="secondary">Закрыта</Badge>
                 )}
               </div>
+
+              {shift?.isOpen ? (
+                <Button
+                  size="lg"
+                  variant="destructive"
+                  className="h-14 w-full text-base"
+                  onClick={handleCloseShift}
+                  disabled={shiftSaving}
+                >
+                  <Icon
+                    name={shiftSaving ? 'Loader2' : 'LogOut'}
+                    size={20}
+                    className={`mr-2 ${shiftSaving ? 'animate-spin' : ''}`}
+                  />
+                  Закрыть смену
+                </Button>
+              ) : (
+                <Button
+                  size="lg"
+                  className="h-14 w-full bg-emerald-600 text-base text-white hover:bg-emerald-700"
+                  onClick={handleOpenShift}
+                  disabled={shiftSaving}
+                >
+                  <Icon
+                    name={shiftSaving ? 'Loader2' : 'Play'}
+                    size={20}
+                    className={`mr-2 ${shiftSaving ? 'animate-spin' : ''}`}
+                  />
+                  Открыть смену
+                </Button>
+              )}
 
               <Button variant="outline" size="lg" className="w-full" onClick={handleLogout}>
                 <Icon name="LogOut" size={18} className="mr-2" />

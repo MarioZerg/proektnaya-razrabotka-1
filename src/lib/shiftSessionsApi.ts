@@ -66,6 +66,8 @@ export interface OpenShiftResult {
   openedAt: string;
   workshopId: number;
   shiftNumber: number;
+  /** Смена открыта позже начала рабочего дня — зафиксировано опоздание. */
+  isLate?: boolean;
 }
 
 export const openShift = (
