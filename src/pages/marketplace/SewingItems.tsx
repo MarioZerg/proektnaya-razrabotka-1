@@ -253,6 +253,7 @@ const SewingItems = () => {
           setPage={setPage}
           totalPages={totalPages}
           totalCount={filteredOrders.length}
+          canPrintSticker={user?.role === 'storekeeper' || user?.role === 'admin'}
         />
 
         <SewingItemDetailDialog

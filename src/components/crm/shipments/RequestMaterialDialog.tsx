@@ -50,7 +50,7 @@ const RequestMaterialDialog = ({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button onClick={onOpenCreate}>
+        <Button onClick={onOpenCreate} className="w-full sm:w-auto">
           <Icon name="Plus" size={16} className="mr-2" />
           Запросить материал
         </Button>

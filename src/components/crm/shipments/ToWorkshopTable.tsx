@@ -29,6 +29,7 @@ import type { Workshop } from '@/lib/workshopsApi';
 import type { AccessZone } from '@/lib/roles';
 import { formatDate, statusVariant, shiftLabel } from '@/components/crm/shipments/toWorkshopShared';
 import { formatQuantity } from '@/lib/formatQuantity';
+import ToWorkshopCards from '@/components/crm/shipments/ToWorkshopCards';
 
 interface ToWorkshopTableProps {
   loading: boolean;
@@ -86,7 +87,23 @@ const ToWorkshopTable = ({
       ) : shipments.length === 0 ? (
         <p className="text-sm text-muted-foreground">Заявок пока нет</p>
       ) : (
-        <div className="rounded-md border border-border">
+        <>
+        <div className="md:hidden">
+          <ToWorkshopCards
+            shipments={shipments}
+            workshops={workshops}
+            zone={zone}
+            userWorkshopId={userWorkshopId}
+            userShiftNumber={userShiftNumber}
+            expandedRolls={expandedRolls}
+            loadingRolls={loadingRolls}
+            onToggleRolls={onToggleRolls}
+            onOpenShipment={onOpenShipment}
+            onOpenReceiveDialog={onOpenReceiveDialog}
+            onSetDeleteId={onSetDeleteId}
+          />
+        </div>
+        <div className="hidden overflow-x-auto rounded-md border border-border md:block">
           <Table>
             <TableHeader>
               <TableRow className="bg-primary hover:bg-primary">
@@ -195,6 +212,7 @@ const ToWorkshopTable = ({
             </TableBody>
           </Table>
         </div>
+        </>
       )}
 
       <AlertDialog open={deleteId !== null} onOpenChange={(open) => !open && onSetDeleteId(null)}>

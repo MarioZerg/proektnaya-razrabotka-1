@@ -16,6 +16,8 @@ interface SewingItemsCardsProps {
   setPage: Dispatch<SetStateAction<number>>;
   totalPages: number;
   totalCount: number;
+  /** Печать стикера FBO доступна только кладовщику и админу. */
+  canPrintSticker?: boolean;
 }
 
 const statusBadgeClass: Record<string, string> = {
@@ -41,6 +43,7 @@ const SewingItemsCards = ({
   setPage,
   totalPages,
   totalCount,
+  canPrintSticker = false,
 }: SewingItemsCardsProps) => {
   if (loading) {
     return (
@@ -74,7 +77,7 @@ const SewingItemsCards = ({
             <CardContent className="space-y-2.5 pt-6">
               <p className="flex items-center gap-1.5 pr-6 font-mono-tech text-sm font-semibold">
                 {o.orderNumber} {o.orderType}
-                {o.orderType === 'FBO' && o.sewingStatus === 'Готовые' && (
+                {canPrintSticker && o.orderType === 'FBO' && o.sewingStatus === 'Готовые' && (
                   <button
                     type="button"
                     onClick={(e) => {

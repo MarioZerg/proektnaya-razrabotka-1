@@ -24,8 +24,10 @@ import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import { printFboSticker } from '@/lib/printFboSticker';
 
-/** Стикер FBO можно печатать для готового FBO-товара — прямо у номера заказа. */
-const canPrintFboSticker = (o: Order) => o.orderType === 'FBO' && o.sewingStatus === 'Готовые';
+/** Стикер FBO можно печатать для готового FBO-товара — прямо у номера заказа.
+ * Доступно только кладовщику и админу (передаётся флагом canPrint). */
+const canPrintFboSticker = (o: Order, canPrint: boolean) =>
+  canPrint && o.orderType === 'FBO' && o.sewingStatus === 'Готовые';
 
 /** Компактный список страниц с многоточиями: первая, последняя, текущая и соседние.
  * Например при 42 страницах и текущей 6-й: [1, '…', 5, 6, 7, '…', 42]. */
@@ -49,6 +51,8 @@ interface SewingItemsTableProps {
   setPage: Dispatch<SetStateAction<number>>;
   totalPages: number;
   totalCount?: number;
+  /** Печать стикера FBO доступна только кладовщику и админу. */
+  canPrintSticker?: boolean;
 }
 
 const SewingItemsTable = ({
@@ -59,6 +63,7 @@ const SewingItemsTable = ({
   setPage,
   totalPages,
   totalCount = 0,
+  canPrintSticker = false,
 }: SewingItemsTableProps) => {
   if (loading) {
     return (
@@ -80,6 +85,7 @@ const SewingItemsTable = ({
           setPage={setPage}
           totalPages={totalPages}
           totalCount={totalCount}
+          canPrintSticker={canPrintSticker}
         />
       </div>
 
@@ -113,7 +119,7 @@ const SewingItemsTable = ({
                 <TableCell className="font-medium">
                   <span className="flex items-center gap-1.5">
                     {o.orderNumber}
-                    {canPrintFboSticker(o) && (
+                    {canPrintFboSticker(o, canPrintSticker) && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <button
