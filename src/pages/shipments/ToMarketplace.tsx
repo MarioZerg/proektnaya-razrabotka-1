@@ -207,6 +207,10 @@ const ToMarketplace = () => {
               <SelectContent>
                 <SelectItem value="open">Открытые</SelectItem>
                 <SelectItem value="closed">Закрытые</SelectItem>
+                <SelectItem value="Открытая">Открытая</SelectItem>
+                <SelectItem value="На сборке">На сборке</SelectItem>
+                <SelectItem value="Отгрузка">Отгрузка</SelectItem>
+                <SelectItem value="Выполнена">Выполнена</SelectItem>
               </SelectContent>
             </Select>
           </div>
