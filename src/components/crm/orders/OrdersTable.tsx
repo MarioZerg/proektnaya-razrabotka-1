@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -8,8 +9,30 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+} from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
+
+const PAGE_SIZE = 50;
+
+/** Компактный список страниц с многоточиями: первая, последняя, текущая и соседние. */
+const buildPageList = (current: number, total: number): Array<number | 'ellipsis'> => {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: Array<number | 'ellipsis'> = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+  if (start > 2) pages.push('ellipsis');
+  for (let p = start; p <= end; p += 1) pages.push(p);
+  if (end < total - 1) pages.push('ellipsis');
+  pages.push(total);
+  return pages;
+};
 import {
   formatDate,
   marketplaceLogo,
@@ -44,6 +67,18 @@ interface OrdersTableProps {
 }
 
 const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) => {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE));
+
+  // При изменении набора заказов (фильтры, обновление) возвращаемся на первую страницу,
+  // а также не даём странице выйти за пределы диапазона.
+  useEffect(() => {
+    setPage((p) => Math.min(p, totalPages));
+  }, [totalPages]);
+  useEffect(() => {
+    setPage(1);
+  }, [orders.length]);
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -57,7 +92,10 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
     return <p className="text-sm text-muted-foreground">Заказов пока нет.</p>;
   }
 
+  const pagedOrders = orders.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   return (
+    <div className="space-y-4">
     <div className="rounded-md border border-border">
       <Table>
         <TableHeader>
@@ -76,7 +114,7 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {orders.map((o) => {
+          {pagedOrders.map((o) => {
             const isCancelled = o.status === 'Отменён';
             return (
             <TableRow key={o.id} className={isCancelled ? 'text-muted-foreground line-through opacity-70' : ''}>
@@ -128,6 +166,47 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
           })}
         </TableBody>
       </Table>
+    </div>
+
+      {totalPages > 1 && (
+        <Pagination>
+          <PaginationContent className="flex-wrap justify-center">
+            <PaginationItem>
+              <PaginationLink
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className={`cursor-pointer ${page === 1 ? 'pointer-events-none opacity-40' : ''}`}
+              >
+                <Icon name="ChevronLeft" size={16} />
+              </PaginationLink>
+            </PaginationItem>
+            {buildPageList(page, totalPages).map((p, i) =>
+              p === 'ellipsis' ? (
+                <PaginationItem key={`e${i}`}>
+                  <PaginationEllipsis />
+                </PaginationItem>
+              ) : (
+                <PaginationItem key={p}>
+                  <PaginationLink
+                    isActive={p === page}
+                    onClick={() => setPage(p)}
+                    className="cursor-pointer"
+                  >
+                    {p}
+                  </PaginationLink>
+                </PaginationItem>
+              )
+            )}
+            <PaginationItem>
+              <PaginationLink
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className={`cursor-pointer ${page === totalPages ? 'pointer-events-none opacity-40' : ''}`}
+              >
+                <Icon name="ChevronRight" size={16} />
+              </PaginationLink>
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      )}
     </div>
   );
 };
