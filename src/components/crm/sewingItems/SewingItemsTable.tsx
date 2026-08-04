@@ -12,6 +12,7 @@ import {
 import {
   Pagination,
   PaginationContent,
+  PaginationEllipsis,
   PaginationItem,
   PaginationLink,
 } from '@/components/ui/pagination';
@@ -25,6 +26,20 @@ import { printFboSticker } from '@/lib/printFboSticker';
 
 /** Стикер FBO можно печатать для готового FBO-товара — прямо у номера заказа. */
 const canPrintFboSticker = (o: Order) => o.orderType === 'FBO' && o.sewingStatus === 'Готовые';
+
+/** Компактный список страниц с многоточиями: первая, последняя, текущая и соседние.
+ * Например при 42 страницах и текущей 6-й: [1, '…', 5, 6, 7, '…', 42]. */
+const buildPageList = (current: number, total: number): Array<number | 'ellipsis'> => {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: Array<number | 'ellipsis'> = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+  if (start > 2) pages.push('ellipsis');
+  for (let p = start; p <= end; p += 1) pages.push(p);
+  if (end < total - 1) pages.push('ellipsis');
+  pages.push(total);
+  return pages;
+};
 
 interface SewingItemsTableProps {
   loading: boolean;
@@ -158,30 +173,36 @@ const SewingItemsTable = ({
       {totalPages > 1 && (
         <div className="hidden md:block">
           <Pagination>
-            <PaginationContent>
+            <PaginationContent className="flex-wrap justify-center">
               <PaginationItem>
                 <PaginationLink
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="cursor-pointer"
+                  className={`cursor-pointer ${page === 1 ? 'pointer-events-none opacity-40' : ''}`}
                 >
                   <Icon name="ChevronLeft" size={16} />
                 </PaginationLink>
               </PaginationItem>
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                <PaginationItem key={p}>
-                  <PaginationLink
-                    isActive={p === page}
-                    onClick={() => setPage(p)}
-                    className="cursor-pointer"
-                  >
-                    {p}
-                  </PaginationLink>
-                </PaginationItem>
-              ))}
+              {buildPageList(page, totalPages).map((p, i) =>
+                p === 'ellipsis' ? (
+                  <PaginationItem key={`e${i}`}>
+                    <PaginationEllipsis />
+                  </PaginationItem>
+                ) : (
+                  <PaginationItem key={p}>
+                    <PaginationLink
+                      isActive={p === page}
+                      onClick={() => setPage(p)}
+                      className="cursor-pointer"
+                    >
+                      {p}
+                    </PaginationLink>
+                  </PaginationItem>
+                )
+              )}
               <PaginationItem>
                 <PaginationLink
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  className="cursor-pointer"
+                  className={`cursor-pointer ${page === totalPages ? 'pointer-events-none opacity-40' : ''}`}
                 >
                   <Icon name="ChevronRight" size={16} />
                 </PaginationLink>
