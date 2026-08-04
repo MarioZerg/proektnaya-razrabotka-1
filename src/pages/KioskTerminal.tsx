@@ -28,12 +28,16 @@ const KioskTerminal = () => {
   const [shiftSaving, setShiftSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Сканер может ввести как чистый код (1-1-20260804), так и всю ссылку из QR
-  // (https://.../kiosk/1?barcode=1-1-20260804) — вытаскиваем код в обоих случаях.
+  // Сканер может ввести чистый код (1-1-20260804) или всю ссылку из QR. Причём если на
+  // терминале включена русская раскладка, латиница в ссылке превращается в кириллицу
+  // ("barcode=" → "ифксцщву="), а цифры остаются целыми. Поэтому ищем в строке сам код по
+  // шаблону "{id}-{смена}-{дата}" — это работает при любой раскладке и формате ввода.
   const extractCode = (raw: string): string => {
     const value = raw.trim();
-    const match = value.match(/barcode=([^&\s]+)/i);
-    if (match) return decodeURIComponent(match[1]);
+    const byPattern = value.match(/(\d{1,6}-\d{1,3}-\d{6,8})/);
+    if (byPattern) return byPattern[1];
+    const byParam = value.match(/barcode=([^&\s]+)/i);
+    if (byParam) return decodeURIComponent(byParam[1]);
     return value;
   };
 

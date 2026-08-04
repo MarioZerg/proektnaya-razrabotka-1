@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 import psycopg2
 
@@ -132,8 +133,13 @@ def handler(event: dict, context) -> dict:
             # QR с бейджа. Возвращаем сотрудника и состояние его смены.
             if action == 'login_by_code':
                 code = (body_data.get('code') or '').strip()
-                # Сканер мог передать полную ссылку из QR — берём значение barcode из неё.
-                if 'barcode=' in code:
+                # Сканер мог передать полную ссылку из QR, причём при русской раскладке на
+                # терминале латиница превращается в кириллицу, а цифры остаются целыми.
+                # Поэтому сначала ищем сам код по шаблону "{id}-{смена}-{дата}".
+                m = re.search(r'(\d{1,6}-\d{1,3}-\d{6,8})', code)
+                if m:
+                    code = m.group(1)
+                elif 'barcode=' in code:
                     code = code.split('barcode=')[1].split('&')[0].strip()
                 parts = code.split('-')
                 if len(parts) < 1 or not parts[0].isdigit():
