@@ -105,11 +105,11 @@ export const useSewingItemOrderDetail = ({
     }
   };
 
-  const handleCut = async (rollId?: number) => {
+  const handleCut = async (rollId?: number, hangerNumber?: number) => {
     if (!selectedOrder) return;
     setCutting(true);
     try {
-      await cutOrder(selectedOrder.id, rollId);
+      await cutOrder(selectedOrder.id, rollId, hangerNumber);
       toast({ title: 'Раскрой выполнен', description: 'Тюль списан, тесьму укажет швея перед стикеровкой' });
       setSelectedOrder({ ...selectedOrder, sewingStatus: 'Раскроено' });
       load();

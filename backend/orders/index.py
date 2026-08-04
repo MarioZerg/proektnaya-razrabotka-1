@@ -213,7 +213,7 @@ def handler(event: dict, context) -> dict:
                     "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                     "o.cutter_user_id, cu.full_name, o.hanger_number, "
                     "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, o.product_barcode, "
-                    "o.marketplace_item_id, o.product_ozon_sku "
+                    "o.marketplace_item_id, o.product_ozon_sku, u.last_hanger_number "
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
                     "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -306,6 +306,7 @@ def handler(event: dict, context) -> dict:
                     'productBarcode': row[26],
                     'marketplaceItemId': row[27],
                     'productOzonSku': row[28],
+                    'lastHangerNumber': row[29],
                     'materialUsage': materialUsage,
                     'requiredFabricMaterialId': required_fabric_material_id,
                     'requiredFabricMaterialName': required_fabric_material_name,
@@ -681,6 +682,13 @@ def handler(event: dict, context) -> dict:
             if action == 'cut':
                 item_id = body_data.get('id')
                 roll_id_chosen = body_data.get('rollId')
+                # Вешалка, выбранная закройщиком при раскрое (необязательно). Запоминается за
+                # закройщиком и подставляется по умолчанию в следующие заказы.
+                hanger_number = body_data.get('hangerNumber')
+                try:
+                    hanger_number = int(hanger_number) if hanger_number not in (None, '') else None
+                except (TypeError, ValueError):
+                    hanger_number = None
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
 
@@ -912,9 +920,23 @@ def handler(event: dict, context) -> dict:
                 # assigned_user_id — последний будет перезаписан на швею при take_order,
                 # а история "кто кроил" должна остаться видна на карточке товара.
                 cutter_sql = f", cutter_user_id = {order_assigned_user_id}" if order_assigned_user_id else ""
+                # Если закройщик выбрал вешалку — ставим её; иначе берём его последнюю вешалку
+                # (запоминается за закройщиком, чтобы не выбирать каждый раз заново).
+                effective_hanger = hanger_number
+                if effective_hanger is None and order_assigned_user_id:
+                    cur.execute("SELECT last_hanger_number FROM users WHERE id = %s", (order_assigned_user_id,))
+                    lh = cur.fetchone()
+                    effective_hanger = lh[0] if lh and lh[0] else None
+                hanger_sql = f", hanger_number = {int(effective_hanger)}" if effective_hanger else ""
                 cur.execute(
-                    f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now(){cutter_sql} WHERE id = {int(item_id)}"
+                    f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now(){cutter_sql}{hanger_sql} WHERE id = {int(item_id)}"
                 )
+                # Запоминаем выбранную вешалку за закройщиком для следующих заказов.
+                if hanger_number and order_assigned_user_id:
+                    cur.execute(
+                        "UPDATE users SET last_hanger_number = %s WHERE id = %s",
+                        (int(hanger_number), order_assigned_user_id),
+                    )
 
                 # Начисление закройщику: ставка за 1 пог.м. по материалу И ширине товара
                 # (salary_rates, role='cutter', material_id+width), берётся из тарифов цеха,

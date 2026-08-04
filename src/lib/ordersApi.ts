@@ -70,6 +70,8 @@ export interface OrderDetail extends Order {
   requiredTrimMaterialName: string | null;
   /** Товар справочника, к которому привязан заказ — определяет штрихкод для стикера FBO. */
   marketplaceItemId: number | null;
+  /** Последняя вешалка, выбранная закройщиком заказа — подставляется по умолчанию при раскрое. */
+  lastHangerNumber: number | null;
 }
 
 export const fetchOrders = async (): Promise<Order[]> => {
@@ -119,7 +121,8 @@ export const updateOrder = (
   }>
 ) => postAction({ action: 'update_order', id, ...fields });
 
-export const cutOrder = (id: number, rollId?: number) => postAction({ action: 'cut', id, rollId });
+export const cutOrder = (id: number, rollId?: number, hangerNumber?: number) =>
+  postAction({ action: 'cut', id, rollId, hangerNumber });
 
 export const deleteOrder = (id: number) => postAction({ action: 'delete_order', id });
 

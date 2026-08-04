@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -37,6 +37,7 @@ import type { Order, OrderDetail } from '@/lib/ordersApi';
 import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { Roll } from '@/lib/rollsApi';
+import { fetchHangers, type Hanger } from '@/lib/hangersApi';
 import { marketplaceLogo, formatDate, timeAgo, statusOptions } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import FboStickerCard from '@/components/crm/sewingItems/FboStickerCard';
@@ -55,7 +56,7 @@ interface SewingItemDetailDialogProps {
   onStatusChange: (status: string) => void;
   onAssignUser: (userId: string) => void;
   onAssignWorkshop: (workshopId: string) => void;
-  onCut: (rollId?: number) => void;
+  onCut: (rollId?: number, hangerNumber?: number) => void;
   readOnly?: boolean;
   isCutterView?: boolean;
   isSewerView?: boolean;
@@ -92,6 +93,24 @@ const SewingItemDetailDialog = ({
 }: SewingItemDetailDialogProps) => {
   const [selectedRollId, setSelectedRollId] = useState<string>('');
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const [hangers, setHangers] = useState<Hanger[]>([]);
+  const [selectedHanger, setSelectedHanger] = useState<string>('');
+
+  // Список вешалок нужен только закройщику при раскрое.
+  useEffect(() => {
+    if (isCutterView && dialogOpen) {
+      fetchHangers().then(setHangers).catch(() => setHangers([]));
+    }
+  }, [isCutterView, dialogOpen]);
+
+  // По умолчанию подставляем последнюю вешалку закройщика (запоминается за ним).
+  useEffect(() => {
+    if (dialogOpen && orderDetail?.lastHangerNumber != null) {
+      setSelectedHanger(String(orderDetail.lastHangerNumber));
+    } else if (!dialogOpen) {
+      setSelectedHanger('');
+    }
+  }, [dialogOpen, orderDetail?.lastHangerNumber]);
 
   const isAlreadyCut = selectedOrder?.sewingStatus === 'Раскроено';
   const isAlreadyStickering = selectedOrder?.sewingStatus === 'Стикеровка';
@@ -188,8 +207,33 @@ const SewingItemDetailDialog = ({
                     </Select>
                   </div>
 
+                  <div className="w-40 space-y-1.5">
+                    <Label>Вешалка</Label>
+                    <Select value={selectedHanger} onValueChange={setSelectedHanger} disabled={cutting || isAlreadyCut}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите вешалку" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {hangers.length === 0 ? (
+                          <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет вешалок</div>
+                        ) : (
+                          hangers.map((h) => (
+                            <SelectItem key={h.id} value={String(h.number)}>
+                              № {h.number}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   <Button
-                    onClick={() => onCut(selectedRollId ? Number(selectedRollId) : undefined)}
+                    onClick={() =>
+                      onCut(
+                        selectedRollId ? Number(selectedRollId) : undefined,
+                        selectedHanger ? Number(selectedHanger) : undefined
+                      )
+                    }
                     disabled={cutting || isAlreadyCut || !selectedRollId}
                   >
                     {cutting ? (

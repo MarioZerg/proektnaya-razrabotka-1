@@ -22,6 +22,7 @@ import GoodsWarehouse from "./pages/inventory/GoodsWarehouse";
 import GoodsPicking from "./pages/inventory/GoodsPicking";
 import ShelvesSettings from "./pages/settings/ShelvesSettings";
 import MaterialsSettings from "./pages/settings/MaterialsSettings";
+import HangersSettings from "./pages/settings/HangersSettings";
 import UsersSettings from "./pages/settings/UsersSettings";
 import MarketplaceOrders from "./pages/marketplace/MarketplaceOrders";
 import SewingItems from "./pages/marketplace/SewingItems";
@@ -66,6 +67,7 @@ const App = () => (
             <Route path="/crm/inventory/goods-picking" element={<GoodsPicking />} />
             <Route path="/crm/settings/shelves" element={<ShelvesSettings />} />
             <Route path="/crm/settings/materials" element={<MaterialsSettings />} />
+            <Route path="/crm/settings/hangers" element={<HangersSettings />} />
             <Route path="/crm/settings/users" element={<UsersSettings />} />
             <Route path="/crm/marketplace/orders" element={<MarketplaceOrders />} />
             <Route path="/crm/marketplace/sewing-items" element={<SewingItems />} />
