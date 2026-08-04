@@ -28,9 +28,7 @@ export const printFboSticker = (order: Order): void => {
   const barcodeSvg = barcode ? svgBarcode(barcode) : '';
   const productName = order.material || order.product || '—';
 
-  const win = window.open('', '_blank');
-  if (!win) return;
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8">
+  const html = `<!doctype html><html><head><meta charset="utf-8">
     <title>Стикер FBO — ${esc(order.orderNumber)}</title>
     <style>
       @page { size: 58mm 40mm; margin: 0; }
@@ -53,7 +51,7 @@ export const printFboSticker = (order: Order): void => {
       .right .cluster { font-weight: 700; margin-top: 1mm; }
       .foot { text-align: right; font-size: 7.5pt; font-weight: 700; margin-top: auto; }
       .nobc { font-size: 8pt; color: #b00; text-align: center; padding: 4mm 0; }
-    </style></head><body onload="window.print()">
+    </style></head><body>
     <div class="label">
       ${
         barcode
@@ -76,6 +74,41 @@ export const printFboSticker = (order: Order): void => {
         закройщик № ${order.cutterUserId ?? '—'} | швея № ${order.sewerUserId ?? '—'}
       </div>
     </div>
-    </body></html>`);
-  win.document.close();
+    </body></html>`;
+
+  // Печать через скрытый iframe внутри текущей страницы — без новых вкладок/окон.
+  // Диалог печати браузера открывается поверх страницы, после печати iframe удаляется.
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  document.body.appendChild(iframe);
+
+  const cleanup = () => {
+    setTimeout(() => iframe.remove(), 1000);
+  };
+
+  iframe.onload = () => {
+    const win = iframe.contentWindow;
+    if (!win) {
+      cleanup();
+      return;
+    }
+    win.onafterprint = cleanup;
+    win.focus();
+    win.print();
+  };
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    iframe.remove();
+    return;
+  }
+  doc.open();
+  doc.write(html);
+  doc.close();
 };
