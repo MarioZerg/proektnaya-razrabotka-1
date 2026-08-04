@@ -50,10 +50,11 @@ export const buildBarcodeValue = (data: PackingLabelData, boxNumber: number): st
 
 const svgBarcode = (value: string): string => {
   const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  // Узкие бары, чтобы длинная строка кода уместилась по ширине этикетки 75 мм.
   JsBarcode(el, value, {
     format: 'CODE128',
-    width: 1.6,
-    height: 70,
+    width: 1,
+    height: 45,
     displayValue: false,
     margin: 0,
   });
@@ -105,23 +106,31 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
   win.document.write(`<!doctype html><html><head><meta charset="utf-8">
     <title>Упаковочный лист — заявка ${esc(String(plan.id))}</title>
     <style>
+      /* Этикетка под термопринтер: физический размер страницы 75x120 мм, без полей —
+         так каждый короб печатается на отдельной наклейке. */
+      @page { size: 75mm 120mm; margin: 0; }
       * { box-sizing: border-box; }
-      body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #111; }
-      .label { width: 100%; padding: 24px; page-break-after: always; }
-      .head { display: flex; align-items: center; gap: 14px; border-bottom: 2px solid #111; padding-bottom: 8px; }
-      .logo { height: 46px; width: auto; }
-      .headtext { display: flex; flex: 1; justify-content: space-between; align-items: baseline; }
-      .title { font-size: 22px; font-weight: 700; }
-      .zayavka { font-size: 16px; }
-      .info { width: 100%; margin: 14px 0; border-collapse: collapse; font-size: 14px; }
-      .info td { padding: 4px 6px; vertical-align: top; }
-      .info td:first-child { color: #555; width: 45%; }
-      .barcode { text-align: center; margin: 16px 0 4px; }
-      .barcode svg { max-width: 100%; height: auto; }
-      .bcval { text-align: center; font-family: monospace; font-size: 11px; word-break: break-all; margin-bottom: 14px; }
-      .boxno { font-size: 15px; border-top: 1px solid #ccc; padding-top: 10px; }
-      .boxno span { color: #555; font-size: 12px; margin-left: 6px; }
-      @media print { .label { padding: 12px; } }
+      html, body { margin: 0; padding: 0; }
+      body { font-family: Arial, Helvetica, sans-serif; color: #000; }
+      .label {
+        width: 75mm; height: 120mm; padding: 3mm 3.5mm;
+        page-break-after: always; overflow: hidden;
+        display: flex; flex-direction: column;
+      }
+      .label:last-child { page-break-after: auto; }
+      .head { display: flex; align-items: center; gap: 2mm; border-bottom: 0.5mm solid #000; padding-bottom: 1.5mm; }
+      .logo { height: 8mm; width: auto; }
+      .headtext { display: flex; flex: 1; flex-direction: column; }
+      .title { font-size: 11pt; font-weight: 700; line-height: 1.1; }
+      .zayavka { font-size: 9pt; }
+      .info { width: 100%; margin: 2mm 0; border-collapse: collapse; font-size: 7.5pt; }
+      .info td { padding: 0.6mm 1mm; vertical-align: top; line-height: 1.15; }
+      .info td:first-child { color: #333; width: 42%; }
+      .barcode { text-align: center; margin-top: auto; }
+      .barcode svg { width: 100%; height: auto; }
+      .bcval { text-align: center; font-family: monospace; font-size: 6pt; word-break: break-all; margin: 1mm 0; }
+      .boxno { font-size: 9pt; font-weight: 700; text-align: center; border-top: 0.3mm solid #000; padding-top: 1.5mm; }
+      .boxno span { display: block; color: #333; font-size: 7pt; font-weight: 400; }
     </style></head><body onload="window.print()">${pages}</body></html>`);
   win.document.close();
 };
