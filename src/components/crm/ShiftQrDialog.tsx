@@ -52,17 +52,9 @@ const ShiftQrDialog = ({ open, onOpenChange }: ShiftQrDialogProps) => {
           {user && (
             <div className="max-w-full text-center">
               <p className="text-lg font-semibold">{user.name}</p>
-              <p className="font-mono-tech text-sm text-muted-foreground">{code}</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 Цех {user.workshopId ?? 1} · Смена {user.shiftNumber ?? '—'}
               </p>
-              {/* Ссылка видна текстом — если QR не читается телефоном, её можно открыть вручную */}
-              <a
-                href={kioskUrl}
-                className="mt-2 block break-all text-xs text-blue-600 underline"
-              >
-                {kioskUrl}
-              </a>
             </div>
           )}
         </div>

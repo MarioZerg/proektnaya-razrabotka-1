@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
-import { useToast } from '@/hooks/use-toast';
 import { fetchWorkshops } from '@/lib/workshopsApi';
 
 interface EmployeeKioskQrProps {
@@ -16,7 +15,6 @@ interface EmployeeKioskQrProps {
  * /kiosk/{цех}?barcode={id}-{смена}-{ГГГГММДД} — сканирование открывает терминал и сразу
  * авторизует сотрудника, пароль не нужен. */
 const EmployeeKioskQr = ({ employeeId, fullName, shiftNumber, workshop }: EmployeeKioskQrProps) => {
-  const { toast } = useToast();
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [workshopId, setWorkshopId] = useState<number>(1);
 
@@ -49,12 +47,10 @@ const EmployeeKioskQr = ({ employeeId, fullName, shiftNumber, workshop }: Employ
         body { font-family: Arial, Helvetica, sans-serif; text-align: center; padding: 10mm; }
         img { width: 60mm; height: 60mm; }
         .name { font-size: 16pt; font-weight: bold; margin-top: 4mm; }
-        .code { font-family: monospace; font-size: 11pt; margin-top: 2mm; color: #444; }
         .hint { font-size: 9pt; color: #666; margin-top: 3mm; }
       </style></head><body>
       <img src="${qrDataUrl}" alt="QR" />
       <div class="name">${fullName}</div>
-      <div class="code">${code}</div>
       <div class="hint">Поднесите QR к сканеру терминала в цехе</div>
       </body></html>`;
 
@@ -83,15 +79,6 @@ const EmployeeKioskQr = ({ employeeId, fullName, shiftNumber, workshop }: Employ
     doc.close();
   };
 
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      toast({ title: 'Код скопирован', description: code });
-    } catch {
-      toast({ title: 'Код сотрудника', description: code });
-    }
-  };
-
   return (
     <div className="space-y-2 rounded-md border border-border p-3">
       <div className="flex items-center gap-2 text-sm font-medium">
@@ -107,20 +94,13 @@ const EmployeeKioskQr = ({ employeeId, fullName, shiftNumber, workshop }: Employ
           </div>
         )}
         <div className="min-w-0 space-y-2">
-          <div className="font-mono-tech text-sm">{code}</div>
           <p className="text-xs text-muted-foreground">
             Цех {workshopId}, смена {shiftNumber ?? '—'}
           </p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={handlePrint} disabled={!qrDataUrl}>
-              <Icon name="Printer" size={14} className="mr-1.5" />
-              Печать бейджа
-            </Button>
-            <Button size="sm" variant="ghost" onClick={handleCopy}>
-              <Icon name="Copy" size={14} className="mr-1.5" />
-              Код
-            </Button>
-          </div>
+          <Button size="sm" variant="outline" onClick={handlePrint} disabled={!qrDataUrl}>
+            <Icon name="Printer" size={14} className="mr-1.5" />
+            Печать бейджа
+          </Button>
         </div>
       </div>
     </div>

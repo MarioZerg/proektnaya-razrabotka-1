@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
@@ -57,7 +56,7 @@ const KioskTerminal = () => {
         playScanErrorSound();
         toast({
           title: 'Не удалось войти',
-          description: `${e instanceof Error ? e.message : 'Ошибка'} (получено: ${value})`,
+          description: e instanceof Error ? e.message : undefined,
           variant: 'destructive',
         });
       } finally {
@@ -153,36 +152,33 @@ const KioskTerminal = () => {
     <div className="flex min-h-screen flex-col items-center justify-center bg-background p-6">
       <div className="w-full max-w-xl space-y-6">
         <div className="text-center">
-          <h1 className="text-3xl font-bold">Терминал цеха №{workshopId}</h1>
-          <p className="mt-2 text-muted-foreground">
-            {user ? 'Вы вошли в систему' : 'Отсканируйте свой QR-код с бейджа'}
-          </p>
+          <h1 className="text-4xl font-bold">Цех №{workshopId}</h1>
+          {user && <p className="mt-2 text-muted-foreground">Вы вошли в систему</p>}
         </div>
 
         {!user ? (
-          <Card className="border-primary/30 bg-primary/5 shadow-none">
-            <CardContent className="space-y-4 pt-6">
-              <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                <Icon name="ScanLine" size={28} />
-                <span className="text-lg">Поднесите QR-код к сканеру</span>
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  ref={inputRef}
-                  autoFocus
-                  placeholder="Код сотрудника"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                  disabled={loading}
-                  className="h-14 text-center font-mono-tech text-lg"
-                />
-                <Button size="lg" className="h-14" onClick={handleLogin} disabled={loading || !code.trim()}>
-                  {loading ? <Icon name="Loader2" size={20} className="animate-spin" /> : 'Войти'}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="flex flex-col items-center gap-6 py-6">
+            <Icon
+              name={loading ? 'Loader2' : 'ScanLine'}
+              size={72}
+              className={`text-muted-foreground ${loading ? 'animate-spin' : ''}`}
+            />
+            <p className="text-center text-2xl font-semibold">
+              {loading ? 'Проверяем код…' : 'Отсканируйте свой QR-код сотрудника'}
+            </p>
+            {/* Поле ввода скрыто: сканер печатает в него незаметно для сотрудника. */}
+            <input
+              ref={inputRef}
+              autoFocus
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+              onBlur={() => setTimeout(() => inputRef.current?.focus(), 50)}
+              className="pointer-events-none absolute h-px w-px border-0 p-0 opacity-0"
+              aria-hidden="true"
+              tabIndex={-1}
+            />
+          </div>
         ) : (
           <Card className="border-border shadow-none">
             <CardContent className="space-y-4 pt-6">
