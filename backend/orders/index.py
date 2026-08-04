@@ -213,7 +213,7 @@ def handler(event: dict, context) -> dict:
                     "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                     "o.cutter_user_id, cu.full_name, o.hanger_number, "
                     "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, o.product_barcode, "
-                    "o.marketplace_item_id "
+                    "o.marketplace_item_id, o.product_ozon_sku "
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
                     "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -305,6 +305,7 @@ def handler(event: dict, context) -> dict:
                     'packerUserName': row[25],
                     'productBarcode': row[26],
                     'marketplaceItemId': row[27],
+                    'productOzonSku': row[28],
                     'materialUsage': materialUsage,
                     'requiredFabricMaterialId': required_fabric_material_id,
                     'requiredFabricMaterialName': required_fabric_material_name,
@@ -319,7 +320,7 @@ def handler(event: dict, context) -> dict:
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                 "o.cutter_user_id, cu.full_name, o.hanger_number, "
                 "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
-                "o.ozon_status, o.ozon_posting_number, o.product_barcode "
+                "o.ozon_status, o.ozon_posting_number, o.product_barcode, o.product_ozon_sku "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -359,6 +360,7 @@ def handler(event: dict, context) -> dict:
                     'ozonStatus': r[26],
                     'ozonPostingNumber': r[27],
                     'productBarcode': r[28],
+                    'productOzonSku': r[29],
                 }
                 for r in cur.fetchall()
             ]
@@ -539,13 +541,13 @@ def handler(event: dict, context) -> dict:
                 # ищет marketplace_items именно по этим трём полям), а не только в текстовый
                 # product для отображения.
                 cur.execute(
-                    "SELECT name, material, width, height, barcode FROM marketplace_items WHERE id = %s",
+                    "SELECT name, material, width, height, barcode, ozon_sku FROM marketplace_items WHERE id = %s",
                     (int(marketplace_item_id),),
                 )
                 item_row = cur.fetchone()
                 if not item_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
-                item_name, item_material, item_width, item_height, item_barcode = item_row
+                item_name, item_material, item_width, item_height, item_barcode, item_ozon_sku = item_row
                 product = f"{item_material} {item_width}x{item_height}" if item_material and item_width and item_height else item_name
 
                 order_number_esc = order_number.replace("'", "''")
@@ -571,13 +573,14 @@ def handler(event: dict, context) -> dict:
                 width_sql = str(int(item_width)) if item_width else 'NULL'
                 height_sql = str(int(item_height)) if item_height else 'NULL'
                 barcode_sql = f"'{item_barcode.replace(chr(39), chr(39)*2)}'" if item_barcode else 'NULL'
+                ozon_sku_sql = f"'{item_ozon_sku.replace(chr(39), chr(39)*2)}'" if item_ozon_sku else 'NULL'
 
                 cur.execute(
                     f"INSERT INTO orders (order_number, marketplace, order_type, status, cluster, product, "
-                    f"quantity, source, material, width, height, marketplace_item_id, product_barcode) "
+                    f"quantity, source, material, width, height, marketplace_item_id, product_barcode, product_ozon_sku) "
                     f"VALUES ('{order_number_esc}', '{marketplace_esc}', '{order_type_esc}', 'Новый', "
                     f"'{cluster_esc}', '{product_esc}', 1, 'manual', {material_sql}, {width_sql}, {height_sql}, "
-                    f"{int(marketplace_item_id)}, {barcode_sql}) "
+                    f"{int(marketplace_item_id)}, {barcode_sql}, {ozon_sku_sql}) "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
@@ -643,15 +646,19 @@ def handler(event: dict, context) -> dict:
                     if mi_val in (None, ''):
                         fields.append("marketplace_item_id = NULL")
                         fields.append("product_barcode = NULL")
+                        fields.append("product_ozon_sku = NULL")
                     else:
-                        cur.execute("SELECT barcode FROM marketplace_items WHERE id = %s", (int(mi_val),))
+                        cur.execute("SELECT barcode, ozon_sku FROM marketplace_items WHERE id = %s", (int(mi_val),))
                         mi_row = cur.fetchone()
                         if not mi_row:
                             return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
                         bc = mi_row[0]
+                        oz = mi_row[1]
                         bc_sql = f"'{bc.replace(chr(39), chr(39)*2)}'" if bc else 'NULL'
+                        oz_sql = f"'{oz.replace(chr(39), chr(39)*2)}'" if oz else 'NULL'
                         fields.append(f"marketplace_item_id = {int(mi_val)}")
                         fields.append(f"product_barcode = {bc_sql}")
+                        fields.append(f"product_ozon_sku = {oz_sql}")
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 

@@ -50,7 +50,11 @@ const FboStickerCard = ({ order, orderDetail, onSaved }: FboStickerCardProps) =>
   );
 
   const selectedItemId = orderDetail?.marketplaceItemId ?? null;
-  const barcode = order.productBarcode || null;
+  const isOzon = order.marketplace === 'OZON';
+  // Для OZON на стикер идёт OZON SKU (OZN + ozon_sku) — по нему товар кладётся в поставку FBO.
+  const code = isOzon ? order.productOzonSku || null : order.productBarcode || null;
+  const codeLabel = isOzon ? 'Код OZON (для поставки)' : 'Штрихкод товара';
+  const codeDisplay = code ? (isOzon ? `OZN${code}` : code) : null;
   const selectedItem = selectedItemId ? items.find((i) => i.id === selectedItemId) ?? null : null;
 
   const handleSelect = async (value: string) => {
@@ -112,11 +116,11 @@ const FboStickerCard = ({ order, orderDetail, onSaved }: FboStickerCardProps) =>
           )}
         </div>
 
-        {barcode ? (
+        {code ? (
           <div className="flex items-center justify-between gap-2 rounded border border-border p-2">
             <div className="text-sm">
-              <div className="text-muted-foreground">Штрихкод товара</div>
-              <div className="font-mono-tech font-semibold">{barcode}</div>
+              <div className="text-muted-foreground">{codeLabel}</div>
+              <div className="font-mono-tech font-semibold">{codeDisplay}</div>
             </div>
             <Button size="sm" onClick={() => printFboSticker(order)}>
               <Icon name="Printer" size={14} className="mr-1.5" />
@@ -125,7 +129,9 @@ const FboStickerCard = ({ order, orderDetail, onSaved }: FboStickerCardProps) =>
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            Выберите товар, чтобы загрузить штрихкод и распечатать стикер FBO.
+            {selectedItemId
+              ? 'У выбранного товара не заполнен код OZON — добавьте его в справочнике товаров.'
+              : 'Выберите товар, чтобы загрузить код и распечатать стикер FBO.'}
           </p>
         )}
       </CardContent>

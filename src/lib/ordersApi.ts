@@ -46,6 +46,9 @@ export interface Order {
   /** Штрихкод товара маркетплейса (из справочника, фиксируется при импорте OZON FBO) —
    * печатается на стикере FBO сшитого товара. */
   productBarcode?: string | null;
+  /** OZON SKU товара (из справочника) — именно по нему товар добавляется в поставку FBO OZON,
+   * поэтому на стикере OZON печатается он (OZN + ozonSku), а не штрихкод. */
+  productOzonSku?: string | null;
 }
 
 export interface OrderMaterialUsage {
