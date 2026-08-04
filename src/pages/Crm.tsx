@@ -8,7 +8,6 @@ import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { fetchShipments, type Shipment } from '@/lib/shipmentsApi';
 import { updateEmployee } from '@/lib/usersApi';
-import { fetchMySalary } from '@/lib/salaryApi';
 import {
   fetchEmployeeShifts,
   fetchShiftCalendar,
@@ -22,7 +21,6 @@ import DashboardWidgetsGrid from '@/components/crm/dashboard/DashboardWidgetsGri
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
-import MySalaryCard from '@/components/crm/dashboard/MySalaryCard';
 import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 
 const CrmDashboard = () => {
@@ -106,23 +104,6 @@ const CrmDashboard = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myShiftStatus?.isOpen, myShiftStatus?.sessionWorkshopId, myShiftStatus?.sessionShiftNumber]);
-
-  // Реальный остаток к выплате (то же число, что и на вкладке "Финансы" у сотрудника) —
-  // сумма невыплаченных начислений (salary_accruals без paid_at), а не статичный оклад
-  // из профиля. Загружается отдельно от остальных данных дашборда.
-  const [mySalary, setMySalary] = useState<number | null>(null);
-  const [mySalaryLoading, setMySalaryLoading] = useState(true);
-
-  useEffect(() => {
-    if (isCleaner || !user?.id) {
-      setMySalaryLoading(false);
-      return;
-    }
-    setMySalaryLoading(true);
-    fetchMySalary(user.id)
-      .then((data) => setMySalary(data.balance))
-      .finally(() => setMySalaryLoading(false));
-  }, [isCleaner, user?.id]);
 
   const handleToggleShift = async (employee: EmployeeShiftStatus) => {
     setTogglingId(employee.id);
@@ -283,9 +264,6 @@ const CrmDashboard = () => {
                   needsShiftChoice={needsShiftChoice}
                   onToggle={handleToggleMyShift}
                 />
-              </div>
-              <div className="lg:col-span-2">
-                <MySalaryCard salary={mySalary} loading={mySalaryLoading} />
               </div>
             </>
           )

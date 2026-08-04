@@ -7,7 +7,6 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -27,6 +26,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import Icon from '@/components/ui/icon';
 import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
+import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
 import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
@@ -69,8 +69,10 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   const nav = navByRole[user.role] || [{ label: 'Главная', icon: 'LayoutDashboard', path: '/crm' }];
   const otherRoles = user.availableRoles.filter((r) => r !== user.role);
 
+  // Аккордеон: раскрытие одной группы сворачивает остальные, чтобы меню не разворачивалось
+  // всё сразу.
   const toggleGroup = (label: string) =>
-    setOpenGroups((prev) => ({ ...prev, [label]: !prev[label] }));
+    setOpenGroups((prev) => (prev[label] ? {} : { [label]: true }));
 
   const handleLogout = () => {
     logout();
@@ -97,11 +99,6 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   return (
     <SidebarProvider>
       <Sidebar>
-        <SidebarHeader className="px-3 py-4">
-          <div className="flex items-center gap-2.5 px-1">
-            <img src="/assets/megatul-logo.png" alt="МЕГАТЮЛЬ" className="h-6 w-auto" />
-          </div>
-        </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
             <SidebarGroupLabel>Навигация</SidebarGroupLabel>
@@ -254,9 +251,11 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
       <ShiftQrDialog open={qrOpen} onOpenChange={setQrOpen} />
 
       <main className="flex-1 overflow-x-hidden">
-        <div className="flex items-center gap-3 border-b border-border px-4 py-3 md:hidden">
+        <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
           <SidebarTrigger />
-          <img src="/assets/megatul-logo.png" alt="МЕГАТЮЛЬ" className="h-5 w-auto" />
+          <div className="ml-auto">
+            <HeaderSalaryWidget />
+          </div>
         </div>
         <div className="p-3 sm:p-6">{children}</div>
       </main>
