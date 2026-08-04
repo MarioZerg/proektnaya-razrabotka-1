@@ -129,7 +129,12 @@ const CrmDashboard = () => {
 
   // Сотруднику нужен выбор цеха/смены на дашборде, если он в гостевом режиме (shiftFree),
   // либо у него вообще нет штатной смены — тогда открытие требует явного выбора (см. backend).
-  const needsShiftChoice = !!(myShiftStatus?.shiftFree || (!isCleaner && !user?.workshopId) || (!isCleaner && !user?.shiftNumber));
+  // Кладовщик (как и уборщица) не привязан к цеху и смене — он открывает смену по личному
+  // графику из профиля, выбор цеха/смены ему не показываем.
+  const skipShiftBinding = isCleaner || user?.role === 'storekeeper';
+  const needsShiftChoice = !skipShiftBinding && !!(
+    myShiftStatus?.shiftFree || !user?.workshopId || !user?.shiftNumber
+  );
 
   const handleToggleMyShift = async (choice?: { workshopId: number; shiftNumber: number }) => {
     if (!user) return;
@@ -258,12 +263,25 @@ const CrmDashboard = () => {
             <LototronCard actorId={user?.id} />
           </>
         ) : canSeeShiftCalendar ? (
-          // Кладовщик и менеджер: график смен по календарю (какие смены сегодня работают).
-          <ShiftCalendarCard
-            selectedDate={selectedDate}
-            onSelectDate={setSelectedDate}
-            days={calendarDays}
-          />
+          // Кладовщик и менеджер: своя смена (открыть/закрыть по личному графику) и график
+          // смен по календарю — какие смены сегодня работают.
+          <>
+            <div className="lg:col-span-3">
+              <MyShiftCard
+                status={myShiftStatus}
+                userId={user?.id}
+                loading={shiftsLoading}
+                toggling={togglingId === user?.id}
+                needsShiftChoice={needsShiftChoice}
+                onToggle={handleToggleMyShift}
+              />
+            </div>
+            <ShiftCalendarCard
+              selectedDate={selectedDate}
+              onSelectDate={setSelectedDate}
+              days={calendarDays}
+            />
+          </>
         ) : (
           !isCleaner && (
             <>

@@ -243,11 +243,45 @@ def handler(event: dict, context) -> dict:
                 if cur.fetchone():
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'У сотрудника уже открыта смена'})}
 
-                cur.execute("SELECT workshop, shift_number, shift_free, shift_from FROM users WHERE id = %s", (int(user_id),))
+                cur.execute(
+                    "SELECT workshop, shift_number, shift_free, shift_from, role FROM users WHERE id = %s",
+                    (int(user_id),),
+                )
                 u_row = cur.fetchone()
                 if not u_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник не найден'})}
-                home_workshop_name, home_shift_number, shift_free, shift_from = u_row
+                home_workshop_name, home_shift_number, shift_free, shift_from, user_role = u_row
+
+                # Кладовщик не привязан ни к цеху, ни к смене: он открывает и закрывает смену
+                # по личному графику из профиля (shift_from). Цех/смену ему не требуем и не
+                # проверяем ни выходные, ни активность смен.
+                if user_role == 'storekeeper':
+                    is_late = False
+                    if shift_from:
+                        cur.execute(
+                            "SELECT (now()::time > %s::time)",
+                            (str(shift_from),),
+                        )
+                        lr = cur.fetchone()
+                        is_late = bool(lr and lr[0])
+                    cur.execute(
+                        "INSERT INTO shift_sessions (user_id, workshop_id, shift_number, is_late) "
+                        "VALUES (%s, NULL, NULL, %s) RETURNING id, opened_at",
+                        (int(user_id), is_late),
+                    )
+                    new_row = cur.fetchone()
+                    conn.commit()
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'id': new_row[0],
+                            'openedAt': new_row[1].isoformat() + 'Z',
+                            'workshopId': None,
+                            'shiftNumber': None,
+                            'isLate': is_late,
+                        }),
+                    }
 
                 home_workshop_id = None
                 home_workshop_active = False
