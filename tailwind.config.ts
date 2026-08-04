@@ -100,6 +100,10 @@ export default {
 				'float': {
 					'0%, 100%': { transform: 'translateY(0)' },
 					'50%': { transform: 'translateY(-14px)' }
+				},
+				'shimmer': {
+					'0%': { transform: 'translateX(-150%)' },
+					'18%, 100%': { transform: 'translateX(150%)' }
 				}
 			},
 			animation: {
@@ -107,7 +111,8 @@ export default {
 				'accordion-up': 'accordion-up 0.2s ease-out',
 				'fade-in': 'fade-in 0.6s ease-out both',
 				'scale-in': 'scale-in 0.5s ease-out both',
-				'float': 'float 6s ease-in-out infinite'
+				'float': 'float 6s ease-in-out infinite',
+				'shimmer': 'shimmer 7s ease-in-out infinite'
 			}
 		}
 	},

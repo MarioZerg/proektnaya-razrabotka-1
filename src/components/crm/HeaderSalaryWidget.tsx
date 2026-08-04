@@ -24,7 +24,9 @@ const HeaderSalaryWidget = () => {
   }, [user?.id]);
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5">
+    <div className="relative flex items-center gap-2 overflow-hidden rounded-lg border border-border bg-card px-3 py-1.5">
+      {/* Изредка переливающийся блик по виджету */}
+      <div className="pointer-events-none absolute inset-0 -skew-x-12 animate-shimmer bg-gradient-to-r from-transparent via-emerald-400/25 to-transparent" />
       <Icon name="Wallet" size={16} className="text-emerald-600" />
       <div className="leading-tight">
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
