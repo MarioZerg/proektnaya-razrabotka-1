@@ -50,11 +50,12 @@ export const buildBarcodeValue = (data: PackingLabelData, boxNumber: number): st
 
 const svgBarcode = (value: string): string => {
   const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  // Горизонтальный штрихкод, как в оригинальном упаковочном листе Газельки.
+  // Плотный высокий штрихкод, как в оригинальном упаковочном листе Газельки. Не растягиваем
+  // по ширине в вёрстке (сохраняем натуральные пропорции модулей), чтобы код уверенно бился.
   JsBarcode(el, value, {
     format: 'CODE128',
-    width: 1.4,
-    height: 60,
+    width: 1,
+    height: 90,
     displayValue: false,
     margin: 0,
   });
@@ -115,13 +116,14 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
       .sheet td.k { width: 42%; color: #000; }
       .sheet td.v { font-weight: 700; }
       .sheet td.v.big { font-size: 13pt; }
-      /* Строка с логотипом и штрихкодом — без внутренних отступов, во всю ширину. */
-      .codeRow td { padding: 1mm 2mm; }
+      /* Строка с логотипом и штрихкодом. Код занимает всю высоту ячейки, натуральной ширины
+         (без горизонтального растяжения) и центрируется — как в оригинале Газельки. */
+      .codeRow td { padding: 0.5mm 1mm; height: 22mm; }
       .logoCell { text-align: center; vertical-align: middle; }
-      .logo { height: 13mm; width: auto; }
-      .codeCell { vertical-align: middle; text-align: center; }
-      .barcode { line-height: 0; }
-      .barcode svg { display: block; width: 100%; height: 17mm; }
+      .logo { height: 14mm; width: auto; }
+      .codeCell { vertical-align: middle; text-align: center; padding: 0.5mm 1mm; }
+      .barcode { line-height: 0; display: inline-block; }
+      .barcode svg { display: block; height: 21mm; width: auto; max-width: 100%; }
     </style></head><body onload="window.print()">${pages}</body></html>`);
   win.document.close();
 };
