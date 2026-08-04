@@ -28,8 +28,18 @@ const KioskTerminal = () => {
   const [shiftSaving, setShiftSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Сканер может ввести как чистый код (1-1-20260804), так и всю ссылку из QR
+  // (https://.../kiosk/1?barcode=1-1-20260804) — вытаскиваем код в обоих случаях.
+  const extractCode = (raw: string): string => {
+    const value = raw.trim();
+    const match = value.match(/barcode=([^&\s]+)/i);
+    if (match) return decodeURIComponent(match[1]);
+    return value;
+  };
+
   const loginWithCode = useCallback(
-    async (value: string) => {
+    async (rawValue: string) => {
+      const value = extractCode(rawValue);
       if (!value) return;
       setCode('');
       setLoading(true);

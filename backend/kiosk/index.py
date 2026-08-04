@@ -132,6 +132,9 @@ def handler(event: dict, context) -> dict:
             # QR с бейджа. Возвращаем сотрудника и состояние его смены.
             if action == 'login_by_code':
                 code = (body_data.get('code') or '').strip()
+                # Сканер мог передать полную ссылку из QR — берём значение barcode из неё.
+                if 'barcode=' in code:
+                    code = code.split('barcode=')[1].split('&')[0].strip()
                 parts = code.split('-')
                 if len(parts) < 1 or not parts[0].isdigit():
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неверный код сотрудника'})}
