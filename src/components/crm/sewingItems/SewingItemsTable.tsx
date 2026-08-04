@@ -81,7 +81,6 @@ const SewingItemsTable = ({
               <TableHead className="text-primary-foreground">Высота</TableHead>
               <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
               <TableHead className="text-primary-foreground">Тип</TableHead>
-              <TableHead className="text-primary-foreground">Сотрудники</TableHead>
               <TableHead className="text-primary-foreground">Этапы</TableHead>
               <TableHead className="text-primary-foreground">Вешалка</TableHead>
               <TableHead className="text-primary-foreground">Создан</TableHead>
@@ -129,7 +128,6 @@ const SewingItemsTable = ({
                   </span>
                 </TableCell>
                 <TableCell>{o.orderType}</TableCell>
-                <TableCell>{o.assignedUserName || '—'}</TableCell>
                 <TableCell>
                   <OrderStagesDiagram order={o} />
                 </TableCell>
