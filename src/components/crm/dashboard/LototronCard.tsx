@@ -63,11 +63,11 @@ const LototronCard = ({ actorId }: LototronCardProps) => {
   const readyPlayers = players.filter((p) => p.canPlay);
 
   return (
-    <Card className="border-border shadow-none lg:col-span-2">
+    <Card className="border-amber-300 bg-amber-50/40 shadow-none lg:col-span-5">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Icon name="Coins" size={18} className="text-amber-500" />
-          Лототрон · Варики
+          Лототрон · Списание вариков
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
