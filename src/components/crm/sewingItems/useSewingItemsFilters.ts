@@ -58,11 +58,11 @@ export const useSewingItemsFilters = ({
     // (с именами), поэтому под этот фильтр не попадает.
     if (activeTab === 'На раскрое' && isCutter && o.assignedUserId !== userId) return false;
     if (activeTab === 'В работе' && isSewer && o.assignedUserId !== userId) return false;
-    // На вкладке "Готовые" каждый производственник видит ТОЛЬКО свои заказы по своему этапу:
-    // швея — что отшила сама (sewerUserId), закройщик — что раскроил сам (cutterUserId).
-    // Упаковщица видит все готовые (её этап — терминал стикеровки).
-    if (activeTab === 'Готовые' && isSewer && o.sewerUserId !== userId) return false;
-    if (activeTab === 'Готовые' && isCutter && o.cutterUserId !== userId) return false;
+    // На вкладках "Стикеровка" и "Готовые" каждый производственник видит ТОЛЬКО свои заказы
+    // по своему этапу: швея — что отшила сама (sewerUserId), закройщик — что раскроил сам
+    // (cutterUserId). Упаковщица видит всё (её этап — терминал стикеровки).
+    if ((activeTab === 'Готовые' || activeTab === 'Стикеровка') && isSewer && o.sewerUserId !== userId) return false;
+    if ((activeTab === 'Готовые' || activeTab === 'Стикеровка') && isCutter && o.cutterUserId !== userId) return false;
     return true;
   });
 
@@ -81,11 +81,11 @@ export const useSewingItemsFilters = ({
     if (status === 'В работе' && isSewer) {
       return orders.filter((o) => o.sewingStatus === status && o.assignedUserId === userId).length;
     }
-    // "Готовые" — считаем только свои: швея по sewerUserId, закройщик по cutterUserId.
-    if (status === 'Готовые' && isSewer) {
+    // "Стикеровка" и "Готовые" — считаем только свои: швея по sewerUserId, закройщик по cutterUserId.
+    if ((status === 'Готовые' || status === 'Стикеровка') && isSewer) {
       return orders.filter((o) => o.sewingStatus === status && o.sewerUserId === userId).length;
     }
-    if (status === 'Готовые' && isCutter) {
+    if ((status === 'Готовые' || status === 'Стикеровка') && isCutter) {
       return orders.filter((o) => o.sewingStatus === status && o.cutterUserId === userId).length;
     }
     return orders.filter((o) => o.sewingStatus === status).length;
