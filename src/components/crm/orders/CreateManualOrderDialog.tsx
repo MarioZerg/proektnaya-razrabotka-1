@@ -1,6 +1,5 @@
 import { Dispatch, SetStateAction } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -43,9 +42,7 @@ const CreateManualOrderDialog = ({
   const removeRow = (key: string) => setRows((r) => (r.length > 1 ? r.filter((row) => row.key !== key) : r));
 
   const canCreate =
-    !manualSaving &&
-    rows.length > 0 &&
-    rows.every((r) => r.orderNumber.trim() && r.marketplaceItemId);
+    !manualSaving && rows.length > 0 && rows.every((r) => r.marketplaceItemId);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -55,8 +52,8 @@ const CreateManualOrderDialog = ({
         </DialogHeader>
 
         <p className="text-xs text-muted-foreground">
-          Каждая строка — отдельный уникальный заказ (1 заказ = 1 заявка). Нажмите «+», чтобы
-          добавить ещё один заказ в этом же окне.
+          Каждая строка — отдельный уникальный заказ (1 заказ = 1 заявка). Номер заказа
+          присваивается автоматически. Нажмите «+», чтобы добавить ещё один заказ в этом же окне.
         </p>
 
         <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
@@ -74,15 +71,6 @@ const CreateManualOrderDialog = ({
                     <Icon name="X" size={14} />
                   </Button>
                 )}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Номер заявки</Label>
-                <Input
-                  placeholder="Например: 119956630-181"
-                  value={row.orderNumber}
-                  onChange={(e) => updateRow(row.key, { orderNumber: e.target.value })}
-                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">

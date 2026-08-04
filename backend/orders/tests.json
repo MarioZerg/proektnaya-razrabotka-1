@@ -20,11 +20,11 @@
       "expectedStatus": 400
     },
     {
-      "name": "Create manual order with duplicate number fails",
+      "name": "Create manual order without item fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "create_manual", "orderNumber": "119956630-172", "marketplace": "OZON", "orderType": "FBO", "marketplaceItemId": 5},
-      "expectedStatus": 409
+      "body": {"action": "create_manual", "marketplace": "OZON", "orderType": "FBO"},
+      "expectedStatus": 400
     },
     {
       "name": "Take stack without userId fails",

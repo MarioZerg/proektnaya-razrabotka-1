@@ -510,18 +510,29 @@ def handler(event: dict, context) -> dict:
                 }
 
             if action == 'create_manual':
-                order_number = (body_data.get('orderNumber') or '').strip()
                 marketplace = (body_data.get('marketplace') or '').strip()
                 order_type = (body_data.get('orderType') or 'FBO').strip()
                 cluster = (body_data.get('cluster') or '').strip()
                 marketplace_item_id = body_data.get('marketplaceItemId')
 
-                if not order_number or not marketplace or not marketplace_item_id:
+                if not marketplace or not marketplace_item_id:
                     return {
                         'statusCode': 400,
                         'headers': headers,
-                        'body': json.dumps({'error': 'Укажите номер заказа, маркетплейс и товар'}),
+                        'body': json.dumps({'error': 'Укажите маркетплейс и товар'}),
                     }
+
+                # Номер ручного заказа генерируется автоматически сквозным счётчиком в формате
+                # 00000-01, 00000-02, ... Берём максимальный уже выданный номер такого вида и
+                # увеличиваем на 1. Так пользователю не нужно вводить номер вручную.
+                cur.execute(
+                    "SELECT order_number FROM orders "
+                    "WHERE order_number ~ '^00000-[0-9]+$' "
+                    "ORDER BY (split_part(order_number, '-', 2))::int DESC LIMIT 1"
+                )
+                last_row = cur.fetchone()
+                next_seq = (int(last_row[0].split('-')[1]) + 1) if last_row else 1
+                order_number = f"00000-{next_seq:02d}"
 
                 # Товар выбирается из справочника "Товары на маркетплейсе" — берём его
                 # material/width/height, чтобы заказ сразу попал в очередь раскроя (конвейер

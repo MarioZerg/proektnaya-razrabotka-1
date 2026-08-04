@@ -95,7 +95,6 @@ const postAction = async (payload: Record<string, unknown>) => {
 };
 
 export const createManualOrder = (order: {
-  orderNumber: string;
   marketplace: Marketplace;
   orderType: OrderType;
   cluster?: string;

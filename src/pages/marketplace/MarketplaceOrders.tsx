@@ -200,26 +200,26 @@ const MarketplaceOrders = () => {
   // другая ошибка в одной строке не мешала создать остальные и была понятна пользователю.
   const handleManualCreate = async () => {
     setManualSaving(true);
-    const created: string[] = [];
+    let createdCount = 0;
     const failed: string[] = [];
     try {
-      for (const row of manualRows) {
-        if (!row.orderNumber.trim() || !row.marketplaceItemId) continue;
+      for (const [idx, row] of manualRows.entries()) {
+        if (!row.marketplaceItemId) continue;
         try {
+          // Номер заказа присваивается автоматически на сервере (сквозной счётчик 00000-01).
           await createManualOrder({
-            orderNumber: row.orderNumber.trim(),
             marketplace: row.marketplace,
             orderType: row.orderType,
             marketplaceItemId: row.marketplaceItemId,
           });
-          created.push(row.orderNumber.trim());
+          createdCount += 1;
         } catch (err) {
-          failed.push(`${row.orderNumber.trim()}: ${err instanceof Error ? err.message : 'ошибка'}`);
+          failed.push(`Заказ #${idx + 1}: ${err instanceof Error ? err.message : 'ошибка'}`);
         }
       }
       load();
-      if (created.length > 0) {
-        toast({ title: `Создано заказов: ${created.length}`, description: created.join(', ') });
+      if (createdCount > 0) {
+        toast({ title: `Создано заказов: ${createdCount}` });
       }
       if (failed.length > 0) {
         toast({

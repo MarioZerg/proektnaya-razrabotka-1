@@ -18,6 +18,20 @@ const svgBarcode = (value: string): string => {
 };
 
 /**
+ * Короткий номер для стикера. Импортные FBO-заказы OZON имеют номер вида
+ * "{номер поставки}-{артикул}-{позиция}" (напр. "2000061239378-vyal4_290-1") — он слишком
+ * длинный для стикера, поэтому показываем артикул+позицию (всё после первого дефиса:
+ * "vyal4_290-1"). Короткие/ручные номера оставляем как есть.
+ */
+const shortOrderNumber = (orderNumber: string): string => {
+  const firstDash = orderNumber.indexOf('-');
+  if (firstDash === -1) return orderNumber;
+  const rest = orderNumber.slice(firstDash + 1);
+  // Сокращаем только длинные составные номера поставки (>= 2 дефисов).
+  return orderNumber.split('-').length >= 3 ? rest : orderNumber;
+};
+
+/**
  * Печать стикера FBO сшитого товара (58×40 мм) — по формату OZON FBO:
  *   штрихкод товара (Code128) сверху во всю ширину, под ним текст штрихкода, слева название
  *   товара + ширина/высота, справа номер заказа и кластер (регион), внизу — № закройщика и швеи.
@@ -27,6 +41,7 @@ export const printFboSticker = (order: Order): void => {
   const barcode = order.productBarcode || '';
   const barcodeSvg = barcode ? svgBarcode(barcode) : '';
   const productName = order.material || order.product || '—';
+  const stickerNumber = shortOrderNumber(order.orderNumber);
 
   const html = `<!doctype html><html><head><meta charset="utf-8">
     <title>Стикер FBO — ${esc(order.orderNumber)}</title>
@@ -66,7 +81,7 @@ export const printFboSticker = (order: Order): void => {
           <div>высота ${order.height ?? '—'}</div>
         </div>
         <div class="right">
-          <div class="order">${esc(order.orderNumber)}</div>
+          <div class="order">${esc(stickerNumber)}</div>
           <div class="cluster">${esc(order.cluster)}</div>
         </div>
       </div>
