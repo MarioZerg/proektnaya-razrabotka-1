@@ -28,6 +28,9 @@ const KioskTerminal = () => {
   const [shift, setShift] = useState<KioskShift | null>(null);
   const [shiftSaving, setShiftSaving] = useState(false);
   const [screen, setScreen] = useState<KioskScreen>('menu');
+  // После скана QR сотрудник сначала попадает на экран смены и только потом, нажав
+  // «Войти в терминал», переходит в меню с плитками.
+  const [enteredMenu, setEnteredMenu] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Сканер может ввести чистый код (1-1-20260804) или всю ссылку из QR. Причём если на
@@ -98,6 +101,7 @@ const KioskTerminal = () => {
     setUser(null);
     setShift(null);
     setScreen('menu');
+    setEnteredMenu(false);
     setCode('');
     setTimeout(() => inputRef.current?.focus(), 0);
   };
@@ -139,6 +143,9 @@ const KioskTerminal = () => {
       await closeShift(user.id);
       playScanSound();
       setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null });
+      // Смена закрыта — возвращаем сотрудника на стартовый экран терминала.
+      setEnteredMenu(false);
+      setScreen('menu');
       toast({ title: 'Смена закрыта' });
     } catch (e) {
       playScanErrorSound();
@@ -151,6 +158,80 @@ const KioskTerminal = () => {
       setShiftSaving(false);
     }
   };
+
+  // Первый экран после скана QR: открытие смены. В меню терминала пускаем только после того,
+  // как сотрудник открыл смену и нажал «Войти в терминал».
+  if (user && !enteredMenu) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background p-6">
+        <KioskIdleTimer onTimeout={handleLogout} />
+        <div className="w-full max-w-xl space-y-6">
+          <div className="text-center">
+            <h1 className="text-3xl font-bold">Приветствую, {user.name}!</h1>
+            <p className="mt-2 text-lg text-muted-foreground">Цех №{workshopId}</p>
+          </div>
+
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-muted-foreground">Смена:</span>
+            {shift?.isOpen ? (
+              <Badge className="bg-emerald-600 text-base text-white hover:bg-emerald-600">
+                Открыта{shift.shiftNumber != null ? ` · №${shift.shiftNumber}` : ''}
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="text-base">
+                Закрыта
+              </Badge>
+            )}
+          </div>
+
+          {shift?.isOpen ? (
+            <>
+              <Button
+                size="lg"
+                className="h-20 w-full bg-blue-600 text-xl text-white hover:bg-blue-700"
+                onClick={() => setEnteredMenu(true)}
+              >
+                <Icon name="LayoutGrid" size={28} className="mr-2" />
+                Войти в терминал
+              </Button>
+              <Button
+                size="lg"
+                variant="destructive"
+                className="h-16 w-full text-lg"
+                onClick={handleCloseShift}
+                disabled={shiftSaving}
+              >
+                <Icon
+                  name={shiftSaving ? 'Loader2' : 'LogOut'}
+                  size={24}
+                  className={`mr-2 ${shiftSaving ? 'animate-spin' : ''}`}
+                />
+                Закрыть смену
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="lg"
+              className="h-20 w-full bg-emerald-600 text-xl text-white hover:bg-emerald-700"
+              onClick={handleOpenShift}
+              disabled={shiftSaving}
+            >
+              <Icon
+                name={shiftSaving ? 'Loader2' : 'Play'}
+                size={28}
+                className={`mr-2 ${shiftSaving ? 'animate-spin' : ''}`}
+              />
+              Открыть смену
+            </Button>
+          )}
+
+          <Button variant="outline" size="lg" className="h-14 w-full" onClick={handleLogout}>
+            Выход
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   // После входа сотрудник попадает в меню терминала с крупными плитками.
   if (user) {
