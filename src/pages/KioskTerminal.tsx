@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,6 +17,7 @@ import type { Role } from '@/lib/roles';
  * Номер цеха берётся из адреса: /kiosk/1 — терминал первого цеха. */
 const KioskTerminal = () => {
   const { workshopId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
 
   const [code, setCode] = useState('');
@@ -25,28 +26,43 @@ const KioskTerminal = () => {
   const [shift, setShift] = useState<KioskShift | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleLogin = async () => {
-    const value = code.trim();
-    if (!value) return;
-    setCode('');
-    setLoading(true);
-    try {
-      const data = await kioskLoginByCode(value);
-      playScanSound();
-      setUser(data.user);
-      setShift(data.shift);
-    } catch (e) {
-      playScanErrorSound();
-      toast({
-        title: 'Не удалось войти',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setLoading(false);
-      setTimeout(() => inputRef.current?.focus(), 0);
+  const loginWithCode = useCallback(
+    async (value: string) => {
+      if (!value) return;
+      setCode('');
+      setLoading(true);
+      try {
+        const data = await kioskLoginByCode(value);
+        playScanSound();
+        setUser(data.user);
+        setShift(data.shift);
+      } catch (e) {
+        playScanErrorSound();
+        toast({
+          title: 'Не удалось войти',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      } finally {
+        setLoading(false);
+        setTimeout(() => inputRef.current?.focus(), 0);
+      }
+    },
+    [toast]
+  );
+
+  const handleLogin = () => loginWithCode(code.trim());
+
+  // Вход по ссылке из персонального QR сотрудника: /kiosk/1?barcode=3-20-20250513
+  useEffect(() => {
+    const barcode = searchParams.get('barcode');
+    if (barcode && !user && !loading) {
+      loginWithCode(barcode.trim());
+      searchParams.delete('barcode');
+      setSearchParams(searchParams, { replace: true });
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useScannerAutoSubmit(code, handleLogin, !loading && !user);
 

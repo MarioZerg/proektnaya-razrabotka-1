@@ -23,6 +23,7 @@ import {
   workshopOptions,
   type CardFormState,
 } from '@/components/crm/users/usersShared';
+import EmployeeKioskQr from '@/components/crm/users/EmployeeKioskQr';
 
 interface EmployeeCardDialogProps {
   cardEmployee: Employee | null;
@@ -183,6 +184,13 @@ const EmployeeCardDialog = ({
                 </div>
               </div>
             </div>
+
+            <EmployeeKioskQr
+              employeeId={cardEmployee.id}
+              fullName={cardEmployee.fullName}
+              shiftNumber={cardEmployee.shiftNumber}
+              workshop={cardEmployee.workshop}
+            />
 
             <div className="space-y-1.5">
               <Label>Новый пароль</Label>
