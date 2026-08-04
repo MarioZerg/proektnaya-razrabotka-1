@@ -34,6 +34,8 @@ interface SewingItemsFiltersProps {
   /** Закройщик/швея видят только заказы, назначенные на себя — выбирать другого
    * сотрудника им незачем, поэтому фильтр сотрудников для них скрыт. */
   showEmployeeFilter?: boolean;
+  /** Закройщик работает только в своём цехе — выбор цеха ему не нужен, фильтр скрыт. */
+  showWorkshopFilter?: boolean;
 }
 
 const SewingItemsFilters = ({
@@ -55,6 +57,7 @@ const SewingItemsFilters = ({
   marketplaceFilter,
   setMarketplaceFilter,
   showEmployeeFilter = true,
+  showWorkshopFilter = true,
 }: SewingItemsFiltersProps) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   // Список цехов для фильтра — только активные (удалённые/выключенные цеха не должны
@@ -146,19 +149,21 @@ const SewingItemsFilters = ({
         </SelectContent>
       </Select>
 
-      <Select value={workshopFilter} onValueChange={setWorkshopFilter}>
-        <SelectTrigger>
-          <SelectValue placeholder="Все цеха" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">Все цеха</SelectItem>
-          {activeWorkshops.map((w) => (
-            <SelectItem key={w.id} value={String(w.id)}>
-              {w.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {showWorkshopFilter && (
+        <Select value={workshopFilter} onValueChange={setWorkshopFilter}>
+          <SelectTrigger>
+            <SelectValue placeholder="Все цеха" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все цеха</SelectItem>
+            {activeWorkshops.map((w) => (
+              <SelectItem key={w.id} value={String(w.id)}>
+                {w.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
 
       <Select value={marketplaceFilter} onValueChange={setMarketplaceFilter}>
         <SelectTrigger>

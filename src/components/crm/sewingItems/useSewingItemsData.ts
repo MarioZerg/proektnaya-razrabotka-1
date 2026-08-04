@@ -18,6 +18,9 @@ export const useSewingItemsData = () => {
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [loading, setLoading] = useState(true);
   const [printQrCuttingEnabled, setPrintQrCuttingEnabled] = useState(true);
+  // ID материалов (тканей), присущих цеху закройщика — фильтр тканей на конвейере для него
+  // ограничивается только этими материалами (из настроек цеха). null = ограничения нет.
+  const [allowedMaterialIds, setAllowedMaterialIds] = useState<number[] | null>(null);
 
   const isCutter = user?.role === 'cutter';
   const isSewer = user?.role === 'sewer';
@@ -64,20 +67,35 @@ export const useSewingItemsData = () => {
     load();
   }, []);
 
-  // Настройка "печать листа закройщика при взятии стека" — читается из настроек ТЕКУЩЕГО
-  // цеха закройщика (переопределение цеха или глобальное значение). По умолчанию включена.
+  // Настройка "печать листа закройщика при взятии стека" + список материалов цеха —
+  // читаются из настроек ТЕКУЩЕГО цеха закройщика. Ткани в фильтре ограничиваем материалами,
+  // присущими его цеху (allowedMaterials из настроек).
   useEffect(() => {
-    if (!isCutter || !effectiveWorkshopId) return;
+    if (!isCutter || !effectiveWorkshopId) {
+      setAllowedMaterialIds(null);
+      return;
+    }
     fetchWorkshopDetail(effectiveWorkshopId).then((w) => {
       setPrintQrCuttingEnabled((w.settings.print_qr_cutting?.value ?? w.settings.print_qr_cutting?.global ?? 'enabled') !== 'disabled');
+      setAllowedMaterialIds(w.allowedMaterials || []);
     });
   }, [isCutter, effectiveWorkshopId]);
+
+  // Итоговый список тканей для фильтра: у закройщика — только материалы его цеха
+  // (allowedMaterialIds), у остальных ролей — все ткани.
+  const visibleMaterials = useMemo(() => {
+    if (isCutter && allowedMaterialIds) {
+      const allowed = new Set(allowedMaterialIds);
+      return materials.filter((m) => allowed.has(m.id));
+    }
+    return materials;
+  }, [isCutter, allowedMaterialIds, materials]);
 
   return {
     user,
     orders,
     employees,
-    materials,
+    materials: visibleMaterials,
     workshops,
     rolls,
     loading,
