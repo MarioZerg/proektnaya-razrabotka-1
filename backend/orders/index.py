@@ -23,6 +23,78 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
+STATUS_ORDER = ['Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка', 'Готовые']
+
+
+def write_off_materials_once(cur, order_id, material, width, height):
+    """Списывает материалы заказа по FIFO ОДИН раз (для случая, когда админ двигает статус
+    заказа, а не проходит обычный конвейер раскроя). Если по заказу уже есть списания
+    (order_material_usage) — ничего не делает. При нехватке материала возвращает текст ошибки,
+    иначе None. Списывает все материалы товара (тюль + аксессуары) из доступных рулонов."""
+    # Уже списывали по этому заказу — расход идёт один раз (при откате статуса не трогаем).
+    cur.execute("SELECT 1 FROM order_material_usage WHERE order_id = %s LIMIT 1", (order_id,))
+    if cur.fetchone():
+        return None
+
+    if not (material and width and height):
+        return None
+
+    cur.execute(
+        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+        (material, width, height),
+    )
+    item_row = cur.fetchone()
+    if not item_row:
+        return None
+    cur.execute(
+        "SELECT material_id, quantity FROM marketplace_item_materials WHERE marketplace_item_id = %s",
+        (item_row[0],),
+    )
+    needed = cur.fetchall()
+    if not needed:
+        return None
+
+    shortages = []
+    write_offs = []
+    for material_id, qty_needed in needed:
+        qty_needed = float(qty_needed)
+        cur.execute(
+            "SELECT id, remaining_quantity FROM rolls "
+            "WHERE material_id = %s AND status IN ('in_storage', 'in_workshop') AND remaining_quantity > 0 "
+            "ORDER BY created_at ASC",
+            (material_id,),
+        )
+        available_rolls = cur.fetchall()
+        total_available = sum(float(r[1]) for r in available_rolls)
+        if total_available < qty_needed:
+            cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
+            mat_name, mat_unit = cur.fetchone()
+            shortages.append(f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, доступно {round(total_available, 2)} {mat_unit}")
+            continue
+        remaining_to_take = qty_needed
+        for roll_id, roll_remaining in available_rolls:
+            if remaining_to_take <= 0:
+                break
+            take = min(float(roll_remaining), remaining_to_take)
+            write_offs.append((roll_id, material_id, take))
+            remaining_to_take -= take
+
+    if shortages:
+        return 'Недостаточно материалов на складе: ' + '; '.join(shortages)
+
+    for roll_id, material_id, take in write_offs:
+        cur.execute("SELECT remaining_quantity FROM rolls WHERE id = %s", (roll_id,))
+        roll_remaining = float(cur.fetchone()[0])
+        new_remaining = roll_remaining - take
+        new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
+        cur.execute(f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {roll_id}")
+        cur.execute(
+            "INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) VALUES (%s, %s, %s, %s)",
+            (int(order_id), material_id, roll_id, take),
+        )
+    return None
+
+
 def get_setting(cur, workshop_id, key, default=None):
     """Читает значение настройки: сначала переопределение цеха (workshop_settings),
     если его нет — глобальное значение (system_settings), если и его нет — default.
@@ -597,6 +669,17 @@ def handler(event: dict, context) -> dict:
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
 
+                # Двигать заказ по статусам вручную (sewingStatus) может только администратор.
+                # Роль проверяем по actorId.
+                if 'sewingStatus' in body_data:
+                    actor_role = None
+                    if actor_id:
+                        cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                        r_row = cur.fetchone()
+                        actor_role = r_row[0] if r_row else None
+                    if actor_role != 'admin':
+                        return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Менять статус заказа может только администратор'})}
+
                 if 'orderNumber' in body_data:
                     new_number = str(body_data['orderNumber']).strip()
                     new_number_esc = new_number.replace("'", "''")
@@ -670,6 +753,20 @@ def handler(event: dict, context) -> dict:
                         "DELETE FROM salary_accruals WHERE order_id = %s AND type = 'cutter_cut' AND paid_at IS NULL",
                         (int(item_id),),
                     )
+
+                # Админ перевёл статус на "Раскроено" или дальше по конвейеру — материал
+                # расходуется ОДИН раз (по FIFO из доступных рулонов). При откате статуса назад
+                # материалы не трогаются и не возвращаются (расход разовый).
+                if 'sewingStatus' in body_data:
+                    new_status = body_data['sewingStatus']
+                    if new_status in STATUS_ORDER and STATUS_ORDER.index(new_status) >= STATUS_ORDER.index('Раскроено'):
+                        cur.execute("SELECT material, width, height FROM orders WHERE id = %s", (int(item_id),))
+                        mwh = cur.fetchone()
+                        if mwh:
+                            err = write_off_materials_once(cur, int(item_id), mwh[0], mwh[1], mwh[2])
+                            if err:
+                                conn.rollback()
+                                return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': err})}
 
                 log_action(
                     cur, actor_id, actor_name, 'update_order', 'order', item_id,

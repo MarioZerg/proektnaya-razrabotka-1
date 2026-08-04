@@ -35,6 +35,8 @@ interface SewingItemDetailDialogProps {
   readOnly?: boolean;
   isCutterView?: boolean;
   isSewerView?: boolean;
+  /** Блок «Действия» со сменой статуса, назначением сотрудника/цеха доступен только админу. */
+  isAdminView?: boolean;
   availableRolls?: Roll[];
   onSendToStickering?: (rollId?: number) => void;
   onCancelOrder?: () => void;
@@ -60,6 +62,7 @@ const SewingItemDetailDialog = ({
   readOnly = false,
   isCutterView = false,
   isSewerView = false,
+  isAdminView = false,
   availableRolls = [],
   onSendToStickering,
   onCancelOrder,
@@ -110,7 +113,10 @@ const SewingItemDetailDialog = ({
         />
         {selectedOrder && (
           <div className="space-y-4">
-            {!readOnly && (
+            {/* Раскрой/стикеровку выполняют закройщик и швея. Общий блок «Действия» со сменой
+                статуса и назначением сотрудника/цеха доступен только админу — остальные роли
+                (кладовщик, менеджер) двигать заказ по статусам не могут. */}
+            {!readOnly && (isCutterView || isSewerView || isAdminView) && (
               <SewingItemActionsSection
                 selectedOrder={selectedOrder}
                 orderDetail={orderDetail}

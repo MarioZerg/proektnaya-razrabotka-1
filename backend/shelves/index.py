@@ -61,6 +61,18 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
+            # Создавать и удалять полки может только администратор. Роль проверяем по actorId
+            # (в будущем кладовщик сможет только раскладывать товар по полкам, но не менять их).
+            if action in ('create', 'delete'):
+                actor_id = body_data.get('actorId')
+                actor_role = None
+                if actor_id:
+                    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                    row = cur.fetchone()
+                    actor_role = row[0] if row else None
+                if actor_role != 'admin':
+                    return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Полки может изменять только администратор'})}
+
             if action == 'create':
                 name = (body_data.get('name') or '').strip()
                 if not name:

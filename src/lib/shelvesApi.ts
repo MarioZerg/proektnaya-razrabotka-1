@@ -26,5 +26,7 @@ const postAction = async (payload: Record<string, unknown>) => {
   return data;
 };
 
-export const createShelf = (name: string) => postAction({ action: 'create', name });
-export const deleteShelf = (id: number) => postAction({ action: 'delete', id });
+export const createShelf = (name: string, actorId?: number) =>
+  postAction({ action: 'create', name, actorId });
+export const deleteShelf = (id: number, actorId?: number) =>
+  postAction({ action: 'delete', id, actorId });

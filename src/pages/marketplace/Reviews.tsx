@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import {
   fetchReviews,
   fetchReviewsRating,
@@ -25,6 +26,8 @@ const emptyRating: RatingResult = { cutter: [], sewer: [], packer: [] };
 
 const Reviews = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [reviews, setReviews] = useState<Review[]>([]);
   const [rating, setRating] = useState<RatingResult>(emptyRating);
   const [loading, setLoading] = useState(true);
@@ -101,14 +104,16 @@ const Reviews = () => {
               </>
             )}
           </div>
-          <Button variant="outline" onClick={handleSync} disabled={syncing}>
-            <Icon
-              name={syncing ? 'Loader2' : 'RefreshCw'}
-              size={16}
-              className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
-            />
-            {syncing ? 'Обновление…' : 'Обновить отзывы'}
-          </Button>
+          {isAdmin && (
+            <Button variant="outline" onClick={handleSync} disabled={syncing}>
+              <Icon
+                name={syncing ? 'Loader2' : 'RefreshCw'}
+                size={16}
+                className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
+              />
+              {syncing ? 'Обновление…' : 'Обновить отзывы'}
+            </Button>
+          )}
         </div>
 
         <EmployeeRatingCards rating={rating} />

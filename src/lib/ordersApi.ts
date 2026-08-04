@@ -118,6 +118,7 @@ export const updateOrder = (
     assignedUserId: number | null;
     workshopId: number | null;
     marketplaceItemId: number | null;
+    actorId: number;
   }>
 ) => postAction({ action: 'update_order', id, ...fields });
 

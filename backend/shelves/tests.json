@@ -13,11 +13,11 @@
       "expectedStatus": 200
     },
     {
-      "name": "Create shelf without name fails",
+      "name": "Create shelf without admin fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "create" },
-      "expectedStatus": 400
+      "body": { "action": "create", "name": "A-01" },
+      "expectedStatus": 403
     }
   ]
 }

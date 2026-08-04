@@ -12,10 +12,13 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import { fetchShelves, createShelf, deleteShelf, type Shelf } from '@/lib/shelvesApi';
 
 const ShelvesSettings = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [shelves, setShelves] = useState<Shelf[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
@@ -36,7 +39,7 @@ const ShelvesSettings = () => {
     if (!name.trim()) return;
     setSaving(true);
     try {
-      await createShelf(name.trim());
+      await createShelf(name.trim(), user?.id);
       setName('');
       load();
     } catch (e) {
@@ -48,7 +51,7 @@ const ShelvesSettings = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      await deleteShelf(id);
+      await deleteShelf(id, user?.id);
       load();
     } catch (e) {
       toast({ title: 'Не удалось удалить', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
@@ -60,19 +63,21 @@ const ShelvesSettings = () => {
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Полки на складе</h1>
 
-        <div className="flex gap-2">
-          <Input
-            placeholder="Название полки, например A-01"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-            className="max-w-xs"
-          />
-          <Button onClick={handleCreate} disabled={saving || !name.trim()}>
-            <Icon name="Plus" size={16} className="mr-1.5" />
-            Добавить
-          </Button>
-        </div>
+        {isAdmin && (
+          <div className="flex gap-2">
+            <Input
+              placeholder="Название полки, например A-01"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+              className="max-w-xs"
+            />
+            <Button onClick={handleCreate} disabled={saving || !name.trim()}>
+              <Icon name="Plus" size={16} className="mr-1.5" />
+              Добавить
+            </Button>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -99,9 +104,11 @@ const ShelvesSettings = () => {
                     <TableCell className="font-medium">{s.name}</TableCell>
                     <TableCell>{s.itemsCount}</TableCell>
                     <TableCell>
-                      <Button size="icon" variant="destructive" onClick={() => handleDelete(s.id)}>
-                        <Icon name="Trash2" size={14} />
-                      </Button>
+                      {isAdmin && (
+                        <Button size="icon" variant="destructive" onClick={() => handleDelete(s.id)}>
+                          <Icon name="Trash2" size={14} />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

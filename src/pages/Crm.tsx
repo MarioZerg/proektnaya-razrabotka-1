@@ -29,6 +29,9 @@ const CrmDashboard = () => {
   const isAdmin = user?.role === 'admin';
   const isCleaner = user?.role === 'cleaner';
   const canSeeWarehouseWidgets = user?.role === 'admin' || user?.role === 'storekeeper';
+  // Кладовщик и менеджер видят календарь-график смен (какие смены сегодня работают),
+  // но без управления сменами сотрудников — это только для админа.
+  const canSeeShiftCalendar = isAdmin || user?.role === 'storekeeper' || user?.role === 'manager';
 
   const [dataLoading, setDataLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -86,10 +89,10 @@ const CrmDashboard = () => {
   }, [user?.role]);
 
   useEffect(() => {
-    if (!isAdmin || !selectedDate) return;
+    if (!canSeeShiftCalendar || !selectedDate) return;
     const month = format(selectedDate, 'yyyy-MM');
     fetchShiftCalendar(month).then(setCalendarDays);
-  }, [isAdmin, selectedDate]);
+  }, [canSeeShiftCalendar, selectedDate]);
 
   const myShiftStatus = useMemo(
     () => employeeShifts.find((e) => e.id === user?.id) || null,
@@ -252,6 +255,13 @@ const CrmDashboard = () => {
               days={calendarDays}
             />
           </>
+        ) : canSeeShiftCalendar ? (
+          // Кладовщик и менеджер: график смен по календарю (какие смены сегодня работают).
+          <ShiftCalendarCard
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+            days={calendarDays}
+          />
         ) : (
           !isCleaner && (
             <>

@@ -96,11 +96,6 @@ const WorkshopMaterials = () => {
                           className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''}`}
                         >
                           {col.shiftLabel}
-                          {isActiveColumn(col) && (
-                            <Badge variant="outline" className="ml-1.5 text-[10px]">
-                              Работает
-                            </Badge>
-                          )}
                         </TableHead>
                       ))}
                       <TableHead className="w-48 text-center">Итого</TableHead>

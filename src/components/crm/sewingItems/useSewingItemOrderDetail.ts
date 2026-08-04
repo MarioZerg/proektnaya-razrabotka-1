@@ -18,6 +18,8 @@ interface UseSewingItemOrderDetailArgs {
   rolls: Roll[];
   effectiveWorkshopId: number | null;
   effectiveShiftNumber: number | null;
+  /** Текущий пользователь — нужен для проверки прав на смену статуса (только админ). */
+  actorId?: number;
 }
 
 /** Диалог детальной карточки заказа: открытие/загрузка деталей и все действия над
@@ -29,6 +31,7 @@ export const useSewingItemOrderDetail = ({
   rolls,
   effectiveWorkshopId,
   effectiveShiftNumber,
+  actorId,
 }: UseSewingItemOrderDetailArgs) => {
   const { toast } = useToast();
 
@@ -94,7 +97,7 @@ export const useSewingItemOrderDetail = ({
     if (!selectedOrder) return;
     setSaving(true);
     try {
-      await updateOrder(selectedOrder.id, { sewingStatus: status as SewingStatus });
+      await updateOrder(selectedOrder.id, { sewingStatus: status as SewingStatus, actorId });
       toast({ title: 'Статус обновлён' });
       setSelectedOrder({ ...selectedOrder, sewingStatus: status });
       load();

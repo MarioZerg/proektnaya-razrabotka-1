@@ -98,6 +98,7 @@ const SewingItems = () => {
     rolls,
     effectiveWorkshopId,
     effectiveShiftNumber,
+    actorId: user?.id,
   });
 
   const {
@@ -273,6 +274,7 @@ const SewingItems = () => {
           readOnly={isReadOnlyTab}
           isCutterView={isCutter}
           isSewerView={isSewer}
+          isAdminView={user?.role === 'admin'}
           availableRolls={isSewer ? myTrimRolls : myFabricRolls}
           onSendToStickering={handleSendToStickering}
           onCancelOrder={handleCancelOrder}
