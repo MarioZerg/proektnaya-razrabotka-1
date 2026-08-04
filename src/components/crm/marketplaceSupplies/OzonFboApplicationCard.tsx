@@ -1,16 +1,6 @@
-import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { formatDateTime } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
@@ -21,74 +11,30 @@ const deliveryMethodLabels: Record<string, string> = {
   cross_docking: 'Кросс-докинг',
 };
 
-interface OzonFboEditFields {
-  gazelkaId: string;
-  shipToGazelkaAt: string;
-  gazelkaPickup: boolean;
-}
-
 interface OzonFboApplicationCardProps {
   supply: SupplyDetail;
-  canEdit: boolean;
-  saving: boolean;
-  onSave: (fields: OzonFboEditFields) => Promise<void>;
+  /** Загрузка товарного состава в пошив — доступна только менеджеру (передаётся, если разрешено). */
   onImportComposition?: () => void;
   importing?: boolean;
 }
 
-const OzonFboApplicationCard = ({
-  supply,
-  canEdit,
-  saving,
-  onSave,
-  onImportComposition,
-  importing,
-}: OzonFboApplicationCardProps) => {
-  const [editOpen, setEditOpen] = useState(false);
-  const [gazelkaId, setGazelkaId] = useState('');
-  const [shipToGazelkaAt, setShipToGazelkaAt] = useState('');
-  const [gazelkaPickup, setGazelkaPickup] = useState(false);
-
-  const openEdit = () => {
-    setGazelkaId(supply.gazelkaId || '');
-    setShipToGazelkaAt(supply.shipToGazelkaAt ? supply.shipToGazelkaAt.slice(0, 10) : '');
-    setGazelkaPickup(supply.gazelkaPickup);
-    setEditOpen(true);
-  };
-
-  const handleSave = async () => {
-    await onSave({
-      gazelkaId,
-      shipToGazelkaAt: shipToGazelkaAt ? `${shipToGazelkaAt}T00:00:00` : '',
-      gazelkaPickup,
-    });
-    setEditOpen(false);
-  };
-
+const OzonFboApplicationCard = ({ supply, onImportComposition, importing }: OzonFboApplicationCardProps) => {
   const closedBoxes = supply.boxes.filter((b) => b.closedAt).length;
 
   return (
     <Card className="border-border shadow-none">
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base">Данные поставки OZON FBO</CardTitle>
-        <div className="flex gap-2">
-          {supply.ozonSupplyOrderId && onImportComposition && (
-            <Button size="sm" onClick={onImportComposition} disabled={importing}>
-              <Icon
-                name={importing ? 'Loader2' : 'Download'}
-                size={14}
-                className={`mr-1.5 ${importing ? 'animate-spin' : ''}`}
-              />
-              {importing ? 'Загрузка...' : 'Загрузить товарный состав'}
-            </Button>
-          )}
-          {canEdit && (
-            <Button variant="outline" size="sm" onClick={openEdit}>
-              <Icon name="Pencil" size={14} className="mr-1.5" />
-              Редактировать
-            </Button>
-          )}
-        </div>
+        {supply.ozonSupplyOrderId && onImportComposition && (
+          <Button size="sm" onClick={onImportComposition} disabled={importing}>
+            <Icon
+              name={importing ? 'Loader2' : 'Download'}
+              size={14}
+              className={`mr-1.5 ${importing ? 'animate-spin' : ''}`}
+            />
+            {importing ? 'Загрузка...' : 'Загрузить товарный состав'}
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         <div className="flex items-center justify-between border-b border-border pb-2">
@@ -160,38 +106,6 @@ const OzonFboApplicationCard = ({
           )}
         </div>
       </CardContent>
-
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Редактирование заявки OZON FBO</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>ID отгрузки в Газельку</Label>
-              <Input value={gazelkaId} onChange={(e) => setGazelkaId(e.target.value)} placeholder="Номер рейса развоза" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Дата отгрузки в Газельку</Label>
-              <Input type="date" value={shipToGazelkaAt} onChange={(e) => setShipToGazelkaAt(e.target.value)} />
-            </div>
-            <div className="flex items-center justify-between rounded-md border border-border p-3">
-              <Label htmlFor="gazelka-pickup" className="cursor-pointer">
-                Забор Газелькой
-              </Label>
-              <Switch id="gazelka-pickup" checked={gazelkaPickup} onCheckedChange={setGazelkaPickup} />
-            </div>
-            {gazelkaPickup && (
-              <p className="text-xs text-muted-foreground">
-                На заявке будет отмечено: «Забор Газелькой со склада»
-              </p>
-            )}
-            <Button className="w-full" onClick={handleSave} disabled={saving}>
-              {saving ? 'Сохранение...' : 'Сохранить'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </Card>
   );
 };

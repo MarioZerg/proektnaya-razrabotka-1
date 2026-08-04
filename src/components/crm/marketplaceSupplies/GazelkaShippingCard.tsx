@@ -21,12 +21,17 @@ import { printGazelkaLabels } from '@/lib/gazelkaPackingLabel';
 interface GazelkaShippingCardProps {
   supply: SupplyDetail;
   onReload: () => void;
+  /** Менеджер (или админ): может выбирать заявку Газельки, синхронизировать данные, вводить коды. */
+  isManager: boolean;
+  /** Данные Газельки заполнены менеджером (выбрана заявка + синхронизирован ID отгрузки) —
+   * только тогда кладовщику доступна печать стикеров. */
+  gazelkaReady: boolean;
 }
 
 /** Грузоперевозка через Газельку: менеджер вручную выбирает заявку Газельки под поставку,
  * после чего можно распечатать упаковочные листы коробов — прямо в нашей системе (штрихкод
  * Code128) либо ссылкой на печать в ЛК Газельки. */
-const GazelkaShippingCard = ({ supply, onReload }: GazelkaShippingCardProps) => {
+const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: GazelkaShippingCardProps) => {
   const { toast } = useToast();
   const [plans, setPlans] = useState<GazelkaPlan[]>([]);
   const [loading, setLoading] = useState(false);
@@ -108,8 +113,9 @@ const GazelkaShippingCard = ({ supply, onReload }: GazelkaShippingCardProps) => 
     <Card className="border-border shadow-none">
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base">Грузоперевозка Газелька</CardTitle>
-        {supply.gazelkaPlanId && (
-          <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
+          {/* Синхронизация — только менеджер */}
+          {isManager && supply.gazelkaPlanId && (
             <Button size="sm" variant="secondary" onClick={handleSyncFromGazelka} disabled={syncing || !linkedPlan}>
               <Icon
                 name={syncing ? 'Loader2' : 'RefreshCw'}
@@ -118,59 +124,74 @@ const GazelkaShippingCard = ({ supply, onReload }: GazelkaShippingCardProps) => 
               />
               Синхронизировать данные
             </Button>
-            <Button
-              size="sm"
-              className="bg-[#004cdb] text-white hover:bg-[#003bb0]"
-              onClick={handlePrintOurLabels}
-              disabled={!linkedPlan}
-            >
-              <Icon name="Printer" size={14} className="mr-1.5" />
-              Печать стикеров
-            </Button>
-            <Button size="sm" variant="outline" asChild>
-              <a href={gazelkaPrintUrl(supply.gazelkaPlanId)} target="_blank" rel="noreferrer">
-                <Icon name="ExternalLink" size={14} className="mr-1.5" />
-                В ЛК Газельки
-              </a>
-            </Button>
-          </div>
-        )}
+          )}
+          {/* Печать стикеров — доступна только после того, как менеджер синхронизировал данные */}
+          {gazelkaReady && supply.gazelkaPlanId && (
+            <>
+              <Button
+                size="sm"
+                className="bg-[#004cdb] text-white hover:bg-[#003bb0]"
+                onClick={handlePrintOurLabels}
+                disabled={!linkedPlan}
+              >
+                <Icon name="Printer" size={14} className="mr-1.5" />
+                Печать стикеров
+              </Button>
+              <Button size="sm" variant="outline" asChild>
+                <a href={gazelkaPrintUrl(supply.gazelkaPlanId)} target="_blank" rel="noreferrer">
+                  <Icon name="ExternalLink" size={14} className="mr-1.5" />
+                  В ЛК Газельки
+                </a>
+              </Button>
+            </>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="space-y-1.5">
-          <Label>Заявка Газельки для этой поставки</Label>
-          <div className="flex flex-wrap gap-2">
-            <Select value={selected} onValueChange={setSelected} disabled={loading}>
-              <SelectTrigger className="w-full sm:w-[360px]">
-                <SelectValue placeholder={loading ? 'Загрузка заявок Газельки...' : '— Выберите заявку —'} />
-              </SelectTrigger>
-              <SelectContent>
-                {error ? (
-                  <div className="px-2 py-1.5 text-sm text-destructive">{error}</div>
-                ) : plans.length === 0 && !loading ? (
-                  <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет заявок в Газельке</div>
-                ) : (
-                  plans.map((p) => (
-                    <SelectItem key={p.id} value={String(p.id)}>
-                      №{p.id} · {p.deliveryAddress || '—'} · {p.deliveryDate ? formatDate(p.deliveryDate) : ''} ·{' '}
-                      {p.boxes ?? 0} кор.
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
-            <Button
-              onClick={handleSave}
-              disabled={saving || String(supply.gazelkaPlanId ?? '') === selected}
-            >
-              {saving ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить'}
-            </Button>
+        {/* Выбор заявки Газельки — только менеджер */}
+        {isManager && (
+          <div className="space-y-1.5">
+            <Label>Заявка Газельки для этой поставки</Label>
+            <div className="flex flex-wrap gap-2">
+              <Select value={selected} onValueChange={setSelected} disabled={loading}>
+                <SelectTrigger className="w-full sm:w-[360px]">
+                  <SelectValue placeholder={loading ? 'Загрузка заявок Газельки...' : '— Выберите заявку —'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {error ? (
+                    <div className="px-2 py-1.5 text-sm text-destructive">{error}</div>
+                  ) : plans.length === 0 && !loading ? (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет заявок в Газельке</div>
+                  ) : (
+                    plans.map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        №{p.id} · {p.deliveryAddress || '—'} · {p.deliveryDate ? formatDate(p.deliveryDate) : ''} ·{' '}
+                        {p.boxes ?? 0} кор.
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+              <Button
+                onClick={handleSave}
+                disabled={saving || String(supply.gazelkaPlanId ?? '') === selected}
+              >
+                {saving ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить'}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Выберите заявку и нажмите «Синхронизировать данные» — после этого кладовщику станут доступны
+              печать стикеров и вход в ЛК Газельки.
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">
-            «Печать стикеров» формирует упаковочные листы коробов прямо у нас (со штрихкодом). Кнопка
-            «В ЛК Газельки» открывает их печать на сайте Газельки.
+        )}
+
+        {/* Кладовщику, пока менеджер не подготовил данные — понятная подсказка */}
+        {!isManager && !gazelkaReady && (
+          <p className="text-sm text-muted-foreground">
+            Стикеры коробов появятся, когда менеджер выберет заявку Газельки и синхронизирует данные.
           </p>
-        </div>
+        )}
 
         {linkedPlan && (
           <>
@@ -197,34 +218,37 @@ const GazelkaShippingCard = ({ supply, onReload }: GazelkaShippingCardProps) => 
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">
-                Коды склада для штрихкода (IDS и IDM) — уточните в Газельке, если стикеры не считываются
-              </Label>
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  type="number"
-                  className="w-24"
-                  value={ids}
-                  onChange={(e) => setIds(e.target.value)}
-                  placeholder="IDS"
-                />
-                <Input
-                  type="number"
-                  className="w-24"
-                  value={idm}
-                  onChange={(e) => setIdm(e.target.value)}
-                  placeholder="IDM"
-                />
-                <Button
-                  variant="outline"
-                  onClick={handleSaveIds}
-                  disabled={savingIds || (Number(ids) === supply.gazelkaIds && Number(idm) === supply.gazelkaIdm)}
-                >
-                  {savingIds ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить коды'}
-                </Button>
+            {/* Коды склада для штрихкода — редактирует только менеджер */}
+            {isManager && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">
+                  Коды склада для штрихкода (IDS и IDM) — уточните в Газельке, если стикеры не считываются
+                </Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    type="number"
+                    className="w-24"
+                    value={ids}
+                    onChange={(e) => setIds(e.target.value)}
+                    placeholder="IDS"
+                  />
+                  <Input
+                    type="number"
+                    className="w-24"
+                    value={idm}
+                    onChange={(e) => setIdm(e.target.value)}
+                    placeholder="IDM"
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={handleSaveIds}
+                    disabled={savingIds || (Number(ids) === supply.gazelkaIds && Number(idm) === supply.gazelkaIdm)}
+                  >
+                    {savingIds ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить коды'}
+                  </Button>
+                </div>
               </div>
-            </div>
+            )}
           </>
         )}
       </CardContent>

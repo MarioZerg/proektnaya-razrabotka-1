@@ -129,27 +129,6 @@ const MarketplaceSupplyShow = () => {
     }
   };
 
-  const handleSaveOzonFboFields = async (fields: {
-    gazelkaId: string;
-    shipToGazelkaAt: string;
-    gazelkaPickup: boolean;
-  }) => {
-    setSaving(true);
-    try {
-      await updateSupply(supplyId, {
-        gazelkaId: fields.gazelkaId,
-        shipToGazelkaAt: fields.shipToGazelkaAt,
-        gazelkaPickup: fields.gazelkaPickup,
-      });
-      toast({ title: 'Данные заявки сохранены' });
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleMoveStatus = async () => {
     if (!supply) return;
     const idx = supplyStatusFlow.indexOf(supply.status);
@@ -230,6 +209,11 @@ const MarketplaceSupplyShow = () => {
   const nextStatus = isWbFbs && rawNextStatus !== 'Выполнена' ? undefined : rawNextStatus;
   const canEditItems = supply.status === 'Открытая' || supply.status === 'На сборке';
   const isOzonFbo = supply.marketplace === 'OZON' && supply.type === 'FBO';
+  // Права по ролям для OZON FBO: менеджер (и админ) управляет заявкой Газельки, синхронизацией
+  // и загрузкой товарного состава в пошив. Кладовщик — только печать стикеров, и только после
+  // того как менеджер выбрал заявку Газельки и синхронизировал данные (появился ID отгрузки).
+  const isManager = user?.role === 'manager' || user?.role === 'admin';
+  const gazelkaReady = !!supply.gazelkaPlanId && !!supply.gazelkaId;
 
   const nextStatusLabel: Record<string, string> = {
     'На сборке': 'Взять на сборку',
@@ -257,15 +241,14 @@ const MarketplaceSupplyShow = () => {
         {isOzonFbo && (
           <OzonFboApplicationCard
             supply={supply}
-            canEdit={canEditItems}
-            saving={saving}
-            onSave={handleSaveOzonFboFields}
-            onImportComposition={handleImportFboComposition}
+            onImportComposition={isManager ? handleImportFboComposition : undefined}
             importing={importingFbo}
           />
         )}
 
-        {isOzonFbo && <GazelkaShippingCard supply={supply} onReload={load} />}
+        {isOzonFbo && (
+          <GazelkaShippingCard supply={supply} onReload={load} isManager={isManager} gazelkaReady={gazelkaReady} />
+        )}
 
         {supply.type === 'FBO' && !isOzonFbo && (
           <SupplyFboFieldsCard
