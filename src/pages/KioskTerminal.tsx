@@ -185,30 +185,16 @@ const KioskTerminal = () => {
           </div>
 
           {shift?.isOpen ? (
-            <>
-              <Button
-                size="lg"
-                className="h-20 w-full bg-blue-600 text-xl text-white hover:bg-blue-700"
-                onClick={() => setEnteredMenu(true)}
-              >
-                <Icon name="LayoutGrid" size={28} className="mr-2" />
-                Войти в терминал
-              </Button>
-              <Button
-                size="lg"
-                variant="destructive"
-                className="h-16 w-full text-lg"
-                onClick={handleCloseShift}
-                disabled={shiftSaving}
-              >
-                <Icon
-                  name={shiftSaving ? 'Loader2' : 'LogOut'}
-                  size={24}
-                  className={`mr-2 ${shiftSaving ? 'animate-spin' : ''}`}
-                />
-                Закрыть смену
-              </Button>
-            </>
+            // Закрытие смены доступно внутри терминала (плитка «Открытие / Закрытие смены»),
+            // поэтому здесь только вход.
+            <Button
+              size="lg"
+              className="h-20 w-full bg-blue-600 text-xl text-white hover:bg-blue-700"
+              onClick={() => setEnteredMenu(true)}
+            >
+              <Icon name="LayoutGrid" size={28} className="mr-2" />
+              Войти в терминал
+            </Button>
           ) : (
             <Button
               size="lg"
