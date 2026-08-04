@@ -89,6 +89,7 @@ const SewingItems = () => {
     handleCut,
     handleSendToStickering,
     handleCancelOrder,
+    reloadSelected,
     myFabricRolls,
     myTrimRolls,
   } = useSewingItemOrderDetail({
@@ -275,6 +276,7 @@ const SewingItems = () => {
           onSendToStickering={handleSendToStickering}
           onCancelOrder={handleCancelOrder}
           cancelling={cancelling}
+          onOrderUpdated={reloadSelected}
         />
       </div>
     </CrmLayout>

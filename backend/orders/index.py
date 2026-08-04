@@ -212,7 +212,8 @@ def handler(event: dict, context) -> dict:
                     "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
                     "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                     "o.cutter_user_id, cu.full_name, o.hanger_number, "
-                    "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, o.product_barcode "
+                    "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, o.product_barcode, "
+                    "o.marketplace_item_id "
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
                     "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -303,6 +304,7 @@ def handler(event: dict, context) -> dict:
                     'packerUserId': row[24],
                     'packerUserName': row[25],
                     'productBarcode': row[26],
+                    'marketplaceItemId': row[27],
                     'materialUsage': materialUsage,
                     'requiredFabricMaterialId': required_fabric_material_id,
                     'requiredFabricMaterialName': required_fabric_material_name,
@@ -526,13 +528,13 @@ def handler(event: dict, context) -> dict:
                 # ищет marketplace_items именно по этим трём полям), а не только в текстовый
                 # product для отображения.
                 cur.execute(
-                    "SELECT name, material, width, height FROM marketplace_items WHERE id = %s",
+                    "SELECT name, material, width, height, barcode FROM marketplace_items WHERE id = %s",
                     (int(marketplace_item_id),),
                 )
                 item_row = cur.fetchone()
                 if not item_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
-                item_name, item_material, item_width, item_height = item_row
+                item_name, item_material, item_width, item_height, item_barcode = item_row
                 product = f"{item_material} {item_width}x{item_height}" if item_material and item_width and item_height else item_name
 
                 order_number_esc = order_number.replace("'", "''")
@@ -557,12 +559,14 @@ def handler(event: dict, context) -> dict:
                 material_sql = f"'{material_esc}'" if material_esc else 'NULL'
                 width_sql = str(int(item_width)) if item_width else 'NULL'
                 height_sql = str(int(item_height)) if item_height else 'NULL'
+                barcode_sql = f"'{item_barcode.replace(chr(39), chr(39)*2)}'" if item_barcode else 'NULL'
 
                 cur.execute(
                     f"INSERT INTO orders (order_number, marketplace, order_type, status, cluster, product, "
-                    f"quantity, source, material, width, height) "
+                    f"quantity, source, material, width, height, marketplace_item_id, product_barcode) "
                     f"VALUES ('{order_number_esc}', '{marketplace_esc}', '{order_type_esc}', 'Новый', "
-                    f"'{cluster_esc}', '{product_esc}', 1, 'manual', {material_sql}, {width_sql}, {height_sql}) "
+                    f"'{cluster_esc}', '{product_esc}', 1, 'manual', {material_sql}, {width_sql}, {height_sql}, "
+                    f"{int(marketplace_item_id)}, {barcode_sql}) "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
@@ -620,6 +624,23 @@ def handler(event: dict, context) -> dict:
                 if 'workshopId' in body_data:
                     val = body_data['workshopId']
                     fields.append(f"workshop_id = {int(val) if val not in (None, '') else 'NULL'}")
+                # Привязка заказа к конкретному товару справочника — фиксируем штрихкод товара
+                # для стикера FBO. Штрихкод берём из выбранного товара (может быть несколько
+                # товаров на один размер с разными штрихкодами).
+                if 'marketplaceItemId' in body_data:
+                    mi_val = body_data['marketplaceItemId']
+                    if mi_val in (None, ''):
+                        fields.append("marketplace_item_id = NULL")
+                        fields.append("product_barcode = NULL")
+                    else:
+                        cur.execute("SELECT barcode FROM marketplace_items WHERE id = %s", (int(mi_val),))
+                        mi_row = cur.fetchone()
+                        if not mi_row:
+                            return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
+                        bc = mi_row[0]
+                        bc_sql = f"'{bc.replace(chr(39), chr(39)*2)}'" if bc else 'NULL'
+                        fields.append(f"marketplace_item_id = {int(mi_val)}")
+                        fields.append(f"product_barcode = {bc_sql}")
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 

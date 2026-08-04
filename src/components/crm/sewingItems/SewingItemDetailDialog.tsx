@@ -39,6 +39,7 @@ import type { Workshop } from '@/lib/workshopsApi';
 import type { Roll } from '@/lib/rollsApi';
 import { marketplaceLogo, formatDate, timeAgo, statusOptions } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
+import FboStickerCard from '@/components/crm/sewingItems/FboStickerCard';
 import { formatQuantity } from '@/lib/formatQuantity';
 
 interface SewingItemDetailDialogProps {
@@ -62,6 +63,8 @@ interface SewingItemDetailDialogProps {
   onSendToStickering?: (rollId?: number) => void;
   onCancelOrder?: () => void;
   cancelling?: boolean;
+  /** Перезагрузка заказа после привязки товара (штрихкод стикера FBO). */
+  onOrderUpdated?: () => void;
 }
 
 const SewingItemDetailDialog = ({
@@ -85,6 +88,7 @@ const SewingItemDetailDialog = ({
   onSendToStickering,
   onCancelOrder,
   cancelling = false,
+  onOrderUpdated,
 }: SewingItemDetailDialogProps) => {
   const [selectedRollId, setSelectedRollId] = useState<string>('');
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
@@ -442,6 +446,14 @@ const SewingItemDetailDialog = ({
                 </CardContent>
               </Card>
             </div>
+
+            {selectedOrder.orderType === 'FBO' && (
+              <FboStickerCard
+                order={selectedOrder}
+                orderDetail={orderDetail}
+                onSaved={() => onOrderUpdated?.()}
+              />
+            )}
 
             <Card className="border-border shadow-none">
               <CardHeader className="pb-3">

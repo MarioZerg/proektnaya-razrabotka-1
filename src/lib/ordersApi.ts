@@ -65,6 +65,8 @@ export interface OrderDetail extends Order {
   requiredFabricMaterialName: string | null;
   requiredTrimMaterialId: number | null;
   requiredTrimMaterialName: string | null;
+  /** Товар справочника, к которому привязан заказ — определяет штрихкод для стикера FBO. */
+  marketplaceItemId: number | null;
 }
 
 export const fetchOrders = async (): Promise<Order[]> => {
@@ -111,6 +113,7 @@ export const updateOrder = (
     sewingStatus: SewingStatus;
     assignedUserId: number | null;
     workshopId: number | null;
+    marketplaceItemId: number | null;
   }>
 ) => postAction({ action: 'update_order', id, ...fields });
 

@@ -173,6 +173,16 @@ export const useSewingItemOrderDetail = ({
     }
   };
 
+  // Перезагрузка текущего заказа после привязки товара к стикеру FBO: обновляем и деталь
+  // (marketplaceItemId), и сам selectedOrder (productBarcode для печати), и общий список.
+  const reloadSelected = async () => {
+    if (!selectedOrder) return;
+    const detail = await fetchOrderDetail(selectedOrder.id);
+    setOrderDetail(detail);
+    setSelectedOrder(detail);
+    load();
+  };
+
   const rollsInMyWorkshop = rolls.filter(
     (r) => r.workshopId === effectiveWorkshopId && (!effectiveShiftNumber || r.shiftNumber === effectiveShiftNumber)
   );
@@ -203,6 +213,7 @@ export const useSewingItemOrderDetail = ({
     handleCut,
     handleSendToStickering,
     handleCancelOrder,
+    reloadSelected,
     myFabricRolls,
     myTrimRolls,
   };
