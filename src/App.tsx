@@ -26,6 +26,7 @@ import UsersSettings from "./pages/settings/UsersSettings";
 import MarketplaceOrders from "./pages/marketplace/MarketplaceOrders";
 import SewingItems from "./pages/marketplace/SewingItems";
 import FboStickers from "./pages/marketplace/FboStickers";
+import Reviews from "./pages/marketplace/Reviews";
 import Finance from "./pages/Finance";
 import Workshops from "./pages/shifts/Workshops";
 import WorkshopEdit from "./pages/shifts/WorkshopEdit";
@@ -70,6 +71,7 @@ const App = () => (
             <Route path="/crm/marketplace/orders" element={<MarketplaceOrders />} />
             <Route path="/crm/marketplace/sewing-items" element={<SewingItems />} />
             <Route path="/crm/marketplace/fbo-stickers" element={<FboStickers />} />
+            <Route path="/crm/marketplace/reviews" element={<Reviews />} />
             <Route path="/crm/finance" element={<Finance />} />
             <Route path="/crm/shifts/workshops" element={<Workshops />} />
             <Route path="/crm/shifts/workshops/:id/edit" element={<WorkshopEdit />} />

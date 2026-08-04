@@ -124,6 +124,7 @@ const storekeeperNav: NavItem[] = [
       { label: 'Заказы с маркетплейса', path: '/crm/marketplace/orders' },
       { label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' },
       { label: 'Печать стикеров FBO', path: '/crm/marketplace/fbo-stickers' },
+      { label: 'Отзывы', path: '/crm/marketplace/reviews' },
     ],
   },
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
@@ -151,6 +152,7 @@ const managerNav: NavItem[] = [
       { label: 'Заказы с маркетплейса', path: '/crm/marketplace/orders' },
       { label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' },
       { label: 'Печать стикеров FBO', path: '/crm/marketplace/fbo-stickers' },
+      { label: 'Отзывы', path: '/crm/marketplace/reviews' },
     ],
   },
 ];
@@ -190,6 +192,7 @@ const adminNav: NavItem[] = [
       { label: 'Заказы с маркетплейса', path: '/crm/marketplace/orders' },
       { label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' },
       { label: 'Печать стикеров FBO', path: '/crm/marketplace/fbo-stickers' },
+      { label: 'Отзывы', path: '/crm/marketplace/reviews' },
     ],
   },
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
