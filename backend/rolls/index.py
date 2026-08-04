@@ -191,7 +191,7 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 f"SELECT r.id, r.barcode, r.material_id, m.name, m.unit, r.workshop_id, w.name, "
                 f"r.shift_number, r.initial_quantity, r.remaining_quantity, r.status, "
-                f"r.created_at, r.completed_at "
+                f"r.created_at, r.completed_at, COALESCE(r.shortage_quantity, 0) "
                 f"FROM rolls r "
                 f"LEFT JOIN materials m ON m.id = r.material_id "
                 f"LEFT JOIN workshops w ON w.id = r.workshop_id "
@@ -213,6 +213,7 @@ def handler(event: dict, context) -> dict:
                     'status': r[10],
                     'createdAt': r[11].isoformat() + 'Z',
                     'completedAt': (r[12].isoformat() + 'Z') if r[12] else None,
+                    'shortageQuantity': float(r[13] or 0),
                     'usedInShift': r[0] in used_roll_ids,
                 }
                 for r in cur.fetchall()
@@ -371,7 +372,11 @@ def handler(event: dict, context) -> dict:
                     shortage = 0.0
 
                 cur.execute(
-                    "SELECT remaining_quantity, status FROM rolls WHERE id = %s",
+                    "SELECT r.remaining_quantity, r.status, r.workshop_id, mt.name "
+                    "FROM rolls r "
+                    "LEFT JOIN materials m ON m.id = r.material_id "
+                    "LEFT JOIN material_types mt ON mt.id = m.type_id "
+                    "WHERE r.id = %s",
                     (int(item_id),),
                 )
                 row = cur.fetchone()
@@ -379,6 +384,38 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
                 if row[1] == 'completed':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Рулон уже закрыт'})}
+
+                # Рулон нельзя закрыть, пока на нём остаётся слишком много материала:
+                # тюль — по настройке цеха min_remaining_to_close_fabric (по умолчанию 20 м),
+                # тесьма/аксессуары — min_remaining_to_close_trim (по умолчанию 80 м).
+                remaining_now = float(row[0] or 0)
+                type_name = row[3] or ''
+                setting_key = 'min_remaining_to_close_fabric' if type_name == 'Тюль' else 'min_remaining_to_close_trim'
+                default_limit = 20.0 if type_name == 'Тюль' else 80.0
+                limit = default_limit
+                cur.execute(
+                    "SELECT value FROM workshop_settings WHERE workshop_id = %s AND key = %s",
+                    (row[2], setting_key),
+                )
+                s_row = cur.fetchone()
+                if not s_row:
+                    cur.execute("SELECT value FROM system_settings WHERE key = %s", (setting_key,))
+                    s_row = cur.fetchone()
+                if s_row and s_row[0] not in (None, ''):
+                    try:
+                        limit = float(s_row[0])
+                    except (TypeError, ValueError):
+                        limit = default_limit
+
+                if remaining_now > limit:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Рулон нельзя закрыть: на нём ещё {round(remaining_now, 2)} м '
+                                     f'(закрытие возможно при остатке до {round(limit, 2)} м)'
+                        }),
+                    }
 
                 cur.execute(
                     "UPDATE rolls SET remaining_quantity = 0, status = 'completed', completed_at = now(), "

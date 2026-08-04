@@ -18,6 +18,8 @@ export interface Roll {
   completedAt: string | null;
   /** По рулону было движение материала в текущей смене (заполняется при запросе с usedSinceUserId). */
   usedInShift?: boolean;
+  /** Недостача: сколько метража не хватило в рулоне при закрытии в цехе. */
+  shortageQuantity?: number;
 }
 
 export type RollMovementKind = 'order' | 'defect' | 'return_to_supplier' | 'workshop_writeoff';

@@ -4,6 +4,8 @@ export type KioskScreen = 'menu' | 'shift' | 'orders' | 'reviews' | 'rolls';
 
 interface KioskMenuProps {
   onSelect: (screen: KioskScreen) => void;
+  /** Роль сотрудника — кладовщику на терминале доступна только работа со сменой. */
+  role: string;
 }
 
 const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className: string }> = [
@@ -34,10 +36,13 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
 ];
 
 /** Главное меню терминала — крупные плитки под сенсорный экран. */
-const KioskMenu = ({ onSelect }: KioskMenuProps) => {
+const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
+  // Кладовщик на терминале работает только со сменой — остальные разделы ему не нужны.
+  const visibleTiles = role === 'storekeeper' ? tiles.filter((t) => t.screen === 'shift') : tiles;
+
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {tiles.map((t) => (
+      {visibleTiles.map((t) => (
         <button
           key={t.screen}
           onClick={() => onSelect(t.screen)}

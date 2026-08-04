@@ -282,6 +282,7 @@ const Rolls = () => {
                   <TableHead className="text-primary-foreground">Цех</TableHead>
                   <TableHead className="text-primary-foreground">Смена</TableHead>
                   <TableHead className="text-primary-foreground">Остаток</TableHead>
+                  <TableHead className="text-primary-foreground">Недостача</TableHead>
                   <TableHead className="text-primary-foreground">Создан</TableHead>
                   <TableHead className="text-primary-foreground">Завершён</TableHead>
                 </TableRow>
@@ -305,6 +306,15 @@ const Rolls = () => {
                     <TableCell>{shiftLabel(workshops, r.workshopId, r.shiftNumber)}</TableCell>
                     <TableCell>
                       {formatQuantity(r.remainingQuantity)} из {formatQuantity(r.initialQuantity)} {r.unit}
+                    </TableCell>
+                    <TableCell>
+                      {r.shortageQuantity && r.shortageQuantity > 0 ? (
+                        <Badge variant="destructive" className="font-normal">
+                          {formatQuantity(r.shortageQuantity)} {r.unit}
+                        </Badge>
+                      ) : (
+                        '—'
+                      )}
                     </TableCell>
                     <TableCell>{formatDate(r.createdAt)}</TableCell>
                     <TableCell>{r.completedAt ? formatDate(r.completedAt) : '—'}</TableCell>

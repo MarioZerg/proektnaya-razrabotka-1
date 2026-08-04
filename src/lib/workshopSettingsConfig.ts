@@ -100,6 +100,16 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
   },
   { key: 'max_fabric_rolls_per_shift', label: 'Макс. рулонов ткани на смену', type: 'number' },
   {
+    key: 'min_remaining_to_close_fabric',
+    label: 'Мин. остаток для закрытия рулона тюля (м)',
+    type: 'number',
+  },
+  {
+    key: 'min_remaining_to_close_trim',
+    label: 'Мин. остаток для закрытия рулона тесьмы (м)',
+    type: 'number',
+  },
+  {
     key: 'floating_schedule',
     label: 'Плавающий график (например 2/2)',
     type: 'select',

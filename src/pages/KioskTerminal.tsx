@@ -249,7 +249,7 @@ const KioskTerminal = () => {
         </div>
 
         <div className="p-4">
-          {screen === 'menu' && <KioskMenu onSelect={setScreen} />}
+          {screen === 'menu' && <KioskMenu onSelect={setScreen} role={user.role} />}
 
           {screen === 'shift' && (
             <div className="mx-auto max-w-xl space-y-4">
@@ -304,6 +304,7 @@ const KioskTerminal = () => {
                 workshopId={Number(workshopId) || 1}
                 shiftNumber={shift?.shiftNumber ?? user.shiftFromCode ?? null}
                 userId={user.id}
+                role={user.role}
               />
             </div>
           )}

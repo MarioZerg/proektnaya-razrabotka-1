@@ -14,11 +14,21 @@ interface KioskRollsScreenProps {
   shiftNumber: number | null;
   /** Сотрудник терминала — по нему определяем движение материала в текущей смене. */
   userId: number;
+  /** Роль сотрудника — определяет, с рулонами какого типа он может работать. */
+  role: string;
 }
+
+/** С какими типами материалов работает роль: закройщик — ткань (Тюль), швея — тесьма
+ * (Аксессуары), упаковщица — пакеты и этикетки (Упаковка). */
+const allowedTypesByRole: Record<string, string[]> = {
+  cutter: ['Тюль'],
+  sewer: ['Аксессуары'],
+  packer: ['Упаковка'],
+};
 
 /** Экран работы с рулонами на терминале: закройщик закрывает рулоны, у которых закончился
  * метраж. Если ткань кончилась раньше — указывает недостачу цифровой клавиатурой. */
-const KioskRollsScreen = ({ workshopId, shiftNumber, userId }: KioskRollsScreenProps) => {
+const KioskRollsScreen = ({ workshopId, shiftNumber, userId, role }: KioskRollsScreenProps) => {
   const { toast } = useToast();
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -56,10 +66,23 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId }: KioskRollsScreenP
   }, [workshopId, shiftNumber, userId]);
 
   const typeIdByMaterial = new Map(materials.map((m) => [m.id, m.typeId]));
+  // Роль работает только со «своими» типами материалов (закройщик — ткань, швея — тесьма,
+  // упаковщица — упаковка). Остальным ролям показываем всё.
+  const allowedNames = allowedTypesByRole[role];
+  const visibleTypes = allowedNames ? types.filter((t) => allowedNames.includes(t.name)) : types;
+  const allowedTypeIds = new Set(visibleTypes.map((t) => t.id));
+
+  const roleRolls = allowedNames
+    ? rolls.filter((r) => {
+        const tid = typeIdByMaterial.get(r.materialId);
+        return tid != null && allowedTypeIds.has(tid);
+      })
+    : rolls;
+
   const visibleRolls =
     typeFilter === 'all'
-      ? rolls
-      : rolls.filter((r) => typeIdByMaterial.get(r.materialId) === typeFilter);
+      ? roleRolls
+      : roleRolls.filter((r) => typeIdByMaterial.get(r.materialId) === typeFilter);
 
   const handleClose = async (withShortage: boolean) => {
     if (!selected) return;
@@ -163,7 +186,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId }: KioskRollsScreenP
         >
           Все
         </Button>
-        {types.map((t) => (
+        {visibleTypes.map((t) => (
           <Button
             key={t.id}
             variant={typeFilter === t.id ? 'default' : 'outline'}

@@ -1222,6 +1222,47 @@ def handler(event: dict, context) -> dict:
                     }
                 order_id = row[0]
 
+                # Проверяем, что материалы для этого товара есть в цехе смены. Если чего-то
+                # не хватает — заказ в работу не выдаём и пишем, какого именно материала мало.
+                cur.execute("SELECT material, width, height FROM orders WHERE id = %s", (order_id,))
+                o_row = cur.fetchone()
+                if o_row and o_row[0] and o_row[1] and o_row[2]:
+                    cur.execute(
+                        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                        (o_row[0], o_row[1], o_row[2]),
+                    )
+                    mi_row = cur.fetchone()
+                    if mi_row:
+                        cur.execute(
+                            "SELECT mim.material_id, mim.quantity, m.name, m.unit "
+                            "FROM marketplace_item_materials mim "
+                            "JOIN materials m ON m.id = mim.material_id "
+                            "JOIN material_types mt ON mt.id = m.type_id "
+                            "WHERE mim.marketplace_item_id = %s AND mt.name = 'Аксессуары'",
+                            (mi_row[0],),
+                        )
+                        lacks = []
+                        for mat_id, qty_needed, mat_name, mat_unit in cur.fetchall():
+                            cur.execute(
+                                "SELECT COALESCE(SUM(remaining_quantity), 0) FROM rolls "
+                                "WHERE material_id = %s AND status = 'in_workshop' AND remaining_quantity > 0 "
+                                "AND (%s IS NULL OR workshop_id = %s)",
+                                (mat_id, session_workshop_id, session_workshop_id),
+                            )
+                            available = float(cur.fetchone()[0] or 0)
+                            if available < float(qty_needed):
+                                lacks.append(
+                                    f"{mat_name}: нужно {round(float(qty_needed), 2)} {mat_unit}, "
+                                    f"в цехе {round(available, 2)} {mat_unit}"
+                                )
+                        if lacks:
+                            conn.rollback()
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({'error': 'Не хватает материала в цехе — ' + '; '.join(lacks)}),
+                            }
+
                 cur.execute(
                     f"UPDATE orders SET sewing_status = 'В работе', assigned_user_id = {int(user_id)}, "
                     f"taken_at = now() WHERE id = {order_id}"
