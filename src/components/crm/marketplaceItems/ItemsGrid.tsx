@@ -12,6 +12,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
+import { useToast } from '@/hooks/use-toast';
 import type { MarketplaceItem } from '@/lib/marketplaceItemsApi';
 
 interface ItemsGridProps {
@@ -39,6 +40,19 @@ const ItemsGrid = ({
   setDeleteId,
   onDelete,
 }: ItemsGridProps) => {
+  const { toast } = useToast();
+
+  // Копирует код OZON (OZN + ozon_sku) в буфер — им товар добавляют в поставку FBO.
+  const copyOzonCode = async (ozonSku: string) => {
+    const code = `OZN${ozonSku}`;
+    try {
+      await navigator.clipboard.writeText(code);
+      toast({ title: 'Код скопирован', description: code });
+    } catch {
+      toast({ title: 'Не удалось скопировать', variant: 'destructive' });
+    }
+  };
+
   return (
     <>
       {loading ? (
@@ -70,8 +84,18 @@ const ItemsGrid = ({
                     )}
                     {item.material && <Badge variant="outline">{item.material}</Badge>}
                     {item.ozonSku && (
-                      <Badge className="bg-blue-600 font-mono-tech text-white hover:bg-blue-700">
+                      <Badge
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => copyOzonCode(item.ozonSku!)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') copyOzonCode(item.ozonSku!);
+                        }}
+                        className="cursor-pointer gap-1 bg-blue-600 font-mono-tech text-white hover:bg-blue-700"
+                        title="Скопировать код для поставки FBO"
+                      >
                         OZN{item.ozonSku}
+                        <Icon name="Copy" size={11} />
                       </Badge>
                     )}
                   </div>
