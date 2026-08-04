@@ -42,6 +42,7 @@ const KioskTerminal = () => {
       const value = extractCode(rawValue);
       if (!value) return;
       setCode('');
+      if (inputRef.current) inputRef.current.value = '';
       setLoading(true);
       try {
         const data = await kioskLoginByCode(value);
@@ -52,7 +53,7 @@ const KioskTerminal = () => {
         playScanErrorSound();
         toast({
           title: 'Не удалось войти',
-          description: e instanceof Error ? e.message : undefined,
+          description: `${e instanceof Error ? e.message : 'Ошибка'} (получено: ${value})`,
           variant: 'destructive',
         });
       } finally {
@@ -63,7 +64,10 @@ const KioskTerminal = () => {
     [toast]
   );
 
-  const handleLogin = () => loginWithCode(code.trim());
+  // Значение читаем прямо из поля: сканер вводит длинную строку очень быстро и может нажать
+  // Enter раньше, чем React успеет положить последние символы в состояние — из состояния
+  // тогда ушёл бы обрывок кода.
+  const handleLogin = () => loginWithCode((inputRef.current?.value || code).trim());
 
   // Вход по ссылке из персонального QR сотрудника: /kiosk/1?barcode=3-20-20250513
   useEffect(() => {
@@ -76,7 +80,9 @@ const KioskTerminal = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  useScannerAutoSubmit(code, handleLogin, !loading && !user);
+  // Пауза больше обычной: из QR приходит длинная ссылка, ей нужно чуть больше времени,
+  // чтобы сканер успел ввести её целиком до автоотправки.
+  useScannerAutoSubmit(code, handleLogin, !loading && !user, 400);
 
   useEffect(() => {
     inputRef.current?.focus();

@@ -12,7 +12,12 @@ import { useEffect, useRef } from 'react';
  * @param onSubmit колбэк отправки (например, сканирование штрихкода)
  * @param enabled  можно временно отключить (например, пока идёт запрос)
  */
-export function useScannerAutoSubmit(value: string, onSubmit: () => void, enabled = true) {
+export function useScannerAutoSubmit(
+  value: string,
+  onSubmit: () => void,
+  enabled = true,
+  delayMs = 200
+) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
@@ -39,10 +44,10 @@ export function useScannerAutoSubmit(value: string, onSubmit: () => void, enable
     timerRef.current = setTimeout(() => {
       lastSubmittedRef.current = value;
       onSubmitRef.current();
-    }, 200);
+    }, delayMs);
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [value, enabled]);
+  }, [value, enabled, delayMs]);
 }
