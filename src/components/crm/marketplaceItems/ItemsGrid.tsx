@@ -69,13 +69,17 @@ const ItemsGrid = ({
                       </Badge>
                     )}
                     {item.material && <Badge variant="outline">{item.material}</Badge>}
+                    {item.ozonSku && (
+                      <Badge className="bg-blue-600 font-mono-tech text-white hover:bg-blue-700">
+                        OZN{item.ozonSku}
+                      </Badge>
+                    )}
                   </div>
                   <div className="text-sm text-muted-foreground">
                     {item.width && item.height ? `${item.width}×${item.height}` : '—'}
                   </div>
-                  {(item.ozonSku || item.wbSku || item.barcode) && (
+                  {(item.wbSku || item.barcode) && (
                     <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      {item.ozonSku && <span>OZON: {item.ozonSku}</span>}
                       {item.wbSku && <span>WB: {item.wbSku}</span>}
                       {item.barcode && <span>Баркод: {item.barcode}</span>}
                     </div>
