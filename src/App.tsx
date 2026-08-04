@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import Crm from "./pages/Crm";
-import NotFound from "./pages/NotFound";
+import NotFoundRedirect from "./pages/NotFoundRedirect";
 import WarehouseMaterials from "./pages/inventory/WarehouseMaterials";
 import WorkshopMaterials from "./pages/inventory/WorkshopMaterials";
 import Rolls from "./pages/inventory/Rolls";
@@ -80,7 +80,7 @@ const App = () => (
             <Route path="/crm/settings/marketplace-integrations" element={<MarketplaceIntegrationsSettings />} />
             <Route path="/crm/kiosk" element={<Kiosk />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-            <Route path="*" element={<NotFound />} />
+            <Route path="*" element={<NotFoundRedirect />} />
           </Routes>
         </AuthProvider>
       </BrowserRouter>
