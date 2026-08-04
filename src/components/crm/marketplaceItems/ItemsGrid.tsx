@@ -23,6 +23,7 @@ interface ItemsGridProps {
   currentPage: number;
   totalPages: number;
   setPage: (updater: (p: number) => number) => void;
+  onEdit: (item: MarketplaceItem) => void;
   deleteId: number | null;
   setDeleteId: (id: number | null) => void;
   onDelete: () => void;
@@ -36,6 +37,7 @@ const ItemsGrid = ({
   currentPage,
   totalPages,
   setPage,
+  onEdit,
   deleteId,
   setDeleteId,
   onDelete,
@@ -92,9 +94,14 @@ const ItemsGrid = ({
                 <CardContent className="space-y-2 pt-6">
                   <div className="flex items-start justify-between">
                     <p className="font-medium">{item.name}</p>
-                    <Button size="icon" variant="destructive" onClick={() => setDeleteId(item.id)}>
-                      <Icon name="Trash2" size={14} />
-                    </Button>
+                    <div className="flex gap-1">
+                      <Button size="icon" variant="secondary" onClick={() => onEdit(item)}>
+                        <Icon name="Pencil" size={14} />
+                      </Button>
+                      <Button size="icon" variant="destructive" onClick={() => setDeleteId(item.id)}>
+                        <Icon name="Trash2" size={14} />
+                      </Button>
+                    </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {item.article && (
