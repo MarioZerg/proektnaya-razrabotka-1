@@ -198,7 +198,7 @@ const MarketplaceSupplyAssemble = () => {
             <Badge variant="outline">{supply.type}</Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Номер поставки: {supply.supplyNumber || 'подгрузится через API маркетплейса'} · Создана{' '}
+            Номер поставки: {supply.supplyNumber || 'не указан'} · Создана{' '}
             {formatDateTime(supply.createdAt)}
           </p>
         </div>
