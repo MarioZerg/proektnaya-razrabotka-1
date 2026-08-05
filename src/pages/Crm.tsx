@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 import { fetchOrders, type Order } from '@/lib/ordersApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import { fetchMarketplaceReturns } from '@/lib/marketplaceReturnsApi';
 import { fetchShipments, type Shipment } from '@/lib/shipmentsApi';
 import { updateEmployee } from '@/lib/usersApi';
 import {
@@ -40,6 +41,7 @@ const CrmDashboard = () => {
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [goodsItems, setGoodsItems] = useState<GoodsWarehouseItem[]>([]);
   const [shipmentsToWorkshop, setShipmentsToWorkshop] = useState<Shipment[]>([]);
+  const [returnsWaiting, setReturnsWaiting] = useState(0);
 
   const [shiftsLoading, setShiftsLoading] = useState(true);
   const [employeeShifts, setEmployeeShifts] = useState<EmployeeShiftStatus[]>([]);
@@ -61,12 +63,17 @@ const CrmDashboard = () => {
       canSeeWarehouseWidgets ? fetchRolls({ status: 'in_workshop' }) : Promise.resolve([]),
       canSeeWarehouseWidgets ? fetchGoodsWarehouse() : Promise.resolve([]),
       fetchShipments('to_workshop'),
+      // Возвраты с маркетплейсов, которые ждут приёмки на складе — задача кладовщика.
+      canSeeWarehouseWidgets
+        ? fetchMarketplaceReturns({ status: 'new' })
+        : Promise.resolve({ returns: [], counts: {} as Record<string, number> }),
     ])
-      .then(([ordersData, rollsData, goodsData, shipmentsData]) => {
+      .then(([ordersData, rollsData, goodsData, shipmentsData, returnsData]) => {
         setOrders(ordersData);
         setRolls(rollsData);
         setGoodsItems(goodsData);
         setShipmentsToWorkshop(shipmentsData);
+        setReturnsWaiting(returnsData.counts.new || 0);
       })
       .finally(() => setDataLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,6 +226,13 @@ const CrmDashboard = () => {
         path: '/crm/inventory/goods-warehouse',
       });
       list.push({
+        label: 'Возвраты — принять на склад',
+        value: returnsWaiting,
+        icon: 'Undo2',
+        tone: returnsWaiting > 0 ? 'warning' : 'default',
+        path: '/crm/shipments/receive-returns',
+      });
+      list.push({
         label: 'Рулоны с малым остатком',
         value: lowStockRolls,
         icon: 'AlertTriangle',
@@ -228,7 +242,7 @@ const CrmDashboard = () => {
     }
 
     return list;
-  }, [isCleaner, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop]);
+  }, [isCleaner, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop, returnsWaiting]);
 
   const content = (
     <div className="space-y-8">
