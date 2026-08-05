@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import urllib.request
@@ -219,6 +220,47 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
     }
 
 
+
+def ym_get_raw(path, api_key):
+    """GET к Partner API, возвращающий БИНАРНЫЙ ответ (PDF ярлыка). Отдаём (код, bytes)."""
+    req = urllib.request.Request(YM_API_BASE + path, method='GET')
+    req.add_header('Api-Key', api_key)
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except Exception as e:
+        return 0, str(e).encode()
+
+
+def get_order_label(cur, api_key, campaign_id, order_number):
+    """Ярлык-наклейка Яндекса на вещь заказа FBS.
+
+    Яндекс печатает ярлык на КАЖДОЕ грузоместо (пакет), а не один на весь заказ: на ярлыке
+    указано «1 из 3». Формат A9 — это как раз 58×40 мм, наш размер термонаклейки, поэтому
+    просим у API сразу его и печатаем как есть, без пересборки.
+
+    Возвращает (ошибка, base64_pdf).
+    """
+    cur.execute(
+        "SELECT ym_order_id, group_position, group_size FROM orders WHERE order_number = %s",
+        (order_number,),
+    )
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return 'Это не заказ Яндекс Маркета', None
+    ym_id, position, size = row
+
+    status, data = ym_get_raw(
+        f'/campaigns/{campaign_id}/orders/{ym_id}/delivery/labels?format=A9', api_key
+    )
+    if status != 200:
+        text = data.decode('utf-8', 'replace')[:300] if data else ''
+        return f'Яндекс не отдал ярлык (код {status}): {text}', None
+    return None, base64.b64encode(data).decode()
+
+
 def handler(event: dict, context) -> dict:
     """Интеграция с Яндекс Маркетом: загрузка заказов FBS на конвейер производства.
 
@@ -229,6 +271,9 @@ def handler(event: dict, context) -> dict:
     GET  /?action=campaigns       - какие кампании доступны ключу (проверка настроек)
     GET  /?action=check&status=   - проверка ключа: сколько заказов ждёт сборки
     POST /  { action: 'sync' }    - загрузить новые заказы на конвейер
+    POST /  { action: 'label', orderNumber }
+        - ярлык-наклейка Яндекса на вещь заказа (формат A9 = 58×40 мм) в base64 PDF.
+          Яндекс печатает ярлык на КАЖДОЕ грузоместо, на нём указано «1 из 3»
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -308,6 +353,16 @@ def handler(event: dict, context) -> dict:
                     for o in orders[:10]
                 ],
             })
+
+        if action == 'label':
+            # Ярлык на вещь заказа — печатается на терминале упаковщика и клеится на пакет.
+            order_number = (body_data.get('orderNumber') or params.get('orderNumber') or '').strip()
+            if not order_number:
+                return _resp(400, {'error': 'Укажите номер заказа'})
+            err, pdf_b64 = get_order_label(cur, api_key, campaign_id, order_number)
+            if err:
+                return _resp(502, {'error': err})
+            return _resp(200, {'orderNumber': order_number, 'pdfBase64': pdf_b64})
 
         if action == 'sync':
             result = sync_orders(cur, api_key, campaign_id, actor_id, actor_name)

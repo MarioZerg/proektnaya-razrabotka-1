@@ -19,6 +19,8 @@ export interface KioskOrder {
   groupKey?: string | null;
   groupSize?: number | null;
   groupPosition?: number | null;
+  /** FBS — ярлык отправления выдаёт маркетплейс по API; FBO — печатаем свой стикер товара. */
+  orderType?: string | null;
 }
 
 export const fetchKioskOrder = async (orderNumber: string): Promise<KioskOrder> => {

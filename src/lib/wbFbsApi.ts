@@ -73,3 +73,8 @@ export const deliverWbSupply = (
     stickersSaved: number;
     sandbox: boolean;
   }>;
+/** Маркетплейсный стикер WB на вещь FBS (PNG 58×40 в base64). */
+export const fetchWbLabel = async (orderNumber: string): Promise<string> => {
+  const data = (await post({ action: 'label', orderNumber })) as { pngBase64: string };
+  return data.pngBase64;
+};

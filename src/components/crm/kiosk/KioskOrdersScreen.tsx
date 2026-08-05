@@ -7,6 +7,10 @@ import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskAp
 import { fetchOrderDetail } from '@/lib/ordersApi';
 import { printFboSticker } from '@/lib/printFboSticker';
 import { printStorageSticker } from '@/lib/printStorageSticker';
+import { printLabelPng, printLabelPdf } from '@/lib/printMarketplaceLabel';
+import { fetchWbLabel } from '@/lib/wbFbsApi';
+import { fetchOzonLabel } from '@/lib/ozonFbsApi';
+import { fetchYandexLabel } from '@/lib/yandexMarketApi';
 import { printTraceSticker } from '@/lib/printTraceSticker';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
@@ -69,9 +73,24 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   const handlePrint = async () => {
     if (!order) return;
     try {
-      // Для стикера нужны штрихкод/код OZON — берём полную карточку заказа.
-      const detail = await fetchOrderDetail(order.id);
-      printFboSticker(detail);
+      // FBS: ярлык отправления печатает МАРКЕТПЛЕЙС — берём готовый файл по API и печатаем
+      // как есть. Свой аналог рисовать нельзя: на складе принимают только их ярлык с их
+      // кодами. FBO: маркетплейсного ярлыка нет, печатаем свой стикер товара.
+      if (order.orderType === 'FBS') {
+        const mp = (order.marketplace || '').toUpperCase();
+        if (mp === 'WB') {
+          printLabelPng(await fetchWbLabel(order.orderNumber), 'Стикер WB');
+        } else if (mp === 'OZON') {
+          printLabelPdf(await fetchOzonLabel(order.orderNumber), 'Ярлык OZON');
+        } else if (mp === 'YANDEX') {
+          printLabelPdf(await fetchYandexLabel(order.orderNumber), 'Ярлык Яндекс Маркета');
+        } else {
+          printFboSticker(await fetchOrderDetail(order.id));
+        }
+      } else {
+        // Для стикера нужны штрихкод/код OZON — берём полную карточку заказа.
+        printFboSticker(await fetchOrderDetail(order.id));
+      }
       setPrinted(true);
     } catch (e) {
       toast({
@@ -164,7 +183,8 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
                     Заказ из {order.groupSize} вещей — это {order.groupPosition}-я
                   </p>
                   <p className="text-sm">
-                    Ярлык на весь заказ один: упакуйте все {order.groupSize} вещи вместе
+                    Каждая вещь едет своим пакетом со своим ярлыком. Отгружается заказ только
+                    целиком — все {order.groupSize} вещи должны попасть в одну поставку
                   </p>
                 </div>
               </div>
@@ -214,7 +234,9 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
             ) : (
               <Button size="lg" className="h-16 w-full text-lg" onClick={handlePrint}>
                 <Icon name="Printer" size={24} className="mr-2" />
-                Распечатать стикер
+                {order.orderType === 'FBS'
+                  ? 'Распечатать ярлык отправления'
+                  : 'Распечатать стикер'}
               </Button>
             )}
 

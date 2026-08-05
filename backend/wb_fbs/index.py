@@ -446,6 +446,33 @@ def handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox):
     return _resp(200, {'success': True, 'stickersSaved': stickers_saved, 'sandbox': use_sandbox})
 
 
+
+def get_order_sticker(cur, api_key, use_sandbox, order_number):
+    """Маркетплейсный стикер WB на сборочное задание FBS.
+
+    WB отдаёт готовый стикер по id сборочного задания. Просим формат 58×40 — ровно наша
+    термонаклейка, чтобы печатать как есть. Свой штрихкод рисовать нельзя: на складе WB
+    принимают только их стикер с их кодом.
+
+    Возвращает (ошибка, base64_png).
+    """
+    cur.execute("SELECT wb_order_id FROM orders WHERE order_number = %s", (order_number,))
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return 'У этого заказа нет сборочного задания WB', None
+
+    status, data = wb_request(
+        'POST', '/api/v3/orders/stickers?type=png&width=58&height=40', api_key, use_sandbox,
+        {'orders': [int(row[0])]},
+    )
+    if status != 200 or not isinstance(data, dict):
+        return f'WB не отдал стикер (код {status}): {str(data)[:250]}', None
+    stickers = data.get('stickers') or []
+    if not stickers:
+        return 'WB не вернул стикер для этого заказа', None
+    return None, stickers[0].get('file')
+
+
 def handler(event: dict, context) -> dict:
     """Интеграция с WildBerries FBS (Marketplace API v3).
 
@@ -473,6 +500,8 @@ def handler(event: dict, context) -> dict:
         - убирает ошибочно отсканированный заказ из WB FBS-поставки: удаляет сборочное задание
           из поставки на WB (DELETE /supplies/{sid}/orders/{orderId}) и снимает связь у нас;
           заказ снова становится готовым к отгрузке. Доступно, пока поставка не в доставке.
+    POST /  { action: 'label', orderNumber }
+        - маркетплейсный стикер WB на вещь (png 58×40) в base64 — для печати на терминале
     POST /  { action: 'deliver_supply', supplyId }
         - передаёт поставку в доставку на WB (PATCH /supplies/{sid}/deliver), тянет PNG-стикеры
           коробов trbx (POST /supplies/{sid}/trbx/stickers), сохраняет их в S3 и привязывает
@@ -498,7 +527,8 @@ def handler(event: dict, context) -> dict:
     actor_name = body_data.get('actorName')
 
     if action not in ('sync_orders', 'create_supply', 'scan_order_to_supply',
-                      'remove_order_from_supply', 'deliver_supply', 'list_warehouses'):
+                      'remove_order_from_supply', 'deliver_supply', 'list_warehouses',
+                      'label'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -520,6 +550,16 @@ def handler(event: dict, context) -> dict:
             return handle_scan_order(cur, conn, body_data, api_key, use_sandbox)
         if action == 'remove_order_from_supply':
             return handle_remove_order(cur, conn, body_data, api_key, use_sandbox)
+        if action == 'label':
+            # Маркетплейсный стикер на вещь — печатается на терминале упаковщика.
+            order_number = (body_data.get('orderNumber') or '').strip()
+            if not order_number:
+                return _resp(400, {'error': 'Укажите номер заказа'})
+            err, png_b64 = get_order_sticker(cur, api_key, use_sandbox, order_number)
+            if err:
+                return _resp(502, {'error': err})
+            return _resp(200, {'orderNumber': order_number, 'pngBase64': png_b64})
+
         if action == 'deliver_supply':
             return handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox)
 

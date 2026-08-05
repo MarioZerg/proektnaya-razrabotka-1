@@ -52,3 +52,8 @@ export const refreshAllOzonStatuses = (): Promise<{
     checked: number;
     known: number;
   }>;
+/** Маркетплейсный ярлык OZON на отправление FBS (PDF в base64). */
+export const fetchOzonLabel = async (orderNumber: string): Promise<string> => {
+  const data = await post({ action: 'label', orderNumber });
+  return data.pdfBase64;
+};

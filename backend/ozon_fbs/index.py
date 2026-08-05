@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import urllib.request
@@ -372,6 +373,48 @@ def handle_refresh_all(cur, conn, client_id, api_key):
     return _resp(200, {'updated': updated, 'checked': len(found), 'known': len(known)})
 
 
+
+def get_posting_label(cur, client_id, api_key, order_number):
+    """Маркетплейсный ярлык OZON на отправление FBS.
+
+    OZON отдаёт готовую этикетку PDF по номеру отправления — печатаем её как есть, а не
+    рисуем свой штрихкод: на ярлыке маркетплейса нужные ему коды и разметка, самодельный
+    аналог на складе OZON не примут.
+
+    Возвращает (ошибка, base64_pdf).
+    """
+    cur.execute(
+        "SELECT ozon_posting_number FROM orders WHERE order_number = %s",
+        (order_number,),
+    )
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return 'У этого заказа нет отправления OZON', None
+    posting_number = row[0]
+
+    status, data = ozon_post(
+        '/v2/posting/fbs/package-label', client_id, api_key,
+        {'posting_number': [posting_number]},
+    )
+    if status != 200:
+        # OZON отдаёт этикетку только после того, как отправление собрано на его стороне.
+        # Пока заказ в статусе «ожидает упаковки», API отвечает INVALID_ARGUMENT — объясняем
+        # это упаковщику человеческим языком, а не кодом ошибки.
+        if 'INVALID_ARGUMENT' in str(data):
+            return (
+                'OZON ещё не подготовил этикетку для этого отправления. '
+                'Она появляется после сборки заказа на стороне OZON — попробуйте позже.'
+            ), None
+        return f'OZON не отдал этикетку (код {status}): {str(data)[:250]}', None
+    # Этикетка приходит бинарным PDF — ozon_post уже вернул распарсенное тело, поэтому
+    # при бинарном ответе оно приходит строкой.
+    if isinstance(data, (bytes, bytearray)):
+        return None, base64.b64encode(bytes(data)).decode()
+    if isinstance(data, str):
+        return None, base64.b64encode(data.encode('latin-1', 'ignore')).decode()
+    return 'OZON вернул этикетку в неожиданном формате', None
+
+
 def handler(event: dict, context) -> dict:
     """Интеграция с OZON FBS (Seller API) — РЕЖИМ ТОЛЬКО ЧТЕНИЕ.
 
@@ -411,7 +454,7 @@ def handler(event: dict, context) -> dict:
     actor_id = body_data.get('actorId')
     actor_name = body_data.get('actorName')
 
-    if action not in ('sync_orders', 'refresh_status', 'refresh_all_statuses'):
+    if action not in ('sync_orders', 'refresh_status', 'refresh_all_statuses', 'label'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -431,5 +474,14 @@ def handler(event: dict, context) -> dict:
             return handle_refresh_status(cur, conn, client_id, api_key, body_data)
         if action == 'refresh_all_statuses':
             return handle_refresh_all(cur, conn, client_id, api_key)
+        if action == 'label':
+            # Маркетплейсный ярлык на отправление — печатается на терминале упаковщика.
+            order_number = (body_data.get('orderNumber') or '').strip()
+            if not order_number:
+                return _resp(400, {'error': 'Укажите номер заказа'})
+            err, pdf_b64 = get_posting_label(cur, client_id, api_key, order_number)
+            if err:
+                return _resp(502, {'error': err})
+            return _resp(200, {'orderNumber': order_number, 'pdfBase64': pdf_b64})
     finally:
         conn.close()
