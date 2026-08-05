@@ -21,7 +21,6 @@ import DashboardWidgetsGrid from '@/components/crm/dashboard/DashboardWidgetsGri
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
-import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
 import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 
 const CrmDashboard = () => {
@@ -127,47 +126,7 @@ const CrmDashboard = () => {
     }
   };
 
-  // Сотруднику нужен выбор цеха/смены на дашборде, если он в гостевом режиме (shiftFree),
-  // либо у него вообще нет штатной смены — тогда открытие требует явного выбора (см. backend).
-  // Кладовщик (как и уборщица) не привязан к цеху и смене — он открывает смену по личному
-  // графику из профиля, выбор цеха/смены ему не показываем.
-  // Производственные должности, разрешённые сотруднику: если их несколько, при открытии
-  // смены он выбирает, кем выходит в этот цех.
-  const productionRoles = (user?.availableRoles || []).filter((r) =>
-    ['sewer', 'cutter', 'packer'].includes(r),
-  );
 
-  const skipShiftBinding = isCleaner || user?.role === 'storekeeper';
-  // Швея, закройщик и упаковщик работают гибко — цех и смену выбирают при каждом открытии.
-  const isFlexibleRole = ['sewer', 'cutter', 'packer'].includes(user?.role || '');
-  const needsShiftChoice = !skipShiftBinding && !!(
-    isFlexibleRole || myShiftStatus?.shiftFree || !user?.workshopId || !user?.shiftNumber
-  );
-
-  const handleToggleMyShift = async (choice?: { workshopId: number; shiftNumber: number; role?: string }) => {
-    if (!user) return;
-    setTogglingId(user.id);
-    try {
-      if (myShiftStatus?.isOpen) {
-        await closeShift(user.id);
-        setActiveShift(null, null);
-      } else {
-        const res = await openShift(
-          user.id,
-          choice?.workshopId ?? user.workshopId,
-          choice?.shiftNumber ?? user.shiftNumber,
-          false,
-          choice?.role,
-        );
-        setActiveShift(res.workshopId, res.shiftNumber);
-      }
-      loadShifts();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setTogglingId(null);
-    }
-  };
 
   // Админ постоянно переключает штатную смену сотрудника (users.workshop/shiftNumber) —
   // сотрудник теперь официально числится в новой смене, пока его не переключат снова.
@@ -277,43 +236,16 @@ const CrmDashboard = () => {
             <LototronCard actorId={user?.id} />
           </>
         ) : canSeeShiftCalendar ? (
-          // Кладовщик и менеджер: своя смена (открыть/закрыть по личному графику) и график
-          // смен по календарю — какие смены сегодня работают.
-          <>
-            <div className="lg:col-span-3">
-              <MyShiftCard
-                status={myShiftStatus}
-                userId={user?.id}
-                loading={shiftsLoading}
-                toggling={togglingId === user?.id}
-                needsShiftChoice={needsShiftChoice}
-                onToggle={handleToggleMyShift}
-              />
-            </div>
+          // Кладовщик и менеджер: график смен по календарю. Открытие и закрытие смены
+          // выполняется только на терминале в цехе (киоск).
+          <div className="lg:col-span-5">
             <ShiftCalendarCard
               selectedDate={selectedDate}
               onSelectDate={setSelectedDate}
               days={calendarDays}
             />
-          </>
-        ) : (
-          !isCleaner && (
-            <>
-              <div className="lg:col-span-2">
-                <MyShiftCard
-                  status={myShiftStatus}
-                  userId={user?.id}
-                  loading={shiftsLoading}
-                  toggling={togglingId === user?.id}
-                  needsShiftChoice={needsShiftChoice}
-                  onToggle={handleToggleMyShift}
-                  allowedRoles={productionRoles}
-                  defaultRole={user?.role}
-                />
-              </div>
-            </>
-          )
-        )}
+          </div>
+        ) : null}
       </div>
     </div>
   );
