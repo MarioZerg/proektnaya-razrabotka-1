@@ -14,6 +14,8 @@ interface KioskRollsScreenProps {
   shiftNumber: number | null;
   /** Сотрудник терминала — по нему определяем движение материала в текущей смене. */
   userId: number;
+  /** Имя закройщика — попадает в статистику недостач по рулонам. */
+  userName?: string;
   /** Роль сотрудника — определяет, с рулонами какого типа он может работать. */
   role: string;
 }
@@ -28,7 +30,7 @@ const allowedTypesByRole: Record<string, string[]> = {
 
 /** Экран работы с рулонами на терминале: закройщик закрывает рулоны, у которых закончился
  * метраж. Если ткань кончилась раньше — указывает недостачу цифровой клавиатурой. */
-const KioskRollsScreen = ({ workshopId, shiftNumber, userId, role }: KioskRollsScreenProps) => {
+const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: KioskRollsScreenProps) => {
   const { toast } = useToast();
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -88,7 +90,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, role }: KioskRollsS
     if (!selected) return;
     setSaving(true);
     try {
-      await closeRoll(selected.id, withShortage ? Number(shortage) || 0 : 0);
+      await closeRoll(selected.id, withShortage ? Number(shortage) || 0 : 0, userId, userName);
       toast({
         title: 'Рулон закрыт',
         description: withShortage && Number(shortage) > 0 ? `Недостача: ${shortage} ${selected.unit}` : undefined,

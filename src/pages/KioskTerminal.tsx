@@ -396,6 +396,7 @@ const KioskTerminal = () => {
                 workshopId={Number(workshopId) || 1}
                 shiftNumber={shift?.shiftNumber ?? user.shiftFromCode ?? null}
                 userId={user.id}
+                userName={user.name}
                 role={user.role}
               />
             </div>

@@ -38,6 +38,7 @@ import SuppliersSettings from "./pages/settings/SuppliersSettings";
 import MarketplaceItemsSettings from "./pages/settings/MarketplaceItemsSettings";
 import MarketplaceIntegrationsSettings from "./pages/settings/MarketplaceIntegrationsSettings";
 import Kiosk from "./pages/Kiosk";
+import RollShortageAnalysis from "./pages/analytics/RollShortageAnalysis";
 import KioskTerminal from "./pages/KioskTerminal";
 import { AuthProvider } from "@/context/AuthContext";
 
@@ -56,6 +57,7 @@ const App = () => (
             <Route path="/kiosk/:workshopId" element={<KioskTerminal />} />
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
+            <Route path="/crm/analytics/roll-shortage" element={<RollShortageAnalysis />} />
             <Route path="/crm/inventory/workshop-materials" element={<WorkshopMaterials />} />
             <Route path="/crm/inventory/rolls" element={<Rolls />} />
             <Route path="/crm/inventory/rolls/:id" element={<RollShow />} />

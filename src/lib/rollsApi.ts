@@ -114,5 +114,59 @@ export const writeOffRoll = (id: number, quantity: number, orderId?: number) =>
 export const deleteRoll = (id: number) => postAction({ action: 'delete', id });
 
 /** Закрытие рулона в цехе: рулон закончился. Если ткани не хватило — передаётся недостача. */
-export const closeRoll = (id: number, shortage = 0) =>
-  postAction({ action: 'close_roll', id, shortage });
+export const closeRoll = (id: number, shortage = 0, userId?: number, userName?: string) =>
+  postAction({ action: 'close_roll', id, shortage, userId, userName });
+
+/** Сводка недостач по закрытым рулонам: средний процент по каждой ткани, разрез по
+ * закройщикам и список рулонов. Пока используется только для сбора статистики. */
+export interface ShortageByMaterial {
+  materialId: number;
+  material: string;
+  unit: string;
+  cost: number;
+  normPercent: number | null;
+  rollsClosed: number;
+  shortageTotal: number;
+  avgPercent: number;
+  maxPercent: number;
+  rollsWithShortage: number;
+  costTotal: number;
+}
+
+export interface ShortageByUser {
+  userId: number | null;
+  userName: string;
+  rollsClosed: number;
+  shortageTotal: number;
+  avgPercent: number;
+  costTotal: number;
+}
+
+export interface ShortageRoll {
+  id: number;
+  barcode: string;
+  material: string;
+  unit: string;
+  initialQuantity: number;
+  shortage: number;
+  shortagePercent: number;
+  closedBy: string;
+  completedAt: string | null;
+  cost: number;
+}
+
+export const fetchShortageStats = async (params?: {
+  from?: string;
+  to?: string;
+}): Promise<{
+  byMaterial: ShortageByMaterial[];
+  byUser: ShortageByUser[];
+  rolls: ShortageRoll[];
+}> => {
+  const qs = new URLSearchParams({ shortage_stats: '1' });
+  if (params?.from) qs.set('from', params.from);
+  if (params?.to) qs.set('to', params.to);
+  const res = await fetch(`${ROLLS_URL}?${qs.toString()}`);
+  const data = await res.json();
+  return { byMaterial: data.byMaterial || [], byUser: data.byUser || [], rolls: data.rolls || [] };
+};

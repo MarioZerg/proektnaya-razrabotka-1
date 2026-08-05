@@ -18,6 +18,10 @@ def handler(event: dict, context) -> dict:
 
     GET  /                                 - список рулонов
     GET  /?material_id=1&status=in_storage - список рулонов с фильтром
+    GET  /?shortage_stats=1&from=&to=      - статистика недостач по закрытым рулонам:
+        средний и максимальный процент недостачи по каждому материалу, сводка по закройщикам
+        и список закрытых рулонов. Нужна, чтобы за месяц набрать реальные цифры и потом
+        задать нормы недостачи (materials.shortage_norm_percent)
     POST /  { action: 'create', barcode, materialId, initialQuantity, workshopId?, shiftNumber? }
         - если указан workshopId, shiftNumber обязателен
     POST /  { action: 'update', id, status?, workshopId?, shiftNumber? }
@@ -56,6 +60,117 @@ def handler(event: dict, context) -> dict:
         material_id = params.get('material_id')
         status = params.get('status')
         roll_id = params.get('id')
+
+        # Статистика недостач по закрытым рулонам: сколько метров в среднем «не хватает»
+        # в целом рулоне по каждому материалу. Нужна, чтобы за месяц набрать реальные цифры
+        # и на их основе задать нормы недостачи. Пока никого не штрафуем — только считаем.
+        if params.get('shortage_stats'):
+            date_from = (params.get('from') or '').strip()
+            date_to = (params.get('to') or '').strip()
+            where = ["r.status = 'completed'", "r.initial_quantity > 0"]
+            if date_from:
+                where.append(f"r.completed_at >= '{date_from.replace(chr(39), chr(39)*2)}'")
+            if date_to:
+                where.append(f"r.completed_at < ('{date_to.replace(chr(39), chr(39)*2)}'::date + 1)")
+            where_sql = ' AND '.join(where)
+
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                # По каждому материалу: сколько рулонов закрыто, средняя/макс недостача в
+                # процентах от рулона и во что она обошлась по себестоимости материала.
+                cur.execute(
+                    "SELECT m.id, m.name, m.unit, COALESCE(m.cost, 0), m.shortage_norm_percent, "
+                    "COUNT(*), "
+                    "COALESCE(SUM(r.shortage_quantity), 0), "
+                    "COALESCE(AVG(r.shortage_quantity / r.initial_quantity * 100), 0), "
+                    "COALESCE(MAX(r.shortage_quantity / r.initial_quantity * 100), 0), "
+                    "COUNT(*) FILTER (WHERE r.shortage_quantity > 0) "
+                    "FROM rolls r JOIN materials m ON m.id = r.material_id "
+                    f"WHERE {where_sql} "
+                    "GROUP BY m.id, m.name, m.unit, m.cost, m.shortage_norm_percent "
+                    "ORDER BY 8 DESC"
+                )
+                by_material = [
+                    {
+                        'materialId': row[0],
+                        'material': row[1],
+                        'unit': row[2],
+                        'cost': float(row[3]),
+                        'normPercent': float(row[4]) if row[4] is not None else None,
+                        'rollsClosed': row[5],
+                        'shortageTotal': float(row[6]),
+                        'avgPercent': float(row[7]),
+                        'maxPercent': float(row[8]),
+                        'rollsWithShortage': row[9],
+                        'costTotal': float(row[6]) * float(row[3]),
+                    }
+                    for row in cur.fetchall()
+                ]
+
+                # По закройщикам: у кого недостача выше средней — это будущие кандидаты
+                # на списание, когда нормы будут введены.
+                cur.execute(
+                    "SELECT r.closed_by_user_id, COALESCE(r.closed_by_name, 'Не указан'), "
+                    "COUNT(*), COALESCE(SUM(r.shortage_quantity), 0), "
+                    "COALESCE(AVG(r.shortage_quantity / r.initial_quantity * 100), 0), "
+                    "COALESCE(SUM(r.shortage_quantity * COALESCE(m.cost, 0)), 0) "
+                    "FROM rolls r JOIN materials m ON m.id = r.material_id "
+                    f"WHERE {where_sql} "
+                    "GROUP BY r.closed_by_user_id, r.closed_by_name "
+                    "ORDER BY 5 DESC"
+                )
+                by_user = [
+                    {
+                        'userId': row[0],
+                        'userName': row[1],
+                        'rollsClosed': row[2],
+                        'shortageTotal': float(row[3]),
+                        'avgPercent': float(row[4]),
+                        'costTotal': float(row[5]),
+                    }
+                    for row in cur.fetchall()
+                ]
+
+                # Полный список закрытых рулонов — чтобы можно было посмотреть каждый случай.
+                cur.execute(
+                    "SELECT r.id, r.barcode, m.name, m.unit, r.initial_quantity, "
+                    "r.shortage_quantity, "
+                    "CASE WHEN r.initial_quantity > 0 "
+                    "THEN r.shortage_quantity / r.initial_quantity * 100 ELSE 0 END, "
+                    "COALESCE(r.closed_by_name, ''), r.completed_at, "
+                    "r.shortage_quantity * COALESCE(m.cost, 0) "
+                    "FROM rolls r JOIN materials m ON m.id = r.material_id "
+                    f"WHERE {where_sql} "
+                    "ORDER BY r.completed_at DESC LIMIT 500"
+                )
+                rolls_list = [
+                    {
+                        'id': row[0],
+                        'barcode': row[1],
+                        'material': row[2],
+                        'unit': row[3],
+                        'initialQuantity': float(row[4]),
+                        'shortage': float(row[5]),
+                        'shortagePercent': float(row[6]),
+                        'closedBy': row[7],
+                        'completedAt': row[8].isoformat() if row[8] else None,
+                        'cost': float(row[9]),
+                    }
+                    for row in cur.fetchall()
+                ]
+
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'byMaterial': by_material,
+                        'byUser': by_user,
+                        'rolls': rolls_list,
+                    }),
+                }
+            finally:
+                conn.close()
 
         # Детальная карточка рулона: сам рулон + история движений (расход на заказы и
         # списание брака). Позволяет "провалиться" в рулон и увидеть, сколько осталось,
@@ -417,10 +532,19 @@ def handler(event: dict, context) -> dict:
                         }),
                     }
 
+                # Запоминаем, кто закрыл рулон: по этим данным копится статистика недостач
+                # в разрезе закройщиков и тканей — она понадобится для будущих норм списания.
+                closed_by_id = body_data.get('userId')
+                closed_by_name = (body_data.get('userName') or '').strip()
                 cur.execute(
                     "UPDATE rolls SET remaining_quantity = 0, status = 'completed', completed_at = now(), "
-                    "shortage_quantity = %s WHERE id = %s",
-                    (shortage, int(item_id)),
+                    "shortage_quantity = %s, closed_by_user_id = %s, closed_by_name = %s WHERE id = %s",
+                    (
+                        shortage,
+                        int(closed_by_id) if closed_by_id else None,
+                        closed_by_name or None,
+                        int(item_id),
+                    ),
                 )
                 conn.commit()
                 return {
