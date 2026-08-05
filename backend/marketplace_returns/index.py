@@ -532,13 +532,52 @@ def handler(event: dict, context) -> dict:
                 gw_id = None
                 storage_barcode = None
 
-                # Вещь без исходного заказа положить на склад нельзя: карточка склада
-                # всегда привязана к заказу. Утилизировать можно — там склад не участвует.
+                # Возврат приехал по заказу, которого нет в системе (типичный случай FBO:
+                # маркетплейс не сообщает, какую именно штуку из партии выкупили). Чтобы вещь
+                # всё равно встала на склад и её можно было переупаковать, заводим
+                # технический заказ-возврат: он не идёт на конвейер, а служит карточкой вещи.
                 if outcome != 'utilized' and not order_id:
-                    return _resp(409, {
-                        'error': 'Заказ этого возврата не найден в системе — вещь нельзя '
-                                 'завести на склад. Утилизируйте её или заведите заказ вручную'
-                    })
+                    cur.execute(
+                        "SELECT mi.material, mi.width, mi.height, mi.name, r.marketplace, "
+                        "r.external_id, r.product_name FROM marketplace_returns r "
+                        "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
+                        "WHERE r.id = %s",
+                        (int(return_id),),
+                    )
+                    info = cur.fetchone()
+                    material, width, height = info[0], info[1], info[2]
+                    product = (
+                        f'{material} {width}x{height}'
+                        if material and width and height
+                        else (info[6] or info[3] or 'Возврат')
+                    )
+                    cur.execute(
+                        "INSERT INTO orders (order_number, marketplace, order_type, status, "
+                        "sewing_status, product, quantity, source, material, width, height) "
+                        "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s) "
+                        "ON CONFLICT (order_number) DO NOTHING RETURNING id",
+                        (
+                            f'RET-{info[4]}-{info[5]}',
+                            info[4],
+                            product,
+                            material,
+                            width,
+                            height,
+                        ),
+                    )
+                    created_order = cur.fetchone()
+                    if created_order:
+                        order_id = created_order[0]
+                    else:
+                        cur.execute(
+                            "SELECT id FROM orders WHERE order_number = %s",
+                            (f'RET-{info[4]}-{info[5]}',),
+                        )
+                        order_id = cur.fetchone()[0]
+                    cur.execute(
+                        "UPDATE marketplace_returns SET order_id = %s WHERE id = %s",
+                        (order_id, int(return_id)),
+                    )
 
                 if outcome != 'utilized':
                     # Вещь остаётся в обороте — заводим её на складе. Повреждённая
