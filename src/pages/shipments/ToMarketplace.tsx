@@ -56,6 +56,7 @@ const statusVariant: Record<string, { className: string }> = {
 const createOptions: Array<{ marketplace: string; type: SupplyType; label: string }> = [
   { marketplace: 'OZON', type: 'FBS', label: 'OZON FBS' },
   { marketplace: 'WB', type: 'FBS', label: 'WB FBS' },
+  { marketplace: 'Yandex', type: 'FBS', label: 'Яндекс FBS' },
   { marketplace: 'OZON', type: 'FBO', label: 'OZON FBO' },
   { marketplace: 'WB', type: 'FBO', label: 'WB FBO' },
 ];
@@ -242,6 +243,7 @@ const ToMarketplace = () => {
                 <SelectItem value="all">Все маркетплейсы</SelectItem>
                 <SelectItem value="OZON">OZON</SelectItem>
                 <SelectItem value="WB">WB</SelectItem>
+                <SelectItem value="Yandex">Яндекс.Маркет</SelectItem>
               </SelectContent>
             </Select>
           </div>
