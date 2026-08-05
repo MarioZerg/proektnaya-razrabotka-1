@@ -62,65 +62,57 @@ const SewingItemsCards = ({
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">Всего заказов: {totalCount}</p>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {pagedOrders.map((o) => (
           <Card
             key={o.id}
-            className="relative overflow-hidden border-border shadow-none"
+            className="relative cursor-pointer overflow-hidden border-border shadow-none transition-colors hover:bg-muted/40"
+            onClick={() => onOpenDetail(o)}
           >
-            <div
-              className={`pointer-events-none absolute -right-11 top-4 w-40 rotate-45 py-1 text-center text-[11px] font-bold uppercase tracking-wide text-white ${ribbonClass[o.marketplace] || 'bg-muted-foreground'}`}
-            >
-              {marketplaceLogo[o.marketplace]?.label || o.marketplace}
-            </div>
+            {/* Цветная полоса слева — маркетплейс заказа, не занимает места в контенте. */}
+            <span
+              className={`absolute inset-y-0 left-0 w-1 ${ribbonClass[o.marketplace] || 'bg-muted-foreground'}`}
+            />
 
-            <CardContent className="space-y-2.5 pt-6">
-              <p className="flex items-center gap-1.5 pr-6 font-mono-tech text-sm font-semibold">
-                {o.orderNumber} {o.orderType}
-                {canPrintSticker && o.orderType === 'FBO' && o.sewingStatus === 'Готовые' && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      printFboSticker(o);
-                    }}
-                    className="text-muted-foreground hover:text-blue-600"
-                    aria-label="Печать стикера FBO"
-                  >
-                    <Icon name="Printer" size={15} />
-                  </button>
-                )}
-              </p>
+            <CardContent className="space-y-1.5 p-3 pl-4">
+              <div className="flex items-start justify-between gap-2">
+                <p className="min-w-0 flex-1 truncate font-mono-tech text-xs text-muted-foreground">
+                  {o.orderNumber} · {o.orderType} ·{' '}
+                  {marketplaceLogo[o.marketplace]?.label || o.marketplace}
+                </p>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {canPrintSticker && o.orderType === 'FBO' && o.sewingStatus === 'Готовые' && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        printFboSticker(o);
+                      }}
+                      className="text-muted-foreground hover:text-blue-600"
+                      aria-label="Печать стикера FBO"
+                    >
+                      <Icon name="Printer" size={15} />
+                    </button>
+                  )}
+                  <Badge className={`${statusBadgeClass[o.sewingStatus] || ''} shrink-0 text-[11px]`}>
+                    {o.sewingStatus}
+                  </Badge>
+                </div>
+              </div>
 
-              <Badge className={statusBadgeClass[o.sewingStatus] || ''}>{o.sewingStatus}</Badge>
-
-              <p className="text-xl font-bold leading-tight">
+              <p className="truncate text-base font-bold leading-tight">
                 {o.material || '—'} {o.width && o.height ? `${o.width} x ${o.height}` : ''}
               </p>
 
-              <div className="space-y-1 text-sm text-muted-foreground">
-                <p>Создан: {formatDate(o.createdAt)}</p>
-                {o.assignedUserName && <p>Сотрудник: {o.assignedUserName}</p>}
-                {o.hangerNumber > 0 && <p>Вешалка: № {o.hangerNumber}</p>}
-              </div>
+              <p className="truncate text-xs text-muted-foreground">
+                {formatDate(o.createdAt)} · {timeAgo(o.createdAt)}
+                {o.assignedUserName ? ` · ${o.assignedUserName}` : ''}
+                {o.hangerNumber > 0 ? ` · вешалка № ${o.hangerNumber}` : ''}
+              </p>
 
               {(o.cutterUserName || o.sewerUserName || o.packerUserName) && (
-                <div className="border-t border-border pt-2">
-                  <OrderStagesDiagram order={o} />
-                </div>
+                <OrderStagesDiagram order={o} />
               )}
-
-              <Badge variant="secondary" className="bg-emerald-100 font-normal text-emerald-700 hover:bg-emerald-100">
-                {timeAgo(o.createdAt)}
-              </Badge>
-
-              <Button
-                className="w-full bg-blue-600 text-white hover:bg-blue-700"
-                onClick={() => onOpenDetail(o)}
-              >
-                <Icon name="Eye" size={16} className="mr-1.5" />
-                Просмотр
-              </Button>
             </CardContent>
           </Card>
         ))}
