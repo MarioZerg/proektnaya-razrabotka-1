@@ -42,6 +42,31 @@ def compute_order_status(sewing_status: str, box_number) -> str:
     return 'Новый'
 
 
+
+def check_incomplete_groups(cur, supply_id):
+    """Ищет в поставке заказы Яндекса, собранные не полностью.
+
+    На заказ покупателя из нескольких вещей Яндекс выдаёт ОДИН ярлык. Если отгрузить часть
+    такого заказа, вторая половина останется на складе, а покупатель получит неполную
+    посылку — маркетплейс засчитает это как недовоз. Поэтому заказ едет только целиком.
+
+    Возвращает список словарей с ключами groupKey, inSupply, total.
+    """
+    cur.execute(
+        "SELECT o.group_key, count(*) AS in_supply, max(o.group_size) AS total "
+        "FROM marketplace_supply_items msi "
+        "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+        "JOIN orders o ON o.id = gw.order_id "
+        "WHERE msi.supply_id = %s AND o.group_key IS NOT NULL "
+        "GROUP BY o.group_key HAVING count(*) < max(o.group_size)",
+        (int(supply_id),),
+    )
+    return [
+        {'groupKey': r[0], 'inSupply': int(r[1]), 'total': int(r[2] or 0)}
+        for r in cur.fetchall()
+    ]
+
+
 def handler(event: dict, context) -> dict:
     """Поставки готового товара на маркетплейс (полный цикл, как на физическом складе):
 
@@ -112,7 +137,7 @@ def handler(event: dict, context) -> dict:
           type='storekeeper_shift'). Ставка (salary_rates, role='storekeeper') берётся из
           тарифов цеха этой смены (workshop_id смены), либо из цеха профиля кладовщика, если
           у смены цех не указан. Не больше одного начисления на одну смену (shift_session_id)
-    POST /  { action: 'force_complete', supplyId }
+    POST /  { action: 'force_complete', supplyId, confirmIncomplete? }
         - принудительное закрытие поставки в системе из любого статуса (кроме уже
           "Выполнена"): используется, если реальная поставка зависла на любом этапе
           из-за задержек API маркетплейса. Все товары переводятся в 'shipped',
@@ -525,8 +550,44 @@ def handler(event: dict, context) -> dict:
                     f"INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id) VALUES ({int(supply_id)}, {goods_id})"
                 )
                 cur.execute(f"UPDATE goods_warehouse SET status = 'reserved' WHERE id = {goods_id}")
+
+                # Если товар из заказа с общим ярлыком (Яндекс) — сразу подсказываем, сколько
+                # вещей этого заказа ещё нужно отсканировать. Лучше сказать об этом здесь, чем
+                # заблокировать всю поставку в конце сборки.
+                cur.execute(
+                    "SELECT o.group_key, o.group_size FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.order_id WHERE gw.id = %s",
+                    (goods_id,),
+                )
+                g_row = cur.fetchone()
+                group_hint = None
+                if g_row and g_row[0] and (g_row[1] or 0) > 1:
+                    cur.execute(
+                        "SELECT count(*) FROM marketplace_supply_items msi "
+                        "JOIN goods_warehouse gw2 ON gw2.id = msi.goods_warehouse_id "
+                        "JOIN orders o2 ON o2.id = gw2.order_id "
+                        "WHERE msi.supply_id = %s AND o2.group_key = %s",
+                        (int(supply_id), g_row[0]),
+                    )
+                    in_supply = int(cur.fetchone()[0])
+                    group_hint = {
+                        'groupKey': g_row[0],
+                        'inSupply': in_supply,
+                        'total': int(g_row[1]),
+                        'remaining': max(0, int(g_row[1]) - in_supply),
+                    }
+
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'goodsWarehouseId': goods_id, 'orderNumber': order_number})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'goodsWarehouseId': goods_id,
+                        'orderNumber': order_number,
+                        'group': group_hint,
+                    }, ensure_ascii=False),
+                }
 
             if action == 'remove_item':
                 item_id = body_data.get('itemId')
@@ -820,6 +881,25 @@ def handler(event: dict, context) -> dict:
 
                 extra_sql = ""
                 if new_status == 'Отгрузка':
+                    # Заказ Яндекса из нескольких вещей отгружается по одному общему ярлыку.
+                    # Отгрузить его наполовину нельзя: остаток застрянет на складе, а
+                    # покупателю уедет неполная посылка — маркетплейс засчитает недовоз.
+                    incomplete = check_incomplete_groups(cur, supply_id)
+                    if incomplete:
+                        parts = '; '.join(
+                            f"{g['groupKey']}: собрано {g['inSupply']} из {g['total']}"
+                            for g in incomplete
+                        )
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'В поставке есть заказы, собранные не полностью — '
+                                         'у них общий ярлык, отгружать можно только целиком. '
+                                         + parts,
+                                'incompleteGroups': incomplete,
+                            }, ensure_ascii=False),
+                        }
                     extra_sql = ", ship_to_gazelka_at = COALESCE(ship_to_gazelka_at, now())"
                     cur.execute(
                         "SELECT goods_warehouse_id FROM marketplace_supply_items WHERE supply_id = %s",
@@ -888,6 +968,26 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
                 if row[0] == 'Выполнена':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Поставка уже выполнена'})}
+
+                # Принудительное закрытие — аварийный инструмент, поэтому неполный заказ с общим
+                # ярлыком он не запрещает наглухо, но требует осознанного подтверждения: иначе
+                # половина заказа молча уедет как отгруженная, а вторая зависнет на складе.
+                incomplete = check_incomplete_groups(cur, supply_id)
+                if incomplete and not body_data.get('confirmIncomplete'):
+                    parts = '; '.join(
+                        f"{g['groupKey']}: собрано {g['inSupply']} из {g['total']}"
+                        for g in incomplete
+                    )
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'В поставке есть заказы, собранные не полностью (общий ярлык): '
+                                     + parts + '. Подтвердите закрытие, если поставка реально уехала.',
+                            'incompleteGroups': incomplete,
+                            'needsConfirm': True,
+                        }, ensure_ascii=False),
+                    }
 
                 cur.execute(
                     "SELECT goods_warehouse_id FROM marketplace_supply_items WHERE supply_id = %s",

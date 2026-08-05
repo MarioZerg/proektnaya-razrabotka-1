@@ -166,6 +166,15 @@ export const createSupply = (payload: {
 export interface ScanOrderResult {
   success: true;
   goodsWarehouseId: number;
+  orderNumber?: string | null;
+  /** Заполняется, если товар из заказа с общим ярлыком (Яндекс Маркет): такой заказ
+   * отгружается только целиком, поэтому сразу показываем, сколько вещей ещё не отсканировано. */
+  group?: {
+    groupKey: string;
+    inSupply: number;
+    total: number;
+    remaining: number;
+  } | null;
 }
 
 export const scanOrderToSupply = (supplyId: number, orderNumber: string): Promise<ScanOrderResult> =>

@@ -86,9 +86,18 @@ const MarketplaceSupplyShow = () => {
     setScanOrderNumber('');
     setScanning(true);
     try {
-      await scanOrderToSupply(supplyId, orderNumber);
+      const res = await scanOrderToSupply(supplyId, orderNumber);
       playScanSound();
-      toast({ title: `Заказ ${orderNumber} добавлен` });
+      // Заказ Яндекса из нескольких вещей уедет по одному ярлыку — пока собраны не все вещи,
+      // напоминаем кладовщику, сколько осталось: отгрузить половину заказа система не даст.
+      if (res.group && res.group.remaining > 0) {
+        toast({
+          title: `Заказ собран не полностью: ${res.group.inSupply} из ${res.group.total}`,
+          description: `Отсканируйте ещё ${res.group.remaining} — у этого заказа общий ярлык`,
+        });
+      } else {
+        toast({ title: `Заказ ${orderNumber} добавлен` });
+      }
       load();
     } catch (e) {
       playScanErrorSound();
