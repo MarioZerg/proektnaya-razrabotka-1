@@ -18,6 +18,8 @@ def handler(event: dict, context) -> dict:
 
     GET  /                                 - список рулонов
     GET  /?material_id=1&status=in_storage - список рулонов с фильтром
+    GET  /?forUserId=5                     - рулоны ТОЛЬКО цеха открытой смены сотрудника
+                                             (для швеи/закройщика/упаковщика)
     GET  /?shortage_stats=1&from=&to=      - статистика недостач по закрытым рулонам:
         средний и максимальный процент недостачи по каждому материалу, сводка по закройщикам
         и список закрытых рулонов. Нужна, чтобы за месяц набрать реальные цифры и потом
@@ -290,6 +292,25 @@ def handler(event: dict, context) -> dict:
             if status:
                 status_esc = status.replace("'", "''")
                 conditions.append(f"r.status = '{status_esc}'")
+
+            # forUserId — производственная роль (швея/закройщик/упаковщик) смотрит рулоны:
+            # показываем ТОЛЬКО рулоны цеха её текущей открытой смены. Склад и рулоны чужих
+            # цехов ей не видны. Кладовщику и админу этот параметр не передаётся — они
+            # видят всё. Без открытой смены список пустой.
+            for_user_id = params.get('forUserId')
+            if for_user_id:
+                cur.execute(
+                    "SELECT ss.workshop_id FROM shift_sessions ss "
+                    "WHERE ss.user_id = %s AND ss.closed_at IS NULL "
+                    "ORDER BY ss.opened_at DESC LIMIT 1",
+                    (int(for_user_id),),
+                )
+                sess = cur.fetchone()
+                if sess and sess[0]:
+                    conditions.append(f"r.workshop_id = {int(sess[0])}")
+                else:
+                    conditions.append("1 = 0")
+
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
             # Если передан usedSinceUserId — отмечаем, по каким рулонам было движение материала

@@ -74,11 +74,14 @@ export const fetchRolls = async (filters?: {
   status?: string;
   /** Отметить рулоны, по которым было движение в текущей смене этого сотрудника. */
   usedSinceUserId?: number;
+  /** Производственная роль: вернуть рулоны ТОЛЬКО цеха её открытой смены. */
+  forUserId?: number;
 }): Promise<Roll[]> => {
   const params = new URLSearchParams();
   if (filters?.materialId) params.set('material_id', String(filters.materialId));
   if (filters?.status) params.set('status', filters.status);
   if (filters?.usedSinceUserId) params.set('usedSinceUserId', String(filters.usedSinceUserId));
+  if (filters?.forUserId) params.set('forUserId', String(filters.forUserId));
   const qs = params.toString();
   const res = await fetch(qs ? `${ROLLS_URL}?${qs}` : ROLLS_URL);
   const data = await res.json();

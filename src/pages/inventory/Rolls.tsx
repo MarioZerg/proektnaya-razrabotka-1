@@ -29,6 +29,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import { fetchRolls, createRoll, type Roll, type RollStatus } from '@/lib/rollsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
@@ -45,6 +46,7 @@ const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | '
 const Rolls = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
@@ -64,9 +66,18 @@ const Rolls = () => {
     shiftNumber: '',
   });
 
+  // Швея, закройщик и упаковщик видят рулоны только своего цеха (сервер фильтрует по
+  // цеху их открытой смены) и не могут заводить новые — это работа кладовщика.
+  const isProductionRole =
+    user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
+
   const load = () => {
     setLoading(true);
-    Promise.all([fetchRolls(), fetchMaterialsData(), fetchWorkshops()])
+    Promise.all([
+      fetchRolls(isProductionRole && user ? { forUserId: user.id } : undefined),
+      fetchMaterialsData(),
+      fetchWorkshops(),
+    ])
       .then(([rollsData, materialsData, workshopsData]) => {
         setRolls(rollsData);
         setMaterials(materialsData.materials);
@@ -127,16 +138,20 @@ const Rolls = () => {
           <div>
             <h1 className="text-xl font-bold">Рулоны материалов</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Партии материалов со штрихкодом, остатком и статусом
+              {isProductionRole
+                ? 'Рулоны вашего цеха: остаток, статус и штрихкод'
+                : 'Партии материалов со штрихкодом, остатком и статусом'}
             </p>
           </div>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button onClick={openCreate}>
-                <Icon name="Plus" size={16} className="mr-2" />
-                Добавить рулон
-              </Button>
-            </DialogTrigger>
+            {!isProductionRole && (
+              <DialogTrigger asChild>
+                <Button onClick={openCreate}>
+                  <Icon name="Plus" size={16} className="mr-2" />
+                  Добавить рулон
+                </Button>
+              </DialogTrigger>
+            )}
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Новый рулон</DialogTitle>

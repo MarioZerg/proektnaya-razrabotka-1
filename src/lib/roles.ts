@@ -47,7 +47,12 @@ const productionNav: NavItem[] = [
   {
     label: 'Инвентаризация',
     icon: 'Boxes',
-    children: [{ label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' }],
+    // Рулоны производственным ролям показываем только своего цеха (фильтрация на бэкенде),
+    // чтобы швея/закройщик/упаковщик видели остатки, с которыми реально работают.
+    children: [
+      { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
+      { label: 'Рулоны', path: '/crm/inventory/rolls' },
+    ],
   },
   {
     label: 'Отгрузки',
@@ -70,7 +75,12 @@ const packerNav: NavItem[] = [
   {
     label: 'Инвентаризация',
     icon: 'Boxes',
-    children: [{ label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' }],
+    // Рулоны производственным ролям показываем только своего цеха (фильтрация на бэкенде),
+    // чтобы швея/закройщик/упаковщик видели остатки, с которыми реально работают.
+    children: [
+      { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
+      { label: 'Рулоны', path: '/crm/inventory/rolls' },
+    ],
   },
   {
     label: 'Отгрузки',
