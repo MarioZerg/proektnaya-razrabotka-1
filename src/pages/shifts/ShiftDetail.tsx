@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -43,6 +44,10 @@ const ShiftDetailPage = () => {
   const [addUserId, setAddUserId] = useState('');
   const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<number | null>(null);
+  // Редактирование названия смены прямо в заголовке: клик по карандашу — поле ввода.
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [savingName, setSavingName] = useState(false);
 
   const load = () => {
     if (!id) return;
@@ -107,6 +112,34 @@ const ShiftDetailPage = () => {
   };
 
   // Сотрудники, которых можно добавить — не состоящие уже в этой смене (в других сменах или
+  const handleSaveName = async () => {
+    if (!shift) return;
+    const name = nameDraft.trim();
+    if (!name) {
+      toast({ title: 'Название не может быть пустым', variant: 'destructive' });
+      return;
+    }
+    if (name === shift.name) {
+      setEditingName(false);
+      return;
+    }
+    setSavingName(true);
+    try {
+      await updateShift(shift.id, { name });
+      toast({ title: 'Название смены изменено' });
+      setEditingName(false);
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось переименовать',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingName(false);
+    }
+  };
+
   // без смены вообще). Админ сюда не добавляется — у него нет привязки к цеху/смене.
   const availableEmployees = employees.filter(
     (e) => e.role !== 'admin' && !shift?.employees.some((se) => se.id === e.id)
@@ -132,7 +165,40 @@ const ShiftDetailPage = () => {
             К списку смен
           </Button>
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-xl font-bold">{shift.name}</h1>
+            {editingName ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  autoFocus
+                  className="h-9 w-56 text-base font-bold"
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveName();
+                    if (e.key === 'Escape') setEditingName(false);
+                  }}
+                />
+                <Button size="sm" onClick={handleSaveName} disabled={savingName}>
+                  {savingName ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Сохранить'}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditingName(false)}>
+                  Отмена
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold">{shift.name}</h1>
+                <button
+                  onClick={() => {
+                    setNameDraft(shift.name);
+                    setEditingName(true);
+                  }}
+                  className="text-muted-foreground transition hover:text-foreground"
+                  aria-label="Переименовать смену"
+                >
+                  <Icon name="Pencil" size={16} />
+                </button>
+              </div>
+            )}
             <Badge
               variant={shift.isActive ? 'secondary' : 'outline'}
               className={shift.isActive ? 'bg-emerald-600 text-white hover:bg-emerald-600' : ''}
