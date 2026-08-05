@@ -38,6 +38,7 @@ const GoodsWarehouse = () => {
   const [widthFilter, setWidthFilter] = useState('');
   const [heightFilter, setHeightFilter] = useState('');
   const [shelfFilter, setShelfFilter] = useState('');
+  const [reasonFilter, setReasonFilter] = useState('');
 
 
   // Принять новые возвраты
@@ -98,6 +99,7 @@ const GoodsWarehouse = () => {
     if (widthFilter && i.width !== Number(widthFilter)) return false;
     if (heightFilter && i.height !== Number(heightFilter)) return false;
     if (shelfFilter && String(i.shelfId) !== shelfFilter) return false;
+    if (reasonFilter && i.receiveReason !== reasonFilter) return false;
     return true;
   });
 
@@ -107,6 +109,7 @@ const GoodsWarehouse = () => {
     !!widthFilter,
     !!heightFilter,
     !!shelfFilter,
+    !!reasonFilter,
   ].filter(Boolean).length;
 
   const resetFilters = () => {
@@ -115,6 +118,7 @@ const GoodsWarehouse = () => {
     setWidthFilter('');
     setHeightFilter('');
     setShelfFilter('');
+    setReasonFilter('');
   };
 
   const openReturn = () => {
@@ -295,6 +299,8 @@ const GoodsWarehouse = () => {
           setWidthFilter={setWidthFilter}
           heightFilter={heightFilter}
           setHeightFilter={setHeightFilter}
+          reasonFilter={reasonFilter}
+          setReasonFilter={setReasonFilter}
           shelfFilter={shelfFilter}
           setShelfFilter={setShelfFilter}
           shelves={shelves}

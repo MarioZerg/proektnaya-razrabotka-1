@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import type { Shelf } from '@/lib/shelvesApi';
-import { statusLabels } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
+import { statusLabels, reasonLabels } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
 
 interface GoodsWarehouseFiltersProps {
   statusFilter: string;
@@ -23,6 +23,8 @@ interface GoodsWarehouseFiltersProps {
   setHeightFilter: (value: string) => void;
   shelfFilter: string;
   setShelfFilter: (value: string) => void;
+  reasonFilter: string;
+  setReasonFilter: (value: string) => void;
   shelves: Shelf[];
   activeFiltersCount: number;
   onReset: () => void;
@@ -40,6 +42,8 @@ const GoodsWarehouseFilters = ({
   setHeightFilter,
   shelfFilter,
   setShelfFilter,
+  reasonFilter,
+  setReasonFilter,
   shelves,
   activeFiltersCount,
   onReset,
@@ -54,6 +58,22 @@ const GoodsWarehouseFilters = ({
           <SelectContent>
             <SelectItem value="all">Все статусы</SelectItem>
             {Object.entries(statusLabels).map(([key, label]) => (
+              <SelectItem key={key} value={key}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="w-52">
+        <Select value={reasonFilter || 'all'} onValueChange={(v) => setReasonFilter(v === 'all' ? '' : v)}>
+          <SelectTrigger>
+            <SelectValue placeholder="Откуда" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Любой источник</SelectItem>
+            {Object.entries(reasonLabels).map(([key, label]) => (
               <SelectItem key={key} value={key}>
                 {label}
               </SelectItem>
