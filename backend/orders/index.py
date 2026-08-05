@@ -407,7 +407,8 @@ def handler(event: dict, context) -> dict:
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                 "o.cutter_user_id, cu.full_name, o.hanger_number, "
                 "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
-                "o.ozon_status, o.ozon_posting_number, o.product_barcode, o.product_ozon_sku "
+                "o.ozon_status, o.ozon_posting_number, o.product_barcode, o.product_ozon_sku, "
+                "o.marketplace_created_at "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -448,6 +449,7 @@ def handler(event: dict, context) -> dict:
                     'ozonPostingNumber': r[27],
                     'productBarcode': r[28],
                     'productOzonSku': r[29],
+                    'marketplaceCreatedAt': (r[30].isoformat() + 'Z') if r[30] else None,
                 }
                 for r in cur.fetchall()
             ]

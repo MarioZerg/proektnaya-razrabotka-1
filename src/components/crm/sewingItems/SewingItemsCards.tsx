@@ -4,8 +4,9 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
-import { marketplaceLogo, formatDate, timeAgo } from '@/components/crm/sewingItems/sewingItemsShared';
+import { marketplaceLogo, formatDate } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
+import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import { printFboSticker } from '@/lib/printFboSticker';
 
 interface SewingItemsCardsProps {
@@ -94,6 +95,7 @@ const SewingItemsCards = ({
                       <Icon name="Printer" size={15} />
                     </button>
                   )}
+                  <OrderWaitTimer order={o} compact />
                   <Badge className={`${statusBadgeClass[o.sewingStatus] || ''} shrink-0 text-[11px]`}>
                     {o.sewingStatus}
                   </Badge>
@@ -105,7 +107,7 @@ const SewingItemsCards = ({
               </p>
 
               <p className="truncate text-xs text-muted-foreground">
-                {formatDate(o.createdAt)} · {timeAgo(o.createdAt)}
+                {formatDate(o.marketplaceCreatedAt || o.createdAt)}
                 {o.assignedUserName ? ` · ${o.assignedUserName}` : ''}
                 {o.hangerNumber > 0 ? ` · вешалка № ${o.hangerNumber}` : ''}
               </p>

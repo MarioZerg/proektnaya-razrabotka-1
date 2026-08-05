@@ -19,7 +19,8 @@ import {
 import Icon from '@/components/ui/icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { Order } from '@/lib/ordersApi';
-import { marketplaceLogo, formatDate, timeAgo } from '@/components/crm/sewingItems/sewingItemsShared';
+import { marketplaceLogo, formatDate } from '@/components/crm/sewingItems/sewingItemsShared';
+import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import { printFboSticker } from '@/lib/printFboSticker';
@@ -154,10 +155,12 @@ const SewingItemsTable = ({
                 </TableCell>
                 <TableCell>{o.hangerNumber > 0 ? `№ ${o.hangerNumber}` : '—'}</TableCell>
                 <TableCell>
-                  <div className="whitespace-nowrap">{formatDate(o.createdAt)}</div>
-                  <Badge variant="destructive" className="mt-1 font-normal">
-                    {timeAgo(o.createdAt)}
-                  </Badge>
+                  <div className="whitespace-nowrap">
+                    {formatDate(o.marketplaceCreatedAt || o.createdAt)}
+                  </div>
+                  <div className="mt-1">
+                    <OrderWaitTimer order={o} />
+                  </div>
                 </TableCell>
                 <TableCell>{o.completedAt ? formatDate(o.completedAt) : ''}</TableCell>
                 <TableCell>

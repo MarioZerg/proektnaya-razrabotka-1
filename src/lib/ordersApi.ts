@@ -49,6 +49,9 @@ export interface Order {
   /** OZON SKU товара (из справочника) — именно по нему товар добавляется в поставку FBO OZON,
    * поэтому на стикере OZON печатается он (OZN + ozonSku), а не штрихкод. */
   productOzonSku?: string | null;
+  /** Дата и время оформления заказа покупателем на маркетплейсе (WB, OZON). По ней считаем,
+   * сколько заказ реально ждёт отгрузки — а не с момента загрузки в нашу систему. */
+  marketplaceCreatedAt?: string | null;
 }
 
 export interface OrderMaterialUsage {

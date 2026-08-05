@@ -533,10 +533,14 @@ def handler(event: dict, context) -> dict:
             # с фолбэком на служебный id сборочного задания.
             order_number = str(wb.get('rid') or wb_order_id)
 
+            # Время оформления заказа покупателем на WB (createdAt) — по нему считаем,
+            # сколько заказ уже ждёт, а не с момента импорта в нашу систему.
+            mp_created_at = wb.get('createdAt') or None
+
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
-                "quantity, source, material, width, height, wb_order_id) "
-                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s) RETURNING id",
+                "quantity, source, material, width, height, wb_order_id, marketplace_created_at) "
+                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s) RETURNING id",
                 (
                     order_number,
                     product,
@@ -544,6 +548,7 @@ def handler(event: dict, context) -> dict:
                     int(width) if width else None,
                     int(height) if height else None,
                     int(wb_order_id),
+                    mp_created_at,
                 ),
             )
             new_id = cur.fetchone()[0]

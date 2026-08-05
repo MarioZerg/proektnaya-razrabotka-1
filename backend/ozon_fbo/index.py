@@ -277,6 +277,8 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
     warehouse = (supplies[0].get('storage_warehouse') or {}).get('name') or (app.get('drop_off_warehouse') or {}).get('name')
     ts = (app.get('timeslot') or {}).get('timeslot') or {}
     supply_date = (ts.get('from') or '')[:10] or None
+    # Дата создания заявки на OZON — по ней считаем, сколько заказ уже ждёт.
+    app_created_at = app.get('created_at') or app.get('created_date') or None
 
     items = get_bundle_items(client_id, api_key, bundle_id) if bundle_id else []
     if not items:
@@ -334,6 +336,7 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
                 barcode or None,
                 int(item_id) if item_id else None,
                 item_ozon_sku or None,
+                app_created_at,
             ))
 
     created = 0
@@ -342,10 +345,10 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
             cur,
             "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
             "quantity, source, material, width, height, cluster, product_barcode, marketplace_item_id, "
-            "product_ozon_sku) VALUES %s "
+            "product_ozon_sku, marketplace_created_at) VALUES %s "
             "ON CONFLICT (order_number) DO NOTHING RETURNING id",
             rows,
-            template="(%s, 'OZON', 'FBO', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s)",
+            template="(%s, 'OZON', 'FBO', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s)",
             fetch=True,
         )
         created = len(result)

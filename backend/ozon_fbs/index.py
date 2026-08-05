@@ -150,6 +150,10 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
             skipped_existing += 1
             continue
 
+        # Время оформления заказа покупателем на OZON: in_process_at (когда отправление
+        # ушло в работу), с фолбэком на created_at. По нему считаем ожидание заказа.
+        mp_created_at = p.get('in_process_at') or p.get('created_at') or None
+
         # Каждый товар отправления = отдельная штука на конвейере (1 заказ = 1 штука),
         # с учётом количества.
         products = p.get('products', []) or []
@@ -168,8 +172,9 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
             for _ in range(qty):
                 cur.execute(
                     "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
-                    "quantity, source, material, width, height, ozon_posting_number, ozon_status) "
-                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s)",
+                    "quantity, source, material, width, height, ozon_posting_number, ozon_status, "
+                    "marketplace_created_at) "
+                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s)",
                     (
                         posting_number,
                         product,
@@ -178,6 +183,7 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
                         int(height) if height else None,
                         posting_number,
                         ozon_status,
+                        mp_created_at,
                     ),
                 )
                 made_any = True
