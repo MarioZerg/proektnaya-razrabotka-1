@@ -1,17 +1,26 @@
 import { useEffect, useRef } from 'react';
 import { syncWbOrders } from '@/lib/wbFbsApi';
 import { syncOzonOrders } from '@/lib/ozonFbsApi';
+import { syncMarketplaceReturns } from '@/lib/marketplaceReturnsApi';
 import { useToast } from '@/hooks/use-toast';
 
 const INTERVAL_MS = 15 * 60 * 1000; // 15 минут
+// Возвраты появляются реже заказов — тянем их раз в час, чтобы не дёргать API впустую.
+const RETURNS_INTERVAL_MS = 60 * 60 * 1000;
 
-/** Фоновая автозагрузка новых FBS-заказов с маркетплейсов (WildBerries и OZON), пока
- * открыта CRM. Раз в 15 минут (и один раз при заходе) вызывает синхронизацию. Работает
- * тихо: уведомление показывается только когда реально созданы новые заказы. Ошибки не
- * всплывают (интеграция может быть выключена/недоступна) — чтобы не мешать работе. */
+/** Фоновая автозагрузка с маркетплейсов, пока открыта CRM:
+ *  - новые FBS-заказы (WildBerries и OZON) — раз в 15 минут;
+ *  - заявки на возврат — раз в час (появляются реже, чаще опрашивать незачем).
+ *
+ * Первый прогон идёт сразу при заходе. Работает тихо: уведомление всплывает только когда
+ * реально что-то создано. Ошибки не показываем — интеграция может быть выключена или
+ * недоступна, и это не должно мешать работе. */
 export const useMarketplaceAutoSync = (
+  /** Тянуть новые FBS-заказы — нужно только тем, кто ведёт производство (админ). */
   enabled: boolean,
-  actor?: { id?: number | null; name?: string | null }
+  actor?: { id?: number | null; name?: string | null },
+  /** Тянуть заявки на возврат — нужно админу и кладовщику. */
+  returnsEnabled = false
 ) => {
   const { toast } = useToast();
   const running = useRef(false);
@@ -20,7 +29,7 @@ export const useMarketplaceAutoSync = (
   actorRef.current = actor;
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled && !returnsEnabled) return;
 
     const run = async () => {
       if (running.current) return;
@@ -46,9 +55,34 @@ export const useMarketplaceAutoSync = (
       }
     };
 
-    run();
-    const timer = setInterval(run, INTERVAL_MS);
-    return () => clearInterval(timer);
+    const runReturns = async () => {
+      const a = { id: actorRef.current?.id, name: actorRef.current?.name };
+      const res = await syncMarketplaceReturns(30, a.id ?? undefined, a.name ?? undefined).catch(
+        () => null
+      );
+      if (res && res.created > 0) {
+        toast({
+          title: `Новые возвраты с маркетплейсов: ${res.created}`,
+          description: 'Проверьте заявки в разделе «Получение возвратов».',
+        });
+      }
+    };
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let returnsTimer: ReturnType<typeof setInterval> | null = null;
+
+    if (enabled) {
+      run();
+      timer = setInterval(run, INTERVAL_MS);
+    }
+    if (returnsEnabled) {
+      runReturns();
+      returnsTimer = setInterval(runReturns, RETURNS_INTERVAL_MS);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+      if (returnsTimer) clearInterval(returnsTimer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
+  }, [enabled, returnsEnabled]);
 };

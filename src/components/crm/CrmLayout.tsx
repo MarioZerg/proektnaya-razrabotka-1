@@ -36,9 +36,14 @@ import KioskPreviewDialog from '@/components/crm/kiosk/KioskPreviewDialog';
 const CrmLayout = ({ children }: { children: ReactNode }) => {
   const { user, login, logout, switchRole } = useAuth();
 
-  // Автоподгрузка новых FBS-заказов с WildBerries и OZON каждые 15 минут — только для
-  // управляющей роли (администратор), которая работает с заказами.
-  useMarketplaceAutoSync(user?.role === 'admin', { id: user?.id, name: user?.name });
+  // Автоподгрузка с маркетплейсов, пока открыта CRM: FBS-заказы каждые 15 минут и заявки
+  // на возврат раз в час. Только для управляющих ролей — админа и кладовщика (возвраты
+  // принимает он).
+  useMarketplaceAutoSync(
+    user?.role === 'admin',
+    { id: user?.id, name: user?.name },
+    user?.role === 'admin' || user?.role === 'storekeeper',
+  );
   const navigate = useNavigate();
   const location = useLocation();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
