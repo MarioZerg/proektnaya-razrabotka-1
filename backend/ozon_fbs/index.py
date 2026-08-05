@@ -180,10 +180,10 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         if not posting_number:
             continue
 
-        cur.execute("SELECT id FROM orders WHERE ozon_posting_number = %s", (posting_number,))
-        if cur.fetchone():
-            skipped_existing += 1
-            continue
+        # Раньше здесь отправление целиком пропускалось, если по нему уже был хоть один
+        # заказ. Из-за этого из отправления с несколькими товарами в производство попадала
+        # только первая штука. Теперь проверяем каждую штуку отдельно — по её уникальному
+        # номеру заказа (см. ниже), поэтому повторный импорт по-прежнему не создаёт дублей.
 
         # Время оформления заказа покупателем на OZON: in_process_at (когда отправление
         # ушло в работу), с фолбэком на created_at. По нему считаем ожидание заказа.
@@ -204,14 +204,21 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
                 continue
             material, width, height, item_name, item_id = item
             product = f"{material} {width}x{height}" if material and width and height else item_name
-            for _ in range(qty):
+            for n in range(1, qty + 1):
+                # Номер заказа для каждой штуки свой: "{отправление}-{артикул}-{номер штуки}".
+                # Так несколько товаров одного покупателя становятся отдельными позициями на
+                # конвейере, а повторная загрузка не создаёт дублей (ON CONFLICT DO NOTHING).
+                # Само отправление хранится в ozon_posting_number — по нему заказы собираются
+                # обратно при отгрузке.
+                unique_number = f"{posting_number}-{offer_id or ozon_sku}-{n}"
                 cur.execute(
                     "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                     "quantity, source, material, width, height, ozon_posting_number, ozon_status, "
                     "marketplace_created_at, marketplace_item_id) "
-                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                     (
-                        posting_number,
+                        unique_number,
                         product,
                         material,
                         int(width) if width else None,
@@ -222,7 +229,12 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
                         int(item_id) if item_id else None,
                     ),
                 )
-                new_order_id = cur.fetchone()[0]
+                inserted = cur.fetchone()
+                if not inserted:
+                    # Эта штука уже загружена ранее — пропускаем, дубль не создаём.
+                    skipped_existing += 1
+                    continue
+                new_order_id = inserted[0]
                 # Такая вещь может уже лежать на полке (осталась от отменённого заказа) —
                 # тогда шить заново не надо: резервируем её под этот заказ, кладовщик заберёт
                 # её с полки, наклеит стикер отправления и отсканирует в поставку FBS.
