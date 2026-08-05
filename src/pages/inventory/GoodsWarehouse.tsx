@@ -83,7 +83,17 @@ const GoodsWarehouse = () => {
         setItems(itemsData);
         setShelves(shelvesData);
         const acceptedOrderIds = new Set(itemsData.map((i) => i.orderId));
-        setReadyOrders(ordersData.filter((o) => o.sewingStatus === 'Готовые' && !acceptedOrderIds.has(o.id)));
+        // На склад хранения принимаем только готовые заказы, отменённые клиентом (по статусу
+        // из API OZON/WB). Заказы, идущие по конвейеру, отгружаются на маркетплейс напрямую —
+        // всё остальное кладовщик принимает вручную через «Принять возврат».
+        setReadyOrders(
+          ordersData.filter(
+            (o) =>
+              o.sewingStatus === 'Готовые' &&
+              !acceptedOrderIds.has(o.id) &&
+              (o.status === 'Отменён' || (o.ozonStatus || '').toLowerCase().includes('cancel')),
+          ),
+        );
       })
       .finally(() => setLoading(false));
   };
@@ -303,14 +313,17 @@ const GoodsWarehouse = () => {
                 </DialogHeader>
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <Label>Заказ (статус «Готовые»)</Label>
+                    <Label>Отменённый клиентом заказ</Label>
                     <Select value={selectedOrderId} onValueChange={setSelectedOrderId}>
                       <SelectTrigger>
                         <SelectValue placeholder="Выберите заказ" />
                       </SelectTrigger>
                       <SelectContent>
                         {readyOrders.length === 0 ? (
-                          <div className="p-2 text-sm text-muted-foreground">Нет готовых заказов</div>
+                          <div className="p-2 text-sm text-muted-foreground">
+                            Нет отменённых заказов — остальные товары принимайте через «Принять
+                            возврат»
+                          </div>
                         ) : (
                           readyOrders.map((o) => (
                             <SelectItem key={o.id} value={String(o.id)}>

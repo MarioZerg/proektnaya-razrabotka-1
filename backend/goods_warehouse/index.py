@@ -51,8 +51,10 @@ def handler(event: dict, context) -> dict:
     GET  /?barcode=GW-000001         - найти товар по штрихкоду хранения (для сканера подбора
                                         и сканирования в поставку)
     POST /  { action: 'receive', orderId, shelfId? }
-        - принимает готовый заказ на склад товара (заказ должен быть в статусе "Готовые"),
-          генерирует новый storage_barcode
+        - принимает готовый заказ на склад товара. ТОЛЬКО заказы, отменённые клиентом
+          (status='Отменён' или статус отмены из API OZON/WB) — заказы, идущие по конвейеру,
+          отгружаются на маркетплейс и на склад не принимаются (их кладут вручную через
+          receive_return). Генерирует новый storage_barcode
     POST /  { action: 'receive_return', orderNumber, shelfId? }
         - приём возврата с маркетплейса по номеру заказа (ручной ввод, до появления API):
           если заказ уже был на складе — запись просто возвращается в статус in_stock с
@@ -201,7 +203,10 @@ def handler(event: dict, context) -> dict:
                 if not order_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите заказ'})}
 
-                cur.execute("SELECT sewing_status FROM orders WHERE id = %s", (int(order_id),))
+                cur.execute(
+                    "SELECT sewing_status, status, ozon_status FROM orders WHERE id = %s",
+                    (int(order_id),),
+                )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
@@ -210,6 +215,22 @@ def handler(event: dict, context) -> dict:
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({'error': f'Заказ должен быть в статусе "Готовые" (сейчас: {row[0]})'}),
+                    }
+                # Заказы, которые идут по конвейеру, отгружаются на маркетплейс напрямую и на
+                # склад хранения не принимаются. На склад попадает только то, что отменил
+                # клиент (статус отмены из API OZON/WB) — остальное кладовщик принимает вручную
+                # как возврат (action receive_return).
+                ozon_status = (row[2] or '').lower()
+                is_cancelled = row[1] == 'Отменён' or 'cancel' in ozon_status
+                if not is_cancelled:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Этот заказ идёт по конвейеру и отгружается на маркетплейс. '
+                                     'На склад принимаются только заказы, отменённые клиентом — '
+                                     'остальное оформляйте вручную через приём возврата'
+                        }),
                     }
 
                 cur.execute("SELECT id FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
@@ -276,9 +297,15 @@ def handler(event: dict, context) -> dict:
                 shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
                 created = []
                 for order_id in order_ids:
-                    cur.execute("SELECT sewing_status FROM orders WHERE id = %s", (int(order_id),))
+                    cur.execute(
+                        "SELECT sewing_status, status, ozon_status FROM orders WHERE id = %s",
+                        (int(order_id),),
+                    )
                     row = cur.fetchone()
                     if not row or row[0] != 'Готовые':
+                        continue
+                    # Только отменённые клиентом — конвейерные заказы уходят на маркетплейс.
+                    if not (row[1] == 'Отменён' or 'cancel' in (row[2] or '').lower()):
                         continue
                     cur.execute("SELECT id FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
                     if cur.fetchone():
