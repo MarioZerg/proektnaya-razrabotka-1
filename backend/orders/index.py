@@ -1183,15 +1183,16 @@ def handler(event: dict, context) -> dict:
                                 'body': json.dumps({'error': f'Лимит метража на смену исчерпан: {round(taken_meters, 2)}/{daily_limit} пог.м.'}),
                             }
 
-                    # НАКОПИТЕЛЬНЫЙ таймаут между взятием заказов. Первые
-                    # max_quantity_orders_without_timeout заказов за смену швея берёт без
-                    # задержки — они НЕ входят в сумму. Каждый следующий заказ (сверх лимита)
-                    # добавляет к общему "бюджету времени" свой timeout_{bucket} по ширине.
-                    # Взять новый заказ можно, когда с момента взятия ПЕРВОГО заказа за смену
-                    # прошло не меньше этого накопленного бюджета. Пример: лимит 2, взяли 2
-                    # заказа мгновенно — бюджет 0. Берём 3-й (ширина 500, timeout 12с) — теперь
-                    # бюджет 12с; 4-й станет доступен, когда с первого взятия пройдёт ещё столько,
-                    # чтобы покрыть сумму таймаутов 3-го и 4-го заказов. Так задержки суммируются.
+                    # НАКОПИТЕЛЬНЫЙ таймаут между взятием заказов. Настройки timeout_200..800
+                    # задаются в МИНУТАХ (в БД хранятся минуты, здесь переводим в секунды).
+                    # Первые max_quantity_orders_without_timeout заказов за смену швея берёт
+                    # без задержки — они НЕ входят в сумму. Каждый следующий заказ (сверх
+                    # лимита) добавляет к общему "бюджету времени" свой timeout_{bucket} по
+                    # ширине. Взять новый заказ можно, когда с момента взятия ПЕРВОГО заказа
+                    # за смену прошло не меньше накопленного бюджета. Пример: лимит 2, взяли 2
+                    # заказа мгновенно — бюджет 0. Берём 3-й (ширина 500, timeout 12 мин) —
+                    # бюджет 12 мин; 4-й станет доступен, когда с первого взятия пройдёт
+                    # столько, чтобы покрыть сумму таймаутов 3-го и 4-го. Задержки суммируются.
                     without_timeout = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_without_timeout', 0)
                     cur.execute(
                         "SELECT width, taken_at, EXTRACT(EPOCH FROM (now() - taken_at))::float "
@@ -1207,16 +1208,24 @@ def handler(event: dict, context) -> dict:
                     for w in taken_rows[without_timeout:]:
                         bucket = nearest_timeout_width(w[0])
                         if bucket:
-                            required_budget += get_setting_int(cur, session_workshop_id, f'timeout_{bucket}', 0)
+                            # Значение настройки — минуты, бюджет считаем в секундах.
+                            required_budget += get_setting_int(
+                                cur, session_workshop_id, f'timeout_{bucket}', 0
+                            ) * 60
 
                     if required_budget > 0 and taken_rows:
                         elapsed_since_first = taken_rows[0][2]
                         if elapsed_since_first < required_budget:
-                            wait_left = round(required_budget - elapsed_since_first)
+                            wait_sec = round(required_budget - elapsed_since_first)
+                            # Пишем понятно: до минуты — в секундах, дальше — в минутах.
+                            if wait_sec < 60:
+                                wait_text = f'{wait_sec} сек.'
+                            else:
+                                wait_text = f'{wait_sec // 60} мин. {wait_sec % 60} сек.'
                             return {
                                 'statusCode': 409,
                                 'headers': headers,
-                                'body': json.dumps({'error': f'Подождите ещё {wait_left} сек. перед взятием следующего заказа'}),
+                                'body': json.dumps({'error': f'Подождите ещё {wait_text} перед взятием следующего заказа'}),
                             }
 
                 # Приоритет и фильтр заказов (по цеху смены): orders_filter — ограничивает
