@@ -7,6 +7,7 @@ export type KioskScreen =
   | 'reviews'
   | 'rolls'
   | 'unlabeled'
+  | 'defect-receive'
   | 'repack';
 
 interface KioskMenuProps {
@@ -47,6 +48,12 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
     className: 'bg-rose-500 hover:bg-rose-600 text-white',
   },
   {
+    screen: 'defect-receive',
+    label: 'Приём брака из цеха',
+    icon: 'PackageX',
+    className: 'bg-red-600 hover:bg-red-700 text-white',
+  },
+  {
     screen: 'repack',
     label: 'Перепаковка',
     icon: 'PackageOpen',
@@ -60,10 +67,13 @@ const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
   // «Товар без стикера» — его зона ответственности, остальным эта плитка не нужна.
   // «Перепаковка» — вещи, вернувшиеся от покупателя годными, но с мятой упаковкой:
   // их переупаковывает упаковщик, кладовщику эта плитка не нужна.
+  // «Приём брака» — тоже зона кладовщика: он забирает брак из контейнеров цеха на склад.
   const visibleTiles =
     role === 'storekeeper'
-      ? tiles.filter((t) => t.screen === 'shift' || t.screen === 'unlabeled')
-      : tiles.filter((t) => t.screen !== 'unlabeled');
+      ? tiles.filter((t) =>
+          ['shift', 'unlabeled', 'defect-receive'].includes(t.screen)
+        )
+      : tiles.filter((t) => !['unlabeled', 'defect-receive'].includes(t.screen));
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

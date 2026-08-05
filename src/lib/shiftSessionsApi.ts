@@ -83,3 +83,24 @@ export const openShift = (
   postAction({ action: 'open', userId, workshopId, shiftNumber, openedByAdmin, role });
 
 export const closeShift = (userId: number) => postAction({ action: 'close', userId });
+export interface DefectCheck {
+  ask: boolean;
+  question: string;
+  hint: string;
+  defectsCount: number;
+  defectsQuantity: number;
+  role: string;
+}
+
+/** Перед закрытием смены спрашиваем про брак: текст свой для каждой роли — закройщик режет
+ * ткань, швея работает с тесьмой. Нулевой счётчик обычно значит, что человек забыл оформить
+ * брак, а не что его не было. */
+export const checkShiftDefects = async (userId: number): Promise<DefectCheck | null> => {
+  const res = await fetch(SHIFT_SESSIONS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_check', userId }),
+  });
+  const data = await res.json();
+  return data.ask ? data : null;
+};

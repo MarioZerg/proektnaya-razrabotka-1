@@ -5,7 +5,13 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { kioskLoginByCode, type KioskUser, type KioskShift } from '@/lib/kioskApi';
-import { openShift, closeShift, fetchEmployeeShifts } from '@/lib/shiftSessionsApi';
+import {
+  openShift,
+  closeShift,
+  fetchEmployeeShifts,
+  checkShiftDefects,
+  type DefectCheck,
+} from '@/lib/shiftSessionsApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import KioskMenu, { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
@@ -15,6 +21,7 @@ import KioskRepackScreen from '@/components/crm/kiosk/KioskRepackScreen';
 import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
 import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
+import KioskDefectReceiveScreen from '@/components/crm/kiosk/KioskDefectReceiveScreen';
 import KioskIdleTimer from '@/components/crm/kiosk/KioskIdleTimer';
 import { roleLabels, type Role } from '@/lib/roles';
 
@@ -31,6 +38,7 @@ const KioskTerminal = () => {
   const [user, setUser] = useState<KioskUser | null>(null);
   const [shift, setShift] = useState<KioskShift | null>(null);
   const [shiftSaving, setShiftSaving] = useState(false);
+  const [defectCheck, setDefectCheck] = useState<DefectCheck | null>(null);
   const [screen, setScreen] = useState<KioskScreen>('menu');
   // После скана QR сотрудник сначала попадает на экран смены и только потом, нажав
   // «Войти в терминал», переходит в меню с плитками.
@@ -195,8 +203,24 @@ const KioskTerminal = () => {
     user.homeWorkshopId !== currentWorkshopId
   );
 
+  // Перед закрытием смены напоминаем про брак: если сотрудник за смену не оформил ни одной
+  // записи, скорее всего он про это забыл. Спрашиваем один раз — закрыть смену не мешаем.
+  const handleCloseShiftClick = async () => {
+    if (!user || isPreview) {
+      handleCloseShift();
+      return;
+    }
+    const check = await checkShiftDefects(user.id).catch(() => null);
+    if (check) {
+      setDefectCheck(check);
+      return;
+    }
+    handleCloseShift();
+  };
+
   const handleCloseShift = async () => {
     if (!user) return;
+    setDefectCheck(null);
     if (isPreview) {
       toast({ title: 'Режим проверки', description: 'Смена не закрывается — это только просмотр' });
       return;
@@ -289,6 +313,60 @@ const KioskTerminal = () => {
         {/* Автовыход из профиля при бездействии: предупреждение через минуту, отсчёт 30 сек.
             В режиме проверки таймер не нужен — админ может спокойно изучать экраны. */}
         {!isPreview && <KioskIdleTimer onTimeout={handleLogout} />}
+
+        {/* Напоминание про брак перед закрытием смены. Текст свой для каждой роли:
+            закройщику про ткань, швее про тесьму — так вопрос попадает в её работу. */}
+        {defectCheck && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+            <div className="w-full max-w-lg space-y-4 rounded-lg bg-background p-6">
+              <div className="flex items-start gap-3">
+                <Icon name="TriangleAlert" size={32} className="mt-0.5 shrink-0 text-amber-600" />
+                <div>
+                  <p className="text-2xl font-bold">{defectCheck.question}</p>
+                  <p className="mt-1 text-base text-muted-foreground">{defectCheck.hint}</p>
+                </div>
+              </div>
+
+              <div
+                className={`rounded-md border p-3 text-base ${
+                  defectCheck.defectsCount > 0
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                    : 'border-amber-300 bg-amber-50 text-amber-900'
+                }`}
+              >
+                {defectCheck.defectsCount > 0
+                  ? `За смену вы оформили брака: ${defectCheck.defectsCount} шт. на ${defectCheck.defectsQuantity} пог.м.`
+                  : 'За эту смену вы не оформили ни одного брака'}
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="h-16 flex-1 text-lg"
+                  onClick={() => {
+                    setDefectCheck(null);
+                    setScreen('rolls');
+                  }}
+                >
+                  <Icon name="PackageX" size={22} className="mr-2" />
+                  Оформить брак
+                </Button>
+                <Button
+                  size="lg"
+                  variant="destructive"
+                  className="h-16 flex-1 text-lg"
+                  onClick={handleCloseShift}
+                  disabled={shiftSaving}
+                >
+                  <Icon name="LogOut" size={22} className="mr-2" />
+                  Всё закрыто, завершить смену
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div
           className={`flex flex-wrap items-center gap-3 px-4 py-3 ${
             isPreview ? 'bg-violet-100' : 'bg-emerald-100'
@@ -345,7 +423,7 @@ const KioskTerminal = () => {
                   size="lg"
                   variant="destructive"
                   className="h-20 w-full text-xl"
-                  onClick={handleCloseShift}
+                  onClick={handleCloseShiftClick}
                   disabled={shiftSaving}
                 >
                   <Icon
@@ -399,6 +477,12 @@ const KioskTerminal = () => {
           {screen === 'unlabeled' && (
             <div className="mx-auto max-w-3xl">
               <KioskUnlabeledScreen actorId={user.id} actorName={user.name} />
+            </div>
+          )}
+
+          {screen === 'defect-receive' && (
+            <div className="mx-auto max-w-3xl">
+              <KioskDefectReceiveScreen actorId={user.id} actorName={user.name} />
             </div>
           )}
 

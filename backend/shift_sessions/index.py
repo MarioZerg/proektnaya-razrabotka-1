@@ -509,6 +509,56 @@ def handler(event: dict, context) -> dict:
                     }),
                 }
 
+            if action == 'defect_check':
+                # Перед закрытием смены напоминаем оформить брак: если сотрудник за смену не
+                # завёл ни одной записи — вероятно, забыл, а не работал идеально. Текст свой
+                # для каждой роли: закройщик режет ткань, швея работает с тесьмой.
+                user_id = body_data.get('userId')
+                if not user_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
+                cur.execute(
+                    "SELECT s.id, s.opened_at, u.role FROM shift_sessions s "
+                    "JOIN users u ON u.id = s.user_id "
+                    "WHERE s.user_id = %s AND s.closed_at IS NULL ORDER BY s.opened_at DESC LIMIT 1",
+                    (int(user_id),),
+                )
+                srow = cur.fetchone()
+                if not srow:
+                    return {'statusCode': 200, 'headers': headers,
+                            'body': json.dumps({'ask': False}, ensure_ascii=False)}
+                session_id, opened_at, role = srow
+
+                cur.execute(
+                    "SELECT count(*), coalesce(sum(quantity), 0) FROM material_defects "
+                    "WHERE user_id = %s AND created_at >= %s",
+                    (int(user_id), opened_at),
+                )
+                cnt, total = cur.fetchone()
+
+                if role == 'cutter':
+                    question = 'Вы закрыли брак ткани?'
+                    hint = 'Закройщик работает с тюлем — если находили затяжки, полосы или дырки, оформите брак до закрытия смены'
+                elif role == 'sewer':
+                    question = 'Вы закрыли брак тесьмы?'
+                    hint = 'Швея работает с тесьмой — если попадался брак петель или заводской брак, оформите его до закрытия смены'
+                else:
+                    question = 'Вы закрыли брак материалов?'
+                    hint = 'Если за смену попадался брак ткани или тесьмы, оформите его до закрытия смены'
+
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        # Спрашиваем всегда, но если брак уже оформлен — показываем сколько.
+                        'ask': True,
+                        'question': question,
+                        'hint': hint,
+                        'defectsCount': int(cnt),
+                        'defectsQuantity': float(total or 0),
+                        'role': role,
+                    }, ensure_ascii=False),
+                }
+
             if action == 'close':
                 user_id = body_data.get('userId')
                 if not user_id:

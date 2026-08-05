@@ -254,3 +254,141 @@ export const fetchReprintReport = async (days = 30): Promise<ReprintReport> => {
   }
   return data;
 };
+
+// ---------- Брак материалов ----------
+
+export interface DefectReason {
+  code: string;
+  label: string;
+}
+
+export interface DefectRoll {
+  id: number;
+  barcode: string;
+  materialName: string;
+  unit: string | null;
+  /** «Тюль» (ткань) или «Аксессуары» (тесьма) — от типа зависят причины брака. */
+  materialType: string;
+  remaining: number;
+  reasons: DefectReason[];
+}
+
+/** Рулоны цеха, по которым можно оформить брак, вместе с подходящими причинами.
+ * Пакеты и этикетки сюда не попадают — по ним брак не ведут. */
+export const fetchDefectRolls = async (workshopId?: number): Promise<DefectRoll[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_reasons', workshopId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить рулоны');
+  return data.rolls || [];
+};
+
+export interface DefectResult {
+  defectId: number;
+  /** Штрихкод стикера брака DF-000001 — печатается и клеится на бракованный кусок. */
+  defectBarcode: string;
+  reasonLabel: string;
+  materialType: string;
+  unit: string | null;
+  actorName: string;
+}
+
+/** Оформить брак рулона на терминале. */
+export const createDefect = async (payload: {
+  code: string;
+  rollId: number;
+  quantity: number;
+  reasonCode: string;
+  comment?: string;
+}): Promise<DefectResult> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_writeoff', ...payload }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось оформить брак');
+  return data;
+};
+
+/** Кладовщик принимает брак на склад по стикеру из контейнера. */
+export const receiveDefect = async (
+  barcode: string,
+  actorId?: number,
+  actorName?: string
+): Promise<{
+  barcode: string;
+  materialName: string;
+  quantity: number;
+  unit: string | null;
+  reasonLabel: string;
+  foundBy: string;
+}> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_receive', barcode, actorId, actorName }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось принять брак');
+  return data;
+};
+
+export interface PendingDefect {
+  barcode: string;
+  materialName: string;
+  unit: string | null;
+  quantity: number;
+  reasonLabel: string;
+  userName: string;
+  workshopName: string | null;
+  createdAt: string;
+}
+
+/** Брак, который ещё лежит в контейнерах и не доехал до склада. */
+export const fetchPendingDefects = async (): Promise<PendingDefect[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_pending' }),
+  });
+  const data = await res.json();
+  return data.items || [];
+};
+
+export interface DefectReportRow {
+  month: string;
+  userName: string;
+  role: string;
+  count: number;
+  quantity: number;
+  pending: number;
+}
+
+export interface DefectReport {
+  byUser: DefectReportRow[];
+  byReason: { reason: string; count: number; quantity: number }[];
+  /** Сотрудники, не оформившие ни одного брака — их проверяют в первую очередь. */
+  neverReported: { userName: string; role: string }[];
+  pendingCount: number;
+  pendingQuantity: number;
+}
+
+export const fetchDefectReport = async (months = 6): Promise<DefectReport> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_report', months }),
+  });
+  const data = await res.json();
+  return {
+    byUser: data.byUser || [],
+    byReason: data.byReason || [],
+    neverReported: data.neverReported || [],
+    pendingCount: data.pendingCount || 0,
+    pendingQuantity: data.pendingQuantity || 0,
+  };
+};

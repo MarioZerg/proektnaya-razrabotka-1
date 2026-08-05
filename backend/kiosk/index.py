@@ -147,6 +147,39 @@ def write_off_packaging(cur, order_id: int) -> str | None:
     return None
 
 
+
+# Брак ведём только по ТКАНИ и ТЕСЬМЕ. Пакеты и этикетки не считаем: их брак копеечный, а
+# время сотрудника на оформление дороже самой потери.
+DEFECT_REASONS = {
+    # Тюль — полотно: дефекты видны при раскрое.
+    'Тюль': [
+        {'code': 'fabric_snags', 'label': 'Затяжки'},
+        {'code': 'fabric_stripes', 'label': 'Полосы'},
+        {'code': 'fabric_holes', 'label': 'Дырки'},
+        {'code': 'fabric_weight', 'label': 'Брак утяжелителя'},
+    ],
+    # Аксессуары — тесьма: дефекты видны при пошиве.
+    'Аксессуары': [
+        {'code': 'trim_loops', 'label': 'Брак петель'},
+        {'code': 'trim_factory', 'label': 'Заводской брак'},
+    ],
+}
+
+
+def defect_reason_label(material_type, code):
+    """Название причины по её коду — чтобы в отчёте не тянуть справочник каждый раз."""
+    for r in DEFECT_REASONS.get(material_type, []):
+        if r['code'] == code:
+            return r['label']
+    return None
+
+
+def next_defect_barcode(cur):
+    """Штрихкод стикера брака DF-000001 — по нему кладовщик принимает брак на склад."""
+    cur.execute("SELECT nextval('material_defect_barcode_seq')")
+    return f'DF-{int(cur.fetchone()[0]):06d}'
+
+
 def handler(event: dict, context) -> dict:
     """Терминал упаковщицы (kiosk) — упрощённый экран для завершения стикеровки.
 
@@ -836,6 +869,178 @@ def handler(event: dict, context) -> dict:
                 sewers = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'sewers': sewers})}
 
+            if action == 'defect_report':
+                # Статистика брака: кто сколько находит и по каким причинам.
+                # Смысл отчёта — увидеть НЕ только тех, кто много бракует, но и тех, кто не
+                # оформляет брак вообще: брак есть у всех, и нулевая строка обычно значит,
+                # что человек молча выбрасывает обрезки, а не работает идеально.
+                months = int(body_data.get('months') or 6)
+
+                cur.execute(
+                    "SELECT to_char(d.created_at, 'YYYY-MM') AS ym, "
+                    "coalesce(d.user_name, 'Не указан'), d.user_role, "
+                    "count(*), coalesce(sum(d.quantity), 0), "
+                    "count(*) FILTER (WHERE d.received_at IS NULL) "
+                    "FROM material_defects d "
+                    f"WHERE d.created_at >= date_trunc('month', now()) - interval '{int(months)} months' "
+                    "GROUP BY ym, d.user_name, d.user_role "
+                    "ORDER BY ym DESC, sum(d.quantity) DESC"
+                )
+                by_user = [
+                    {
+                        'month': r[0],
+                        'userName': r[1],
+                        'role': r[2],
+                        'count': int(r[3]),
+                        'quantity': float(r[4]),
+                        'pending': int(r[5]),
+                    }
+                    for r in cur.fetchall()
+                ]
+
+                cur.execute(
+                    "SELECT d.reason_label, count(*), coalesce(sum(d.quantity), 0) "
+                    "FROM material_defects d "
+                    f"WHERE d.created_at >= date_trunc('month', now()) - interval '{int(months)} months' "
+                    "GROUP BY d.reason_label ORDER BY sum(d.quantity) DESC"
+                )
+                by_reason = [
+                    {'reason': r[0], 'count': int(r[1]), 'quantity': float(r[2])}
+                    for r in cur.fetchall()
+                ]
+
+                # Сотрудники цехов, которые НЕ оформили ни одного брака за период — именно их
+                # и нужно проверить в первую очередь.
+                cur.execute(
+                    "SELECT u.full_name, u.role FROM users u "
+                    "WHERE u.is_active AND u.role IN ('sewer', 'cutter') "
+                    "AND NOT EXISTS (SELECT 1 FROM material_defects d WHERE d.user_id = u.id "
+                    f"       AND d.created_at >= date_trunc('month', now()) - interval '{int(months)} months') "
+                    "ORDER BY u.role, u.full_name"
+                )
+                never = [{'userName': r[0], 'role': r[1]} for r in cur.fetchall()]
+
+                cur.execute(
+                    "SELECT count(*), coalesce(sum(quantity), 0) FROM material_defects "
+                    "WHERE received_at IS NULL"
+                )
+                p_cnt, p_qty = cur.fetchone()
+
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'byUser': by_user,
+                        'byReason': by_reason,
+                        'neverReported': never,
+                        'pendingCount': int(p_cnt),
+                        'pendingQuantity': float(p_qty or 0),
+                        'months': months,
+                    }, ensure_ascii=False),
+                }
+
+            if action == 'defect_pending':
+                # Брак, который лежит в контейнерах и ещё не доехал до склада.
+                cur.execute(
+                    "SELECT d.barcode, m.name, m.unit, d.quantity, d.reason_label, d.user_name, "
+                    "w.name, d.created_at FROM material_defects d "
+                    "JOIN materials m ON m.id = d.material_id "
+                    "LEFT JOIN workshops w ON w.id = d.workshop_id "
+                    "WHERE d.received_at IS NULL ORDER BY d.created_at"
+                )
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'items': [
+                        {
+                            'barcode': r[0], 'materialName': r[1], 'unit': r[2],
+                            'quantity': float(r[3]), 'reasonLabel': r[4], 'userName': r[5],
+                            'workshopName': r[6], 'createdAt': r[7].isoformat() + 'Z',
+                        }
+                        for r in cur.fetchall()
+                    ]}, ensure_ascii=False),
+                }
+
+            if action == 'defect_receive':
+                # Кладовщик сканирует стикер брака из контейнера — брак приходит на склад.
+                # Пока не отсканирован, он числится «в контейнере» в цехе: так видно, что
+                # реально доехало до склада, а что потерялось по дороге.
+                barcode = (body_data.get('barcode') or '').strip().upper()
+                if not barcode:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Отсканируйте стикер брака'}, ensure_ascii=False)}
+                cur.execute(
+                    "SELECT d.id, d.received_at, d.quantity, d.reason_label, m.name, m.unit, d.user_name "
+                    "FROM material_defects d JOIN materials m ON m.id = d.material_id "
+                    "WHERE d.barcode = %s",
+                    (barcode,),
+                )
+                d_row = cur.fetchone()
+                if not d_row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': f'Брак {barcode} не найден'}, ensure_ascii=False)}
+                if d_row[1]:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': f'Брак {barcode} уже принят на склад'}, ensure_ascii=False)}
+
+                cur.execute(
+                    "UPDATE material_defects SET received_at = now(), received_by = %s, "
+                    "received_by_name = %s WHERE id = %s",
+                    (int(actor_id) if actor_id else None, actor_name, d_row[0]),
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'defect_received', 'material_defect', d_row[0],
+                    f'Принял брак {barcode} на склад: {d_row[4]} {d_row[2]} {d_row[5] or ""}',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'barcode': barcode,
+                        'materialName': d_row[4],
+                        'quantity': float(d_row[2]),
+                        'unit': d_row[5],
+                        'reasonLabel': d_row[3],
+                        'foundBy': d_row[6],
+                    }, ensure_ascii=False),
+                }
+
+            if action == 'defect_reasons':
+                # Рулоны цеха, по которым можно оформить брак, и причины для каждого.
+                # Отдаём вместе: терминалу нужен и список рулонов, и подходящие причины —
+                # у ткани и тесьмы они разные.
+                workshop_id = body_data.get('workshopId')
+                cur.execute(
+                    "SELECT r.id, r.barcode, m.name, m.unit, mt.name, r.remaining_quantity "
+                    "FROM rolls r "
+                    "JOIN materials m ON m.id = r.material_id "
+                    "JOIN material_types mt ON mt.id = m.type_id "
+                    "WHERE r.status = 'in_workshop' AND r.remaining_quantity > 0 "
+                    "AND mt.name IN ('Тюль', 'Аксессуары') "
+                    "AND (%s IS NULL OR r.workshop_id = %s) "
+                    "ORDER BY mt.name, m.name, r.barcode",
+                    (workshop_id, workshop_id),
+                )
+                rolls = [
+                    {
+                        'id': r[0],
+                        'barcode': r[1],
+                        'materialName': r[2],
+                        'unit': r[3],
+                        'materialType': r[4],
+                        'remaining': float(r[5] or 0),
+                        'reasons': DEFECT_REASONS.get(r[4], []),
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'rolls': rolls}, ensure_ascii=False),
+                }
+
             if action == 'defect_writeoff':
                 # Списание брака прямо на терминале: сотрудник сканирует СВОЙ штрихкод, и если
                 # он штатный работник цеха этого рулона — брак списывается (в том числе за
@@ -844,9 +1049,13 @@ def handler(event: dict, context) -> dict:
                 roll_id = body_data.get('rollId')
                 quantity = body_data.get('quantity')
                 comment = (body_data.get('comment') or '').strip()
+                reason_code = (body_data.get('reasonCode') or '').strip()
                 if not code or not roll_id or quantity in (None, ''):
                     return {'statusCode': 400, 'headers': headers,
                             'body': json.dumps({'error': 'Отсканируйте штрихкод, выберите рулон и укажите метраж'})}
+                if not reason_code:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите причину брака'}, ensure_ascii=False)}
 
                 m = re.search(r'(\d{1,6}-\d{1,3}-\d{6,8})', code)
                 if m:
@@ -869,14 +1078,35 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник неактивен'})}
 
                 cur.execute(
-                    "SELECT r.workshop_id, r.remaining_quantity, w.name, m.unit FROM rolls r "
+                    "SELECT r.workshop_id, r.remaining_quantity, w.name, m.unit, mt.name, "
+                    "r.material_id, r.shift_number "
+                    "FROM rolls r "
                     "LEFT JOIN workshops w ON w.id = r.workshop_id "
-                    "LEFT JOIN materials m ON m.id = r.material_id WHERE r.id = %s",
+                    "LEFT JOIN materials m ON m.id = r.material_id "
+                    "LEFT JOIN material_types mt ON mt.id = m.type_id WHERE r.id = %s",
                     (int(roll_id),),
                 )
                 rr = cur.fetchone()
                 if not rr:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+
+                material_type = rr[4]
+                # Брак ведём только по ткани и тесьме: по пакетам и этикеткам его не считают.
+                if material_type not in DEFECT_REASONS:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'По материалу «{material_type}» брак не ведётся — только ткань и тесьма'},
+                            ensure_ascii=False),
+                    }
+                reason_label = defect_reason_label(material_type, reason_code)
+                if not reason_label:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Причина не подходит к этому материалу'}, ensure_ascii=False),
+                    }
 
                 if au[1] not in ('admin', 'storekeeper', 'manager') and rr[0] and rr[0] != au[2]:
                     return {'statusCode': 403, 'headers': headers, 'body': json.dumps({
@@ -893,12 +1123,13 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "INSERT INTO shipments (type, status, comment, completed_at, created_by) "
                     "VALUES ('defect_writeoff', 'Завершено', %s, now(), %s) RETURNING id",
-                    (comment or None, int(actor_uid)),
+                    (f'{reason_label}. {comment}'.strip('. ') or None, int(actor_uid)),
                 )
                 shipment_id = cur.fetchone()[0]
                 cur.execute(
-                    "INSERT INTO shipment_items (shipment_id, roll_id, quantity) VALUES (%s, %s, %s)",
-                    (shipment_id, int(roll_id), qty),
+                    "INSERT INTO shipment_items (shipment_id, material_id, roll_id, quantity) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (shipment_id, rr[5], int(roll_id), qty),
                 )
                 new_remaining = float(rr[1] or 0) - qty
                 if new_remaining <= 0:
@@ -909,13 +1140,47 @@ def handler(event: dict, context) -> dict:
                     cur.execute("UPDATE rolls SET remaining_quantity = %s WHERE id = %s",
                                 (new_remaining, int(roll_id)))
 
+                # Отдельная запись брака: по ней печатается стикер, кладовщик принимает брак
+                # на склад, и по ней же строится статистика — кто сколько брака находит.
+                defect_barcode = next_defect_barcode(cur)
+                cur.execute(
+                    "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "ORDER BY opened_at DESC LIMIT 1",
+                    (int(actor_uid),),
+                )
+                sess = cur.fetchone()
+                cur.execute(
+                    "INSERT INTO material_defects (barcode, roll_id, material_id, user_id, user_name, "
+                    "user_role, workshop_id, shift_number, shift_session_id, quantity, reason_code, "
+                    "reason_label, comment, shipment_id) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (
+                        defect_barcode, int(roll_id), rr[5], int(actor_uid), au[0], au[1],
+                        rr[0], rr[6], sess[0] if sess else None, qty, reason_code,
+                        reason_label, comment or None, shipment_id,
+                    ),
+                )
+                defect_id = cur.fetchone()[0]
+
                 log_action(
                     cur, int(actor_uid), au[0], 'defect_writeoff', 'shipment', shipment_id,
-                    f'Списал брак на терминале: рулон #{roll_id}, {qty}',
+                    f'Списал брак на терминале: рулон #{roll_id}, {qty} — {reason_label}',
                 )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers,
-                        'body': json.dumps({'success': True, 'id': shipment_id, 'actorName': au[0]})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'id': shipment_id,
+                        'defectId': defect_id,
+                        'defectBarcode': defect_barcode,
+                        'reasonLabel': reason_label,
+                        'materialType': material_type,
+                        'unit': rr[3],
+                        'actorName': au[0],
+                    }, ensure_ascii=False),
+                }
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
         finally:

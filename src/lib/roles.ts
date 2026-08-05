@@ -114,6 +114,7 @@ const storekeeperNav: NavItem[] = [
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
       { label: 'Анализ возвратов', path: '/crm/analytics/returns' },
+      { label: 'Анализ брака', path: '/crm/analytics/defects' },
     ],
   },
   {
@@ -182,6 +183,7 @@ const adminNav: NavItem[] = [
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
       { label: 'Анализ возвратов', path: '/crm/analytics/returns' },
+      { label: 'Анализ брака', path: '/crm/analytics/defects' },
     ],
   },
   {
