@@ -9,6 +9,7 @@ import { openShift, closeShift } from '@/lib/shiftSessionsApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import KioskMenu, { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
+import KioskDefectWriteoffPanel from '@/components/crm/kiosk/KioskDefectWriteoffPanel';
 import KioskOrdersScreen from '@/components/crm/kiosk/KioskOrdersScreen';
 import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
@@ -262,20 +263,11 @@ const KioskTerminal = () => {
 
           {screen === 'shift' && (
             <div className="mx-auto max-w-xl space-y-4">
-              {shift?.isOpen && isGuestInWorkshop && (
-                <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
-                  <div className="flex items-start gap-3">
-                    <Icon name="TriangleAlert" size={24} className="mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-lg font-bold">Вы работаете в чужом цехе</p>
-                      <p className="mt-1 text-base">
-                        Списывать брак здесь может только штатный сотрудник этого цеха. Если у вас
-                        есть брак за смену — позовите его: он отсканирует свой штрихкод на терминале
-                        и спишет брак за вас.
-                      </p>
-                    </div>
-                  </div>
-                </div>
+              {shift?.isOpen && (
+                <KioskDefectWriteoffPanel
+                  workshopId={currentWorkshopId || Number(workshopId) || 1}
+                  isGuest={isGuestInWorkshop}
+                />
               )}
               {shift?.isOpen ? (
                 <Button

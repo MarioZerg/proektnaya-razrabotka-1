@@ -206,6 +206,34 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': f'Заказ не на стикеровке (статус: {sewing_status})'}),
                     }
 
+                # Пока в цехе на смене есть упаковщик — стикеровать может только он. Швеи и
+                # закройщики допускаются к стикеровке лишь после закрытия его смены.
+                cur.execute(
+                    "SELECT COALESCE(ss.role, u.role) FROM shift_sessions ss "
+                    "JOIN users u ON u.id = ss.user_id "
+                    "WHERE ss.user_id = %s AND ss.closed_at IS NULL ORDER BY ss.opened_at DESC LIMIT 1",
+                    (int(packer_id),),
+                )
+                pr = cur.fetchone()
+                packer_shift_role = pr[0] if pr else None
+                if packer_shift_role and packer_shift_role != 'packer' and order_workshop_id:
+                    cur.execute(
+                        "SELECT u.full_name FROM shift_sessions ss JOIN users u ON u.id = ss.user_id "
+                        "WHERE ss.closed_at IS NULL AND ss.workshop_id = %s "
+                        "AND COALESCE(ss.role, u.role) = 'packer' LIMIT 1",
+                        (order_workshop_id,),
+                    )
+                    active_packer = cur.fetchone()
+                    if active_packer:
+                        return {
+                            'statusCode': 403,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'В цехе на смене упаковщик ({active_packer[0]}) — стикеровку '
+                                         f'выполняет он. Вы сможете стикеровать после закрытия его смены'
+                            }),
+                        }
+
                 # packer_user_id фиксирует, КТО именно закрыл заказ (упаковщица) — отдельное
                 # поле, аналогично cutter_user_id/sewer_user_id, чтобы история исполнителей на
                 # каждом этапе была видна на карточке товара (раньше сохранялось только в
@@ -241,6 +269,10 @@ def handler(event: dict, context) -> dict:
                 )
                 packer_workshop_row = cur.fetchone()
                 packer_workshop_id = packer_workshop_row[0] if packer_workshop_row else None
+                # Если стикерует швея/закройщик (упаковщика на смене нет) — оплата всё равно
+                # идёт по тарифу упаковщицы; при отсутствии штатного цеха берём цех заказа.
+                if not packer_workshop_id:
+                    packer_workshop_id = order_workshop_id
 
                 packer_rate = 0.0
                 if packer_workshop_id:
@@ -266,6 +298,87 @@ def handler(event: dict, context) -> dict:
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'defect_writeoff':
+                # Списание брака прямо на терминале: сотрудник сканирует СВОЙ штрихкод, и если
+                # он штатный работник цеха этого рулона — брак списывается (в том числе за
+                # гостевых работников, которым списание в чужом цехе запрещено).
+                code = (body_data.get('code') or '').strip()
+                roll_id = body_data.get('rollId')
+                quantity = body_data.get('quantity')
+                comment = (body_data.get('comment') or '').strip()
+                if not code or not roll_id or quantity in (None, ''):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Отсканируйте штрихкод, выберите рулон и укажите метраж'})}
+
+                m = re.search(r'(\d{1,6}-\d{1,3}-\d{6,8})', code)
+                if m:
+                    code = m.group(1)
+                elif 'barcode=' in code:
+                    code = code.split('barcode=')[1].split('&')[0].strip()
+                actor_uid = code.split('-')[0]
+                if not actor_uid.isdigit():
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректный штрихкод'})}
+
+                cur.execute(
+                    "SELECT u.full_name, u.role, w.id, u.is_active FROM users u "
+                    "LEFT JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
+                    (int(actor_uid),),
+                )
+                au = cur.fetchone()
+                if not au:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник не найден'})}
+                if not au[3]:
+                    return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник неактивен'})}
+
+                cur.execute(
+                    "SELECT r.workshop_id, r.remaining_quantity, w.name, m.unit FROM rolls r "
+                    "LEFT JOIN workshops w ON w.id = r.workshop_id "
+                    "LEFT JOIN materials m ON m.id = r.material_id WHERE r.id = %s",
+                    (int(roll_id),),
+                )
+                rr = cur.fetchone()
+                if not rr:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+
+                if au[1] not in ('admin', 'storekeeper', 'manager') and rr[0] and rr[0] != au[2]:
+                    return {'statusCode': 403, 'headers': headers, 'body': json.dumps({
+                        'error': f'{au[0]} не относится к цеху «{rr[2]}» — брак может списать только '
+                                 f'штатный сотрудник этого цеха'})}
+
+                qty = float(quantity)
+                if qty <= 0:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Метраж должен быть больше нуля'})}
+                if qty > float(rr[1] or 0):
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({
+                        'error': f'На рулоне осталось {round(float(rr[1] or 0), 2)} {rr[3] or "м"}'})}
+
+                cur.execute(
+                    "INSERT INTO shipments (type, status, comment, completed_at, created_by) "
+                    "VALUES ('defect_writeoff', 'Завершено', %s, now(), %s) RETURNING id",
+                    (comment or None, int(actor_uid)),
+                )
+                shipment_id = cur.fetchone()[0]
+                cur.execute(
+                    "INSERT INTO shipment_items (shipment_id, roll_id, quantity) VALUES (%s, %s, %s)",
+                    (shipment_id, int(roll_id), qty),
+                )
+                new_remaining = float(rr[1] or 0) - qty
+                if new_remaining <= 0:
+                    cur.execute(
+                        "UPDATE rolls SET remaining_quantity = 0, status = 'completed', completed_at = now() "
+                        "WHERE id = %s", (int(roll_id),))
+                else:
+                    cur.execute("UPDATE rolls SET remaining_quantity = %s WHERE id = %s",
+                                (new_remaining, int(roll_id)))
+
+                log_action(
+                    cur, int(actor_uid), au[0], 'defect_writeoff', 'shipment', shipment_id,
+                    f'Списал брак на терминале: рулон #{roll_id}, {qty}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'id': shipment_id, 'actorName': au[0]})}
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
         finally:

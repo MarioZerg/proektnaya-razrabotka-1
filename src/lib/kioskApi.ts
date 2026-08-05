@@ -53,6 +53,26 @@ export const kioskLoginByCode = async (
   return data;
 };
 
+/** Списание брака на терминале: штатный сотрудник цеха сканирует свой штрихкод и списывает
+ * метраж с рулона — в том числе за гостевых работников, которым это в чужом цехе запрещено. */
+export const kioskDefectWriteoff = async (payload: {
+  code: string;
+  rollId: number;
+  quantity: number;
+  comment?: string;
+}): Promise<{ success: true; id: number; actorName: string }> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_writeoff', ...payload }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Ошибка запроса');
+  }
+  return data;
+};
+
 export const closeKioskOrder = async (
   orderId: number,
   packerId: number,
