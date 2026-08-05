@@ -76,7 +76,11 @@ def handler(event: dict, context) -> dict:
                                       смена + сегодня не отмечено выходным в календаре).
                                       Если у userId штатная смена ещё рабочая — она тоже
                                       входит в список, помечена isHome=true
-    POST /  { action: 'open', userId, workshopId?, shiftNumber?, openedByAdmin? }
+    POST /  { action: 'open', userId, workshopId?, shiftNumber?, openedByAdmin?, role? }
+        - швея/закройщик/упаковщик работают гибко: цех и смену выбирают при КАЖДОМ открытии
+          (можно работать в разных цехах), обязанность закрыть смену сохраняется. Должность
+          (role) фиксируется в смене и должна быть в утверждённых ролях сотрудника.
+          Кладовщик не привязан ни к цеху, ни к смене — открывает смену по личному графику.
         - открывает смену сотруднику (создаёт запись с closed_at = NULL).
           Если у сотрудника уже есть открытая смена — отклоняется (409).
           Если сотрудник жёстко привязан (shift_free=false) и его штатная смена/цех активны
@@ -185,10 +189,10 @@ def handler(event: dict, context) -> dict:
             employee_rows = cur.fetchall()
 
             cur.execute(
-                "SELECT DISTINCT ON (user_id) user_id, opened_at, closed_at, workshop_id, shift_number "
+                "SELECT DISTINCT ON (user_id) user_id, opened_at, closed_at, workshop_id, shift_number, role "
                 "FROM shift_sessions ORDER BY user_id, opened_at DESC"
             )
-            latest_by_user = {r[0]: (r[1], r[2], r[3], r[4]) for r in cur.fetchall()}
+            latest_by_user = {r[0]: (r[1], r[2], r[3], r[4], r[5]) for r in cur.fetchall()}
 
             employees = []
             for uid, full_name, role, shift_number, shift_from, shift_to, workshop_name, shift_free in employee_rows:
@@ -214,6 +218,7 @@ def handler(event: dict, context) -> dict:
                     'shiftFree': shift_free,
                     'sessionWorkshopId': session_workshop_id,
                     'sessionShiftNumber': session_shift_number,
+                    'sessionRole': (latest[4] if is_open else None) or (role if is_open else None),
                 })
         finally:
             conn.close()
@@ -232,6 +237,7 @@ def handler(event: dict, context) -> dict:
                 user_id = body_data.get('userId')
                 req_workshop_id = body_data.get('workshopId')
                 req_shift_number = body_data.get('shiftNumber')
+                req_role = body_data.get('role')
                 opened_by_admin = bool(body_data.get('openedByAdmin'))
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
@@ -307,6 +313,28 @@ def handler(event: dict, context) -> dict:
                     or not home_workshop_active or not home_shift_active
                 )
 
+                # Производственные роли работают гибко: сотрудник сам выбирает цех и смену
+                # при каждом открытии. Перешёл в другой цех — открывает смену там, но
+                # обязанность закрыть смену по окончании рабочего дня сохраняется.
+                if user_role in ('sewer', 'cutter', 'packer'):
+                    effective_free = True
+
+                # Должность фиксируется на момент открытия смены в цехе. Выбрать можно
+                # только из утверждённых администратором ролей сотрудника.
+                session_role = user_role
+                if req_role and req_role != user_role:
+                    cur.execute(
+                        "SELECT 1 FROM user_roles WHERE user_id = %s AND role = %s AND is_approved = true",
+                        (int(user_id), req_role),
+                    )
+                    if not cur.fetchone():
+                        return {
+                            'statusCode': 403,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'Эта должность вам не разрешена администратором'}),
+                        }
+                    session_role = req_role
+
                 if not effective_free:
                     # Жёсткая привязка — игнорируем то, что могло быть передано с фронта,
                     # используем ТОЛЬКО штатные цех/смену, чтобы нельзя было обойти привязку
@@ -365,9 +393,9 @@ def handler(event: dict, context) -> dict:
                         is_late = False
 
                 cur.execute(
-                    f"INSERT INTO shift_sessions (user_id, workshop_id, shift_number, is_late) "
-                    f"VALUES ({int(user_id)}, {workshop_id}, {shift_number}, {'true' if is_late else 'false'}) "
-                    f"RETURNING id, opened_at"
+                    "INSERT INTO shift_sessions (user_id, workshop_id, shift_number, is_late, role) "
+                    "VALUES (%s, %s, %s, %s, %s) RETURNING id, opened_at",
+                    (int(user_id), workshop_id, shift_number, is_late, session_role),
                 )
                 new_id, opened_at = cur.fetchone()
 

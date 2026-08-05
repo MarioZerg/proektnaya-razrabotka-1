@@ -131,12 +131,20 @@ const CrmDashboard = () => {
   // либо у него вообще нет штатной смены — тогда открытие требует явного выбора (см. backend).
   // Кладовщик (как и уборщица) не привязан к цеху и смене — он открывает смену по личному
   // графику из профиля, выбор цеха/смены ему не показываем.
-  const skipShiftBinding = isCleaner || user?.role === 'storekeeper';
-  const needsShiftChoice = !skipShiftBinding && !!(
-    myShiftStatus?.shiftFree || !user?.workshopId || !user?.shiftNumber
+  // Производственные должности, разрешённые сотруднику: если их несколько, при открытии
+  // смены он выбирает, кем выходит в этот цех.
+  const productionRoles = (user?.availableRoles || []).filter((r) =>
+    ['sewer', 'cutter', 'packer'].includes(r),
   );
 
-  const handleToggleMyShift = async (choice?: { workshopId: number; shiftNumber: number }) => {
+  const skipShiftBinding = isCleaner || user?.role === 'storekeeper';
+  // Швея, закройщик и упаковщик работают гибко — цех и смену выбирают при каждом открытии.
+  const isFlexibleRole = ['sewer', 'cutter', 'packer'].includes(user?.role || '');
+  const needsShiftChoice = !skipShiftBinding && !!(
+    isFlexibleRole || myShiftStatus?.shiftFree || !user?.workshopId || !user?.shiftNumber
+  );
+
+  const handleToggleMyShift = async (choice?: { workshopId: number; shiftNumber: number; role?: string }) => {
     if (!user) return;
     setTogglingId(user.id);
     try {
@@ -144,7 +152,13 @@ const CrmDashboard = () => {
         await closeShift(user.id);
         setActiveShift(null, null);
       } else {
-        const res = await openShift(user.id, choice?.workshopId ?? user.workshopId, choice?.shiftNumber ?? user.shiftNumber);
+        const res = await openShift(
+          user.id,
+          choice?.workshopId ?? user.workshopId,
+          choice?.shiftNumber ?? user.shiftNumber,
+          false,
+          choice?.role,
+        );
         setActiveShift(res.workshopId, res.shiftNumber);
       }
       loadShifts();
@@ -293,6 +307,8 @@ const CrmDashboard = () => {
                   toggling={togglingId === user?.id}
                   needsShiftChoice={needsShiftChoice}
                   onToggle={handleToggleMyShift}
+                  allowedRoles={productionRoles}
+                  defaultRole={user?.role}
                 />
               </div>
             </>

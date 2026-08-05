@@ -14,6 +14,8 @@ export interface EmployeeShiftStatus {
    * профиля), если сотрудник зашёл гостем в другую смену. */
   sessionWorkshopId: number | null;
   sessionShiftNumber: number | null;
+  /** Должность, в которой сотрудник работает в текущей открытой смене. */
+  sessionRole?: string | null;
 }
 
 export const fetchEmployeeShifts = async (): Promise<EmployeeShiftStatus[]> => {
@@ -74,8 +76,10 @@ export const openShift = (
   userId: number,
   workshopId?: number | null,
   shiftNumber?: number | null,
-  openedByAdmin?: boolean
+  openedByAdmin?: boolean,
+  /** Должность, в которой сотрудник выходит в эту смену (из его разрешённых ролей). */
+  role?: string | null
 ): Promise<OpenShiftResult> =>
-  postAction({ action: 'open', userId, workshopId, shiftNumber, openedByAdmin });
+  postAction({ action: 'open', userId, workshopId, shiftNumber, openedByAdmin, role });
 
 export const closeShift = (userId: number) => postAction({ action: 'close', userId });

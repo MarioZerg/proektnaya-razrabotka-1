@@ -21,12 +21,35 @@ interface MyShiftCardProps {
   toggling: boolean;
   /** Штатный цех сотрудника из профиля пуст/неактивен или смена выключена — нужен выбор. */
   needsShiftChoice: boolean;
-  onToggle: (choice?: { workshopId: number; shiftNumber: number }) => void;
+  onToggle: (choice?: { workshopId: number; shiftNumber: number; role?: string }) => void;
+  /** Разрешённые администратором должности сотрудника — можно выбрать при открытии смены. */
+  allowedRoles?: string[];
+  /** Основная должность из профиля. */
+  defaultRole?: string;
 }
 
-const MyShiftCard = ({ status, userId, loading, toggling, needsShiftChoice, onToggle }: MyShiftCardProps) => {
+const roleLabels: Record<string, string> = {
+  sewer: 'Швея',
+  cutter: 'Закройщик',
+  packer: 'Упаковщик',
+  storekeeper: 'Кладовщик',
+  cleaner: 'Уборщица',
+  manager: 'Менеджер',
+};
+
+const MyShiftCard = ({
+  status,
+  userId,
+  loading,
+  toggling,
+  needsShiftChoice,
+  onToggle,
+  allowedRoles = [],
+  defaultRole,
+}: MyShiftCardProps) => {
   const [availableShifts, setAvailableShifts] = useState<AvailableShift[]>([]);
   const [choice, setChoice] = useState('');
+  const [roleChoice, setRoleChoice] = useState(defaultRole || '');
 
   useEffect(() => {
     if (needsShiftChoice && userId && !status?.isOpen) {
@@ -38,13 +61,19 @@ const MyShiftCard = ({ status, userId, loading, toggling, needsShiftChoice, onTo
     if (needsShiftChoice && !status?.isOpen) {
       const selected = availableShifts.find((s) => `${s.workshopId}-${s.shiftNumber}` === choice);
       if (!selected) return;
-      onToggle({ workshopId: selected.workshopId, shiftNumber: selected.shiftNumber });
+      onToggle({
+        workshopId: selected.workshopId,
+        shiftNumber: selected.shiftNumber,
+        role: roleChoice || undefined,
+      });
       return;
     }
     onToggle();
   };
 
   const showChoicePicker = needsShiftChoice && !status?.isOpen && !loading;
+  // Должность выбирается, только если админ разрешил сотруднику больше одной роли.
+  const showRolePicker = showChoicePicker && allowedRoles.length > 1;
 
   return (
     <Card className="border-border shadow-none">
@@ -66,6 +95,9 @@ const MyShiftCard = ({ status, userId, loading, toggling, needsShiftChoice, onTo
               {status?.isOpen && status.sessionShiftNumber && (
                 <Badge variant="outline">Смена {status.sessionShiftNumber}</Badge>
               )}
+              {status?.isOpen && status.sessionRole && (
+                <Badge variant="outline">{roleLabels[status.sessionRole] || status.sessionRole}</Badge>
+              )}
             </div>
             {status?.isOpen && status.openedAt && (
               <p className="text-sm text-muted-foreground">
@@ -82,9 +114,7 @@ const MyShiftCard = ({ status, userId, loading, toggling, needsShiftChoice, onTo
             {showChoicePicker && (
               <div className="space-y-1.5">
                 <Label className="text-xs">
-                  {status?.shiftFree
-                    ? 'Ваш свободный график — выберите цех/смену на сегодня'
-                    : 'Ваша штатная смена сейчас выключена — выберите, где работать сегодня'}
+                  Выберите цех и смену, в которой работаете сегодня
                 </Label>
                 <Select value={choice} onValueChange={setChoice}>
                   <SelectTrigger>
@@ -102,10 +132,28 @@ const MyShiftCard = ({ status, userId, loading, toggling, needsShiftChoice, onTo
               </div>
             )}
 
+            {showRolePicker && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Должность в этой смене</Label>
+                <Select value={roleChoice} onValueChange={setRoleChoice}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите должность" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allowedRoles.map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {roleLabels[r] || r}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <Button
               className="w-full"
               variant={status?.isOpen ? 'destructive' : 'default'}
-              disabled={toggling || (showChoicePicker && !choice)}
+              disabled={toggling || (showChoicePicker && !choice) || (showRolePicker && !roleChoice)}
               onClick={handleOpen}
             >
               {toggling ? (
