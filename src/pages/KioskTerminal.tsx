@@ -346,7 +346,7 @@ const KioskTerminal = () => {
                   className="h-16 flex-1 text-lg"
                   onClick={() => {
                     setDefectCheck(null);
-                    setScreen('rolls');
+                    setScreen('defect');
                   }}
                 >
                   <Icon name="PackageX" size={22} className="mr-2" />
@@ -412,12 +412,6 @@ const KioskTerminal = () => {
 
           {screen === 'shift' && (
             <div className="mx-auto max-w-xl space-y-4">
-              {shift?.isOpen && (
-                <KioskDefectWriteoffPanel
-                  workshopId={currentWorkshopId || Number(workshopId) || 1}
-                  isGuest={isGuestInWorkshop}
-                />
-              )}
               {shift?.isOpen ? (
                 <Button
                   size="lg"
@@ -477,6 +471,24 @@ const KioskTerminal = () => {
           {screen === 'unlabeled' && (
             <div className="mx-auto max-w-3xl">
               <KioskUnlabeledScreen actorId={user.id} actorName={user.name} />
+            </div>
+          )}
+
+          {screen === 'defect' && (
+            <div className="mx-auto max-w-xl space-y-4">
+              {shift?.isOpen ? (
+                <KioskDefectWriteoffPanel
+                  workshopId={currentWorkshopId || Number(workshopId) || 1}
+                  isGuest={isGuestInWorkshop}
+                />
+              ) : (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+                  <p className="text-lg font-bold">Смена не открыта</p>
+                  <p className="mt-1 text-base">
+                    Брак оформляется в рамках смены — сначала откройте её
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

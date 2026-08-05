@@ -7,6 +7,7 @@ export type KioskScreen =
   | 'reviews'
   | 'rolls'
   | 'unlabeled'
+  | 'defect'
   | 'defect-receive'
   | 'repack';
 
@@ -48,6 +49,12 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
     className: 'bg-rose-500 hover:bg-rose-600 text-white',
   },
   {
+    screen: 'defect',
+    label: 'Брак из рулона',
+    icon: 'PackageX',
+    className: 'bg-red-600 hover:bg-red-700 text-white',
+  },
+  {
     screen: 'defect-receive',
     label: 'Приём брака из цеха',
     icon: 'PackageX',
@@ -68,11 +75,11 @@ const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
   // «Перепаковка» — вещи, вернувшиеся от покупателя годными, но с мятой упаковкой:
   // их переупаковывает упаковщик, кладовщику эта плитка не нужна.
   // «Приём брака» — тоже зона кладовщика: он забирает брак из контейнеров цеха на склад.
+  // «Брак из рулона» — для тех, кто работает с материалом: закройщик режет ткань, швея шьёт
+  // тесьмой, именно они видят дефекты. Кладовщику нужен обратный экран — «Приём брака».
   const visibleTiles =
     role === 'storekeeper'
-      ? tiles.filter((t) =>
-          ['shift', 'unlabeled', 'defect-receive'].includes(t.screen)
-        )
+      ? tiles.filter((t) => ['shift', 'unlabeled', 'defect-receive'].includes(t.screen))
       : tiles.filter((t) => !['unlabeled', 'defect-receive'].includes(t.screen));
 
   return (
