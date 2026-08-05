@@ -10,6 +10,9 @@ export interface KioskOrder {
   sewingStatus: string;
   assignedUserId: number | null;
   assignedUserName: string | null;
+  /** Клиент отменил заказ: вещь дошивается, но уходит не покупателю, а на склад хранения —
+   * упаковщик клеит стикер ХРАНЕНИЯ вместо стикера отправления. */
+  isCancelled?: boolean;
 }
 
 export const fetchKioskOrder = async (orderNumber: string): Promise<KioskOrder> => {
@@ -78,7 +81,7 @@ export const closeKioskOrder = async (
   packerId: number,
   actorId?: number,
   actorName?: string
-) => {
+): Promise<{ success: true; isCancelled: boolean; storageBarcode: string | null }> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

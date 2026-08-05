@@ -57,7 +57,7 @@ const CrmDashboard = () => {
     Promise.all([
       fetchOrders(),
       canSeeWarehouseWidgets ? fetchRolls({ status: 'in_workshop' }) : Promise.resolve([]),
-      canSeeWarehouseWidgets ? fetchGoodsWarehouse('in_stock') : Promise.resolve([]),
+      canSeeWarehouseWidgets ? fetchGoodsWarehouse() : Promise.resolve([]),
       fetchShipments('to_workshop'),
     ])
       .then(([ordersData, rollsData, goodsData, shipmentsData]) => {
@@ -186,11 +186,34 @@ const CrmDashboard = () => {
           r.unit === 'п.м.' &&
           r.remainingQuantity < ROLL_LOW_STOCK_THRESHOLD
       ).length;
+      // Вещи, отменённые клиентом: упаковщик наклеил стикер хранения, но кладовщик ещё не
+      // забрал их из цеха и не положил на полку — это его прямая задача на сегодня.
+      const awaitingShelf = goodsItems.filter((g) => g.status === 'awaiting_shelf').length;
+      // Заказы, которые закрываются вещью с полки и ждут стикера отправления от кладовщика.
+      const awaitingShipLabel = goodsItems.filter(
+        (g) => g.reservedOrderId && !g.shippingLabeledAt && g.status === 'in_stock',
+      ).length;
+      const inStock = goodsItems.filter((g) => g.status === 'in_stock').length;
+
       list.splice(4, 0, {
         label: 'Товары к подбору со склада',
-        value: goodsItems.length,
+        value: inStock,
         icon: 'PackageSearch',
         tone: 'default',
+        path: '/crm/inventory/goods-warehouse',
+      });
+      list.splice(4, 0, {
+        label: 'Отменено — забрать из цеха на полку',
+        value: awaitingShelf,
+        icon: 'PackageCheck',
+        tone: awaitingShelf > 0 ? 'urgent' : 'default',
+        path: '/crm/inventory/goods-warehouse',
+      });
+      list.splice(5, 0, {
+        label: 'Заказы с полок — наклеить стикер',
+        value: awaitingShipLabel,
+        icon: 'Tags',
+        tone: awaitingShipLabel > 0 ? 'warning' : 'default',
         path: '/crm/inventory/goods-warehouse',
       });
       list.push({

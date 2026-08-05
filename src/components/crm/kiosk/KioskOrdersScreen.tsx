@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskApi';
 import { fetchOrderDetail } from '@/lib/ordersApi';
 import { printFboSticker } from '@/lib/printFboSticker';
+import { printBarcodes } from '@/lib/printBarcodes';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 
@@ -77,8 +78,24 @@ const KioskOrdersScreen = ({ packerId, packerName }: KioskOrdersScreenProps) => 
     if (!order) return;
     setClosing(true);
     try {
-      await closeKioskOrder(order.id, packerId, packerId, packerName);
+      const res = await closeKioskOrder(order.id, packerId, packerId, packerName);
       playScanSound();
+      // Заказ отменён клиентом — вещь едет не покупателю, а на склад хранения. Печатаем
+      // стикер ХРАНЕНИЯ: по нему кладовщик заберёт вещь из цеха и положит на полку.
+      if (res.isCancelled && res.storageBarcode) {
+        printBarcodes(
+          [{ code: res.storageBarcode, label: `${order.orderNumber} — ${order.product}` }],
+          `Стикер хранения ${res.storageBarcode}`,
+        );
+        toast({
+          title: `Заказ ${order.orderNumber} отменён клиентом`,
+          description: 'Наклейте стикер хранения — вещь заберёт кладовщик на полку',
+        });
+        setOrder(null);
+        setPrinted(false);
+        setTimeout(() => inputRef.current?.focus(), 0);
+        return;
+      }
       toast({ title: `Заказ ${order.orderNumber} закрыт`, description: 'Отправлен в «Готовые»' });
       setOrder(null);
       setPrinted(false);
@@ -134,12 +151,22 @@ const KioskOrdersScreen = ({ packerId, packerName }: KioskOrdersScreenProps) => 
               </div>
             </div>
 
-            <Button size="lg" className="h-16 w-full text-lg" onClick={handlePrint}>
-              <Icon name="Printer" size={24} className="mr-2" />
-              Распечатать стикер
-            </Button>
+            {order.isCancelled ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-center">
+                <p className="text-lg font-bold text-destructive">Клиент отменил заказ</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Стикер отправления не нужен. Нажмите «Закрыть заказ» — распечатается стикер
+                  хранения, наклейте его и оставьте вещь для кладовщика
+                </p>
+              </div>
+            ) : (
+              <Button size="lg" className="h-16 w-full text-lg" onClick={handlePrint}>
+                <Icon name="Printer" size={24} className="mr-2" />
+                Распечатать стикер
+              </Button>
+            )}
 
-            {printed && (
+            {(printed || order.isCancelled) && (
               <Button
                 size="lg"
                 className="h-16 w-full bg-emerald-600 text-lg text-white hover:bg-emerald-700"

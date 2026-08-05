@@ -34,6 +34,8 @@ import { fetchOrders, type Order } from '@/lib/ordersApi';
 import ReceiveReturnDialog from '@/components/crm/goodsWarehouse/ReceiveReturnDialog';
 import GroupReceiveDialog from '@/components/crm/goodsWarehouse/GroupReceiveDialog';
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
+import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
+import ShipLabelDialog from '@/components/crm/goodsWarehouse/ShipLabelDialog';
 import GoodsWarehouseFilters from '@/components/crm/goodsWarehouse/GoodsWarehouseFilters';
 import GoodsWarehouseTable from '@/components/crm/goodsWarehouse/GoodsWarehouseTable';
 
@@ -70,6 +72,10 @@ const GoodsWarehouse = () => {
   const [groupSelectedIds, setGroupSelectedIds] = useState<number[]>([]);
   const [groupShelfId, setGroupShelfId] = useState('');
 
+  // Разложить отменённые товары по полкам (сканером) и стикеровка заказов с полок
+  const [placeOpen, setPlaceOpen] = useState(false);
+  const [shipLabelOpen, setShipLabelOpen] = useState(false);
+
   // Смена полки
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveSaving, setMoveSaving] = useState(false);
@@ -101,6 +107,19 @@ const GoodsWarehouse = () => {
   useEffect(() => {
     load();
   }, []);
+
+  // Вещи, отменённые клиентом: упаковщик наклеил стикер хранения, кладовщик ещё не положил
+  // их на полку — именно их он забирает из цеха.
+  const pendingShelf = useMemo(
+    () => items.filter((i) => i.status === 'awaiting_shelf'),
+    [items],
+  );
+
+  // Вещи с полок, подобранные под новые заказы FBS и ждущие стикера отправления.
+  const matchedFromStock = useMemo(
+    () => items.filter((i) => i.reservedOrderId && !i.shippingLabeledAt && i.status === 'in_stock'),
+    [items],
+  );
 
   const materialsList = useMemo(
     () => Array.from(new Set(items.map((i) => i.material).filter((m): m is string => !!m))).sort(),
@@ -288,6 +307,43 @@ const GoodsWarehouse = () => {
               <Icon name="ScanLine" size={16} className="mr-2" />
               Товар к подбору
             </Button>
+            <Button
+              variant={pendingShelf.length > 0 ? 'default' : 'outline'}
+              onClick={() => setPlaceOpen(true)}
+            >
+              <Icon name="PackageCheck" size={16} className="mr-2" />
+              Разложить по полкам
+              {pendingShelf.length > 0 && (
+                <span className="ml-2 rounded-full bg-background/25 px-2 text-xs">
+                  {pendingShelf.length}
+                </span>
+              )}
+            </Button>
+            <Button
+              variant={matchedFromStock.length > 0 ? 'default' : 'outline'}
+              onClick={() => setShipLabelOpen(true)}
+            >
+              <Icon name="Tags" size={16} className="mr-2" />
+              Стикеровка с полок
+              {matchedFromStock.length > 0 && (
+                <span className="ml-2 rounded-full bg-background/25 px-2 text-xs">
+                  {matchedFromStock.length}
+                </span>
+              )}
+            </Button>
+            <PlaceOnShelfDialog
+              open={placeOpen}
+              onOpenChange={setPlaceOpen}
+              shelves={shelves}
+              pendingCount={pendingShelf.length}
+              onDone={load}
+            />
+            <ShipLabelDialog
+              open={shipLabelOpen}
+              onOpenChange={setShipLabelOpen}
+              matched={matchedFromStock}
+              onDone={load}
+            />
             <MoveShelfDialog
               open={moveOpen}
               onOpenChange={setMoveOpen}

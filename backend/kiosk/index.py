@@ -23,6 +23,17 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
+def next_storage_barcode(cur) -> str:
+    """Генерирует следующий штрихкод хранения вида GW-000001 (по максимальному текущему)."""
+    cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE storage_barcode LIKE 'GW-%'")
+    max_seq = 0
+    for (bc,) in cur.fetchall():
+        suffix = bc.split('-', 1)[1] if '-' in bc else ''
+        if suffix.isdigit():
+            max_seq = max(max_seq, int(suffix))
+    return f"GW-{max_seq + 1:06d}"
+
+
 def handler(event: dict, context) -> dict:
     """Терминал упаковщицы (kiosk) — упрощённый экран для завершения стикеровки.
 
@@ -88,7 +99,7 @@ def handler(event: dict, context) -> dict:
             order_number_esc = order_number.replace("'", "''")
             cur.execute(
                 "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
-                "o.sewing_status, o.assigned_user_id, u.full_name "
+                "o.sewing_status, o.assigned_user_id, u.full_name, o.status, o.ozon_status "
                 "FROM orders o LEFT JOIN users u ON u.id = o.assigned_user_id "
                 f"WHERE o.order_number = '{order_number_esc}'"
             )
@@ -112,6 +123,9 @@ def handler(event: dict, context) -> dict:
                 'sewingStatus': row[6],
                 'assignedUserId': row[7],
                 'assignedUserName': row[8],
+                # Заказ отменён клиентом: вещь всё равно дошивается, но уходит не покупателю,
+                # а на склад хранения — упаковщик клеит стикер ХРАНЕНИЯ вместо отправления.
+                'isCancelled': row[9] == 'Отменён' or 'cancel' in (row[10] or '').lower(),
             }
         finally:
             conn.close()
@@ -192,13 +206,16 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите orderId и packerId'})}
 
                 cur.execute(
-                    "SELECT sewing_status, width, assigned_user_id, order_number, workshop_id FROM orders WHERE id = %s",
+                    "SELECT sewing_status, width, assigned_user_id, order_number, workshop_id, "
+                    "status, ozon_status FROM orders WHERE id = %s",
                     (int(order_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-                sewing_status, width, assigned_user_id, order_number, order_workshop_id = row
+                (sewing_status, width, assigned_user_id, order_number, order_workshop_id,
+                 order_status, order_ozon_status) = row
+                is_cancelled = order_status == 'Отменён' or 'cancel' in (order_ozon_status or '').lower()
                 if sewing_status != 'Стикеровка':
                     return {
                         'statusCode': 409,
@@ -242,6 +259,23 @@ def handler(event: dict, context) -> dict:
                     f"UPDATE orders SET sewing_status = 'Готовые', packer_user_id = {int(packer_id)} "
                     f"WHERE id = {int(order_id)}"
                 )
+
+                # Заказ отменён клиентом — вещь не поедет покупателю. Сразу заводим её на складе
+                # в статусе awaiting_shelf: упаковщик клеит стикер хранения, а кладовщик потом
+                # заберёт вещь из цеха и отсканирует на конкретную полку у себя на компьютере.
+                storage_barcode = None
+                if is_cancelled:
+                    cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
+                    gw_existing = cur.fetchone()
+                    if gw_existing:
+                        storage_barcode = gw_existing[0]
+                    else:
+                        storage_barcode = next_storage_barcode(cur)
+                        cur.execute(
+                            "INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason) "
+                            "VALUES (%s, 'awaiting_shelf', %s, 'cancelled')",
+                            (int(order_id), storage_barcode),
+                        )
 
                 # Швея получает фиксированную ставку за штуку по ширине товара — именно сейчас,
                 # когда заказ реально дошит и прошёл стикеровку (не раньше). Ставка берётся из
@@ -303,10 +337,19 @@ def handler(event: dict, context) -> dict:
 
                 log_action(
                     cur, actor_id, actor_name, 'close_order', 'order', order_id,
-                    f'Закрыл заказ #{order_number} после стикеровки',
+                    f'Закрыл заказ #{order_number} после стикеровки'
+                    + (' (отменён клиентом — на склад хранения)' if is_cancelled else ''),
                 )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'isCancelled': is_cancelled,
+                        'storageBarcode': storage_barcode,
+                    }),
+                }
 
             if action == 'defect_writeoff':
                 # Списание брака прямо на терминале: сотрудник сканирует СВОЙ штрихкод, и если

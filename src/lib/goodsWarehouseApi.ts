@@ -1,6 +1,12 @@
 const GOODS_WAREHOUSE_URL = 'https://functions.poehali.dev/370fdff8-7cae-4cc7-a853-b664f3da61cf';
 
-export type GoodsStatus = 'in_stock' | 'picking' | 'reserved' | 'shipped' | 'lost';
+export type GoodsStatus =
+  | 'awaiting_shelf'
+  | 'in_stock'
+  | 'picking'
+  | 'reserved'
+  | 'shipped'
+  | 'lost';
 
 /** Почему товар оказался на складе хранения:
  * cancelled — заказ отменён клиентом (по статусу из API OZON/WB);
@@ -25,6 +31,11 @@ export interface GoodsWarehouseItem {
   lostReason: string | null;
   lostAt: string | null;
   receiveReason: ReceiveReason;
+  /** Новый заказ маркетплейса, который закрывается этой вещью с полки (автоподбор). */
+  reservedOrderId: number | null;
+  reservedOrderNumber: string | null;
+  /** Когда кладовщик наклеил стикер отправления — после этого можно сканировать в поставку. */
+  shippingLabeledAt: string | null;
 }
 
 export interface GoodsWarehouseFilters {
@@ -80,6 +91,21 @@ export const receiveGoods = (orderId: number, shelfId?: number) =>
 // Если заказ уже был на складе (даже отгружен ранее) — та же запись возвращается в "На хранении".
 export const receiveReturn = (orderNumber: string, shelfId?: number) =>
   postAction({ action: 'receive_return', orderNumber, shelfId });
+
+/** Кладовщик сканирует стикер хранения вещи, отменённой клиентом, и кладёт её на полку. */
+export const placeOnShelf = (barcode: string, shelfId: number) =>
+  postAction({ action: 'place_on_shelf', barcode, shelfId });
+
+/** Кладовщик наклеил стикер отправления на вещь с полки, подобранную под новый заказ. */
+export const shipLabelGoods = (barcode: string) =>
+  postAction({ action: 'ship_label', barcode }) as Promise<{
+    id: number;
+    orderId: number;
+    orderNumber: string;
+    product: string | null;
+    shelfName: string | null;
+    storageBarcode: string;
+  }>;
 
 export const groupReceiveGoods = (orderIds: number[], shelfId?: number) =>
   postAction({ action: 'group_receive', orderIds, shelfId });

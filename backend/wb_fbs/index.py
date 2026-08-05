@@ -139,12 +139,45 @@ def handle_list_warehouses(api_key):
     return _resp(200, {'warehouses': warehouses})
 
 
+
+def match_from_stock(cur, order_id, item_id) -> bool:
+    """Пробует закрыть новый заказ вещью, которая уже лежит на полке склада.
+
+    Подбор строго по товару справочника (marketplace_item_id) — та же карточка товара, значит
+    вещь подойдёт покупателю. Берём самую давно лежащую (FIFO). Заказ помечается как закрытый
+    со склада и на конвейер производства не уходит, вещь резервируется под него.
+    """
+    if not item_id:
+        return False
+    cur.execute(
+        "SELECT gw.id FROM goods_warehouse gw "
+        "JOIN orders src ON src.id = gw.order_id "
+        "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+        "AND src.marketplace_item_id = %s "
+        "ORDER BY gw.received_at ASC LIMIT 1",
+        (int(item_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    gw_id = row[0]
+    cur.execute(
+        "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
+        (int(order_id), gw_id),
+    )
+    cur.execute(
+        "UPDATE orders SET fulfilled_from_stock_id = %s, sewing_status = 'Со склада' WHERE id = %s",
+        (gw_id, int(order_id)),
+    )
+    return True
+
+
 def find_marketplace_item(cur, nm_id, skus, article):
     """Ищет товар в marketplace_items: сначала по wb_sku (nmId), затем по любому баркоду
-    из skus, затем по sku (артикул продавца). Возвращает (material, width, height, name) или None."""
+    из skus, затем по sku (артикул продавца). Возвращает (material, width, height, name, id) или None."""
     if nm_id:
         cur.execute(
-            "SELECT material, width, height, name FROM marketplace_items WHERE wb_sku = %s LIMIT 1",
+            "SELECT material, width, height, name, id FROM marketplace_items WHERE wb_sku = %s LIMIT 1",
             (str(nm_id),),
         )
         row = cur.fetchone()
@@ -152,7 +185,7 @@ def find_marketplace_item(cur, nm_id, skus, article):
             return row
     for sku in (skus or []):
         cur.execute(
-            "SELECT material, width, height, name FROM marketplace_items WHERE barcode = %s LIMIT 1",
+            "SELECT material, width, height, name, id FROM marketplace_items WHERE barcode = %s LIMIT 1",
             (str(sku),),
         )
         row = cur.fetchone()
@@ -160,7 +193,7 @@ def find_marketplace_item(cur, nm_id, skus, article):
             return row
     if article:
         cur.execute(
-            "SELECT material, width, height, name FROM marketplace_items WHERE sku = %s LIMIT 1",
+            "SELECT material, width, height, name, id FROM marketplace_items WHERE sku = %s LIMIT 1",
             (str(article),),
         )
         row = cur.fetchone()
@@ -501,6 +534,7 @@ def handler(event: dict, context) -> dict:
         wb_orders = data.get('orders', []) if isinstance(data, dict) else []
 
         created = 0
+        matched = 0
         skipped_existing = 0
         skipped_no_item = 0
         unmatched = []
@@ -525,7 +559,7 @@ def handler(event: dict, context) -> dict:
                 unmatched.append({'wbOrderId': wb_order_id, 'nmId': nm_id, 'article': article, 'skus': skus})
                 continue
 
-            material, width, height, item_name = item
+            material, width, height, item_name, item_id = item
             product = (
                 f"{material} {width}x{height}" if material and width and height else item_name
             )
@@ -539,8 +573,9 @@ def handler(event: dict, context) -> dict:
 
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
-                "quantity, source, material, width, height, wb_order_id, marketplace_created_at) "
-                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s) RETURNING id",
+                "quantity, source, material, width, height, wb_order_id, marketplace_created_at, "
+                "marketplace_item_id) "
+                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s) RETURNING id",
                 (
                     order_number,
                     product,
@@ -549,9 +584,14 @@ def handler(event: dict, context) -> dict:
                     int(height) if height else None,
                     int(wb_order_id),
                     mp_created_at,
+                    int(item_id) if item_id else None,
                 ),
             )
             new_id = cur.fetchone()[0]
+            # Такая вещь может уже лежать на полке склада (осталась от отменённого заказа) —
+            # тогда шить заново не нужно, резервируем её под этот заказ.
+            if match_from_stock(cur, new_id, item_id):
+                matched += 1
             created += 1
             created_numbers.append(order_number)
 
@@ -565,6 +605,7 @@ def handler(event: dict, context) -> dict:
 
         return _resp(200, {
             'created': created,
+            'matchedFromStock': matched,
             'skippedExisting': skipped_existing,
             'skippedNoItem': skipped_no_item,
             'totalFromWb': len(wb_orders),

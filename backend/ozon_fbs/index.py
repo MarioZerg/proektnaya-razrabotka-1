@@ -76,10 +76,10 @@ def ozon_error_text(status_code, data):
 
 def find_marketplace_item(cur, ozon_sku, offer_id):
     """Ищет товар: сначала по ozon_sku (числовой sku OZON), затем по offer_id=sku (артикул
-    продавца). Возвращает (material, width, height, name) или None."""
+    продавца). Возвращает (material, width, height, name, id) или None."""
     if ozon_sku:
         cur.execute(
-            "SELECT material, width, height, name FROM marketplace_items WHERE ozon_sku = %s LIMIT 1",
+            "SELECT material, width, height, name, id FROM marketplace_items WHERE ozon_sku = %s LIMIT 1",
             (str(ozon_sku),),
         )
         row = cur.fetchone()
@@ -87,7 +87,7 @@ def find_marketplace_item(cur, ozon_sku, offer_id):
             return row
     if offer_id:
         cur.execute(
-            "SELECT material, width, height, name FROM marketplace_items WHERE sku = %s LIMIT 1",
+            "SELECT material, width, height, name, id FROM marketplace_items WHERE sku = %s LIMIT 1",
             (str(offer_id),),
         )
         row = cur.fetchone()
@@ -112,6 +112,40 @@ def log_action(cur, actor_id, actor_name, action, description):
     )
 
 
+def match_from_stock(cur, order_id, item_id) -> bool:
+    """Пробует закрыть новый заказ вещью, которая уже лежит на полке склада.
+
+    Подбор строго по товару справочника (marketplace_item_id) — это та же карточка товара,
+    значит вещь подойдёт покупателю. Берём самую давно лежащую вещь (FIFO). Если нашли:
+    заказ помечается как закрытый со склада и НЕ уходит на конвейер производства, а вещь
+    резервируется под него — кладовщик заберёт её с полки и наклеит стикер отправления.
+    """
+    if not item_id:
+        return False
+    cur.execute(
+        "SELECT gw.id FROM goods_warehouse gw "
+        "JOIN orders src ON src.id = gw.order_id "
+        "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+        "AND src.marketplace_item_id = %s "
+        "ORDER BY gw.received_at ASC LIMIT 1",
+        (int(item_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    gw_id = row[0]
+    cur.execute(
+        "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
+        (int(order_id), gw_id),
+    )
+    # Заказ закрывается со склада: на конвейер не попадает, ждёт стикеровки кладовщиком.
+    cur.execute(
+        "UPDATE orders SET fulfilled_from_stock_id = %s, sewing_status = 'Со склада' WHERE id = %s",
+        (gw_id, int(order_id)),
+    )
+    return True
+
+
 def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
     """Тянет новые FBS-заказы OZON (status=awaiting_packaging) и создаёт их в системе."""
     payload = {
@@ -134,6 +168,7 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
     postings = (data.get('result', {}) or {}).get('postings', []) if isinstance(data, dict) else []
 
     created = 0
+    matched = 0
     skipped_existing = 0
     skipped_no_item = 0
     unmatched = []
@@ -167,14 +202,14 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
                 skipped_no_item += 1
                 unmatched.append({'postingNumber': posting_number, 'ozonSku': ozon_sku, 'offerId': offer_id})
                 continue
-            material, width, height, item_name = item
+            material, width, height, item_name, item_id = item
             product = f"{material} {width}x{height}" if material and width and height else item_name
             for _ in range(qty):
                 cur.execute(
                     "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                     "quantity, source, material, width, height, ozon_posting_number, ozon_status, "
-                    "marketplace_created_at) "
-                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s)",
+                    "marketplace_created_at, marketplace_item_id) "
+                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                     (
                         posting_number,
                         product,
@@ -184,8 +219,14 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
                         posting_number,
                         ozon_status,
                         mp_created_at,
+                        int(item_id) if item_id else None,
                     ),
                 )
+                new_order_id = cur.fetchone()[0]
+                # Такая вещь может уже лежать на полке (осталась от отменённого заказа) —
+                # тогда шить заново не надо: резервируем её под этот заказ, кладовщик заберёт
+                # её с полки, наклеит стикер отправления и отсканирует в поставку FBS.
+                matched += 1 if match_from_stock(cur, new_order_id, item_id) else 0
                 made_any = True
                 created += 1
         if made_any:
@@ -201,6 +242,7 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
 
     return _resp(200, {
         'created': created,
+        'matchedFromStock': matched,
         'skippedExisting': skipped_existing,
         'skippedNoItem': skipped_no_item,
         'totalFromOzon': len(postings),

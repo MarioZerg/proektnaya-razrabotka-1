@@ -18,6 +18,7 @@ export const statusTabs: StatusTab[] = [
   { value: 'Раскроено', label: 'Раскроено' },
   { value: 'Стикеровка', label: 'На стикеровке' },
   { value: 'Готовые', label: 'Готовые' },
+  { value: 'Со склада', label: 'Со склада' },
 ];
 
 export const marketplaceLogo: Record<string, { label: string; className: string }> = {

@@ -55,6 +55,12 @@ def handler(event: dict, context) -> dict:
           (status='Отменён' или статус отмены из API OZON/WB) — заказы, идущие по конвейеру,
           отгружаются на маркетплейс и на склад не принимаются (их кладут вручную через
           receive_return). Генерирует новый storage_barcode
+    POST /  { action: 'place_on_shelf', barcode, shelfId }
+        - кладовщик у себя на компьютере сканирует стикер хранения вещи, отменённой клиентом
+          (статус awaiting_shelf), и кладёт её на конкретную полку → in_stock
+    GET  /?pending_shelf=1
+        - список отменённых вещей, отстикерованных упаковщиком, но ещё не положенных на полку
+          (виджет на дашборде кладовщика)
     POST /  { action: 'receive_return', orderNumber, shelfId? }
         - приём возврата с маркетплейса по номеру заказа (ручной ввод, до появления API):
           если заказ уже был на складе — запись просто возвращается в статус in_stock с
@@ -156,9 +162,11 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 f"SELECT gw.id, gw.order_id, o.order_number, o.product, o.material, o.width, o.height, "
                 f"gw.shelf_id, s.name, gw.status, gw.received_at, gw.shipped_at, gw.storage_barcode, "
-                f"gw.lost_reason, gw.lost_at, gw.receive_reason "
+                f"gw.lost_reason, gw.lost_at, gw.receive_reason, gw.reserved_order_id, ro.order_number, "
+                f"gw.shipping_labeled_at "
                 f"FROM goods_warehouse gw "
                 f"LEFT JOIN orders o ON o.id = gw.order_id "
+                f"LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
                 f"LEFT JOIN shelves s ON s.id = gw.shelf_id "
                 f"{where_clause} "
                 f"ORDER BY gw.received_at DESC, gw.id DESC"
@@ -181,6 +189,9 @@ def handler(event: dict, context) -> dict:
                     'lostReason': r[13],
                     'lostAt': (r[14].isoformat() + 'Z') if r[14] else None,
                     'receiveReason': r[15] or 'manual',
+                    'reservedOrderId': r[16],
+                    'reservedOrderNumber': r[17],
+                    'shippingLabeledAt': (r[18].isoformat() + 'Z') if r[18] else None,
                 }
                 for r in cur.fetchall()
             ]
@@ -249,6 +260,121 @@ def handler(event: dict, context) -> dict:
                 log_action(cur, actor_id, actor_name, 'receive', 'goods_warehouse', new_id, f'Принял товар на склад ({storage_barcode})')
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'storageBarcode': storage_barcode})}
+
+            if action == 'ship_label':
+                # Кладовщик забрал с полки вещь, зарезервированную под новый заказ FBS,
+                # наклеил на неё стикер отправления маркетплейса и сканирует стикер хранения
+                # у себя на компьютере. После этого вещь готова к сканированию в поставку FBS.
+                scan_barcode = (body_data.get('barcode') or '').strip()
+                if not scan_barcode:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте стикер хранения'})}
+
+                bc_esc = scan_barcode.replace("'", "''")
+                cur.execute(
+                    "SELECT gw.id, gw.status, gw.reserved_order_id, ro.order_number, o.product, s.name "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                    "LEFT JOIN shelves s ON s.id = gw.shelf_id "
+                    f"WHERE gw.storage_barcode = '{bc_esc}'"
+                )
+                gw_row = cur.fetchone()
+                if not gw_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Стикер {scan_barcode} не найден'})}
+                gw_id, gw_status, reserved_order_id, target_number, gw_product, shelf_name = gw_row
+                if not reserved_order_id:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Эта вещь не подобрана ни под один заказ — стикеровать её рано'}),
+                    }
+                if gw_status not in ('in_stock', 'picking'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Вещь недоступна (статус: {gw_status})'}),
+                    }
+
+                # picking = отстикерована и готова к сканированию в поставку FBS.
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'picking', shipping_labeled_at = now() WHERE id = {gw_id}"
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'ship_label', 'goods_warehouse', gw_id,
+                    f'Наклеил стикер отправления на заказ #{target_number} ({scan_barcode})',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'id': gw_id,
+                        'orderId': reserved_order_id,
+                        'orderNumber': target_number,
+                        'product': gw_product,
+                        'shelfName': shelf_name,
+                        'storageBarcode': scan_barcode,
+                    }),
+                }
+
+            if action == 'place_on_shelf':
+                # Кладовщик забрал из цеха вещь, отменённую клиентом (упаковщик уже наклеил
+                # на неё стикер хранения), и сканирует её у себя на компьютере, укладывая на
+                # конкретную полку. Работает только со сканера — вручную полки не путаем.
+                scan_barcode = (body_data.get('barcode') or '').strip()
+                shelf_id = body_data.get('shelfId')
+                if not scan_barcode:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте стикер хранения'})}
+                if shelf_id in (None, ''):
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите полку'})}
+
+                bc_esc = scan_barcode.replace("'", "''")
+                cur.execute(
+                    "SELECT gw.id, gw.status, o.order_number, o.product FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    f"WHERE gw.storage_barcode = '{bc_esc}'"
+                )
+                gw_row = cur.fetchone()
+                if not gw_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Стикер {scan_barcode} не найден — это не стикер хранения'}),
+                    }
+                gw_id, gw_status, gw_order_number, gw_product = gw_row
+                if gw_status == 'in_stock':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Товар {gw_order_number or ""} уже лежит на полке'}),
+                    }
+                if gw_status != 'awaiting_shelf':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Товар {gw_order_number or ""} не ожидает укладки (статус: {gw_status})'}),
+                    }
+
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'in_stock', shelf_id = {int(shelf_id)}, "
+                    f"received_at = now() WHERE id = {gw_id}"
+                )
+                cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+                shelf_row = cur.fetchone()
+                shelf_name = shelf_row[0] if shelf_row else None
+                log_action(
+                    cur, actor_id, actor_name, 'place_on_shelf', 'goods_warehouse', gw_id,
+                    f'Положил на полку {shelf_name or shelf_id}: заказ #{gw_order_number} ({scan_barcode})',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'id': gw_id, 'orderNumber': gw_order_number,
+                        'product': gw_product, 'shelfName': shelf_name,
+                    }),
+                }
 
             if action == 'receive_return':
                 order_number = (body_data.get('orderNumber') or '').strip()
