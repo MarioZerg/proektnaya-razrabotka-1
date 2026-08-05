@@ -623,8 +623,10 @@ def handler(event: dict, context) -> dict:
                 # Полные данные взятых заказов — фронтенду нужны для немедленной печати
                 # "листа закройщика" (чек-лист + QR-лист) сразу после взятия стека.
                 cur.execute(
-                    f"SELECT id, order_number, order_type, marketplace, material, width, height "
-                    f"FROM orders WHERE id IN ({ids_csv}) ORDER BY material, id"
+                    f"SELECT id, order_number, order_type, marketplace, material, width, height, "
+                    f"group_key, group_size, group_position "
+                    f"FROM orders WHERE id IN ({ids_csv}) "
+                    f"ORDER BY material, group_key NULLS FIRST, group_position NULLS LAST, id"
                 )
                 taken_orders = [
                     {
@@ -635,6 +637,11 @@ def handler(event: dict, context) -> dict:
                         'material': r[4],
                         'width': r[5],
                         'height': r[6],
+                        # Связка Яндекса: все вещи одного заказа покупателя вешаются вместе
+                        # на одну вешалку — иначе швея не соберёт заказ целиком.
+                        'groupKey': r[7],
+                        'groupSize': r[8],
+                        'groupPosition': r[9],
                     }
                     for r in cur.fetchall()
                 ]

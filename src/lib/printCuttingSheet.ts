@@ -27,7 +27,9 @@ const formatToday = () => {
   return `${dd}/${mm}/${d.getFullYear()}`;
 };
 
-/** Группирует заказы по материалу, сохраняя порядок первого появления материала. */
+/** Группирует заказы по материалу, сохраняя порядок первого появления материала. Внутри
+ * материала вещи одной связки Яндекса идут подряд и по порядку — их вешают на одну вешалку,
+ * поэтому в листе они не должны перемешиваться с другими заказами. */
 const groupByMaterial = (orders: TakenOrder[]): TakenOrder[] => {
   const groups = new Map<string, TakenOrder[]>();
   for (const o of orders) {
@@ -35,8 +37,24 @@ const groupByMaterial = (orders: TakenOrder[]): TakenOrder[] => {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(o);
   }
+  for (const list of groups.values()) {
+    list.sort((a, b) => {
+      const ga = a.groupKey || '';
+      const gb = b.groupKey || '';
+      if (ga !== gb) return ga.localeCompare(gb);
+      return (a.groupPosition || 0) - (b.groupPosition || 0);
+    });
+  }
   return Array.from(groups.values()).flat();
 };
+
+/** Подпись связки в позиции листа: «СВЯЗКА 3/32 — одна вешалка». */
+const groupNote = (o: TakenOrder) =>
+  o.groupSize && o.groupSize > 1
+    ? `<div style="margin-top:3px;font-size:11px;font-weight:700;">
+         СВЯЗКА ${o.groupPosition}/${o.groupSize} — НА ОДНУ ВЕШАЛКУ
+       </div>`
+    : '';
 
 const chunk = <T,>(arr: T[], size: number): T[][] => {
   const result: T[][] = [];
@@ -79,17 +97,34 @@ const page = (inner: string) =>
   `<div style="width:${A4_WIDTH_PX}px;height:${A4_HEIGHT_PX}px;box-sizing:border-box;padding:24px;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;">${inner}</div>`;
 
 const buildChecklistPageHtml = (pageOrders: TakenOrder[], cutterName: string, date: string) => {
+  // Сводка связок на странице: заказ покупателя из нескольких вещей вешается на ОДНУ вешалку
+  // целиком, иначе швея не сможет взять и отшить его одним куском.
+  const groupCounts = new Map<string, number>();
+  for (const o of pageOrders) {
+    if (o.groupKey && o.groupSize && o.groupSize > 1) {
+      groupCounts.set(o.groupKey, (groupCounts.get(o.groupKey) || 0) + 1);
+    }
+  }
+  const groupsBanner = groupCounts.size
+    ? `<div style="border:2px solid #000;padding:6px 12px;margin-bottom:10px;font-size:12px;font-weight:700;">
+         ВНИМАНИЕ: на листе есть связки — вещи одного заказа вешать ВМЕСТЕ на одну вешалку:
+         ${Array.from(groupCounts.entries())
+           .map(([key, cnt]) => `${key} (${cnt} шт.)`)
+           .join(', ')}
+       </div>`
+    : '';
   const header = `
     <div style="display:flex;justify-content:space-between;align-items:stretch;margin-bottom:14px;">
       <div style="border:1px solid #000;padding:6px 14px;font-size:13px;font-weight:700;">${cutterName}</div>
       <div style="border:1px solid #000;padding:6px 14px;font-size:13px;font-weight:700;">${date}</div>
-    </div>`;
+    </div>` + groupsBanner;
   const grid = groupedGrid(
     pageOrders,
     (o) => `
       <div style="padding:8px 12px;text-align:center;">
         <div style="font-size:18px;font-weight:700;line-height:1.15;">${sizeLabel(o)}</div>
         <div style="font-size:11px;color:#222;margin-top:3px;">${o.marketplace} ${o.orderNumber}</div>
+        ${groupNote(o)}
       </div>`
   );
   return page(header + grid);
@@ -110,6 +145,7 @@ const buildQrPageHtml = (
           <div style="font-size:11px;color:#222;margin-top:3px;">
             ${o.marketplace} ${o.orderNumber} [${o.orderType}]${cutterId != null ? ` ID: ${cutterId}` : ''}
           </div>
+          ${groupNote(o)}
         </div>
       </div>`
   );

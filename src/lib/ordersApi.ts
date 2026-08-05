@@ -176,6 +176,10 @@ export interface TakenOrder {
   material: string | null;
   width: number | null;
   height: number | null;
+  /** Связка Яндекса: вещи одного заказа покупателя вешаются вместе на одну вешалку. */
+  groupKey?: string | null;
+  groupSize?: number | null;
+  groupPosition?: number | null;
 }
 
 export interface TakeStackResult {
