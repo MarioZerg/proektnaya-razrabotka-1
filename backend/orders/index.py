@@ -480,6 +480,19 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'Укажите userId и workshopId'}),
                     }
 
+                # Брать работу с конвейера можно только на открытой смене — иначе выработка
+                # и зарплата повиснут вне смены, а в цехе будет непонятно, кто работает.
+                cur.execute(
+                    "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL LIMIT 1",
+                    (int(user_id),),
+                )
+                if not cur.fetchone():
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Смена не открыта — откройте смену на терминале в цехе'}),
+                    }
+
                 cur.execute(
                     "SELECT COUNT(*) FROM orders WHERE assigned_user_id = %s AND sewing_status = 'На раскрое'",
                     (int(user_id),),
@@ -1101,7 +1114,15 @@ def handler(event: dict, context) -> dict:
                     (int(user_id),),
                 )
                 session_row = cur.fetchone()
-                session_workshop_id, session_opened_at = session_row if session_row else (None, None)
+                # Брать заказ в пошив можно только на открытой смене — выработка и зарплата
+                # должны попадать в смену, а не «висеть» вне её.
+                if not session_row:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Смена не открыта — откройте смену на терминале в цехе'}),
+                    }
+                session_workshop_id, session_opened_at = session_row
 
                 # Лимит одновременных заказов "В работе" у швеи (max_quantity_orders_to_seamstress)
                 max_orders = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_to_seamstress', 0)

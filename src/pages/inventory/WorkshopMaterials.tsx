@@ -16,6 +16,12 @@ import {
   type WorkshopMaterialColumn,
 } from '@/lib/workshopMaterialsApi';
 import { formatQuantity } from '@/lib/formatQuantity';
+import {
+  getStockLevel,
+  stockCellClass,
+  STOCK_LOW_LIMIT,
+  STOCK_MEDIUM_LIMIT,
+} from '@/lib/stockLevels';
 import { useAuth } from '@/context/AuthContext';
 
 const WorkshopMaterials = () => {
@@ -69,6 +75,20 @@ const WorkshopMaterials = () => {
           <p className="mt-1 text-sm text-muted-foreground">
             Остатки материалов в цехах по сменам (рулоны со статусом «в цехе»)
           </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <span className="h-3 w-3 rounded-sm bg-red-100 ring-1 ring-red-300" />
+              меньше {STOCK_LOW_LIMIT} пог.м
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-3 w-3 rounded-sm bg-amber-100 ring-1 ring-amber-300" />
+              до {STOCK_MEDIUM_LIMIT} пог.м
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-3 w-3 rounded-sm bg-emerald-100 ring-1 ring-emerald-300" />
+              свыше {STOCK_MEDIUM_LIMIT} пог.м
+            </span>
+          </div>
         </div>
 
         {loading ? (
@@ -109,16 +129,33 @@ const WorkshopMaterials = () => {
                           const cell = m.cells.find(
                             (c) => c.workshopId === col.workshopId && c.shiftNumber === col.shiftNumber
                           );
+                          // Подсветка остатка: до 200 пог.м — красная, до 500 — жёлтая,
+                          // свыше 500 — зелёная. Сразу видно, где материал заканчивается.
+                          const level = cell ? getStockLevel(cell.quantity, m.unit) : null;
                           return (
                             <TableCell
                               key={`${col.workshopId}-${col.shiftNumber}`}
-                              className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''} ${cell ? 'bg-emerald-50' : ''}`}
+                              className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''} ${
+                                level ? stockCellClass[level] : cell ? 'bg-emerald-50' : ''
+                              }`}
                             >
                               {cell ? `${formatQuantity(cell.quantity)} ${m.unit}, ${cell.rollCount} рул.` : '—'}
                             </TableCell>
                           );
                         })}
-                        <TableCell className="text-center font-semibold">
+                        <TableCell
+                          className={`text-center font-semibold ${(() => {
+                            // Итог подсвечиваем по той же шкале, что и ячейки смен.
+                            const own = m.cells.find(
+                              (c) =>
+                                c.workshopId === effectiveWorkshopId &&
+                                (c.shiftNumber === null || c.shiftNumber === effectiveShiftNumber)
+                            );
+                            const total = isProduction ? own?.quantity ?? 0 : m.totalQuantity;
+                            const lvl = getStockLevel(total, m.unit);
+                            return lvl ? stockCellClass[lvl] : '';
+                          })()}`}
+                        >
                           {/* Работнику цеха "Итого" считаем только по его видимой смене (иначе
                               общая цифра компании выдавала бы остатки других смен/цехов),
                               кладовщику и админу — общий итог по всем цехам и сменам как есть. */}

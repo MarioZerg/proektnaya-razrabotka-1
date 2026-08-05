@@ -598,6 +598,21 @@ def handler(event: dict, context) -> dict:
                     if actor_row and actor_row[0] not in ('sewer', 'cutter', 'packer', 'admin'):
                         return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Создать заявку на материал может только сотрудник цеха'})}
 
+                    # Материал заказывают под работу текущей смены — без открытой смены заявка
+                    # не имеет смысла (непонятно, в какой цех и на какую смену везти рулон).
+                    # Админ проверку не проходит: он оформляет заявки за цех вне смены.
+                    if actor_row and actor_row[0] != 'admin':
+                        cur.execute(
+                            "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL LIMIT 1",
+                            (int(actor_id),),
+                        )
+                        if not cur.fetchone():
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({'error': 'Смена не открыта — откройте смену на терминале в цехе'}),
+                            }
+
                 # 1 материал = 1 незакрытая заявка на смену: пока предыдущая заявка на этот же
                 # материал/цех/смену не дошла до статуса "Получено" (отгружена кладовщиком И
                 # подтверждена сотрудником цеха) — новую создать нельзя. shift_number здесь

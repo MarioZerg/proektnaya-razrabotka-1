@@ -8,6 +8,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import type { Material } from '@/lib/materialsApi';
+import { getStockLevel, stockStatusLabel, stockStatusClass } from '@/lib/stockLevels';
 
 const InventoryTable = ({ typeName, materials }: { typeName: string; materials: Material[] }) => {
   return (
@@ -30,10 +31,21 @@ const InventoryTable = ({ typeName, materials }: { typeName: string; materials: 
               </TableCell>
               <TableCell>{item.warehouseRolls}</TableCell>
               <TableCell>
-                {item.warehouseRolls > 0 ? (
-                  <Badge variant="secondary">В наличии</Badge>
-                ) : (
+                {item.warehouseRolls === 0 ? (
                   <Badge variant="outline">Нет на складе</Badge>
+                ) : (
+                  (() => {
+                    // Статус остатка по метражу: до 200 пог.м — мало, до 500 — среднее,
+                    // свыше 500 — нормальное значение. Заливки строки нет, только статус.
+                    const level = getStockLevel(item.warehouseQuantity, item.unit);
+                    return level ? (
+                      <Badge variant="secondary" className={stockStatusClass[level]}>
+                        {stockStatusLabel[level]}
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary">В наличии</Badge>
+                    );
+                  })()
                 )}
               </TableCell>
             </TableRow>
