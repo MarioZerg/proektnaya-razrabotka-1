@@ -32,6 +32,19 @@ export const fetchMaterialsData = async (): Promise<MaterialsData> => {
   return { types: data.types || [], materials: data.materials || [] };
 };
 
+/** Удаление группы материалов. Разрешено только для пустой группы — если в ней есть
+ * материалы, сервер вернёт ошибку и подскажет перенести их. */
+export const deleteMaterialType = async (id: number) => {
+  const res = await fetch(MATERIALS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'delete_type', id }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось удалить группу');
+  return data;
+};
+
 export const createType = async (name: string) => {
   const res = await fetch(MATERIALS_URL, {
     method: 'POST',

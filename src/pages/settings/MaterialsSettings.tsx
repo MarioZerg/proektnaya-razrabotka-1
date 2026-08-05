@@ -49,6 +49,7 @@ import {
   createMaterial,
   updateMaterial,
   deleteMaterial,
+  deleteMaterialType,
   type Material,
   type MaterialType,
 } from '@/lib/materialsApi';
@@ -189,6 +190,21 @@ const MaterialsSettings = () => {
     }
   };
 
+  const handleDeleteType = async (id: number, name: string) => {
+    if (!confirm(`Удалить группу «${name}»?`)) return;
+    try {
+      await deleteMaterialType(id);
+      toast({ title: `Группа «${name}» удалена` });
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось удалить группу',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      });
+    }
+  };
+
   return (
     <CrmLayout>
       <div className="space-y-6">
@@ -298,6 +314,37 @@ const MaterialsSettings = () => {
             </DialogContent>
           </Dialog>
         </div>
+
+        {/* Группы материалов: пустую группу можно удалить прямо здесь, чтобы в справочнике
+            не висели лишние категории. Группа с материалами не удаляется. */}
+        {types.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Группы материалов</p>
+            <div className="flex flex-wrap gap-2">
+              {types.map((t) => {
+                const count = materials.filter((m) => m.typeId === t.id).length;
+                return (
+                  <div
+                    key={t.id}
+                    className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm"
+                  >
+                    <span className="font-medium">{t.name}</span>
+                    <span className="text-xs text-muted-foreground">{count} шт</span>
+                    {count === 0 && (
+                      <button
+                        onClick={() => handleDeleteType(t.id, t.name)}
+                        className="text-muted-foreground transition hover:text-destructive"
+                        aria-label={`Удалить группу ${t.name}`}
+                      >
+                        <Icon name="X" size={14} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">

@@ -168,6 +168,30 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            if action == 'delete_type':
+                # Удалить можно только пустую группу: если в ней есть материалы, они бы
+                # «повисли» без категории. Тогда сначала переносим материалы в другую группу.
+                type_id = body_data.get('id')
+                if not type_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                cur.execute(
+                    "SELECT COUNT(*), COALESCE(MIN(name), '') FROM materials WHERE type_id = %s",
+                    (int(type_id),),
+                )
+                cnt_row = cur.fetchone()
+                if cnt_row[0] > 0:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'В группе есть материалы ({cnt_row[0]} шт, например «{cnt_row[1]}») — '
+                                     f'сначала перенесите их в другую группу'
+                        }),
+                    }
+                cur.execute("DELETE FROM material_types WHERE id = %s", (int(type_id),))
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
         finally:
             conn.close()
