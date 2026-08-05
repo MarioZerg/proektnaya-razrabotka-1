@@ -270,6 +270,14 @@ def handler(event: dict, context) -> dict:
                         )
                         lr = cur.fetchone()
                         is_late = bool(lr and lr[0])
+                    if is_late:
+                        cur.execute(
+                            "SELECT 1 FROM shift_sessions WHERE user_id = %s "
+                            "AND opened_at::date = CURRENT_DATE AND is_late = false LIMIT 1",
+                            (int(user_id),),
+                        )
+                        if cur.fetchone():
+                            is_late = False
                     cur.execute(
                         "INSERT INTO shift_sessions (user_id, workshop_id, shift_number, is_late) "
                         "VALUES (%s, NULL, NULL, %s) RETURNING id, opened_at",
@@ -390,6 +398,18 @@ def handler(event: dict, context) -> dict:
                         start_dt = datetime.combine(now_dt.date(), start_time)
                         is_late = now_dt > start_dt
                     except ValueError:
+                        is_late = False
+
+                # Если сегодня сотрудник уже открывал смену вовремя (в любом цехе и в любой
+                # должности), то последующие открытия — это переход в другой цех или смена
+                # должности в течение дня, а не опоздание. Штраф повторно не начисляем.
+                if is_late:
+                    cur.execute(
+                        "SELECT 1 FROM shift_sessions WHERE user_id = %s "
+                        "AND opened_at::date = CURRENT_DATE AND is_late = false LIMIT 1",
+                        (int(user_id),),
+                    )
+                    if cur.fetchone():
                         is_late = False
 
                 cur.execute(
