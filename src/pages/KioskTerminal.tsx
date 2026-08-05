@@ -15,6 +15,7 @@ import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
 import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
 import KioskIdleTimer from '@/components/crm/kiosk/KioskIdleTimer';
+import { roleLabels, type Role } from '@/lib/roles';
 
 /** Терминал цеха (киоск). Полноэкранный экран для планшета в цехе: сотрудник входит
  * сканированием личного QR-кода с бейджа (формат "{id}-{смена}-{дата}"), пароль не нужен.
@@ -80,6 +81,26 @@ const KioskTerminal = () => {
   // тогда ушёл бы обрывок кода.
   const handleLogin = () => loginWithCode((inputRef.current?.value || code).trim());
 
+  // Режим проверки для администратора: /kiosk/1?preview=1&role=sewer&name=Иван. Терминал
+  // открывается глазами выбранной должности без сканирования QR и без открытия смены —
+  // ничего не пишется в отчёты, админ просто смотрит, что видит сотрудник.
+  const isPreview = searchParams.get('preview') === '1';
+  useEffect(() => {
+    if (!isPreview || user) return;
+    const previewRole = searchParams.get('role') || 'sewer';
+    const previewName = searchParams.get('name') || 'Проверка';
+    setUser({
+      id: 0,
+      name: previewName,
+      role: previewRole,
+      shiftFromCode: null,
+      homeWorkshopId: Number(workshopId) || null,
+    });
+    setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null });
+    setEnteredMenu(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPreview, user]);
+
   // Вход по ссылке из персонального QR сотрудника: /kiosk/1?barcode=3-20-20250513
   useEffect(() => {
     const barcode = searchParams.get('barcode');
@@ -112,6 +133,11 @@ const KioskTerminal = () => {
   // персонального QR-кода сотрудника (или из его профиля, если в коде её нет).
   const handleOpenShift = async () => {
     if (!user) return;
+    // В режиме проверки смену не открываем: админ смотрит терминал, а не работает за него.
+    if (isPreview) {
+      toast({ title: 'Режим проверки', description: 'Смена не открывается — это только просмотр' });
+      return;
+    }
     setShiftSaving(true);
     try {
       const res = await openShift(user.id, Number(workshopId) || null, user.shiftFromCode ?? null);
@@ -149,6 +175,10 @@ const KioskTerminal = () => {
 
   const handleCloseShift = async () => {
     if (!user) return;
+    if (isPreview) {
+      toast({ title: 'Режим проверки', description: 'Смена не закрывается — это только просмотр' });
+      return;
+    }
     setShiftSaving(true);
     try {
       await closeShift(user.id);
@@ -234,10 +264,27 @@ const KioskTerminal = () => {
   if (user) {
     return (
       <div className="min-h-screen bg-background">
-        {/* Автовыход из профиля при бездействии: предупреждение через минуту, отсчёт 30 сек. */}
-        <KioskIdleTimer onTimeout={handleLogout} />
-        <div className="flex flex-wrap items-center gap-3 bg-emerald-100 px-4 py-3">
-          <p className="text-xl font-semibold text-emerald-900">Приветствую, {user.name}!</p>
+        {/* Автовыход из профиля при бездействии: предупреждение через минуту, отсчёт 30 сек.
+            В режиме проверки таймер не нужен — админ может спокойно изучать экраны. */}
+        {!isPreview && <KioskIdleTimer onTimeout={handleLogout} />}
+        <div
+          className={`flex flex-wrap items-center gap-3 px-4 py-3 ${
+            isPreview ? 'bg-violet-100' : 'bg-emerald-100'
+          }`}
+        >
+          {isPreview && (
+            <Badge className="bg-violet-600 text-base text-white hover:bg-violet-600">
+              <Icon name="Eye" size={14} className="mr-1.5" />
+              Режим проверки · {roleLabels[user.role as Role] || user.role}
+            </Badge>
+          )}
+          <p
+            className={`text-xl font-semibold ${
+              isPreview ? 'text-violet-900' : 'text-emerald-900'
+            }`}
+          >
+            Приветствую, {user.name}!
+          </p>
           <Badge variant="secondary" className="text-base">
             Цех №{workshopId}
           </Badge>
@@ -253,8 +300,8 @@ const KioskTerminal = () => {
                 В меню
               </Button>
             )}
-            <Button variant="destructive" onClick={handleLogout}>
-              Выход
+            <Button variant="destructive" onClick={isPreview ? () => window.close() : handleLogout}>
+              {isPreview ? 'Закрыть проверку' : 'Выход'}
             </Button>
           </div>
         </div>

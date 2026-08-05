@@ -31,6 +31,7 @@ import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
 import { useMarketplaceAutoSync } from '@/hooks/useMarketplaceAutoSync';
+import KioskPreviewDialog from '@/components/crm/kiosk/KioskPreviewDialog';
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
   const { user, login, logout, switchRole } = useAuth();
@@ -43,6 +44,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [testAccounts, setTestAccounts] = useState<TestAccount[]>([]);
   const [qrOpen, setQrOpen] = useState(false);
+  const [kioskPreviewOpen, setKioskPreviewOpen] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -157,6 +159,17 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           </SidebarGroup>
         </SidebarContent>
         <SidebarFooter className="border-t border-sidebar-border p-3">
+          {/* Админу — быстрый вход в терминал цеха, чтобы проверить, что видит каждая
+              должность на планшете в цехе. */}
+          {user.role === 'admin' && (
+            <button
+              onClick={() => setKioskPreviewOpen(true)}
+              className="mb-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            >
+              <Icon name="MonitorPlay" size={16} className="shrink-0" />
+              <span className="truncate">Проверить киоск</span>
+            </button>
+          )}
           {user.isDemo && (
             <div className="mb-2 flex items-center gap-1.5 rounded-sm bg-sidebar-accent/60 px-2 py-1">
               <Icon name="FlaskConical" size={12} className="shrink-0 text-sidebar-foreground/60" />
@@ -241,6 +254,13 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
       </Sidebar>
 
       <ShiftQrDialog open={qrOpen} onOpenChange={setQrOpen} />
+      {user.role === 'admin' && (
+        <KioskPreviewDialog
+          open={kioskPreviewOpen}
+          onOpenChange={setKioskPreviewOpen}
+          adminName={user.name}
+        />
+      )}
 
       <main className="flex-1 overflow-x-hidden">
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
