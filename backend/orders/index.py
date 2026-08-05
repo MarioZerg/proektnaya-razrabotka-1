@@ -299,7 +299,8 @@ def handler(event: dict, context) -> dict:
                     "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                     "o.cutter_user_id, cu.full_name, o.hanger_number, "
                     "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, o.product_barcode, "
-                    "o.marketplace_item_id, o.product_ozon_sku, u.last_hanger_number "
+                    "o.marketplace_item_id, o.product_ozon_sku, u.last_hanger_number, "
+                    "o.group_key, o.group_size, o.group_position "
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
                     "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -398,6 +399,11 @@ def handler(event: dict, context) -> dict:
                     'requiredFabricMaterialName': required_fabric_material_name,
                     'requiredTrimMaterialId': required_trim_material_id,
                     'requiredTrimMaterialName': required_trim_material_name,
+                    # Вещи одного заказа покупателя (Яндекс Маркет) идут по цеху вместе —
+                    # показываем «1 из 3», чтобы швея видела, что заказ ещё не закончен.
+                    'groupKey': row[30],
+                    'groupSize': row[31],
+                    'groupPosition': row[32],
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'order': detail})}
 
@@ -408,7 +414,7 @@ def handler(event: dict, context) -> dict:
                 "o.cutter_user_id, cu.full_name, o.hanger_number, "
                 "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
                 "o.ozon_status, o.ozon_posting_number, o.product_barcode, o.product_ozon_sku, "
-                "o.marketplace_created_at "
+                "o.marketplace_created_at, o.group_key, o.group_size, o.group_position "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -450,6 +456,11 @@ def handler(event: dict, context) -> dict:
                     'productBarcode': r[28],
                     'productOzonSku': r[29],
                     'marketplaceCreatedAt': (r[30].isoformat() + 'Z') if r[30] else None,
+                    # Заказ покупателя из нескольких вещей (Яндекс Маркет): вещи связаны общим
+                    # ключом и едут по цеху вместе — в интерфейсе показываем «1 из 3».
+                    'groupKey': r[31],
+                    'groupSize': r[32],
+                    'groupPosition': r[33],
                 }
                 for r in cur.fetchall()
             ]

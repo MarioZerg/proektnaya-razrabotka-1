@@ -14,6 +14,11 @@ export interface KioskOrder {
    * упаковщик клеит стикер ХРАНЕНИЯ вместо стикера отправления. */
   isCancelled?: boolean;
   marketplace?: string | null;
+  /** Заказ покупателя из нескольких вещей (Яндекс Маркет). Ярлык на такой заказ один общий,
+   * поэтому вещи упаковываются вместе — терминал предупреждает об этом упаковщицу. */
+  groupKey?: string | null;
+  groupSize?: number | null;
+  groupPosition?: number | null;
 }
 
 export const fetchKioskOrder = async (orderNumber: string): Promise<KioskOrder> => {

@@ -1,0 +1,322 @@
+import json
+import os
+import urllib.request
+import urllib.error
+
+import psycopg2
+
+# Яндекс Маркет Partner API. Работает ТОЛЬКО НА ЧТЕНИЕ: тянет новые заказы FBS и их
+# статусы, но не двигает заказы на стороне Яндекса (не собирает и не отгружает).
+YM_API_BASE = 'https://api.partner.market.yandex.ru'
+
+# Заказ попадает на конвейер, когда Яндекс ждёт от нас сборку.
+YM_NEW_STATUS = 'PROCESSING'
+
+CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, X-Auth-Token, X-Session-Id',
+    'Access-Control-Max-Age': '86400',
+}
+
+
+def _resp(status, body):
+    return {
+        'statusCode': status,
+        'headers': {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'},
+        'body': json.dumps(body, ensure_ascii=False),
+    }
+
+
+def get_ym_credentials(cur):
+    """Возвращает (api_key, campaign_id, is_enabled) для Яндекс Маркета."""
+    cur.execute(
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = 'yandex_market'"
+    )
+    row = cur.fetchone()
+    if not row:
+        return None, None, False
+    creds = row[1] if isinstance(row[1], dict) else json.loads(row[1] or '{}')
+    return (creds.get('apiKey') or '').strip(), (creds.get('campaignId') or '').strip(), bool(row[0])
+
+
+def ym_get(path, api_key):
+    """GET к Partner API. Возвращает (status_code, parsed_json_or_text)."""
+    req = urllib.request.Request(YM_API_BASE + path, method='GET')
+    req.add_header('Api-Key', api_key)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = r.read().decode('utf-8')
+            return r.status, (json.loads(data) if data else {})
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode('utf-8', 'replace')
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {'raw': raw[:500]}
+    except Exception as e:
+        return 0, {'raw': str(e)[:500]}
+
+
+def find_marketplace_item(cur, offer_id, shop_sku):
+    """Ищет товар справочника по артикулу продавца (offerId / shopSku = наш sku)."""
+    for code in (offer_id, shop_sku):
+        if not code:
+            continue
+        cur.execute(
+            "SELECT material, width, height, name, id FROM marketplace_items WHERE sku = %s LIMIT 1",
+            (str(code),),
+        )
+        row = cur.fetchone()
+        if row:
+            return row
+    return None
+
+
+def match_from_stock(cur, order_id, item_id) -> bool:
+    """Пробует закрыть заказ вещью, уже лежащей на полке (FIFO), — шить заново не нужно."""
+    if not item_id:
+        return False
+    cur.execute(
+        "SELECT gw.id FROM goods_warehouse gw "
+        "JOIN orders src ON src.id = gw.order_id "
+        "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+        "AND src.marketplace_item_id = %s "
+        "ORDER BY gw.received_at ASC LIMIT 1",
+        (int(item_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    cur.execute(
+        "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
+        (int(order_id), row[0]),
+    )
+    cur.execute(
+        "UPDATE orders SET fulfilled_from_stock_id = %s, sewing_status = 'Со склада' WHERE id = %s",
+        (row[0], int(order_id)),
+    )
+    return True
+
+
+def log_action(cur, actor_id, actor_name, action, description):
+    cur.execute(
+        "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, entity_id, description) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            'integration',
+            action,
+            'order',
+            None,
+            description,
+        ),
+    )
+
+
+def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
+    """Тянет новые заказы Яндекс Маркета и ставит их на конвейер.
+
+    Ключевое отличие от OZON и WB: у Яндекса покупатель заказывает несколько вещей ОДНИМ
+    заказом, и ярлык-стикер на такой заказ выдаётся ОДИН на всё отправление. Разорвать его
+    между разными закройщиками и швеями нельзя — вещи разъедутся по цеху, а к отгрузке их
+    надо собрать вместе под один ярлык.
+
+    Поэтому все вещи одного заказа получают общий group_key: в цеху они идут одной пачкой,
+    закройщик берёт заказ целиком, и шьёт его одна швея.
+    """
+    status_code, data = ym_get(
+        f'/campaigns/{campaign_id}/orders?status={YM_NEW_STATUS}&pageSize=50', api_key
+    )
+    if status_code != 200 or 'orders' not in data:
+        return {'error': 'Яндекс Маркет вернул ошибку', 'status': status_code, 'details': data}
+
+    created = 0
+    matched = 0
+    skipped_existing = 0
+    skipped_no_item = 0
+    unmatched = []
+    created_orders = []
+
+    for o in data.get('orders', []) or []:
+        ym_id = o.get('id')
+        if not ym_id:
+            continue
+        group_key = f'YM-{ym_id}'
+        mp_created_at = o.get('creationDate') or None
+
+        # Сначала разворачиваем позиции в плоский список вещей: товар с count=3 — это три
+        # отдельные вещи на конвейере, но все они из одного заказа покупателя.
+        units = []
+        for it in o.get('items', []) or []:
+            offer_id = it.get('offerId')
+            shop_sku = it.get('shopSku')
+            item = find_marketplace_item(cur, offer_id, shop_sku)
+            if not item:
+                skipped_no_item += 1
+                unmatched.append({'orderId': ym_id, 'offerId': offer_id, 'shopSku': shop_sku})
+                continue
+            for _ in range(int(it.get('count') or 1)):
+                units.append(item)
+
+        if not units:
+            continue
+
+        group_size = len(units)
+        made_any = False
+        for pos, (material, width, height, item_name, item_id) in enumerate(units, start=1):
+            product = f'{material} {width}x{height}' if material and width and height else item_name
+            # Номер вида "YM-12345-2" — вторая вещь заказа 12345. Повторная загрузка дублей
+            # не создаст (ON CONFLICT), а по group_key вещи всегда собираются обратно.
+            unique_number = f'{group_key}-{pos}'
+            cur.execute(
+                "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
+                "quantity, source, material, width, height, ym_order_id, ym_status, "
+                "marketplace_created_at, marketplace_item_id, group_key, group_size, group_position) "
+                "VALUES (%s, 'Yandex', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (order_number) DO NOTHING RETURNING id",
+                (
+                    unique_number,
+                    product,
+                    material,
+                    int(width) if width else None,
+                    int(height) if height else None,
+                    int(ym_id),
+                    o.get('status'),
+                    mp_created_at,
+                    int(item_id) if item_id else None,
+                    group_key,
+                    group_size,
+                    pos,
+                ),
+            )
+            inserted = cur.fetchone()
+            if not inserted:
+                skipped_existing += 1
+                continue
+            if match_from_stock(cur, inserted[0], item_id):
+                matched += 1
+            made_any = True
+            created += 1
+        if made_any:
+            created_orders.append(group_key)
+
+    if created:
+        log_action(
+            cur, actor_id, actor_name, 'ym_sync',
+            f'Загружено с Яндекс Маркета: {created} вещей в {len(created_orders)} заказах',
+        )
+    return {
+        'created': created,
+        'matchedFromStock': matched,
+        'skippedExisting': skipped_existing,
+        'skippedNoItem': skipped_no_item,
+        'unmatched': unmatched[:20],
+        'orders': created_orders,
+    }
+
+
+def handler(event: dict, context) -> dict:
+    """Интеграция с Яндекс Маркетом: загрузка заказов FBS на конвейер производства.
+
+    Заказ Яндекса может содержать несколько вещей, и ярлык на них один общий — поэтому все
+    вещи одного заказа связываются общим ключом группы и идут по цеху вместе: их берёт один
+    закройщик и шьёт одна швея, чтобы к отгрузке заказ собрался целиком.
+
+    GET  /?action=campaigns       - какие кампании доступны ключу (проверка настроек)
+    GET  /?action=check&status=   - проверка ключа: сколько заказов ждёт сборки
+    POST /  { action: 'sync' }    - загрузить новые заказы на конвейер
+
+    Args:
+        event: dict с httpMethod, queryStringParameters, body
+        context: объект с request_id
+
+    Returns:
+        dict: HTTP-ответ с результатом синхронизации
+    """
+    method = event.get('httpMethod', 'GET')
+    if method == 'OPTIONS':
+        return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
+
+    body_data = {}
+    if method == 'POST':
+        try:
+            body_data = json.loads(event.get('body') or '{}')
+        except Exception:
+            return _resp(400, {'error': 'Некорректный JSON'})
+
+    params = event.get('queryStringParameters') or {}
+    action = body_data.get('action') or params.get('action') or 'check'
+    actor_id = body_data.get('actorId') or params.get('actorId')
+    actor_name = body_data.get('actorName') or params.get('actorName')
+
+    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    try:
+        cur = conn.cursor()
+        api_key, campaign_id, is_enabled = get_ym_credentials(cur)
+        if not api_key or not campaign_id:
+            return _resp(400, {'error': 'Не заполнены API-ключ и номер кампании Яндекс Маркета'})
+        if not is_enabled:
+            return _resp(400, {'error': 'Интеграция с Яндекс Маркетом выключена'})
+
+        if action == 'campaigns':
+            # Список кампаний, доступных ключу — чтобы убедиться, что campaignId указан верно.
+            st, data = ym_get('/campaigns', api_key)
+            return _resp(200, {
+                'status': st,
+                'configuredCampaignId': campaign_id,
+                'campaigns': [
+                    {
+                        'id': c.get('id'),
+                        'domain': c.get('domain'),
+                        'businessId': (c.get('business') or {}).get('id'),
+                        'placementType': c.get('placementType'),
+                    }
+                    for c in (data.get('campaigns') or [])
+                ] if isinstance(data, dict) else data,
+            })
+
+        if action == 'check':
+            # По умолчанию смотрим заказы в работе, но можно указать любой статус
+            # (?status=DELIVERED) — например чтобы разобрать состав прошлых заказов.
+            want = (params.get('status') or YM_NEW_STATUS).strip()
+            q = f'/campaigns/{campaign_id}/orders?pageSize=50'
+            if want.upper() != 'ANY':
+                q += f'&status={want}'
+            status_code, data = ym_get(q, api_key)
+            if status_code != 200:
+                return _resp(200, {'ok': False, 'status': status_code, 'details': data})
+            orders = data.get('orders', []) or []
+            multi = sum(
+                1 for o in orders if sum(int(i.get('count') or 1) for i in (o.get('items') or [])) > 1
+            )
+            return _resp(200, {
+                'ok': True,
+                'ordersAwaiting': len(orders),
+                'multiItemOrders': multi,
+                'sample': [
+                    {
+                        'id': o.get('id'),
+                        'status': o.get('status'),
+                        'itemsTotal': sum(int(i.get('count') or 1) for i in (o.get('items') or [])),
+                        'positions': len(o.get('items') or []),
+                        'offers': [i.get('offerId') for i in (o.get('items') or [])][:5],
+                    }
+                    for o in orders[:10]
+                ],
+            })
+
+        if action == 'sync':
+            result = sync_orders(cur, api_key, campaign_id, actor_id, actor_name)
+            if 'error' in result:
+                conn.rollback()
+                return _resp(502, result)
+            conn.commit()
+            return _resp(200, result)
+
+        return _resp(400, {'error': 'Неизвестное действие'})
+    finally:
+        conn.close()

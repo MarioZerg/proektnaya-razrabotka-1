@@ -11,6 +11,7 @@ import {
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { syncWbOrders } from '@/lib/wbFbsApi';
 import { syncOzonOrders, refreshAllOzonStatuses } from '@/lib/ozonFbsApi';
+import { syncYandexOrders } from '@/lib/yandexMarketApi';
 import { useAuth } from '@/context/AuthContext';
 import { emptyManualRow, type EditFormState, type ManualOrderRow } from '@/components/crm/orders/ordersShared';
 import OrdersToolbar, {
@@ -29,6 +30,7 @@ const MarketplaceOrders = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncingOzon, setSyncingOzon] = useState(false);
+  const [syncingYandex, setSyncingYandex] = useState(false);
   const [refreshingOzon, setRefreshingOzon] = useState(false);
   const [loading, setLoading] = useState(true);
   const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
@@ -169,6 +171,39 @@ const MarketplaceOrders = () => {
     }
   };
 
+  // Загрузка новых FBS-заказов с Яндекс Маркета. Вещи одного заказа покупателя связываются
+  // в группу: ярлык на них общий, поэтому по цеху они едут вместе — один закройщик, одна швея.
+  const handleSyncYandex = async () => {
+    setSyncingYandex(true);
+    try {
+      const r = await syncYandexOrders({ id: user?.id, name: user?.name });
+      const parts = [`создано ${r.created}`];
+      if (r.skippedExisting) parts.push(`уже были ${r.skippedExisting}`);
+      if (r.matchedFromStock) parts.push(`закрыто со склада ${r.matchedFromStock}`);
+      toast({
+        title: 'Заказы Яндекс Маркета загружены',
+        description: `Заказов покупателей: ${r.orders.length}. ${parts.join(', ')}.`,
+      });
+      if (r.skippedNoItem > 0) {
+        const arts = r.unmatched.map((u) => u.offerId || u.shopSku).filter(Boolean).join(', ');
+        toast({
+          title: `Не распознано товаров: ${r.skippedNoItem}`,
+          description: `Добавьте артикулы в справочник товаров: ${arts}`,
+          variant: 'destructive',
+        });
+      }
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось загрузить заказы с Яндекс Маркета',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setSyncingYandex(false);
+    }
+  };
+
   // Разом обновляет статусы всех OZON-заказов (сборка/отгрузка/доставка/доставлен) — читает
   // актуальные статусы с OZON, ничего не двигая на его стороне.
   const handleRefreshOzonStatuses = async () => {
@@ -271,6 +306,8 @@ const MarketplaceOrders = () => {
           syncing={syncing}
           onSyncOzon={handleSyncOzon}
           syncingOzon={syncingOzon}
+          onSyncYandex={handleSyncYandex}
+          syncingYandex={syncingYandex}
           onRefreshOzonStatuses={handleRefreshOzonStatuses}
           refreshingOzon={refreshingOzon}
           statusFilter={statusFilter}

@@ -154,6 +154,21 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
       ) : (
         <Card className="border-border shadow-none">
           <CardContent className="space-y-4 pt-6">
+            {/* Заказ Яндекса из нескольких вещей отгружается по одному общему ярлыку —
+                упаковщица должна дождаться все вещи и упаковать их вместе. */}
+            {order.groupSize && order.groupSize > 1 && (
+              <div className="flex items-start gap-3 rounded-md border border-violet-300 bg-violet-50 p-3 text-violet-900">
+                <Icon name="Package" size={22} className="mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-bold">
+                    Заказ из {order.groupSize} вещей — это {order.groupPosition}-я
+                  </p>
+                  <p className="text-sm">
+                    Ярлык на весь заказ один: упакуйте все {order.groupSize} вещи вместе
+                  </p>
+                </div>
+              </div>
+            )}
             <div className="space-y-2 text-lg">
               <div className="flex items-center justify-between border-b border-border pb-2">
                 <span className="text-muted-foreground">Заказ</span>

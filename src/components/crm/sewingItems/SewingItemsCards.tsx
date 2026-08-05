@@ -89,6 +89,13 @@ const SewingItemsCards = ({
                     <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
                       {o.orderType}
                     </Badge>
+                    {/* Заказ покупателя из нескольких вещей едет по одному общему ярлыку —
+                        предупреждаем, что вещь нельзя отправлять отдельно от остальных. */}
+                    {o.groupSize && o.groupSize > 1 && (
+                      <Badge className="bg-violet-600 px-1.5 py-0 text-[10px] text-white hover:bg-violet-600">
+                        Заказ {o.groupPosition} из {o.groupSize}
+                      </Badge>
+                    )}
                   </p>
                   <p className="break-all font-mono-tech text-[11px] text-muted-foreground">
                     {o.orderNumber}

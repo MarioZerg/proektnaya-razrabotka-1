@@ -1,0 +1,5 @@
+{"tests": [
+  {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
+  {"name": "Unknown action fails", "method": "POST", "path": "/", "body": {"action": "nope"}, "expectedStatus": 400},
+  {"name": "Check returns status", "method": "GET", "path": "/?action=check", "expectedStatus": 200}
+]}

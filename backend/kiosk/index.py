@@ -229,7 +229,8 @@ def handler(event: dict, context) -> dict:
             order_number_esc = order_number.replace("'", "''")
             cur.execute(
                 "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
-                "o.sewing_status, o.assigned_user_id, u.full_name, o.status, o.ozon_status "
+                "o.sewing_status, o.assigned_user_id, u.full_name, o.status, o.ozon_status, "
+                "o.marketplace, o.group_key, o.group_size, o.group_position "
                 "FROM orders o LEFT JOIN users u ON u.id = o.assigned_user_id "
                 f"WHERE o.order_number = '{order_number_esc}'"
             )
@@ -256,6 +257,12 @@ def handler(event: dict, context) -> dict:
                 # Заказ отменён клиентом: вещь всё равно дошивается, но уходит не покупателю,
                 # а на склад хранения — упаковщик клеит стикер ХРАНЕНИЯ вместо отправления.
                 'isCancelled': row[9] == 'Отменён' or 'cancel' in (row[10] or '').lower(),
+                'marketplace': row[11],
+                # Заказ покупателя из нескольких вещей (Яндекс Маркет): ярлык на него один,
+                # поэтому упаковщица должна собрать все вещи заказа вместе.
+                'groupKey': row[12],
+                'groupSize': row[13],
+                'groupPosition': row[14],
             }
         finally:
             conn.close()
