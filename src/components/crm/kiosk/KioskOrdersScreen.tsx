@@ -9,16 +9,19 @@ import { printFboSticker } from '@/lib/printFboSticker';
 import { printBarcodes } from '@/lib/printBarcodes';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
+import KioskManualSearch from '@/components/crm/kiosk/KioskManualSearch';
 
 interface KioskOrdersScreenProps {
   packerId: number;
   packerName: string;
+  workshopId?: number | null;
+  role?: string | null;
 }
 
 /** Экран печати заказов: сотрудник сканирует QR с листка закройщика, видит данные товара,
  * печатает стикер и закрывает заказ. Сканируются только заказы на стикеровке — это
  * проверяет сервер. */
-const KioskOrdersScreen = ({ packerId, packerName }: KioskOrdersScreenProps) => {
+const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrdersScreenProps) => {
   const { toast } = useToast();
   const [code, setCode] = useState('');
   const [searching, setSearching] = useState(false);
@@ -126,6 +129,17 @@ const KioskOrdersScreen = ({ packerId, packerName }: KioskOrdersScreenProps) => 
           <p className="text-center text-muted-foreground">
             Сканируются только заказы на стикеровке
           </p>
+          {/* Запасной путь, если сканер сломался или QR затёрт: найти заказ по размеру. */}
+          <div className="w-full max-w-md">
+            <KioskManualSearch
+              workshopId={workshopId}
+              role={role}
+              onSelect={(found) => {
+                setOrder(found);
+                setPrinted(false);
+              }}
+            />
+          </div>
         </div>
       ) : (
         <Card className="border-border shadow-none">

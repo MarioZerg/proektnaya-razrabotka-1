@@ -374,7 +374,12 @@ const KioskTerminal = () => {
 
           {screen === 'orders' && (
             <div className="mx-auto max-w-xl">
-              <KioskOrdersScreen packerId={user.id} packerName={user.name} />
+              <KioskOrdersScreen
+                packerId={user.id}
+                packerName={user.name}
+                workshopId={currentWorkshopId}
+                role={user.role}
+              />
             </div>
           )}
 

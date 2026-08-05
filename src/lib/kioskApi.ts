@@ -33,6 +33,8 @@ export const findStickeringOrders = async (filters: {
   height?: number | null;
   material?: string | null;
   workshopId?: number | null;
+  /** Роль сотрудника — по ней сервер проверяет, разрешена ли ему стикеровка в этом цехе. */
+  role?: string | null;
 }): Promise<KioskOrder[]> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',

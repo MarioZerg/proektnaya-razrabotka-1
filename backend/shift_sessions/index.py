@@ -386,6 +386,27 @@ def handler(event: dict, context) -> dict:
                     workshop_id = int(req_workshop_id)
                     shift_number = int(req_shift_number)
 
+                # Расписание рабочего дня: если включено (is_enabled_work_schedule), смену
+                # нельзя открыть после окончания рабочего дня (working_day_end) — иначе
+                # сотрудник может «открыть смену» ночью и накрутить часы.
+                schedule_on = str(get_setting(cur, workshop_id, 'is_enabled_work_schedule', 'false')).lower() == 'true'
+                if schedule_on:
+                    end_time_str = get_setting(cur, workshop_id, 'working_day_end')
+                    if end_time_str:
+                        try:
+                            end_time = datetime.strptime(str(end_time_str)[:5], '%H:%M').time()
+                            if datetime.now().time() > end_time:
+                                return {
+                                    'statusCode': 409,
+                                    'headers': headers,
+                                    'body': json.dumps({
+                                        'error': f'Рабочий день в цехе закончился в {str(end_time_str)[:5]} — '
+                                                 f'смену открыть нельзя'
+                                    }),
+                                }
+                        except ValueError:
+                            pass
+
                 # Опоздание определяется по времени начала: shift_from сотрудника, если задан
                 # в профиле, иначе working_day_start настроек цеха (переопределение цеха или
                 # глобальное значение). Если ни то, ни другое не задано — проверка пропускается.

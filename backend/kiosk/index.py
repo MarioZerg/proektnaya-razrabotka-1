@@ -34,6 +34,23 @@ def next_storage_barcode(cur) -> str:
     return f"GW-{max_seq + 1:06d}"
 
 
+def get_setting(cur, workshop_id, key, default=None):
+    """Значение настройки: сначала переопределение цеха, потом глобальное, потом default."""
+    if workshop_id:
+        cur.execute(
+            "SELECT value FROM workshop_settings WHERE workshop_id = %s AND key = %s",
+            (int(workshop_id), key),
+        )
+        row = cur.fetchone()
+        if row and row[0] not in (None, ''):
+            return row[0]
+    cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
+    row = cur.fetchone()
+    if row and row[0] not in (None, ''):
+        return row[0]
+    return default
+
+
 def write_off_packaging(cur, order_id: int) -> str | None:
     """Списывает упаковку заказа (пакет, этикетка на пакет) в момент стикеровки.
 
@@ -361,6 +378,20 @@ def handler(event: dict, context) -> dict:
                 # поле, аналогично cutter_user_id/sewer_user_id, чтобы история исполнителей на
                 # каждом этапе была видна на карточке товара (раньше сохранялось только в
                 # salary_accruals для зарплаты и нигде на самом заказе не фиксировалось).
+                # Режим стикеровки для роли из настроек цеха (sticking_otk — упаковщик,
+                # sticking_seamstress — швея): 'forbidden' полностью запрещает роли
+                # стикеровать в этом цехе. 'scanner'/'manual' различаются только способом
+                # поиска заказа на терминале и закрытию не мешают.
+                mode_key = 'sticking_seamstress' if packer_shift_role == 'sewer' else 'sticking_otk'
+                sticking_mode = get_setting(cur, order_workshop_id, mode_key, 'scanner')
+                if sticking_mode == 'forbidden':
+                    who = 'швеям' if mode_key == 'sticking_seamstress' else 'упаковщикам'
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'В настройках цеха стикеровка {who} запрещена'}),
+                    }
+
                 # Упаковка расходуется именно на стикеровке — списываем её здесь. Если пакетов
                 # или этикеток не хватает, заказ не закрываем и показываем чего именно нет.
                 pack_err = write_off_packaging(cur, int(order_id))
@@ -488,6 +519,18 @@ def handler(event: dict, context) -> dict:
                 if workshop_id not in (None, ''):
                     conditions.append(f"o.workshop_id = {int(workshop_id)}")
                 where_sql = ' AND '.join(conditions)
+
+                # Ручной поиск доступен, если для роли не выбран режим «только сканером»:
+                # так админ может заставить стикеровать строго по QR-коду.
+                if workshop_id not in (None, ''):
+                    role_key = 'sticking_seamstress' if body_data.get('role') == 'sewer' else 'sticking_otk'
+                    mode = get_setting(cur, int(workshop_id), role_key, 'scanner')
+                    if mode == 'forbidden':
+                        return {
+                            'statusCode': 403,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'В настройках цеха стикеровка для вашей роли запрещена'}),
+                        }
 
                 cur.execute(
                     "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "

@@ -9,7 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import KioskManualSearch from '@/components/kiosk/KioskManualSearch';
+import KioskManualSearch from '@/components/crm/kiosk/KioskManualSearch';
 
 const Kiosk = () => {
   const { toast } = useToast();

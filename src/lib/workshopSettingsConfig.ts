@@ -26,8 +26,13 @@ const yesNoOptions: SettingOption[] = [
  */
 export const workshopSettingsConfig: SettingConfigItem[] = [
   { key: 'working_day_start', label: 'Начало рабочего дня', type: 'time' },
-  { key: 'working_day_end', label: 'Конец рабочего дня', type: 'time' },
-  { key: 'is_enabled_work_schedule', label: 'Расписание включено?', type: 'select', options: yesNoOptions },
+  { key: 'working_day_end', label: 'Конец рабочего дня (позже смену не открыть)', type: 'time' },
+  {
+    key: 'is_enabled_work_schedule',
+    label: 'Соблюдать расписание рабочего дня?',
+    type: 'select',
+    options: yesNoOptions,
+  },
   { key: 'max_quantity_orders_to_seamstress', label: 'Макс. кол-во заказов у швеи', type: 'number' },
   {
     key: 'orders_priority',
@@ -68,8 +73,7 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
     label: 'Стикеровка упаковщиком',
     type: 'select',
     options: [
-      { value: 'scanner', label: 'Сканером по QR-коду' },
-      { value: 'manual', label: 'Вручную по фильтру' },
+      { value: 'scanner', label: 'Разрешена' },
       { value: 'forbidden', label: 'Запрещена' },
     ],
   },
@@ -78,8 +82,7 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
     label: 'Стикеровка швеей',
     type: 'select',
     options: [
-      { value: 'scanner', label: 'Сканером по QR-коду' },
-      { value: 'manual', label: 'Вручную по фильтру' },
+      { value: 'scanner', label: 'Разрешена' },
       { value: 'forbidden', label: 'Запрещена' },
     ],
   },
