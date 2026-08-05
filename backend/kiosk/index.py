@@ -148,7 +148,8 @@ def handler(event: dict, context) -> dict:
                 shift_from_code = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
 
                 cur.execute(
-                    "SELECT id, full_name, role, is_active FROM users WHERE id = %s",
+                    "SELECT u.id, u.full_name, u.role, u.is_active, w.id "
+                    "FROM users u LEFT JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
                     (user_id,),
                 )
                 u_row = cur.fetchone()
@@ -173,6 +174,7 @@ def handler(event: dict, context) -> dict:
                             'name': u_row[1],
                             'role': u_row[2],
                             'shiftFromCode': shift_from_code,
+                            'homeWorkshopId': u_row[4],
                         },
                         'shift': {
                             'isOpen': bool(s_row),

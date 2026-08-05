@@ -136,6 +136,15 @@ const KioskTerminal = () => {
     }
   };
 
+  // Сотрудник пришёл работать в чужой цех: списание брака здесь ему запрещено — это делает
+  // штатный работник цеха, отсканировав свой штрихкод.
+  const currentWorkshopId = shift?.workshopId ?? (Number(workshopId) || null);
+  const isGuestInWorkshop = !!(
+    user?.homeWorkshopId &&
+    currentWorkshopId &&
+    user.homeWorkshopId !== currentWorkshopId
+  );
+
   const handleCloseShift = async () => {
     if (!user) return;
     setShiftSaving(true);
@@ -253,6 +262,21 @@ const KioskTerminal = () => {
 
           {screen === 'shift' && (
             <div className="mx-auto max-w-xl space-y-4">
+              {shift?.isOpen && isGuestInWorkshop && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+                  <div className="flex items-start gap-3">
+                    <Icon name="TriangleAlert" size={24} className="mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-lg font-bold">Вы работаете в чужом цехе</p>
+                      <p className="mt-1 text-base">
+                        Списывать брак здесь может только штатный сотрудник этого цеха. Если у вас
+                        есть брак за смену — позовите его: он отсканирует свой штрихкод на терминале
+                        и спишет брак за вас.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               {shift?.isOpen ? (
                 <Button
                   size="lg"

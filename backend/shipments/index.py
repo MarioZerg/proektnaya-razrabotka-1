@@ -355,6 +355,38 @@ def handler(event: dict, context) -> dict:
                     conn.commit()
                     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}
 
+                # Списание брака может оформлять ТОЛЬКО штатный сотрудник того цеха, где
+                # находится рулон. Если сотрудник пришёл работать в чужой цех — брак за него
+                # списывает штатный работник этого цеха, отсканировав свой штрихкод.
+                if doc_type == 'defect_writeoff' and created_by not in (None, ''):
+                    cur.execute(
+                        "SELECT w.id, u.role FROM users u LEFT JOIN workshops w ON w.name = u.workshop "
+                        "WHERE u.id = %s",
+                        (int(created_by),),
+                    )
+                    au = cur.fetchone()
+                    home_ws_id = au[0] if au else None
+                    actor_role = au[1] if au else None
+                    if actor_role not in ('admin', 'storekeeper', 'manager'):
+                        for item in items:
+                            if not item.get('rollId'):
+                                continue
+                            cur.execute(
+                                "SELECT r.workshop_id, w.name FROM rolls r "
+                                "LEFT JOIN workshops w ON w.id = r.workshop_id WHERE r.id = %s",
+                                (int(item['rollId']),),
+                            )
+                            rw = cur.fetchone()
+                            if rw and rw[0] and rw[0] != home_ws_id:
+                                return {
+                                    'statusCode': 403,
+                                    'headers': headers,
+                                    'body': json.dumps({
+                                        'error': f'Списывать брак в цехе «{rw[1]}» может только штатный '
+                                                 f'сотрудник этого цеха — позовите его отсканировать свой штрихкод'
+                                    }),
+                                }
+
                 cur.execute(
                     f"INSERT INTO shipments (type, status, supplier_id, comment, completed_at, created_by) "
                     f"VALUES ('{doc_type}', 'Завершено', {supplier_sql}, '{comment_esc}', now(), {created_by_sql}) RETURNING id"

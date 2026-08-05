@@ -26,6 +26,8 @@ export interface KioskUser {
   name: string;
   role: string;
   shiftFromCode: number | null;
+  /** Штатный цех сотрудника из профиля — в чужом цехе списание брака ему недоступно. */
+  homeWorkshopId?: number | null;
 }
 
 export interface KioskShift {
