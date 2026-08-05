@@ -119,7 +119,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT gw.id, gw.order_id, o.order_number, o.product, o.material, o.width, o.height, "
                     "gw.shelf_id, s.name, gw.status, gw.received_at, gw.shipped_at, gw.storage_barcode, "
-                    "gw.lost_reason, gw.lost_at "
+                    "gw.lost_reason, gw.lost_at, gw.receive_reason "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN shelves s ON s.id = gw.shelf_id "
@@ -134,6 +134,7 @@ def handler(event: dict, context) -> dict:
                     'shelfName': row[8], 'status': row[9], 'receivedAt': row[10].isoformat() + 'Z',
                     'shippedAt': (row[11].isoformat() + 'Z') if row[11] else None, 'storageBarcode': row[12],
                     'lostReason': row[13], 'lostAt': (row[14].isoformat() + 'Z') if row[14] else None,
+                    'receiveReason': row[15] or 'manual',
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'item': item})}
 
@@ -155,7 +156,7 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 f"SELECT gw.id, gw.order_id, o.order_number, o.product, o.material, o.width, o.height, "
                 f"gw.shelf_id, s.name, gw.status, gw.received_at, gw.shipped_at, gw.storage_barcode, "
-                f"gw.lost_reason, gw.lost_at "
+                f"gw.lost_reason, gw.lost_at, gw.receive_reason "
                 f"FROM goods_warehouse gw "
                 f"LEFT JOIN orders o ON o.id = gw.order_id "
                 f"LEFT JOIN shelves s ON s.id = gw.shelf_id "
@@ -179,6 +180,7 @@ def handler(event: dict, context) -> dict:
                     'storageBarcode': r[12],
                     'lostReason': r[13],
                     'lostAt': (r[14].isoformat() + 'Z') if r[14] else None,
+                    'receiveReason': r[15] or 'manual',
                 }
                 for r in cur.fetchall()
             ]
@@ -240,8 +242,8 @@ def handler(event: dict, context) -> dict:
                 shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
                 storage_barcode = next_storage_barcode(cur)
                 cur.execute(
-                    f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode) "
-                    f"VALUES ({int(order_id)}, {shelf_sql}, 'in_stock', '{storage_barcode}') RETURNING id"
+                    f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, receive_reason) "
+                    f"VALUES ({int(order_id)}, {shelf_sql}, 'in_stock', '{storage_barcode}', 'cancelled') RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
                 log_action(cur, actor_id, actor_name, 'receive', 'goods_warehouse', new_id, f'Принял товар на склад ({storage_barcode})')
@@ -272,7 +274,8 @@ def handler(event: dict, context) -> dict:
                     gw_id, storage_barcode = existing
                     cur.execute(
                         f"UPDATE goods_warehouse SET status = 'in_stock', shelf_id = {shelf_sql}, "
-                        f"shipped_at = NULL, lost_reason = NULL, lost_at = NULL WHERE id = {gw_id}"
+                        f"shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
+                        f"receive_reason = 'return' WHERE id = {gw_id}"
                     )
                     log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', gw_id, f'Принял возврат заказа #{order_number} повторно')
                     conn.commit()
@@ -280,8 +283,8 @@ def handler(event: dict, context) -> dict:
 
                 storage_barcode = next_storage_barcode(cur)
                 cur.execute(
-                    f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode) "
-                    f"VALUES ({order_id}, {shelf_sql}, 'in_stock', '{storage_barcode}') RETURNING id"
+                    f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, receive_reason) "
+                    f"VALUES ({order_id}, {shelf_sql}, 'in_stock', '{storage_barcode}', 'return') RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
                 log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', new_id, f'Принял возврат заказа #{order_number} ({storage_barcode})')
@@ -312,8 +315,8 @@ def handler(event: dict, context) -> dict:
                         continue
                     storage_barcode = next_storage_barcode(cur)
                     cur.execute(
-                        f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode) "
-                        f"VALUES ({int(order_id)}, {shelf_sql}, 'in_stock', '{storage_barcode}') RETURNING id"
+                        f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, receive_reason) "
+                        f"VALUES ({int(order_id)}, {shelf_sql}, 'in_stock', '{storage_barcode}', 'cancelled') RETURNING id"
                     )
                     created.append(cur.fetchone()[0])
 

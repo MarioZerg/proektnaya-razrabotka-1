@@ -2,6 +2,12 @@ const GOODS_WAREHOUSE_URL = 'https://functions.poehali.dev/370fdff8-7cae-4cc7-a8
 
 export type GoodsStatus = 'in_stock' | 'picking' | 'reserved' | 'shipped' | 'lost';
 
+/** Почему товар оказался на складе хранения:
+ * cancelled — заказ отменён клиентом (по статусу из API OZON/WB);
+ * return — возврат с маркетплейса, принят вручную по номеру заказа;
+ * manual — принят вручную (старые записи). */
+export type ReceiveReason = 'cancelled' | 'return' | 'manual';
+
 export interface GoodsWarehouseItem {
   id: number;
   orderId: number;
@@ -18,6 +24,7 @@ export interface GoodsWarehouseItem {
   storageBarcode: string;
   lostReason: string | null;
   lostAt: string | null;
+  receiveReason: ReceiveReason;
 }
 
 export interface GoodsWarehouseFilters {

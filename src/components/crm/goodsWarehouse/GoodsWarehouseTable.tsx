@@ -23,7 +23,14 @@ import {
 import Icon from '@/components/ui/icon';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { printBarcodes } from '@/lib/printBarcodes';
-import { formatDate, statusLabels, statusVariant } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
+import {
+  formatDate,
+  statusLabels,
+  statusVariant,
+  reasonLabels,
+  reasonIcons,
+  reasonClass,
+} from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
 
 interface GoodsWarehouseTableProps {
   loading: boolean;
@@ -76,6 +83,7 @@ const GoodsWarehouseTable = ({ loading, items, onReturnToWorkshop, onMarkLost }:
               <TableHead className="text-primary-foreground">Номер заказа</TableHead>
               <TableHead className="text-primary-foreground">Товар</TableHead>
               <TableHead className="text-primary-foreground">Статус</TableHead>
+              <TableHead className="text-primary-foreground">Откуда</TableHead>
               <TableHead className="text-primary-foreground">Полка</TableHead>
               <TableHead className="text-primary-foreground">Принят</TableHead>
               <TableHead className="text-primary-foreground">Отгружен</TableHead>
@@ -113,6 +121,15 @@ const GoodsWarehouseTable = ({ loading, items, onReturnToWorkshop, onMarkLost }:
                 </TableCell>
                 <TableCell>
                   <Badge variant={statusVariant[i.status]}>{statusLabels[i.status]}</Badge>
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    variant="secondary"
+                    className={`${reasonClass[i.receiveReason] || ''} gap-1 whitespace-nowrap font-normal`}
+                  >
+                    <Icon name={reasonIcons[i.receiveReason] || 'Hand'} size={12} />
+                    {reasonLabels[i.receiveReason] || 'Принят вручную'}
+                  </Badge>
                 </TableCell>
                 <TableCell>{i.shelfName || '—'}</TableCell>
                 <TableCell>{formatDate(i.receivedAt)}</TableCell>
