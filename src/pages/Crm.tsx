@@ -22,6 +22,7 @@ import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard'
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
 import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
+import { isMetersUnit } from '@/lib/stockLevels';
 
 const CrmDashboard = () => {
   const { user, setActiveShift } = useAuth();
@@ -183,7 +184,7 @@ const CrmDashboard = () => {
       const lowStockRolls = rolls.filter(
         (r) =>
           r.status !== 'completed' &&
-          r.unit === 'п.м.' &&
+          isMetersUnit(r.unit) &&
           r.remainingQuantity < ROLL_LOW_STOCK_THRESHOLD
       ).length;
       // Вещи, отменённые клиентом: упаковщик наклеил стикер хранения, но кладовщик ещё не
