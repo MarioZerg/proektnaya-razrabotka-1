@@ -10,7 +10,8 @@ import psycopg2
 # маркетплейса не подтверждаем и не отклоняем — решение принимает кладовщик, когда вещь
 # физически доехала до склада.
 OZON_API_BASE = 'https://api-seller.ozon.ru'
-WB_API_BASE = 'https://marketplace-api.wildberries.ru'
+# Заявки покупателей на возврат WB отдаёт отдельный хост returns-api (не marketplace-api).
+WB_RETURNS_API_BASE = 'https://returns-api.wildberries.ru'
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -101,14 +102,25 @@ def find_item(cur, sku, offer_id):
     return None, None
 
 
-def find_order(cur, posting_number):
-    """Заказ, по которому оформлен возврат — по номеру отправления OZON."""
+def find_order(cur, marketplace, posting_number):
+    """Заказ, по которому оформлен возврат.
+
+    У OZON это номер отправления (ozon_posting_number), у WB — srid заявки, который
+    совпадает с order_number заказа (там он берётся из поля rid сборочного задания).
+    """
     if not posting_number:
         return None
-    cur.execute(
-        "SELECT id FROM orders WHERE ozon_posting_number = %s ORDER BY id LIMIT 1",
-        (str(posting_number),),
-    )
+    if marketplace == 'OZON':
+        cur.execute(
+            "SELECT id FROM orders WHERE ozon_posting_number = %s ORDER BY id LIMIT 1",
+            (str(posting_number),),
+        )
+    else:
+        cur.execute(
+            "SELECT id FROM orders WHERE order_number = %s AND marketplace = 'WB' "
+            "ORDER BY id LIMIT 1",
+            (str(posting_number),),
+        )
     row = cur.fetchone()
     return row[0] if row else None
 
@@ -124,13 +136,14 @@ def save_return(cur, marketplace, r):
     if existing:
         # Свой статус обработки не трогаем — обновляем только данные со стороны маркетплейса.
         cur.execute(
-            "UPDATE marketplace_returns SET mp_status = %s, return_reason = %s WHERE id = %s",
-            (r.get('mpStatus'), r.get('reason'), existing[0]),
+            "UPDATE marketplace_returns SET mp_status = %s, return_reason = %s, "
+            "product_name = COALESCE(%s, product_name) WHERE id = %s",
+            (r.get('mpStatus'), r.get('reason'), r.get('productName'), existing[0]),
         )
         return 'updated'
 
     item_id, item_name = find_item(cur, r.get('sku'), r.get('offerId'))
-    order_id = find_order(cur, r.get('postingNumber'))
+    order_id = find_order(cur, marketplace, r.get('postingNumber'))
     cur.execute(
         "INSERT INTO marketplace_returns (marketplace, external_id, posting_number, order_id, "
         "offer_id, sku, product_name, marketplace_item_id, quantity, mp_status, return_reason, "
@@ -221,30 +234,60 @@ def sync_wb(cur, days):
     if not api_key:
         return {'created': 0, 'updated': 0, 'error': 'Не заполнен Api Key Wildberries'}
 
-    since = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
-    status, data = http_json(
-        f'{WB_API_BASE}/api/v1/claims?is_archive=false&date_from={since}',
-        'GET',
-        {'Authorization': api_key},
-    )
-    if status != 200:
-        return {'created': 0, 'updated': 0, 'error': error_text(data)}
-
+    # WB отдаёт заявки постранично и НЕ принимает фильтр по дате — берём свежие
+    # (is_archive=false: ещё не закрытые) и отсеиваем старые уже у себя.
+    since_dt = datetime.now(timezone.utc) - timedelta(days=days)
     created = updated = 0
-    for it in (data or {}).get('claims') or []:
+    claims = []
+    for offset in range(0, 1000, 200):
+        status, data = http_json(
+            f'{WB_RETURNS_API_BASE}/api/v1/claims?is_archive=false&limit=200&offset={offset}',
+            'GET',
+            {'Authorization': api_key},
+        )
+        if status != 200:
+            return {'created': created, 'updated': updated, 'error': error_text(data)}
+        page = (data or {}).get('claims') or []
+        claims.extend(page)
+        if len(page) < 200:
+            break
+
+    for it in claims:
+        # WB отдаёт статус числом: 0 — заявка на рассмотрении, 1 — одобрена продавцом,
+        # 2 — отклонена, 3 — автоматически одобрена площадкой.
+        wb_status_labels = {
+            0: 'На рассмотрении',
+            1: 'Одобрен продавцом',
+            2: 'Отклонён',
+            3: 'Одобрен автоматически',
+        }
+        raw_status = it.get('status')
+        status_text = it.get('status_name') or wb_status_labels.get(
+            raw_status if isinstance(raw_status, int) else -1, ''
+        )
         rec = {
             'externalId': str(it.get('id') or ''),
-            'postingNumber': str(it.get('srid') or it.get('order_dt') or ''),
-            'offerId': it.get('nm_id'),
+            'postingNumber': str(it.get('srid') or ''),
+            'offerId': str(it.get('nm_id')) if it.get('nm_id') else None,
             'sku': it.get('nm_id'),
             'productName': it.get('imt_name'),
             'quantity': 1,
-            'mpStatus': it.get('status_name') or str(it.get('status') or ''),
+            'mpStatus': status_text or None,
             'reason': it.get('user_comment') or it.get('claim_type'),
             'createdAt': it.get('dt'),
         }
         if not rec['externalId']:
             continue
+        # Старые заявки за пределами запрошенного периода пропускаем.
+        if rec['createdAt']:
+            try:
+                dt = datetime.fromisoformat(str(rec['createdAt']).replace('Z', '+00:00'))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if dt < since_dt:
+                    continue
+            except ValueError:
+                pass
         if save_return(cur, 'WB', rec) == 'created':
             created += 1
         else:
