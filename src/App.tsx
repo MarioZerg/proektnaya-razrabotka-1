@@ -16,6 +16,7 @@ import ToWorkshop from "./pages/shipments/ToWorkshop";
 import ReturnToSupplier from "./pages/shipments/ReturnToSupplier";
 import DefectWriteoff from "./pages/shipments/DefectWriteoff";
 import ToMarketplace from "./pages/shipments/ToMarketplace";
+import ReceiveReturns from "./pages/shipments/ReceiveReturns";
 import MarketplaceSupplyShow from "./pages/shipments/MarketplaceSupplyShow";
 import MarketplaceSupplyAssemble from "./pages/shipments/MarketplaceSupplyAssemble";
 import GoodsWarehouse from "./pages/inventory/GoodsWarehouse";
@@ -65,6 +66,7 @@ const App = () => (
             <Route path="/crm/shipments/to-workshop" element={<ToWorkshop />} />
             <Route path="/crm/shipments/return-to-supplier" element={<ReturnToSupplier />} />
             <Route path="/crm/shipments/defect-writeoff" element={<DefectWriteoff />} />
+            <Route path="/crm/shipments/receive-returns" element={<ReceiveReturns />} />
             <Route path="/crm/shipments/to-marketplace" element={<ToMarketplace />} />
             <Route path="/crm/shipments/to-marketplace/:id" element={<MarketplaceSupplyShow />} />
             <Route path="/crm/shipments/to-marketplace/:id/assemble" element={<MarketplaceSupplyAssemble />} />

@@ -1,0 +1,37 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get returns list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Receive without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "receive" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Receive non-existing return fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "receive", "id": 999999 },
+      "expectedStatus": 404
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "nope" },
+      "expectedStatus": 400
+    }
+  ]
+}
