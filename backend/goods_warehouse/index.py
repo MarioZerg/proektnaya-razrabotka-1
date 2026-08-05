@@ -51,6 +51,10 @@ def handler(event: dict, context) -> dict:
         доп. фильтры: ?material=Вуаль, ?width=200, ?height=250, ?shelf_id=1
     GET  /?barcode=GW-000001         - найти товар по штрихкоду хранения (для сканера подбора
                                         и сканирования в поставку)
+    POST /  { action: 'admin_receive', marketplaceItemId, shelfId? }
+        - ручной приём администратором: вещь без заказа с маркетплейса (излишек производства,
+          найденный товар). Под неё создаётся служебный заказ WH-00001 и запись склада с
+          receive_reason='admin' — в списке видно, что товар принял админ вручную
     POST /  { action: 'place_on_shelf', barcode, shelfId }
         - кладовщик у себя на компьютере сканирует стикер хранения вещи, отменённой клиентом
           (статус awaiting_shelf), и кладёт её на конкретную полку → in_stock
@@ -201,6 +205,87 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if action == 'admin_receive':
+                # Ручной приём администратором: он находит товар в справочнике по названию
+                # («Вуаль 300x250») и кладёт вещь на склад без заказа с маркетплейса — например,
+                # излишек с производства или найденный на складе товар. Под такую вещь создаётся
+                # служебный заказ (source='manual'), а запись помечается receive_reason='admin',
+                # чтобы в списке было видно: это принял админ вручную.
+                item_id = body_data.get('marketplaceItemId')
+                shelf_id = body_data.get('shelfId')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товар'})}
+
+                cur.execute(
+                    "SELECT name, material, width, height, barcode, ozon_sku FROM marketplace_items WHERE id = %s",
+                    (int(item_id),),
+                )
+                item_row = cur.fetchone()
+                if not item_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
+                item_name, item_material, item_width, item_height, item_barcode, item_ozon_sku = item_row
+                product = (
+                    f"{item_material} {item_width}x{item_height}"
+                    if item_material and item_width and item_height
+                    else item_name
+                )
+
+                # Служебный номер заказа для складской вещи без заказа маркетплейса: WH-00001.
+                cur.execute(
+                    "SELECT order_number FROM orders WHERE order_number ~ '^WH-[0-9]+$' "
+                    "ORDER BY (split_part(order_number, '-', 2))::int DESC LIMIT 1"
+                )
+                last_row = cur.fetchone()
+                next_seq = (int(last_row[0].split('-')[1]) + 1) if last_row else 1
+                order_number = f"WH-{next_seq:05d}"
+
+                cur.execute(
+                    "INSERT INTO orders (order_number, marketplace, order_type, status, product, quantity, "
+                    "source, material, width, height, marketplace_item_id, product_barcode, product_ozon_sku, "
+                    "sewing_status) "
+                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'manual', %s, %s, %s, %s, %s, %s, 'Готовые') "
+                    "RETURNING id",
+                    (
+                        order_number, product, item_material,
+                        int(item_width) if item_width else None,
+                        int(item_height) if item_height else None,
+                        int(item_id), item_barcode or None, item_ozon_sku or None,
+                    ),
+                )
+                new_order_id = cur.fetchone()[0]
+
+                storage_barcode = next_storage_barcode(cur)
+                # Полку админ может указать сразу (он принимает вещь осознанно), а если не
+                # указал — вещь встанет в очередь «Ждёт полку» и ляжет на полку по скану.
+                status_val = 'in_stock' if shelf_id not in (None, '') else 'awaiting_shelf'
+                cur.execute(
+                    "INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, receive_reason) "
+                    "VALUES (%s, %s, %s, %s, 'admin') RETURNING id",
+                    (
+                        new_order_id,
+                        int(shelf_id) if shelf_id not in (None, '') else None,
+                        status_val,
+                        storage_barcode,
+                    ),
+                )
+                new_gw_id = cur.fetchone()[0]
+                log_action(
+                    cur, actor_id, actor_name, 'admin_receive', 'goods_warehouse', new_gw_id,
+                    f'Администратор принял товар вручную: {product} ({storage_barcode})',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'id': new_gw_id,
+                        'orderNumber': order_number,
+                        'product': product,
+                        'storageBarcode': storage_barcode,
+                        'status': status_val,
+                    }),
+                }
 
             if action == 'ship_label':
                 # Кладовщик забрал с полки вещь, зарезервированную под новый заказ FBS,

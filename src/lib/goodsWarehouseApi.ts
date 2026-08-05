@@ -11,8 +11,9 @@ export type GoodsStatus =
 /** Почему товар оказался на складе хранения:
  * cancelled — заказ отменён клиентом (по статусу из API OZON/WB);
  * return — возврат с маркетплейса, принят вручную по номеру заказа;
- * manual — принят вручную (старые записи). */
-export type ReceiveReason = 'cancelled' | 'return' | 'manual';
+ * manual — принят вручную (старые записи);
+ * admin — администратор добавил вещь на склад вручную по товару из справочника. */
+export type ReceiveReason = 'cancelled' | 'return' | 'manual' | 'admin';
 
 export interface GoodsWarehouseItem {
   id: number;
@@ -89,6 +90,17 @@ const postAction = async (payload: Record<string, unknown>) => {
 // сканированием стикера хранения — так товар не окажется не на своём месте.
 export const receiveReturn = (orderNumber: string) =>
   postAction({ action: 'receive_return', orderNumber });
+
+/** Ручной приём администратором: вещь без заказа с маркетплейса кладётся на склад по товару
+ * из справочника. Такие записи помечаются как принятые админом. */
+export const adminReceiveGoods = (marketplaceItemId: number, shelfId?: number) =>
+  postAction({ action: 'admin_receive', marketplaceItemId, shelfId }) as Promise<{
+    id: number;
+    orderNumber: string;
+    product: string;
+    storageBarcode: string;
+    status: string;
+  }>;
 
 /** Кладовщик сканирует стикер хранения вещи, отменённой клиентом, и кладёт её на полку. */
 export const placeOnShelf = (barcode: string, shelfId: number) =>

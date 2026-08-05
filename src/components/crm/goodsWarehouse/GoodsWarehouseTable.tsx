@@ -91,8 +91,13 @@ const GoodsWarehouseTable = ({ loading, items, onReturnToWorkshop, onMarkLost }:
             </TableRow>
           </TableHeader>
           <TableBody>
+            {/* Товары, принятые администратором вручную, подсвечены: их не было в заказах
+                маркетплейса, по ним может понадобиться отдельная сверка. */}
             {items.map((i) => (
-              <TableRow key={i.id}>
+              <TableRow
+                key={i.id}
+                className={i.receiveReason === 'admin' ? 'bg-violet-50 hover:bg-violet-100' : ''}
+              >
                 <TableCell>{i.id}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5">

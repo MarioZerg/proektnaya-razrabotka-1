@@ -19,6 +19,7 @@ import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
 import ShipLabelDialog from '@/components/crm/goodsWarehouse/ShipLabelDialog';
 import ReprintReportDialog from '@/components/crm/goodsWarehouse/ReprintReportDialog';
+import AdminReceiveDialog from '@/components/crm/goodsWarehouse/AdminReceiveDialog';
 import GoodsWarehouseFilters from '@/components/crm/goodsWarehouse/GoodsWarehouseFilters';
 import GoodsWarehouseTable from '@/components/crm/goodsWarehouse/GoodsWarehouseTable';
 
@@ -49,6 +50,7 @@ const GoodsWarehouse = () => {
   const [placeOpen, setPlaceOpen] = useState(false);
   const [shipLabelOpen, setShipLabelOpen] = useState(false);
   const [reprintOpen, setReprintOpen] = useState(false);
+  const [adminReceiveOpen, setAdminReceiveOpen] = useState(false);
 
   // Смена полки
   const [moveOpen, setMoveOpen] = useState(false);
@@ -251,6 +253,16 @@ const GoodsWarehouse = () => {
             />
             {isAdmin && (
               <>
+                <Button onClick={() => setAdminReceiveOpen(true)}>
+                  <Icon name="PackagePlus" size={16} className="mr-2" />
+                  Принять вручную
+                </Button>
+                <AdminReceiveDialog
+                  open={adminReceiveOpen}
+                  onOpenChange={setAdminReceiveOpen}
+                  shelves={shelves}
+                  onDone={load}
+                />
                 <Button variant="outline" onClick={() => setReprintOpen(true)}>
                   <Icon name="FileWarning" size={16} className="mr-2" />
                   Пропущенные стикеры
