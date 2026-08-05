@@ -1138,19 +1138,32 @@ def handler(event: dict, context) -> dict:
                     }
                 session_workshop_id, session_opened_at = session_row
 
-                # Лимит одновременных заказов "В работе" у швеи (max_quantity_orders_to_seamstress)
+                # Лимит незакрытых заказов у швеи (max_quantity_orders_to_seamstress). Считаем
+                # и те, что "В работе", и те, что уже отправлены на "Стикеровку", но упаковщик
+                # их ещё не закрыл: иначе швея копит горы неупакованного и лимит обходится.
                 max_orders = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_to_seamstress', 0)
                 if max_orders > 0:
                     cur.execute(
-                        "SELECT COUNT(*) FROM orders WHERE assigned_user_id = %s AND sewing_status = 'В работе'",
-                        (int(user_id),),
+                        "SELECT COUNT(*) FILTER (WHERE sewing_status = 'В работе'), "
+                        "COUNT(*) FILTER (WHERE sewing_status = 'Стикеровка') FROM orders "
+                        "WHERE (assigned_user_id = %s OR sewer_user_id = %s) "
+                        "AND sewing_status IN ('В работе', 'Стикеровка')",
+                        (int(user_id), int(user_id)),
                     )
-                    in_work = cur.fetchone()[0]
-                    if in_work >= max_orders:
+                    cnt_row = cur.fetchone()
+                    in_work, on_stickering = int(cnt_row[0]), int(cnt_row[1])
+                    total_open = in_work + on_stickering
+                    if total_open >= max_orders:
+                        if on_stickering > 0:
+                            msg = (f'У вас {in_work} в работе и {on_stickering} ждут стикеровки '
+                                   f'(лимит {max_orders}) — дождитесь, пока упаковщик их закроет')
+                        else:
+                            msg = (f'У вас уже {in_work} заказов в работе (лимит {max_orders}) — '
+                                   f'сначала отправьте их на стикеровку')
                         return {
                             'statusCode': 409,
                             'headers': headers,
-                            'body': json.dumps({'error': f'У вас уже {in_work} заказов в работе (лимит {max_orders}) — сначала отправьте их на стикеровку'}),
+                            'body': json.dumps({'error': msg}),
                         }
 
                 # Лимиты и таймаут считаются в пределах ТЕКУЩЕЙ открытой смены (сбрасываются

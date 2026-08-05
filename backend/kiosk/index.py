@@ -154,6 +154,10 @@ def handler(event: dict, context) -> dict:
           "{userId}-{shiftNumber}-{ГГГГММДД}" (например 3-20-20250513). Возвращает сотрудника
           и состояние его смены (открыта/закрыта) — пароль на терминале не нужен
 
+    POST /  { action: 'find_stickering', sewerId?, width?, height?, material?, workshopId? }
+        - поиск заказов на стикеровке вручную, когда сканер не работает: по размеру,
+          швее, материалу. Возвращает список заказов для выбора
+
     POST /  { action: 'find_unlabeled', sewerId?, width?, height? }
         - кладовщик ищет вещь без стикера хранения (упаковщица не наклеила / стикер потерян)
           среди отменённых заказов, ожидающих укладки на полку — по швее и/или размеру
@@ -458,6 +462,62 @@ def handler(event: dict, context) -> dict:
                         'isCancelled': is_cancelled,
                         'storageBarcode': storage_barcode,
                     }),
+                }
+
+            if action == 'find_stickering':
+                # Сканер сломался или штрихкод не читается — упаковщик ищет заказ на
+                # стикеровке вручную: по размеру (ширина/высота), швее или материалу.
+                # Возвращает те же заказы, что и поиск по номеру, только списком.
+                sewer_id = body_data.get('sewerId')
+                width = body_data.get('width')
+                height = body_data.get('height')
+                material = (body_data.get('material') or '').strip()
+                workshop_id = body_data.get('workshopId')
+
+                conditions = ["o.sewing_status = 'Стикеровка'"]
+                if sewer_id not in (None, ''):
+                    conditions.append(
+                        f"(o.assigned_user_id = {int(sewer_id)} OR o.sewer_user_id = {int(sewer_id)})"
+                    )
+                if width not in (None, ''):
+                    conditions.append(f"o.width = {int(width)}")
+                if height not in (None, ''):
+                    conditions.append(f"o.height = {int(height)}")
+                if material:
+                    conditions.append(f"o.material = '{material.replace(chr(39), chr(39) * 2)}'")
+                if workshop_id not in (None, ''):
+                    conditions.append(f"o.workshop_id = {int(workshop_id)}")
+                where_sql = ' AND '.join(conditions)
+
+                cur.execute(
+                    "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
+                    "o.sewing_status, COALESCE(o.sewer_user_id, o.assigned_user_id), "
+                    "su.full_name, o.status, o.ozon_status, o.marketplace "
+                    "FROM orders o "
+                    "LEFT JOIN users su ON su.id = COALESCE(o.sewer_user_id, o.assigned_user_id) "
+                    f"WHERE {where_sql} "
+                    "ORDER BY o.id ASC LIMIT 100"
+                )
+                orders_found = [
+                    {
+                        'id': r[0],
+                        'orderNumber': r[1],
+                        'product': r[2],
+                        'material': r[3],
+                        'width': r[4],
+                        'height': r[5],
+                        'sewingStatus': r[6],
+                        'assignedUserId': r[7],
+                        'assignedUserName': r[8],
+                        'isCancelled': r[9] == 'Отменён' or 'cancel' in (r[10] or '').lower(),
+                        'marketplace': r[11],
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'orders': orders_found}),
                 }
 
             if action == 'find_unlabeled':

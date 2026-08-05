@@ -13,6 +13,7 @@ export interface KioskOrder {
   /** Клиент отменил заказ: вещь дошивается, но уходит не покупателю, а на склад хранения —
    * упаковщик клеит стикер ХРАНЕНИЯ вместо стикера отправления. */
   isCancelled?: boolean;
+  marketplace?: string | null;
 }
 
 export const fetchKioskOrder = async (orderNumber: string): Promise<KioskOrder> => {
@@ -22,6 +23,25 @@ export const fetchKioskOrder = async (orderNumber: string): Promise<KioskOrder> 
     throw new Error(data.error || 'Заказ не найден');
   }
   return data.order;
+};
+
+/** Ручной поиск заказов на стикеровке, когда сканер не работает или штрихкод не читается.
+ * Ищет по размеру, материалу и швее — упаковщик выбирает нужный заказ из списка. */
+export const findStickeringOrders = async (filters: {
+  sewerId?: number | null;
+  width?: number | null;
+  height?: number | null;
+  material?: string | null;
+  workshopId?: number | null;
+}): Promise<KioskOrder[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'find_stickering', ...filters }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось найти заказы');
+  return data.orders || [];
 };
 
 export interface KioskUser {

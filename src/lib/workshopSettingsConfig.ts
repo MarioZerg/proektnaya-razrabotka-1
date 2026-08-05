@@ -19,13 +19,15 @@ const yesNoOptions: SettingOption[] = [
   { value: 'false', label: 'Нет' },
 ];
 
+/** Настройки цеха, которые видит и меняет админ.
+ *
+ * Ключи маркетплейсов (WB/OZON) здесь НЕ дублируются — они живут в разделе «Интеграции».
+ * Лимиты остатка для закрытия рулонов настраиваются в разделе «Рулоны».
+ */
 export const workshopSettingsConfig: SettingConfigItem[] = [
   { key: 'working_day_start', label: 'Начало рабочего дня', type: 'time' },
   { key: 'working_day_end', label: 'Конец рабочего дня', type: 'time' },
   { key: 'is_enabled_work_schedule', label: 'Расписание включено?', type: 'select', options: yesNoOptions },
-  { key: 'api_key_wb', label: 'WB api key', type: 'text' },
-  { key: 'api_key_ozon', label: 'OZON api key', type: 'text' },
-  { key: 'seller_id_ozon', label: 'OZON seller id', type: 'text' },
   { key: 'max_quantity_orders_to_seamstress', label: 'Макс. кол-во заказов у швеи', type: 'number' },
   {
     key: 'orders_priority',
@@ -40,7 +42,6 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
   },
   { key: 'late_opened_shift_penalty', label: 'Штраф за опоздание', type: 'number' },
   { key: 'unclosed_shift_penalty', label: 'Штраф за не закрытую смену', type: 'number' },
-  { key: 'is_enabled_work_shift', label: 'Функционал смен включен?', type: 'select', options: yesNoOptions },
   { key: 'max_quantity_orders_to_cutter', label: 'Макс. кол-во заказов у закройщика', type: 'number' },
   { key: 'cutter_daily_limit', label: 'Метраж в день у закройщика', type: 'number' },
   { key: 'cancel_order_penalty', label: 'Штраф за отмену заказа', type: 'number' },
@@ -99,16 +100,6 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
     options: marketplaceClusters.map((c) => ({ value: c, label: c })),
   },
   { key: 'max_fabric_rolls_per_shift', label: 'Макс. рулонов ткани на смену', type: 'number' },
-  {
-    key: 'min_remaining_to_close_fabric',
-    label: 'Мин. остаток для закрытия рулона тюля (м)',
-    type: 'number',
-  },
-  {
-    key: 'min_remaining_to_close_trim',
-    label: 'Мин. остаток для закрытия рулона тесьмы (м)',
-    type: 'number',
-  },
   {
     key: 'floating_schedule',
     label: 'Плавающий график (например 2/2)',

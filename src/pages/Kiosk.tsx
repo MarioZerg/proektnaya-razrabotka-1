@@ -9,6 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
+import KioskManualSearch from '@/components/kiosk/KioskManualSearch';
 
 const Kiosk = () => {
   const { toast } = useToast();
@@ -94,6 +95,8 @@ const Kiosk = () => {
             </div>
           </CardContent>
         </Card>
+
+        {!order && <KioskManualSearch onSelect={setOrder} />}
 
         {order && (
           <Card className="border-border shadow-none">

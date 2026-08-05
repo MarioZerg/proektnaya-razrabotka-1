@@ -24,6 +24,7 @@ const SewingItems = () => {
     loading,
     load,
     printQrCuttingEnabled,
+    cancelOrderPenalty,
     isCutter,
     isSewer,
     isPacker,
@@ -278,6 +279,7 @@ const SewingItems = () => {
           availableRolls={isSewer ? myTrimRolls : myFabricRolls}
           onSendToStickering={handleSendToStickering}
           onCancelOrder={handleCancelOrder}
+          cancelOrderPenalty={cancelOrderPenalty}
           cancelling={cancelling}
           onOrderUpdated={reloadSelected}
         />

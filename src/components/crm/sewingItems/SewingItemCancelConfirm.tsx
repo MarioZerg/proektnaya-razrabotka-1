@@ -13,6 +13,8 @@ interface SewingItemCancelConfirmProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   cancelTargetLabel: string;
+  /** Сумма штрафа за отмену из настроек цеха. 0 — штрафа нет, предупреждение не показываем. */
+  penalty?: number;
   onConfirm: () => void;
 }
 
@@ -20,6 +22,7 @@ const SewingItemCancelConfirm = ({
   open,
   onOpenChange,
   cancelTargetLabel,
+  penalty = 0,
   onConfirm,
 }: SewingItemCancelConfirmProps) => {
   return (
@@ -31,6 +34,11 @@ const SewingItemCancelConfirm = ({
             Заказ будет отменён и вернётся во вкладку {cancelTargetLabel}, откуда его снова
             сможет взять в работу любой сотрудник в порядке очереди. Из системы заказ не пропадёт.
           </AlertDialogDescription>
+          {penalty > 0 && (
+            <AlertDialogDescription className="font-medium text-destructive">
+              Вам будет начислен штраф {penalty} руб.
+            </AlertDialogDescription>
+          )}
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Не отменять</AlertDialogCancel>

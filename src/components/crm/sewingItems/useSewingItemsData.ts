@@ -18,6 +18,9 @@ export const useSewingItemsData = () => {
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [loading, setLoading] = useState(true);
   const [printQrCuttingEnabled, setPrintQrCuttingEnabled] = useState(true);
+  // Штраф за отмену заказа из настроек цеха — показываем сотруднику в подтверждении,
+  // чтобы он видел сумму ДО отмены, а не узнавал о списании из расчётки.
+  const [cancelOrderPenalty, setCancelOrderPenalty] = useState(0);
   // ID материалов (тканей), присущих цеху закройщика — фильтр тканей на конвейере для него
   // ограничивается только этими материалами (из настроек цеха). null = ограничения нет.
   const [allowedMaterialIds, setAllowedMaterialIds] = useState<number[] | null>(null);
@@ -78,6 +81,8 @@ export const useSewingItemsData = () => {
     fetchWorkshopDetail(effectiveWorkshopId).then((w) => {
       setPrintQrCuttingEnabled((w.settings.print_qr_cutting?.value ?? w.settings.print_qr_cutting?.global ?? 'enabled') !== 'disabled');
       setAllowedMaterialIds(w.allowedMaterials || []);
+      const penaltyRaw = w.settings.cancel_order_penalty?.value ?? w.settings.cancel_order_penalty?.global;
+      setCancelOrderPenalty(Number(penaltyRaw) || 0);
     });
   }, [isCutter, effectiveWorkshopId]);
 
@@ -101,6 +106,7 @@ export const useSewingItemsData = () => {
     loading,
     load,
     printQrCuttingEnabled,
+    cancelOrderPenalty,
     isCutter,
     isSewer,
     isPacker,

@@ -41,6 +41,8 @@ interface SewingItemDetailDialogProps {
   onSendToStickering?: (rollId?: number) => void;
   onCancelOrder?: () => void;
   cancelling?: boolean;
+  /** Штраф за отмену заказа из настроек цеха — показывается в окне подтверждения. */
+  cancelOrderPenalty?: number;
   /** Перезагрузка заказа после привязки товара (штрихкод стикера FBO). */
   onOrderUpdated?: () => void;
 }
@@ -67,6 +69,7 @@ const SewingItemDetailDialog = ({
   onSendToStickering,
   onCancelOrder,
   cancelling = false,
+  cancelOrderPenalty = 0,
   onOrderUpdated,
 }: SewingItemDetailDialogProps) => {
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
@@ -106,6 +109,7 @@ const SewingItemDetailDialog = ({
           open={cancelConfirmOpen}
           onOpenChange={setCancelConfirmOpen}
           cancelTargetLabel={cancelTargetLabel}
+          penalty={cancelOrderPenalty}
           onConfirm={() => {
             setCancelConfirmOpen(false);
             onCancelOrder?.();
