@@ -311,7 +311,9 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'sync' }                 - загрузить свежие заявки с OZON и WB
     POST /  { action: 'approve', id }          - админ одобряет заявку (вещь поедет к нам)
     POST /  { action: 'reject', id }           - админ отклоняет заявку
-    POST /  { action: 'scan', code }           - кладовщик сканирует стикер возврата
+    POST /  { action: 'scan', code }           - кладовщик сканирует стикер возврата.
+                                                 Код вида TR{id} — внутренний стикер из
+                                                 пакета: показывает, кто шил эту штуку
     POST /  { action: 'process', id, outcome } - судьба вещи: utilized (утилизация),
                                                  repack (на перепаковку), stored (на полку)
 
@@ -467,6 +469,77 @@ def handler(event: dict, context) -> dict:
                 code = (body_data.get('code') or '').strip()
                 if not code:
                     return _resp(400, {'error': 'Отсканируйте стикер возврата'})
+
+                # Внутренний стикер прослеживаемости TR{id заказа}: его кладёт в пакет
+                # упаковщик. По нему сразу видно, КТО шил именно эту штуку — на FBO
+                # маркетплейс такой информации не даёт вовсе.
+                if code.upper().startswith('TR') and code[2:].isdigit():
+                    cur.execute(
+                        "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.material, "
+                        "o.width, o.height, su.full_name, cu.full_name, pu.full_name, o.cut_at "
+                        "FROM orders o "
+                        "LEFT JOIN users su ON su.id = COALESCE(o.sewer_user_id, o.assigned_user_id) "
+                        "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+                        "LEFT JOIN users pu ON pu.id = o.packer_user_id "
+                        "WHERE o.id = %s",
+                        (int(code[2:]),),
+                    )
+                    o = cur.fetchone()
+                    if not o:
+                        return _resp(404, {'error': f'Заказ по коду {code} не найден'})
+
+                    # Возврат по этому заказу мог быть уже загружен с маркетплейса — тогда
+                    # продолжаем работу с ним. Если нет, заводим заявку сами: вещь физически
+                    # перед кладовщиком, значит возврат состоялся.
+                    cur.execute(
+                        "SELECT id, status FROM marketplace_returns WHERE order_id = %s "
+                        "AND status <> 'processed' ORDER BY id DESC LIMIT 1",
+                        (o[0],),
+                    )
+                    existing = cur.fetchone()
+                    if existing:
+                        ret_id = existing[0]
+                        cur.execute(
+                            "UPDATE marketplace_returns SET status = 'approved', "
+                            "return_barcode = COALESCE(return_barcode, %s) WHERE id = %s",
+                            (code, ret_id),
+                        )
+                    else:
+                        cur.execute(
+                            "INSERT INTO marketplace_returns (marketplace, external_id, "
+                            "posting_number, order_id, product_name, quantity, status, "
+                            "return_barcode, approved_at, mp_created_at) "
+                            "VALUES (%s, %s, %s, %s, %s, 1, 'approved', %s, now(), now()) "
+                            "RETURNING id",
+                            (
+                                o[2] or 'OZON',
+                                f'TRACE-{o[0]}',
+                                o[1],
+                                o[0],
+                                f'{o[4]} {o[5]}x{o[6]}' if o[4] and o[5] else o[1],
+                                code,
+                            ),
+                        )
+                        ret_id = cur.fetchone()[0]
+                    conn.commit()
+                    return _resp(200, {'return': {
+                        'id': ret_id,
+                        'marketplace': o[2],
+                        'externalId': f'TRACE-{o[0]}',
+                        'postingNumber': o[1],
+                        'productName': f'{o[4]} {o[5]}x{o[6]}' if o[4] and o[5] else o[1],
+                        'returnReason': None,
+                        'status': 'approved',
+                        'material': o[4],
+                        'width': o[5],
+                        'height': o[6],
+                        # Кто именно делал эту вещь — главная польза внутреннего стикера.
+                        'sewerName': o[7],
+                        'cutterName': o[8],
+                        'packerName': o[9],
+                        'orderNumber': o[1],
+                    }})
+
                 cur.execute(
                     "SELECT r.id, r.marketplace, r.external_id, r.posting_number, r.product_name, "
                     "r.return_reason, r.status, r.outcome, mi.material, mi.width, mi.height "

@@ -21,6 +21,10 @@ export interface MarketplaceReturn {
   returnBarcode: string | null;
   outcomeAt: string | null;
   outcomeByName: string | null;
+  /** Кто делал эту вещь — заполняется при сканировании внутреннего стикера TR{id}. */
+  sewerName?: string | null;
+  cutterName?: string | null;
+  packerName?: string | null;
   mpCreatedAt: string | null;
   receivedAt: string | null;
   receivedByName: string | null;

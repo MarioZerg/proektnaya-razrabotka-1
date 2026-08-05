@@ -106,13 +106,13 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
       <CardContent className="space-y-4 pt-6">
         <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <Icon name="ScanLine" size={18} />
-          Отсканируйте стикер возврата с коробки
+          Отсканируйте стикер возврата с коробки или наш стикер из пакета
         </div>
         <div className="flex gap-2">
           <Input
             ref={inputRef}
             autoFocus
-            placeholder="Штрихкод возврата или номер отправления"
+            placeholder="Стикер возврата или стикер из пакета"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleScan()}
@@ -139,6 +139,19 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
                 <p className="text-sm text-muted-foreground">
                   Причина покупателя: {found.returnReason}
                 </p>
+              )}
+              {/* Отсканирован внутренний стикер из пакета — видно, кто делал именно эту
+                  вещь. По маркетплейсному стикеру такой информации нет. */}
+              {(found.sewerName || found.cutterName) && (
+                <div className="rounded-md border border-blue-200 bg-blue-50 p-2 text-sm text-blue-900">
+                  <p className="font-medium">Кто делал эту вещь:</p>
+                  <p>
+                    {found.sewerName && `швея ${found.sewerName}`}
+                    {found.sewerName && found.cutterName && ' · '}
+                    {found.cutterName && `закройщик ${found.cutterName}`}
+                    {found.packerName && ` · упаковщик ${found.packerName}`}
+                  </p>
+                </div>
               )}
             </div>
 

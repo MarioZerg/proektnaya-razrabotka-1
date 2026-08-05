@@ -7,6 +7,7 @@ import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskAp
 import { fetchOrderDetail } from '@/lib/ordersApi';
 import { printFboSticker } from '@/lib/printFboSticker';
 import { printBarcodes } from '@/lib/printBarcodes';
+import { printTraceSticker } from '@/lib/printTraceSticker';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import KioskManualSearch from '@/components/crm/kiosk/KioskManualSearch';
@@ -27,6 +28,9 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   const [searching, setSearching] = useState(false);
   const [order, setOrder] = useState<KioskOrder | null>(null);
   const [printed, setPrinted] = useState(false);
+  // Внутренний стикер с номером нашего заказа кладётся ВНУТРЬ пакета. По нему при возврате
+  // видно, кто шил именно эту штуку — на FBO маркетплейс такой информации не даёт.
+  const [tracePrinted, setTracePrinted] = useState(false);
   const [closing, setClosing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -42,6 +46,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     setSearching(true);
     setOrder(null);
     setPrinted(false);
+    setTracePrinted(false);
     try {
       const found = await fetchKioskOrder(value);
       playScanSound();
@@ -96,12 +101,14 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         });
         setOrder(null);
         setPrinted(false);
+        setTracePrinted(false);
         setTimeout(() => inputRef.current?.focus(), 0);
         return;
       }
       toast({ title: `Заказ ${order.orderNumber} закрыт`, description: 'Отправлен в «Готовые»' });
       setOrder(null);
       setPrinted(false);
+      setTracePrinted(false);
       setTimeout(() => inputRef.current?.focus(), 0);
     } catch (e) {
       toast({
@@ -165,6 +172,19 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
               </div>
             </div>
 
+            <Button
+              size="lg"
+              variant={tracePrinted ? 'outline' : 'default'}
+              className="h-16 w-full text-lg"
+              onClick={() => {
+                printTraceSticker(order);
+                setTracePrinted(true);
+              }}
+            >
+              <Icon name={tracePrinted ? 'Check' : 'QrCode'} size={24} className="mr-2" />
+              {tracePrinted ? 'Стикер в пакет напечатан' : 'Стикер в пакет (кто шил)'}
+            </Button>
+
             {order.isCancelled ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-center">
                 <p className="text-lg font-bold text-destructive">Клиент отменил заказ</p>
@@ -203,6 +223,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
               onClick={() => {
                 setOrder(null);
                 setPrinted(false);
+                setTracePrinted(false);
                 setTimeout(() => inputRef.current?.focus(), 0);
               }}
             >
