@@ -20,6 +20,7 @@ import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDial
 import ShipLabelDialog from '@/components/crm/goodsWarehouse/ShipLabelDialog';
 import ReprintReportDialog from '@/components/crm/goodsWarehouse/ReprintReportDialog';
 import AdminReceiveDialog from '@/components/crm/goodsWarehouse/AdminReceiveDialog';
+import { printShelfPickList } from '@/lib/printShelfPickList';
 import GoodsWarehouseFilters from '@/components/crm/goodsWarehouse/GoodsWarehouseFilters';
 import GoodsWarehouseTable from '@/components/crm/goodsWarehouse/GoodsWarehouseTable';
 
@@ -141,6 +142,14 @@ const GoodsWarehouse = () => {
     setHeightFilter('');
     setShelfFilter('');
     setReasonFilter('');
+  };
+
+  const handlePrintPickList = () => {
+    const shelfName =
+      shelfFilter === 'none'
+        ? 'Без полки'
+        : shelves.find((s) => String(s.id) === shelfFilter)?.name || 'Все полки';
+    printShelfPickList(filtered, shelfName);
   };
 
   const openReturn = () => {
@@ -333,13 +342,21 @@ const GoodsWarehouse = () => {
         />
 
         {/* Сколько вещей отобрано текущим фильтром — кладовщик видит объём работы до того,
-            как пойдёт к стеллажу. */}
+            как пойдёт к стеллажу, и может распечатать список, чтобы собирать с бумагой. */}
         {!loading && (
-          <p className="text-sm text-muted-foreground">
-            {shelfFilter
-              ? `На выбранной полке: ${filtered.length} шт`
-              : `Показано товаров: ${filtered.length}`}
-          </p>
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-muted-foreground">
+              {shelfFilter
+                ? `На выбранной полке: ${filtered.length} шт`
+                : `Показано товаров: ${filtered.length}`}
+            </p>
+            {filtered.length > 0 && (
+              <Button variant="outline" size="sm" onClick={handlePrintPickList}>
+                <Icon name="Printer" size={14} className="mr-2" />
+                Печать списка
+              </Button>
+            )}
+          </div>
         )}
 
         <GoodsWarehouseTable
