@@ -101,12 +101,15 @@ const postAction = async (payload: Record<string, unknown>) => {
   return data;
 };
 
+/** Ручное создание рулона — только для администратора: обычный приход оформляется
+ * приёмкой от поставщика, где у партии есть документ, поставщик и цена. */
 export const createRoll = (payload: {
   barcode: string;
   materialId: number;
   initialQuantity: number;
   workshopId?: number;
   shiftNumber?: number;
+  actorRole?: string;
 }) => postAction({ action: 'create', ...payload });
 
 export const updateRoll = (

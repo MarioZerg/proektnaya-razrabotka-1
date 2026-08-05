@@ -377,6 +377,20 @@ def handler(event: dict, context) -> dict:
             cur = conn.cursor()
 
             if action == 'create':
+                # Рулоны появляются в системе ТОЛЬКО через приёмку от поставщика — так у
+                # каждой партии есть документ прихода, поставщик и цена. Ручное создание
+                # доступно лишь администратору (исправление данных), кладовщику — нет.
+                actor_role = (body_data.get('actorRole') or '').strip()
+                if actor_role and actor_role != 'admin':
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Рулоны заводятся приёмкой от поставщика '
+                                     '(Отгрузки → Отгрузка от поставщика)'
+                        }),
+                    }
+
                 barcode = (body_data.get('barcode') or '').strip()
                 material_id = body_data.get('materialId')
                 initial_quantity = body_data.get('initialQuantity')

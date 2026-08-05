@@ -70,6 +70,10 @@ const Rolls = () => {
   // цеху их открытой смены) и не могут заводить новые — это работа кладовщика.
   const isProductionRole =
     user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
+  // Рулоны заводятся только приёмкой от поставщика (Отгрузки → Отгрузка от поставщика):
+  // так у каждого рулона есть документ прихода, поставщик и цена. Ручное создание оставлено
+  // администратору на случай исправления данных.
+  const canCreateRoll = user?.role === 'admin';
 
   const load = () => {
     setLoading(true);
@@ -120,6 +124,7 @@ const Rolls = () => {
         initialQuantity: Number(form.initialQuantity),
         workshopId: form.workshopId ? Number(form.workshopId) : undefined,
         shiftNumber: form.workshopId && form.shiftNumber ? Number(form.shiftNumber) : undefined,
+        actorRole: user?.role,
       });
       toast({ title: 'Рулон добавлен' });
       setDialogOpen(false);
@@ -140,11 +145,13 @@ const Rolls = () => {
             <p className="mt-1 text-sm text-muted-foreground">
               {isProductionRole
                 ? 'Рулоны вашего цеха: остаток, статус и штрихкод'
-                : 'Партии материалов со штрихкодом, остатком и статусом'}
+                : canCreateRoll
+                  ? 'Партии материалов со штрихкодом, остатком и статусом'
+                  : 'Партии материалов со штрихкодом, остатком и статусом. Новые рулоны заводятся приёмкой в разделе «Отгрузка от поставщика»'}
             </p>
           </div>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            {!isProductionRole && (
+            {canCreateRoll && (
               <DialogTrigger asChild>
                 <Button onClick={openCreate}>
                   <Icon name="Plus" size={16} className="mr-2" />
