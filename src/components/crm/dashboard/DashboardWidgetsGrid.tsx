@@ -22,6 +22,15 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
         >
           <CardContent className="flex items-center gap-3 p-3 sm:flex-col sm:items-stretch sm:gap-2 sm:p-4">
             <span
+              className={`h-1.5 w-1.5 shrink-0 rounded-full sm:hidden ${
+                w.tone === 'urgent'
+                  ? 'bg-destructive'
+                  : w.tone === 'warning'
+                    ? 'bg-amber-500'
+                    : 'bg-transparent'
+              }`}
+            />
+            <span
               className={`grid h-8 w-8 shrink-0 place-items-center rounded-md bg-muted ${toneStyles[w.tone]}`}
             >
               <Icon name={w.icon} size={16} />
@@ -29,14 +38,9 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
             <p className="min-w-0 flex-1 truncate text-sm text-muted-foreground sm:order-last sm:whitespace-normal sm:text-xs sm:leading-snug">
               {w.label}
             </p>
-            <p className="text-xl font-bold leading-none sm:text-2xl">{loading ? '—' : w.value}</p>
-            {w.tone !== 'default' && (
-              <span
-                className={`h-1.5 w-1.5 shrink-0 rounded-full sm:hidden ${
-                  w.tone === 'urgent' ? 'bg-destructive' : 'bg-amber-500'
-                }`}
-              />
-            )}
+            <p className="shrink-0 text-right text-xl font-bold leading-none sm:text-left sm:text-2xl">
+              {loading ? '—' : w.value}
+            </p>
           </CardContent>
         </Card>
       ))}
