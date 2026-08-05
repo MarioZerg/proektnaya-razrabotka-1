@@ -18,16 +18,29 @@ def is_day_off_today(cur, workshop_id, shift_number) -> bool:
     if cur.fetchone():
         return True
     cur.execute(
-        "SELECT CURRENT_DATE < cycle_start_date "
-        "OR MOD((CURRENT_DATE - cycle_start_date), (cycle_work_days + cycle_off_days)) "
-        ">= cycle_work_days "
-        "FROM shifts WHERE workshop_id = %s AND shift_number = %s "
-        "AND cycle_work_days IS NOT NULL AND cycle_off_days IS NOT NULL "
-        "AND cycle_start_date IS NOT NULL",
+        "SELECT cycle_work_days, cycle_off_days, cycle_start_date, work_weekdays FROM shifts "
+        "WHERE workshop_id = %s AND shift_number = %s",
         (int(workshop_id), int(shift_number)),
     )
     row = cur.fetchone()
-    return bool(row and row[0])
+    if not row:
+        return False
+    cycle_work, cycle_off, cycle_start, weekdays = row
+
+    # Недельный график (5/2): сегодня выходной, если дня недели нет в списке рабочих.
+    if weekdays:
+        cur.execute("SELECT EXTRACT(ISODOW FROM CURRENT_DATE)::int")
+        return int(cur.fetchone()[0]) not in weekdays
+
+    # Цикличный график (2/2, 3/3): считаем от даты первого выхода смены.
+    if cycle_work and cycle_off and cycle_start:
+        cur.execute(
+            "SELECT CURRENT_DATE < %s "
+            "OR MOD((CURRENT_DATE - %s), %s) >= %s",
+            (cycle_start, cycle_start, int(cycle_work) + int(cycle_off), int(cycle_work)),
+        )
+        return bool(cur.fetchone()[0])
+    return False
 
 
 def get_setting(cur, workshop_id, key, default=None):
@@ -201,6 +214,8 @@ def handler(event: dict, context) -> dict:
                     "  AND (CURRENT_DATE < s.cycle_start_date "
                     "    OR MOD((CURRENT_DATE - s.cycle_start_date), "
                     "           (s.cycle_work_days + s.cycle_off_days)) >= s.cycle_work_days)) "
+                    "AND NOT (s.work_weekdays IS NOT NULL "
+                    "  AND NOT (EXTRACT(ISODOW FROM CURRENT_DATE)::int = ANY(s.work_weekdays))) "
                     "ORDER BY w.id, s.shift_number"
                 )
                 available = [

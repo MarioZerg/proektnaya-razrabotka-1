@@ -77,6 +77,7 @@ const ShiftsCalendar = () => {
   // Цикличный график смены (2/2 и т.п.): если задан, выходные считает система, а клики
   // по дням в календаре отключаются — иначе ручные отметки конфликтовали бы с расчётом.
   const [cycle, setCycle] = useState<ShiftCycle | null>(null);
+  const [workWeekdays, setWorkWeekdays] = useState<number[] | null>(null);
 
   const today = new Date();
   const [monthOffset, setMonthOffset] = useState(0);
@@ -100,6 +101,7 @@ const ShiftsCalendar = () => {
     fetchShiftDaysOff(selectedShift.workshopId, selectedShift.shiftNumber, month).then((data) => {
       setDaysOff(new Set(data.daysOff));
       setCycle(data.cycle);
+      setWorkWeekdays(data.workWeekdays);
     });
   };
 
@@ -110,7 +112,7 @@ const ShiftsCalendar = () => {
 
   const toggleDayOff = async (date: Date, isCurrentMonth: boolean) => {
     if (!selectedShift || !isCurrentMonth) return;
-    if (cycle) {
+    if (cycle || workWeekdays) {
       toast({
         title: 'Выходные считаются автоматически',
         description: 'У смены включён график — измените его выше или выключите',
@@ -140,7 +142,7 @@ const ShiftsCalendar = () => {
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Календарь смен</h1>
         <p className="text-sm text-muted-foreground">
-          {cycle
+          {cycle || workWeekdays
             ? 'У смены включён автоматический график — выходные рассчитаны системой и отмечены в календаре.'
             : 'Кликните по дню, чтобы отметить его выходным для выбранной смены — в этот день сотрудники смены не смогут открыть смену.'}
         </p>
@@ -152,6 +154,7 @@ const ShiftsCalendar = () => {
             shiftNumber={selectedShift.shiftNumber}
             shiftName={`${selectedShift.workshopName} — ${selectedShift.name}`}
             cycle={cycle}
+            workWeekdays={workWeekdays}
             onSaved={loadDaysOff}
           />
         )}

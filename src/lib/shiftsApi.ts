@@ -50,12 +50,16 @@ export const fetchShiftDaysOff = async (
   workshopId: number,
   shiftNumber: number,
   month: string
-): Promise<{ daysOff: string[]; cycle: ShiftCycle | null }> => {
+): Promise<{ daysOff: string[]; cycle: ShiftCycle | null; workWeekdays: number[] | null }> => {
   const res = await fetch(
     `${SHIFTS_URL}?calendar=1&workshop_id=${workshopId}&shift_number=${shiftNumber}&month=${month}`
   );
   const data = await res.json();
-  return { daysOff: data.daysOff || [], cycle: data.cycle || null };
+  return {
+    daysOff: data.daysOff || [],
+    cycle: data.cycle || null,
+    workWeekdays: data.workWeekdays || null,
+  };
 };
 
 /** Включить цикличный график смены. Пустые значения выключают цикл и возвращают
@@ -66,7 +70,17 @@ export const setShiftCycle = (payload: {
   workDays?: number | null;
   offDays?: number | null;
   startDate?: string | null;
+  /** Сохранить, даже если смена работает одновременно с другой (5/2 рядом с бригадами 2/2). */
+  force?: boolean;
 }) => postAction({ action: 'set_cycle', ...payload });
+
+/** Недельный график (5/2 и др.): рабочие дни недели, 1 = понедельник ... 7 = воскресенье.
+ * Пустой список выключает недельный график. */
+export const setShiftWeekdays = (payload: {
+  workshopId: number;
+  shiftNumber: number;
+  workWeekdays: number[] | null;
+}) => postAction({ action: 'set_weekdays', ...payload });
 
 const postAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(SHIFTS_URL, {

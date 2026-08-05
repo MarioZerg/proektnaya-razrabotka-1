@@ -21,15 +21,31 @@ def is_cycle_day_off(cycle_work: int, cycle_off: int, start: date, day: date) ->
     return ((day - start).days % period) >= cycle_work
 
 
-def cycle_days_off_for_month(cycle_work, cycle_off, start, year: int, month: int) -> list:
-    """Список дат-выходных смены в указанном месяце по цикличному графику."""
-    if not cycle_work or not cycle_off or not start:
-        return []
+def is_weekday_day_off(work_weekdays, day: date) -> bool:
+    """Выходной ли день при недельном графике (5/2 и т.п.).
+
+    work_weekdays — номера рабочих дней недели: 1 = понедельник ... 7 = воскресенье.
+    Например, 5/2 с выходными в СБ/ВС — это [1, 2, 3, 4, 5].
+    """
+    if not work_weekdays:
+        return False
+    return (day.weekday() + 1) not in work_weekdays
+
+
+def days_off_for_month(shift_row, year: int, month: int) -> list:
+    """Даты-выходные смены в месяце: по недельному графику или по циклу (2/2, 3/3).
+
+    shift_row = (cycle_work_days, cycle_off_days, cycle_start_date, work_weekdays).
+    """
+    cycle_work, cycle_off, start, weekdays = shift_row
     days_in_month = monthrange(year, month)[1]
     result = []
     for d in range(1, days_in_month + 1):
         day = date(year, month, d)
-        if is_cycle_day_off(int(cycle_work), int(cycle_off), start, day):
+        if weekdays:
+            if is_weekday_day_off(weekdays, day):
+                result.append(day.isoformat())
+        elif is_cycle_day_off(int(cycle_work), int(cycle_off), start, day):
             result.append(day.isoformat())
     return result
 
@@ -97,10 +113,14 @@ def handler(event: dict, context) -> dict:
         - isActive=false выключает смену — все её сотрудники смогут работать в любой смене
     POST /  { action: 'delete', id }
         - запрещено, если в смене ещё есть сотрудники
-    POST /  { action: 'set_cycle', workshopId, shiftNumber, workDays, offDays, startDate }
-        - цикличный график смены (2/2, 3/3): выходные считаются автоматически от даты
-          первого выхода. Пустые значения выключают цикл. Не даёт двум сменам цеха
-          выходить в один день
+    POST /  { action: 'set_cycle', workshopId, shiftNumber, workDays, offDays, startDate, force? }
+        - цикличный график смены (2/2, 5/2 и т.п.): выходные считаются автоматически от
+          даты первого выхода. Пустые значения выключают цикл. Если смена пересекается по
+          рабочим дням с другой сменой цеха — возвращает 409 со списком пересечений;
+          force=true сохраняет всё равно (нормально для 5/2 рядом с бригадами 2/2)
+    POST /  { action: 'set_weekdays', workshopId, shiftNumber, workWeekdays: [1..7] }
+        - недельный график (5/2): указываются рабочие дни недели, 1 = понедельник.
+          Пустой список выключает недельный график
     POST /  { action: 'add_employee', shiftId, userId }
         - добавляет сотрудника в смену (users.workshop/shift_number = смены), сбрасывает
           гостевой режим (shift_free = false) — сотрудник снова жёстко привязан
@@ -153,24 +173,27 @@ def handler(event: dict, context) -> dict:
                 # Если у смены задан цикл (2/2 и т.п.) — выходные считаются автоматически
                 # от даты первого выхода, ручные отметки для неё не нужны.
                 cur.execute(
-                    "SELECT cycle_work_days, cycle_off_days, cycle_start_date FROM shifts "
-                    "WHERE workshop_id = %s AND shift_number = %s",
+                    "SELECT cycle_work_days, cycle_off_days, cycle_start_date, work_weekdays "
+                    "FROM shifts WHERE workshop_id = %s AND shift_number = %s",
                     (int(wid), int(snum)),
                 )
                 cyc = cur.fetchone()
-                if cyc and cyc[0] and cyc[1] and cyc[2]:
+                has_weekdays = bool(cyc and cyc[3])
+                has_cycle = bool(cyc and cyc[0] and cyc[1] and cyc[2])
+                if has_weekdays or has_cycle:
                     year, mon = int(month[:4]), int(month[5:7])
-                    days_off = cycle_days_off_for_month(cyc[0], cyc[1], cyc[2], year, mon)
+                    days_off = days_off_for_month(cyc, year, mon)
                     return {
                         'statusCode': 200,
                         'headers': headers,
                         'body': json.dumps({
                             'daysOff': days_off,
-                            'cycle': {
+                            'cycle': None if has_weekdays else {
                                 'workDays': cyc[0],
                                 'offDays': cyc[1],
                                 'startDate': cyc[2].isoformat(),
                             },
+                            'workWeekdays': cyc[3] if has_weekdays else None,
                         }),
                     }
 
@@ -427,24 +450,37 @@ def handler(event: dict, context) -> dict:
                     "AND cycle_work_days IS NOT NULL",
                     (int(workshop_id), int(shift_number)),
                 )
+                # Пересечение — не всегда ошибка: смена 5/2 в цехе с двумя сменами 2/2
+                # обязана работать одновременно с ними (это разные бригады). Поэтому
+                # сообщаем о совпадении и даём сохранить повторным запросом с force.
                 period = work_days + off_days
+                overlaps = []
                 for other in cur.fetchall():
-                    for i in range(period * 2):
+                    for i in range(max(period, other[2] + other[3]) * 2):
                         day = start + timedelta(days=i)
                         mine_off = is_cycle_day_off(work_days, off_days, start, day)
                         their_off = is_cycle_day_off(other[2], other[3], other[4], day)
                         if not mine_off and not their_off:
-                            return {
-                                'statusCode': 409,
-                                'headers': headers,
-                                'body': json.dumps({
-                                    'error': f'{day.isoformat()} выходит вместе со сменой «{other[1]}» — '
-                                             f'сдвиньте дату первого выхода'
-                                }),
-                            }
+                            overlaps.append({'date': day.isoformat(), 'shiftName': other[1]})
+                            break
 
+                if overlaps and not body_data.get('force'):
+                    names = ', '.join(f'«{o["shiftName"]}»' for o in overlaps)
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Смена будет работать одновременно со сменами: {names} '
+                                     f'(например {overlaps[0]["date"]})',
+                            'overlaps': overlaps,
+                            'canForce': True,
+                        }),
+                    }
+
+                # Цикл и недельный график взаимоисключающие — включаем один, гасим другой.
                 cur.execute(
-                    "UPDATE shifts SET cycle_work_days = %s, cycle_off_days = %s, cycle_start_date = %s "
+                    "UPDATE shifts SET cycle_work_days = %s, cycle_off_days = %s, "
+                    "cycle_start_date = %s, work_weekdays = NULL "
                     "WHERE workshop_id = %s AND shift_number = %s",
                     (work_days, off_days, start, int(workshop_id), int(shift_number)),
                 )
@@ -465,6 +501,49 @@ def handler(event: dict, context) -> dict:
                         'success': True,
                         'cycle': {'workDays': work_days, 'offDays': off_days, 'startDate': start.isoformat()},
                     }),
+                }
+
+            if action == 'set_weekdays':
+                # Недельный график (5/2 и любой другой): админ указывает, в какие дни недели
+                # смена выходит — 1 понедельник ... 7 воскресенье. Остальные дни выходные.
+                workshop_id = body_data.get('workshopId')
+                shift_number = body_data.get('shiftNumber')
+                weekdays = body_data.get('workWeekdays')
+                if not workshop_id or not shift_number:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите workshopId и shiftNumber'})}
+
+                if not weekdays:
+                    cur.execute(
+                        "UPDATE shifts SET work_weekdays = NULL "
+                        "WHERE workshop_id = %s AND shift_number = %s",
+                        (int(workshop_id), int(shift_number)),
+                    )
+                    conn.commit()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'workWeekdays': None})}
+
+                days = sorted({int(d) for d in weekdays if 1 <= int(d) <= 7})
+                if not days:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите хотя бы один рабочий день недели'})}
+
+                cur.execute(
+                    "UPDATE shifts SET work_weekdays = %s, cycle_work_days = NULL, "
+                    "cycle_off_days = NULL, cycle_start_date = NULL "
+                    "WHERE workshop_id = %s AND shift_number = %s",
+                    (days, int(workshop_id), int(shift_number)),
+                )
+                cur.execute(
+                    "DELETE FROM shift_calendar WHERE workshop_id = %s AND shift_number = %s",
+                    (int(workshop_id), int(shift_number)),
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'set_weekdays', 'shift', None,
+                    f'Недельный график смены №{shift_number}: рабочие дни {days}',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'workWeekdays': days}),
                 }
 
             if action == 'set_day_off':
