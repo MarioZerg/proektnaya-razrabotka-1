@@ -156,9 +156,16 @@ const FromSupplier = () => {
     if (!detail) {
       detail = await fetchShipmentDetail(shipmentId);
     }
+    // На наклейку рулона кроме штрихкода кладём поставщика и дату приёмки: на складе по ним
+    // видно, чей это материал и сколько он лежит (старые рулоны пускают в работу первыми).
     const items = detail.items
       .filter((i) => i.barcode)
-      .map((i) => ({ code: i.barcode as string, label: `${i.materialName} — ${formatQuantity(i.quantity)} ${i.unit || ''}` }));
+      .map((i) => ({
+        code: i.barcode as string,
+        label: `${i.materialName} — ${formatQuantity(i.quantity)} ${i.unit || ''}`,
+        supplier: detail.supplierName,
+        receivedAt: detail.completedAt || detail.createdAt,
+      }));
     printBarcodes(items, `Приёмка #${shipmentId}`);
   };
 

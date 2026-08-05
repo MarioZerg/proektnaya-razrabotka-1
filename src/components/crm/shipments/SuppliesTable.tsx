@@ -131,7 +131,19 @@ const SuppliesTable = ({
                                       variant="outline"
                                       size="icon"
                                       className="h-5 w-5"
-                                      onClick={() => printBarcodes([{ code: item.barcode as string, label: `${item.materialName} — ${formatQuantity(item.quantity)} ${item.unit || ''}` }], item.barcode as string)}
+                                      onClick={() =>
+                                        printBarcodes(
+                                          [
+                                            {
+                                              code: item.barcode as string,
+                                              label: `${item.materialName} — ${formatQuantity(item.quantity)} ${item.unit || ''}`,
+                                              supplier: s.supplierName,
+                                              receivedAt: s.completedAt || s.createdAt,
+                                            },
+                                          ],
+                                          item.barcode as string
+                                        )
+                                      }
                                     >
                                       <Icon name="Barcode" size={11} />
                                     </Button>

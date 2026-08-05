@@ -3,10 +3,22 @@ import JsBarcode from 'jsbarcode';
 export interface BarcodePrintItem {
   code: string;
   label?: string;
+  /** Поставщик рулона — по нему на складе разбираются, чей это материал и куда вернуть брак. */
+  supplier?: string | null;
+  /** Дата приёмки — видно, сколько рулон лежит; старые пускают в работу первыми. */
+  receivedAt?: string | null;
 }
 
 const esc = (v: string) =>
   v.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c] || c);
+
+/** Дата в привычном виде 05.08.2026 — на складе читают её, а не ISO-строку. */
+const formatDate = (iso?: string | null) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('ru-RU');
+};
 
 /**
  * Печать штрихкодов рулонов на наклейке 75×120 мм.
@@ -32,10 +44,20 @@ export const printBarcodes = (items: BarcodePrintItem[], title = 'Штрихко
       margin: 4,
     });
     const label = (item.label || '').trim();
+    const supplier = (item.supplier || '').trim();
+    const received = formatDate(item.receivedAt);
+    const footer =
+      supplier || received
+        ? `<div class="meta">
+             ${supplier ? `<div>Поставщик: ${esc(supplier)}</div>` : ''}
+             ${received ? `<div>Принят: ${esc(received)}</div>` : ''}
+           </div>`
+        : '';
     return `
     <div class="sticker">
       ${label ? `<div class="label">${esc(label)}</div>` : ''}
       <img src="${canvas.toDataURL('image/png')}" alt="${esc(item.code)}" />
+      ${footer}
     </div>`;
   });
 
@@ -75,6 +97,15 @@ export const printBarcodes = (items: BarcodePrintItem[], title = 'Штрихко
       word-break: break-word;
     }
     .sticker img { width: 67mm; height: auto; display: block; }
+    .meta {
+      font-size: 11pt;
+      text-align: center;
+      line-height: 1.3;
+      width: 100%;
+      max-height: 22mm;
+      overflow: hidden;
+      word-break: break-word;
+    }
   </style>
 </head>
 <body>
