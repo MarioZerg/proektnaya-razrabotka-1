@@ -71,12 +71,20 @@ export const fetchRepackItems = async (): Promise<RepackItem[]> => {
   return data.items || [];
 };
 
-/** Упаковщик переупаковал вещь — она уходит на склад в очередь «Ждёт полку». */
-export const finishRepack = async (id: number, actorId?: number, actorName?: string) => {
+/** Решение упаковщика по вещи на перепаковке:
+ *  repacked — переупакована, печатается стикер хранения и вещь уходит на склад;
+ *  utilized — при вскрытии обнаружен брак, вещь списывается (нужна причина). */
+export const finishRepack = async (payload: {
+  id: number;
+  outcome: 'repacked' | 'utilized';
+  note?: string;
+  actorId?: number;
+  actorName?: string;
+}): Promise<{ outcome: string; storageBarcode: string | null }> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'repack_done', id, actorId, actorName }),
+    body: JSON.stringify({ action: 'repack_done', ...payload }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось завершить перепаковку');

@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { printStorageSticker } from '@/lib/printStorageSticker';
 import { fetchRepackItems, finishRepack, type RepackItem } from '@/lib/kioskApi';
 
 interface KioskRepackScreenProps {
@@ -11,13 +13,15 @@ interface KioskRepackScreenProps {
   actorName: string;
 }
 
-/** Перепаковка: вещи вернулись от покупателя годными, но с помятой упаковкой. Упаковщик
- * переупаковывает их и отправляет обратно на склад — там они снова ждут полку. */
+/** Перепаковка: вещи вернулись от покупателя. Упаковщик вскрывает пакет, осматривает вещь
+ * и решает — переупаковать (печатает стикер хранения, вещь едет на склад) или списать,
+ * если внутри обнаружился брак. */
 const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
   const { toast } = useToast();
   const [items, setItems] = useState<RepackItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<number | null>(null);
+  const [notes, setNotes] = useState<Record<number, string>>({});
 
   const load = () => {
     setLoading(true);
@@ -30,14 +34,41 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
     load();
   }, []);
 
-  const handleDone = async (item: RepackItem) => {
+  const handleFinish = async (item: RepackItem, outcome: 'repacked' | 'utilized') => {
+    const note = (notes[item.id] || '').trim();
+    if (outcome === 'utilized' && !note) {
+      toast({
+        title: 'Опишите брак',
+        description: 'Администратор должен видеть, за что списан товар',
+        variant: 'destructive',
+      });
+      return;
+    }
     setProcessingId(item.id);
     try {
-      await finishRepack(item.id, actorId, actorName);
-      toast({
-        title: 'Вещь переупакована',
-        description: 'Отправлена на склад — кладовщик положит её на полку',
-      });
+      const res = await finishRepack({ id: item.id, outcome, note, actorId, actorName });
+
+      if (outcome === 'repacked' && res.storageBarcode) {
+        // Печатаем стикер хранения сразу: кладовщик по нему положит вещь на полку.
+        printStorageSticker({
+          storageBarcode: res.storageBarcode,
+          title:
+            item.material && item.width
+              ? `${item.material} ${item.width}×${item.height}`
+              : item.product,
+          orderNumber: item.orderNumber,
+        });
+        toast({
+          title: 'Вещь переупакована',
+          description: 'Наклейте стикер хранения — кладовщик заберёт вещь на полку',
+        });
+      } else {
+        toast({
+          title: 'Товар списан',
+          description: 'Брак попадёт в отчёт администратору',
+        });
+      }
+      setNotes((prev) => ({ ...prev, [item.id]: '' }));
       load();
     } catch (e) {
       toast({
@@ -74,7 +105,8 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
   return (
     <div className="space-y-4">
       <p className="text-lg text-muted-foreground">
-        Переупакуйте вещь в новый пакет и нажмите «Готово» — она вернётся на склад
+        Осмотрите вещь: годная — переупакуйте и наклейте стикер хранения, бракованная —
+        спишите с указанием причины
       </p>
 
       {items.map((item) => (
@@ -101,19 +133,38 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
               </div>
             )}
 
-            <Button
-              size="lg"
-              className="h-16 w-full bg-emerald-600 text-lg text-white hover:bg-emerald-700"
-              onClick={() => handleDone(item)}
-              disabled={processingId === item.id}
-            >
-              <Icon
-                name={processingId === item.id ? 'Loader2' : 'Check'}
-                size={24}
-                className={`mr-2 ${processingId === item.id ? 'animate-spin' : ''}`}
-              />
-              Готово — переупаковано
-            </Button>
+            <Textarea
+              placeholder="Что с вещью: дырки, пятна, затяжки (обязательно при списании)"
+              value={notes[item.id] || ''}
+              onChange={(e) => setNotes((prev) => ({ ...prev, [item.id]: e.target.value }))}
+              rows={2}
+            />
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Button
+                size="lg"
+                className="h-16 bg-emerald-600 text-lg text-white hover:bg-emerald-700"
+                onClick={() => handleFinish(item, 'repacked')}
+                disabled={processingId === item.id}
+              >
+                <Icon
+                  name={processingId === item.id ? 'Loader2' : 'Check'}
+                  size={24}
+                  className={`mr-2 ${processingId === item.id ? 'animate-spin' : ''}`}
+                />
+                Переупаковано — печать стикера
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-16 text-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => handleFinish(item, 'utilized')}
+                disabled={processingId === item.id}
+              >
+                <Icon name="Trash2" size={24} className="mr-2" />
+                Брак — списать
+              </Button>
+            </div>
           </CardContent>
         </Card>
       ))}

@@ -173,8 +173,10 @@ def handler(event: dict, context) -> dict:
 
     POST /  { action: 'repack_list' }
         - вещи на перепаковке в этом цехе (вернулись годными, но с мятой упаковкой)
-    POST /  { action: 'repack_done', id }
-        - упаковщик переупаковал вещь: она уходит на склад в очередь «Ждёт полку»
+    POST /  { action: 'repack_done', id, outcome, note? }
+        - решение упаковщика по вещи на перепаковке: outcome='repacked' — переупакована,
+          печатается стикер хранения и вещь уходит на склад; outcome='utilized' — при
+          вскрытии обнаружен брак, вещь списывается (note обязателен)
 
     POST /  { action: 'find_stickering', sewerId?, width?, height?, material?, workshopId? }
         - поиск заказов на стикеровке вручную, когда сканер не работает: по размеру,
@@ -528,12 +530,27 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'items': items})}
 
             if action == 'repack_done':
-                # Упаковщик переупаковал вещь — она возвращается на склад и ждёт полку.
+                # Упаковщик осмотрел вещь и решил её судьбу:
+                #   repacked  — переупакована, годна: печатает стикер хранения и вещь едет
+                #               на склад, кладовщик по этому стикеру кладёт её на полку;
+                #   utilized  — при вскрытии обнаружен брак: вещь списывается, на склад не
+                #               попадает, причина уходит в отчёт админу.
                 gw_id = body_data.get('id')
+                outcome = (body_data.get('outcome') or 'repacked').strip()
+                note = (body_data.get('note') or '').strip()
                 if not gw_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id вещи'})}
+                if outcome not in ('repacked', 'utilized'):
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное решение'})}
+                if outcome == 'utilized' and not note:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Опишите брак — администратор должен видеть причину списания'}),
+                    }
+
                 cur.execute(
-                    "SELECT storage_barcode, status FROM goods_warehouse WHERE id = %s",
+                    "SELECT storage_barcode, status, repack_return_id FROM goods_warehouse WHERE id = %s",
                     (int(gw_id),),
                 )
                 row = cur.fetchone()
@@ -542,20 +559,54 @@ def handler(event: dict, context) -> dict:
                 if row[1] != 'repacking':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Эта вещь не на перепаковке'})}
 
+                if outcome == 'utilized':
+                    # Вещь физически уничтожена — на складе её быть не должно.
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'lost', lost_reason = %s, "
+                        "lost_at = now(), repack_return_id = NULL WHERE id = %s",
+                        (f'Брак при перепаковке: {note}', int(gw_id)),
+                    )
+                    if row[2]:
+                        cur.execute(
+                            "UPDATE marketplace_returns SET outcome = 'utilized', outcome_at = now(), "
+                            "outcome_by = %s, damage_note = %s WHERE id = %s",
+                            (int(actor_id) if actor_id else None, note, int(row[2])),
+                        )
+                    log_action(
+                        cur, actor_id, actor_name, 'repack_utilized', 'goods_warehouse', gw_id,
+                        f'Вещь {row[0]} списана при перепаковке: {note}',
+                    )
+                    conn.commit()
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'success': True, 'outcome': 'utilized', 'storageBarcode': None}),
+                    }
+
                 cur.execute(
                     "UPDATE goods_warehouse SET status = 'awaiting_shelf', repack_return_id = NULL "
                     "WHERE id = %s",
                     (int(gw_id),),
                 )
+                if row[2]:
+                    cur.execute(
+                        "UPDATE marketplace_returns SET outcome = 'stored' WHERE id = %s",
+                        (int(row[2]),),
+                    )
                 log_action(
                     cur, actor_id, actor_name, 'repack_done', 'goods_warehouse', gw_id,
-                    f'Вещь {row[0]} переупакована — отправлена на склад',
+                    f'Вещь {row[0]} переупакована — отправлена на склад'
+                    + (f' ({note})' if note else ''),
                 )
                 conn.commit()
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'success': True, 'storageBarcode': row[0]}),
+                    'body': json.dumps({
+                        'success': True,
+                        'outcome': 'repacked',
+                        'storageBarcode': row[0],
+                    }),
                 }
 
             if action == 'find_stickering':

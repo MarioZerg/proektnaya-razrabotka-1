@@ -6,7 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskApi';
 import { fetchOrderDetail } from '@/lib/ordersApi';
 import { printFboSticker } from '@/lib/printFboSticker';
-import { printBarcodes } from '@/lib/printBarcodes';
+import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printTraceSticker } from '@/lib/printTraceSticker';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
@@ -91,10 +91,13 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
       // Заказ отменён клиентом — вещь едет не покупателю, а на склад хранения. Печатаем
       // стикер ХРАНЕНИЯ: по нему кладовщик заберёт вещь из цеха и положит на полку.
       if (res.isCancelled && res.storageBarcode) {
-        printBarcodes(
-          [{ code: res.storageBarcode, label: `${order.orderNumber} — ${order.product}` }],
-          `Стикер хранения ${res.storageBarcode}`,
-        );
+        printStorageSticker({
+          storageBarcode: res.storageBarcode,
+          title: order.material && order.width
+            ? `${order.material} ${order.width}×${order.height}`
+            : order.product,
+          orderNumber: order.orderNumber,
+        });
         toast({
           title: `Заказ ${order.orderNumber} отменён клиентом`,
           description: 'Наклейте стикер хранения — вещь заберёт кладовщик на полку',

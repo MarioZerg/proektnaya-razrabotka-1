@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { printBarcodes } from '@/lib/printBarcodes';
+import { printStorageSticker } from '@/lib/printStorageSticker';
 import { widthOptions, heightOptions } from '@/components/crm/sewingItems/sewingItemsShared';
 import {
   findUnlabeledGoods,
@@ -72,10 +72,11 @@ const KioskUnlabeledScreen = ({ actorId, actorName }: KioskUnlabeledScreenProps)
   const handlePrint = (c: UnlabeledCandidate) => {
     // Фиксируем перепечатку: админ увидит, по чьей вине стикера не оказалось на товаре.
     reprintStorageLabel(c.id, actorId, actorName);
-    printBarcodes(
-      [{ code: c.storageBarcode, label: `${c.orderNumber} — ${c.product || ''}` }],
-      `Стикер хранения ${c.storageBarcode}`,
-    );
+    printStorageSticker({
+      storageBarcode: c.storageBarcode,
+      title: c.product,
+      orderNumber: c.orderNumber,
+    });
     toast({
       title: 'Стикер отправлен на печать',
       description: `Наклейте его на товар ${c.product || ''}`,

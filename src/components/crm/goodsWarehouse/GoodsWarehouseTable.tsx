@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import Icon from '@/components/ui/icon';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
-import { printBarcodes } from '@/lib/printBarcodes';
+import { printStorageSticker } from '@/lib/printStorageSticker';
 import {
   formatDate,
   statusLabels,
@@ -107,10 +107,11 @@ const GoodsWarehouseTable = ({ loading, items, onReturnToWorkshop, onMarkLost }:
                       size="icon"
                       className="h-6 w-6"
                       onClick={() =>
-                        printBarcodes(
-                          [{ code: i.storageBarcode, label: `${i.orderNumber || ''} — ${i.product || ''}` }],
-                          `Стикер хранения ${i.storageBarcode}`
-                        )
+                        printStorageSticker({
+                          storageBarcode: i.storageBarcode,
+                          title: i.product,
+                          orderNumber: i.orderNumber,
+                        })
                       }
                     >
                       <Icon name="Barcode" size={12} />

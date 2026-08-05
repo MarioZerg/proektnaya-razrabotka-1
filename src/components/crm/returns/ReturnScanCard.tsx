@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import { printBarcodes } from '@/lib/printBarcodes';
+import { printStorageSticker } from '@/lib/printStorageSticker';
 import {
   scanMarketplaceReturn,
   processMarketplaceReturn,
@@ -74,10 +74,13 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
 
       if (outcome === 'stored' && res.storageBarcode) {
         // Вещь едет на полку — сразу печатаем стикер хранения, по нему её и разместят.
-        printBarcodes(
-          [{ code: res.storageBarcode, label: found.productName || 'Возврат' }],
-          `Стикер хранения ${res.storageBarcode}`
-        );
+        printStorageSticker({
+          storageBarcode: res.storageBarcode,
+          title: found.material && found.width
+            ? `${found.material} ${found.width}×${found.height}`
+            : found.productName,
+          orderNumber: found.postingNumber || found.externalId,
+        });
       }
 
       const messages = {
