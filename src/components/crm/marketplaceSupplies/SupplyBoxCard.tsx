@@ -7,6 +7,7 @@ import Icon from '@/components/ui/icon';
 import type { SupplyBox, SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { printWbBoxLabel } from '@/lib/wbBoxLabel';
+import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
 
 interface SupplyBoxCardProps {
   box: SupplyBox;
@@ -156,15 +157,33 @@ const SupplyBoxCard = ({
         )}
 
         {box.stickerUrl && (
-          <a
-            href={box.stickerUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-          >
-            <Icon name="FileText" size={14} />
-            Стикер короба (PDF)
-          </a>
+          <div className="space-y-1.5">
+            {/* Стикер короба от маркетплейса печатаем на наклейке 75×120 — той же, что у WB.
+                Раньше PDF просто открывался ссылкой и уходил на печать как A4. */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() =>
+                printBoxLabelFromUrl(
+                  box.stickerUrl as string,
+                  `Стикер короба №${box.boxNumber}`
+                )
+              }
+            >
+              <Icon name="Printer" size={14} className="mr-1.5" />
+              Печать стикера короба (75×120)
+            </Button>
+            <a
+              href={box.stickerUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:underline"
+            >
+              <Icon name="FileText" size={12} />
+              Открыть PDF
+            </a>
+          </div>
         )}
       </CardContent>
     </Card>
