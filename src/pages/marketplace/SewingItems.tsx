@@ -64,6 +64,7 @@ const SewingItems = () => {
     countForTab,
     myUnfinishedCount,
     myInWorkCount,
+    myGroups,
   } = useSewingItemsFilters({
     orders,
     materials,
@@ -89,6 +90,7 @@ const SewingItems = () => {
     handleAssignWorkshop,
     handleStatusChange,
     handleCut,
+    handleCutGroup,
     handleSendToStickering,
     handleCancelOrder,
     reloadSelected,
@@ -220,6 +222,23 @@ const SewingItems = () => {
                 У вас {myInWorkCount} заказов в работе — укажите рулон тесьмы и отправьте их на стикеровку.
               </p>
             )}
+
+            {/* Связки Яндекса в работе у швеи: заказ покупателя шьётся целиком одним
+                человеком, поэтому показываем прогресс — сколько вещей заказа уже отшито. */}
+            {isSewer &&
+              myGroups.map((g) => (
+                <div
+                  key={g.groupKey}
+                  className="flex flex-wrap items-center gap-2 rounded-md border border-violet-300 bg-violet-50 px-3 py-2 text-sm text-violet-900"
+                >
+                  <Icon name="Package" size={16} />
+                  <span className="font-semibold">Заказ покупателя целиком</span>
+                  <span className="break-all font-mono-tech text-xs">{g.groupKey}</span>
+                  <Badge className="bg-violet-600 text-white hover:bg-violet-600">
+                    отшито {g.done} из {g.total}
+                  </Badge>
+                </div>
+              ))}
           </div>
         )}
 
@@ -273,6 +292,7 @@ const SewingItems = () => {
           onAssignUser={handleAssignUser}
           onAssignWorkshop={handleAssignWorkshop}
           onCut={handleCut}
+          onCutGroup={handleCutGroup}
           readOnly={isReadOnlyTab}
           isCutterView={isCutter}
           isSewerView={isSewer}

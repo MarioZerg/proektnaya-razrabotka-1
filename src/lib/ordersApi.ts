@@ -144,6 +144,28 @@ export const updateOrder = (
 export const cutOrder = (id: number, rollId?: number, hangerNumber?: number) =>
   postAction({ action: 'cut', id, rollId, hangerNumber });
 
+/** Раскроить и отправить в цех ВСЮ связку Яндекса разом — заказ покупателя из десятков вещей
+ * закройщик не должен раскраивать по одной кнопке на каждую вещь. */
+export const cutOrderGroup = async (
+  id: number,
+  rollId?: number,
+  hangerNumber?: number
+): Promise<{ cutCount: number }> => {
+  // Большая связка раскраивается порциями: за один вызов сервер обрабатывает несколько вещей,
+  // иначе упирается в лимит времени. Повторяем, пока в связке остаются нераскроенные вещи —
+  // для закройщика это по-прежнему одно нажатие кнопки.
+  let total = 0;
+  for (let pass = 0; pass < 30; pass += 1) {
+    const res = (await postAction({ action: 'cut_group', id, rollId, hangerNumber })) as {
+      cutCount: number;
+      groupRemaining?: number;
+    };
+    total += res.cutCount || 0;
+    if (!res.groupRemaining) break;
+  }
+  return { cutCount: total };
+};
+
 export const deleteOrder = (id: number) => postAction({ action: 'delete_order', id });
 
 export interface TakenOrder {
@@ -169,6 +191,10 @@ export const takeStack = (userId: number, workshopId: number, shiftNumber?: numb
 export interface TakeOrderResult {
   success: true;
   orderId: number;
+  /** Ключ связки, если швея получила заказ Яндекса из нескольких вещей. */
+  groupKey?: string | null;
+  /** Сколько вещей выдано одним нажатием: связка приходит целиком. */
+  takenCount?: number;
 }
 
 export const takeOrder = (userId: number): Promise<TakeOrderResult> =>

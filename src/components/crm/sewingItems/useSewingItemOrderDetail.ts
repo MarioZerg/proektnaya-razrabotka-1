@@ -4,6 +4,7 @@ import {
   fetchOrderDetail,
   updateOrder,
   cutOrder,
+  cutOrderGroup,
   sendToStickering,
   cancelOrder,
   type Order,
@@ -105,6 +106,31 @@ export const useSewingItemOrderDetail = ({
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** Раскроить всю связку Яндекса разом: закройщик отправляет в цех весь заказ покупателя
+   * одной кнопкой, чтобы его потом целиком взяла одна швея. */
+  const handleCutGroup = async (rollId?: number, hangerNumber?: number) => {
+    if (!selectedOrder) return;
+    setCutting(true);
+    try {
+      const res = await cutOrderGroup(selectedOrder.id, rollId, hangerNumber);
+      toast({
+        title: `Связка раскроена: ${res.cutCount} вещей`,
+        description: 'Повесьте их вместе — заказ целиком возьмёт одна швея',
+      });
+      setSelectedOrder({ ...selectedOrder, sewingStatus: 'Раскроено' });
+      load();
+      loadDetail(selectedOrder.id);
+    } catch (e) {
+      toast({
+        title: 'Не удалось раскроить связку',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setCutting(false);
     }
   };
 
@@ -214,6 +240,7 @@ export const useSewingItemOrderDetail = ({
     handleAssignWorkshop,
     handleStatusChange,
     handleCut,
+    handleCutGroup,
     handleSendToStickering,
     handleCancelOrder,
     reloadSelected,

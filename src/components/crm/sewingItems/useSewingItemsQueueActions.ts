@@ -102,8 +102,17 @@ export const useSewingItemsQueueActions = ({
     setTakingOrder(true);
     setTakeOrderCooldown(true);
     try {
-      await takeOrder(userId);
-      toast({ title: 'Заказ получен' });
+      const res = await takeOrder(userId);
+      // Связка Яндекса прилетает швее целиком одним нажатием — сообщаем, сколько вещей
+      // пришло, чтобы она сразу понимала объём работы.
+      if (res?.takenCount && res.takenCount > 1) {
+        toast({
+          title: `Получен заказ из ${res.takenCount} вещей`,
+          description: 'Это один заказ покупателя — шьётся целиком вами, ярлык на него общий',
+        });
+      } else {
+        toast({ title: 'Заказ получен' });
+      }
       setActiveTab('В работе');
       load();
     } catch (e) {

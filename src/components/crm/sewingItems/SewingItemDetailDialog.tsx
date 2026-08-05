@@ -33,6 +33,8 @@ interface SewingItemDetailDialogProps {
   onAssignUser: (userId: string) => void;
   onAssignWorkshop: (workshopId: string) => void;
   onCut: (rollId?: number, hangerNumber?: number) => void;
+  /** Раскроить всю связку Яндекса разом (заказ покупателя из нескольких вещей). */
+  onCutGroup: (rollId?: number, hangerNumber?: number) => void;
   readOnly?: boolean;
   isCutterView?: boolean;
   isSewerView?: boolean;
@@ -64,6 +66,7 @@ const SewingItemDetailDialog = ({
   onAssignUser,
   onAssignWorkshop,
   onCut,
+  onCutGroup,
   readOnly = false,
   isCutterView = false,
   isSewerView = false,
@@ -103,6 +106,13 @@ const SewingItemDetailDialog = ({
                 {marketplaceLogo[selectedOrder.marketplace]?.label || selectedOrder.marketplace}
               </span>
               <Badge variant="outline">{selectedOrder.orderType}</Badge>
+              {/* Связка Яндекса: швея должна видеть, что это часть большого заказа и сколько
+                  вещей в нём всего — заказ шьётся целиком одним человеком. */}
+              {selectedOrder.groupSize && selectedOrder.groupSize > 1 && (
+                <Badge className="bg-violet-600 text-white hover:bg-violet-600">
+                  Связка: вещь {selectedOrder.groupPosition} из {selectedOrder.groupSize}
+                </Badge>
+              )}
               {selectedOrder.cluster && (
                 <Badge variant="outline" className="text-muted-foreground">
                   {selectedOrder.cluster}
@@ -156,6 +166,7 @@ const SewingItemDetailDialog = ({
                 onAssignUser={onAssignUser}
                 onAssignWorkshop={onAssignWorkshop}
                 onCut={onCut}
+                onCutGroup={onCutGroup}
                 isCutterView={isCutterView}
                 isSewerView={isSewerView}
                 availableRolls={availableRolls}

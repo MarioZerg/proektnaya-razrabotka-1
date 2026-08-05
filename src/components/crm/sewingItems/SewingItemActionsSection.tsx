@@ -29,6 +29,7 @@ interface SewingItemActionsSectionProps {
   onAssignUser: (userId: string) => void;
   onAssignWorkshop: (workshopId: string) => void;
   onCut: (rollId?: number, hangerNumber?: number) => void;
+  onCutGroup: (rollId?: number, hangerNumber?: number) => void;
   isCutterView: boolean;
   isSewerView: boolean;
   availableRolls: Roll[];
@@ -47,6 +48,7 @@ const SewingItemActionsSection = ({
   onAssignUser,
   onAssignWorkshop,
   onCut,
+  onCutGroup,
   isCutterView,
   isSewerView,
   availableRolls,
@@ -154,6 +156,26 @@ const SewingItemActionsSection = ({
               </>
             )}
           </Button>
+
+          {/* Заказ Яндекса из нескольких вещей отправляем в цех ЦЕЛИКОМ одной кнопкой: иначе
+              заказ из 30 вещей пришлось бы раскраивать 30 нажатиями, а швея потом собирала бы
+              его по кусочкам. Связка вешается вместе — её берёт одна швея. */}
+          {selectedOrder.groupSize && selectedOrder.groupSize > 1 && (
+            <Button
+              variant="outline"
+              className="border-violet-500 text-violet-700 hover:bg-violet-50 hover:text-violet-800"
+              onClick={() =>
+                onCutGroup(
+                  selectedRollId ? Number(selectedRollId) : undefined,
+                  selectedHanger ? Number(selectedHanger) : undefined
+                )
+              }
+              disabled={cutting || !selectedRollId}
+            >
+              <Icon name="Package" size={16} className="mr-2" />
+              Раскроить всю связку — {selectedOrder.groupSize} вещей
+            </Button>
+          )}
         </CardContent>
       </Card>
     );

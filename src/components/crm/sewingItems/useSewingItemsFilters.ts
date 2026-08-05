@@ -114,6 +114,19 @@ export const useSewingItemsFilters = ({
     (o) => o.sewingStatus === 'В работе' && o.assignedUserId === userId
   ).length;
 
+  // Связки Яндекса у этой швеи: заказ покупателя шьётся целиком одним человеком, поэтому
+  // показываем прогресс — сколько вещей заказа уже ушло со стола (на стикеровку/готово).
+  const myGroups = Object.values(
+    orders
+      .filter((o) => o.groupKey && (o.assignedUserId === userId || o.sewerUserId === userId))
+      .reduce<Record<string, { groupKey: string; total: number; done: number }>>((acc, o) => {
+        const key = o.groupKey as string;
+        if (!acc[key]) acc[key] = { groupKey: key, total: o.groupSize || 0, done: 0 };
+        if (o.sewingStatus !== 'В работе') acc[key].done += 1;
+        return acc;
+      }, {})
+  ).filter((g) => g.total > 1 && g.done < g.total);
+
   return {
     activeTab,
     setActiveTab,
@@ -144,5 +157,6 @@ export const useSewingItemsFilters = ({
     countForTab,
     myUnfinishedCount,
     myInWorkCount,
+    myGroups,
   };
 };

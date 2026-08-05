@@ -176,6 +176,12 @@ def nearest_timeout_width(width):
     return TIMEOUT_WIDTHS[-1]
 
 
+# Сколько вещей связки раскраиваем за один вызов функции. Раскрой одной вещи — это десятки
+# запросов к базе, поэтому большую связку обрабатываем порциями, иначе упираемся в лимит
+# времени выполнения. Для закройщика это незаметно: фронтенд повторяет вызов автоматически.
+GROUP_CUT_BATCH = 6
+
+
 def handler(event: dict, context) -> dict:
     """Управляет заказами с маркетплейсов (OZON, WB, Яндекс.Маркет).
 
@@ -209,6 +215,11 @@ def handler(event: dict, context) -> dict:
           Возвращает orders — полные данные взятых заказов (orderNumber, orderType, material,
           width, height), отсортированные по материалу — для немедленной печати листа закройщика
     POST /  { action: 'cut', id, rollId }
+    POST /  { action: 'cut_group', id, rollId }
+        - раскроить и отправить в цех ВСЮ связку Яндекса разом (все вещи одного заказа
+          покупателя, закреплённые за этим закройщиком). Материалы, лимиты и начисления
+          считаются для каждой вещи как при обычном раскрое; если материала не хватило,
+          не раскраивается ничего
         - переводит заказ в статус "Раскроено". Тюль списывается с указанного закройщиком
           рулона rollId (должен быть в его цехе/смене), упаковка (этикетки, пакеты) списывается
           автоматически по FIFO со склада. Тесьма (Аксессуары) НЕ списывается на этом этапе —
@@ -832,7 +843,13 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
-            if action == 'cut':
+            if action in ('cut', 'cut_group'):
+                # 'cut' — раскроить одну вещь.
+                # 'cut_group' — раскроить и отправить в цех ВСЮ связку Яндекса разом: заказ
+                # покупателя из 30 вещей закройщик не должен раскраивать по одной кнопке на
+                # каждую, а швея потом собирать его по кусочкам. Списание материалов, лимиты
+                # и начисление зарплаты для каждой вещи считаются точно так же, как при
+                # обычном раскрое — просто в цикле.
                 item_id = body_data.get('id')
                 roll_id_chosen = body_data.get('rollId')
                 # Вешалка, выбранная закройщиком при раскрое (необязательно). Запоминается за
@@ -845,302 +862,358 @@ def handler(event: dict, context) -> dict:
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
 
-                cur.execute(
-                    "SELECT material, width, height, workshop_id, assigned_user_id FROM orders WHERE id = %s",
-                    (int(item_id),),
-                )
-                order_row = cur.fetchone()
-                if not order_row:
-                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-                material, width, height, order_workshop_id, order_assigned_user_id = order_row
-
-                # Лимит метража и макс. число рулонов на смену закройщика (cutter_daily_limit,
-                # max_fabric_rolls_per_shift) — считаются в пределах ТЕКУЩЕЙ открытой рабочей
-                # смены (сбрасываются при открытии новой). Без открытой смены не применяются.
-                if order_assigned_user_id:
+                # Для связки собираем все её ещё не раскроенные вещи, закреплённые за этим же
+                # закройщиком, и обрабатываем их одну за другой в общей транзакции: либо
+                # раскраивается вся связка, либо (при нехватке материала) не меняется ничего.
+                cut_queue = [int(item_id)]
+                if action == 'cut_group':
                     cur.execute(
-                        "SELECT opened_at FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
-                        "ORDER BY opened_at DESC LIMIT 1",
-                        (order_assigned_user_id,),
+                        "SELECT group_key, assigned_user_id FROM orders WHERE id = %s",
+                        (int(item_id),),
                     )
-                    cutter_session_row = cur.fetchone()
-                    if cutter_session_row:
-                        session_opened_at = cutter_session_row[0]
-                        cutter_daily_limit = get_setting_float(cur, order_workshop_id, 'cutter_daily_limit', 0)
-                        if cutter_daily_limit > 0:
+                    g_row = cur.fetchone()
+                    if not g_row or not g_row[0]:
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'Этот заказ не входит в связку'}, ensure_ascii=False),
+                        }
+                    # Связка может быть огромной (заказ из 30+ вещей). Раскрой каждой вещи —
+                    # это десятки запросов к базе (состав товара, рулоны, списание, зарплата),
+                    # поэтому за один вызов обрабатываем ограниченную порцию: иначе функция
+                    # упирается в лимит времени и запросов и падает на середине. Фронтенд
+                    # вызывает действие повторно, пока в связке остаются нераскроенные вещи —
+                    # для закройщика это по-прежнему ОДНА кнопка.
+                    cur.execute(
+                        "SELECT id FROM orders WHERE group_key = %s AND sewing_status = 'На раскрое' "
+                        "AND (assigned_user_id = %s OR %s IS NULL) "
+                        "ORDER BY group_position ASC NULLS LAST, id ASC",
+                        (g_row[0], g_row[1], g_row[1]),
+                    )
+                    all_pending = [r[0] for r in cur.fetchall()] or [int(item_id)]
+                    cut_queue = all_pending[:GROUP_CUT_BATCH]
+                    group_remaining = max(0, len(all_pending) - len(cut_queue))
+
+                # Связка раскраивается по принципу «всё или ничего»: если на какой-то вещи
+                # не хватило материала, откатываем ВСЮ транзакцию (conn.rollback перед каждым
+                # выходом с ошибкой). Иначе часть заказа осталась бы раскроенной, часть нет —
+                # и связка застряла бы разорванной посреди цеха.
+                group_remaining = locals().get('group_remaining', 0)
+                cut_done = []
+                for item_id in cut_queue:
+
+                    cur.execute(
+                        "SELECT material, width, height, workshop_id, assigned_user_id FROM orders WHERE id = %s",
+                        (int(item_id),),
+                    )
+                    order_row = cur.fetchone()
+                    if not order_row:
+                            conn.rollback()
+                            return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
+                    material, width, height, order_workshop_id, order_assigned_user_id = order_row
+
+                    # Лимит метража и макс. число рулонов на смену закройщика (cutter_daily_limit,
+                    # max_fabric_rolls_per_shift) — считаются в пределах ТЕКУЩЕЙ открытой рабочей
+                    # смены (сбрасываются при открытии новой). Без открытой смены не применяются.
+                    if order_assigned_user_id:
                             cur.execute(
-                                "SELECT COALESCE(SUM(width), 0) FROM orders WHERE assigned_user_id = %s "
-                                "AND sewing_status IN ('Раскроено', 'В работе', 'Стикеровка', 'Готовые') AND cut_at >= %s",
-                                (order_assigned_user_id, session_opened_at),
+                                    "SELECT opened_at FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                                    "ORDER BY opened_at DESC LIMIT 1",
+                                    (order_assigned_user_id,),
                             )
-                            cut_meters = float(cur.fetchone()[0] or 0) / 100
-                            if cut_meters >= cutter_daily_limit:
-                                return {
+                            cutter_session_row = cur.fetchone()
+                            if cutter_session_row:
+                                    session_opened_at = cutter_session_row[0]
+                                    cutter_daily_limit = get_setting_float(cur, order_workshop_id, 'cutter_daily_limit', 0)
+                                    if cutter_daily_limit > 0:
+                                            cur.execute(
+                                                    "SELECT COALESCE(SUM(width), 0) FROM orders WHERE assigned_user_id = %s "
+                                                    "AND sewing_status IN ('Раскроено', 'В работе', 'Стикеровка', 'Готовые') AND cut_at >= %s",
+                                                    (order_assigned_user_id, session_opened_at),
+                                            )
+                                            cut_meters = float(cur.fetchone()[0] or 0) / 100
+                                            if cut_meters >= cutter_daily_limit:
+                                                    conn.rollback()
+                                                    return {
+                                                            'statusCode': 409,
+                                                            'headers': headers,
+                                                            'body': json.dumps({'error': f'Лимит метража на смену исчерпан: {round(cut_meters, 2)}/{cutter_daily_limit} пог.м.'}),
+                                                    }
+
+                                    max_rolls = get_setting_int(cur, order_workshop_id, 'max_fabric_rolls_per_shift', 0)
+                                    if max_rolls > 0 and roll_id_chosen:
+                                            cur.execute(
+                                                    "SELECT COUNT(DISTINCT omu.roll_id) FROM order_material_usage omu "
+                                                    "JOIN orders o ON o.id = omu.order_id "
+                                                    "WHERE o.assigned_user_id = %s AND o.cut_at >= %s AND omu.roll_id IS NOT NULL",
+                                                    (order_assigned_user_id, session_opened_at),
+                                            )
+                                            rolls_used = cur.fetchone()[0]
+                                            cur.execute(
+                                                    "SELECT 1 FROM order_material_usage omu JOIN orders o ON o.id = omu.order_id "
+                                                    "WHERE o.assigned_user_id = %s AND o.cut_at >= %s AND omu.roll_id = %s LIMIT 1",
+                                                    (order_assigned_user_id, session_opened_at, int(roll_id_chosen)),
+                                            )
+                                            roll_already_used = bool(cur.fetchone())
+                                            if not roll_already_used and rolls_used >= max_rolls:
+                                                    conn.rollback()
+                                                    return {
+                                                            'statusCode': 409,
+                                                            'headers': headers,
+                                                            'body': json.dumps({'error': f'Лимит рулонов на смену исчерпан: {rolls_used}/{max_rolls}'}),
+                                                    }
+
+                    # Текущая смена закройщика берётся из его ОТКРЫТОЙ shift_sessions (а не из
+                    # статичного users.shift_number) — это учитывает гостевой режим: если
+                    # сотрудник сегодня зашёл в чужую смену, рулон должен списываться именно с
+                    # неё. Если открытой смены нет (например, старые тестовые данные) — fallback
+                    # на штатную смену профиля.
+                    order_shift_number = None
+                    if order_assigned_user_id:
+                            cur.execute(
+                                    "SELECT shift_number FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                                    "ORDER BY opened_at DESC LIMIT 1",
+                                    (order_assigned_user_id,),
+                            )
+                            session_row = cur.fetchone()
+                            if session_row and session_row[0] is not None:
+                                    order_shift_number = session_row[0]
+                            else:
+                                    cur.execute("SELECT shift_number FROM users WHERE id = %s", (order_assigned_user_id,))
+                                    u_row = cur.fetchone()
+                                    order_shift_number = u_row[0] if u_row else None
+
+                    cur.execute(
+                            "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                            (material, width, height),
+                    )
+                    item_row = cur.fetchone()
+                    if not item_row:
+                            conn.rollback()
+                            return {
+                                    'statusCode': 404,
+                                    'headers': headers,
+                                    'body': json.dumps({'error': 'Не найден товар маркетплейса для этого материала/размера — расход материалов не определён'}),
+                            }
+                    marketplace_item_id = item_row[0]
+
+                    cur.execute(
+                            "SELECT material_id, quantity FROM marketplace_item_materials WHERE marketplace_item_id = %s",
+                            (marketplace_item_id,),
+                    )
+                    needed = cur.fetchall()
+                    if not needed:
+                            conn.rollback()
+                            return {
+                                    'statusCode': 400,
+                                    'headers': headers,
+                                    'body': json.dumps({'error': 'У товара не заполнен расход материалов'}),
+                            }
+
+                    cur.execute("SELECT id FROM material_types WHERE name = 'Тюль'")
+                    tul_type_row = cur.fetchone()
+                    tul_type_id = tul_type_row[0] if tul_type_row else None
+
+                    cur.execute("SELECT id FROM material_types WHERE name = 'Аксессуары'")
+                    acc_type_row = cur.fetchone()
+                    acc_type_id = acc_type_row[0] if acc_type_row else None
+
+                    # Упаковка (пакет, этикетка на пакет) расходуется физически только на
+                    # стикеровке, поэтому при раскрое её не трогаем — списание идёт на терминале
+                    # упаковщика при закрытии заказа.
+                    cur.execute("SELECT id FROM material_types WHERE name = 'Упаковка'")
+                    pack_type_row = cur.fetchone()
+                    pack_type_id = pack_type_row[0] if pack_type_row else None
+
+                    fabric_material_id = None
+                    accessory_material_ids = set()
+                    packaging_material_ids = set()
+                    for material_id, _qty in needed:
+                            cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
+                            mt_row = cur.fetchone()
+                            if not mt_row:
+                                    continue
+                            if tul_type_id and mt_row[0] == tul_type_id and fabric_material_id is None:
+                                    fabric_material_id = material_id
+                            elif acc_type_id and mt_row[0] == acc_type_id:
+                                    accessory_material_ids.add(material_id)
+                            elif pack_type_id and mt_row[0] == pack_type_id:
+                                    packaging_material_ids.add(material_id)
+
+                    if fabric_material_id and not roll_id_chosen:
+                            conn.rollback()
+                            return {
+                                    'statusCode': 400,
+                                    'headers': headers,
+                                    'body': json.dumps({'error': 'Выберите рулон тюля для раскроя'}),
+                            }
+
+                    shortages = []
+                    write_offs = []
+                    for material_id, qty_needed in needed:
+                            qty_needed = float(qty_needed)
+
+                            if material_id in accessory_material_ids:
+                                    # Тесьма списывается позже швеёй перед отправкой на стикеровку
+                                    continue
+
+                            if material_id in packaging_material_ids:
+                                    # Упаковка списывается на стикеровке (терминал упаковщика)
+                                    continue
+
+                            if fabric_material_id and material_id == fabric_material_id:
+                                    cur.execute(
+                                            "SELECT id, remaining_quantity, workshop_id, shift_number FROM rolls WHERE id = %s "
+                                            "AND material_id = %s AND status = 'in_workshop'",
+                                            (int(roll_id_chosen), material_id),
+                                    )
+                                    roll_row = cur.fetchone()
+                                    if not roll_row:
+                                            conn.rollback()
+                                            return {
+                                                    'statusCode': 404,
+                                                    'headers': headers,
+                                                    'body': json.dumps({'error': 'Выбранный рулон не найден или недоступен'}),
+                                            }
+                                    if order_workshop_id and roll_row[2] != order_workshop_id:
+                                            conn.rollback()
+                                            return {
+                                                    'statusCode': 409,
+                                                    'headers': headers,
+                                                    'body': json.dumps({'error': 'Рулон не принадлежит вашему цеху/смене'}),
+                                            }
+                                    if order_shift_number and roll_row[3] != order_shift_number:
+                                            conn.rollback()
+                                            return {
+                                                    'statusCode': 409,
+                                                    'headers': headers,
+                                                    'body': json.dumps({'error': 'Рулон не принадлежит вашей смене'}),
+                                            }
+                                    roll_remaining = float(roll_row[1])
+                                    if roll_remaining < qty_needed:
+                                            cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
+                                            mat_name, mat_unit = cur.fetchone()
+                                            shortages.append(
+                                                    f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, "
+                                                    f"в рулоне осталось {round(roll_remaining, 2)} {mat_unit}"
+                                            )
+                                            continue
+                                    write_offs.append((roll_row[0], material_id, qty_needed))
+                                    continue
+
+                            cur.execute(
+                                    "SELECT id, remaining_quantity FROM rolls "
+                                    "WHERE material_id = %s AND status IN ('in_storage', 'in_workshop') AND remaining_quantity > 0 "
+                                    "ORDER BY created_at ASC",
+                                    (material_id,),
+                            )
+                            available_rolls = cur.fetchall()
+                            total_available = sum(float(r[1]) for r in available_rolls)
+                            if total_available < qty_needed:
+                                    cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
+                                    mat_name, mat_unit = cur.fetchone()
+                                    shortages.append(
+                                            f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, "
+                                            f"доступно {round(total_available, 2)} {mat_unit}"
+                                    )
+                                    continue
+
+                            remaining_to_take = qty_needed
+                            for roll_id, roll_remaining in available_rolls:
+                                    if remaining_to_take <= 0:
+                                            break
+                                    take = min(float(roll_remaining), remaining_to_take)
+                                    write_offs.append((roll_id, material_id, take))
+                                    remaining_to_take -= take
+
+                    if shortages:
+                            conn.rollback()
+                            return {
                                     'statusCode': 409,
                                     'headers': headers,
-                                    'body': json.dumps({'error': f'Лимит метража на смену исчерпан: {round(cut_meters, 2)}/{cutter_daily_limit} пог.м.'}),
-                                }
+                                    'body': json.dumps({'error': 'Недостаточно материалов на складе: ' + '; '.join(shortages)}),
+                            }
 
-                        max_rolls = get_setting_int(cur, order_workshop_id, 'max_fabric_rolls_per_shift', 0)
-                        if max_rolls > 0 and roll_id_chosen:
+                    for roll_id, material_id, take in write_offs:
                             cur.execute(
-                                "SELECT COUNT(DISTINCT omu.roll_id) FROM order_material_usage omu "
-                                "JOIN orders o ON o.id = omu.order_id "
-                                "WHERE o.assigned_user_id = %s AND o.cut_at >= %s AND omu.roll_id IS NOT NULL",
-                                (order_assigned_user_id, session_opened_at),
+                                    "SELECT remaining_quantity FROM rolls WHERE id = %s",
+                                    (roll_id,),
                             )
-                            rolls_used = cur.fetchone()[0]
+                            roll_remaining = float(cur.fetchone()[0])
+                            new_remaining = roll_remaining - take
+                            new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
                             cur.execute(
-                                "SELECT 1 FROM order_material_usage omu JOIN orders o ON o.id = omu.order_id "
-                                "WHERE o.assigned_user_id = %s AND o.cut_at >= %s AND omu.roll_id = %s LIMIT 1",
-                                (order_assigned_user_id, session_opened_at, int(roll_id_chosen)),
+                                    f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {roll_id}"
                             )
-                            roll_already_used = bool(cur.fetchone())
-                            if not roll_already_used and rolls_used >= max_rolls:
-                                return {
-                                    'statusCode': 409,
-                                    'headers': headers,
-                                    'body': json.dumps({'error': f'Лимит рулонов на смену исчерпан: {rolls_used}/{max_rolls}'}),
-                                }
-
-                # Текущая смена закройщика берётся из его ОТКРЫТОЙ shift_sessions (а не из
-                # статичного users.shift_number) — это учитывает гостевой режим: если
-                # сотрудник сегодня зашёл в чужую смену, рулон должен списываться именно с
-                # неё. Если открытой смены нет (например, старые тестовые данные) — fallback
-                # на штатную смену профиля.
-                order_shift_number = None
-                if order_assigned_user_id:
-                    cur.execute(
-                        "SELECT shift_number FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
-                        "ORDER BY opened_at DESC LIMIT 1",
-                        (order_assigned_user_id,),
-                    )
-                    session_row = cur.fetchone()
-                    if session_row and session_row[0] is not None:
-                        order_shift_number = session_row[0]
-                    else:
-                        cur.execute("SELECT shift_number FROM users WHERE id = %s", (order_assigned_user_id,))
-                        u_row = cur.fetchone()
-                        order_shift_number = u_row[0] if u_row else None
-
-                cur.execute(
-                    "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
-                    (material, width, height),
-                )
-                item_row = cur.fetchone()
-                if not item_row:
-                    return {
-                        'statusCode': 404,
-                        'headers': headers,
-                        'body': json.dumps({'error': 'Не найден товар маркетплейса для этого материала/размера — расход материалов не определён'}),
-                    }
-                marketplace_item_id = item_row[0]
-
-                cur.execute(
-                    "SELECT material_id, quantity FROM marketplace_item_materials WHERE marketplace_item_id = %s",
-                    (marketplace_item_id,),
-                )
-                needed = cur.fetchall()
-                if not needed:
-                    return {
-                        'statusCode': 400,
-                        'headers': headers,
-                        'body': json.dumps({'error': 'У товара не заполнен расход материалов'}),
-                    }
-
-                cur.execute("SELECT id FROM material_types WHERE name = 'Тюль'")
-                tul_type_row = cur.fetchone()
-                tul_type_id = tul_type_row[0] if tul_type_row else None
-
-                cur.execute("SELECT id FROM material_types WHERE name = 'Аксессуары'")
-                acc_type_row = cur.fetchone()
-                acc_type_id = acc_type_row[0] if acc_type_row else None
-
-                # Упаковка (пакет, этикетка на пакет) расходуется физически только на
-                # стикеровке, поэтому при раскрое её не трогаем — списание идёт на терминале
-                # упаковщика при закрытии заказа.
-                cur.execute("SELECT id FROM material_types WHERE name = 'Упаковка'")
-                pack_type_row = cur.fetchone()
-                pack_type_id = pack_type_row[0] if pack_type_row else None
-
-                fabric_material_id = None
-                accessory_material_ids = set()
-                packaging_material_ids = set()
-                for material_id, _qty in needed:
-                    cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
-                    mt_row = cur.fetchone()
-                    if not mt_row:
-                        continue
-                    if tul_type_id and mt_row[0] == tul_type_id and fabric_material_id is None:
-                        fabric_material_id = material_id
-                    elif acc_type_id and mt_row[0] == acc_type_id:
-                        accessory_material_ids.add(material_id)
-                    elif pack_type_id and mt_row[0] == pack_type_id:
-                        packaging_material_ids.add(material_id)
-
-                if fabric_material_id and not roll_id_chosen:
-                    return {
-                        'statusCode': 400,
-                        'headers': headers,
-                        'body': json.dumps({'error': 'Выберите рулон тюля для раскроя'}),
-                    }
-
-                shortages = []
-                write_offs = []
-                for material_id, qty_needed in needed:
-                    qty_needed = float(qty_needed)
-
-                    if material_id in accessory_material_ids:
-                        # Тесьма списывается позже швеёй перед отправкой на стикеровку
-                        continue
-
-                    if material_id in packaging_material_ids:
-                        # Упаковка списывается на стикеровке (терминал упаковщика)
-                        continue
-
-                    if fabric_material_id and material_id == fabric_material_id:
-                        cur.execute(
-                            "SELECT id, remaining_quantity, workshop_id, shift_number FROM rolls WHERE id = %s "
-                            "AND material_id = %s AND status = 'in_workshop'",
-                            (int(roll_id_chosen), material_id),
-                        )
-                        roll_row = cur.fetchone()
-                        if not roll_row:
-                            return {
-                                'statusCode': 404,
-                                'headers': headers,
-                                'body': json.dumps({'error': 'Выбранный рулон не найден или недоступен'}),
-                            }
-                        if order_workshop_id and roll_row[2] != order_workshop_id:
-                            return {
-                                'statusCode': 409,
-                                'headers': headers,
-                                'body': json.dumps({'error': 'Рулон не принадлежит вашему цеху/смене'}),
-                            }
-                        if order_shift_number and roll_row[3] != order_shift_number:
-                            return {
-                                'statusCode': 409,
-                                'headers': headers,
-                                'body': json.dumps({'error': 'Рулон не принадлежит вашей смене'}),
-                            }
-                        roll_remaining = float(roll_row[1])
-                        if roll_remaining < qty_needed:
-                            cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
-                            mat_name, mat_unit = cur.fetchone()
-                            shortages.append(
-                                f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, "
-                                f"в рулоне осталось {round(roll_remaining, 2)} {mat_unit}"
+                            cur.execute(
+                                    f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
+                                    f"VALUES ({int(item_id)}, {material_id}, {roll_id}, {take})"
                             )
-                            continue
-                        write_offs.append((roll_row[0], material_id, qty_needed))
-                        continue
 
+                    # cutter_user_id фиксирует, КТО именно раскроил заказ, отдельно от
+                    # assigned_user_id — последний будет перезаписан на швею при take_order,
+                    # а история "кто кроил" должна остаться видна на карточке товара.
+                    cutter_sql = f", cutter_user_id = {order_assigned_user_id}" if order_assigned_user_id else ""
+                    # Если закройщик выбрал вешалку — ставим её; иначе берём его последнюю вешалку
+                    # (запоминается за закройщиком, чтобы не выбирать каждый раз заново).
+                    effective_hanger = hanger_number
+                    if effective_hanger is None and order_assigned_user_id:
+                            cur.execute("SELECT last_hanger_number FROM users WHERE id = %s", (order_assigned_user_id,))
+                            lh = cur.fetchone()
+                            effective_hanger = lh[0] if lh and lh[0] else None
+                    hanger_sql = f", hanger_number = {int(effective_hanger)}" if effective_hanger else ""
                     cur.execute(
-                        "SELECT id, remaining_quantity FROM rolls "
-                        "WHERE material_id = %s AND status IN ('in_storage', 'in_workshop') AND remaining_quantity > 0 "
-                        "ORDER BY created_at ASC",
-                        (material_id,),
+                            f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now(){cutter_sql}{hanger_sql} WHERE id = {int(item_id)}"
                     )
-                    available_rolls = cur.fetchall()
-                    total_available = sum(float(r[1]) for r in available_rolls)
-                    if total_available < qty_needed:
-                        cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
-                        mat_name, mat_unit = cur.fetchone()
-                        shortages.append(
-                            f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, "
-                            f"доступно {round(total_available, 2)} {mat_unit}"
-                        )
-                        continue
+                    # Запоминаем выбранную вешалку за закройщиком для следующих заказов.
+                    if hanger_number and order_assigned_user_id:
+                            cur.execute(
+                                    "UPDATE users SET last_hanger_number = %s WHERE id = %s",
+                                    (int(hanger_number), order_assigned_user_id),
+                            )
 
-                    remaining_to_take = qty_needed
-                    for roll_id, roll_remaining in available_rolls:
-                        if remaining_to_take <= 0:
-                            break
-                        take = min(float(roll_remaining), remaining_to_take)
-                        write_offs.append((roll_id, material_id, take))
-                        remaining_to_take -= take
+                    # Начисление закройщику: ставка за 1 пог.м. по материалу И ширине товара
+                    # (salary_rates, role='cutter', material_id+width), берётся из тарифов цеха,
+                    # в котором выполняется заказ (order_workshop_id) — тарифы полностью раздельные
+                    # по цехам. Метраж для оплаты — ЧИСТАЯ ширина товара (width/100 пог.м.), а НЕ
+                    # технологический расход ткани со склада (marketplace_item_materials.quantity,
+                    # который включает запас на подгибку и используется только для списания со
+                    # склада) — иначе оплата некорректно завышалась/дробилась на копейки запаса.
+                    # Если заказ позже удалят из раскроя (cancel_order/delete_order), начисление
+                    # снимается там же.
+                    if fabric_material_id and order_assigned_user_id and order_workshop_id and width:
+                            cur.execute(
+                                    "SELECT rate FROM salary_rates WHERE role = 'cutter' AND material_id = %s "
+                                    "AND width = %s AND workshop_id = %s",
+                                    (fabric_material_id, int(width), order_workshop_id),
+                            )
+                            rate_row = cur.fetchone()
+                            rate = float(rate_row[0]) if rate_row else 0
+                            if rate > 0:
+                                    cur.execute("SELECT name FROM materials WHERE id = %s", (fabric_material_id,))
+                                    mat_name = cur.fetchone()[0]
+                                    pay_meters = round(float(width) / 100, 2)
+                                    amount = round(pay_meters * rate, 2)
+                                    cur.execute(
+                                            f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                                            f"VALUES ({order_assigned_user_id}, 'cutter_cut', {amount}, {int(item_id)}, "
+                                            f"'Раскрой заказа #{item_id} ({mat_name} {int(width)} см) - {pay_meters} пог.м.') "
+                                            f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
+                                    )
 
-                if shortages:
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps({'error': 'Недостаточно материалов на складе: ' + '; '.join(shortages)}),
-                    }
-
-                for roll_id, material_id, take in write_offs:
-                    cur.execute(
-                        "SELECT remaining_quantity FROM rolls WHERE id = %s",
-                        (roll_id,),
-                    )
-                    roll_remaining = float(cur.fetchone()[0])
-                    new_remaining = roll_remaining - take
-                    new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
-                    cur.execute(
-                        f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {roll_id}"
-                    )
-                    cur.execute(
-                        f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
-                        f"VALUES ({int(item_id)}, {material_id}, {roll_id}, {take})"
-                    )
-
-                # cutter_user_id фиксирует, КТО именно раскроил заказ, отдельно от
-                # assigned_user_id — последний будет перезаписан на швею при take_order,
-                # а история "кто кроил" должна остаться видна на карточке товара.
-                cutter_sql = f", cutter_user_id = {order_assigned_user_id}" if order_assigned_user_id else ""
-                # Если закройщик выбрал вешалку — ставим её; иначе берём его последнюю вешалку
-                # (запоминается за закройщиком, чтобы не выбирать каждый раз заново).
-                effective_hanger = hanger_number
-                if effective_hanger is None and order_assigned_user_id:
-                    cur.execute("SELECT last_hanger_number FROM users WHERE id = %s", (order_assigned_user_id,))
-                    lh = cur.fetchone()
-                    effective_hanger = lh[0] if lh and lh[0] else None
-                hanger_sql = f", hanger_number = {int(effective_hanger)}" if effective_hanger else ""
-                cur.execute(
-                    f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now(){cutter_sql}{hanger_sql} WHERE id = {int(item_id)}"
-                )
-                # Запоминаем выбранную вешалку за закройщиком для следующих заказов.
-                if hanger_number and order_assigned_user_id:
-                    cur.execute(
-                        "UPDATE users SET last_hanger_number = %s WHERE id = %s",
-                        (int(hanger_number), order_assigned_user_id),
+                    cut_done.append(item_id)
+                    log_action(
+                            cur, actor_id, actor_name, 'cut', 'order', item_id,
+                            f'Раскроил заказ #{item_id}',
+                            {'rollId': roll_id_chosen},
                     )
 
-                # Начисление закройщику: ставка за 1 пог.м. по материалу И ширине товара
-                # (salary_rates, role='cutter', material_id+width), берётся из тарифов цеха,
-                # в котором выполняется заказ (order_workshop_id) — тарифы полностью раздельные
-                # по цехам. Метраж для оплаты — ЧИСТАЯ ширина товара (width/100 пог.м.), а НЕ
-                # технологический расход ткани со склада (marketplace_item_materials.quantity,
-                # который включает запас на подгибку и используется только для списания со
-                # склада) — иначе оплата некорректно завышалась/дробилась на копейки запаса.
-                # Если заказ позже удалят из раскроя (cancel_order/delete_order), начисление
-                # снимается там же.
-                if fabric_material_id and order_assigned_user_id and order_workshop_id and width:
-                    cur.execute(
-                        "SELECT rate FROM salary_rates WHERE role = 'cutter' AND material_id = %s "
-                        "AND width = %s AND workshop_id = %s",
-                        (fabric_material_id, int(width), order_workshop_id),
-                    )
-                    rate_row = cur.fetchone()
-                    rate = float(rate_row[0]) if rate_row else 0
-                    if rate > 0:
-                        cur.execute("SELECT name FROM materials WHERE id = %s", (fabric_material_id,))
-                        mat_name = cur.fetchone()[0]
-                        pay_meters = round(float(width) / 100, 2)
-                        amount = round(pay_meters * rate, 2)
-                        cur.execute(
-                            f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
-                            f"VALUES ({order_assigned_user_id}, 'cutter_cut', {amount}, {int(item_id)}, "
-                            f"'Раскрой заказа #{item_id} ({mat_name} {int(width)} см) - {pay_meters} пог.м.') "
-                            f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
-                        )
-
-                log_action(
-                    cur, actor_id, actor_name, 'cut', 'order', item_id,
-                    f'Раскроил заказ #{item_id}',
-                    {'rollId': roll_id_chosen},
-                )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'cutCount': len(cut_done)}),
+                }
 
             if action == 'take_order':
                 user_id = body_data.get('userId')
@@ -1385,16 +1458,49 @@ def handler(event: dict, context) -> dict:
                                 'body': json.dumps({'error': 'Не хватает материала в цехе — ' + '; '.join(lacks)}),
                             }
 
+                # Заказ Яндекса из нескольких вещей шьётся ОДНОЙ швеёй целиком — ярлык на него
+                # общий. Поэтому выдаём сразу всю связку одним нажатием, а не по одной вещи:
+                # швея не должна жать кнопку 30 раз и упираться в лимиты на середине заказа.
+                cur.execute("SELECT group_key FROM orders WHERE id = %s", (order_id,))
+                gk_row = cur.fetchone()
+                group_key = gk_row[0] if gk_row else None
+
+                taken_ids = [order_id]
+                if group_key:
+                    cur.execute(
+                        f"SELECT id FROM orders WHERE {' AND '.join(where_parts)} "
+                        "AND group_key = %s AND id <> %s "
+                        "ORDER BY group_position ASC NULLS LAST, id ASC FOR UPDATE SKIP LOCKED",
+                        (group_key, order_id),
+                    )
+                    taken_ids += [r[0] for r in cur.fetchall()]
+
+                ids_csv = ','.join(str(int(i)) for i in taken_ids)
                 cur.execute(
                     f"UPDATE orders SET sewing_status = 'В работе', assigned_user_id = {int(user_id)}, "
-                    f"taken_at = now() WHERE id = {order_id}"
+                    f"taken_at = now() WHERE id IN ({ids_csv})"
                 )
-                log_action(
-                    cur, actor_id, actor_name, 'take_order', 'order', order_id,
-                    f'Взял в работу заказ #{order_id}',
-                )
+                if group_key and len(taken_ids) > 1:
+                    log_action(
+                        cur, actor_id, actor_name, 'take_order', 'order', order_id,
+                        f'Взяла в работу связку {group_key} целиком: {len(taken_ids)} вещей',
+                    )
+                else:
+                    log_action(
+                        cur, actor_id, actor_name, 'take_order', 'order', order_id,
+                        f'Взял в работу заказ #{order_id}',
+                    )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'orderId': order_id})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'orderId': order_id,
+                        'groupKey': group_key,
+                        'takenCount': len(taken_ids),
+                    }, ensure_ascii=False),
+                }
 
             if action == 'send_to_stickering':
                 item_id = body_data.get('id')
