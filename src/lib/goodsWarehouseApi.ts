@@ -84,13 +84,11 @@ const postAction = async (payload: Record<string, unknown>) => {
   return data;
 };
 
-export const receiveGoods = (orderId: number, shelfId?: number) =>
-  postAction({ action: 'receive', orderId, shelfId });
-
 // Приём возврата с маркетплейса по номеру заказа (ручной ввод, до появления API-интеграции).
-// Если заказ уже был на складе (даже отгружен ранее) — та же запись возвращается в "На хранении".
-export const receiveReturn = (orderNumber: string, shelfId?: number) =>
-  postAction({ action: 'receive_return', orderNumber, shelfId });
+// Полка не выбирается: вещь встаёт в очередь «Ждёт полку» и попадает на полку только
+// сканированием стикера хранения — так товар не окажется не на своём месте.
+export const receiveReturn = (orderNumber: string) =>
+  postAction({ action: 'receive_return', orderNumber });
 
 /** Кладовщик сканирует стикер хранения вещи, отменённой клиентом, и кладёт её на полку. */
 export const placeOnShelf = (barcode: string, shelfId: number) =>
@@ -106,12 +104,6 @@ export const shipLabelGoods = (barcode: string) =>
     shelfName: string | null;
     storageBarcode: string;
   }>;
-
-export const groupReceiveGoods = (orderIds: number[], shelfId?: number) =>
-  postAction({ action: 'group_receive', orderIds, shelfId });
-
-export const moveGoodsShelf = (id: number, shelfId: number | null) =>
-  postAction({ action: 'move_shelf', id, shelfId });
 
 export const moveGoodsShelfByBarcode = (barcode: string, shelfId: number | null) =>
   postAction({ action: 'move_shelf_by_barcode', barcode, shelfId });

@@ -2,38 +2,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import {
   fetchGoodsWarehouse,
-  receiveGoods,
   receiveReturn,
-  groupReceiveGoods,
   returnGoodsToWorkshop,
   markGoodsLost,
   moveGoodsShelfByBarcode,
   type GoodsWarehouseItem,
 } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
-import { fetchOrders, type Order } from '@/lib/ordersApi';
 import ReceiveReturnDialog from '@/components/crm/goodsWarehouse/ReceiveReturnDialog';
-import GroupReceiveDialog from '@/components/crm/goodsWarehouse/GroupReceiveDialog';
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
 import ShipLabelDialog from '@/components/crm/goodsWarehouse/ShipLabelDialog';
@@ -49,7 +30,6 @@ const GoodsWarehouse = () => {
 
   const [items, setItems] = useState<GoodsWarehouseItem[]>([]);
   const [shelves, setShelves] = useState<Shelf[]>([]);
-  const [readyOrders, setReadyOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [statusFilter, setStatusFilter] = useState('in_stock');
@@ -58,23 +38,12 @@ const GoodsWarehouse = () => {
   const [heightFilter, setHeightFilter] = useState('');
   const [shelfFilter, setShelfFilter] = useState('');
 
-  // Принять товар (одиночный)
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [selectedOrderId, setSelectedOrderId] = useState('');
-  const [selectedShelfId, setSelectedShelfId] = useState('');
 
   // Принять новые возвраты
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnSaving, setReturnSaving] = useState(false);
   const [returnOrderNumber, setReturnOrderNumber] = useState('');
-  const [returnShelfId, setReturnShelfId] = useState('');
 
-  // Добавить товары группой
-  const [groupOpen, setGroupOpen] = useState(false);
-  const [groupSaving, setGroupSaving] = useState(false);
-  const [groupSelectedIds, setGroupSelectedIds] = useState<number[]>([]);
-  const [groupShelfId, setGroupShelfId] = useState('');
 
   // Разложить отменённые товары по полкам (сканером) и стикеровка заказов с полок
   const [placeOpen, setPlaceOpen] = useState(false);
@@ -89,22 +58,12 @@ const GoodsWarehouse = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchGoodsWarehouse(), fetchShelves(), fetchOrders()])
-      .then(([itemsData, shelvesData, ordersData]) => {
+    // Товар попадает на склад только по сканированию стикера хранения — вручную выбрать
+    // заказ и «положить» его на полку нельзя, поэтому список заказов здесь больше не нужен.
+    Promise.all([fetchGoodsWarehouse(), fetchShelves()])
+      .then(([itemsData, shelvesData]) => {
         setItems(itemsData);
         setShelves(shelvesData);
-        const acceptedOrderIds = new Set(itemsData.map((i) => i.orderId));
-        // На склад хранения принимаем только готовые заказы, отменённые клиентом (по статусу
-        // из API OZON/WB). Заказы, идущие по конвейеру, отгружаются на маркетплейс напрямую —
-        // всё остальное кладовщик принимает вручную через «Принять возврат».
-        setReadyOrders(
-          ordersData.filter(
-            (o) =>
-              o.sewingStatus === 'Готовые' &&
-              !acceptedOrderIds.has(o.id) &&
-              (o.status === 'Отменён' || (o.ozonStatus || '').toLowerCase().includes('cancel')),
-          ),
-        );
       })
       .finally(() => setLoading(false));
   };
@@ -156,30 +115,8 @@ const GoodsWarehouse = () => {
     setShelfFilter('');
   };
 
-  const openReceive = () => {
-    setSelectedOrderId('');
-    setSelectedShelfId('');
-    setDialogOpen(true);
-  };
-
-  const handleReceive = async () => {
-    if (!selectedOrderId) return;
-    setSaving(true);
-    try {
-      await receiveGoods(Number(selectedOrderId), selectedShelfId ? Number(selectedShelfId) : undefined);
-      toast({ title: 'Товар принят на склад' });
-      setDialogOpen(false);
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const openReturn = () => {
     setReturnOrderNumber('');
-    setReturnShelfId('');
     setReturnOpen(true);
   };
 
@@ -191,8 +128,11 @@ const GoodsWarehouse = () => {
     setReturnOrderNumber('');
     setReturnSaving(true);
     try {
-      await receiveReturn(orderNumber, returnShelfId ? Number(returnShelfId) : undefined);
-      toast({ title: 'Возврат принят на хранение' });
+      await receiveReturn(orderNumber);
+      toast({
+        title: 'Возврат принят',
+        description: 'Отсканируйте стикер хранения в «Разложить по полкам», чтобы положить на полку',
+      });
       setReturnOpen(false);
       load();
     } catch (e) {
@@ -202,30 +142,6 @@ const GoodsWarehouse = () => {
     }
   };
 
-  const openGroup = () => {
-    setGroupSelectedIds([]);
-    setGroupShelfId('');
-    setGroupOpen(true);
-  };
-
-  const toggleGroupOrder = (id: number) => {
-    setGroupSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  };
-
-  const handleGroupReceive = async () => {
-    if (groupSelectedIds.length === 0) return;
-    setGroupSaving(true);
-    try {
-      const res = await groupReceiveGoods(groupSelectedIds, groupShelfId ? Number(groupShelfId) : undefined);
-      toast({ title: `Принято товаров: ${res.createdCount}` });
-      setGroupOpen(false);
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setGroupSaving(false);
-    }
-  };
 
   const openMove = () => {
     setMoveBarcode('');
@@ -287,26 +203,10 @@ const GoodsWarehouse = () => {
               open={returnOpen}
               onOpenChange={setReturnOpen}
               onOpenCreate={openReturn}
-              shelves={shelves}
               orderNumber={returnOrderNumber}
               setOrderNumber={setReturnOrderNumber}
-              shelfId={returnShelfId}
-              setShelfId={setReturnShelfId}
               saving={returnSaving}
               onSave={handleReceiveReturn}
-            />
-            <GroupReceiveDialog
-              open={groupOpen}
-              onOpenChange={setGroupOpen}
-              onOpenCreate={openGroup}
-              shelves={shelves}
-              readyOrders={readyOrders}
-              selectedOrderIds={groupSelectedIds}
-              onToggleOrder={toggleGroupOrder}
-              shelfId={groupShelfId}
-              setShelfId={setGroupShelfId}
-              saving={groupSaving}
-              onSave={handleGroupReceive}
             />
             <Button variant="outline" onClick={() => navigate('/crm/inventory/goods-picking')}>
               <Icon name="ScanLine" size={16} className="mr-2" />
@@ -370,62 +270,6 @@ const GoodsWarehouse = () => {
               saving={moveSaving}
               onSave={handleMoveShelf}
             />
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button onClick={openReceive}>
-                  <Icon name="Plus" size={16} className="mr-2" />
-                  Принять товар
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Принять готовый товар</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <div className="space-y-1.5">
-                    <Label>Отменённый клиентом заказ</Label>
-                    <Select value={selectedOrderId} onValueChange={setSelectedOrderId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Выберите заказ" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {readyOrders.length === 0 ? (
-                          <div className="p-2 text-sm text-muted-foreground">
-                            Нет отменённых заказов — остальные товары принимайте через «Принять
-                            возврат»
-                          </div>
-                        ) : (
-                          readyOrders.map((o) => (
-                            <SelectItem key={o.id} value={String(o.id)}>
-                              {o.orderNumber} · {o.material} {o.width}×{o.height}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Полка (необязательно)</Label>
-                    <Select value={selectedShelfId || 'none'} onValueChange={(v) => setSelectedShelfId(v === 'none' ? '' : v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Без полки" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Без полки</SelectItem>
-                        {shelves.map((s) => (
-                          <SelectItem key={s.id} value={String(s.id)}>
-                            {s.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button className="w-full" onClick={handleReceive} disabled={saving || !selectedOrderId}>
-                    {saving ? 'Сохранение...' : 'Принять на склад'}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
           </div>
         </div>
 

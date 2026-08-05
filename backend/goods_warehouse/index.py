@@ -39,6 +39,7 @@ def handler(event: dict, context) -> dict:
     (storage_barcode), откуда далее уходят в поставку на маркетплейс.
 
     Статусы (status):
+      - awaiting_shelf — отстикерован, ждёт, пока кладовщик отсканирует его на полку
       - in_stock  — на хранении (лежит на полке, ничего с ним не происходит)
       - picking   — на сборке (кладовщик отобрал его как нужный для будущей поставки FBS,
                      ещё не привязан к конкретной поставке)
@@ -50,26 +51,17 @@ def handler(event: dict, context) -> dict:
         доп. фильтры: ?material=Вуаль, ?width=200, ?height=250, ?shelf_id=1
     GET  /?barcode=GW-000001         - найти товар по штрихкоду хранения (для сканера подбора
                                         и сканирования в поставку)
-    POST /  { action: 'receive', orderId, shelfId? }
-        - принимает готовый заказ на склад товара. ТОЛЬКО заказы, отменённые клиентом
-          (status='Отменён' или статус отмены из API OZON/WB) — заказы, идущие по конвейеру,
-          отгружаются на маркетплейс и на склад не принимаются (их кладут вручную через
-          receive_return). Генерирует новый storage_barcode
     POST /  { action: 'place_on_shelf', barcode, shelfId }
         - кладовщик у себя на компьютере сканирует стикер хранения вещи, отменённой клиентом
           (статус awaiting_shelf), и кладёт её на конкретную полку → in_stock
     GET  /?pending_shelf=1
         - список отменённых вещей, отстикерованных упаковщиком, но ещё не положенных на полку
           (виджет на дашборде кладовщика)
-    POST /  { action: 'receive_return', orderNumber, shelfId? }
-        - приём возврата с маркетплейса по номеру заказа (ручной ввод, до появления API):
-          если заказ уже был на складе — запись просто возвращается в статус in_stock с
-          выбором полки (старый storage_barcode сохраняется); если заказа на складе не было —
-          создаётся новая запись (заказ должен существовать в orders)
-    POST /  { action: 'group_receive', orderIds: [...], shelfId? }
-        - принимает несколько готовых заказов сразу на одну полку
-    POST /  { action: 'move_shelf', id, shelfId }
-        - перемещает товар на другую полку (по id записи)
+    POST /  { action: 'receive_return', orderNumber }
+        - приём возврата с маркетплейса по номеру заказа (ручной ввод, до появления API).
+          Полка НЕ выбирается: вещь встаёт в статус awaiting_shelf и попадает на полку только
+          сканированием стикера хранения (place_on_shelf) — так товар не окажется «не на месте».
+          Если заказ уже был на складе, старый storage_barcode сохраняется
     POST /  { action: 'move_shelf_by_barcode', barcode, shelfId }
         - то же самое, но по штрихкоду хранения (для диалога "Смена полки" со сканером)
     POST /  { action: 'return_to_workshop', id }
@@ -210,57 +202,6 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
-            if action == 'receive':
-                order_id = body_data.get('orderId')
-                shelf_id = body_data.get('shelfId')
-                if not order_id:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите заказ'})}
-
-                cur.execute(
-                    "SELECT sewing_status, status, ozon_status FROM orders WHERE id = %s",
-                    (int(order_id),),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-                if row[0] != 'Готовые':
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps({'error': f'Заказ должен быть в статусе "Готовые" (сейчас: {row[0]})'}),
-                    }
-                # Заказы, которые идут по конвейеру, отгружаются на маркетплейс напрямую и на
-                # склад хранения не принимаются. На склад попадает только то, что отменил
-                # клиент (статус отмены из API OZON/WB) — остальное кладовщик принимает вручную
-                # как возврат (action receive_return).
-                ozon_status = (row[2] or '').lower()
-                is_cancelled = row[1] == 'Отменён' or 'cancel' in ozon_status
-                if not is_cancelled:
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps({
-                            'error': 'Этот заказ идёт по конвейеру и отгружается на маркетплейс. '
-                                     'На склад принимаются только заказы, отменённые клиентом — '
-                                     'остальное оформляйте вручную через приём возврата'
-                        }),
-                    }
-
-                cur.execute("SELECT id FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
-                if cur.fetchone():
-                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Этот заказ уже принят на склад товара'})}
-
-                shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
-                storage_barcode = next_storage_barcode(cur)
-                cur.execute(
-                    f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, receive_reason) "
-                    f"VALUES ({int(order_id)}, {shelf_sql}, 'in_stock', '{storage_barcode}', 'cancelled') RETURNING id"
-                )
-                new_id = cur.fetchone()[0]
-                log_action(cur, actor_id, actor_name, 'receive', 'goods_warehouse', new_id, f'Принял товар на склад ({storage_barcode})')
-                conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'storageBarcode': storage_barcode})}
-
             if action == 'ship_label':
                 # Кладовщик забрал с полки вещь, зарезервированную под новый заказ FBS,
                 # наклеил на неё стикер отправления маркетплейса и сканирует стикер хранения
@@ -378,7 +319,6 @@ def handler(event: dict, context) -> dict:
 
             if action == 'receive_return':
                 order_number = (body_data.get('orderNumber') or '').strip()
-                shelf_id = body_data.get('shelfId')
                 if not order_number:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите номер заказа'})}
 
@@ -389,7 +329,9 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Заказ {order_number} не найден'})}
                 order_id = order_row[0]
 
-                shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
+                # Полку вручную не выбираем: возврат принимается в статусе awaiting_shelf, а на
+                # конкретную полку вещь кладётся ТОЛЬКО сканированием стикера хранения
+                # (action place_on_shelf) — так на складе не бывает вещей «не на своём месте».
 
                 # Заказ уже был на складе (в т.ч. отгружен раньше) — просто возвращаем
                 # существующую запись обратно в "На хранении" с новой полкой, без дублирования
@@ -399,8 +341,9 @@ def handler(event: dict, context) -> dict:
                 if existing:
                     gw_id, storage_barcode = existing
                     cur.execute(
-                        f"UPDATE goods_warehouse SET status = 'in_stock', shelf_id = {shelf_sql}, "
+                        f"UPDATE goods_warehouse SET status = 'awaiting_shelf', shelf_id = NULL, "
                         f"shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
+                        f"reserved_order_id = NULL, shipping_labeled_at = NULL, "
                         f"receive_reason = 'return' WHERE id = {gw_id}"
                     )
                     log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', gw_id, f'Принял возврат заказа #{order_number} повторно')
@@ -409,56 +352,13 @@ def handler(event: dict, context) -> dict:
 
                 storage_barcode = next_storage_barcode(cur)
                 cur.execute(
-                    f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, receive_reason) "
-                    f"VALUES ({order_id}, {shelf_sql}, 'in_stock', '{storage_barcode}', 'return') RETURNING id"
+                    f"INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason) "
+                    f"VALUES ({order_id}, 'awaiting_shelf', '{storage_barcode}', 'return') RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
                 log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', new_id, f'Принял возврат заказа #{order_number} ({storage_barcode})')
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'storageBarcode': storage_barcode})}
-
-            if action == 'group_receive':
-                order_ids = body_data.get('orderIds') or []
-                shelf_id = body_data.get('shelfId')
-                if not order_ids:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите хотя бы один заказ'})}
-
-                shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
-                created = []
-                for order_id in order_ids:
-                    cur.execute(
-                        "SELECT sewing_status, status, ozon_status FROM orders WHERE id = %s",
-                        (int(order_id),),
-                    )
-                    row = cur.fetchone()
-                    if not row or row[0] != 'Готовые':
-                        continue
-                    # Только отменённые клиентом — конвейерные заказы уходят на маркетплейс.
-                    if not (row[1] == 'Отменён' or 'cancel' in (row[2] or '').lower()):
-                        continue
-                    cur.execute("SELECT id FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
-                    if cur.fetchone():
-                        continue
-                    storage_barcode = next_storage_barcode(cur)
-                    cur.execute(
-                        f"INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, receive_reason) "
-                        f"VALUES ({int(order_id)}, {shelf_sql}, 'in_stock', '{storage_barcode}', 'cancelled') RETURNING id"
-                    )
-                    created.append(cur.fetchone()[0])
-
-                log_action(cur, actor_id, actor_name, 'group_receive', 'goods_warehouse', None, f'Принял группой {len(created)} товаров на склад')
-                conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'createdCount': len(created), 'ids': created})}
-
-            if action == 'move_shelf':
-                item_id = body_data.get('id')
-                shelf_id = body_data.get('shelfId')
-                if not item_id:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
-                shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
-                cur.execute(f"UPDATE goods_warehouse SET shelf_id = {shelf_sql} WHERE id = {int(item_id)}")
-                conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'move_shelf_by_barcode':
                 barcode = (body_data.get('barcode') or '').strip()

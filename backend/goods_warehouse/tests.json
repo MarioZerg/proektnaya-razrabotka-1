@@ -13,10 +13,30 @@
       "expectedStatus": 200
     },
     {
-      "name": "Receive without orderId fails",
+      "name": "Place on shelf without barcode fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "receive" },
+      "body": {
+        "action": "place_on_shelf"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Ship label without barcode fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "ship_label"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Receive return without orderNumber fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "receive_return"
+      },
       "expectedStatus": 400
     }
   ]
