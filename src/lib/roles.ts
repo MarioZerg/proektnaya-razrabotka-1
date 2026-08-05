@@ -134,7 +134,6 @@ const storekeeperNav: NavItem[] = [
     children: [
       { label: 'Заказы с маркетплейса', path: '/crm/marketplace/orders' },
       { label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' },
-      { label: 'Печать стикеров FBO', path: '/crm/marketplace/fbo-stickers' },
       { label: 'Отзывы', path: '/crm/marketplace/reviews' },
     ],
   },
@@ -162,7 +161,6 @@ const managerNav: NavItem[] = [
     children: [
       { label: 'Заказы с маркетплейса', path: '/crm/marketplace/orders' },
       { label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' },
-      { label: 'Печать стикеров FBO', path: '/crm/marketplace/fbo-stickers' },
       { label: 'Отзывы', path: '/crm/marketplace/reviews' },
     ],
   },
@@ -202,7 +200,6 @@ const adminNav: NavItem[] = [
     children: [
       { label: 'Заказы с маркетплейса', path: '/crm/marketplace/orders' },
       { label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' },
-      { label: 'Печать стикеров FBO', path: '/crm/marketplace/fbo-stickers' },
       { label: 'Отзывы', path: '/crm/marketplace/reviews' },
     ],
   },

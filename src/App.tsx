@@ -76,6 +76,8 @@ const App = () => (
             <Route path="/crm/settings/users" element={<UsersSettings />} />
             <Route path="/crm/marketplace/orders" element={<MarketplaceOrders />} />
             <Route path="/crm/marketplace/sewing-items" element={<SewingItems />} />
+            {/* Печать стикеров FBO временно скрыта из меню — позже её интегрируем прямо
+                со склада. Маршрут оставлен рабочим по прямой ссылке. */}
             <Route path="/crm/marketplace/fbo-stickers" element={<FboStickers />} />
             <Route path="/crm/marketplace/reviews" element={<Reviews />} />
             <Route path="/crm/finance" element={<Finance />} />
