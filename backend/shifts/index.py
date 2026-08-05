@@ -105,6 +105,9 @@ def handler(event: dict, context) -> dict:
     GET  /                                  - список всех смен всех цехов
     GET  /?workshop_id=1                    - смены конкретного цеха
     GET  /?id=1                             - детальная карточка смены + список сотрудников
+    GET  /?today=1                          - какие смены работают сегодня по графику
+                                              (с учётом цикла 2/2, недельного 5/2 и ручных
+                                              выходных) + сколько человек уже на смене
     GET  /?calendar=1&workshop_id=1&shift_number=1&month=YYYY-MM
                                              - список дат-выходных в этом месяце для смены
     POST /  { action: 'create', workshopId, name, shiftNumber? }
@@ -161,6 +164,40 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if params.get('today'):
+                # Кто по графику должен быть в цехе сегодня: смена работает, если день не
+                # отмечен выходным вручную, не выпадает на отдых по циклу (2/2) и попадает
+                # в рабочие дни недели (5/2). Плюс сколько человек уже открыли смену.
+                cur.execute(
+                    "SELECT s.workshop_id, w.name, s.shift_number, s.name, "
+                    "(SELECT COUNT(*) FROM shift_sessions ss WHERE ss.workshop_id = s.workshop_id "
+                    "  AND ss.shift_number = s.shift_number AND ss.closed_at IS NULL) "
+                    "FROM shifts s JOIN workshops w ON w.id = s.workshop_id "
+                    "WHERE s.is_active = true AND w.is_active = true "
+                    "AND NOT EXISTS (SELECT 1 FROM shift_calendar sc "
+                    "  WHERE sc.workshop_id = s.workshop_id AND sc.shift_number = s.shift_number "
+                    "  AND sc.calendar_date = CURRENT_DATE) "
+                    "AND NOT (s.cycle_work_days IS NOT NULL AND s.cycle_off_days IS NOT NULL "
+                    "  AND s.cycle_start_date IS NOT NULL "
+                    "  AND (CURRENT_DATE < s.cycle_start_date "
+                    "    OR MOD((CURRENT_DATE - s.cycle_start_date), "
+                    "           (s.cycle_work_days + s.cycle_off_days)) >= s.cycle_work_days)) "
+                    "AND NOT (s.work_weekdays IS NOT NULL "
+                    "  AND NOT (EXTRACT(ISODOW FROM CURRENT_DATE)::int = ANY(s.work_weekdays))) "
+                    "ORDER BY w.id, s.shift_number"
+                )
+                working = [
+                    {
+                        'workshopId': r[0],
+                        'workshopName': r[1],
+                        'shiftNumber': r[2],
+                        'shiftName': r[3],
+                        'openedCount': r[4],
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'working': working})}
 
             if params.get('calendar'):
                 wid = params.get('workshop_id')

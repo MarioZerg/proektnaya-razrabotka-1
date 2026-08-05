@@ -37,6 +37,23 @@ export const fetchShiftDetail = async (id: number): Promise<ShiftDetail> => {
   return data.shift;
 };
 
+/** Смена, которая по графику работает сегодня. */
+export interface WorkingShiftToday {
+  workshopId: number;
+  workshopName: string;
+  shiftNumber: number;
+  shiftName: string;
+  /** Сколько сотрудников этой смены уже открыли смену. */
+  openedCount: number;
+}
+
+/** Какие смены должны быть в цехах сегодня — с учётом графика 2/2, 5/2 и ручных выходных. */
+export const fetchWorkingToday = async (): Promise<WorkingShiftToday[]> => {
+  const res = await fetch(`${SHIFTS_URL}?today=1`);
+  const data = await res.json();
+  return data.working || [];
+};
+
 /** Цикличный график смены: работает workDays дней, отдыхает offDays, отсчёт от startDate. */
 export interface ShiftCycle {
   workDays: number;

@@ -18,6 +18,7 @@ import {
 } from '@/lib/shiftSessionsApi';
 import { fetchShifts, type ShiftListItem } from '@/lib/shiftsApi';
 import DashboardWidgetsGrid from '@/components/crm/dashboard/DashboardWidgetsGrid';
+import WorkingTodayCard from '@/components/crm/dashboard/WorkingTodayCard';
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
@@ -239,6 +240,8 @@ const CrmDashboard = () => {
       </div>
 
       {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
+
+      <WorkingTodayCard />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         {isAdmin ? (
