@@ -11,6 +11,9 @@ interface UseSewingItemsFiltersArgs {
   isSewer: boolean;
   isPacker: boolean;
   userId: number | undefined;
+  /** Цех текущей открытой смены сотрудника. Производственные роли видят заказы только
+   * своего цеха: перейдя в другой цех, упаковщица не должна видеть чужие заказы. */
+  effectiveWorkshopId?: number | null;
 }
 
 /** Вкладки статусов, фильтры поиска/типа/сотрудника/материала/размера/цеха и производные
@@ -23,6 +26,7 @@ export const useSewingItemsFilters = ({
   isSewer,
   isPacker,
   userId,
+  effectiveWorkshopId,
 }: UseSewingItemsFiltersArgs) => {
   const [activeTab, setActiveTab] = useState<SewingStatus>(visibleTabs[0]?.value || 'Новый');
   const [page, setPage] = useState(1);
@@ -52,6 +56,17 @@ export const useSewingItemsFilters = ({
     if (widthFilter !== 'all' && String(o.width) !== widthFilter) return false;
     if (heightFilter !== 'all' && String(o.height) !== heightFilter) return false;
     if (workshopFilter !== 'all' && String(o.workshopId) !== workshopFilter) return false;
+    // Жёсткая привязка к цеху смены: упаковщица, швея и закройщик видят ТОЛЬКО заказы того
+    // цеха, где сейчас открыта их смена. Раньше упаковщица, зайдя в другой цех, продолжала
+    // видеть заказы всех цехов сразу.
+    if (
+      (isPacker || isSewer || isCutter) &&
+      effectiveWorkshopId &&
+      o.workshopId &&
+      o.workshopId !== effectiveWorkshopId
+    ) {
+      return false;
+    }
     if (marketplaceFilter !== 'all' && o.marketplace !== marketplaceFilter) return false;
     // Владение по вкладкам: закройщик на "На раскрое" видит только свой стек, швея на
     // "В работе" — только свои заказы. Упаковщица на "В работе" видит ЗАКАЗЫ ВСЕХ швей

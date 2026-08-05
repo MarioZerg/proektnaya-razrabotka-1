@@ -7,7 +7,6 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import type { Order, OrderDetail } from '@/lib/ordersApi';
-import { marketplaceLogo } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import { formatQuantity } from '@/lib/formatQuantity';
 
@@ -36,26 +35,6 @@ const SewingItemInfoCards = ({
                 <TableCell>
                   {selectedOrder.material} {selectedOrder.width}×{selectedOrder.height}
                 </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="font-medium text-muted-foreground">Номер заказа</TableCell>
-                <TableCell>{selectedOrder.orderNumber}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="font-medium text-muted-foreground">Маркетплейс</TableCell>
-                <TableCell>
-                  <span className={marketplaceLogo[selectedOrder.marketplace]?.className}>
-                    {marketplaceLogo[selectedOrder.marketplace]?.label || selectedOrder.marketplace}
-                  </span>
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="font-medium text-muted-foreground">Тип</TableCell>
-                <TableCell>{selectedOrder.orderType}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="font-medium text-muted-foreground">Кластер</TableCell>
-                <TableCell>{selectedOrder.cluster || '—'}</TableCell>
               </TableRow>
             </TableBody>
           </Table>

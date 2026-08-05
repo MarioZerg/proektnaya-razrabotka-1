@@ -72,6 +72,7 @@ const SewingItems = () => {
     isSewer,
     isPacker,
     userId: user?.id,
+    effectiveWorkshopId,
   });
 
   const {
@@ -280,6 +281,7 @@ const SewingItems = () => {
           onSendToStickering={handleSendToStickering}
           onCancelOrder={handleCancelOrder}
           cancelOrderPenalty={cancelOrderPenalty}
+          isPackerView={isPacker}
           cancelling={cancelling}
           onOrderUpdated={reloadSelected}
         />

@@ -8,6 +8,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
+import { marketplaceLogo } from '@/components/crm/sewingItems/sewingItemsShared';
 import type { Order, OrderDetail } from '@/lib/ordersApi';
 import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
@@ -43,6 +44,8 @@ interface SewingItemDetailDialogProps {
   cancelling?: boolean;
   /** Штраф за отмену заказа из настроек цеха — показывается в окне подтверждения. */
   cancelOrderPenalty?: number;
+  /** Карточку открыл упаковщик — часть админских блоков ему не нужна. */
+  isPackerView?: boolean;
   /** Перезагрузка заказа после привязки товара (штрихкод стикера FBO). */
   onOrderUpdated?: () => void;
 }
@@ -70,6 +73,7 @@ const SewingItemDetailDialog = ({
   onCancelOrder,
   cancelling = false,
   cancelOrderPenalty = 0,
+  isPackerView = false,
   onOrderUpdated,
 }: SewingItemDetailDialogProps) => {
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
@@ -83,12 +87,32 @@ const SewingItemDetailDialog = ({
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+      <DialogContent className="max-h-[90vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto p-4 sm:max-w-4xl sm:p-6">
         <DialogHeader>
           <div className="flex flex-wrap items-center gap-2 pr-8">
             <DialogTitle>Товар #{selectedOrder?.id}</DialogTitle>
             {selectedOrder && <Badge variant="secondary">{selectedOrder.sewingStatus}</Badge>}
           </div>
+          {/* Маркетплейс, схема (FBO/FBS) и полный номер заказа — сразу в шапке: раньше их
+              приходилось искать в таблице ниже, а на телефоне номер ещё и обрезался. */}
+          {selectedOrder && (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span
+                className={`text-sm ${marketplaceLogo[selectedOrder.marketplace]?.className || 'font-bold'}`}
+              >
+                {marketplaceLogo[selectedOrder.marketplace]?.label || selectedOrder.marketplace}
+              </span>
+              <Badge variant="outline">{selectedOrder.orderType}</Badge>
+              {selectedOrder.cluster && (
+                <Badge variant="outline" className="text-muted-foreground">
+                  {selectedOrder.cluster}
+                </Badge>
+              )}
+              <span className="w-full break-all font-mono-tech text-xs text-muted-foreground">
+                {selectedOrder.orderNumber}
+              </span>
+            </div>
+          )}
           <div className="mt-1 flex flex-wrap gap-2">
             {canCancel && (
               <Button
@@ -146,7 +170,9 @@ const SewingItemDetailDialog = ({
               detailLoading={detailLoading}
             />
 
-            {selectedOrder.orderType === 'FBO' && (
+            {/* Привязка стикера FBO — задача администратора и кладовщика. Упаковщик печатает
+                стикер на терминале в цехе, в карточке эта плашка ему только мешает. */}
+            {selectedOrder.orderType === 'FBO' && !isPackerView && (
               <FboStickerCard
                 order={selectedOrder}
                 orderDetail={orderDetail}

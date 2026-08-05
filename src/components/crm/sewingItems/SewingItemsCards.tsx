@@ -77,10 +77,23 @@ const SewingItemsCards = ({
 
             <CardContent className="space-y-1.5 p-3 pl-4">
               <div className="flex items-start justify-between gap-2">
-                <p className="min-w-0 flex-1 truncate font-mono-tech text-xs text-muted-foreground">
-                  {o.orderNumber} · {o.orderType} ·{' '}
-                  {marketplaceLogo[o.marketplace]?.label || o.marketplace}
-                </p>
+                {/* Номер заказа переносим целиком (break-all): у OZON он длинный и раньше
+                    обрезался многоточием — сотрудник не видел, какой это заказ. */}
+                <div className="min-w-0 flex-1">
+                  <p className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <span
+                      className={marketplaceLogo[o.marketplace]?.className || 'font-bold'}
+                    >
+                      {marketplaceLogo[o.marketplace]?.label || o.marketplace}
+                    </span>
+                    <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                      {o.orderType}
+                    </Badge>
+                  </p>
+                  <p className="break-all font-mono-tech text-[11px] text-muted-foreground">
+                    {o.orderNumber}
+                  </p>
+                </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   {canPrintSticker && o.orderType === 'FBO' && o.sewingStatus === 'Готовые' && (
                     <button
