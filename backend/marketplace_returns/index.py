@@ -308,6 +308,8 @@ def handler(event: dict, context) -> dict:
     отмечает возврат принятым, и вещь встаёт на склад в очередь «Ждёт полку».
 
     GET  /                            - список возвратов (фильтры: status, marketplace)
+    GET  /?report=1&days=90           - отчёт: возвраты по швеям (сколько отшила, сколько
+                                        вернулось, процент) и топ причин возврата
     POST /  { action: 'sync' }                 - загрузить свежие заявки с OZON и WB
     POST /  { action: 'approve', id }          - админ одобряет заявку (вещь поедет к нам)
     POST /  { action: 'reject', id }           - админ отклоняет заявку
@@ -338,6 +340,69 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if params.get('report'):
+                # Отчёт по возвратам в разрезе сотрудников: у кого чаще возвращают товар и
+                # чем это заканчивается. Считаем только те возвраты, где известен исполнитель
+                # (заказ найден в системе) — по остальным винить некого.
+                days = int(params.get('days') or 90)
+                cur.execute(
+                    "SELECT COALESCE(su.full_name, 'Не определена') AS sewer, "
+                    "COUNT(*) AS total, "
+                    "COUNT(*) FILTER (WHERE r.outcome = 'utilized') AS utilized, "
+                    "COUNT(*) FILTER (WHERE r.outcome = 'repack') AS repack, "
+                    "COUNT(*) FILTER (WHERE r.outcome = 'stored') AS stored, "
+                    "COALESCE(cu.full_name, '—') AS cutter "
+                    "FROM marketplace_returns r "
+                    "JOIN orders o ON o.id = r.order_id "
+                    "LEFT JOIN users su ON su.id = COALESCE(o.sewer_user_id, o.assigned_user_id) "
+                    "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+                    f"WHERE r.created_at >= now() - interval '{int(days)} days' "
+                    "GROUP BY su.full_name, cu.full_name ORDER BY total DESC LIMIT 100"
+                )
+                by_sewer = [
+                    {
+                        'sewerName': r[0],
+                        'total': r[1],
+                        'utilized': r[2],
+                        'repack': r[3],
+                        'stored': r[4],
+                        'cutterName': r[5],
+                    }
+                    for r in cur.fetchall()
+                ]
+
+                # Сколько всего вещей эти швеи отшили за тот же период — без этого числа
+                # сравнивать нельзя: у кого больше объём, у того и возвратов больше.
+                cur.execute(
+                    "SELECT COALESCE(su.full_name, 'Не определена'), COUNT(*) "
+                    "FROM orders o "
+                    "LEFT JOIN users su ON su.id = COALESCE(o.sewer_user_id, o.assigned_user_id) "
+                    "WHERE o.sewing_status IN ('Стикеровка', 'Готовые') "
+                    f"AND o.created_at >= now() - interval '{int(days)} days' "
+                    "GROUP BY su.full_name"
+                )
+                made = {r[0]: r[1] for r in cur.fetchall()}
+                for row in by_sewer:
+                    row['madeTotal'] = made.get(row['sewerName'], 0)
+                    row['returnRate'] = (
+                        round(row['total'] * 100.0 / row['madeTotal'], 1)
+                        if row['madeTotal']
+                        else None
+                    )
+
+                # Топ причин возврата — что чаще всего не устраивает покупателей.
+                cur.execute(
+                    "SELECT COALESCE(NULLIF(TRIM(r.damage_note), ''), "
+                    "        NULLIF(TRIM(r.return_reason), ''), 'Без причины') AS reason, "
+                    "COUNT(*) FROM marketplace_returns r "
+                    f"WHERE r.created_at >= now() - interval '{int(days)} days' "
+                    "GROUP BY reason ORDER BY COUNT(*) DESC LIMIT 20"
+                )
+                reasons = [{'reason': r[0], 'count': r[1]} for r in cur.fetchall()]
+
+                return _resp(200, {'bySewer': by_sewer, 'reasons': reasons, 'days': days})
+
             conditions = []
             if status_filter and status_filter != 'all':
                 conditions.append(f"r.status = '{status_filter.replace(chr(39), chr(39) * 2)}'")

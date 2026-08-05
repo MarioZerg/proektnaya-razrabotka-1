@@ -62,6 +62,33 @@ export const fetchMarketplaceReturns = async (filters?: {
   };
 };
 
+/** Строка отчёта: сколько швея отшила и сколько из этого вернулось. */
+export interface ReturnsBySewer {
+  sewerName: string;
+  cutterName: string;
+  total: number;
+  utilized: number;
+  repack: number;
+  stored: number;
+  madeTotal: number;
+  /** Процент возвратов от отшитого. null — объём за период неизвестен. */
+  returnRate: number | null;
+}
+
+export interface ReturnReasonStat {
+  reason: string;
+  count: number;
+}
+
+/** Отчёт по возвратам: разрез по швеям и топ причин возврата. */
+export const fetchReturnsReport = async (
+  days = 90
+): Promise<{ bySewer: ReturnsBySewer[]; reasons: ReturnReasonStat[] }> => {
+  const res = await fetch(`${RETURNS_URL}?report=1&days=${days}`);
+  const data = await res.json();
+  return { bySewer: data.bySewer || [], reasons: data.reasons || [] };
+};
+
 const postAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(RETURNS_URL, {
     method: 'POST',
