@@ -285,11 +285,20 @@ def handler(event: dict, context) -> dict:
                 if packer_rate > 0 and width:
                     meters = round(float(width) / 100, 2)
                     amount = round(meters * packer_rate, 2)
+                    # Если стикеровал не упаковщик (упаковщика на смене не было), помечаем это
+                    # в описании начисления — админу видно, кто подменял упаковщицу.
+                    role_labels = {'sewer': 'швея', 'cutter': 'закройщик', 'packer': 'упаковщик'}
+                    instead_note = ''
+                    if packer_shift_role and packer_shift_role != 'packer':
+                        instead_note = f' (стикеровал {role_labels.get(packer_shift_role, packer_shift_role)} вместо упаковщицы)'
                     cur.execute(
-                        f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
-                        f"VALUES ({int(packer_id)}, 'packer_stickering', {amount}, {int(order_id)}, "
-                        f"'Стикеровка заказа #{order_number} - {meters} п.м.') "
-                        f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
+                        "INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                        "VALUES (%s, 'packer_stickering', %s, %s, %s) "
+                        "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING",
+                        (
+                            int(packer_id), amount, int(order_id),
+                            f'Стикеровка заказа #{order_number} - {meters} п.м.{instead_note}',
+                        ),
                     )
 
                 log_action(
