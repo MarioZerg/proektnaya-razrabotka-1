@@ -568,12 +568,28 @@ def handler(event: dict, context) -> dict:
                 # FBS-заказы раскраиваются первыми (жёсткое правило по всему конвейеру —
                 # сжатые сроки отгрузки), при равенстве — FIFO по дате попадания в систему.
                 cur.execute(
-                    "SELECT id FROM orders WHERE sewing_status = 'Новый' "
+                    "SELECT id, group_key FROM orders WHERE sewing_status = 'Новый' "
                     "AND material IN (" + names_csv + ") "
-                    "ORDER BY (order_type = 'FBS') DESC, created_at ASC, id ASC LIMIT %s",
+                    "ORDER BY (order_type = 'FBS') DESC, created_at ASC, "
+                    "group_key NULLS FIRST, group_position ASC NULLS LAST, id ASC LIMIT %s",
                     (stack_size,),
                 )
-                order_ids = [r[0] for r in cur.fetchall()]
+                picked = cur.fetchall()
+                order_ids = [r[0] for r in picked]
+
+                # Заказ Яндекс Маркета из нескольких вещей едет по одному общему ярлыку, поэтому
+                # его нельзя разрезать границей стека: если в стек попала часть связки, добираем
+                # остальные её вещи — иначе хвост заказа уйдёт другому закройщику и вещи
+                # разъедутся по цеху, а собрать их к отгрузке будет нечем.
+                group_keys = {r[1] for r in picked if r[1]}
+                if group_keys:
+                    keys_csv = ','.join("'" + k.replace("'", "''") + "'" for k in group_keys)
+                    cur.execute(
+                        "SELECT id FROM orders WHERE sewing_status = 'Новый' "
+                        f"AND group_key IN ({keys_csv}) "
+                        "AND material IN (" + names_csv + ")"
+                    )
+                    order_ids = sorted({r[0] for r in cur.fetchall()} | set(order_ids))
 
                 if not order_ids:
                     return {
@@ -1149,11 +1165,28 @@ def handler(event: dict, context) -> dict:
                     }
                 session_workshop_id, session_opened_at = session_row
 
+                # Заказ Яндекса из нескольких вещей едет по ОДНОМУ общему ярлыку, поэтому его
+                # шьёт одна швея целиком. Если у неё уже есть незакрытая связка, лимиты на
+                # взятие не применяются: иначе при заказе из 5 вещей и лимите в 3 швея упрётся
+                # на середине, а недошитый заказ повиснет — его не сможет добрать ни она (лимит),
+                # ни другая швея (связка закреплена за ней). Это исключение НЕ даёт брать больше
+                # работы: догрузить можно только вещи уже начатого заказа, новые заказы сверх
+                # лимита по-прежнему недоступны.
+                cur.execute(
+                    "SELECT 1 FROM orders o WHERE o.group_key IS NOT NULL "
+                    "AND (o.assigned_user_id = %s OR o.sewer_user_id = %s) "
+                    "AND o.sewing_status IN ('В работе', 'Стикеровка') "
+                    "AND EXISTS (SELECT 1 FROM orders p WHERE p.group_key = o.group_key "
+                    "            AND p.sewing_status = 'Раскроено') LIMIT 1",
+                    (int(user_id), int(user_id)),
+                )
+                finishing_group = cur.fetchone() is not None
+
                 # Лимит незакрытых заказов у швеи (max_quantity_orders_to_seamstress). Считаем
                 # и те, что "В работе", и те, что уже отправлены на "Стикеровку", но упаковщик
                 # их ещё не закрыл: иначе швея копит горы неупакованного и лимит обходится.
                 max_orders = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_to_seamstress', 0)
-                if max_orders > 0:
+                if max_orders > 0 and not finishing_group:
                     cur.execute(
                         "SELECT COUNT(*) FILTER (WHERE sewing_status = 'В работе'), "
                         "COUNT(*) FILTER (WHERE sewing_status = 'Стикеровка') FROM orders "
@@ -1179,7 +1212,7 @@ def handler(event: dict, context) -> dict:
 
                 # Лимиты и таймаут считаются в пределах ТЕКУЩЕЙ открытой смены (сбрасываются
                 # при открытии новой) — без открытой смены не применяются.
-                if session_opened_at:
+                if session_opened_at and not finishing_group:
                     daily_limit = get_setting_float(cur, session_workshop_id, 'seamstress_daily_limit', 0)
                     if daily_limit > 0:
                         cur.execute(
@@ -1276,14 +1309,33 @@ def handler(event: dict, context) -> dict:
                 elif orders_priority_setting == 'yandex_first':
                     order_parts.append("(marketplace = 'Yandex') DESC")
                 order_parts.append("cut_at ASC NULLS LAST")
+                # Внутри одного заказа покупателя вещи выдаются по порядку — «1 из 3», «2 из 3».
+                order_parts.append("group_key NULLS FIRST")
+                order_parts.append("group_position ASC NULLS LAST")
                 order_parts.append("id ASC")
 
+                # Если швея уже начала связку (заказ Яндекса из нескольких вещей), сначала
+                # доотдаём ей оставшиеся вещи этой связки — заказ шьётся одной швеёй целиком,
+                # потому что ярлык на него один общий. Только когда связка закрыта, выдаём
+                # следующий заказ из общей очереди.
                 cur.execute(
                     f"SELECT id FROM orders WHERE {' AND '.join(where_parts)} "
-                    f"ORDER BY {', '.join(order_parts)} "
+                    f"AND group_key IS NOT NULL AND group_key IN ("
+                    f"  SELECT group_key FROM orders WHERE group_key IS NOT NULL "
+                    f"  AND (assigned_user_id = {int(user_id)} OR sewer_user_id = {int(user_id)}) "
+                    f"  AND sewing_status IN ('В работе', 'Стикеровка')) "
+                    f"ORDER BY group_key, group_position ASC NULLS LAST, id ASC "
                     f"LIMIT 1 FOR UPDATE SKIP LOCKED"
                 )
                 row = cur.fetchone()
+
+                if not row:
+                    cur.execute(
+                        f"SELECT id FROM orders WHERE {' AND '.join(where_parts)} "
+                        f"ORDER BY {', '.join(order_parts)} "
+                        f"LIMIT 1 FOR UPDATE SKIP LOCKED"
+                    )
+                    row = cur.fetchone()
                 if not row:
                     return {
                         'statusCode': 404,
