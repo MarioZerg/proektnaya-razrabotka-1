@@ -929,8 +929,16 @@ def handler(event: dict, context) -> dict:
                 acc_type_row = cur.fetchone()
                 acc_type_id = acc_type_row[0] if acc_type_row else None
 
+                # Упаковка (пакет, этикетка на пакет) расходуется физически только на
+                # стикеровке, поэтому при раскрое её не трогаем — списание идёт на терминале
+                # упаковщика при закрытии заказа.
+                cur.execute("SELECT id FROM material_types WHERE name = 'Упаковка'")
+                pack_type_row = cur.fetchone()
+                pack_type_id = pack_type_row[0] if pack_type_row else None
+
                 fabric_material_id = None
                 accessory_material_ids = set()
+                packaging_material_ids = set()
                 for material_id, _qty in needed:
                     cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
                     mt_row = cur.fetchone()
@@ -940,6 +948,8 @@ def handler(event: dict, context) -> dict:
                         fabric_material_id = material_id
                     elif acc_type_id and mt_row[0] == acc_type_id:
                         accessory_material_ids.add(material_id)
+                    elif pack_type_id and mt_row[0] == pack_type_id:
+                        packaging_material_ids.add(material_id)
 
                 if fabric_material_id and not roll_id_chosen:
                     return {
@@ -955,6 +965,10 @@ def handler(event: dict, context) -> dict:
 
                     if material_id in accessory_material_ids:
                         # Тесьма списывается позже швеёй перед отправкой на стикеровку
+                        continue
+
+                    if material_id in packaging_material_ids:
+                        # Упаковка списывается на стикеровке (терминал упаковщика)
                         continue
 
                     if fabric_material_id and material_id == fabric_material_id:

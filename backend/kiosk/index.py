@@ -34,6 +34,102 @@ def next_storage_barcode(cur) -> str:
     return f"GW-{max_seq + 1:06d}"
 
 
+def write_off_packaging(cur, order_id: int) -> str | None:
+    """Списывает упаковку заказа (пакет, этикетка на пакет) в момент стикеровки.
+
+    Упаковка физически расходуется именно здесь, на терминале упаковщика, а не при раскрое.
+    Берём нужные материалы типа «Упаковка» из состава товара и списываем по FIFO
+    (сначала самые старые рулоны) со склада или из цеха. Повторное закрытие заказа
+    ничего не спишет второй раз. Возвращает текст ошибки при нехватке, иначе None.
+    """
+    cur.execute("SELECT id FROM material_types WHERE name = 'Упаковка'")
+    pack_type_row = cur.fetchone()
+    if not pack_type_row:
+        return None
+    pack_type_id = pack_type_row[0]
+
+    cur.execute(
+        "SELECT material, width, height FROM orders WHERE id = %s",
+        (order_id,),
+    )
+    o = cur.fetchone()
+    if not o or not (o[0] and o[1] and o[2]):
+        return None
+
+    cur.execute(
+        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+        (o[0], o[1], o[2]),
+    )
+    item_row = cur.fetchone()
+    if not item_row:
+        return None
+
+    cur.execute(
+        "SELECT mim.material_id, mim.quantity FROM marketplace_item_materials mim "
+        "JOIN materials m ON m.id = mim.material_id "
+        "WHERE mim.item_id = %s AND m.type_id = %s",
+        (item_row[0], pack_type_id),
+    )
+    needed = cur.fetchall()
+    if not needed:
+        return None
+
+    shortages = []
+    write_offs = []
+    for material_id, qty_needed in needed:
+        qty_needed = float(qty_needed)
+        # Этот материал по заказу уже списан — второй раз не списываем.
+        cur.execute(
+            "SELECT 1 FROM order_material_usage WHERE order_id = %s AND material_id = %s LIMIT 1",
+            (order_id, material_id),
+        )
+        if cur.fetchone():
+            continue
+
+        cur.execute(
+            "SELECT id, remaining_quantity FROM rolls "
+            "WHERE material_id = %s AND status IN ('in_storage', 'in_workshop') AND remaining_quantity > 0 "
+            "ORDER BY created_at ASC",
+            (material_id,),
+        )
+        available_rolls = cur.fetchall()
+        total_available = sum(float(r[1]) for r in available_rolls)
+        if total_available < qty_needed:
+            cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
+            mat_name, mat_unit = cur.fetchone()
+            shortages.append(
+                f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, "
+                f"доступно {round(total_available, 2)} {mat_unit}"
+            )
+            continue
+
+        remaining_to_take = qty_needed
+        for roll_id, roll_remaining in available_rolls:
+            if remaining_to_take <= 0:
+                break
+            take = min(float(roll_remaining), remaining_to_take)
+            write_offs.append((roll_id, material_id, take))
+            remaining_to_take -= take
+
+    if shortages:
+        return 'Недостаточно упаковки: ' + '; '.join(shortages)
+
+    for roll_id, material_id, take in write_offs:
+        cur.execute("SELECT remaining_quantity FROM rolls WHERE id = %s", (roll_id,))
+        roll_remaining = float(cur.fetchone()[0])
+        new_remaining = roll_remaining - take
+        new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
+        cur.execute(
+            f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {int(roll_id)}"
+        )
+        cur.execute(
+            "INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
+            "VALUES (%s, %s, %s, %s)",
+            (order_id, int(material_id), int(roll_id), take),
+        )
+    return None
+
+
 def handler(event: dict, context) -> dict:
     """Терминал упаковщицы (kiosk) — упрощённый экран для завершения стикеровки.
 
@@ -261,6 +357,13 @@ def handler(event: dict, context) -> dict:
                 # поле, аналогично cutter_user_id/sewer_user_id, чтобы история исполнителей на
                 # каждом этапе была видна на карточке товара (раньше сохранялось только в
                 # salary_accruals для зарплаты и нигде на самом заказе не фиксировалось).
+                # Упаковка расходуется именно на стикеровке — списываем её здесь. Если пакетов
+                # или этикеток не хватает, заказ не закрываем и показываем чего именно нет.
+                pack_err = write_off_packaging(cur, int(order_id))
+                if pack_err:
+                    conn.rollback()
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': pack_err})}
+
                 cur.execute(
                     f"UPDATE orders SET sewing_status = 'Готовые', packer_user_id = {int(packer_id)} "
                     f"WHERE id = {int(order_id)}"
