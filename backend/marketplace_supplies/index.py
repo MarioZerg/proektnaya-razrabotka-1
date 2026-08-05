@@ -241,7 +241,7 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(
                     "SELECT msi.id, msi.goods_warehouse_id, o.order_number, o.product, o.material, o.width, o.height, "
-                    "gw.status, gw.shipped_at, msi.box_id "
+                    "gw.status, gw.shipped_at, msi.box_id, o.group_key, o.group_size, o.group_position "
                     "FROM marketplace_supply_items msi "
                     "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
@@ -260,6 +260,39 @@ def handler(event: dict, context) -> dict:
                         'goodsStatus': r[7],
                         'shippedAt': (r[8].isoformat() + 'Z') if r[8] else None,
                         'boxId': r[9],
+                        # Заказ покупателя из нескольких вещей (Яндекс) — ярлык на них общий.
+                        'groupKey': r[10],
+                        'groupSize': r[11],
+                        'groupPosition': r[12],
+                    }
+                    for r in cur.fetchall()
+                ]
+
+                # Сводка по связкам: какие заказы с общим ярлыком собраны полностью, а каким
+                # ещё не хватает вещей. Кладовщик должен видеть это прямо во время сборки, а не
+                # упереться в блокировку при отгрузке.
+                cur.execute(
+                    "SELECT o.group_key, max(o.group_size) AS total, "
+                    "count(DISTINCT msi.id) FILTER (WHERE msi.supply_id = %s) AS in_supply, "
+                    "string_agg(DISTINCT o.order_number, ', ') AS numbers "
+                    "FROM orders o "
+                    "LEFT JOIN goods_warehouse gw ON gw.order_id = o.id "
+                    "LEFT JOIN marketplace_supply_items msi ON msi.goods_warehouse_id = gw.id "
+                    "WHERE o.group_key IS NOT NULL AND o.group_key IN ("
+                    "  SELECT o2.group_key FROM marketplace_supply_items m2 "
+                    "  JOIN goods_warehouse g2 ON g2.id = m2.goods_warehouse_id "
+                    "  JOIN orders o2 ON o2.id = g2.order_id "
+                    "  WHERE m2.supply_id = %s AND o2.group_key IS NOT NULL) "
+                    "GROUP BY o.group_key ORDER BY o.group_key",
+                    (int(supply_id), int(supply_id)),
+                )
+                groups = [
+                    {
+                        'groupKey': r[0],
+                        'total': int(r[1] or 0),
+                        'inSupply': int(r[2] or 0),
+                        'isComplete': int(r[2] or 0) >= int(r[1] or 0),
+                        'orderNumbers': r[3],
                     }
                     for r in cur.fetchall()
                 ]
@@ -351,6 +384,7 @@ def handler(event: dict, context) -> dict:
                     'packagingCount': row[25],
                     'gazelkaPickup': row[26],
                     'items': items,
+                    'groups': groups,
                     'boxes': boxes,
                     'wbSupplyId': wb_supply_id,
                     'wbOrders': wb_orders,

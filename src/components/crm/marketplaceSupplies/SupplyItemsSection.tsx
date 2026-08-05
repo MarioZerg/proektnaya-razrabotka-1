@@ -149,9 +149,31 @@ const SupplyItemsSection = ({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {supply.items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium">{item.orderNumber || '—'}</TableCell>
+              {supply.items.map((item) => {
+                // Связка этого товара: полностью собранные подсвечиваем зелёным, неполные —
+                // жёлтым, чтобы кладовщик прямо в списке видел, что ещё нужно донести.
+                const group = item.groupKey
+                  ? supply.groups?.find((g) => g.groupKey === item.groupKey)
+                  : undefined;
+                return (
+                <TableRow
+                  key={item.id}
+                  className={group && !group.isComplete ? 'bg-amber-50' : undefined}
+                >
+                  <TableCell className="font-medium">
+                    <span className="break-all">{item.orderNumber || '—'}</span>
+                    {group && (
+                      <Badge
+                        className={`ml-1.5 px-1.5 py-0 text-[10px] text-white ${
+                          group.isComplete
+                            ? 'bg-emerald-600 hover:bg-emerald-600'
+                            : 'bg-amber-600 hover:bg-amber-600'
+                        }`}
+                      >
+                        связка {group.inSupply}/{group.total}
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>{item.product || '—'}</TableCell>
                   <TableCell>{item.material || '—'}</TableCell>
                   <TableCell>
@@ -170,7 +192,8 @@ const SupplyItemsSection = ({
                     </TableCell>
                   )}
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </div>

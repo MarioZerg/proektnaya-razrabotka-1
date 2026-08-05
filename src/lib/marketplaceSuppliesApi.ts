@@ -40,6 +40,21 @@ export interface SupplyItem {
   goodsStatus: string | null;
   shippedAt: string | null;
   boxId: number | null;
+  /** Заказ покупателя из нескольких вещей (Яндекс Маркет) — ярлык на них общий. */
+  groupKey?: string | null;
+  groupSize?: number | null;
+  groupPosition?: number | null;
+}
+
+/** Связка — заказ покупателя из нескольких вещей, которые едут по одному общему ярлыку.
+ * Отгрузить такой заказ можно только целиком, поэтому кладовщик должен видеть, где связка
+ * собрана, а где ещё нет. */
+export interface SupplyGroup {
+  groupKey: string;
+  total: number;
+  inSupply: number;
+  isComplete: boolean;
+  orderNumbers: string | null;
 }
 
 export interface SupplyBox {
@@ -67,6 +82,8 @@ export interface WbSupplyOrder {
 
 export interface SupplyDetail extends Supply {
   items: SupplyItem[];
+  /** Связки заказов с общим ярлыком, попавшие в эту поставку. */
+  groups?: SupplyGroup[];
   boxes: SupplyBox[];
   createdBy: number | null;
   totalQuantityMarketplace: number | null;

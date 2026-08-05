@@ -23,6 +23,7 @@ import GazelkaShippingCard from '@/components/crm/marketplaceSupplies/GazelkaShi
 import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
 import SupplyFboFieldsCard from '@/components/crm/marketplaceSupplies/SupplyFboFieldsCard';
 import SupplyItemsSection from '@/components/crm/marketplaceSupplies/SupplyItemsSection';
+import SupplyGroupsPanel from '@/components/crm/marketplaceSupplies/SupplyGroupsPanel';
 import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCard';
 import WbFboSupplyCard from '@/components/crm/marketplaceSupplies/WbFboSupplyCard';
 
@@ -282,6 +283,10 @@ const MarketplaceSupplyShow = () => {
         {(isOzonFbo || isWbFbo) && (
           <GazelkaShippingCard supply={supply} onReload={load} isManager={isManager} gazelkaReady={gazelkaReady} />
         )}
+
+        {/* Связки заказов Яндекса: показываем НАД списком товаров, чтобы кладовщик увидел
+            незакрытые связки сразу, а не после прокрутки всей поставки. */}
+        <SupplyGroupsPanel groups={supply.groups || []} />
 
         {isWbFbs ? (
           <WbFbsSupplyCard supply={supply} supplyId={supplyId} onReload={load} />
