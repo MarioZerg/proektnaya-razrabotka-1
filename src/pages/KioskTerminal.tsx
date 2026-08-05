@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { kioskLoginByCode, type KioskUser, type KioskShift } from '@/lib/kioskApi';
-import { openShift, closeShift } from '@/lib/shiftSessionsApi';
+import { openShift, closeShift, fetchEmployeeShifts } from '@/lib/shiftSessionsApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import KioskMenu, { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
@@ -89,15 +89,36 @@ const KioskTerminal = () => {
     if (!isPreview || user) return;
     const previewRole = searchParams.get('role') || 'sewer';
     const previewName = searchParams.get('name') || 'Проверка';
+    // userId задан — админ смотрит терминал глазами конкретного сотрудника: экраны получат
+    // его id, поэтому заказы, рулоны и смена будут настоящими, как у него на планшете.
+    const previewUserId = Number(searchParams.get('userId')) || 0;
     setUser({
-      id: 0,
+      id: previewUserId,
       name: previewName,
       role: previewRole,
       shiftFromCode: null,
       homeWorkshopId: Number(workshopId) || null,
     });
-    setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null });
     setEnteredMenu(true);
+    if (previewUserId) {
+      // Подтягиваем настоящую смену сотрудника, чтобы админ видел терминал в том же
+      // состоянии, что и работник: открыта смена или нет, какой цех и номер смены.
+      fetchEmployeeShifts()
+        .then((list) => {
+          const found = list.find((e) => e.id === previewUserId);
+          setShift({
+            isOpen: !!found?.isOpen,
+            openedAt: found?.openedAt ?? null,
+            workshopId: found?.sessionWorkshopId ?? null,
+            shiftNumber: found?.sessionShiftNumber ?? found?.shiftNumber ?? null,
+          });
+        })
+        .catch(() =>
+          setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null }),
+        );
+    } else {
+      setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPreview, user]);
 
@@ -276,6 +297,7 @@ const KioskTerminal = () => {
             <Badge className="bg-violet-600 text-base text-white hover:bg-violet-600">
               <Icon name="Eye" size={14} className="mr-1.5" />
               Режим проверки · {roleLabels[user.role as Role] || user.role}
+              {user.id ? ' · реальные данные' : ''}
             </Badge>
           )}
           <p
