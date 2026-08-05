@@ -294,7 +294,10 @@ const MarketplaceSupplyShow = () => {
 
         {/* Связки заказов Яндекса: показываем НАД списком товаров, чтобы кладовщик увидел
             незакрытые связки сразу, а не после прокрутки всей поставки. */}
-        <SupplyGroupsPanel groups={supply.groups || []} />
+        <SupplyGroupsPanel
+          groups={supply.groups || []}
+          cancelledCount={supply.items.filter((i) => i.isCancelled).length}
+        />
 
         {isWbFbs ? (
           <WbFbsSupplyCard supply={supply} supplyId={supplyId} onReload={load} />
@@ -311,6 +314,7 @@ const MarketplaceSupplyShow = () => {
             onScanOrder={handleScanOrder}
             onRemoveItem={handleRemoveItem}
             onNavigateAssemble={() => navigate(`/crm/shipments/to-marketplace/${supplyId}/assemble`)}
+            onReload={load}
           />
         )}
       </div>

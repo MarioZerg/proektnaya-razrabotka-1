@@ -15,6 +15,7 @@ import Icon from '@/components/ui/icon';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
+import CancelledItemShelfCell from './CancelledItemShelfCell';
 
 interface SupplyItemsSectionProps {
   supply: SupplyDetail;
@@ -28,6 +29,8 @@ interface SupplyItemsSectionProps {
   onScanOrder: () => void;
   onRemoveItem: (itemId: number) => void;
   onNavigateAssemble: () => void;
+  /** Перезагрузить поставку после отправки отменённого заказа на полку. */
+  onReload: () => void;
 }
 
 const SupplyItemsSection = ({
@@ -41,6 +44,7 @@ const SupplyItemsSection = ({
   onScanOrder,
   onRemoveItem,
   onNavigateAssemble,
+  onReload,
 }: SupplyItemsSectionProps) => {
   useScannerAutoSubmit(scanOrderNumber, onScanOrder, !scanning && supply.type === 'FBS' && canEditItems);
 
@@ -158,7 +162,13 @@ const SupplyItemsSection = ({
                 return (
                 <TableRow
                   key={item.id}
-                  className={group && !group.isComplete ? 'bg-amber-50' : undefined}
+                  className={
+                    item.isCancelled
+                      ? 'bg-destructive/10'
+                      : group && !group.isComplete
+                        ? 'bg-amber-50'
+                        : undefined
+                  }
                 >
                   <TableCell className="font-medium">
                     <span className="break-all">{item.orderNumber || '—'}</span>
@@ -180,15 +190,29 @@ const SupplyItemsSection = ({
                     {item.width && item.height ? `${item.width}×${item.height}` : '—'}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline">
-                      {item.goodsStatus === 'reserved' ? 'Зарезервирован' : item.goodsStatus === 'shipped' ? 'Отгружен' : item.goodsStatus}
-                    </Badge>
+                    {item.isCancelled ? (
+                      <Badge variant="destructive">Заказ отменён</Badge>
+                    ) : (
+                      <Badge variant="outline">
+                        {item.goodsStatus === 'reserved' ? 'Зарезервирован' : item.goodsStatus === 'shipped' ? 'Отгружен' : item.goodsStatus}
+                      </Badge>
+                    )}
                   </TableCell>
                   {canEditItems && (
                     <TableCell>
-                      <Button variant="ghost" size="icon" onClick={() => onRemoveItem(item.id)}>
-                        <Icon name="Trash2" size={14} />
-                      </Button>
+                      {/* Отменённый заказ отгружать нельзя — вместо удаления даём кладовщику
+                          отправить вещь на полку хранения прямо отсюда. */}
+                      {item.isCancelled ? (
+                        <CancelledItemShelfCell
+                          item={item}
+                          shelves={supply.shelves || []}
+                          onDone={onReload}
+                        />
+                      ) : (
+                        <Button variant="ghost" size="icon" onClick={() => onRemoveItem(item.id)}>
+                          <Icon name="Trash2" size={14} />
+                        </Button>
+                      )}
                     </TableCell>
                   )}
                 </TableRow>

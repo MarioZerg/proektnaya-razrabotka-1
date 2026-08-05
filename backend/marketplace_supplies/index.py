@@ -66,6 +66,80 @@ def deny_manager_fbs(cur, supply_id=None, supply_type=None, actor_role=None):
     return None
 
 
+
+
+def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description):
+    """Запись в журнал действий — чтобы было видно, кто и что делал с поставкой."""
+    cur.execute(
+        "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, entity_id, description) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            'supply',
+            action,
+            entity_type,
+            int(entity_id) if entity_id not in (None, '') else None,
+            description,
+        ),
+    )
+
+
+def find_cancelled_items(cur, supply_id):
+    """Товары поставки, чьи заказы отменены маркетплейсом.
+
+    Заказ могут отменить в любой момент — в том числе когда вещь уже сшита, застикерована
+    и лежит в собранной поставке. Отгружать её нельзя: на маркетплейсе заказа больше нет.
+    Такая вещь должна уехать на полку хранения и ждать нового покупателя, а поставку с ней
+    внутри закрывать запрещено.
+
+    Возвращает список словарей: id позиции, штрихкод хранения, номер заказа, связка.
+    """
+    cur.execute(
+        "SELECT msi.id, gw.storage_barcode, o.order_number, o.group_key "
+        "FROM marketplace_supply_items msi "
+        "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+        "JOIN orders o ON o.id = gw.order_id "
+        "WHERE msi.supply_id = %s AND ("
+        "  o.status = 'Отменён' "
+        "  OR lower(coalesce(o.ozon_status, '')) LIKE '%%cancel%%' "
+        "  OR lower(coalesce(o.ym_status, '')) LIKE '%%cancel%%')",
+        (int(supply_id),),
+    )
+    direct = [
+        {'itemId': r[0], 'storageBarcode': r[1], 'orderNumber': r[2], 'groupKey': r[3],
+         'reason': 'cancelled'}
+        for r in cur.fetchall()
+    ]
+
+    # Связка Яндекса едет по ОДНОМУ общему ярлыку. Если отменили хотя бы одну вещь заказа,
+    # отправлять остаток нельзя — покупателю уедет неполная посылка по ярлыку на весь заказ.
+    # Поэтому на полку уходит вся связка целиком, а не только отменённая вещь.
+    broken_keys = {c['groupKey'] for c in direct if c['groupKey']}
+    if not broken_keys:
+        return direct
+
+    keys_csv = ','.join("'" + k.replace("'", "''") + "'" for k in broken_keys)
+    cur.execute(
+        "SELECT msi.id, gw.storage_barcode, o.order_number, o.group_key "
+        "FROM marketplace_supply_items msi "
+        "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+        "JOIN orders o ON o.id = gw.order_id "
+        f"WHERE msi.supply_id = %s AND o.group_key IN ({keys_csv})",
+        (int(supply_id),),
+    )
+    known = {c['itemId'] for c in direct}
+    for r in cur.fetchall():
+        if r[0] not in known:
+            direct.append({
+                'itemId': r[0], 'storageBarcode': r[1], 'orderNumber': r[2],
+                'groupKey': r[3],
+                # Сама вещь не отменена — но её заказ уже неполный, ехать ей некуда.
+                'reason': 'broken_group',
+            })
+    return direct
+
+
 def check_incomplete_groups(cur, supply_id):
     """Ищет в поставке заказы Яндекса, собранные не полностью.
 
@@ -126,6 +200,10 @@ def handler(event: dict, context) -> dict:
           "Товар к подбору", action 'start_picking', статус picking), а здесь сканирует стикер
           хранения каждого отобранного товара, чтобы добавить его в конкретную поставку и
           перевести статус picking -> reserved
+    POST /  { action: 'cancelled_to_shelf', itemId, shelfId }
+        - отменённый заказ убирается из поставки на полку хранения (status='in_stock').
+          Для связки Яндекса на полку уходит ВСЯ связка — ярлык на неё общий, неполный
+          заказ отгружать нельзя
     POST /  { action: 'remove_item', itemId }
         - убирает товар из поставки, возвращает его на склад в статус 'picking' (он остаётся
           отобранным, но не привязанным к этой поставке)
@@ -264,7 +342,8 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(
                     "SELECT msi.id, msi.goods_warehouse_id, o.order_number, o.product, o.material, o.width, o.height, "
-                    "gw.status, gw.shipped_at, msi.box_id, o.group_key, o.group_size, o.group_position "
+                    "gw.status, gw.shipped_at, msi.box_id, o.group_key, o.group_size, o.group_position, "
+                    "o.status, o.ozon_status, o.ym_status, gw.storage_barcode, gw.shelf_id "
                     "FROM marketplace_supply_items msi "
                     "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
@@ -287,6 +366,16 @@ def handler(event: dict, context) -> dict:
                         'groupKey': r[10],
                         'groupSize': r[11],
                         'groupPosition': r[12],
+                        # Заказ могли отменить уже после стикеровки, когда вещь физически
+                        # готова и лежит в поставке. Такую вещь отгружать НЕЛЬЗЯ — она должна
+                        # уехать на полку хранения, а поставка не должна закрыться с ней внутри.
+                        'isCancelled': (
+                            r[13] == 'Отменён'
+                            or 'cancel' in (r[14] or '').lower()
+                            or 'cancel' in (r[15] or '').lower()
+                        ),
+                        'storageBarcode': r[16],
+                        'shelfId': r[17],
                     }
                     for r in cur.fetchall()
                 ]
@@ -340,6 +429,9 @@ def handler(event: dict, context) -> dict:
                     }
                     for r in cur.fetchall()
                 ]
+
+                cur.execute("SELECT id, name FROM shelves ORDER BY name")
+                shelves = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
 
                 # WB FBS-специфичные данные: id поставки на WB, отсканированные готовые
                 # заказы WB (со стикерами коробов), и счётчик готовых кандидатов на складе
@@ -408,6 +500,9 @@ def handler(event: dict, context) -> dict:
                     'gazelkaPickup': row[26],
                     'items': items,
                     'groups': groups,
+                    # Полки склада — чтобы кладовщик мог отправить отменённый заказ на
+                    # хранение прямо из строки поставки, не уходя в другой раздел.
+                    'shelves': shelves,
                     'boxes': boxes,
                     'wbSupplyId': wb_supply_id,
                     'wbOrders': wb_orders,
@@ -677,6 +772,78 @@ def handler(event: dict, context) -> dict:
                         'goodsWarehouseId': goods_id,
                         'orderNumber': order_number,
                         'group': group_hint,
+                    }, ensure_ascii=False),
+                }
+
+            if action == 'cancelled_to_shelf':
+                # Отменённый заказ уезжает не на маркетплейс, а на полку хранения: вещь
+                # физически готова, но покупателя у неё больше нет. Убираем её из поставки и
+                # кладём на выбранную полку — оттуда её потом подберут под новый заказ.
+                # Для связки Яндекса отправляем на полку ВСЮ связку: ярлык на неё общий,
+                # поэтому неполный заказ отгружать нельзя.
+                item_id = body_data.get('itemId')
+                shelf_id = body_data.get('shelfId')
+                if not item_id or not shelf_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите позицию и полку'})}
+
+                cur.execute(
+                    "SELECT msi.supply_id, msi.goods_warehouse_id, s.status, o.group_key "
+                    "FROM marketplace_supply_items msi "
+                    "JOIN marketplace_supplies s ON s.id = msi.supply_id "
+                    "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+                    "JOIN orders o ON o.id = gw.order_id "
+                    "WHERE msi.id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Позиция не найдена'})}
+                supply_id_of_item, goods_id, supply_status, group_key = row
+                if supply_status not in ('Открытая', 'На сборке'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Поставка уже закрыта — товар из неё убрать нельзя'}, ensure_ascii=False),
+                    }
+
+                targets = [(int(item_id), goods_id)]
+                if group_key:
+                    cur.execute(
+                        "SELECT msi.id, msi.goods_warehouse_id FROM marketplace_supply_items msi "
+                        "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+                        "JOIN orders o ON o.id = gw.order_id "
+                        "WHERE msi.supply_id = %s AND o.group_key = %s",
+                        (int(supply_id_of_item), group_key),
+                    )
+                    targets = [(r[0], r[1]) for r in cur.fetchall()] or targets
+
+                for t_item_id, t_goods_id in targets:
+                    cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(t_item_id)}")
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', shelf_id = %s, "
+                        "reserved_order_id = NULL WHERE id = %s",
+                        (int(shelf_id), int(t_goods_id)),
+                    )
+
+                cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+                sh_row = cur.fetchone()
+                shelf_name = sh_row[0] if sh_row else str(shelf_id)
+
+                log_action(
+                    cur, body_data.get('actorId'), body_data.get('actorName'),
+                    'cancelled_to_shelf', 'marketplace_supply', supply_id_of_item,
+                    f'Отменённый заказ убран из поставки на полку {shelf_name}: {len(targets)} шт.'
+                    + (f' (связка {group_key})' if group_key else ''),
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'movedCount': len(targets),
+                        'shelfName': shelf_name,
+                        'groupKey': group_key,
                     }, ensure_ascii=False),
                 }
 
@@ -972,6 +1139,22 @@ def handler(event: dict, context) -> dict:
 
                 extra_sql = ""
                 if new_status == 'Отгрузка':
+                    # Отменённые заказы отгружать нельзя: на маркетплейсе их больше нет.
+                    # Кладовщик должен сначала отправить такие вещи на полку хранения —
+                    # прямо из строки поставки, кнопкой «На полку».
+                    cancelled = find_cancelled_items(cur, supply_id)
+                    if cancelled:
+                        nums = ', '.join(c['orderNumber'] or c['storageBarcode'] for c in cancelled[:10])
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'В поставке {len(cancelled)} отменённых заказов — '
+                                         f'отправьте их на полку хранения: {nums}',
+                                'cancelledItems': cancelled,
+                            }, ensure_ascii=False),
+                        }
+
                     # Заказ Яндекса из нескольких вещей отгружается по одному общему ярлыку.
                     # Отгрузить его наполовину нельзя: остаток застрянет на складе, а
                     # покупателю уедет неполная посылка — маркетплейс засчитает недовоз.

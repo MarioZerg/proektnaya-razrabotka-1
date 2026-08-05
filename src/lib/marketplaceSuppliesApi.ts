@@ -44,6 +44,16 @@ export interface SupplyItem {
   groupKey?: string | null;
   groupSize?: number | null;
   groupPosition?: number | null;
+  /** Заказ отменён маркетплейсом уже после стикеровки: отгружать вещь нельзя, она должна
+   * уехать на полку хранения и ждать нового покупателя. */
+  isCancelled?: boolean;
+  storageBarcode?: string | null;
+  shelfId?: number | null;
+}
+
+export interface SupplyShelf {
+  id: number;
+  name: string;
 }
 
 /** Связка — заказ покупателя из нескольких вещей, которые едут по одному общему ярлыку.
@@ -84,6 +94,8 @@ export interface SupplyDetail extends Supply {
   items: SupplyItem[];
   /** Связки заказов с общим ярлыком, попавшие в эту поставку. */
   groups?: SupplyGroup[];
+  /** Полки склада — для отправки отменённых заказов на хранение прямо из поставки. */
+  shelves?: SupplyShelf[];
   boxes: SupplyBox[];
   createdBy: number | null;
   totalQuantityMarketplace: number | null;
@@ -209,6 +221,21 @@ export const scanOrderToSupply = (supplyId: number, orderNumber: string): Promis
   postAction({ action: 'scan_order', supplyId, orderNumber });
 
 export const removeSupplyItem = (itemId: number) => postAction({ action: 'remove_item', itemId });
+
+/** Убрать отменённый заказ из поставки на полку хранения. Для связки Яндекса на полку
+ * уходит вся связка целиком — ярлык на неё общий. */
+export const cancelledToShelf = (
+  itemId: number,
+  shelfId: number,
+  actor?: { id?: number | null; name?: string | null }
+): Promise<{ movedCount: number; shelfName: string; groupKey: string | null }> =>
+  postAction({
+    action: 'cancelled_to_shelf',
+    itemId,
+    shelfId,
+    actorId: actor?.id,
+    actorName: actor?.name,
+  }) as Promise<{ movedCount: number; shelfName: string; groupKey: string | null }>;
 
 export interface CreateBoxResult {
   id: number;
