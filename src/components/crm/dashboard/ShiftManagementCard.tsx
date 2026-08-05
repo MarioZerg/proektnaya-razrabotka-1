@@ -2,14 +2,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Input } from '@/components/ui/input';
 import {
   Dialog,
   DialogContent,
@@ -56,6 +49,19 @@ const ShiftManagementCard = ({
   const [switchShiftId, setSwitchShiftId] = useState('');
   const [switching, setSwitching] = useState(false);
   const [freeTogglingId, setFreeTogglingId] = useState<number | null>(null);
+  const [search, setSearch] = useState('');
+  const [onlyOpen, setOnlyOpen] = useState(false);
+
+  const openCount = employees.filter((e) => e.isOpen).length;
+  const visibleEmployees = employees.filter((e) => {
+    if (onlyOpen && !e.isOpen) return false;
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      e.fullName.toLowerCase().includes(q) ||
+      (roleLabels[e.role as Role] || e.role).toLowerCase().includes(q)
+    );
+  });
 
   const openSwitch = (employee: EmployeeShiftStatus) => {
     setSwitchTarget(employee);
@@ -84,8 +90,33 @@ const ShiftManagementCard = ({
 
   return (
     <Card className="border-border shadow-none lg:col-span-3">
-      <CardHeader>
-        <CardTitle className="text-base">Управление сменами</CardTitle>
+      <CardHeader className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-base">Управление сменами</CardTitle>
+          <Badge variant="secondary">На смене: {openCount}</Badge>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[180px] flex-1">
+            <Icon
+              name="Search"
+              size={14}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск по имени или должности"
+              className="h-9 pl-8"
+            />
+          </div>
+          <Button
+            size="sm"
+            variant={onlyOpen ? 'default' : 'outline'}
+            onClick={() => setOnlyOpen((v) => !v)}
+          >
+            Только на смене
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {loading ? (
@@ -93,83 +124,71 @@ const ShiftManagementCard = ({
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
-        ) : employees.length === 0 ? (
-          <p className="p-4 text-sm text-muted-foreground">Сотрудников пока нет</p>
+        ) : visibleEmployees.length === 0 ? (
+          <p className="p-4 text-sm text-muted-foreground">
+            {employees.length === 0 ? 'Сотрудников пока нет' : 'Никто не найден'}
+          </p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Сотрудник</TableHead>
-                <TableHead>Смена</TableHead>
-                <TableHead className="text-right">Действия</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {employees.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell>
-                    <p className="font-medium">{s.fullName}</p>
-                    <p className="text-xs text-muted-foreground">{roleLabels[s.role as Role] || s.role}</p>
-                    {s.isOpen && s.openedAt && (
-                      <p className="text-xs text-muted-foreground">
-                        Открыл в {formatTime(s.openedAt)}
-                        {s.canCloseAt && ` · закроет после ${formatTime(s.canCloseAt)}`}
-                      </p>
+          <div className="max-h-[420px] divide-y divide-border overflow-y-auto">
+            {visibleEmployees.map((s) => (
+              <div key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 p-3">
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${
+                    s.isOpen ? 'bg-emerald-500' : 'bg-muted-foreground/30'
+                  }`}
+                />
+                <div className="min-w-[160px] flex-1">
+                  <p className="truncate text-sm font-medium">{s.fullName}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {roleLabels[s.role as Role] || s.role}
+                    {s.shiftNumber ? ` · смена ${s.shiftNumber}` : ''}
+                    {s.shiftFree ? ' · свободный график' : ''}
+                    {s.isOpen && s.openedAt ? ` · с ${formatTime(s.openedAt)}` : ''}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 px-2"
+                    title="Переключить смену"
+                    onClick={() => openSwitch(s)}
+                  >
+                    <Icon name="ArrowLeftRight" size={15} />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 px-2"
+                    title={s.shiftFree ? 'Вернуть в штатную смену' : 'Перевести на свободный график'}
+                    disabled={freeTogglingId === s.id}
+                    onClick={() => handleToggleFree(s)}
+                  >
+                    <Icon
+                      name={freeTogglingId === s.id ? 'Loader2' : s.shiftFree ? 'Lock' : 'LockOpen'}
+                      size={15}
+                      className={freeTogglingId === s.id ? 'animate-spin' : ''}
+                    />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={s.isOpen ? 'destructive' : 'default'}
+                    className="h-8"
+                    disabled={togglingId === s.id}
+                    onClick={() => onToggle(s)}
+                  >
+                    {togglingId === s.id ? (
+                      <Icon name="Loader2" size={14} className="animate-spin" />
+                    ) : s.isOpen ? (
+                      'Закрыть'
+                    ) : (
+                      'Открыть'
                     )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {s.shiftNumber ? (
-                        <Badge variant="secondary">Смена {s.shiftNumber}</Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                      {s.shiftFree && (
-                        <Badge variant="outline" className="text-xs">
-                          Свободный график
-                        </Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex flex-wrap justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => openSwitch(s)}>
-                        Переключить
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={freeTogglingId === s.id}
-                        onClick={() => handleToggleFree(s)}
-                      >
-                        {freeTogglingId === s.id ? (
-                          <Icon name="Loader2" size={14} className="animate-spin" />
-                        ) : s.shiftFree ? (
-                          'Вернуть в смену'
-                        ) : (
-                          'Выключить смену'
-                        )}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={s.isOpen ? 'destructive' : 'default'}
-                        disabled={togglingId === s.id}
-                        onClick={() => onToggle(s)}
-                      >
-                        {togglingId === s.id ? (
-                          <Icon name="Loader2" size={14} className="animate-spin" />
-                        ) : s.isOpen ? (
-                          'Закрыть смену'
-                        ) : (
-                          'Открыть смену'
-                        )}
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </CardContent>
 
