@@ -16,77 +16,134 @@
       "name": "Create supply without marketplace fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "create" },
+      "body": {
+        "action": "create"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Create supply with invalid type fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "create", "marketplace": "OZON", "type": "XYZ" },
+      "body": {
+        "action": "create",
+        "marketplace": "OZON",
+        "type": "XYZ"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Move status without valid status fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "move_status", "supplyId": 1, "status": "Не статус" },
+      "body": {
+        "action": "move_status",
+        "supplyId": 1,
+        "status": "Не статус"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Scan order without supplyId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "scan_order", "orderNumber": "TEST-001" },
+      "body": {
+        "action": "scan_order",
+        "orderNumber": "TEST-001"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Create box without supplyId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "create_box" },
+      "body": {
+        "action": "create_box"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Delete box without boxId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "delete_box" },
+      "body": {
+        "action": "delete_box"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Close box without boxId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "close_box" },
+      "body": {
+        "action": "close_box"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Add order to box without boxId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "add_order_to_box", "orderNumber": "TEST-001" },
+      "body": {
+        "action": "add_order_to_box",
+        "orderNumber": "TEST-001"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Force complete without supplyId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "force_complete" },
+      "body": {
+        "action": "force_complete"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Create OZON FBO without delivery method fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "create", "marketplace": "OZON", "type": "FBO" },
+      "body": {
+        "action": "create",
+        "marketplace": "OZON",
+        "type": "FBO"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Create OZON FBO with invalid delivery method fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "create", "marketplace": "OZON", "type": "FBO", "ozonDeliveryMethod": "invalid" },
+      "body": {
+        "action": "create",
+        "marketplace": "OZON",
+        "type": "FBO",
+        "ozonDeliveryMethod": "invalid"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Manager cannot create FBS supply",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "create",
+        "marketplace": "OZON",
+        "type": "FBS",
+        "actorRole": "manager"
+      },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Manager can still create FBO supply",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "create",
+        "marketplace": "OZON",
+        "type": "FBO",
+        "actorRole": "manager"
+      },
       "expectedStatus": 400
     }
   ]

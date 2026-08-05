@@ -68,6 +68,12 @@ const ToMarketplace = () => {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [ozonFboDialogOpen, setOzonFboDialogOpen] = useState(false);
+  // FBS-поставки создаёт и собирает кладовщик — товар он отбирает со своих полок. Менеджер
+  // ведёт FBO-поставки и только наблюдает за сборкой FBS в реальном времени.
+  const isManagerRole = user?.role === 'manager';
+  const availableCreateOptions = isManagerRole
+    ? createOptions.filter((o) => o.type !== 'FBS')
+    : createOptions;
 
   const [statusFilter, setStatusFilter] = useState('open');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -190,7 +196,7 @@ const ToMarketplace = () => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              {createOptions.map((opt) => (
+              {availableCreateOptions.map((opt) => (
                 <DropdownMenuItem key={opt.label} onClick={() => handleCreate(opt.marketplace, opt.type)}>
                   {opt.label}
                 </DropdownMenuItem>

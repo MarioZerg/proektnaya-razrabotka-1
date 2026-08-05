@@ -43,6 +43,29 @@ def compute_order_status(sewing_status: str, box_number) -> str:
 
 
 
+
+def deny_manager_fbs(cur, supply_id=None, supply_type=None, actor_role=None):
+    """Проверяет, что менеджер не правит FBS-поставку.
+
+    FBS-поставку собирает кладовщик: он сканирует товары со своих полок на складе. Менеджер
+    такую поставку только НАБЛЮДАЕТ в реальном времени — иначе состав поставки можно менять
+    из-за стола, пока кладовщик физически собирает другой набор вещей, и данные разъедутся
+    с реальностью. FBO-поставки менеджера это не касается — там состав ведёт именно он.
+
+    Возвращает текст ошибки или None, если действие разрешено.
+    """
+    if (actor_role or '') != 'manager':
+        return None
+    if supply_type is None and supply_id:
+        cur.execute("SELECT type FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
+        row = cur.fetchone()
+        supply_type = row[0] if row else None
+    if supply_type == 'FBS':
+        return ('FBS-поставку собирает кладовщик — вам доступен только просмотр '
+                'хода сборки в реальном времени')
+    return None
+
+
 def check_incomplete_groups(cur, supply_id):
     """Ищет в поставке заказы Яндекса, собранные не полностью.
 
@@ -480,10 +503,41 @@ def handler(event: dict, context) -> dict:
     if method == 'POST':
         body_data = json.loads(event.get('body') or '{}')
         action = body_data.get('action')
+        actor_role = (body_data.get('actorRole') or '').strip()
+
+        # Действия, меняющие FBS-поставку. Менеджеру они закрыты: FBS собирает кладовщик,
+        # сканируя товар со своих полок, а менеджер только наблюдает за ходом сборки.
+        FBS_WRITE_ACTIONS = (
+            'scan_order', 'remove_item', 'create_box', 'delete_box', 'close_box',
+            'add_order_to_box', 'remove_box_item', 'move_status', 'force_complete',
+            'update', 'delete',
+        )
 
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if actor_role == 'manager' and action in FBS_WRITE_ACTIONS:
+                target_supply = (
+                    body_data.get('supplyId') or body_data.get('id')
+                )
+                if not target_supply and body_data.get('boxId'):
+                    cur.execute(
+                        "SELECT supply_id FROM marketplace_supply_boxes WHERE id = %s",
+                        (int(body_data['boxId']),),
+                    )
+                    b_row = cur.fetchone()
+                    target_supply = b_row[0] if b_row else None
+                if not target_supply and body_data.get('itemId'):
+                    cur.execute(
+                        "SELECT supply_id FROM marketplace_supply_items WHERE id = %s",
+                        (int(body_data['itemId']),),
+                    )
+                    i_row = cur.fetchone()
+                    target_supply = i_row[0] if i_row else None
+                denied = deny_manager_fbs(cur, supply_id=target_supply, actor_role=actor_role)
+                if denied:
+                    return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': denied}, ensure_ascii=False)}
 
             if action == 'create':
                 marketplace = (body_data.get('marketplace') or '').strip()
@@ -494,6 +548,9 @@ def handler(event: dict, context) -> dict:
 
                 if not marketplace:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите маркетплейс'})}
+                denied = deny_manager_fbs(cur, supply_type=supply_type, actor_role=actor_role)
+                if denied:
+                    return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': denied}, ensure_ascii=False)}
                 if supply_type not in ('FBO', 'FBS'):
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Тип поставки должен быть FBO или FBS'})}
                 if marketplace == 'OZON' and supply_type == 'FBO' and ozon_delivery_method not in ('direct', 'cross_docking'):

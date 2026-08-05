@@ -218,7 +218,14 @@ const MarketplaceSupplyShow = () => {
   // остаётся только финальное «Отметить выполненной» после отгрузки.
   const rawNextStatus = supplyStatusFlow[supplyStatusFlow.indexOf(supply.status) + 1];
   const nextStatus = isWbFbs && rawNextStatus !== 'Выполнена' ? undefined : rawNextStatus;
-  const canEditItems = supply.status === 'Открытая' || supply.status === 'На сборке';
+  // FBS-поставку собирает кладовщик — он сканирует товары со своих полок. Менеджер такую
+  // поставку только НАБЛЮДАЕТ в реальном времени: сборка идёт на складе, а не за его столом,
+  // поэтому редактирование состава ему недоступно. FBO-поставки менеджера это не касается —
+  // там товарный состав ведёт именно он.
+  const isManagerRole = user?.role === 'manager';
+  const canEditItems =
+    (supply.status === 'Открытая' || supply.status === 'На сборке') &&
+    !(isManagerRole && supply.type === 'FBS');
   const isOzonFbo = supply.marketplace === 'OZON' && supply.type === 'FBO';
   // WB FBO: данные поставки заполняются вручную (у WB нет API заявок FBO), но грузоперевозку
   // так же везём через Газельку — поэтому показываем тот же блок Газельки, что и у OZON FBO.
@@ -242,6 +249,7 @@ const MarketplaceSupplyShow = () => {
           supply={supply}
           isOzonFbo={isOzonFbo}
           now={now}
+          readOnly={isManagerRole && supply.type === 'FBS'}
           nextStatus={nextStatus}
           nextStatusLabel={nextStatusLabel}
           saving={saving}

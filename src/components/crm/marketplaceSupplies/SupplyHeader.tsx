@@ -25,6 +25,9 @@ interface SupplyHeaderProps {
   supply: SupplyDetail;
   isOzonFbo: boolean;
   now: Date;
+  /** Режим наблюдения: менеджер видит ход сборки FBS-поставки, но не управляет ею —
+   * поставку собирает и закрывает кладовщик на складе. */
+  readOnly?: boolean;
   nextStatus: SupplyStatus | undefined;
   nextStatusLabel: Record<string, string>;
   saving: boolean;
@@ -39,6 +42,7 @@ const SupplyHeader = ({
   supply,
   isOzonFbo,
   now,
+  readOnly = false,
   nextStatus,
   nextStatusLabel,
   saving,
@@ -83,13 +87,19 @@ const SupplyHeader = ({
           </p>
         </div>
         <div className="flex gap-2">
-          {supply.status === 'Открытая' && (
+          {readOnly && (
+            <span className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
+              <Icon name="Eye" size={16} />
+              Наблюдение — поставку собирает кладовщик
+            </span>
+          )}
+          {!readOnly && supply.status === 'Открытая' && (
             <Button variant="destructive" onClick={onDelete}>
               <Icon name="Trash2" size={16} className="mr-2" />
               Удалить
             </Button>
           )}
-          {supply.type === 'FBS' && supply.status !== 'Выполнена' && (
+          {!readOnly && supply.type === 'FBS' && supply.status !== 'Выполнена' && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="outline" disabled={forceCompleting}>
@@ -113,7 +123,7 @@ const SupplyHeader = ({
               </AlertDialogContent>
             </AlertDialog>
           )}
-          {nextStatus && (
+          {!readOnly && nextStatus && (
             <Button onClick={onMoveStatus} disabled={saving}>
               <Icon name="ArrowRight" size={16} className="mr-2" />
               {nextStatusLabel[nextStatus] || nextStatus}

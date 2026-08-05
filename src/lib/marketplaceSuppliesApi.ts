@@ -157,11 +157,22 @@ export const fetchSupplyCandidates = async (id: number): Promise<SupplyCandidate
   return data.candidates || [];
 };
 
+/** Роль текущего сотрудника — backend по ней решает, что человеку можно менять.
+ * Например, менеджеру закрыто редактирование FBS-поставок: их собирает кладовщик. */
+const currentRole = (): string | undefined => {
+  try {
+    const raw = localStorage.getItem('megatul_user');
+    return raw ? JSON.parse(raw).role : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const postAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(SUPPLIES_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ actorRole: currentRole(), ...payload }),
   });
   const data = await res.json();
   if (!res.ok) {
