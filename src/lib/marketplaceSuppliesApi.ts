@@ -162,8 +162,6 @@ export const createSupply = (payload: {
   ozonDeliveryMethod?: OzonDeliveryMethod;
 }) => postAction({ action: 'create', ...payload });
 
-export const addSupplyItems = (supplyId: number, goodsWarehouseIds: number[]) =>
-  postAction({ action: 'add_items', supplyId, goodsWarehouseIds });
 
 export interface ScanOrderResult {
   success: true;
@@ -201,6 +199,9 @@ export interface AddOrderToBoxResult {
   goodsWarehouseId: number;
 }
 
+/** Кладёт товар в короб поставки по ШТРИХКОДУ ХРАНЕНИЯ (GW-XXXXXX). Параметр называется
+ * orderNumber ради совместимости, но номер заказа маркетплейса сюда передавать нельзя —
+ * в поставку попадает только реально отсканированная вещь. */
 export const addOrderToBox = (boxId: number, orderNumber: string): Promise<AddOrderToBoxResult> =>
   postAction({ action: 'add_order_to_box', boxId, orderNumber });
 

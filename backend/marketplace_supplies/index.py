@@ -69,7 +69,6 @@ def handler(event: dict, context) -> dict:
           Для OZON FBO обязателен ozonDeliveryMethod: 'direct' (прямая поставка) или
           'cross_docking' (кросс-докинг) — без него создание отклоняется (400).
           У такой поставки автоматически ozon_status = 'Заполнение данных'
-    POST /  { action: 'add_items', supplyId, goodsWarehouseIds: [...] }
         - добавляет товары со склада в поставку, резервирует их (status='reserved')
         - используется для FBS (выбор товаров чекбоксами из списка)
     POST /  { action: 'scan_order', supplyId, orderNumber }
@@ -87,9 +86,10 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'delete_box', boxId }
         - удаляет короб (разрешено только если в нём нет товаров)
     POST /  { action: 'add_order_to_box', boxId, orderNumber }
-        - добавляет заказ в конкретный короб поставки: находит готовый товар на складе
-          (goods_warehouse, status='in_stock') по номеру заказа, резервирует его и
-          привязывает к коробу
+        - кладёт товар в конкретный короб поставки. В orderNumber передаётся ШТРИХКОД
+          ХРАНЕНИЯ (GW-XXXXXX) — параметр назван так для обратной совместимости фронтенда.
+          Только сканирование: номер заказа маркетплейса руками не вводится, поэтому в
+          поставку не попадёт вещь, которую кладовщик физически не держал в руках
     POST /  { action: 'remove_box_item', itemId }
         - убирает товар из короба и из поставки, возвращает его на склад (status='in_stock')
     POST /  { action: 'update', supplyId, supplyNumber?, supplyBarcode?, cluster?,
@@ -471,34 +471,6 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': supply_id})}
 
-            if action == 'add_items':
-                supply_id = body_data.get('supplyId')
-                goods_ids = body_data.get('goodsWarehouseIds') or []
-                if not supply_id or not goods_ids:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку и товары'})}
-
-                cur.execute("SELECT status FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
-                row = cur.fetchone()
-                if not row:
-                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
-                if row[0] not in ('Открытая', 'На сборке'):
-                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять товары'})}
-
-                for gid in goods_ids:
-                    cur.execute("SELECT status FROM goods_warehouse WHERE id = %s", (int(gid),))
-                    g_row = cur.fetchone()
-                    if not g_row:
-                        return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Товар #{gid} не найден на складе'})}
-                    if g_row[0] != 'in_stock':
-                        return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Товар #{gid} недоступен'})}
-                    cur.execute(
-                        f"INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id) VALUES ({int(supply_id)}, {int(gid)})"
-                    )
-                    cur.execute(f"UPDATE goods_warehouse SET status = 'reserved' WHERE id = {int(gid)}")
-
-                conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
-
             if action == 'scan_order':
                 # Сканируется ШТРИХКОД ХРАНЕНИЯ товара (storage_barcode из goods_warehouse),
                 # а не номер заказа маркетплейса — кладовщик заранее отбирает товары к подбору
@@ -658,7 +630,7 @@ def handler(event: dict, context) -> dict:
                 box_id = body_data.get('boxId')
                 order_number = (body_data.get('orderNumber') or '').strip()
                 if not box_id or not order_number:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите короб и номер заказа'})}
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите короб и отсканируйте стикер хранения'})}
 
                 cur.execute(
                     "SELECT mb.supply_id, s.status FROM marketplace_supply_boxes mb "
@@ -672,26 +644,39 @@ def handler(event: dict, context) -> dict:
                 if supply_status not in ('Открытая', 'На сборке'):
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять товары'})}
 
-                order_number_esc = order_number.replace("'", "''")
+                # В короб товар кладётся ТОЛЬКО сканированием стикера хранения (GW-XXXXXX).
+                # Номер заказа маркетплейса руками не вводится: так в поставку не попадёт
+                # вещь, которую кладовщик физически не держал в руках.
+                scan_esc = order_number.replace("'", "''")
                 cur.execute(
-                    "SELECT gw.id, gw.status FROM goods_warehouse gw "
-                    "JOIN orders o ON o.id = gw.order_id "
-                    f"WHERE o.order_number = '{order_number_esc}'"
+                    "SELECT gw.id, gw.status, o.order_number FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    f"WHERE gw.storage_barcode = '{scan_esc}'"
                 )
                 gw_row = cur.fetchone()
                 if not gw_row:
                     return {
                         'statusCode': 404,
                         'headers': headers,
-                        'body': json.dumps({'error': f'Заказ {order_number} не найден на складе готового товара (не готов или не принят)'}),
+                        'body': json.dumps({
+                            'error': f'Стикер {order_number} не найден. Сканируйте стикер хранения '
+                                     f'товара (GW-...), а не номер заказа'
+                        }),
                     }
-                goods_id, goods_status = gw_row
-                if goods_status != 'in_stock':
+                goods_id, goods_status, goods_order_number = gw_row
+                if goods_status == 'awaiting_shelf':
                     return {
                         'statusCode': 409,
                         'headers': headers,
-                        'body': json.dumps({'error': f'Заказ {order_number} уже зарезервирован или отгружен'}),
+                        'body': json.dumps({'error': f'Товар {goods_order_number or ""} ещё не положен на полку'}),
                     }
+                if goods_status not in ('in_stock', 'picking'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Товар {goods_order_number or ""} уже зарезервирован или отгружен'}),
+                    }
+                order_number = goods_order_number or order_number
 
                 cur.execute(
                     "SELECT id FROM marketplace_supply_items WHERE supply_id = %s AND goods_warehouse_id = %s",

@@ -85,16 +85,18 @@ const SupplyBoxCard = ({
           <div className="flex gap-2">
             <Input
               ref={inputRef}
-              placeholder="Номер заказа"
+              placeholder="Отсканируйте стикер хранения"
               value={orderNumber}
               onChange={(e) => setOrderNumber(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
               disabled={scanning}
               className="font-mono-tech"
             />
-            <Button size="sm" onClick={handleAdd} disabled={scanning || !orderNumber.trim()}>
-              {scanning ? <Icon name="Loader2" size={14} className="animate-spin" /> : <Icon name="Plus" size={14} />}
-            </Button>
+            {scanning && (
+              <div className="flex h-9 w-9 items-center justify-center">
+                <Icon name="Loader2" size={16} className="animate-spin text-muted-foreground" />
+              </div>
+            )}
           </div>
         )}
 
