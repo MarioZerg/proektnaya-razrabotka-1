@@ -58,6 +58,12 @@ def handler(event: dict, context) -> dict:
           "{userId}-{shiftNumber}-{ГГГГММДД}" (например 3-20-20250513). Возвращает сотрудника
           и состояние его смены (открыта/закрыта) — пароль на терминале не нужен
 
+    POST /  { action: 'find_unlabeled', sewerId?, width?, height? }
+        - кладовщик ищет вещь без стикера хранения (упаковщица не наклеила / стикер потерян)
+          среди отменённых заказов, ожидающих укладки на полку — по швее и/или размеру
+    POST /  { action: 'sewers_list' }
+        - швеи, у которых есть вещи, ожидающие укладки на полку (для поиска выше)
+
     POST /  { action: 'close_order', orderId, packerId }
         - переводит заказ в статус "Готовые", создаёт начисления швее и упаковщице.
           Фиксирует packer_user_id = packerId — отдельное поле на заказе, аналогично
@@ -350,6 +356,70 @@ def handler(event: dict, context) -> dict:
                         'storageBarcode': storage_barcode,
                     }),
                 }
+
+            if action == 'find_unlabeled':
+                # Кладовщик нашёл в цехе вещь без стикера хранения (упаковщица забыла наклеить
+                # или стикер потерялся) и ищет, чей это товар: по швее и/или размеру среди
+                # отменённых заказов, которые ждут укладки на полку. Показывает кандидатов —
+                # кладовщик выбирает нужный и печатает стикер заново.
+                sewer_id = body_data.get('sewerId')
+                width = body_data.get('width')
+                height = body_data.get('height')
+
+                conditions = ["gw.status = 'awaiting_shelf'"]
+                if sewer_id not in (None, ''):
+                    conditions.append(
+                        f"(o.assigned_user_id = {int(sewer_id)} OR o.sewer_user_id = {int(sewer_id)})"
+                    )
+                if width not in (None, ''):
+                    conditions.append(f"o.width = {int(width)}")
+                if height not in (None, ''):
+                    conditions.append(f"o.height = {int(height)}")
+                where_sql = ' AND '.join(conditions)
+
+                cur.execute(
+                    "SELECT gw.id, gw.storage_barcode, o.order_number, o.product, o.material, "
+                    "o.width, o.height, su.full_name, pu.full_name, o.marketplace, gw.received_at "
+                    "FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN users su ON su.id = COALESCE(o.sewer_user_id, o.assigned_user_id) "
+                    "LEFT JOIN users pu ON pu.id = o.packer_user_id "
+                    f"WHERE {where_sql} "
+                    "ORDER BY gw.received_at DESC LIMIT 50"
+                )
+                candidates = [
+                    {
+                        'id': r[0],
+                        'storageBarcode': r[1],
+                        'orderNumber': r[2],
+                        'product': r[3],
+                        'material': r[4],
+                        'width': r[5],
+                        'height': r[6],
+                        'sewerName': r[7],
+                        'packerName': r[8],
+                        'marketplace': r[9],
+                        'receivedAt': r[10].isoformat() + 'Z' if r[10] else None,
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'candidates': candidates}),
+                }
+
+            if action == 'sewers_list':
+                # Список швей для выпадающего списка поиска: только те, у кого есть вещи,
+                # ожидающие укладки на полку — искать среди всех сотрудников бессмысленно.
+                cur.execute(
+                    "SELECT DISTINCT u.id, u.full_name FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.order_id "
+                    "JOIN users u ON u.id = COALESCE(o.sewer_user_id, o.assigned_user_id) "
+                    "WHERE gw.status = 'awaiting_shelf' ORDER BY u.full_name"
+                )
+                sewers = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'sewers': sewers})}
 
             if action == 'defect_writeoff':
                 # Списание брака прямо на терминале: сотрудник сканирует СВОЙ штрихкод, и если

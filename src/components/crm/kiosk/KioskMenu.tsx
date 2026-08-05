@@ -1,10 +1,10 @@
 import Icon from '@/components/ui/icon';
 
-export type KioskScreen = 'menu' | 'shift' | 'orders' | 'reviews' | 'rolls';
+export type KioskScreen = 'menu' | 'shift' | 'orders' | 'reviews' | 'rolls' | 'unlabeled';
 
 interface KioskMenuProps {
   onSelect: (screen: KioskScreen) => void;
-  /** Роль сотрудника — кладовщику на терминале доступна только работа со сменой. */
+  /** Роль сотрудника — кладовщику на терминале доступны смена и поиск вещей без стикера. */
   role: string;
 }
 
@@ -33,12 +33,22 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
     icon: 'Scroll',
     className: 'bg-amber-400 hover:bg-amber-500 text-black',
   },
+  {
+    screen: 'unlabeled',
+    label: 'Товар без стикера',
+    icon: 'PackageSearch',
+    className: 'bg-rose-500 hover:bg-rose-600 text-white',
+  },
 ];
 
 /** Главное меню терминала — крупные плитки под сенсорный экран. */
 const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
-  // Кладовщик на терминале работает только со сменой — остальные разделы ему не нужны.
-  const visibleTiles = role === 'storekeeper' ? tiles.filter((t) => t.screen === 'shift') : tiles;
+  // Кладовщик на терминале открывает смену и ищет вещи, оставшиеся без стикера хранения.
+  // «Товар без стикера» — его зона ответственности, остальным эта плитка не нужна.
+  const visibleTiles =
+    role === 'storekeeper'
+      ? tiles.filter((t) => t.screen === 'shift' || t.screen === 'unlabeled')
+      : tiles.filter((t) => t.screen !== 'unlabeled');
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

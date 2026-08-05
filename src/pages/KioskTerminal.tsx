@@ -13,6 +13,7 @@ import KioskDefectWriteoffPanel from '@/components/crm/kiosk/KioskDefectWriteoff
 import KioskOrdersScreen from '@/components/crm/kiosk/KioskOrdersScreen';
 import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
+import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
 import KioskIdleTimer from '@/components/crm/kiosk/KioskIdleTimer';
 
 /** Терминал цеха (киоск). Полноэкранный экран для планшета в цехе: сотрудник входит
@@ -311,6 +312,12 @@ const KioskTerminal = () => {
           {screen === 'reviews' && (
             <div className="mx-auto max-w-3xl">
               <KioskReviewsScreen />
+            </div>
+          )}
+
+          {screen === 'unlabeled' && (
+            <div className="mx-auto max-w-3xl">
+              <KioskUnlabeledScreen />
             </div>
           )}
 

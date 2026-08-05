@@ -93,3 +93,49 @@ export const closeKioskOrder = async (
   }
   return data;
 };
+export interface UnlabeledCandidate {
+  id: number;
+  storageBarcode: string;
+  orderNumber: string;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  sewerName: string | null;
+  packerName: string | null;
+  marketplace: string | null;
+  receivedAt: string | null;
+}
+
+/** Кладовщик ищет вещь без стикера хранения среди отменённых заказов, ждущих укладки на
+ * полку — по швее и/или размеру. Нужен, когда упаковщица не наклеила стикер или он потерян. */
+export const findUnlabeledGoods = async (filters: {
+  sewerId?: number;
+  width?: number;
+  height?: number;
+}): Promise<UnlabeledCandidate[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'find_unlabeled', ...filters }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Ошибка поиска');
+  }
+  return data.candidates || [];
+};
+
+/** Швеи, у которых есть вещи, ожидающие укладки на полку. */
+export const fetchUnlabeledSewers = async (): Promise<Array<{ id: number; name: string }>> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'sewers_list' }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Ошибка запроса');
+  }
+  return data.sewers || [];
+};
