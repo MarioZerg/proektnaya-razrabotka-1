@@ -26,6 +26,10 @@ interface GoodsWarehouseFiltersProps {
   reasonFilter: string;
   setReasonFilter: (value: string) => void;
   shelves: Shelf[];
+  /** Сколько товаров лежит на каждой полке (id полки → количество) — чтобы кладовщик сразу
+   * видел, сколько штук идти собирать, не открывая каждую полку. */
+  shelfCounts: Record<number, number>;
+  noShelfCount: number;
   activeFiltersCount: number;
   onReset: () => void;
 }
@@ -45,6 +49,8 @@ const GoodsWarehouseFilters = ({
   reasonFilter,
   setReasonFilter,
   shelves,
+  shelfCounts,
+  noShelfCount,
   activeFiltersCount,
   onReset,
 }: GoodsWarehouseFiltersProps) => {
@@ -120,9 +126,12 @@ const GoodsWarehouseFilters = ({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все полки</SelectItem>
+            {noShelfCount > 0 && (
+              <SelectItem value="none">Без полки — {noShelfCount} шт</SelectItem>
+            )}
             {shelves.map((s) => (
               <SelectItem key={s.id} value={String(s.id)}>
-                {s.name}
+                {s.name} — {shelfCounts[s.id] || 0} шт
               </SelectItem>
             ))}
           </SelectContent>
@@ -135,6 +144,57 @@ const GoodsWarehouseFilters = ({
           Сбросить
         </Button>
       )}
+
+      {/* Быстрый выбор полки: кладовщик видит остатки по всем полкам сразу и одним нажатием
+          отбирает нужную, чтобы идти собирать именно её. Пустые полки не показываем. */}
+      <div className="flex w-full flex-wrap gap-2">
+        {shelves
+          .filter((s) => (shelfCounts[s.id] || 0) > 0)
+          .map((s) => {
+            const active = shelfFilter === String(s.id);
+            return (
+              <button
+                key={s.id}
+                onClick={() => setShelfFilter(active ? '' : String(s.id))}
+                className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition ${
+                  active
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border hover:bg-muted'
+                }`}
+              >
+                <Icon name="Layers" size={14} />
+                <span className="font-medium">{s.name}</span>
+                <span
+                  className={`rounded-full px-1.5 text-xs ${
+                    active ? 'bg-primary-foreground/20' : 'bg-muted-foreground/10'
+                  }`}
+                >
+                  {shelfCounts[s.id]}
+                </span>
+              </button>
+            );
+          })}
+        {noShelfCount > 0 && (
+          <button
+            onClick={() => setShelfFilter(shelfFilter === 'none' ? '' : 'none')}
+            className={`flex items-center gap-2 rounded-md border border-dashed px-3 py-1.5 text-sm transition ${
+              shelfFilter === 'none'
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border hover:bg-muted'
+            }`}
+          >
+            <Icon name="PackageX" size={14} />
+            <span className="font-medium">Без полки</span>
+            <span
+              className={`rounded-full px-1.5 text-xs ${
+                shelfFilter === 'none' ? 'bg-primary-foreground/20' : 'bg-muted-foreground/10'
+              }`}
+            >
+              {noShelfCount}
+            </span>
+          </button>
+        )}
+      </div>
     </div>
   );
 };

@@ -98,10 +98,32 @@ const GoodsWarehouse = () => {
     if (materialFilter && i.material !== materialFilter) return false;
     if (widthFilter && i.width !== Number(widthFilter)) return false;
     if (heightFilter && i.height !== Number(heightFilter)) return false;
-    if (shelfFilter && String(i.shelfId) !== shelfFilter) return false;
+    // 'none' — вещи без полки: приняты, но ещё не разложены.
+    if (shelfFilter === 'none' ? i.shelfId != null : shelfFilter && String(i.shelfId) !== shelfFilter)
+      return false;
     if (reasonFilter && i.receiveReason !== reasonFilter) return false;
     return true;
   });
+
+  // Считаем остатки по полкам только среди товаров, которые реально лежат на складе:
+  // отгруженные и утерянные вещи собирать не нужно.
+  const shelfCounts = useMemo(() => {
+    const acc: Record<number, number> = {};
+    items.forEach((i) => {
+      if (i.status !== 'in_stock' && i.status !== 'picking') return;
+      if (i.shelfId == null) return;
+      acc[i.shelfId] = (acc[i.shelfId] || 0) + 1;
+    });
+    return acc;
+  }, [items]);
+
+  const noShelfCount = useMemo(
+    () =>
+      items.filter(
+        (i) => i.shelfId == null && (i.status === 'in_stock' || i.status === 'awaiting_shelf'),
+      ).length,
+    [items],
+  );
 
   const activeFiltersCount = [
     statusFilter !== 'in_stock',
@@ -301,12 +323,24 @@ const GoodsWarehouse = () => {
           setHeightFilter={setHeightFilter}
           reasonFilter={reasonFilter}
           setReasonFilter={setReasonFilter}
+          shelfCounts={shelfCounts}
+          noShelfCount={noShelfCount}
           shelfFilter={shelfFilter}
           setShelfFilter={setShelfFilter}
           shelves={shelves}
           activeFiltersCount={activeFiltersCount}
           onReset={resetFilters}
         />
+
+        {/* Сколько вещей отобрано текущим фильтром — кладовщик видит объём работы до того,
+            как пойдёт к стеллажу. */}
+        {!loading && (
+          <p className="text-sm text-muted-foreground">
+            {shelfFilter
+              ? `На выбранной полке: ${filtered.length} шт`
+              : `Показано товаров: ${filtered.length}`}
+          </p>
+        )}
 
         <GoodsWarehouseTable
           loading={loading}
