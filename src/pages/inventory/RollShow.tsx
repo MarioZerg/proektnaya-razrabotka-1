@@ -88,8 +88,11 @@ const RollShow = () => {
             <h1 className="text-xl font-bold">Рулон #{roll.id}</h1>
             <span className="font-mono-tech text-sm text-muted-foreground">{roll.barcode}</span>
             <Badge variant={statusLabels[roll.status].variant}>{statusLabels[roll.status].label}</Badge>
+            {/* Тип материала и кто отвечает за брак именно по нему: Тюль — закройщик,
+                Аксессуары — швея, Упаковка — упаковщик. */}
             <Badge variant="outline">
-              {roll.kind === 'fabric' ? 'Ткань · брак закройщика' : 'Тесьма · брак швеи'}
+              {roll.materialType || 'Тип не указан'}
+              {roll.defectRoleLabel ? ` · брак: ${roll.defectRoleLabel}` : ''}
             </Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">

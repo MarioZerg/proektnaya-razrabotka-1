@@ -194,8 +194,17 @@ def handler(event: dict, context) -> dict:
                 if not r:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
                 material_type = r[13]
-                # Тип материала рулона: "Тюль" — это ткань (за брак отвечает закройщик), всё
-                # остальное (Аксессуары/тесьма и т.п.) — за брак отвечает швея.
+                # За брак отвечает тот, кто физически работает с этим материалом:
+                # Тюль (ткань) — закройщик, Аксессуары (тесьма) — швея, Упаковка — упаковщик.
+                # Для незнакомого типа ответственного не назначаем, чтобы не обвинить не того.
+                responsible_by_type = {
+                    'Тюль': ('cutter', 'закройщик'),
+                    'Аксессуары': ('sewer', 'швея'),
+                    'Упаковка': ('packer', 'упаковщик'),
+                }
+                defect_role, defect_role_label = responsible_by_type.get(
+                    material_type, (None, None)
+                )
                 is_fabric = (material_type == 'Тюль')
                 roll = {
                     'id': r[0], 'barcode': r[1], 'materialId': r[2], 'materialName': r[3],
@@ -205,6 +214,8 @@ def handler(event: dict, context) -> dict:
                     'completedAt': (r[12].isoformat() + 'Z') if r[12] else None,
                     'materialType': material_type,
                     'kind': 'fabric' if is_fabric else 'trim',
+                    'defectRole': defect_role,
+                    'defectRoleLabel': defect_role_label,
                 }
 
                 history = []
@@ -239,11 +250,9 @@ def handler(event: dict, context) -> dict:
                         'stages': stages,
                     })
 
-                # Списание брака. Роль исполнителя брака зависит от типа рулона: ткань → закройщик,
-                # тесьма → швея. Пока конкретного исполнителя нет — показываем создателя документа
-                # (в дальнейшем при логине по штрих-коду на терминале подтянется реальный сотрудник).
-                defect_role = 'cutter' if is_fabric else 'sewer'
-                defect_role_label = 'закройщик' if is_fabric else 'швея'
+                # Списание брака. Ответственный определён выше по типу материала. Пока
+                # конкретного исполнителя нет — показываем создателя документа (в дальнейшем
+                # при логине по штрих-коду на терминале подтянется реальный сотрудник).
                 cur.execute(
                     "SELECT si.quantity, s.created_at, s.comment, cu.full_name, s.type "
                     "FROM shipment_items si "

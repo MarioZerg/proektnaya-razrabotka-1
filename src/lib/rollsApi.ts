@@ -41,15 +41,18 @@ export interface RollMovement {
   comment: string | null;
   /** Лесенка этапов заказа (только для движений kind='order'). */
   stages?: RollOrderStage[] | null;
-  /** Роль исполнителя брака: 'cutter' для ткани, 'sewer' для тесьмы. */
-  defectRole?: 'cutter' | 'sewer' | null;
+  /** Кто отвечает за брак этого материала: Тюль — закройщик, Аксессуары — швея,
+   * Упаковка — упаковщик. Для незнакомого типа материала — null. */
+  defectRole?: 'cutter' | 'sewer' | 'packer' | null;
   defectRoleLabel?: string | null;
 }
 
-/** Рулон в деталях: тип материала (ткань/тесьма) для правильной атрибуции брака. */
+/** Рулон в деталях: тип материала нужен, чтобы правильно назвать ответственного за брак. */
 export interface RollDetailInfo extends Roll {
   materialType: string | null;
   kind: 'fabric' | 'trim';
+  defectRole?: 'cutter' | 'sewer' | 'packer' | null;
+  defectRoleLabel?: string | null;
 }
 
 export interface RollDetail {
