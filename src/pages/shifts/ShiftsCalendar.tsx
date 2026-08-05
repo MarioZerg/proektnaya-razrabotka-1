@@ -18,8 +18,14 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { fetchShifts, fetchShiftDaysOff, setShiftDayOff, type ShiftListItem } from '@/lib/shiftsApi';
-import { fetchWorkshopDetail } from '@/lib/workshopsApi';
+import {
+  fetchShifts,
+  fetchShiftDaysOff,
+  setShiftDayOff,
+  type ShiftListItem,
+  type ShiftCycle,
+} from '@/lib/shiftsApi';
+import ShiftCycleSetup from '@/components/crm/shifts/ShiftCycleSetup';
 
 const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -68,7 +74,9 @@ const ShiftsCalendar = () => {
   const [loading, setLoading] = useState(true);
   const [daysOff, setDaysOff] = useState<Set<string>>(new Set());
   const [savingDate, setSavingDate] = useState<string | null>(null);
-  const [isFloatingSchedule, setIsFloatingSchedule] = useState(false);
+  // Цикличный график смены (2/2 и т.п.): если задан, выходные считает система, а клики
+  // по дням в календаре отключаются — иначе ручные отметки конфликтовали бы с расчётом.
+  const [cycle, setCycle] = useState<ShiftCycle | null>(null);
 
   const today = new Date();
   const [monthOffset, setMonthOffset] = useState(0);
@@ -89,9 +97,10 @@ const ShiftsCalendar = () => {
   const loadDaysOff = () => {
     if (!selectedShift) return;
     const month = `${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}`;
-    fetchShiftDaysOff(selectedShift.workshopId, selectedShift.shiftNumber, month).then((data) =>
-      setDaysOff(new Set(data))
-    );
+    fetchShiftDaysOff(selectedShift.workshopId, selectedShift.shiftNumber, month).then((data) => {
+      setDaysOff(new Set(data.daysOff));
+      setCycle(data.cycle);
+    });
   };
 
   useEffect(() => {
@@ -99,21 +108,15 @@ const ShiftsCalendar = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedShift?.id, viewDate.getFullYear(), viewDate.getMonth()]);
 
-  // У цехов с чередующимся графиком (например 2/2) смена открывается вручную через
-  // дашборд по фактическому графику, а не по заранее отмеченным здесь выходным — поэтому
-  // предупреждаем, что отметки в календаре для такого цеха ни на что не влияют.
-  useEffect(() => {
-    if (!selectedShift) {
-      setIsFloatingSchedule(false);
-      return;
-    }
-    fetchWorkshopDetail(selectedShift.workshopId).then((w) => {
-      setIsFloatingSchedule((w.settings.floating_schedule?.value ?? w.settings.floating_schedule?.global) === 'true');
-    });
-  }, [selectedShift?.workshopId]);
-
   const toggleDayOff = async (date: Date, isCurrentMonth: boolean) => {
     if (!selectedShift || !isCurrentMonth) return;
+    if (cycle) {
+      toast({
+        title: 'Выходные считаются автоматически',
+        description: 'У смены включён график — измените его выше или выключите',
+      });
+      return;
+    }
     const iso = toIsoDate(date);
     const isDayOff = daysOff.has(iso);
     setSavingDate(iso);
@@ -137,20 +140,20 @@ const ShiftsCalendar = () => {
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Календарь смен</h1>
         <p className="text-sm text-muted-foreground">
-          Кликните по дню, чтобы отметить его выходным для выбранной смены — в этот день
-          сотрудники смены не смогут открыть смену. Например, для Цеха №2 (график 5/2) вручную
-          отмечайте каждую субботу и воскресенье.
+          {cycle
+            ? 'У смены включён автоматический график — выходные рассчитаны системой и отмечены в календаре.'
+            : 'Кликните по дню, чтобы отметить его выходным для выбранной смены — в этот день сотрудники смены не смогут открыть смену.'}
         </p>
 
-        {isFloatingSchedule && (
-          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-            <Icon name="TriangleAlert" size={16} className="mt-0.5 shrink-0" />
-            <p>
-              У этого цеха включён плавающий график (например 2/2) — смена открывается вручную
-              через дашборд администратором по фактическому графику. Отметки в этом календаре
-              для такого цеха ни на что не влияют.
-            </p>
-          </div>
+
+        {selectedShift && (
+          <ShiftCycleSetup
+            workshopId={selectedShift.workshopId}
+            shiftNumber={selectedShift.shiftNumber}
+            shiftName={`${selectedShift.workshopName} — ${selectedShift.name}`}
+            cycle={cycle}
+            onSaved={loadDaysOff}
+          />
         )}
 
         <div className="flex flex-wrap items-end gap-3">

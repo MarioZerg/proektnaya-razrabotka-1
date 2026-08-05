@@ -37,17 +37,36 @@ export const fetchShiftDetail = async (id: number): Promise<ShiftDetail> => {
   return data.shift;
 };
 
+/** Цикличный график смены: работает workDays дней, отдыхает offDays, отсчёт от startDate. */
+export interface ShiftCycle {
+  workDays: number;
+  offDays: number;
+  startDate: string;
+}
+
+/** Выходные смены за месяц. Если у смены задан цикл (2/2 и т.п.), выходные считаются
+ * автоматически и приходят вместе с параметрами цикла. */
 export const fetchShiftDaysOff = async (
   workshopId: number,
   shiftNumber: number,
   month: string
-): Promise<string[]> => {
+): Promise<{ daysOff: string[]; cycle: ShiftCycle | null }> => {
   const res = await fetch(
     `${SHIFTS_URL}?calendar=1&workshop_id=${workshopId}&shift_number=${shiftNumber}&month=${month}`
   );
   const data = await res.json();
-  return data.daysOff || [];
+  return { daysOff: data.daysOff || [], cycle: data.cycle || null };
 };
+
+/** Включить цикличный график смены. Пустые значения выключают цикл и возвращают
+ * ручную отметку выходных в календаре. */
+export const setShiftCycle = (payload: {
+  workshopId: number;
+  shiftNumber: number;
+  workDays?: number | null;
+  offDays?: number | null;
+  startDate?: string | null;
+}) => postAction({ action: 'set_cycle', ...payload });
 
 const postAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(SHIFTS_URL, {

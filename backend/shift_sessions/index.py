@@ -5,6 +5,31 @@ from datetime import datetime, timedelta
 import psycopg2
 
 
+def is_day_off_today(cur, workshop_id, shift_number) -> bool:
+    """Выходной ли сегодня у смены: ручная отметка в календаре ИЛИ отдых по цикличному
+    графику (2/2 и т.п., отсчёт от даты первого выхода смены)."""
+    if not workshop_id or not shift_number:
+        return False
+    cur.execute(
+        "SELECT 1 FROM shift_calendar WHERE workshop_id = %s AND shift_number = %s "
+        "AND calendar_date = CURRENT_DATE",
+        (int(workshop_id), int(shift_number)),
+    )
+    if cur.fetchone():
+        return True
+    cur.execute(
+        "SELECT CURRENT_DATE < cycle_start_date "
+        "OR MOD((CURRENT_DATE - cycle_start_date), (cycle_work_days + cycle_off_days)) "
+        ">= cycle_work_days "
+        "FROM shifts WHERE workshop_id = %s AND shift_number = %s "
+        "AND cycle_work_days IS NOT NULL AND cycle_off_days IS NOT NULL "
+        "AND cycle_start_date IS NOT NULL",
+        (int(workshop_id), int(shift_number)),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
 def get_setting(cur, workshop_id, key, default=None):
     """Читает значение настройки: сначала переопределение цеха (workshop_settings),
     если его нет — глобальное значение (system_settings), если и его нет — default."""
@@ -165,10 +190,18 @@ def handler(event: dict, context) -> dict:
                     "SELECT s.workshop_id, w.name, s.shift_number, s.name FROM shifts s "
                     "JOIN workshops w ON w.id = s.workshop_id "
                     "WHERE s.is_active = true AND w.is_active = true "
+                    # Смена недоступна сегодня, если день отмечен выходным вручную ИЛИ
+                    # выпадает на отдых по цикличному графику (2/2 и т.п.).
                     "AND NOT EXISTS ("
                     "  SELECT 1 FROM shift_calendar sc WHERE sc.workshop_id = s.workshop_id "
                     "  AND sc.shift_number = s.shift_number AND sc.calendar_date = CURRENT_DATE"
-                    ") ORDER BY w.id, s.shift_number"
+                    ") "
+                    "AND NOT (s.cycle_work_days IS NOT NULL AND s.cycle_off_days IS NOT NULL "
+                    "  AND s.cycle_start_date IS NOT NULL "
+                    "  AND (CURRENT_DATE < s.cycle_start_date "
+                    "    OR MOD((CURRENT_DATE - s.cycle_start_date), "
+                    "           (s.cycle_work_days + s.cycle_off_days)) >= s.cycle_work_days)) "
+                    "ORDER BY w.id, s.shift_number"
                 )
                 available = [
                     {
@@ -350,12 +383,7 @@ def handler(event: dict, context) -> dict:
                     workshop_id = home_workshop_id
                     shift_number = home_shift_number
 
-                    cur.execute(
-                        "SELECT 1 FROM shift_calendar WHERE workshop_id = %s AND shift_number = %s "
-                        "AND calendar_date = CURRENT_DATE",
-                        (workshop_id, shift_number),
-                    )
-                    if cur.fetchone():
+                    if is_day_off_today(cur, workshop_id, shift_number):
                         return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Сегодня выходной день для вашей смены'})}
                 else:
                     if not req_workshop_id or not req_shift_number:
@@ -375,12 +403,7 @@ def handler(event: dict, context) -> dict:
                     if not s_row[0] or not s_row[1]:
                         return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Эта смена или цех сейчас выключены'})}
 
-                    cur.execute(
-                        "SELECT 1 FROM shift_calendar WHERE workshop_id = %s AND shift_number = %s "
-                        "AND calendar_date = CURRENT_DATE",
-                        (int(req_workshop_id), int(req_shift_number)),
-                    )
-                    if cur.fetchone():
+                    if is_day_off_today(cur, int(req_workshop_id), int(req_shift_number)):
                         return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Сегодня выходной день для этой смены'})}
 
                     workshop_id = int(req_workshop_id)
