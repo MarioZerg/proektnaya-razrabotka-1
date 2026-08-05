@@ -11,6 +11,7 @@ import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import KioskMenu, { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
 import KioskDefectWriteoffPanel from '@/components/crm/kiosk/KioskDefectWriteoffPanel';
 import KioskOrdersScreen from '@/components/crm/kiosk/KioskOrdersScreen';
+import KioskRepackScreen from '@/components/crm/kiosk/KioskRepackScreen';
 import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
 import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
@@ -386,6 +387,12 @@ const KioskTerminal = () => {
           {screen === 'reviews' && (
             <div className="mx-auto max-w-3xl">
               <KioskReviewsScreen />
+            </div>
+          )}
+
+          {screen === 'repack' && (
+            <div className="mx-auto max-w-3xl">
+              <KioskRepackScreen actorId={user.id} actorName={user.name} />
             </div>
           )}
 

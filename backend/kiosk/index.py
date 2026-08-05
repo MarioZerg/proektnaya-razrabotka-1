@@ -171,6 +171,11 @@ def handler(event: dict, context) -> dict:
           "{userId}-{shiftNumber}-{ГГГГММДД}" (например 3-20-20250513). Возвращает сотрудника
           и состояние его смены (открыта/закрыта) — пароль на терминале не нужен
 
+    POST /  { action: 'repack_list' }
+        - вещи на перепаковке в этом цехе (вернулись годными, но с мятой упаковкой)
+    POST /  { action: 'repack_done', id }
+        - упаковщик переупаковал вещь: она уходит на склад в очередь «Ждёт полку»
+
     POST /  { action: 'find_stickering', sewerId?, width?, height?, material?, workshopId? }
         - поиск заказов на стикеровке вручную, когда сканер не работает: по размеру,
           швее, материалу. Возвращает список заказов для выбора
@@ -493,6 +498,64 @@ def handler(event: dict, context) -> dict:
                         'isCancelled': is_cancelled,
                         'storageBarcode': storage_barcode,
                     }),
+                }
+
+            if action == 'repack_list':
+                # Вещи, вернувшиеся от покупателя годными, но с помятой упаковкой: кладовщик
+                # отправил их в цех, упаковщик переупаковывает и возвращает на склад.
+                cur.execute(
+                    "SELECT gw.id, gw.storage_barcode, o.order_number, o.product, o.material, "
+                    "o.width, o.height, mr.return_reason, mr.marketplace "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN marketplace_returns mr ON mr.id = gw.repack_return_id "
+                    "WHERE gw.status = 'repacking' ORDER BY gw.received_at ASC LIMIT 100"
+                )
+                items = [
+                    {
+                        'id': r[0],
+                        'storageBarcode': r[1],
+                        'orderNumber': r[2],
+                        'product': r[3],
+                        'material': r[4],
+                        'width': r[5],
+                        'height': r[6],
+                        'returnReason': r[7],
+                        'marketplace': r[8],
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'items': items})}
+
+            if action == 'repack_done':
+                # Упаковщик переупаковал вещь — она возвращается на склад и ждёт полку.
+                gw_id = body_data.get('id')
+                if not gw_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id вещи'})}
+                cur.execute(
+                    "SELECT storage_barcode, status FROM goods_warehouse WHERE id = %s",
+                    (int(gw_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Вещь не найдена'})}
+                if row[1] != 'repacking':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Эта вещь не на перепаковке'})}
+
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'awaiting_shelf', repack_return_id = NULL "
+                    "WHERE id = %s",
+                    (int(gw_id),),
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'repack_done', 'goods_warehouse', gw_id,
+                    f'Вещь {row[0]} переупакована — отправлена на склад',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'storageBarcode': row[0]}),
                 }
 
             if action == 'find_stickering':

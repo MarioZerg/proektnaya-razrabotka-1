@@ -46,6 +46,43 @@ export const findStickeringOrders = async (filters: {
   return data.orders || [];
 };
 
+/** Вещь на перепаковке: вернулась от покупателя годной, но с помятой упаковкой. */
+export interface RepackItem {
+  id: number;
+  storageBarcode: string;
+  orderNumber: string | null;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  returnReason: string | null;
+  marketplace: string | null;
+}
+
+/** Список вещей, ожидающих перепаковки упаковщиком в цехе. */
+export const fetchRepackItems = async (): Promise<RepackItem[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'repack_list' }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить список');
+  return data.items || [];
+};
+
+/** Упаковщик переупаковал вещь — она уходит на склад в очередь «Ждёт полку». */
+export const finishRepack = async (id: number, actorId?: number, actorName?: string) => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'repack_done', id, actorId, actorName }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось завершить перепаковку');
+  return data;
+};
+
 export interface KioskUser {
   id: number;
   name: string;

@@ -13,18 +13,32 @@
       "expectedStatus": 200
     },
     {
-      "name": "Receive without id fails",
+      "name": "Approve requires admin role",
       "method": "POST",
       "path": "/",
-      "body": { "action": "receive" },
+      "body": { "action": "approve", "id": 1, "actorRole": "storekeeper" },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Scan without code fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "scan" },
       "expectedStatus": 400
     },
     {
-      "name": "Receive non-existing return fails",
+      "name": "Scan unknown code fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "receive", "id": 999999 },
+      "body": { "action": "scan", "code": "NOPE-999999" },
       "expectedStatus": 404
+    },
+    {
+      "name": "Process without outcome fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "process", "id": 1 },
+      "expectedStatus": 400
     },
     {
       "name": "Unknown action fails",

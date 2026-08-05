@@ -12,8 +12,15 @@ export interface MarketplaceReturn {
   /** Статус возврата на стороне маркетплейса (как его показывает OZON/WB). */
   mpStatus: string | null;
   returnReason: string | null;
-  /** Наш статус обработки: new — ждёт приёмки, received — принят, rejected — не приехал. */
-  status: 'new' | 'received' | 'rejected';
+  /** Наш статус: new — ждёт решения админа, approved — одобрен и едет к нам,
+   * processed — вещь приехала и обработана кладовщиком, rejected — заявка отклонена. */
+  status: 'new' | 'approved' | 'processed' | 'rejected';
+  /** Судьба вещи после осмотра кладовщиком. */
+  outcome: 'utilized' | 'repack' | 'stored' | null;
+  damageNote: string | null;
+  returnBarcode: string | null;
+  outcomeAt: string | null;
+  outcomeByName: string | null;
   mpCreatedAt: string | null;
   receivedAt: string | null;
   receivedByName: string | null;
@@ -33,14 +40,22 @@ export interface ReturnsSyncResult {
 export const fetchMarketplaceReturns = async (filters?: {
   status?: string;
   marketplace?: string;
-}): Promise<{ returns: MarketplaceReturn[]; counts: Record<string, number> }> => {
+}): Promise<{
+  returns: MarketplaceReturn[];
+  counts: Record<string, number>;
+  outcomes: Record<string, number>;
+}> => {
   const params = new URLSearchParams();
   if (filters?.status) params.set('status', filters.status);
   if (filters?.marketplace) params.set('marketplace', filters.marketplace);
   const qs = params.toString();
   const res = await fetch(qs ? `${RETURNS_URL}?${qs}` : RETURNS_URL);
   const data = await res.json();
-  return { returns: data.returns || [], counts: data.counts || {} };
+  return {
+    returns: data.returns || [],
+    counts: data.counts || {},
+    outcomes: data.outcomes || {},
+  };
 };
 
 const postAction = async (payload: Record<string, unknown>) => {
@@ -65,14 +80,27 @@ export const syncMarketplaceReturns = (
   created: number;
 }> => postAction({ action: 'sync', days, actorId, actorName });
 
-/** Возврат физически доехал — заводим вещь на склад в очередь «Ждёт полку». */
-export const receiveMarketplaceReturn = (
-  id: number,
-  actorId?: number,
-  actorName?: string
-): Promise<{ storageBarcode: string | null; needsManualOrder: boolean }> =>
-  postAction({ action: 'receive', id, actorId, actorName });
+/** Админ одобряет заявку: вещь поедет к нам и появится у кладовщика в приёмке. */
+export const approveMarketplaceReturn = (id: number, actorId?: number, actorName?: string) =>
+  postAction({ action: 'approve', id, actorId, actorName, actorRole: 'admin' });
 
-/** Возврат не приехал или отменён маркетплейсом. */
+/** Админ отклоняет заявку на возврат. */
 export const rejectMarketplaceReturn = (id: number, actorId?: number, actorName?: string) =>
-  postAction({ action: 'reject', id, actorId, actorName });
+  postAction({ action: 'reject', id, actorId, actorName, actorRole: 'admin' });
+
+/** Кладовщик сканирует стикер возврата с коробки — система находит заявку. */
+export const scanMarketplaceReturn = (code: string): Promise<{ return: MarketplaceReturn }> =>
+  postAction({ action: 'scan', code });
+
+/** Судьба вещи после осмотра: утилизация, перепаковка в цехе или сразу на полку. */
+export const processMarketplaceReturn = (payload: {
+  id: number;
+  outcome: 'utilized' | 'repack' | 'stored';
+  damageNote?: string;
+  actorId?: number;
+  actorName?: string;
+}): Promise<{
+  outcome: string;
+  storageBarcode: string | null;
+  needsManualOrder: boolean;
+}> => postAction({ action: 'process', ...payload });

@@ -1,6 +1,13 @@
 import Icon from '@/components/ui/icon';
 
-export type KioskScreen = 'menu' | 'shift' | 'orders' | 'reviews' | 'rolls' | 'unlabeled';
+export type KioskScreen =
+  | 'menu'
+  | 'shift'
+  | 'orders'
+  | 'reviews'
+  | 'rolls'
+  | 'unlabeled'
+  | 'repack';
 
 interface KioskMenuProps {
   onSelect: (screen: KioskScreen) => void;
@@ -39,12 +46,20 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
     icon: 'PackageSearch',
     className: 'bg-rose-500 hover:bg-rose-600 text-white',
   },
+  {
+    screen: 'repack',
+    label: 'Перепаковка',
+    icon: 'PackageOpen',
+    className: 'bg-violet-500 hover:bg-violet-600 text-white',
+  },
 ];
 
 /** Главное меню терминала — крупные плитки под сенсорный экран. */
 const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
   // Кладовщик на терминале открывает смену и ищет вещи, оставшиеся без стикера хранения.
   // «Товар без стикера» — его зона ответственности, остальным эта плитка не нужна.
+  // «Перепаковка» — вещи, вернувшиеся от покупателя годными, но с мятой упаковкой:
+  // их переупаковывает упаковщик, кладовщику эта плитка не нужна.
   const visibleTiles =
     role === 'storekeeper'
       ? tiles.filter((t) => t.screen === 'shift' || t.screen === 'unlabeled')

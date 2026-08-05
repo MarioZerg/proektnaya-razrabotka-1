@@ -21,19 +21,27 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import { printBarcodes } from '@/lib/printBarcodes';
+import ReturnScanCard from '@/components/crm/returns/ReturnScanCard';
 import {
   fetchMarketplaceReturns,
   syncMarketplaceReturns,
-  receiveMarketplaceReturn,
+  approveMarketplaceReturn,
   rejectMarketplaceReturn,
   type MarketplaceReturn,
 } from '@/lib/marketplaceReturnsApi';
 
 const statusLabels: Record<string, { label: string; className: string }> = {
-  new: { label: 'Ждёт приёмки', className: 'bg-amber-500 text-white hover:bg-amber-500' },
-  received: { label: 'Принят на склад', className: 'bg-emerald-600 text-white hover:bg-emerald-600' },
-  rejected: { label: 'Не приехал', className: '' },
+  new: { label: 'Ждёт решения', className: 'bg-amber-500 text-white hover:bg-amber-500' },
+  approved: { label: 'Одобрен, едет к нам', className: 'bg-blue-600 text-white hover:bg-blue-600' },
+  processed: { label: 'Обработан', className: 'bg-emerald-600 text-white hover:bg-emerald-600' },
+  rejected: { label: 'Отклонён', className: '' },
+};
+
+/** Что кладовщик сделал с приехавшей вещью. */
+const outcomeLabels: Record<string, { label: string; className: string }> = {
+  utilized: { label: 'Утилизирован', className: 'text-destructive' },
+  repack: { label: 'На перепаковке', className: 'text-amber-600' },
+  stored: { label: 'На складе', className: 'text-emerald-600' },
 };
 
 const marketplaceClass: Record<string, string> = {
@@ -55,7 +63,11 @@ const ReceiveReturns = () => {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [processingId, setProcessingId] = useState<number | null>(null);
-  const [statusFilter, setStatusFilter] = useState('new');
+  const [outcomes, setOutcomes] = useState<Record<string, number>>({});
+  // Админ решает по заявкам (одобрить/отклонить) и видит отчёт по утилизации.
+  // Кладовщик работает только с приехавшими вещами — сканирует стикеры возврата.
+  const isAdmin = user?.role === 'admin';
+  const [statusFilter, setStatusFilter] = useState(isAdmin ? 'new' : 'approved');
   const [marketplaceFilter, setMarketplaceFilter] = useState('all');
 
   const load = () => {
@@ -64,6 +76,7 @@ const ReceiveReturns = () => {
       .then((data) => {
         setReturns(data.returns);
         setCounts(data.counts);
+        setOutcomes(data.outcomes);
       })
       .finally(() => setLoading(false));
   };
@@ -95,26 +108,14 @@ const ReceiveReturns = () => {
     }
   };
 
-  const handleReceive = async (r: MarketplaceReturn) => {
+  const handleApprove = async (r: MarketplaceReturn) => {
     setProcessingId(r.id);
     try {
-      const res = await receiveMarketplaceReturn(r.id, user?.id, user?.name);
-      if (res.storageBarcode) {
-        // Печатаем стикер хранения сразу: по нему вещь встанет на конкретную полку.
-        printBarcodes(
-          [{ code: res.storageBarcode, label: r.productName || r.offerId || 'Возврат' }],
-          `Стикер хранения ${res.storageBarcode}`
-        );
-        toast({
-          title: 'Возврат принят',
-          description: 'Наклейте стикер хранения и отсканируйте вещь на полку',
-        });
-      } else {
-        toast({
-          title: 'Возврат принят',
-          description: 'Заказ не найден в системе — вещь не заведена на склад автоматически',
-        });
-      }
+      await approveMarketplaceReturn(r.id, user?.id, user?.name);
+      toast({
+        title: 'Заявка одобрена',
+        description: 'Вещь поедет к нам — кладовщик примет её по стикеру возврата',
+      });
       load();
     } catch (e) {
       toast({
@@ -128,11 +129,11 @@ const ReceiveReturns = () => {
   };
 
   const handleReject = async (r: MarketplaceReturn) => {
-    if (!confirm('Отметить, что возврат не приехал?')) return;
+    if (!confirm('Отклонить заявку на возврат?')) return;
     setProcessingId(r.id);
     try {
       await rejectMarketplaceReturn(r.id, user?.id, user?.name);
-      toast({ title: 'Возврат отмечен как не приехавший' });
+      toast({ title: 'Заявка отклонена' });
       load();
     } catch (e) {
       toast({
@@ -152,10 +153,12 @@ const ReceiveReturns = () => {
           <div>
             <h1 className="text-xl font-bold">Получение возвратов</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Заявки на возврат подтягиваются с OZON и Wildberries. Отметьте вещь принятой,
-              когда коробка доехала до склада
+              {isAdmin
+                ? 'Заявки с OZON и Wildberries. Одобренные вещи поедут к нам — кладовщик примет их по стикеру возврата'
+                : 'Отсканируйте стикер возврата на коробке и решите судьбу вещи'}
             </p>
           </div>
+          {isAdmin && (
           <Button onClick={handleSync} disabled={syncing}>
             <Icon
               name={syncing ? 'Loader2' : 'RefreshCw'}
@@ -164,23 +167,52 @@ const ReceiveReturns = () => {
             />
             Загрузить с маркетплейсов
           </Button>
+          )}
         </div>
 
+        {/* Кладовщик принимает приехавшие вещи сканированием — заявки он не одобряет. */}
+        {!isAdmin && <ReturnScanCard onProcessed={load} />}
+
         <div className="flex flex-wrap gap-2">
+          {isAdmin && (
+            <Card className="border-border shadow-none">
+              <CardContent className="flex items-center gap-2 px-4 py-3">
+                <Icon name="Clock" size={18} className="text-amber-600" />
+                <span className="text-sm text-muted-foreground">Ждут решения</span>
+                <span className="text-lg font-bold">{counts.new || 0}</span>
+              </CardContent>
+            </Card>
+          )}
           <Card className="border-border shadow-none">
             <CardContent className="flex items-center gap-2 px-4 py-3">
-              <Icon name="PackageOpen" size={18} className="text-amber-600" />
-              <span className="text-sm text-muted-foreground">Ждут приёмки</span>
-              <span className="text-lg font-bold">{counts.new || 0}</span>
+              <Icon name="Truck" size={18} className="text-blue-600" />
+              <span className="text-sm text-muted-foreground">Едут к нам</span>
+              <span className="text-lg font-bold">{counts.approved || 0}</span>
             </CardContent>
           </Card>
           <Card className="border-border shadow-none">
             <CardContent className="flex items-center gap-2 px-4 py-3">
               <Icon name="PackageCheck" size={18} className="text-emerald-600" />
-              <span className="text-sm text-muted-foreground">Принято</span>
-              <span className="text-lg font-bold">{counts.received || 0}</span>
+              <span className="text-sm text-muted-foreground">На складе</span>
+              <span className="text-lg font-bold">{outcomes.stored || 0}</span>
             </CardContent>
           </Card>
+          <Card className="border-border shadow-none">
+            <CardContent className="flex items-center gap-2 px-4 py-3">
+              <Icon name="PackageOpen" size={18} className="text-amber-600" />
+              <span className="text-sm text-muted-foreground">На перепаковке</span>
+              <span className="text-lg font-bold">{outcomes.repack || 0}</span>
+            </CardContent>
+          </Card>
+          {isAdmin && (
+            <Card className="border-border shadow-none">
+              <CardContent className="flex items-center gap-2 px-4 py-3">
+                <Icon name="Trash2" size={18} className="text-destructive" />
+                <span className="text-sm text-muted-foreground">Утилизировано</span>
+                <span className="text-lg font-bold">{outcomes.utilized || 0}</span>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-3">
@@ -189,9 +221,10 @@ const ReceiveReturns = () => {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="new">Ждут приёмки</SelectItem>
-              <SelectItem value="received">Принятые</SelectItem>
-              <SelectItem value="rejected">Не приехали</SelectItem>
+              {isAdmin && <SelectItem value="new">Ждут решения</SelectItem>}
+              <SelectItem value="approved">Едут к нам</SelectItem>
+              <SelectItem value="processed">Обработанные</SelectItem>
+              {isAdmin && <SelectItem value="rejected">Отклонённые</SelectItem>}
               <SelectItem value="all">Все</SelectItem>
             </SelectContent>
           </Select>
@@ -262,24 +295,34 @@ const ReceiveReturns = () => {
                       <Badge className={statusLabels[r.status]?.className}>
                         {statusLabels[r.status]?.label || r.status}
                       </Badge>
-                      {r.storageBarcode && (
+                      {r.outcome && (
+                        <p className={`mt-1 text-xs font-medium ${outcomeLabels[r.outcome]?.className}`}>
+                          {outcomeLabels[r.outcome]?.label}
+                        </p>
+                      )}
+                      {r.damageNote && (
+                        <p className="mt-0.5 text-xs text-muted-foreground">{r.damageNote}</p>
+                      )}
+                      {r.storageBarcode && r.outcome !== 'utilized' && (
                         <p className="mt-1 font-mono-tech text-xs text-muted-foreground">
                           {r.storageBarcode}
                         </p>
                       )}
                     </TableCell>
                     <TableCell>
-                      {r.status === 'new' && (
+                      {/* Решение по заявке принимает только админ. Кладовщик приехавшие вещи
+                          обрабатывает сканированием стикера возврата в блоке выше. */}
+                      {isAdmin && r.status === 'new' && (
                         <div className="flex gap-1.5">
                           <Button
                             size="sm"
-                            onClick={() => handleReceive(r)}
+                            onClick={() => handleApprove(r)}
                             disabled={processingId === r.id}
                           >
                             {processingId === r.id ? (
                               <Icon name="Loader2" size={14} className="animate-spin" />
                             ) : (
-                              'Принять'
+                              'Одобрить'
                             )}
                           </Button>
                           <Button
@@ -292,8 +335,8 @@ const ReceiveReturns = () => {
                           </Button>
                         </div>
                       )}
-                      {r.status === 'received' && r.receivedByName && (
-                        <span className="text-xs text-muted-foreground">{r.receivedByName}</span>
+                      {r.status === 'processed' && r.outcomeByName && (
+                        <span className="text-xs text-muted-foreground">{r.outcomeByName}</span>
                       )}
                     </TableCell>
                   </TableRow>

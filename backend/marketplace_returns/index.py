@@ -308,9 +308,12 @@ def handler(event: dict, context) -> dict:
     отмечает возврат принятым, и вещь встаёт на склад в очередь «Ждёт полку».
 
     GET  /                            - список возвратов (фильтры: status, marketplace)
-    POST /  { action: 'sync' }        - загрузить свежие заявки с OZON и WB
-    POST /  { action: 'receive', id } - принять вещь на склад (создаёт запись склада)
-    POST /  { action: 'reject', id }  - возврат не приехал / отклонён
+    POST /  { action: 'sync' }                 - загрузить свежие заявки с OZON и WB
+    POST /  { action: 'approve', id }          - админ одобряет заявку (вещь поедет к нам)
+    POST /  { action: 'reject', id }           - админ отклоняет заявку
+    POST /  { action: 'scan', code }           - кладовщик сканирует стикер возврата
+    POST /  { action: 'process', id, outcome } - судьба вещи: utilized (утилизация),
+                                                 repack (на перепаковку), stored (на полку)
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -344,9 +347,11 @@ def handler(event: dict, context) -> dict:
                 "SELECT r.id, r.marketplace, r.external_id, r.posting_number, r.offer_id, "
                 "r.product_name, r.quantity, r.mp_status, r.return_reason, r.status, "
                 "r.mp_created_at, r.received_at, u.full_name, gw.storage_barcode, "
-                "mi.material, mi.width, mi.height, o.order_number "
+                "mi.material, mi.width, mi.height, o.order_number, r.outcome, r.damage_note, "
+                "r.return_barcode, r.outcome_at, ou.full_name "
                 "FROM marketplace_returns r "
                 "LEFT JOIN users u ON u.id = r.received_by "
+                "LEFT JOIN users ou ON ou.id = r.outcome_by "
                 "LEFT JOIN goods_warehouse gw ON gw.id = r.goods_warehouse_id "
                 "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
                 "LEFT JOIN orders o ON o.id = r.order_id "
@@ -372,6 +377,11 @@ def handler(event: dict, context) -> dict:
                     'width': r[15],
                     'height': r[16],
                     'orderNumber': r[17],
+                    'outcome': r[18],
+                    'damageNote': r[19],
+                    'returnBarcode': r[20],
+                    'outcomeAt': r[21].isoformat() + 'Z' if r[21] else None,
+                    'outcomeByName': r[22],
                 }
                 for r in cur.fetchall()
             ]
@@ -380,7 +390,15 @@ def handler(event: dict, context) -> dict:
                 "SELECT status, COUNT(*) FROM marketplace_returns GROUP BY status"
             )
             counts = {row[0]: row[1] for row in cur.fetchall()}
-            return _resp(200, {'returns': returns, 'counts': counts})
+
+            # Разбивка обработанных возвратов по судьбе вещи — админ видит, сколько
+            # товара утилизировано, сколько ушло на перепаковку, сколько легло на полку.
+            cur.execute(
+                "SELECT outcome, COUNT(*) FROM marketplace_returns "
+                "WHERE outcome IS NOT NULL GROUP BY outcome"
+            )
+            outcomes = {row[0]: row[1] for row in cur.fetchall()}
+            return _resp(200, {'returns': returns, 'counts': counts, 'outcomes': outcomes})
         finally:
             conn.close()
 
@@ -408,12 +426,94 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return _resp(200, {'ozon': ozon, 'wildberries': wb, 'created': total_created})
 
-            if action == 'receive':
-                # Возврат физически доехал: заводим вещь на склад в очередь «Ждёт полку».
-                # На полку она попадёт сканированием стикера хранения, как и все остальные.
+            if action == 'approve':
+                # Решение по заявке принимает ТОЛЬКО админ: одобрил — вещь поедет к нам,
+                # и она появится у кладовщика в списке ожидаемых.
+                if (body_data.get('actorRole') or '') != 'admin':
+                    return _resp(403, {'error': 'Решение по заявке принимает администратор'})
                 return_id = body_data.get('id')
                 if not return_id:
                     return _resp(400, {'error': 'Укажите id возврата'})
+                cur.execute(
+                    "UPDATE marketplace_returns SET status = 'approved', approved_at = now(), "
+                    "approved_by = %s WHERE id = %s AND status = 'new' RETURNING external_id",
+                    (int(actor_id) if actor_id else None, int(return_id)),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return _resp(409, {'error': 'Заявка уже обработана'})
+                log_action(cur, actor_id, actor_name, 'approve', f'Заявка на возврат {row[0]} одобрена')
+                conn.commit()
+                return _resp(200, {'success': True})
+
+            if action == 'reject':
+                if (body_data.get('actorRole') or '') != 'admin':
+                    return _resp(403, {'error': 'Решение по заявке принимает администратор'})
+                return_id = body_data.get('id')
+                if not return_id:
+                    return _resp(400, {'error': 'Укажите id возврата'})
+                cur.execute(
+                    "UPDATE marketplace_returns SET status = 'rejected' WHERE id = %s",
+                    (int(return_id),),
+                )
+                log_action(cur, actor_id, actor_name, 'reject', f'Заявка на возврат #{return_id} отклонена')
+                conn.commit()
+                return _resp(200, {'success': True})
+
+            if action == 'scan':
+                # Кладовщик сканирует стикер возврата с коробки. Ищем заявку по штрихкоду
+                # возврата, номеру отправления или внешнему номеру — что напечатано, то и
+                # сработает. Показываем только одобренные админом.
+                code = (body_data.get('code') or '').strip()
+                if not code:
+                    return _resp(400, {'error': 'Отсканируйте стикер возврата'})
+                cur.execute(
+                    "SELECT r.id, r.marketplace, r.external_id, r.posting_number, r.product_name, "
+                    "r.return_reason, r.status, r.outcome, mi.material, mi.width, mi.height "
+                    "FROM marketplace_returns r "
+                    "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
+                    "WHERE r.return_barcode = %s OR r.posting_number = %s OR r.external_id = %s "
+                    "LIMIT 1",
+                    (code, code, code),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return _resp(404, {'error': f'Возврат по коду {code} не найден'})
+                if row[6] == 'new':
+                    return _resp(409, {'error': 'Заявка ещё не одобрена администратором'})
+                if row[6] == 'rejected':
+                    return _resp(409, {'error': 'Эта заявка отклонена'})
+                if row[6] == 'processed':
+                    return _resp(409, {'error': 'Этот возврат уже обработан'})
+                # Запоминаем штрихкод, которым реально сканируют — в следующий раз найдётся сразу.
+                cur.execute(
+                    "UPDATE marketplace_returns SET return_barcode = COALESCE(return_barcode, %s) "
+                    "WHERE id = %s",
+                    (code, row[0]),
+                )
+                conn.commit()
+                return _resp(200, {'return': {
+                    'id': row[0],
+                    'marketplace': row[1],
+                    'externalId': row[2],
+                    'postingNumber': row[3],
+                    'productName': row[4],
+                    'returnReason': row[5],
+                    'status': row[6],
+                    'material': row[8],
+                    'width': row[9],
+                    'height': row[10],
+                }})
+
+            if action == 'process':
+                # Кладовщик осмотрел вещь и решил её судьбу:
+                #   utilized — повреждена, утилизируем (попадёт в отчёт админу);
+                #   repack   — годная, но помята упаковка: едет к упаковщику на перепаковку;
+                #   stored   — сразу на полку хранения со стикером.
+                return_id = body_data.get('id')
+                outcome = (body_data.get('outcome') or '').strip()
+                if not return_id or outcome not in ('utilized', 'repack', 'stored'):
+                    return _resp(400, {'error': 'Укажите возврат и решение по нему'})
 
                 cur.execute(
                     "SELECT status, order_id, product_name, marketplace, external_id "
@@ -423,65 +523,88 @@ def handler(event: dict, context) -> dict:
                 row = cur.fetchone()
                 if not row:
                     return _resp(404, {'error': 'Возврат не найден'})
-                if row[0] == 'received':
-                    return _resp(409, {'error': 'Этот возврат уже принят на склад'})
+                if row[0] == 'processed':
+                    return _resp(409, {'error': 'Этот возврат уже обработан'})
+                if row[0] != 'approved':
+                    return _resp(409, {'error': 'Возврат не одобрен администратором'})
 
                 order_id = row[1]
                 gw_id = None
                 storage_barcode = None
-                if order_id:
-                    # Вещь уже известна системе — переиспользуем её карточку на складе,
-                    # чтобы не плодить дубли и сохранить прежний штрихкод хранения.
-                    cur.execute(
-                        "SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s",
-                        (int(order_id),),
-                    )
-                    gw_row = cur.fetchone()
-                    if gw_row:
-                        gw_id, storage_barcode = gw_row
+
+                # Вещь без исходного заказа положить на склад нельзя: карточка склада
+                # всегда привязана к заказу. Утилизировать можно — там склад не участвует.
+                if outcome != 'utilized' and not order_id:
+                    return _resp(409, {
+                        'error': 'Заказ этого возврата не найден в системе — вещь нельзя '
+                                 'завести на склад. Утилизируйте её или заведите заказ вручную'
+                    })
+
+                if outcome != 'utilized':
+                    # Вещь остаётся в обороте — заводим её на складе. Повреждённая
+                    # (utilized) на склад не попадает вовсе: она физически уничтожена.
+                    gw_status = 'repacking' if outcome == 'repack' else 'awaiting_shelf'
+                    if order_id:
                         cur.execute(
-                            "UPDATE goods_warehouse SET status = 'awaiting_shelf', shelf_id = NULL, "
-                            "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
-                            "reserved_order_id = NULL, shipping_labeled_at = NULL, "
-                            "receive_reason = 'return', received_at = now() WHERE id = %s",
-                            (gw_id,),
+                            "SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s",
+                            (int(order_id),),
                         )
-                    else:
-                        storage_barcode = next_storage_barcode(cur)
-                        cur.execute(
-                            "INSERT INTO goods_warehouse (order_id, status, storage_barcode, "
-                            "receive_reason) VALUES (%s, 'awaiting_shelf', %s, 'return') RETURNING id",
-                            (int(order_id), storage_barcode),
-                        )
-                        gw_id = cur.fetchone()[0]
+                        gw_row = cur.fetchone()
+                        if gw_row:
+                            gw_id, storage_barcode = gw_row
+                            cur.execute(
+                                "UPDATE goods_warehouse SET status = %s, shelf_id = NULL, "
+                                "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
+                                "reserved_order_id = NULL, shipping_labeled_at = NULL, "
+                                "receive_reason = 'return', received_at = now(), "
+                                "repack_return_id = %s WHERE id = %s",
+                                (gw_status, int(return_id) if outcome == 'repack' else None, gw_id),
+                            )
+                        else:
+                            storage_barcode = next_storage_barcode(cur)
+                            cur.execute(
+                                "INSERT INTO goods_warehouse (order_id, status, storage_barcode, "
+                                "receive_reason, repack_return_id) VALUES (%s, %s, %s, 'return', %s) "
+                                "RETURNING id",
+                                (
+                                    int(order_id),
+                                    gw_status,
+                                    storage_barcode,
+                                    int(return_id) if outcome == 'repack' else None,
+                                ),
+                            )
+                            gw_id = cur.fetchone()[0]
 
                 cur.execute(
-                    "UPDATE marketplace_returns SET status = 'received', received_at = now(), "
+                    "UPDATE marketplace_returns SET status = 'processed', outcome = %s, "
+                    "outcome_at = now(), outcome_by = %s, damage_note = %s, received_at = now(), "
                     "received_by = %s, goods_warehouse_id = %s WHERE id = %s",
-                    (int(actor_id) if actor_id else None, gw_id, int(return_id)),
+                    (
+                        outcome,
+                        int(actor_id) if actor_id else None,
+                        (body_data.get('damageNote') or '').strip() or None,
+                        int(actor_id) if actor_id else None,
+                        gw_id,
+                        int(return_id),
+                    ),
                 )
+                outcome_labels = {
+                    'utilized': 'утилизирован',
+                    'repack': 'отправлен на перепаковку',
+                    'stored': 'принят на склад',
+                }
                 log_action(
-                    cur, actor_id, actor_name, 'receive',
-                    f'Принят возврат {row[3]} {row[4]} ({row[2] or "товар"})',
+                    cur, actor_id, actor_name, 'process',
+                    f'Возврат {row[3]} {row[4]} ({row[2] or "товар"}) — {outcome_labels[outcome]}',
+                    {'outcome': outcome, 'damageNote': body_data.get('damageNote')},
                 )
                 conn.commit()
                 return _resp(200, {
                     'success': True,
+                    'outcome': outcome,
                     'storageBarcode': storage_barcode,
-                    'needsManualOrder': order_id is None,
+                    'needsManualOrder': order_id is None and outcome != 'utilized',
                 })
-
-            if action == 'reject':
-                return_id = body_data.get('id')
-                if not return_id:
-                    return _resp(400, {'error': 'Укажите id возврата'})
-                cur.execute(
-                    "UPDATE marketplace_returns SET status = 'rejected' WHERE id = %s",
-                    (int(return_id),),
-                )
-                log_action(cur, actor_id, actor_name, 'reject', f'Возврат #{return_id} отклонён')
-                conn.commit()
-                return _resp(200, {'success': True})
 
             return _resp(400, {'error': 'Неизвестное действие'})
         finally:
