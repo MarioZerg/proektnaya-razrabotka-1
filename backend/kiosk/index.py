@@ -1179,6 +1179,9 @@ def handler(event: dict, context) -> dict:
                         'materialType': material_type,
                         'unit': rr[3],
                         'actorName': au[0],
+                        # На стикере печатается ID, а не фамилия: наклейка маленькая, длинные
+                        # ФИО в неё не влезают, а по ID сотрудника всегда видно в системе.
+                        'actorId': int(actor_uid),
                     }, ensure_ascii=False),
                 }
 

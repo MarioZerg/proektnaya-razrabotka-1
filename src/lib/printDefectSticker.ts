@@ -7,7 +7,10 @@ export interface DefectStickerData {
   quantity: number;
   unit?: string | null;
   reasonLabel: string;
-  userName: string;
+  /** ID сотрудника, который нашёл брак. На стикере печатаем именно ID, а не фамилию:
+   * наклейка маленькая, длинные ФИО в неё не влезают, а по ID сотрудник всегда находится
+   * в системе. */
+  userId: number;
 }
 
 const esc = (v: string | number | null | undefined) =>
@@ -18,8 +21,8 @@ const esc = (v: string | number | null | undefined) =>
  *
  * Клеится на бракованный кусок, который откладывают в контейнер. Кладовщик потом сканирует
  * этот штрихкод и принимает брак на склад — так видно, что реально доехало, а что потерялось
- * по дороге. Причина и фамилия печатаются прямо на стикере: если брак спорный, у него есть
- * автор, и разбираться можно не по памяти.
+ * по дороге. Причина и ID сотрудника печатаются прямо на стикере: если брак спорный, у него
+ * есть автор, и разбираться можно не по памяти.
  */
 export const printDefectSticker = (data: DefectStickerData) => {
   const canvas = document.createElement('canvas');
@@ -74,7 +77,7 @@ export const printDefectSticker = (data: DefectStickerData) => {
     ${esc(data.materialName)} — ${esc(data.quantity)} ${esc(data.unit || 'м')}
   </div>
   <div class="bc"><img src="${canvas.toDataURL('image/png')}" alt="${esc(data.barcode)}" /></div>
-  <div class="meta">${esc(data.reasonLabel)} · ${esc(data.userName)}</div>
+  <div class="meta">${esc(data.reasonLabel)} · ID ${esc(data.userId)}</div>
 </body>
 </html>`);
   win.document.close();

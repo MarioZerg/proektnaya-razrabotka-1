@@ -81,7 +81,7 @@ const KioskDefectWriteoffPanel = ({ workshopId, isGuest }: KioskDefectWriteoffPa
         quantity: Number(quantity.replace(',', '.')),
         unit: res.unit || selectedRoll?.unit,
         reasonLabel: res.reasonLabel,
-        userName: res.actorName,
+        userId: res.actorId,
       });
 
       toast({

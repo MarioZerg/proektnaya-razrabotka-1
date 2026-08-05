@@ -294,6 +294,8 @@ export interface DefectResult {
   materialType: string;
   unit: string | null;
   actorName: string;
+  /** ID сотрудника — печатается на стикере вместо фамилии. */
+  actorId: number;
 }
 
 /** Оформить брак рулона на терминале. */
