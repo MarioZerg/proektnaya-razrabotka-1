@@ -139,3 +139,44 @@ export const fetchUnlabeledSewers = async (): Promise<Array<{ id: number; name: 
   }
   return data.sewers || [];
 };
+
+/** Фиксирует факт перепечатки стикера хранения — для отчёта админу, кто пропускает стикеры. */
+export const reprintStorageLabel = async (
+  goodsId: number,
+  actorId?: number,
+  actorName?: string
+): Promise<void> => {
+  await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'reprint_label', goodsId, actorId, actorName }),
+  });
+};
+
+export interface ReprintReport {
+  total: number;
+  days: number;
+  byPacker: Array<{ packerName: string; count: number; lastAt: string | null }>;
+  events: Array<{
+    createdAt: string;
+    actorName: string | null;
+    orderNumber: string | null;
+    product: string | null;
+    packerName: string | null;
+    sewerName: string | null;
+  }>;
+}
+
+/** Отчёт: сколько стикеров хранения перепечатано и по чьей вине. */
+export const fetchReprintReport = async (days = 30): Promise<ReprintReport> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'reprint_report', days }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Ошибка запроса');
+  }
+  return data;
+};

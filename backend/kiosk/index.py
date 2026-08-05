@@ -409,6 +409,91 @@ def handler(event: dict, context) -> dict:
                     'body': json.dumps({'candidates': candidates}),
                 }
 
+            if action == 'reprint_report':
+                # Отчёт админу: сколько стикеров хранения пришлось перепечатывать и по чьей
+                # вине (упаковщик, который должен был наклеить стикер в цехе).
+                days = int(body_data.get('days') or 30)
+                cur.execute(
+                    "SELECT COALESCE(details->>'packerName', 'Не указан') AS packer, "
+                    "COUNT(*) AS cnt, MAX(created_at) AS last_at "
+                    "FROM audit_log WHERE action = 'reprint_storage_label' "
+                    f"AND created_at >= now() - interval '{days} days' "
+                    "GROUP BY 1 ORDER BY cnt DESC"
+                )
+                by_packer = [
+                    {'packerName': r[0], 'count': r[1], 'lastAt': r[2].isoformat() + 'Z' if r[2] else None}
+                    for r in cur.fetchall()
+                ]
+                cur.execute(
+                    "SELECT created_at, user_name, details->>'orderNumber', details->>'product', "
+                    "details->>'packerName', details->>'sewerName' "
+                    "FROM audit_log WHERE action = 'reprint_storage_label' "
+                    f"AND created_at >= now() - interval '{days} days' "
+                    "ORDER BY created_at DESC LIMIT 100"
+                )
+                events = [
+                    {
+                        'createdAt': r[0].isoformat() + 'Z',
+                        'actorName': r[1],
+                        'orderNumber': r[2],
+                        'product': r[3],
+                        'packerName': r[4],
+                        'sewerName': r[5],
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'total': sum(p['count'] for p in by_packer),
+                        'byPacker': by_packer,
+                        'events': events,
+                        'days': days,
+                    }),
+                }
+
+            if action == 'reprint_label':
+                # Кладовщик перепечатал стикер хранения вместо упаковщицы. Фиксируем факт с
+                # виновником (упаковщик заказа), чтобы админ видел, кто чаще пропускает стикер.
+                gw_id = body_data.get('goodsId')
+                if not gw_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите goodsId'})}
+
+                cur.execute(
+                    "SELECT gw.storage_barcode, o.id, o.order_number, o.product, o.workshop_id, "
+                    "o.packer_user_id, pu.full_name, COALESCE(o.sewer_user_id, o.assigned_user_id), su.full_name "
+                    "FROM goods_warehouse gw JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN users pu ON pu.id = o.packer_user_id "
+                    "LEFT JOIN users su ON su.id = COALESCE(o.sewer_user_id, o.assigned_user_id) "
+                    "WHERE gw.id = %s",
+                    (int(gw_id),),
+                )
+                r = cur.fetchone()
+                if not r:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
+                (barcode_val, ord_id, ord_number, ord_product, ord_workshop,
+                 packer_id_val, packer_name_val, sewer_id_val, sewer_name_val) = r
+
+                log_action(
+                    cur, actor_id, actor_name, 'reprint_storage_label', 'goods_warehouse', int(gw_id),
+                    f'Перепечатал стикер хранения {barcode_val} для заказа #{ord_number} '
+                    f'(упаковщик: {packer_name_val or "не указан"})',
+                    {
+                        'orderId': ord_id,
+                        'orderNumber': ord_number,
+                        'product': ord_product,
+                        'workshopId': ord_workshop,
+                        'packerId': packer_id_val,
+                        'packerName': packer_name_val,
+                        'sewerId': sewer_id_val,
+                        'sewerName': sewer_name_val,
+                        'storageBarcode': barcode_val,
+                    },
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
             if action == 'sewers_list':
                 # Список швей для выпадающего списка поиска: только те, у кого есть вещи,
                 # ожидающие укладки на полку — искать среди всех сотрудников бессмысленно.

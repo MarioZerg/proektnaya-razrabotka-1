@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import {
   fetchGoodsWarehouse,
   receiveGoods,
@@ -36,12 +37,15 @@ import GroupReceiveDialog from '@/components/crm/goodsWarehouse/GroupReceiveDial
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
 import ShipLabelDialog from '@/components/crm/goodsWarehouse/ShipLabelDialog';
+import ReprintReportDialog from '@/components/crm/goodsWarehouse/ReprintReportDialog';
 import GoodsWarehouseFilters from '@/components/crm/goodsWarehouse/GoodsWarehouseFilters';
 import GoodsWarehouseTable from '@/components/crm/goodsWarehouse/GoodsWarehouseTable';
 
 const GoodsWarehouse = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
   const [items, setItems] = useState<GoodsWarehouseItem[]>([]);
   const [shelves, setShelves] = useState<Shelf[]>([]);
@@ -75,6 +79,7 @@ const GoodsWarehouse = () => {
   // Разложить отменённые товары по полкам (сканером) и стикеровка заказов с полок
   const [placeOpen, setPlaceOpen] = useState(false);
   const [shipLabelOpen, setShipLabelOpen] = useState(false);
+  const [reprintOpen, setReprintOpen] = useState(false);
 
   // Смена полки
   const [moveOpen, setMoveOpen] = useState(false);
@@ -344,6 +349,15 @@ const GoodsWarehouse = () => {
               matched={matchedFromStock}
               onDone={load}
             />
+            {isAdmin && (
+              <>
+                <Button variant="outline" onClick={() => setReprintOpen(true)}>
+                  <Icon name="FileWarning" size={16} className="mr-2" />
+                  Пропущенные стикеры
+                </Button>
+                <ReprintReportDialog open={reprintOpen} onOpenChange={setReprintOpen} />
+              </>
+            )}
             <MoveShelfDialog
               open={moveOpen}
               onOpenChange={setMoveOpen}

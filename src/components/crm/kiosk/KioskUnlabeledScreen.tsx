@@ -17,15 +17,22 @@ import { widthOptions, heightOptions } from '@/components/crm/sewingItems/sewing
 import {
   findUnlabeledGoods,
   fetchUnlabeledSewers,
+  reprintStorageLabel,
   type UnlabeledCandidate,
 } from '@/lib/kioskApi';
 
 const ANY = 'any';
 
+interface KioskUnlabeledScreenProps {
+  /** Кладовщик, который перепечатывает стикер — попадёт в отчёт админу. */
+  actorId?: number;
+  actorName?: string;
+}
+
 /** Экран кладовщика на терминале: в цехе нашлась вещь без стикера хранения (упаковщица не
  * наклеила или стикер потерялся). Кладовщик ищет, чей это товар, по швее и размеру среди
  * отменённых заказов, ожидающих укладки на полку, и печатает стикер заново. */
-const KioskUnlabeledScreen = () => {
+const KioskUnlabeledScreen = ({ actorId, actorName }: KioskUnlabeledScreenProps) => {
   const { toast } = useToast();
   const [sewers, setSewers] = useState<Array<{ id: number; name: string }>>([]);
   const [sewerId, setSewerId] = useState(ANY);
@@ -63,6 +70,8 @@ const KioskUnlabeledScreen = () => {
   };
 
   const handlePrint = (c: UnlabeledCandidate) => {
+    // Фиксируем перепечатку: админ увидит, по чьей вине стикера не оказалось на товаре.
+    reprintStorageLabel(c.id, actorId, actorName);
     printBarcodes(
       [{ code: c.storageBarcode, label: `${c.orderNumber} — ${c.product || ''}` }],
       `Стикер хранения ${c.storageBarcode}`,

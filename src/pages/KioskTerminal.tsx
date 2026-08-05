@@ -317,7 +317,7 @@ const KioskTerminal = () => {
 
           {screen === 'unlabeled' && (
             <div className="mx-auto max-w-3xl">
-              <KioskUnlabeledScreen />
+              <KioskUnlabeledScreen actorId={user.id} actorName={user.name} />
             </div>
           )}
 
