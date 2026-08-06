@@ -138,7 +138,7 @@ def handler(event: dict, context) -> dict:
                                       смена + сегодня не отмечено выходным в календаре).
                                       Если у userId штатная смена ещё рабочая — она тоже
                                       входит в список, помечена isHome=true
-    POST /  { action: 'auto_close' }
+    POST /  { action: 'auto_close', cronSecret? }
                                     - закрывает смены, которые сотрудники забыли закрыть:
                                       время конца рабочего дня берётся из настроек цеха
                                       (working_day_end), смена закрывается этим временем,
@@ -147,7 +147,11 @@ def handler(event: dict, context) -> dict:
                                       у швеи «В работе») — штраф unclosed_shift_with_orders_penalty,
                                       иначе обычный unclosed_shift_penalty. Повторный запуск
                                       безопасен: закрытые смены пропускаются, штраф за одну
-                                      смену начисляется один раз
+                                      смену начисляется один раз.
+                                      cronSecret — ключ для ночного планировщика (сверяется
+                                      с переменной CRON_SECRET). Нужен только внешнему
+                                      вызову: автозакрытие начисляет штрафы, поэтому дёргать
+                                      адрес без ключа посторонние не должны
     POST /  { action: 'close', userId, closedByAdmin? }
                                     - закрывает смену. Закройщику нельзя закрыть, пока у него
                                       есть заказы «На раскрое», швее — пока есть «В работе»
@@ -667,6 +671,18 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'auto_close':
+                # Автозакрытие начисляет штрафы, то есть трогает деньги сотрудников.
+                # Поэтому ночной вызов от планировщика пускаем только с секретом, а из
+                # интерфейса — как обычно (там уже есть вход администратора).
+                cron_secret = os.environ.get('CRON_SECRET', '')
+                from_cron = bool(body_data.get('cronSecret'))
+                if from_cron and (not cron_secret or body_data.get('cronSecret') != cron_secret):
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Неверный ключ планировщика'}),
+                    }
+
                 # Ночной обход: закрываем смены, которые сотрудники забыли закрыть сами.
                 # Время конца рабочего дня у каждого цеха своё (working_day_end), поэтому
                 # смотрим смены по одной и сравниваем с настройкой именно её цеха.
