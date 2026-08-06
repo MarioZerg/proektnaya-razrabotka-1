@@ -23,10 +23,8 @@ export interface Employee {
   updatedAt: string;
   shiftNumber: number | null;
   maxUserId: string | null;
-  telegramUserId: string | null;
   phone: string | null;
   registeredViaMax: boolean;
-  registeredViaTelegram: boolean;
   /** Гостевой режим ("смена выключена" сотруднику) — не привязан жёстко к штатной смене,
    * при открытии смены сам выбирает цех/смену на сегодня. */
   shiftFree: boolean;

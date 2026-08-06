@@ -21,20 +21,15 @@ export const fetchTestAccounts = async (): Promise<TestAccount[]> => {
   return data.accounts || [];
 };
 
-export interface BotUrls {
-  max: string | null;
-  telegram: string | null;
-}
-
-/** Публичные ссылки на ботов MAX и Telegram для кнопок входа на странице авторизации. */
-export const fetchBotUrls = async (): Promise<BotUrls> => {
+/** Публичная ссылка на бота MAX для кнопки «Войти через MAX». */
+export const fetchMaxBotUrl = async (): Promise<string | null> => {
   const res = await fetch(AUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'bot_info' }),
   });
   const data = await res.json();
-  return { max: data.botUrl || null, telegram: data.telegramBotUrl || null };
+  return data.botUrl || null;
 };
 
 const postAuthAction = async (payload: Record<string, unknown>) => {
@@ -55,9 +50,6 @@ export interface UserRoleEntry {
   isApproved: boolean;
 }
 
-/** Мессенджер, через который сотрудник входит в систему. */
-export type Messenger = 'max' | 'telegram';
-
 export interface MaxVerifyResult {
   id: number;
   name: string;
@@ -65,19 +57,24 @@ export interface MaxVerifyResult {
   roles: UserRoleEntry[];
 }
 
-/** Проверяет код, присланный ботом MAX или Telegram. Возвращает пользователя и его должности. */
-export const verifyMessengerCode = (
-  code: string,
-  messenger: Messenger
-): Promise<MaxVerifyResult> =>
-  postAuthAction({
-    action: messenger === 'telegram' ? 'telegram_verify_code' : 'max_verify_code',
-    code,
-  });
+/** Проверяет код, присланный ботом MAX. Возвращает пользователя и список его должностей. */
+export const verifyMaxCode = (code: string): Promise<MaxVerifyResult> =>
+  postAuthAction({ action: 'max_verify_code', code });
 
-/** Новый пользователь (без единой должности) выбирает желаемую роль — уходит на утверждение админом. */
-export const selectDesiredRole = (userId: number, role: Role): Promise<{ success: true }> =>
-  postAuthAction({ action: 'select_role', userId, role });
+export interface RegistrationForm {
+  fullName: string;
+  role: Role;
+  email: string;
+  phone: string;
+}
+
+/** Новый сотрудник заполняет анкету (ФИО, должность, почта, телефон) — заявка уходит
+ * на утверждение администратором. */
+export const submitRegistration = (
+  userId: number,
+  form: RegistrationForm
+): Promise<{ success: true }> =>
+  postAuthAction({ action: 'select_role', userId, ...form });
 
 export interface EnterRoleResult {
   id: number;

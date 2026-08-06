@@ -6,17 +6,17 @@ import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import type { Role } from '@/lib/roles';
 import {
-  fetchBotUrls,
-  verifyMessengerCode,
-  selectDesiredRole,
+  fetchMaxBotUrl,
+  verifyMaxCode,
+  submitRegistration,
   enterRole,
   type UserRoleEntry,
-  type BotUrls,
-  type Messenger,
+  type RegistrationForm as RegistrationFormData,
 } from '@/lib/authApi';
 import type { TestAccount } from '@/lib/authApi';
 import TestAccountsPanel from '@/components/auth/TestAccountsPanel';
 import RoleSelectScreen from '@/components/auth/RoleSelectScreen';
+import RegistrationForm from '@/components/auth/RegistrationForm';
 import PendingApprovalScreen from '@/components/auth/PendingApprovalScreen';
 import { roleOptions } from '@/components/crm/users/usersShared';
 
@@ -27,30 +27,30 @@ const Index = () => {
   const { login } = useAuth();
 
   const [step, setStep] = useState<Step>('start');
-  const [botUrls, setBotUrls] = useState<BotUrls>({ max: null, telegram: null });
+  const [botUrl, setBotUrl] = useState<string | null>(null);
   const [botOpened, setBotOpened] = useState(false);
-  // Через какой мессенджер сотрудник вошёл — от этого зависит, в какой таблице
-  // сессий backend будет искать введённый код.
-  const [messenger, setMessenger] = useState<Messenger>('max');
 
   const [code, setCode] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState('');
 
-  const [pendingUser, setPendingUser] = useState<{ id: number; name: string; roles: UserRoleEntry[] } | null>(null);
+  const [pendingUser, setPendingUser] = useState<{
+    id: number;
+    name: string;
+    phone: string | null;
+    roles: UserRoleEntry[];
+  } | null>(null);
   const [selecting, setSelecting] = useState(false);
   const [entering, setEntering] = useState(false);
 
   useEffect(() => {
-    fetchBotUrls().then(setBotUrls);
+    fetchMaxBotUrl().then(setBotUrl);
   }, []);
 
-  const handleOpenBot = (target: Messenger) => {
-    const url = target === 'telegram' ? botUrls.telegram : botUrls.max;
-    if (url) {
-      window.open(url, '_blank', 'noopener,noreferrer');
+  const handleOpenBot = () => {
+    if (botUrl) {
+      window.open(botUrl, '_blank', 'noopener,noreferrer');
     }
-    setMessenger(target);
     setBotOpened(true);
     setStep('code');
   };
@@ -82,17 +82,17 @@ const Index = () => {
     setError('');
     setVerifying(true);
     try {
-      const result = await verifyMessengerCode(code.trim(), messenger);
+      const result = await verifyMaxCode(code.trim());
       const approvedRoles = result.roles.filter((r) => r.isApproved);
 
       if (result.roles.length === 0) {
-        setPendingUser({ id: result.id, name: result.name, roles: result.roles });
+        setPendingUser({ id: result.id, name: result.name, phone: result.phone, roles: result.roles });
         setStep('pickDesiredRole');
         return;
       }
 
       if (approvedRoles.length === 0) {
-        setPendingUser({ id: result.id, name: result.name, roles: result.roles });
+        setPendingUser({ id: result.id, name: result.name, phone: result.phone, roles: result.roles });
         setStep('pendingApproval');
         return;
       }
@@ -103,7 +103,7 @@ const Index = () => {
         return;
       }
 
-      setPendingUser({ id: result.id, name: result.name, roles: result.roles });
+      setPendingUser({ id: result.id, name: result.name, phone: result.phone, roles: result.roles });
       setStep('pickActiveRole');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось подтвердить код');
@@ -112,16 +112,16 @@ const Index = () => {
     }
   };
 
-  const handleSelectDesiredRole = async (role: Role) => {
+  const handleSubmitRegistration = async (form: RegistrationFormData) => {
     if (!pendingUser) return;
     setSelecting(true);
     setError('');
     try {
-      await selectDesiredRole(pendingUser.id, role);
-      setPendingUser({ ...pendingUser, roles: [{ role, isApproved: false }] });
+      await submitRegistration(pendingUser.id, form);
+      setPendingUser({ ...pendingUser, roles: [{ role: form.role, isApproved: false }] });
       setStep('pendingApproval');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось выбрать должность');
+      setError(err instanceof Error ? err.message : 'Не удалось отправить анкету');
     } finally {
       setSelecting(false);
     }
@@ -152,7 +152,6 @@ const Index = () => {
     setError('');
     setPendingUser(null);
     setBotOpened(false);
-    setMessenger('max');
   };
 
   return (
@@ -171,21 +170,12 @@ const Index = () => {
           <div className="space-y-4">
             <Button
               type="button"
-              onClick={() => handleOpenBot('max')}
-              disabled={!botUrls.max}
+              onClick={handleOpenBot}
+              disabled={!botUrl}
               className="h-12 w-full rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <Icon name="MessageCircle" size={18} className="mr-2" />
               Войти через MAX
-            </Button>
-            <Button
-              type="button"
-              onClick={() => handleOpenBot('telegram')}
-              disabled={!botUrls.telegram}
-              className="h-12 w-full rounded-sm bg-[#229ED9] text-white hover:bg-[#1c8ac0]"
-            >
-              <Icon name="Send" size={18} className="mr-2" />
-              Войти через Telegram
             </Button>
             <p className="text-center text-xs text-muted-foreground">
               Откроется бот МЕГАТЮЛЬ — поделитесь номером телефона, и бот пришлёт код для входа
@@ -208,14 +198,13 @@ const Index = () => {
           <form onSubmit={handleVerifyCode} className="space-y-3">
             {botOpened && (
               <p className="text-center text-sm text-muted-foreground">
-                Бот {messenger === 'telegram' ? 'Telegram' : 'MAX'} открылся в новой вкладке.
-                Поделитесь номером телефона в чате — код придёт сообщением.
+                Бот открылся в новой вкладке. Поделитесь номером телефона в чате — код придёт сообщением.
               </p>
             )}
             <Input
               type="text"
               inputMode="numeric"
-              placeholder={messenger === 'telegram' ? 'Код из Telegram' : 'Код из MAX'}
+              placeholder="Код из MAX"
               value={code}
               onChange={(e) => setCode(e.target.value)}
               className="h-11 rounded-sm border-border bg-transparent text-center font-mono-tech text-lg tracking-[0.3em]"
@@ -244,17 +233,15 @@ const Index = () => {
           </form>
         )}
 
-        {step === 'pickDesiredRole' && (
-          <>
-            <RoleSelectScreen
-              title="Кем вы будете работать?"
-              description="Выберите должность — администратор проверит и утвердит её"
-              roles={roleOptions.filter((r) => r !== 'admin')}
-              disabled={selecting}
-              onSelect={handleSelectDesiredRole}
-            />
-            {error && <p className="mt-3 text-center text-sm text-destructive">{error}</p>}
-          </>
+        {step === 'pickDesiredRole' && pendingUser && (
+          <RegistrationForm
+            roles={roleOptions.filter((r) => r !== 'admin')}
+            initialName={pendingUser.name}
+            initialPhone={pendingUser.phone}
+            submitting={selecting}
+            error={error}
+            onSubmit={handleSubmitRegistration}
+          />
         )}
 
         {step === 'pendingApproval' && pendingUser && (

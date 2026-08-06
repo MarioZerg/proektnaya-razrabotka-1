@@ -41,9 +41,8 @@ def handler(event: dict, context) -> dict:
     """Управляет сотрудниками: список, создание, редактирование, график смен, зарплата, аватар.
 
     GET  /  - список пользователей. Каждый включает maxUserId (привязанный MAX-аккаунт,
-              заполняется автоматически при входе через бота), telegramUserId, phone,
-              registeredViaMax / registeredViaTelegram (true, если человек сам
-              зарегистрировался через мессенджер, а не создан админом),
+              заполняется автоматически при входе через бота), phone, registeredViaMax
+              (true, если человек сам зарегистрировался через MAX, а не создан админом),
               и roles — список всех должностей пользователя вида
               [{role, isApproved}] (утверждённые админом отображаются в интерфейсе,
               неутверждённые ждут решения администратора).
@@ -101,8 +100,7 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "SELECT id, login, email, full_name, role, workshop, salary, "
                 "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number, "
-                "max_user_id, phone, registered_via_max, shift_free, "
-                "telegram_user_id, registered_via_telegram "
+                "max_user_id, phone, registered_via_max, shift_free "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -132,8 +130,6 @@ def handler(event: dict, context) -> dict:
                     'phone': r[15],
                     'registeredViaMax': r[16],
                     'shiftFree': r[17],
-                    'telegramUserId': r[18],
-                    'registeredViaTelegram': r[19],
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows

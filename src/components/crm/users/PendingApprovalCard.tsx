@@ -24,8 +24,8 @@ interface PendingApprovalCardProps {
 }
 
 /** Карточка новичка, ожидающего утверждения должности. Показывает, кем человек
- * представился, откуда пришёл (MAX или Telegram) и его телефон — по нему администратор
- * узнаёт сотрудника и решает, впускать ли в систему. */
+ * представился, его почту и телефон — по ним администратор узнаёт сотрудника и решает,
+ * впускать ли его в систему. */
 const PendingApprovalCard = ({
   employee,
   role,
@@ -65,11 +65,11 @@ const PendingApprovalCard = ({
                 {employee.phone}
               </span>
             )}
-            {employee.registeredViaTelegram && (
-              <Badge variant="secondary" className="gap-1 font-normal">
-                <Icon name="Send" size={12} />
-                Telegram
-              </Badge>
+            {employee.email && (
+              <span className="flex items-center gap-1">
+                <Icon name="Mail" size={13} />
+                {employee.email}
+              </span>
             )}
             {employee.registeredViaMax && (
               <Badge variant="secondary" className="gap-1 font-normal">

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 import psycopg2
 
@@ -7,32 +8,42 @@ import psycopg2
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'cleaner', 'admin', 'manager'}
 
 
+def normalize_phone(raw: str) -> str | None:
+    """Приводит номер к формату +7XXXXXXXXXX. Возвращает None, если не похоже на телефон."""
+    digits = re.sub(r'\D', '', raw or '')
+    if len(digits) == 11 and digits[0] in ('7', '8'):
+        digits = '7' + digits[1:]
+    elif len(digits) == 10:
+        digits = '7' + digits
+    else:
+        return None
+    return '+' + digits
+
+
 def handler(event: dict, context) -> dict:
-    """Авторизация сотрудников через мессенджеры MAX и Telegram (без логина/пароля).
+    """Авторизация сотрудников через мессенджер MAX (без логина/пароля).
 
     Полный сценарий входа:
-    1. Сотрудник жмёт «Войти через MAX» или «Войти через Telegram» на сайте →
-       открывается бот (backend/max_bot либо backend/telegram_bot обрабатывает
-       webhook мессенджера и присылает код после того, как человек поделился
+    1. Сотрудник жмёт «Войти через MAX» на сайте → открывается бот (backend/max_bot
+       обрабатывает webhook MAX, присылает код после того как человек поделился
        номером телефона в боте).
-    2. POST { action: 'max_verify_code' | 'telegram_verify_code', code } — сайт
-       отправляет введённый код. Оба действия работают одинаково, отличается
-       только таблица одноразовых сессий.
+    2. POST { action: 'max_verify_code', code } — сайт отправляет введённый код.
        Возвращает данные пользователя и список его ролей (роль + утверждена ли
        админом). Если ролей нет вообще — это новый человек, нужно выбрать желаемую
        должность (см. select_role). Если есть роли, но НИ ОДНА не утверждена —
        показываем экран ожидания. Если утверждена ровно одна — сразу входим в неё
        (это уже делает фронтенд, вызывая enter_role). Если утверждено несколько —
        фронтенд показывает выбор роли.
-    3. POST { action: 'select_role', userId, role } — новый пользователь выбирает
-       желаемую должность (один раз, пока у него нет ни одной роли). Создаёт
-       запись в user_roles с is_approved = false — ждёт утверждения администратором.
+    3. POST { action: 'select_role', userId, role, fullName, email, phone } — новый
+       пользователь заполняет анкету: ФИО, должность, почта для восстановления
+       доступа и телефон. Данные пишутся в его профиль, а в user_roles создаётся
+       запись с is_approved = false — заявка ждёт утверждения администратором.
     4. POST { action: 'enter_role', userId, role } — вход в конкретную утверждённую
        роль пользователя. Проверяет, что роль утверждена, возвращает полные данные
        сессии (id, name, role, workshopId, workshopName, shiftNumber).
 
-    POST { action: 'bot_info' } — отдаёт публичные ссылки на ботов MAX и Telegram
-    (кнопки входа на сайте открывают их в новой вкладке).
+    POST { action: 'bot_info' } — отдаёт публичную ссылку на бота MAX (кнопка
+    «Войти через MAX» на сайте открывает её в новой вкладке).
 
     POST { action: 'test_accounts' } — демо-вход: по одному активному сотруднику
     на каждую основную роль (без проверки кода), для ознакомительного режима.
@@ -69,16 +80,10 @@ def handler(event: dict, context) -> dict:
 
     if action == 'bot_info':
         username = os.environ.get('MAX_BOT_USERNAME', '')
-        tg_username = os.environ.get('TELEGRAM_BOT_USERNAME', '')
         return {
             'statusCode': 200,
             'headers': headers,
-            'body': json.dumps(
-                {
-                    'botUrl': f'https://max.ru/{username}' if username else None,
-                    'telegramBotUrl': f'https://t.me/{tg_username}' if tg_username else None,
-                }
-            ),
+            'body': json.dumps({'botUrl': f'https://max.ru/{username}' if username else None}),
         }
 
     if action == 'test_accounts':
@@ -109,12 +114,9 @@ def handler(event: dict, context) -> dict:
         ]
         return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'accounts': accounts})}
 
-    if action in ('max_verify_code', 'telegram_verify_code'):
-        # Оба мессенджера работают одинаково: бот кладёт одноразовый код в свою таблицу
-        # сессий, сайт его проверяет. Отличаются только названия таблицы и колонки.
-        is_telegram = action == 'telegram_verify_code'
-        sessions_table = 'telegram_auth_sessions' if is_telegram else 'max_auth_sessions'
-        id_column = 'telegram_user_id' if is_telegram else 'max_user_id'
+    if action == 'max_verify_code':
+        sessions_table = 'max_auth_sessions'
+        id_column = 'max_user_id'
 
         code = (body_data.get('code') or '').strip()
         if not code:
@@ -173,8 +175,18 @@ def handler(event: dict, context) -> dict:
     if action == 'select_role':
         user_id = body_data.get('userId')
         role = (body_data.get('role') or '').strip()
+        full_name = (body_data.get('fullName') or '').strip()
+        email = (body_data.get('email') or '').strip().lower()
+        phone = normalize_phone(body_data.get('phone') or '')
+
         if not user_id or role not in ROLES:
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректные данные'})}
+        if len(full_name) < 3:
+            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите фамилию, имя и отчество'})}
+        if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email):
+            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректный адрес почты'})}
+        if not phone:
+            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректный номер телефона'})}
 
         conn = psycopg2.connect(dsn)
         try:
@@ -185,9 +197,33 @@ def handler(event: dict, context) -> dict:
                 return {
                     'statusCode': 409,
                     'headers': headers,
-                    'body': json.dumps({'error': 'Должность уже выбрана — дождитесь утверждения администратором'}),
+                    'body': json.dumps({'error': 'Анкета уже отправлена — дождитесь утверждения администратором'}),
                 }
 
+            # Почта нужна для восстановления доступа, поэтому она должна быть уникальной:
+            # иначе по одному адресу нельзя понять, чей аккаунт восстанавливать.
+            cur.execute('SELECT id FROM users WHERE lower(email) = %s AND id <> %s', (email, int(user_id)))
+            if cur.fetchone():
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({'error': 'Эта почта уже занята другим сотрудником'}),
+                }
+
+            # Телефон из анкеты может отличаться от того, которым человек вошёл в боте
+            # (личный и рабочий), но он тоже должен остаться уникальным.
+            cur.execute('SELECT id FROM users WHERE phone = %s AND id <> %s', (phone, int(user_id)))
+            if cur.fetchone():
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({'error': 'Этот номер телефона уже занят'}),
+                }
+
+            cur.execute(
+                'UPDATE users SET full_name = %s, email = %s, phone = %s WHERE id = %s',
+                (full_name[:200], email, phone, int(user_id)),
+            )
             cur.execute(
                 'INSERT INTO user_roles (user_id, role, is_approved) VALUES (%s, %s, false)',
                 (int(user_id), role),
