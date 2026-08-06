@@ -186,7 +186,7 @@ const Index = () => {
       <div className="relative w-full max-w-[360px] animate-fade-in">
         <div className="mb-10 flex flex-col items-center gap-4 text-center">
           <img src="/assets/megatul-emblem.png" alt="МЕГАТЮЛЬ" className="h-20 w-auto" />
-          <p className="font-mono-tech text-base font-bold uppercase tracking-[0.35em] text-foreground">
+          <p className="text-2xl font-bold uppercase tracking-normal text-foreground">
             МЕГАТЮЛЬ
           </p>
           <OnlineNowBadge />
