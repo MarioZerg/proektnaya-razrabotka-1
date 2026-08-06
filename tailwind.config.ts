@@ -101,6 +101,11 @@ export default {
 					'0%, 100%': { transform: 'translateY(0)' },
 					'50%': { transform: 'translateY(-14px)' }
 				},
+				// Логотип на входе плавно наезжает на зрителя — живая, но спокойная заставка.
+				'logo-zoom': {
+					from: { opacity: '0', transform: 'scale(0.6)' },
+					to: { opacity: '1', transform: 'scale(1)' }
+				},
 				'shimmer': {
 					'0%': { transform: 'translateX(-150%)' },
 					'18%, 100%': { transform: 'translateX(150%)' }
@@ -112,6 +117,7 @@ export default {
 				'fade-in': 'fade-in 0.6s ease-out both',
 				'scale-in': 'scale-in 0.5s ease-out both',
 				'float': 'float 6s ease-in-out infinite',
+				'logo-zoom': 'logo-zoom 1.1s cubic-bezier(0.22, 1, 0.36, 1) both',
 				'shimmer': 'shimmer 7s ease-in-out infinite'
 			}
 		}

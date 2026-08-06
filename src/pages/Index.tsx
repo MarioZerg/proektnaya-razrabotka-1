@@ -185,10 +185,12 @@ const Index = () => {
 
       <div className="relative w-full max-w-[360px] animate-fade-in">
         <div className="mb-10 flex flex-col items-center gap-4 text-center">
-          <img src="/assets/megatul-emblem.png" alt="МЕГАТЮЛЬ" className="h-20 w-auto" />
-          <p className="text-2xl font-bold uppercase tracking-normal text-foreground">
-            МЕГАТЮЛЬ
-          </p>
+          {/* Логотип с названием плавно наезжает при открытии страницы. */}
+          <img
+            src="/assets/megatul-logo.png"
+            alt="МЕГАТЮЛЬ"
+            className="h-28 w-auto animate-logo-zoom"
+          />
           <OnlineNowBadge />
         </div>
 
@@ -242,6 +244,18 @@ const Index = () => {
               <Icon name="KeyRound" size={18} className="mr-2" />
               Вход по паролю
             </Button>
+
+            {/* Реквизиты компании — обязательная информация о владельце сервиса. */}
+            <div className="space-y-0.5 pt-2 text-center text-[11px] leading-relaxed text-muted-foreground">
+              <p>Система управления швейного производства</p>
+              <p>ИНН: 760218194200 · ОГРН: 322774600341432</p>
+              <p>
+                ИП Левкин А.С. ·{' '}
+                <a href="tel:+79997863525" className="hover:text-foreground">
+                  +7 999 786-35-25
+                </a>
+              </p>
+            </div>
 
             <div className="mt-8 space-y-3">
               <div className="flex items-center gap-3">
