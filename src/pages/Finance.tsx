@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
+import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
@@ -61,6 +62,9 @@ const Finance = () => {
   const [myBalance, setMyBalance] = useState(0);
   const [myPayouts, setMyPayouts] = useState<MyPayout[]>([]);
   const [myLoading, setMyLoading] = useState(true);
+  // Новичкам зарплата открывается через 2 недели после регистрации — считает сервер.
+  const [myLocked, setMyLocked] = useState(false);
+  const [myDaysLeft, setMyDaysLeft] = useState(0);
 
   useEffect(() => {
     fetchEmployees().then(setEmployees);
@@ -74,6 +78,8 @@ const Finance = () => {
         setMyAccruals(data.accruals);
         setMyBalance(data.balance);
         setMyPayouts(data.payouts);
+        setMyLocked(!!data.salaryLocked);
+        setMyDaysLeft(data.daysLeft || 0);
       })
       .finally(() => setMyLoading(false));
   }, [user?.role, user?.id]);
@@ -234,6 +240,26 @@ const Finance = () => {
             </p>
           </div>
 
+          {myLocked && !myLoading ? (
+            // Первые две недели зарплата скрыта: новичок только осваивается, суммы
+            // прыгают, а ранние сравнения с коллегами демотивируют. Откроется сама.
+            <div className="rounded-md border border-dashed border-border bg-muted/40 p-8 text-center">
+              <Icon name="Lock" size={40} className="mx-auto text-muted-foreground" />
+              <p className="mt-3 text-lg font-semibold">Зарплата пока закрыта</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Раздел откроется автоматически через {myDaysLeft}{' '}
+                {myDaysLeft % 10 === 1 && myDaysLeft % 100 !== 11
+                  ? 'день'
+                  : [2, 3, 4].includes(myDaysLeft % 10) && ![12, 13, 14].includes(myDaysLeft % 100)
+                    ? 'дня'
+                    : 'дней'}{' '}
+                — через две недели после начала работы
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Все начисления сохраняются, ничего не потеряется
+              </p>
+            </div>
+          ) : (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
             <div className="space-y-4 lg:col-span-3">
               <MyAccrualsTable accruals={myAccruals} loading={myLoading} />
@@ -246,6 +272,7 @@ const Finance = () => {
               <MyPayoutsCard payouts={myPayouts} loading={myLoading} />
             </div>
           </div>
+          )}
         </div>
       </CrmLayout>
     );

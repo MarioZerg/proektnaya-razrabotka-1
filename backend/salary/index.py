@@ -57,7 +57,10 @@ def handler(event: dict, context) -> dict:
         ?type=salary|manual|penalty|all       - фильтр по типу начисления
         ?page=1                              - пагинация (по 50 записей)
     GET  /?my=1&userId=1                     - для сотрудника: его начисления (с указанием
-                                               заказа) и список последних выплат
+                                               заказа) и список последних выплат.
+                                               Дополнительно возвращает salaryLocked/daysLeft/
+                                               unlockAt: у новичков баланс закрыт первые
+                                               14 дней после регистрации и открывается сам
     GET  /?rates=1&workshopId=1               - список тарифов (salary_rates) конкретного цеха
                                                (workshopId обязателен для корректной фильтрации;
                                                без него возвращаются тарифы всех цехов подряд)
@@ -314,10 +317,31 @@ def handler(event: dict, context) -> dict:
                     for r in cur.fetchall()
                 ]
 
+                # Новичкам баланс открывается через 2 недели после регистрации: первые дни
+                # человек только учится, суммы скачут, и раннее сравнение зарплат
+                # демотивирует. Считаем на сервере — дату на телефоне подкрутить нельзя.
+                cur.execute(
+                    "SELECT salary_unlock_at, "
+                    "CEIL(GREATEST(0, EXTRACT(EPOCH FROM (salary_unlock_at - now())) / 86400))::int "
+                    "FROM users WHERE id = %s",
+                    (int(user_id),),
+                )
+                u_row = cur.fetchone()
+                days_left = int(u_row[1]) if u_row and u_row[1] is not None else 0
+                salary_locked = days_left > 0
+                unlock_at = (u_row[0].isoformat() + 'Z') if u_row and u_row[0] else None
+
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'accruals': accruals, 'balance': balance, 'payouts': payouts}),
+                    'body': json.dumps({
+                        'accruals': accruals,
+                        'balance': balance,
+                        'payouts': payouts,
+                        'salaryLocked': salary_locked,
+                        'daysLeft': days_left,
+                        'unlockAt': unlock_at,
+                    }),
                 }
 
             user_id_filter = params.get('userId')

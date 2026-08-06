@@ -98,6 +98,12 @@ export interface MySalaryData {
   accruals: MyAccrual[];
   balance: number;
   payouts: MyPayout[];
+  /** У новичков баланс закрыт первые 14 дней после регистрации. */
+  salaryLocked?: boolean;
+  /** Сколько дней осталось до открытия. */
+  daysLeft?: number;
+  /** Дата, когда баланс откроется сам. */
+  unlockAt?: string | null;
 }
 
 export const fetchMySalary = async (userId: number): Promise<MySalaryData> => {
