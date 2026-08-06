@@ -53,6 +53,36 @@
         "action": "rematch_stock"
       },
       "expectedStatus": 200
+    },
+    {
+      "name": "Send to sewing without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "send_to_sewing"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Send to sewing without reason fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "send_to_sewing",
+        "id": 999999
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Send to sewing for missing item fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "send_to_sewing",
+        "id": 999999,
+        "reason": "порвана"
+      },
+      "expectedStatus": 404
     }
   ]
 }

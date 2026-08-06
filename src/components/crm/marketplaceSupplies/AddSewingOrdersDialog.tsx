@@ -70,8 +70,9 @@ const AddSewingOrdersDialog = ({
         </DialogHeader>
 
         <p className="text-xs text-muted-foreground">
-          Товары уйдут в производство по этой поставке. Каждая штука — отдельное изделие на
-          конвейере, номера присваиваются автоматически.
+          Система сначала проверит склад: если такая вещь уже лежит готовой, она зарезервируется
+          с полки, а шить будем только недостающее. Каждая штука — отдельное изделие, номера
+          присваиваются автоматически.
         </p>
 
         <div className="max-h-[50vh] space-y-3 overflow-y-auto pr-1">
@@ -125,7 +126,7 @@ const AddSewingOrdersDialog = ({
           {saving ? (
             <Icon name="Loader2" size={16} className="animate-spin" />
           ) : (
-            `Отправить в пошив${totalPieces > 0 ? ` (${totalPieces} шт)` : ''}`
+            `Добавить в поставку${totalPieces > 0 ? ` (${totalPieces} шт)` : ''}`
           )}
         </Button>
       </DialogContent>

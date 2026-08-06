@@ -22,6 +22,7 @@ import {
   type GoodsWarehouseItem,
 } from '@/lib/goodsWarehouseApi';
 import ShipLabelDialog from '@/components/crm/goodsWarehouse/ShipLabelDialog';
+import SendToSewingDialog from '@/components/crm/goodsWarehouse/SendToSewingDialog';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 
@@ -40,6 +41,8 @@ const GoodsPicking = () => {
 
   const [shipLabelOpen, setShipLabelOpen] = useState(false);
   const [rematching, setRematching] = useState(false);
+  // Вещь, которую отправляем в пошив (испорчена): открывает окно с причиной.
+  const [sewingItem, setSewingItem] = useState<GoodsWarehouseItem | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -185,6 +188,7 @@ const GoodsPicking = () => {
                       <TableHead>Полка</TableHead>
                       <TableHead>Товар</TableHead>
                       <TableHead>Под заказ</TableHead>
+                      <TableHead />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -194,6 +198,19 @@ const GoodsPicking = () => {
                         <TableCell>{i.shelfName || '—'}</TableCell>
                         <TableCell>{i.product || '—'}</TableCell>
                         <TableCell className="font-medium">{i.reservedOrderNumber || '—'}</TableCell>
+                        <TableCell>
+                          {/* Вещь испорчена — списываем её, заказ уходит шиться заново,
+                              чтобы не висел на подборе бесконечно. */}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setSewingItem(i)}
+                          >
+                            <Icon name="Scissors" size={14} className="mr-1" />
+                            В пошив
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -207,6 +224,12 @@ const GoodsPicking = () => {
           open={shipLabelOpen}
           onOpenChange={setShipLabelOpen}
           matched={awaitingLabel}
+          onDone={load}
+        />
+
+        <SendToSewingDialog
+          item={sewingItem}
+          onOpenChange={(v) => !v && setSewingItem(null)}
           onDone={load}
         />
 
@@ -265,10 +288,21 @@ const GoodsPicking = () => {
                       <TableCell>{i.product || '—'}</TableCell>
                       <TableCell>{i.shelfName || '—'}</TableCell>
                       <TableCell>
-                        <Button variant="ghost" size="sm" onClick={() => handleCancel(i.id)}>
-                          <Icon name="Undo2" size={14} className="mr-1" />
-                          Вернуть на хранение
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button variant="ghost" size="sm" onClick={() => handleCancel(i.id)}>
+                            <Icon name="Undo2" size={14} className="mr-1" />
+                            Вернуть на хранение
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setSewingItem(i)}
+                          >
+                            <Icon name="Scissors" size={14} className="mr-1" />
+                            В пошив
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

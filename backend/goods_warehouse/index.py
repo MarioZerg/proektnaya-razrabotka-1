@@ -711,6 +711,111 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            if action == 'send_to_sewing':
+                # Вещь с полки испорчена (порвана, пятно, брак) — отгружать её нельзя.
+                # Списываем вещь со склада и возвращаем заказ в производство: его сошьют заново.
+                # Если вещь была подобрана под заказ, заказ снимается с подбора и уходит в цех,
+                # иначе он завис бы в ожидании стикеровки навсегда.
+                item_id = body_data.get('id')
+                reason = (body_data.get('reason') or '').strip()
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                if not reason:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите причину — почему вещь нельзя отгрузить'}, ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "SELECT gw.status, gw.reserved_order_id, gw.storage_barcode, o.order_number, o.product "
+                    "FROM goods_warehouse gw LEFT JOIN orders o ON o.id = gw.order_id "
+                    "WHERE gw.id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Запись не найдена'})}
+                gw_status, reserved_order_id, gw_barcode, gw_order_number, gw_product = row
+                if gw_status in ('shipped', 'lost'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Вещь уже отгружена или списана'}, ensure_ascii=False),
+                    }
+                if gw_status == 'reserved':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Вещь уже лежит в собранной поставке — сначала уберите её оттуда'},
+                            ensure_ascii=False,
+                        ),
+                    }
+
+                # Списываем испорченную вещь со склада.
+                reason_esc = reason.replace("'", "''")
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'lost', reserved_order_id = NULL, "
+                    f"matched_at = NULL, shipping_labeled_at = NULL, "
+                    f"lost_reason = 'Брак, отправлен в пошив: {reason_esc}', lost_at = now() "
+                    f"WHERE id = {int(item_id)}"
+                )
+
+                # Заказ покупателя, который закрывался этой вещью, возвращаем в производство.
+                returned_order = None
+                if reserved_order_id:
+                    cur.execute(
+                        "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый', "
+                        "assigned_user_id = NULL, workshop_id = NULL WHERE id = %s "
+                        "RETURNING order_number, group_key",
+                        (int(reserved_order_id),),
+                    )
+                    ret = cur.fetchone()
+                    returned_order = ret[0] if ret else None
+
+                    # Заказ Яндекса едет одним ярлыком: если одна вещь связки испорчена,
+                    # шить надо всю связку заново, иначе половина уедет, половина нет.
+                    group_key = ret[1] if ret else None
+                    if group_key:
+                        cur.execute(
+                            "SELECT gw.id FROM goods_warehouse gw "
+                            "JOIN orders o ON o.id = gw.reserved_order_id "
+                            "WHERE o.group_key = %s AND gw.status = 'in_stock'",
+                            (group_key,),
+                        )
+                        sibling_ids = [r[0] for r in cur.fetchall()]
+                        for sib in sibling_ids:
+                            # Соседние вещи не испорчены — просто возвращаем их на полку
+                            # свободными, они пригодятся другим заказам.
+                            cur.execute(
+                                "UPDATE goods_warehouse SET reserved_order_id = NULL, "
+                                "matched_at = NULL, shipping_labeled_at = NULL WHERE id = %s",
+                                (sib,),
+                            )
+                        cur.execute(
+                            "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый', "
+                            "assigned_user_id = NULL, workshop_id = NULL "
+                            "WHERE group_key = %s AND COALESCE(status, '') <> 'Отменён'",
+                            (group_key,),
+                        )
+
+                log_action(
+                    cur, actor_id, actor_name, 'send_to_sewing', 'goods_warehouse', item_id,
+                    f'Вещь {gw_barcode} ({gw_product or gw_order_number}) списана как брак и '
+                    f'отправлена в пошив: {reason}'
+                    + (f'. Заказ {returned_order} вернулся в производство' if returned_order else ''),
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps(
+                        {'success': True, 'returnedOrder': returned_order},
+                        ensure_ascii=False,
+                    ),
+                }
+
             if action == 'mark_lost':
                 item_id = body_data.get('id')
                 reason = (body_data.get('reason') or '').strip()

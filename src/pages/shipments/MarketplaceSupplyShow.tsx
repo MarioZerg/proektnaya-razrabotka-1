@@ -97,7 +97,14 @@ const MarketplaceSupplyShow = () => {
     setAddingOrders(true);
     try {
       const res = await addSewingOrdersToSupply(supplyId, rows, { id: user?.id, name: user?.name });
-      toast({ title: `Отправлено в пошив: ${res.created} шт` });
+      // Часть товара могла найтись готовой на складе — её шить не нужно, и менеджеру
+      // важно видеть это сразу: экономия ткани и времени цеха.
+      toast({
+        title: `Добавлено в поставку: ${res.created} шт`,
+        description: res.fromStock
+          ? `Взято готовыми со склада: ${res.fromStock}, отправлено в пошив: ${res.toSewing}`
+          : 'Всё отправлено в пошив — на складе готовых нет',
+      });
       setAddOrdersOpen(false);
       load();
     } catch (e) {

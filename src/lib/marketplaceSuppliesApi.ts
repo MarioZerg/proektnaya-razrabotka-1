@@ -340,4 +340,4 @@ export const addSewingOrdersToSupply = (
     items,
     actorId: actor?.id,
     actorName: actor?.name,
-  }) as Promise<{ created: number }>;
+  }) as Promise<{ created: number; fromStock: number; toSewing: number }>;

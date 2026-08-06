@@ -145,3 +145,10 @@ export const cancelPicking = (id: number) => postAction({ action: 'cancel_pickin
 
 export const markGoodsLost = (id: number, reason: string) =>
   postAction({ action: 'mark_lost', id, reason });
+
+/** Вещь испорчена: списываем её со склада, а заказ возвращаем в производство — сошьют заново. */
+export const sendGoodsToSewing = (id: number, reason: string) =>
+  postAction({ action: 'send_to_sewing', id, reason }) as Promise<{
+    success: true;
+    returnedOrder: string | null;
+  }>;

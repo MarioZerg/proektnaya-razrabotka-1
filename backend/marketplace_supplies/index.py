@@ -1356,6 +1356,7 @@ def handler(event: dict, context) -> dict:
                 next_seq = (int(last_row[0].split('-')[1]) + 1) if last_row else 1
 
                 created = 0
+                from_stock = 0
                 for line in lines:
                     mp_item_id = line.get('marketplaceItemId')
                     qty = int(line.get('quantity') or 1)
@@ -1374,7 +1375,56 @@ def handler(event: dict, context) -> dict:
                         f"{i_material} {i_width}x{i_height}"
                         if i_material and i_width and i_height else i_name
                     )
-                    for _ in range(qty):
+
+                    # Сначала смотрим на полки: если такая вещь уже лежит готовой, шить её
+                    # заново не нужно — резервируем со склада. Берём те, что дольше всех лежат
+                    # (FIFO), и не больше, чем нужно в поставку.
+                    # SKIP LOCKED — вещь, которую параллельно резервирует подбор FBS,
+                    # пропускаем, чтобы одна вещь не ушла в два места.
+                    cur.execute(
+                        "SELECT gw.id FROM goods_warehouse gw "
+                        "JOIN orders src ON src.id = gw.order_id "
+                        "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+                        "AND src.marketplace_item_id = %s "
+                        "ORDER BY gw.received_at ASC LIMIT %s "
+                        "FOR UPDATE OF gw SKIP LOCKED",
+                        (int(mp_item_id), qty),
+                    )
+                    stock_ids = [r[0] for r in cur.fetchall()]
+
+                    for gw_pick in stock_ids:
+                        cur.execute(
+                            "INSERT INTO orders (order_number, marketplace, order_type, status, "
+                            "cluster, product, quantity, source, material, width, height, "
+                            "marketplace_item_id, product_barcode, product_ozon_sku, supply_id, "
+                            "fulfilled_from_stock_id, sewing_status) "
+                            "VALUES (%s, %s, %s, 'Новый', %s, %s, 1, 'manual', %s, %s, %s, %s, %s, %s, %s, "
+                            "%s, 'Со склада') "
+                            "ON CONFLICT (order_number) DO NOTHING RETURNING id",
+                            (
+                                f"00000-{next_seq:02d}", s_marketplace, s_type or 'FBO',
+                                s_cluster or '', product, i_material,
+                                int(i_width) if i_width else None,
+                                int(i_height) if i_height else None,
+                                int(mp_item_id), i_barcode or None, i_ozon_sku or None,
+                                int(target_supply), int(gw_pick),
+                            ),
+                        )
+                        new_row = cur.fetchone()
+                        next_seq += 1
+                        if not new_row:
+                            continue
+                        cur.execute(
+                            "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() "
+                            "WHERE id = %s",
+                            (int(new_row[0]), int(gw_pick)),
+                        )
+                        created += 1
+                        from_stock += 1
+
+                    # Остаток, которого не хватило на складе, уходит в пошив.
+                    qty -= len(stock_ids)
+                    for _ in range(max(0, qty)):
                         cur.execute(
                             "INSERT INTO orders (order_number, marketplace, order_type, status, "
                             "cluster, product, quantity, source, material, width, height, "
@@ -1397,10 +1447,19 @@ def handler(event: dict, context) -> dict:
                 log_action(
                     cur, body_data.get('actorId'), body_data.get('actorName'),
                     'supply_add_orders', 'supply', int(target_supply),
-                    f'Догрузил в поставку #{target_supply} заказов на пошив: {created}',
+                    f'Догрузил в поставку #{target_supply}: всего {created}, '
+                    f'из них со склада {from_stock}, в пошив {created - from_stock}',
                 )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'created': created})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'created': created,
+                        'fromStock': from_stock,
+                        'toSewing': created - from_stock,
+                    }),
+                }
 
             if action == 'delete':
                 item_id = body_data.get('id')
@@ -1423,7 +1482,9 @@ def handler(event: dict, context) -> dict:
                     (int(item_id),),
                 )
                 by_status = {r[0]: int(r[1]) for r in cur.fetchall()}
-                started = {st: n for st, n in by_status.items() if st != 'Новый'}
+                # «Со склада» — заказ закрыт готовой вещью с полки, в цехе по нему не работали.
+                # Такой заказ удалению не мешает: вещь просто вернётся на полку свободной.
+                started = {st: n for st, n in by_status.items() if st not in ('Новый', 'Со склада')}
                 if started:
                     parts = ', '.join(f'{st.lower()} — {n}' for st, n in started.items())
                     return {
@@ -1443,9 +1504,24 @@ def handler(event: dict, context) -> dict:
                 for gid in goods_ids:
                     cur.execute(f"UPDATE goods_warehouse SET status = 'in_stock' WHERE id = {gid}")
 
+                # Вещи, зарезервированные с полок под заказы этой поставки, возвращаем в
+                # свободные — иначе они навсегда остались бы занятыми под удалённый заказ.
+                cur.execute(
+                    "UPDATE goods_warehouse SET reserved_order_id = NULL, matched_at = NULL, "
+                    "shipping_labeled_at = NULL "
+                    "WHERE reserved_order_id IN (SELECT id FROM orders WHERE supply_id = %s) "
+                    "RETURNING id",
+                    (int(item_id),),
+                )
+                freed_stock = len(cur.fetchall())
+
                 # Несшитые заказы этой поставки удаляем вместе с ней: они существуют только
-                # ради неё и без поставки повисли бы в конвейере мусором.
-                cur.execute(f"DELETE FROM orders WHERE supply_id = {int(item_id)} AND sewing_status = 'Новый'")
+                # ради неё и без поставки повисли бы в конвейере мусором. Заказы «Со склада»
+                # тоже удаляем — вещь уже освобождена выше и снова доступна другим заказам.
+                cur.execute(
+                    f"DELETE FROM orders WHERE supply_id = {int(item_id)} "
+                    f"AND sewing_status IN ('Новый', 'Со склада')"
+                )
                 # rowcount может прийти -1, если удалять было нечего — приводим к нулю,
                 # иначе в интерфейсе покажется «удалено -1 заказов».
                 deleted_orders = max(0, cur.rowcount)
@@ -1458,7 +1534,11 @@ def handler(event: dict, context) -> dict:
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'success': True, 'deletedOrders': deleted_orders}),
+                    'body': json.dumps({
+                        'success': True,
+                        'deletedOrders': deleted_orders,
+                        'freedFromStock': freed_stock,
+                    }),
                 }
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
