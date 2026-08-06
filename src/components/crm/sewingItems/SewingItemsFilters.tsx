@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Select,
   SelectContent,
@@ -64,6 +64,27 @@ const SewingItemsFilters = ({
   // засорять выпадающий список, ведь заказов с их workshopId уже быть не может).
   const activeWorkshops = workshops.filter((w) => w.isActive);
 
+  // Выбрали конкретный цех — показываем только его ткани. У каждого цеха свой набор
+  // разрешённых материалов, и чужие в фильтре сбивают с толку: заказов с ними в этом
+  // цехе всё равно нет. При «Все цеха» список полный.
+  const visibleMaterials = useMemo(() => {
+    if (workshopFilter === 'all') return materials;
+    const w = workshops.find((x) => String(x.id) === workshopFilter);
+    if (!w || !w.allowedMaterials?.length) return materials;
+    const allowed = new Set(w.allowedMaterials);
+    return materials.filter((m) => allowed.has(m.id));
+  }, [workshopFilter, workshops, materials]);
+
+  // Сменили цех, а выбранная ткань в нём не используется — сбрасываем фильтр, иначе
+  // список заказов молча окажется пустым.
+  useEffect(() => {
+    if (materialFilter === 'all') return;
+    if (!visibleMaterials.some((m) => String(m.id) === materialFilter)) {
+      setMaterialFilter('all');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workshopFilter, visibleMaterials.length]);
+
   return (
     <div>
       <Button
@@ -113,7 +134,7 @@ const SewingItemsFilters = ({
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Все ткани</SelectItem>
-          {materials.map((m) => (
+          {visibleMaterials.map((m) => (
             <SelectItem key={m.id} value={String(m.id)}>
               {m.name}
             </SelectItem>
