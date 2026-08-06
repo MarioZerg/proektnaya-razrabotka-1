@@ -425,7 +425,16 @@ def handler(event: dict, context) -> dict:
                 "o.cutter_user_id, cu.full_name, o.hanger_number, "
                 "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
                 "o.ozon_status, o.ozon_posting_number, o.product_barcode, o.product_ozon_sku, "
-                "o.marketplace_created_at, o.group_key, o.group_size, o.group_position "
+                "o.marketplace_created_at, o.group_key, o.group_size, o.group_position, "
+                # Реальный расход ткани на одно изделие из карточки товара: он включает
+                # запас на подгибку и потому больше «чистой» ширины. Именно эту цифру
+                # кладовщик должен видеть в сводке — столько ткани уйдёт со склада.
+                "(SELECT mim.quantity FROM marketplace_items mi "
+                " JOIN marketplace_item_materials mim ON mim.marketplace_item_id = mi.id "
+                " JOIN materials mm ON mm.id = mim.material_id "
+                " JOIN material_types mmt ON mmt.id = mm.type_id "
+                " WHERE mmt.name = 'Тюль' AND mi.material = o.material "
+                "   AND mi.width = o.width AND mi.height = o.height LIMIT 1) AS fabric_per_item "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -472,6 +481,9 @@ def handler(event: dict, context) -> dict:
                     'groupKey': r[31],
                     'groupSize': r[32],
                     'groupPosition': r[33],
+                    # Сколько ткани реально уйдёт со склада на одно изделие (с запасом на
+                    # подгибку). None — если карточка товара с таким размером не заведена.
+                    'fabricPerItem': float(r[34]) if r[34] is not None else None,
                 }
                 for r in cur.fetchall()
             ]

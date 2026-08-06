@@ -68,6 +68,9 @@ export interface Order {
   groupKey?: string | null;
   groupSize?: number | null;
   groupPosition?: number | null;
+  /** Сколько ткани реально уйдёт со склада на одно изделие (пог.м., с запасом на
+   * подгибку) — из карточки товара. null, если карточка такого размера не заведена. */
+  fabricPerItem?: number | null;
 }
 
 export interface OrderMaterialUsage {
