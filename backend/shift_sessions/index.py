@@ -61,15 +61,26 @@ def get_setting(cur, workshop_id, key, default=None):
     return default
 
 
-def count_orders_in_work(cur, user_id):
-    """Сколько у сотрудника заказов, которые он ещё не довёл до конца. Считаем и раскрой,
-    и пошив, и уже отшитое, но ждущее стикеровки: пока заказ числится за человеком,
-    смену закрывать нельзя — иначе работа зависает и её никто не подхватит."""
+def count_orders_in_work(cur, user_id, role):
+    """Сколько у сотрудника незавершённых заказов — тех, из-за которых нельзя закрыть смену.
+
+    У каждой должности свой этап, и держать человека надо только на нём:
+      - закройщик отвечает за раскрой, поэтому считаем заказы «На раскрое»;
+      - швея отвечает за пошив, поэтому считаем только «В работе». Заказы, уже
+        отправленные на стикеровку, её не держат — там работает упаковщик.
+    Остальным должностям смену закрывать ничего не мешает."""
+    if role == 'cutter':
+        status = 'На раскрое'
+    elif role == 'sewer':
+        status = 'В работе'
+    else:
+        return 0
+
     cur.execute(
         "SELECT COUNT(*) FROM orders "
         "WHERE (assigned_user_id = %s OR sewer_user_id = %s OR cutter_user_id = %s) "
-        "AND sewing_status IN ('На раскрое', 'В работе', 'Стикеровка')",
-        (int(user_id), int(user_id), int(user_id)),
+        "AND sewing_status = %s",
+        (int(user_id), int(user_id), int(user_id), status),
     )
     return int(cur.fetchone()[0])
 
@@ -132,14 +143,16 @@ def handler(event: dict, context) -> dict:
                                       время конца рабочего дня берётся из настроек цеха
                                       (working_day_end), смена закрывается этим временем,
                                       а не моментом запуска. Если за швеёй/закройщиком ещё
-                                      числились заказы — штраф unclosed_shift_with_orders_penalty,
+                                      числились заказы на их этапе (у закройщика «На раскрое»,
+                                      у швеи «В работе») — штраф unclosed_shift_with_orders_penalty,
                                       иначе обычный unclosed_shift_penalty. Повторный запуск
                                       безопасен: закрытые смены пропускаются, штраф за одну
                                       смену начисляется один раз
     POST /  { action: 'close', userId, closedByAdmin? }
-                                    - закрывает смену. Швее и закройщику закрыть смену
-                                      нельзя, пока за ними числятся заказы (409) — сначала
-                                      надо их завершить. Администратор закрывает принудительно
+                                    - закрывает смену. Закройщику нельзя закрыть, пока у него
+                                      есть заказы «На раскрое», швее — пока есть «В работе»
+                                      (409). Заказы на стикеровке швею не держат — их
+                                      закрывает упаковщик. Администратор закрывает принудительно
                                       через closedByAdmin=true
     POST /  { action: 'open', userId, workshopId?, shiftNumber?, openedByAdmin?, role? }
         - швея/закройщик/упаковщик работают гибко: цех и смену выбирают при КАЖДОМ открытии
@@ -601,21 +614,22 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Открытой смены не найдено'})}
                 session_id, session_workshop_id = row
 
-                # Швея и закройщик не закрывают смену, пока за ними числятся заказы: иначе
-                # работа зависает до утра и её никто не подхватит. Администратор закрыть
+                # Швея и закройщик не закрывают смену, пока за ними числятся заказы на их
+                # этапе: иначе работа зависает до утра и её никто не подхватит. Администратор закрыть
                 # может (closedByAdmin) — он разбирается с зависшими заказами вручную.
                 closed_by_admin = bool(body_data.get('closedByAdmin'))
                 cur.execute("SELECT role FROM users WHERE id = %s", (int(user_id),))
                 role_row = cur.fetchone()
-                if not closed_by_admin and role_row and role_row[0] in ('sewer', 'cutter'):
-                    orders_left = count_orders_in_work(cur, user_id)
+                if not closed_by_admin and role_row:
+                    orders_left = count_orders_in_work(cur, user_id, role_row[0])
                     if orders_left > 0:
+                        stage = 'на раскрое' if role_row[0] == 'cutter' else 'в работе'
                         return {
                             'statusCode': 409,
                             'headers': headers,
                             'body': json.dumps(
                                 {
-                                    'error': f'У вас {orders_left} заказов в работе — '
+                                    'error': f'У вас {orders_left} заказов {stage} — '
                                              f'сначала завершите их, потом закрывайте смену',
                                     'ordersInWork': orders_left,
                                 }
@@ -680,9 +694,7 @@ def handler(event: dict, context) -> dict:
                     if not should_close:
                         continue
 
-                    orders_left = (
-                        count_orders_in_work(cur, s_user_id) if s_role in ('sewer', 'cutter') else 0
-                    )
+                    orders_left = count_orders_in_work(cur, s_user_id, s_role)
 
                     cur.execute(
                         "UPDATE shift_sessions SET closed_at = (%s::date + %s::time) WHERE id = %s",
