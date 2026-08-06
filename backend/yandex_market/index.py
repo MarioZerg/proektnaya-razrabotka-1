@@ -298,6 +298,15 @@ def handler(event: dict, context) -> dict:
     actor_id = body_data.get('actorId') or params.get('actorId')
     actor_name = body_data.get('actorName') or params.get('actorName')
 
+    # Ночной планировщик тянет заказы сам, без открытой CRM. Ключ сверяем только если он
+    # пришёл: из интерфейса вызов идёт как раньше, без ключа.
+    if body_data.get('cronSecret'):
+        cron_secret = os.environ.get('CRON_SECRET', '')
+        if not cron_secret or body_data['cronSecret'] != cron_secret:
+            return _resp(403, {'error': 'Неверный ключ планировщика'})
+        # В журнале должно быть видно, что заказы подтянул планировщик, а не сотрудник.
+        actor_id, actor_name = None, 'Планировщик'
+
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
     try:
         cur = conn.cursor()
