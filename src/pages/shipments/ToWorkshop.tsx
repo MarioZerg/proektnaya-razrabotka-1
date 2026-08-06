@@ -116,6 +116,32 @@ const ToWorkshop = () => {
     activeTab === 'new' ? !isCompletedStatus(s.status) : isCompletedStatus(s.status)
   );
 
+  // Материалы в фильтре — только те, что разрешены цеху (workshops.allowedMaterials).
+  // Иначе закройщик Цеха №1 видел бы в списке «Вуаль без утяжелителя» — ткань, которая
+  // относится к другому цеху и в его заявках никогда не встретится.
+  // Кладовщик и админ работают со всеми цехами, поэтому у них список полный.
+  const filterWorkshopId = isProduction
+    ? effectiveWorkshopId
+    : workshopFilter !== 'all'
+      ? Number(workshopFilter)
+      : null;
+  const allowedMaterialIds = filterWorkshopId
+    ? workshops.find((w) => w.id === filterWorkshopId)?.allowedMaterials || []
+    : null;
+  const filterMaterials = allowedMaterialIds
+    ? materials.filter((m) => allowedMaterialIds.includes(m.id))
+    : materials;
+
+  // Цех сменили, а выбранный материал в новом цехе не используется — сбрасываем фильтр,
+  // иначе список молча оказался бы пустым.
+  useEffect(() => {
+    if (materialFilter === 'all') return;
+    if (!filterMaterials.some((m) => String(m.id) === materialFilter)) {
+      setMaterialFilter('all');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterWorkshopId, materials.length, workshops.length]);
+
   const visibleShipments = tabFilteredShipments.filter((s) => {
     if (materialFilter !== 'all' && String(s.materialId) !== materialFilter) return false;
     if (workshopFilter !== 'all' && String(s.workshopId) !== workshopFilter) return false;
@@ -366,7 +392,7 @@ const ToWorkshop = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Все материалы</SelectItem>
-              {materials.map((m) => (
+              {filterMaterials.map((m) => (
                 <SelectItem key={m.id} value={String(m.id)}>
                   {m.name}
                 </SelectItem>

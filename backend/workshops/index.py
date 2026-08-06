@@ -137,7 +137,10 @@ def handler(event: dict, context) -> dict:
 
             cur.execute(
                 "SELECT w.id, w.name, w.is_active, w.shifts_count, w.created_at, w.updated_at, "
-                "(SELECT COUNT(*) FROM users u WHERE u.workshop = w.name), w.shift_names "
+                "(SELECT COUNT(*) FROM users u WHERE u.workshop = w.name), w.shift_names, "
+                # Материалы цеха нужны в списке: по ним фильтруются заявки и подсказки
+                # в интерфейсе, чтобы цех не видел чужие ткани.
+                "w.allowed_materials "
                 "FROM workshops w ORDER BY w.id"
             )
             workshops = [
@@ -150,6 +153,7 @@ def handler(event: dict, context) -> dict:
                     'updatedAt': r[5].isoformat() + 'Z',
                     'employeesCount': r[6],
                     'shiftNames': r[7] if isinstance(r[7], list) else json.loads(r[7] or '[]'),
+                    'allowedMaterials': r[8] or [],
                 }
                 for r in cur.fetchall()
             ]

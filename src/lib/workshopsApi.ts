@@ -9,6 +9,8 @@ export interface Workshop {
   createdAt: string;
   updatedAt: string;
   shiftNames: string[];
+  /** Материалы, разрешённые цеху — по ним фильтруются заявки и списки в интерфейсе. */
+  allowedMaterials: number[];
 }
 
 export interface WorkshopShift {
