@@ -19,7 +19,10 @@ def handler(event: dict, context) -> dict:
     GET  /                                 - список рулонов
     GET  /?material_id=1&status=in_storage - список рулонов с фильтром
     GET  /?forUserId=5                     - рулоны ТОЛЬКО цеха открытой смены сотрудника
-                                             (для швеи/закройщика/упаковщика)
+                                             (для швеи/закройщика/упаковщика) И только
+                                             своего типа материала: закройщик — Тюль,
+                                             швея — Аксессуары (тесьма), упаковщик —
+                                             Упаковка (пакеты, этикетки)
     GET  /?shortage_stats=1&from=&to=      - статистика недостач по закрытым рулонам:
         средний и максимальный процент недостачи по каждому материалу, сводка по закройщикам
         и список закрытых рулонов. Нужна, чтобы за месяц набрать реальные цифры и потом
@@ -310,6 +313,26 @@ def handler(event: dict, context) -> dict:
                     conditions.append(f"r.workshop_id = {int(sess[0])}")
                 else:
                     conditions.append("1 = 0")
+
+                # Каждая производственная роль работает со своим материалом, и лишние
+                # рулоны в списке только мешают и провоцируют ошибки при списании:
+                #   закройщик — тюль (полотно, которое он кроит);
+                #   швея      — тесьма (аксессуары, которые она пришивает);
+                #   упаковщик — пакеты и этикетки (упаковка).
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(for_user_id),))
+                role_row = cur.fetchone()
+                role_types = {
+                    'cutter': 'Тюль',
+                    'sewer': 'Аксессуары',
+                    'packer': 'Упаковка',
+                }
+                allowed_type = role_types.get(role_row[0]) if role_row else None
+                if allowed_type:
+                    type_esc = allowed_type.replace("'", "''")
+                    conditions.append(
+                        "m.type_id = (SELECT id FROM material_types WHERE name = "
+                        f"'{type_esc}')"
+                    )
 
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 

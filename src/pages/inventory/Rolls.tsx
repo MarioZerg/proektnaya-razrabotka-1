@@ -32,7 +32,7 @@ import RollsCards from '@/components/crm/rolls/RollsCards';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { fetchRolls, createRoll, type Roll, type RollStatus } from '@/lib/rollsApi';
-import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
+import { fetchMaterialsData, type Material, type MaterialType } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { formatDateTime as formatDate } from '@/lib/dateUtils';
 import { formatQuantity } from '@/lib/formatQuantity';
@@ -50,6 +50,7 @@ const Rolls = () => {
   const { user } = useAuth();
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
+  const [materialTypes, setMaterialTypes] = useState<MaterialType[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -86,6 +87,7 @@ const Rolls = () => {
       .then(([rollsData, materialsData, workshopsData]) => {
         setRolls(rollsData);
         setMaterials(materialsData.materials);
+        setMaterialTypes(materialsData.types);
         setWorkshops(workshopsData);
       })
       .finally(() => setLoading(false));
@@ -94,6 +96,22 @@ const Rolls = () => {
   useEffect(() => {
     load();
   }, []);
+
+  // Каждая производственная роль работает со своим материалом: закройщик режет тюль,
+  // швея пришивает тесьму, упаковщица берёт пакеты и этикетки. Показываем в фильтре
+  // только их — чужие материалы лишь мешают и провоцируют ошибки при списании.
+  const roleTypeName: Record<string, string> = {
+    cutter: 'Тюль',
+    sewer: 'Аксессуары',
+    packer: 'Упаковка',
+  };
+  const myTypeName = user ? roleTypeName[user.role] : undefined;
+  const myTypeId = myTypeName
+    ? materialTypes.find((t) => t.name === myTypeName)?.id
+    : undefined;
+  const filterMaterials = myTypeId
+    ? materials.filter((m) => m.typeId === myTypeId)
+    : materials;
 
   const filtered = rolls.filter((r) => {
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
@@ -271,7 +289,7 @@ const Rolls = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Все материалы</SelectItem>
-              {materials.map((m) => (
+              {filterMaterials.map((m) => (
                 <SelectItem key={m.id} value={String(m.id)}>
                   {m.name}
                 </SelectItem>
