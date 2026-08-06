@@ -62,6 +62,22 @@ const Kiosk = () => {
     }
   };
 
+  // Упаковщица работает только на киоске в цехе, а не из личного кабинета. Страницу
+  // оставляем администратору — ему она нужна, чтобы проверить работу терминала.
+  if (user && user.role !== 'admin') {
+    return (
+      <CrmLayout>
+        <div className="mx-auto max-w-lg space-y-3 py-10 text-center">
+          <Icon name="ScanLine" size={48} className="mx-auto text-muted-foreground" />
+          <h1 className="text-xl font-bold">Стикеровка идёт через киоск</h1>
+          <p className="text-sm text-muted-foreground">
+            Подойдите к терминалу в цехе и войдите по своему QR-коду
+          </p>
+        </div>
+      </CrmLayout>
+    );
+  }
+
   return (
     <CrmLayout>
       <div className="mx-auto max-w-lg space-y-6">

@@ -31,10 +31,14 @@ const CrmDashboard = () => {
   const { toast } = useToast();
   const isAdmin = user?.role === 'admin';
   const isCleaner = user?.role === 'cleaner';
+  const isCutter = user?.role === 'cutter';
   const canSeeWarehouseWidgets = user?.role === 'admin' || user?.role === 'storekeeper';
   // Кладовщик и менеджер видят календарь-график смен (какие смены сегодня работают),
   // но без управления сменами сотрудников — это только для админа.
   const canSeeShiftCalendar = isAdmin || user?.role === 'storekeeper' || user?.role === 'manager';
+  // Кто сегодня работает — управленческая информация. Производственным ролям (швея,
+  // закройщик, упаковщица, уборщица) она не нужна и только загромождает их кабинет.
+  const canSeeWorkingToday = canSeeShiftCalendar;
 
   const [dataLoading, setDataLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -243,8 +247,23 @@ const CrmDashboard = () => {
       });
     }
 
+    if (isCutter) {
+      // Закройщику показываем только то, что относится к его работе: что предстоит
+      // раскроить, что уже в закрое и раскроено, срочные заказы и поставки материала
+      // в цех. Остальные виджеты (пошив, стикеровка) — не его зона ответственности.
+      const cutterWidgets = [
+        'Новые задания на пошив',
+        'Товары в закрое',
+        'Срочные заказы (FBS)',
+        'Не отгруженные поставки в цех',
+        'Не принятые поставки в цехе',
+        'Раскроено',
+      ];
+      return list.filter((w) => cutterWidgets.includes(w.label));
+    }
+
     return list;
-  }, [isCleaner, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop, returnsWaiting]);
+  }, [isCleaner, isCutter, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop, returnsWaiting]);
 
   const content = (
     <div className="space-y-8">
@@ -257,7 +276,7 @@ const CrmDashboard = () => {
 
       {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
 
-      <WorkingTodayCard />
+      {canSeeWorkingToday && <WorkingTodayCard />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         {isAdmin ? (

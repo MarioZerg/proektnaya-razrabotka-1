@@ -95,7 +95,8 @@ const packerNav: NavItem[] = [
     icon: 'ShoppingBag',
     children: [{ label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' }],
   },
-  { label: 'Терминал стикеровки', icon: 'ScanLine', path: '/crm/kiosk' },
+  // Терминал стикеровки из личного кабинета убран намеренно: упаковщица работает
+  // только на киоске в цехе (планшет), а не через свой личный кабинет.
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
 ];
 
