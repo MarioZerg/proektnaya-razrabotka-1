@@ -11,10 +11,12 @@ import {
   moveSupplyStatus,
   forceCompleteSupply,
   deleteSupply,
+  addSewingOrdersToSupply,
   supplyStatusFlow,
   type SupplyDetail,
 } from '@/lib/marketplaceSuppliesApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { importOzonFboComposition } from '@/lib/ozonFboApi';
 import { useAuth } from '@/context/AuthContext';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
@@ -23,6 +25,8 @@ import GazelkaShippingCard from '@/components/crm/marketplaceSupplies/GazelkaShi
 import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
 import SupplyFboFieldsCard from '@/components/crm/marketplaceSupplies/SupplyFboFieldsCard';
 import SupplyItemsSection from '@/components/crm/marketplaceSupplies/SupplyItemsSection';
+import SupplySewingSection from '@/components/crm/marketplaceSupplies/SupplySewingSection';
+import AddSewingOrdersDialog from '@/components/crm/marketplaceSupplies/AddSewingOrdersDialog';
 import SupplyGroupsPanel from '@/components/crm/marketplaceSupplies/SupplyGroupsPanel';
 import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCard';
 import WbFboSupplyCard from '@/components/crm/marketplaceSupplies/WbFboSupplyCard';
@@ -46,6 +50,9 @@ const MarketplaceSupplyShow = () => {
   const [comment, setComment] = useState('');
 
   const [readyGoods, setReadyGoods] = useState<GoodsWarehouseItem[]>([]);
+  const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
+  const [addOrdersOpen, setAddOrdersOpen] = useState(false);
+  const [addingOrders, setAddingOrders] = useState(false);
 
   const [scanOrderNumber, setScanOrderNumber] = useState('');
   const [scanning, setScanning] = useState(false);
@@ -78,6 +85,31 @@ const MarketplaceSupplyShow = () => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplyId]);
+
+  // Справочник товаров нужен для догрузки в пошив — грузим один раз при открытии карточки.
+  useEffect(() => {
+    fetchMarketplaceItems().then(setMarketplaceItems).catch(() => setMarketplaceItems([]));
+  }, []);
+
+  const handleAddSewingOrders = async (
+    rows: { marketplaceItemId: number; quantity: number }[],
+  ) => {
+    setAddingOrders(true);
+    try {
+      const res = await addSewingOrdersToSupply(supplyId, rows, { id: user?.id, name: user?.name });
+      toast({ title: `Отправлено в пошив: ${res.created} шт` });
+      setAddOrdersOpen(false);
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось догрузить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setAddingOrders(false);
+    }
+  };
 
   const handleScanOrder = async () => {
     const orderNumber = scanOrderNumber.trim();
@@ -193,8 +225,13 @@ const MarketplaceSupplyShow = () => {
 
   const handleDelete = async () => {
     try {
-      await deleteSupply(supplyId);
-      toast({ title: 'Поставка удалена' });
+      const res = await deleteSupply(supplyId);
+      toast({
+        title: 'Поставка удалена',
+        description: res.deletedOrders
+          ? `Заодно убрано заказов на пошив: ${res.deletedOrders}`
+          : undefined,
+      });
       navigate('/crm/shipments/to-marketplace');
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
@@ -292,6 +329,16 @@ const MarketplaceSupplyShow = () => {
           <GazelkaShippingCard supply={supply} onReload={load} isManager={isManager} gazelkaReady={gazelkaReady} />
         )}
 
+        {/* Пошив по поставке: менеджер видит, что уже сшито, и догружает недостающее.
+            Показываем НАД товарным составом — сначала производство, потом сборка. */}
+        {supply.type === 'FBO' && (
+          <SupplySewingSection
+            orders={supply.sewingOrders || []}
+            canAdd={isManager && supply.status !== 'Отгрузка' && supply.status !== 'Выполнена'}
+            onAdd={() => setAddOrdersOpen(true)}
+          />
+        )}
+
         {/* Связки заказов Яндекса: показываем НАД списком товаров, чтобы кладовщик увидел
             незакрытые связки сразу, а не после прокрутки всей поставки. */}
         <SupplyGroupsPanel
@@ -317,6 +364,14 @@ const MarketplaceSupplyShow = () => {
             onReload={load}
           />
         )}
+
+        <AddSewingOrdersDialog
+          open={addOrdersOpen}
+          onOpenChange={setAddOrdersOpen}
+          marketplaceItems={marketplaceItems}
+          saving={addingOrders}
+          onCreate={handleAddSewingOrders}
+        />
       </div>
     </CrmLayout>
   );

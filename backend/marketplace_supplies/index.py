@@ -409,6 +409,30 @@ def handler(event: dict, context) -> dict:
                     for r in cur.fetchall()
                 ]
 
+                # Заказы на пошив по этой поставке: менеджеру нужно видеть, что уже сшито,
+                # а что ещё в работе, и догружать недостающее прямо из карточки поставки.
+                cur.execute(
+                    "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
+                    "o.sewing_status, o.status, o.source, o.marketplace_item_id "
+                    "FROM orders o WHERE o.supply_id = %s ORDER BY o.id",
+                    (int(supply_id),),
+                )
+                sewing_orders = [
+                    {
+                        'id': r[0],
+                        'orderNumber': r[1],
+                        'product': r[2],
+                        'material': r[3],
+                        'width': r[4],
+                        'height': r[5],
+                        'sewingStatus': r[6],
+                        'isCancelled': r[7] == 'Отменён',
+                        'source': r[8],
+                        'marketplaceItemId': r[9],
+                    }
+                    for r in cur.fetchall()
+                ]
+
                 cur.execute(
                     "SELECT id, box_number, barcode, created_at, ozon_cargo_id, closed_at, "
                     "sticker_url, sticker_name FROM marketplace_supply_boxes "
@@ -500,6 +524,8 @@ def handler(event: dict, context) -> dict:
                     'gazelkaPickup': row[26],
                     'items': items,
                     'groups': groups,
+                    # Заказы на пошив по поставке: сколько сшито, сколько ещё в работе.
+                    'sewingOrders': sewing_orders,
                     # Полки склада — чтобы кладовщик мог отправить отменённый заказ на
                     # хранение прямо из строки поставки, не уходя в другой раздел.
                     'shelves': shelves,
@@ -605,7 +631,7 @@ def handler(event: dict, context) -> dict:
         FBS_WRITE_ACTIONS = (
             'scan_order', 'remove_item', 'create_box', 'delete_box', 'close_box',
             'add_order_to_box', 'remove_box_item', 'move_status', 'force_complete',
-            'update', 'delete',
+            'update', 'delete', 'add_sewing_orders',
         )
 
         conn = psycopg2.connect(dsn)
@@ -1281,6 +1307,91 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            if action == 'add_sewing_orders':
+                # Догрузка товаров на пошив в уже существующую поставку. Нужна, когда состав
+                # заявки на маркетплейсе дополнили, или менеджер решил довезти ещё товара.
+                # Каждая штука — отдельный заказ на конвейере (1 заказ = 1 изделие).
+                target_supply = body_data.get('supplyId')
+                lines = body_data.get('items') or []
+                if not target_supply:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку'})}
+                if not lines:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товары'})}
+
+                cur.execute(
+                    "SELECT status, marketplace, type, cluster FROM marketplace_supplies WHERE id = %s",
+                    (int(target_supply),),
+                )
+                s_row = cur.fetchone()
+                if not s_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
+                s_status, s_marketplace, s_type, s_cluster = s_row
+                if s_status in ('Отгрузка', 'Выполнена'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Поставка уже уехала — догрузить товар в неё нельзя'},
+                            ensure_ascii=False,
+                        ),
+                    }
+
+                # Номера ручных заказов идут сквозным счётчиком 00000-01, 00000-02 — тем же,
+                # что и при добавлении заказа вручную, чтобы нумерация в системе была единой.
+                cur.execute(
+                    "SELECT order_number FROM orders WHERE order_number ~ '^00000-[0-9]+$' "
+                    "ORDER BY (split_part(order_number, '-', 2))::int DESC LIMIT 1"
+                )
+                last_row = cur.fetchone()
+                next_seq = (int(last_row[0].split('-')[1]) + 1) if last_row else 1
+
+                created = 0
+                for line in lines:
+                    mp_item_id = line.get('marketplaceItemId')
+                    qty = int(line.get('quantity') or 1)
+                    if not mp_item_id or qty < 1:
+                        continue
+                    cur.execute(
+                        "SELECT name, material, width, height, barcode, ozon_sku "
+                        "FROM marketplace_items WHERE id = %s",
+                        (int(mp_item_id),),
+                    )
+                    i_row = cur.fetchone()
+                    if not i_row:
+                        continue
+                    i_name, i_material, i_width, i_height, i_barcode, i_ozon_sku = i_row
+                    product = (
+                        f"{i_material} {i_width}x{i_height}"
+                        if i_material and i_width and i_height else i_name
+                    )
+                    for _ in range(qty):
+                        cur.execute(
+                            "INSERT INTO orders (order_number, marketplace, order_type, status, "
+                            "cluster, product, quantity, source, material, width, height, "
+                            "marketplace_item_id, product_barcode, product_ozon_sku, supply_id) "
+                            "VALUES (%s, %s, %s, 'Новый', %s, %s, 1, 'manual', %s, %s, %s, %s, %s, %s, %s) "
+                            "ON CONFLICT (order_number) DO NOTHING RETURNING id",
+                            (
+                                f"00000-{next_seq:02d}", s_marketplace, s_type or 'FBO',
+                                s_cluster or '', product, i_material,
+                                int(i_width) if i_width else None,
+                                int(i_height) if i_height else None,
+                                int(mp_item_id), i_barcode or None, i_ozon_sku or None,
+                                int(target_supply),
+                            ),
+                        )
+                        if cur.fetchone():
+                            created += 1
+                        next_seq += 1
+
+                log_action(
+                    cur, body_data.get('actorId'), body_data.get('actorName'),
+                    'supply_add_orders', 'supply', int(target_supply),
+                    f'Догрузил в поставку #{target_supply} заказов на пошив: {created}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'created': created})}
+
             if action == 'delete':
                 item_id = body_data.get('id')
                 if not item_id:
@@ -1293,6 +1404,28 @@ def handler(event: dict, context) -> dict:
                 if row[0] != 'Открытая':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Удалить можно только открытую поставку'})}
 
+                # Заказы на пошив по этой поставке. Удалять поставку можно, только пока их не
+                # начали шить: если по заказу уже кроили или шили, значит потрачены ткань и
+                # труд — такую поставку убирать нельзя, иначе работа пропадёт из учёта.
+                cur.execute(
+                    "SELECT sewing_status, count(*) FROM orders WHERE supply_id = %s "
+                    "GROUP BY sewing_status",
+                    (int(item_id),),
+                )
+                by_status = {r[0]: int(r[1]) for r in cur.fetchall()}
+                started = {st: n for st, n in by_status.items() if st != 'Новый'}
+                if started:
+                    parts = ', '.join(f'{st.lower()} — {n}' for st, n in started.items())
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'По поставке уже начали шить ({parts}). Удалить нельзя — '
+                                      f'сначала отмените или доработайте эти заказы'},
+                            ensure_ascii=False,
+                        ),
+                    }
+
                 cur.execute(
                     "SELECT goods_warehouse_id FROM marketplace_supply_items WHERE supply_id = %s", (int(item_id),)
                 )
@@ -1300,12 +1433,23 @@ def handler(event: dict, context) -> dict:
                 for gid in goods_ids:
                     cur.execute(f"UPDATE goods_warehouse SET status = 'in_stock' WHERE id = {gid}")
 
+                # Несшитые заказы этой поставки удаляем вместе с ней: они существуют только
+                # ради неё и без поставки повисли бы в конвейере мусором.
+                cur.execute(f"DELETE FROM orders WHERE supply_id = {int(item_id)} AND sewing_status = 'Новый'")
+                # rowcount может прийти -1, если удалять было нечего — приводим к нулю,
+                # иначе в интерфейсе покажется «удалено -1 заказов».
+                deleted_orders = max(0, cur.rowcount)
+
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE supply_id = {int(item_id)}")
                 cur.execute(f"DELETE FROM marketplace_supply_boxes WHERE supply_id = {int(item_id)}")
                 cur.execute(f"DELETE FROM wb_supply_orders WHERE supply_id = {int(item_id)}")
                 cur.execute(f"DELETE FROM marketplace_supplies WHERE id = {int(item_id)}")
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'deletedOrders': deleted_orders}),
+                }
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
         finally:

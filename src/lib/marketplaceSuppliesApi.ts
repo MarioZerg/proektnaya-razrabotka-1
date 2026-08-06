@@ -51,6 +51,20 @@ export interface SupplyItem {
   shelfId?: number | null;
 }
 
+/** Заказ на пошив, привязанный к поставке: по ним видно, что уже сшито, а что в работе. */
+export interface SupplySewingOrder {
+  id: number;
+  orderNumber: string;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  sewingStatus: string;
+  isCancelled: boolean;
+  source: string | null;
+  marketplaceItemId: number | null;
+}
+
 export interface SupplyShelf {
   id: number;
   name: string;
@@ -94,6 +108,8 @@ export interface SupplyDetail extends Supply {
   items: SupplyItem[];
   /** Связки заказов с общим ярлыком, попавшие в эту поставку. */
   groups?: SupplyGroup[];
+  /** Заказы на пошив по этой поставке — прогресс производства. */
+  sewingOrders?: SupplySewingOrder[];
   /** Полки склада — для отправки отменённых заказов на хранение прямо из поставки. */
   shelves?: SupplyShelf[];
   boxes: SupplyBox[];
@@ -305,4 +321,19 @@ export const moveSupplyStatus = (supplyId: number, status: SupplyStatus) =>
 export const forceCompleteSupply = (supplyId: number) =>
   postAction({ action: 'force_complete', supplyId });
 
-export const deleteSupply = (id: number) => postAction({ action: 'delete', id });
+export const deleteSupply = (id: number) =>
+  postAction({ action: 'delete', id }) as Promise<{ success: true; deletedOrders: number }>;
+
+/** Догружает в поставку товары на пошив: каждая штука станет отдельным заказом на конвейере. */
+export const addSewingOrdersToSupply = (
+  supplyId: number,
+  items: { marketplaceItemId: number; quantity: number }[],
+  actor?: { id?: number | null; name?: string | null },
+) =>
+  postAction({
+    action: 'add_sewing_orders',
+    supplyId,
+    items,
+    actorId: actor?.id,
+    actorName: actor?.name,
+  }) as Promise<{ created: number }>;

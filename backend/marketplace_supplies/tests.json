@@ -145,6 +145,58 @@
         "actorRole": "manager"
       },
       "expectedStatus": 400
+    },
+    {
+      "name": "Add sewing orders without supply fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "add_sewing_orders",
+        "items": [
+          {
+            "marketplaceItemId": 5,
+            "quantity": 1
+          }
+        ]
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Add sewing orders without items fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "add_sewing_orders",
+        "supplyId": 999999,
+        "items": []
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Add sewing orders to missing supply fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "add_sewing_orders",
+        "supplyId": 999999,
+        "items": [
+          {
+            "marketplaceItemId": 5,
+            "quantity": 1
+          }
+        ]
+      },
+      "expectedStatus": 404
+    },
+    {
+      "name": "Delete missing supply fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "delete",
+        "id": 999999
+      },
+      "expectedStatus": 404
     }
   ]
 }

@@ -256,7 +256,8 @@ def handle_check_composition(cur, client_id, api_key, body_data):
 
 
 def handle_import_composition(cur, conn, client_id, api_key, body_data):
-    """По заявке OZON FBO создаёт нашу поставку (если ещё нет) и заказы на конвейер из её
+    """По заявке OZON FBO создаёт нашу поставку и связывает заказы с ней.
+     (если ещё нет) и заказы на конвейер из её
     товарного состава. Каждая штука состава → отдельный заказ OZON FBO со статусом «Новый»."""
     order_id = body_data.get('orderId')
     created_by = body_data.get('createdBy')
@@ -337,6 +338,7 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
                 int(item_id) if item_id else None,
                 item_ozon_sku or None,
                 app_created_at,
+                int(supply_id),
             ))
 
     created = 0
@@ -345,10 +347,10 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
             cur,
             "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
             "quantity, source, material, width, height, cluster, product_barcode, marketplace_item_id, "
-            "product_ozon_sku, marketplace_created_at) VALUES %s "
+            "product_ozon_sku, marketplace_created_at, supply_id) VALUES %s "
             "ON CONFLICT (order_number) DO NOTHING RETURNING id",
             rows,
-            template="(%s, 'OZON', 'FBO', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s)",
+            template="(%s, 'OZON', 'FBO', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             fetch=True,
         )
         created = len(result)
