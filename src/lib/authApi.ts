@@ -32,6 +32,22 @@ export const fetchMaxBotUrl = async (): Promise<string | null> => {
   return data.botUrl || null;
 };
 
+export interface OnlineNow {
+  total: number;
+  byWorkshop: { workshop: string; count: number }[];
+}
+
+/** Сколько человек сейчас на смене — для экрана входа. Данные обезличенные: только числа. */
+export const fetchOnlineNow = async (): Promise<OnlineNow> => {
+  const res = await fetch(AUTH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'online_now' }),
+  });
+  const data = await res.json();
+  return { total: data.total || 0, byWorkshop: data.byWorkshop || [] };
+};
+
 const postAuthAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(AUTH_URL, {
     method: 'POST',

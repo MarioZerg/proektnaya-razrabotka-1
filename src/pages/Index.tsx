@@ -16,6 +16,7 @@ import {
 } from '@/lib/authApi';
 import type { TestAccount } from '@/lib/authApi';
 import TestAccountsPanel from '@/components/auth/TestAccountsPanel';
+import OnlineNowBadge from '@/components/auth/OnlineNowBadge';
 import RoleSelectScreen from '@/components/auth/RoleSelectScreen';
 import RegistrationForm from '@/components/auth/RegistrationForm';
 import PasswordLoginForm from '@/components/auth/PasswordLoginForm';
@@ -184,10 +185,11 @@ const Index = () => {
 
       <div className="relative w-full max-w-[360px] animate-fade-in">
         <div className="mb-10 flex flex-col items-center gap-4 text-center">
-          <img src="/assets/megatul-logo.png" alt="МЕГАТЮЛЬ" className="h-14 w-auto" />
-          <p className="font-mono-tech text-[11px] uppercase tracking-[0.3em] text-muted-foreground">
-            ERP · швейное производство
+          <img src="/assets/megatul-emblem.png" alt="МЕГАТЮЛЬ" className="h-20 w-auto" />
+          <p className="font-mono-tech text-base font-bold uppercase tracking-[0.35em] text-foreground">
+            МЕГАТЮЛЬ
           </p>
+          <OnlineNowBadge />
         </div>
 
         {step === 'start' && (
@@ -196,8 +198,10 @@ const Index = () => {
               type="button"
               onClick={handleOpenBot}
               disabled={!botUrl}
-              className="h-12 w-full rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
+              className="relative h-12 w-full overflow-hidden rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
             >
+              {/* Блик пробегает по кнопке — подсказывает, что это основной способ входа. */}
+              <span className="pointer-events-none absolute inset-0 -skew-x-12 animate-shimmer bg-gradient-to-r from-transparent via-white/30 to-transparent" />
               <Icon name="MessageCircle" size={18} className="mr-2" />
               Войти через MAX
             </Button>

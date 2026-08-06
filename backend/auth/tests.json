@@ -17,36 +17,56 @@
       "name": "Test accounts list",
       "method": "POST",
       "path": "/",
-      "body": {"action": "test_accounts"},
+      "body": {
+        "action": "test_accounts"
+      },
       "expectedStatus": 200
     },
     {
       "name": "Max verify code without code fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "max_verify_code"},
+      "body": {
+        "action": "max_verify_code"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Max verify code with unknown code fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "max_verify_code", "code": "000000"},
+      "body": {
+        "action": "max_verify_code",
+        "code": "000000"
+      },
       "expectedStatus": 401
     },
     {
       "name": "Select role without data fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "select_role"},
+      "body": {
+        "action": "select_role"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Enter role without data fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "enter_role"},
+      "body": {
+        "action": "enter_role"
+      },
       "expectedStatus": 400
+    },
+    {
+      "name": "Online now returns counters",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "online_now"
+      },
+      "expectedStatus": 200
     }
   ]
 }

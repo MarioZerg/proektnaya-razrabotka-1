@@ -98,6 +98,35 @@ def handler(event: dict, context) -> dict:
             'body': json.dumps({'botUrl': f'https://max.ru/{username}' if username else None}),
         }
 
+    if action == 'online_now':
+        # Сколько человек прямо сейчас на смене — показывается на экране входа.
+        # Данные публичные и обезличенные: только количество и разбивка по цехам,
+        # без имён, чтобы посторонний у экрана не видел, кто именно работает.
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COALESCE(w.name, 'Без цеха') AS ceh, COUNT(*) "
+                "FROM shift_sessions ss "
+                "LEFT JOIN workshops w ON w.id = ss.workshop_id "
+                "WHERE ss.closed_at IS NULL "
+                "GROUP BY COALESCE(w.name, 'Без цеха') "
+                "ORDER BY COALESCE(w.name, 'Без цеха')"
+            )
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+
+        by_workshop = [{'workshop': r[0], 'count': int(r[1])} for r in rows]
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': json.dumps(
+                {'total': sum(w['count'] for w in by_workshop), 'byWorkshop': by_workshop},
+                ensure_ascii=False,
+            ),
+        }
+
     if action == 'test_accounts':
         conn = psycopg2.connect(dsn)
         try:
