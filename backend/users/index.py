@@ -41,8 +41,9 @@ def handler(event: dict, context) -> dict:
     """Управляет сотрудниками: список, создание, редактирование, график смен, зарплата, аватар.
 
     GET  /  - список пользователей. Каждый включает maxUserId (привязанный MAX-аккаунт,
-              заполняется автоматически при входе через бота), phone, registeredViaMax
-              (true, если человек сам зарегистрировался через MAX, а не создан админом),
+              заполняется автоматически при входе через бота), telegramUserId, phone,
+              registeredViaMax / registeredViaTelegram (true, если человек сам
+              зарегистрировался через мессенджер, а не создан админом),
               и roles — список всех должностей пользователя вида
               [{role, isApproved}] (утверждённые админом отображаются в интерфейсе,
               неутверждённые ждут решения администратора).
@@ -62,6 +63,8 @@ def handler(event: dict, context) -> dict:
         должность. approved (по умолчанию true) — сразу утверждённая или нет
     POST /  { action: 'approve_role', id, role } — утверждает ранее выбранную
         пользователем должность (после регистрации через MAX она ждёт подтверждения)
+    POST /  { action: 'reject_role', id, role } — отклоняет заявку новичка на должность:
+        убирает её и отключает учётную запись, если других должностей не осталось
     POST /  { action: 'remove_role', id, role } — убирает должность у пользователя
 
     Логин сотрудника генерируется из email (часть до @). Пароль хранится как
@@ -98,7 +101,8 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "SELECT id, login, email, full_name, role, workshop, salary, "
                 "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number, "
-                "max_user_id, phone, registered_via_max, shift_free "
+                "max_user_id, phone, registered_via_max, shift_free, "
+                "telegram_user_id, registered_via_telegram "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -128,6 +132,8 @@ def handler(event: dict, context) -> dict:
                     'phone': r[15],
                     'registeredViaMax': r[16],
                     'shiftFree': r[17],
+                    'telegramUserId': r[18],
+                    'registeredViaTelegram': r[19],
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows
@@ -303,6 +309,23 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     'UPDATE user_roles SET is_approved = true WHERE user_id = %s AND role = %s',
                     (int(user_id), role),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'reject_role':
+                # Отклонение заявки новичка: убираем запрошенную должность и отключаем
+                # учётную запись. Человека не удаляем — он мог ошибиться с должностью,
+                # админ увидит его в общем списке и при желании вернёт доступ.
+                user_id = body_data.get('id')
+                role = (body_data.get('role') or '').strip()
+                if not user_id or not role:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректные данные'})}
+                cur.execute('DELETE FROM user_roles WHERE user_id = %s AND role = %s', (int(user_id), role))
+                cur.execute(
+                    'UPDATE users SET is_active = false WHERE id = %s '
+                    'AND NOT EXISTS (SELECT 1 FROM user_roles WHERE user_id = %s)',
+                    (int(user_id), int(user_id)),
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

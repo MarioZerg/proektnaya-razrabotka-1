@@ -23,8 +23,10 @@ export interface Employee {
   updatedAt: string;
   shiftNumber: number | null;
   maxUserId: string | null;
+  telegramUserId: string | null;
   phone: string | null;
   registeredViaMax: boolean;
+  registeredViaTelegram: boolean;
   /** Гостевой режим ("смена выключена" сотруднику) — не привязан жёстко к штатной смене,
    * при открытии смены сам выбирает цех/смену на сегодня. */
   shiftFree: boolean;
@@ -90,3 +92,8 @@ export const approveEmployeeRole = (id: number, role: Role) =>
 
 export const removeEmployeeRole = (id: number, role: Role) =>
   postAction({ action: 'remove_role', id, role });
+
+/** Отклоняет заявку новичка: убирает запрошенную должность и отключает учётную запись,
+ * если других должностей у него нет. Сам сотрудник остаётся в общем списке. */
+export const rejectEmployeeRole = (id: number, role: Role) =>
+  postAction({ action: 'reject_role', id, role });
