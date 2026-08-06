@@ -189,6 +189,18 @@ def handler(event: dict, context) -> dict:
                     if needed_combos:
                         conn.commit()
 
+                    # Страховка: тариф перепаковки возвратов у упаковщицы (за штуку, размер
+                    # не важен). Создаём со значением 0, если его в цехе ещё нет — например,
+                    # цех завели раньше, чем появился этот вид оплаты.
+                    cur.execute(
+                        "INSERT INTO salary_rates (role, material_id, width, rate, workshop_id) "
+                        "VALUES ('packer_repack', NULL, NULL, 0, %s) "
+                        "ON CONFLICT (workshop_id, role, COALESCE(material_id, 0), COALESCE(width, 0)) "
+                        "DO NOTHING",
+                        (int(workshop_id_filter),),
+                    )
+                    conn.commit()
+
                 where_clause = f"WHERE sr.workshop_id = {int(workshop_id_filter)}" if workshop_id_filter else ""
                 cur.execute(
                     f"SELECT sr.id, sr.role, sr.material_id, m.name, sr.width, sr.rate, sr.workshop_id, w.name "

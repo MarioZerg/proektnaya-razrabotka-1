@@ -22,7 +22,31 @@
       "name": "Close order without orderId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "close_order" },
+      "body": {
+        "action": "close_order"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Repack done without newBag fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "repack_done",
+        "id": 999999,
+        "outcome": "repacked"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Repack utilized without note fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "repack_done",
+        "id": 999999,
+        "outcome": "utilized"
+      },
       "expectedStatus": 400
     }
   ]

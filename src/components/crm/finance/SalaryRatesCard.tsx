@@ -70,7 +70,17 @@ const RateRow = ({
 };
 
 const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
-  const roleOrder: Role[] = ['cutter', 'sewer', 'packer', 'storekeeper', 'cleaner', 'admin'];
+  // packer_repack — не должность, а отдельный вид оплаты упаковщицы (перепаковка
+  // возвратов за штуку), поэтому в списке ролей идёт сразу после её основной ставки.
+  const roleOrder: string[] = [
+    'cutter',
+    'sewer',
+    'packer',
+    'packer_repack',
+    'storekeeper',
+    'cleaner',
+    'admin',
+  ];
 
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [workshopsLoading, setWorkshopsLoading] = useState(true);
@@ -155,7 +165,9 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
                 return (
                   <div key={role} className="space-y-2">
                     <div>
-                      <p className="text-sm font-semibold">{roleLabels[role]}</p>
+                      <p className="text-sm font-semibold">
+                        {roleLabels[role as Role] || 'Упаковщик — перепаковка'}
+                      </p>
                       <p className="text-xs text-muted-foreground">{roleRateLabels[role]}</p>
                     </div>
                     {materialGroups ? (

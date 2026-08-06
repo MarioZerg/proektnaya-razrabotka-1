@@ -206,10 +206,14 @@ def handler(event: dict, context) -> dict:
 
     POST /  { action: 'repack_list' }
         - вещи на перепаковке в этом цехе (вернулись годными, но с мятой упаковкой)
-    POST /  { action: 'repack_done', id, outcome, note? }
+    POST /  { action: 'repack_done', id, outcome, newBag?, note? }
         - решение упаковщика по вещи на перепаковке: outcome='repacked' — переупакована,
           печатается стикер хранения и вещь уходит на склад; outcome='utilized' — при
-          вскрытии обнаружен брак, вещь списывается (note обязателен)
+          вскрытии обнаружен брак, вещь списывается (note обязателен).
+          При outcome='repacked' обязателен newBag (да/нет — брала ли новый пакет): это
+          учёт расхода упаковки по возвратам. За годную перепаковку упаковщице начисляется
+          фиксированная ставка за штуку (salary_rates, role='packer_repack', размер не
+          важен). За списанный брак оплаты НЕТ
 
     POST /  { action: 'find_stickering', sewerId?, width?, height?, material?, workshopId? }
         - поиск заказов на стикеровке вручную, когда сканер не работает: по размеру,
@@ -581,10 +585,22 @@ def handler(event: dict, context) -> dict:
                 gw_id = body_data.get('id')
                 outcome = (body_data.get('outcome') or 'repacked').strip()
                 note = (body_data.get('note') or '').strip()
+                # Новый пакет при перепаковке: упаковщица отвечает на киоске. Нужен, чтобы
+                # видеть реальный расход упаковки по возвратам — иногда вещь перекладывают
+                # в тот же пакет, и новый пакет не тратится.
+                new_bag = body_data.get('newBag')
                 if not gw_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id вещи'})}
                 if outcome not in ('repacked', 'utilized'):
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное решение'})}
+                if outcome == 'repacked' and new_bag is None:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Ответьте, использовали ли вы новый пакет'}, ensure_ascii=False
+                        ),
+                    }
                 if outcome == 'utilized' and not note:
                     return {
                         'statusCode': 400,
@@ -627,18 +643,76 @@ def handler(event: dict, context) -> dict:
                     }
 
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'awaiting_shelf', repack_return_id = NULL "
-                    "WHERE id = %s",
-                    (int(gw_id),),
+                    "UPDATE goods_warehouse SET status = 'awaiting_shelf', repack_return_id = NULL, "
+                    "repack_new_bag = %s WHERE id = %s",
+                    (bool(new_bag), int(gw_id)),
                 )
                 if row[2]:
                     cur.execute(
                         "UPDATE marketplace_returns SET outcome = 'stored' WHERE id = %s",
                         (int(row[2]),),
                     )
+
+                # Оплата за перепаковку: фиксированная сумма за штуку, размер не важен.
+                # Начисляем ТОЛЬКО за годную переупакованную вещь — за списанный брак
+                # и несоответствие оплаты нет (там ветка utilized, она выходит выше).
+                repack_amount = 0.0
+                if actor_id:
+                    cur.execute(
+                        "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                        "WHERE u.id = %s",
+                        (int(actor_id),),
+                    )
+                    pw_row = cur.fetchone()
+                    packer_workshop_id = pw_row[0] if pw_row else None
+                    if not packer_workshop_id:
+                        # Цех не указан в профиле — берём цех открытой смены сотрудника.
+                        cur.execute(
+                            "SELECT workshop_id FROM shift_sessions WHERE user_id = %s "
+                            "AND closed_at IS NULL ORDER BY id DESC LIMIT 1",
+                            (int(actor_id),),
+                        )
+                        sh_row = cur.fetchone()
+                        packer_workshop_id = sh_row[0] if sh_row else None
+
+                    if packer_workshop_id:
+                        cur.execute(
+                            "SELECT rate FROM salary_rates WHERE role = 'packer_repack' "
+                            "AND workshop_id = %s",
+                            (packer_workshop_id,),
+                        )
+                        rate_row = cur.fetchone()
+                        repack_amount = float(rate_row[0]) if rate_row else 0.0
+
+                    if repack_amount > 0:
+                        # Привязываем начисление к заказу вещи: один и тот же возврат не
+                        # оплатится дважды (уникальный индекс по order_id + type).
+                        cur.execute(
+                            "SELECT order_id FROM goods_warehouse WHERE id = %s", (int(gw_id),)
+                        )
+                        gw_order = cur.fetchone()
+                        cur.execute(
+                            "INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                            "VALUES (%s, 'packer_repack', %s, %s, %s) "
+                            "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING "
+                            "RETURNING id",
+                            (
+                                int(actor_id), repack_amount,
+                                int(gw_order[0]) if gw_order and gw_order[0] else None,
+                                f'Перепаковка возврата {row[0]}'
+                                + (' (новый пакет)' if new_bag else ' (пакет прежний)'),
+                            ),
+                        )
+                        # Оплата за этот возврат уже была (вещь перепаковывают повторно) —
+                        # второй раз не платим и в ответе показываем 0, чтобы упаковщица не
+                        # ждала лишних денег.
+                        if not cur.fetchone():
+                            repack_amount = 0.0
+
                 log_action(
                     cur, actor_id, actor_name, 'repack_done', 'goods_warehouse', gw_id,
                     f'Вещь {row[0]} переупакована — отправлена на склад'
+                    + (', новый пакет' if new_bag else ', пакет прежний')
                     + (f' ({note})' if note else ''),
                 )
                 conn.commit()
@@ -649,6 +723,8 @@ def handler(event: dict, context) -> dict:
                         'success': True,
                         'outcome': 'repacked',
                         'storageBarcode': row[0],
+                        'newBag': bool(new_bag),
+                        'accrued': repack_amount,
                     }),
                 }
 

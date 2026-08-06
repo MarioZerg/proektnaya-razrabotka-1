@@ -84,10 +84,17 @@ export const fetchRepackItems = async (): Promise<RepackItem[]> => {
 export const finishRepack = async (payload: {
   id: number;
   outcome: 'repacked' | 'utilized';
+  /** Брала ли упаковщица новый пакет — обязательно при успешной перепаковке. */
+  newBag?: boolean;
   note?: string;
   actorId?: number;
   actorName?: string;
-}): Promise<{ outcome: string; storageBarcode: string | null }> => {
+}): Promise<{
+  outcome: string;
+  storageBarcode: string | null;
+  newBag?: boolean;
+  accrued?: number;
+}> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

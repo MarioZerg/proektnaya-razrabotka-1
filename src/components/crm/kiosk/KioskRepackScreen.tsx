@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { printStorageSticker } from '@/lib/printStorageSticker';
@@ -22,6 +23,9 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<number | null>(null);
   const [notes, setNotes] = useState<Record<number, string>>({});
+  // Вещь, по которой упаковщица нажала «Переупаковано»: спрашиваем про новый пакет,
+  // прежде чем закрыть перепаковку и напечатать стикер.
+  const [bagAskItem, setBagAskItem] = useState<RepackItem | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -34,7 +38,11 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
     load();
   }, []);
 
-  const handleFinish = async (item: RepackItem, outcome: 'repacked' | 'utilized') => {
+  const handleFinish = async (
+    item: RepackItem,
+    outcome: 'repacked' | 'utilized',
+    newBag?: boolean,
+  ) => {
     const note = (notes[item.id] || '').trim();
     if (outcome === 'utilized' && !note) {
       toast({
@@ -45,8 +53,9 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
       return;
     }
     setProcessingId(item.id);
+    setBagAskItem(null);
     try {
-      const res = await finishRepack({ id: item.id, outcome, note, actorId, actorName });
+      const res = await finishRepack({ id: item.id, outcome, newBag, note, actorId, actorName });
 
       if (outcome === 'repacked' && res.storageBarcode) {
         // Печатаем стикер хранения сразу: кладовщик по нему положит вещь на полку.
@@ -59,7 +68,9 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
           orderNumber: item.orderNumber,
         });
         toast({
-          title: 'Вещь переупакована',
+          title: res.accrued
+            ? `Вещь переупакована · +${res.accrued} ₽`
+            : 'Вещь переупакована',
           description: 'Наклейте стикер хранения — кладовщик заберёт вещь на полку',
         });
       } else {
@@ -109,6 +120,48 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
         спишите с указанием причины
       </p>
 
+      {/* Новый пакет? Спрашиваем перед закрытием перепаковки — по этим ответам видно
+          реальный расход упаковки на возвратах. Кнопки крупные: экран сенсорный. */}
+      <Dialog open={!!bagAskItem} onOpenChange={(v) => !v && setBagAskItem(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-2xl">Вы взяли новый пакет?</DialogTitle>
+          </DialogHeader>
+
+          {bagAskItem && (
+            <div className="space-y-4">
+              <p className="text-lg text-muted-foreground">
+                {bagAskItem.material && bagAskItem.width
+                  ? `${bagAskItem.material} ${bagAskItem.width}×${bagAskItem.height}`
+                  : bagAskItem.product || 'Товар'}
+              </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  size="lg"
+                  className="h-24 bg-emerald-600 text-xl text-white hover:bg-emerald-700"
+                  onClick={() => handleFinish(bagAskItem, 'repacked', true)}
+                  disabled={processingId === bagAskItem.id}
+                >
+                  <Icon name="PackagePlus" size={28} className="mr-2" />
+                  Да, новый
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="h-24 text-xl"
+                  onClick={() => handleFinish(bagAskItem, 'repacked', false)}
+                  disabled={processingId === bagAskItem.id}
+                >
+                  <Icon name="Package" size={28} className="mr-2" />
+                  Нет, прежний
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {items.map((item) => (
         <Card key={item.id} className="border-border shadow-none">
           <CardContent className="space-y-3 pt-6">
@@ -144,7 +197,7 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
               <Button
                 size="lg"
                 className="h-16 bg-emerald-600 text-lg text-white hover:bg-emerald-700"
-                onClick={() => handleFinish(item, 'repacked')}
+                onClick={() => setBagAskItem(item)}
                 disabled={processingId === item.id}
               >
                 <Icon
