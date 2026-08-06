@@ -33,6 +33,8 @@ import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
 import { useMarketplaceAutoSync } from '@/hooks/useMarketplaceAutoSync';
 import { usePickingPending } from '@/hooks/usePickingPending';
 import KioskPreviewDialog from '@/components/crm/kiosk/KioskPreviewDialog';
+import ContractGate from '@/components/crm/contracts/ContractGate';
+import { fetchPendingContracts } from '@/lib/contractsApi';
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
   const { user, login, logout, switchRole } = useAuth();
@@ -58,6 +60,17 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   const [testAccounts, setTestAccounts] = useState<TestAccount[]>([]);
   const [qrOpen, setQrOpen] = useState(false);
   const [kioskPreviewOpen, setKioskPreviewOpen] = useState(false);
+  // Неподписанные документы закрывают систему: пока их не подписали, вместо страниц
+  // показываем экран подписания. null — ещё проверяем, не мигаем интерфейсом зря.
+  const [pendingContracts, setPendingContracts] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    fetchPendingContracts(user.id)
+      .then(setPendingContracts)
+      // Если проверка не удалась (сеть, функция) — не запираем человека снаружи.
+      .catch(() => setPendingContracts(0));
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user) {
@@ -79,6 +92,12 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
 
   if (!user) {
     return null;
+  }
+
+  // Есть неподписанные документы — вместо системы показываем экран подписания.
+  // Страницу «Договоры» не запираем: с неё человек и подписывает.
+  if (pendingContracts !== null && pendingContracts > 0 && location.pathname !== '/crm/contracts') {
+    return <ContractGate onAllSigned={() => setPendingContracts(0)} />;
   }
 
   const nav = navByRole[user.role] || [{ label: 'Главная', icon: 'LayoutDashboard', path: '/crm' }];

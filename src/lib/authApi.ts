@@ -82,6 +82,8 @@ export interface RegistrationForm {
   role: Role;
   email: string;
   phone: string;
+  /** Согласие на обработку персональных данных — без него заявку не принимаем. */
+  consent?: boolean;
 }
 
 /** Заявка на регистрацию от нового человека, которого ещё нет в системе. Пароль ему

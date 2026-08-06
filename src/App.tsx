@@ -40,6 +40,9 @@ import SuppliersSettings from "./pages/settings/SuppliersSettings";
 import MarketplaceItemsSettings from "./pages/settings/MarketplaceItemsSettings";
 import MarketplaceIntegrationsSettings from "./pages/settings/MarketplaceIntegrationsSettings";
 import Kiosk from "./pages/Kiosk";
+import Contracts from "./pages/Contracts";
+import PrivacyPolicy from "./pages/legal/PrivacyPolicy";
+import PersonalDataConsent from "./pages/legal/PersonalDataConsent";
 import RollShortageAnalysis from "./pages/analytics/RollShortageAnalysis";
 import ReturnsAnalysis from "./pages/analytics/ReturnsAnalysis";
 import DefectAnalysis from "./pages/analytics/DefectAnalysis";
@@ -98,6 +101,10 @@ const App = () => (
             <Route path="/crm/settings/marketplace-items" element={<MarketplaceItemsSettings />} />
             <Route path="/crm/settings/marketplace-integrations" element={<MarketplaceIntegrationsSettings />} />
             <Route path="/crm/kiosk" element={<Kiosk />} />
+            <Route path="/crm/contracts" element={<Contracts />} />
+            {/* Юридические документы — открыты без входа: их читают до регистрации. */}
+            <Route path="/privacy" element={<PrivacyPolicy />} />
+            <Route path="/consent" element={<PersonalDataConsent />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFoundRedirect />} />
           </Routes>

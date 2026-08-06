@@ -67,6 +67,7 @@ const productionNav: NavItem[] = [
     icon: 'ShoppingBag',
     children: [{ label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' }],
   },
+  { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
 ];
 
@@ -97,6 +98,7 @@ const packerNav: NavItem[] = [
   },
   // Терминал стикеровки из личного кабинета убран намеренно: упаковщица работает
   // только на киоске в цехе (планшет), а не через свой личный кабинет.
+  { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
 ];
 
@@ -140,6 +142,7 @@ const storekeeperNav: NavItem[] = [
       { label: 'Отзывы', path: '/crm/marketplace/reviews' },
     ],
   },
+  { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
   {
     label: 'Настройки',
@@ -148,7 +151,10 @@ const storekeeperNav: NavItem[] = [
   },
 ];
 
-const cleanerNav: NavItem[] = [{ label: 'Главная', icon: 'LayoutDashboard', path: '/crm' }];
+const cleanerNav: NavItem[] = [
+  { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
+  { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
+];
 
 // Менеджер: работа с заказами и поставками маркетплейса (в т.ч. заявки OZON FBO).
 const managerNav: NavItem[] = [
@@ -167,6 +173,7 @@ const managerNav: NavItem[] = [
       { label: 'Отзывы', path: '/crm/marketplace/reviews' },
     ],
   },
+  { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
 ];
 
 const adminNav: NavItem[] = [
@@ -209,6 +216,7 @@ const adminNav: NavItem[] = [
       { label: 'Отзывы', path: '/crm/marketplace/reviews' },
     ],
   },
+  { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
   {
     label: 'Смены',

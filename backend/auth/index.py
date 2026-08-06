@@ -230,6 +230,17 @@ def handler(event: dict, context) -> dict:
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректный адрес почты'})}
         if not phone:
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректный номер телефона'})}
+        # Согласие на обработку персональных данных обязательно по закону: проверяем на
+        # сервере, а не только галочкой в форме — иначе требование легко обойти.
+        if not body_data.get('consent'):
+            return {
+                'statusCode': 400,
+                'headers': headers,
+                'body': json.dumps(
+                    {'error': 'Необходимо согласие на обработку персональных данных'},
+                    ensure_ascii=False,
+                ),
+            }
 
         conn = psycopg2.connect(dsn)
         try:
@@ -262,8 +273,9 @@ def handler(event: dict, context) -> dict:
                 login = f'{login}{secrets.token_hex(2)}'[:50]
 
             cur.execute(
-                "INSERT INTO users (login, password_hash, password_salt, full_name, role, email, phone, is_active) "
-                "VALUES (%s, %s, %s, %s, '', %s, %s, true) RETURNING id",
+                "INSERT INTO users (login, password_hash, password_salt, full_name, role, email, phone, "
+                "is_active, privacy_accepted_at) "
+                "VALUES (%s, %s, %s, %s, '', %s, %s, true, now()) RETURNING id",
                 (login, dummy_hash, salt, full_name[:200], email, phone),
             )
             user_id = cur.fetchone()[0]

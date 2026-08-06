@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
@@ -238,8 +238,17 @@ const Index = () => {
               Вход по паролю
             </Button>
 
-            {/* Реквизиты компании — обязательная информация о владельце сервиса. */}
+            {/* Реквизиты компании и юридические документы. */}
             <div className="space-y-0.5 pt-2 text-center text-[11px] leading-relaxed text-muted-foreground">
+              <p className="pb-1">
+                <Link to="/privacy" className="underline underline-offset-2 hover:text-foreground">
+                  Политика конфиденциальности
+                </Link>
+                {' · '}
+                <Link to="/consent" className="underline underline-offset-2 hover:text-foreground">
+                  Обработка персональных данных
+                </Link>
+              </p>
               <p>Система управления швейного производства</p>
               <p>ИНН: 760218194200 · ОГРН: 322774600341432</p>
               <p>

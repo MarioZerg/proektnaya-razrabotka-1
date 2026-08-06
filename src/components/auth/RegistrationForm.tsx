@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { roleLabels, type Role } from '@/lib/roles';
@@ -52,17 +54,19 @@ const RegistrationForm = ({ roles, submitting, error, onSubmit, onBack }: Regist
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('+7');
   const [touched, setTouched] = useState(false);
+  // Без согласия на обработку данных заявку отправить нельзя — это требование закона.
+  const [consent, setConsent] = useState(false);
 
   const nameValid = fullName.trim().length >= 3;
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const phoneValid = phoneDigits(phone).length === 10;
-  const valid = nameValid && emailValid && phoneValid && !!role;
+  const valid = nameValid && emailValid && phoneValid && !!role && consent;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setTouched(true);
     if (!valid || !role) return;
-    onSubmit({ fullName: fullName.trim(), role, email: email.trim(), phone });
+    onSubmit({ fullName: fullName.trim(), role, email: email.trim(), phone, consent: true });
   };
 
   return (
@@ -146,11 +150,45 @@ const RegistrationForm = ({ roles, submitting, error, onSubmit, onBack }: Regist
         )}
       </div>
 
+      <div className="flex items-start gap-2.5 rounded-sm border border-border p-3">
+        <Checkbox
+          id="consent"
+          checked={consent}
+          onCheckedChange={(v) => setConsent(v === true)}
+          className="mt-0.5"
+        />
+        <label htmlFor="consent" className="cursor-pointer text-xs leading-relaxed">
+          Я даю{' '}
+          <Link
+            to="/consent"
+            target="_blank"
+            className="underline underline-offset-2 hover:text-primary"
+            onClick={(e) => e.stopPropagation()}
+          >
+            согласие на обработку персональных данных
+          </Link>{' '}
+          и принимаю{' '}
+          <Link
+            to="/privacy"
+            target="_blank"
+            className="underline underline-offset-2 hover:text-primary"
+            onClick={(e) => e.stopPropagation()}
+          >
+            политику конфиденциальности
+          </Link>
+        </label>
+      </div>
+      {touched && !consent && (
+        <p className="text-xs text-destructive">
+          Без согласия на обработку данных заявку отправить нельзя
+        </p>
+      )}
+
       {error && <p className="text-center text-sm text-destructive">{error}</p>}
 
       <Button
         type="submit"
-        disabled={submitting}
+        disabled={submitting || !consent}
         className="h-11 w-full rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
       >
         {submitting ? (
