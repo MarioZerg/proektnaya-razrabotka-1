@@ -14,11 +14,19 @@ interface OrdersCardsProps {
   onEdit: (order: Order) => void;
   onDelete: (id: number) => void;
   ozonStatusLabel: (s?: string | null) => string | null;
+  /** Кладовщик и менеджер смотрят заказы только как справку — без правки и удаления. */
+  canManage: boolean;
 }
 
 /** Мобильный вид списка заказов маркетплейса — карточки вместо широкой таблицы,
  * чтобы не было горизонтальной прокрутки на телефоне. */
-const OrdersCards = ({ orders, onEdit, onDelete, ozonStatusLabel }: OrdersCardsProps) => {
+const OrdersCards = ({
+  orders,
+  onEdit,
+  onDelete,
+  ozonStatusLabel,
+  canManage,
+}: OrdersCardsProps) => {
   return (
     <div className="space-y-3">
       {orders.map((o) => {
@@ -67,18 +75,20 @@ const OrdersCards = ({ orders, onEdit, onDelete, ozonStatusLabel }: OrdersCardsP
               {o.completedAt && <span>Выполнен: {formatDate(o.completedAt)}</span>}
             </div>
 
-            <div className="mt-3 flex justify-end gap-2">
-              <Button size="sm" variant="secondary" onClick={() => onEdit(o)}>
-                <Icon name="Pencil" size={14} className="mr-1.5" />
-                Изменить
-              </Button>
-              {!isCancelled && (
-                <Button size="sm" variant="destructive" onClick={() => onDelete(o.id)}>
-                  <Icon name="Trash2" size={14} className="mr-1.5" />
-                  Удалить
+            {canManage && (
+              <div className="mt-3 flex justify-end gap-2">
+                <Button size="sm" variant="secondary" onClick={() => onEdit(o)}>
+                  <Icon name="Pencil" size={14} className="mr-1.5" />
+                  Изменить
                 </Button>
-              )}
-            </div>
+                {!isCancelled && (
+                  <Button size="sm" variant="destructive" onClick={() => onDelete(o.id)}>
+                    <Icon name="Trash2" size={14} className="mr-1.5" />
+                    Удалить
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         );
       })}

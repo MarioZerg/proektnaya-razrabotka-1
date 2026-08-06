@@ -65,9 +65,11 @@ interface OrdersTableProps {
   orders: Order[];
   onEdit: (order: Order) => void;
   onDelete: (id: number) => void;
+  /** Кладовщик и менеджер смотрят заказы только как справку — без правки и удаления. */
+  canManage: boolean;
 }
 
-const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) => {
+const OrdersTable = ({ loading, orders, onEdit, onDelete, canManage }: OrdersTableProps) => {
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE));
 
@@ -102,6 +104,7 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
         orders={pagedOrders}
         onEdit={onEdit}
         onDelete={onDelete}
+        canManage={canManage}
         ozonStatusLabel={ozonStatusLabel}
       />
     </div>
@@ -160,13 +163,17 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete }: OrdersTableProps) =>
               <TableCell>{o.completedAt ? formatDate(o.completedAt) : ''}</TableCell>
               <TableCell>
                 <div className="flex justify-end gap-2">
-                  <Button size="icon" variant="secondary" onClick={() => onEdit(o)}>
-                    <Icon name="Pencil" size={14} />
-                  </Button>
-                  {!isCancelled && (
-                    <Button size="icon" variant="destructive" onClick={() => onDelete(o.id)}>
-                      <Icon name="Trash2" size={14} />
-                    </Button>
+                  {canManage && (
+                    <>
+                      <Button size="icon" variant="secondary" onClick={() => onEdit(o)}>
+                        <Icon name="Pencil" size={14} />
+                      </Button>
+                      {!isCancelled && (
+                        <Button size="icon" variant="destructive" onClick={() => onDelete(o.id)}>
+                          <Icon name="Trash2" size={14} />
+                        </Button>
+                      )}
+                    </>
                   )}
                 </div>
               </TableCell>

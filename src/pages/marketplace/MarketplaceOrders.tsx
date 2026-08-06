@@ -27,6 +27,11 @@ import CreateManualOrderDialog from '@/components/crm/orders/CreateManualOrderDi
 const MarketplaceOrders = () => {
   const { toast } = useToast();
   const { user } = useAuth();
+  // Заказами с маркетплейса управляет только администратор: он их подгружает по API,
+  // заводит вручную, правит и удаляет. Кладовщик и менеджер открывают эту вкладку как
+  // справку — посмотреть, что за заказ и в каком он статусе. Менеджер удаляет заказы
+  // в другом месте — в поставках FBO, где это часть его работы.
+  const canManageOrders = user?.role === 'admin';
   const [orders, setOrders] = useState<Order[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncingOzon, setSyncingOzon] = useState(false);
@@ -301,6 +306,7 @@ const MarketplaceOrders = () => {
         {!loading && <OrdersSummary orders={orders} />}
 
         <OrdersToolbar
+          canManage={canManageOrders}
           onOpenManual={openManual}
           onSyncWb={handleSyncWb}
           syncing={syncing}
@@ -318,7 +324,13 @@ const MarketplaceOrders = () => {
           onTypeChange={setTypeFilter}
         />
 
-        <OrdersTable loading={loading} orders={filteredOrders} onEdit={openEdit} onDelete={handleDelete} />
+        <OrdersTable
+          loading={loading}
+          orders={filteredOrders}
+          onEdit={openEdit}
+          onDelete={handleDelete}
+          canManage={canManageOrders}
+        />
       </div>
 
       <EditOrderDialog

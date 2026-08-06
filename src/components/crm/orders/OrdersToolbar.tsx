@@ -13,6 +13,9 @@ export type MarketplaceFilter = 'all' | 'OZON' | 'WB' | 'Yandex';
 export type TypeFilter = 'all' | 'FBO' | 'FBS' | 'Индивидуальный';
 
 interface OrdersToolbarProps {
+  /** Может ли пользователь заводить и загружать заказы. Кладовщик и менеджер смотрят
+   * эту вкладку только как справку — управляет заказами администратор. */
+  canManage: boolean;
   onOpenManual: () => void;
   onSyncWb: () => void;
   syncing: boolean;
@@ -31,6 +34,7 @@ interface OrdersToolbarProps {
 }
 
 const OrdersToolbar = ({
+  canManage,
   onOpenManual,
   onSyncWb,
   syncing,
@@ -49,6 +53,9 @@ const OrdersToolbar = ({
 }: OrdersToolbarProps) => {
   return (
     <>
+      {/* Кнопки добавления и загрузки заказов — только у администратора. Кладовщик и
+          менеджер на этой вкладке лишь смотрят информацию, заказами не занимаются. */}
+      {canManage && (
       <div className="flex flex-wrap gap-3">
         <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={onOpenManual}>
           <Icon name="Plus" size={16} className="mr-1.5" />
@@ -99,6 +106,7 @@ const OrdersToolbar = ({
           {refreshingOzon ? 'Обновляем...' : 'Обновить статусы OZON'}
         </Button>
       </div>
+      )}
 
       <div className="flex flex-wrap gap-3">
         <Select value={statusFilter} onValueChange={(v) => onStatusChange(v as StatusFilter)}>
