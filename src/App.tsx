@@ -26,7 +26,6 @@ import MaterialsSettings from "./pages/settings/MaterialsSettings";
 import HangersSettings from "./pages/settings/HangersSettings";
 import UsersSettings from "./pages/settings/UsersSettings";
 import PendingEmployees from "./pages/settings/PendingEmployees";
-import SystemCleanup from "./pages/settings/SystemCleanup";
 import MarketplaceOrders from "./pages/marketplace/MarketplaceOrders";
 import SewingItems from "./pages/marketplace/SewingItems";
 import FboStickers from "./pages/marketplace/FboStickers";
@@ -83,7 +82,6 @@ const App = () => (
             <Route path="/crm/settings/hangers" element={<HangersSettings />} />
             <Route path="/crm/settings/users" element={<UsersSettings />} />
             <Route path="/crm/settings/pending-employees" element={<PendingEmployees />} />
-            <Route path="/crm/settings/cleanup" element={<SystemCleanup />} />
             <Route path="/crm/marketplace/orders" element={<MarketplaceOrders />} />
             <Route path="/crm/marketplace/sewing-items" element={<SewingItems />} />
             {/* Печать стикеров FBO временно скрыта из меню — позже её интегрируем прямо

@@ -231,8 +231,6 @@ const adminNav: NavItem[] = [
       { label: 'Стикеры товаров', path: '/crm/settings/item-stickers' },
       { label: 'Полки на складе', path: '/crm/settings/shelves' },
       { label: 'Вешалки', path: '/crm/settings/hangers' },
-      { label: 'Просмотр логов', path: '/crm/settings/logs' },
-      { label: 'Очистка системы', path: '/crm/settings/cleanup' },
     ],
   },
 ];
