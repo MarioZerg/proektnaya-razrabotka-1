@@ -17,7 +17,46 @@ interface MyAccrualsTableProps {
 
 const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
   return (
-    <div className="rounded-md border border-border">
+    <>
+    {/* Свою зарплату сотрудники смотрят в основном с телефона — там карточки. */}
+    <div className="space-y-2 md:hidden">
+      {loading ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Icon name="Loader2" size={16} className="animate-spin" />
+          Загрузка...
+        </div>
+      ) : accruals.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Начислений пока нет</p>
+      ) : (
+        accruals.map((a) => (
+          <div key={a.id} className="rounded-md border border-border p-3">
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-sm font-medium">
+                {accrualTypeLabels[a.type] || a.type}
+              </span>
+              <span
+                className={`whitespace-nowrap font-semibold ${
+                  a.amount < 0 ? 'text-destructive' : ''
+                }`}
+              >
+                {formatMoney(a.amount)} ₽
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">{a.description}</p>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="text-muted-foreground">{formatDate(a.accruedFor)}</span>
+              {a.paidAt ? (
+                <span className="text-muted-foreground">Выплачено</span>
+              ) : (
+                <span className="font-medium text-amber-600">Ожидает выплаты</span>
+              )}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+
+    <div className="hidden rounded-md border border-border md:block">
       <Table>
         <TableHeader>
           <TableRow className="bg-primary hover:bg-primary">
@@ -68,6 +107,7 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
         </TableBody>
       </Table>
     </div>
+    </>
   );
 };
 

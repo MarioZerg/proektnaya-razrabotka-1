@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import Icon from '@/components/ui/icon';
+import GoodsWarehouseCards from '@/components/crm/goodsWarehouse/GoodsWarehouseCards';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import {
@@ -75,7 +76,16 @@ const GoodsWarehouseTable = ({ loading, items, onReturnToWorkshop, onMarkLost }:
 
   return (
     <>
-      <div className="rounded-md border border-border">
+      {/* На телефоне — карточки, на компьютере привычная таблица. */}
+      <div className="md:hidden">
+        <GoodsWarehouseCards
+          items={items}
+          onReturnToWorkshop={onReturnToWorkshop}
+          onMarkLost={openLostDialog}
+        />
+      </div>
+
+      <div className="hidden rounded-md border border-border md:block">
         <Table>
           <TableHeader>
             <TableRow className="bg-primary hover:bg-primary">

@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
+import RollsCards from '@/components/crm/rolls/RollsCards';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { fetchRolls, createRoll, type Roll, type RollStatus } from '@/lib/rollsApi';
@@ -293,7 +294,20 @@ const Rolls = () => {
         ) : filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground">Рулонов не найдено</p>
         ) : (
-          <div className="rounded-md border border-border">
+          <>
+          {/* На телефоне — карточки, на компьютере привычная таблица. */}
+          <div className="md:hidden">
+            <RollsCards
+              rolls={filtered}
+              statusLabels={statusLabels}
+              formatQuantity={formatQuantity}
+              formatDate={formatDate}
+              shiftLabel={(r) => shiftLabel(workshops, r.workshopId, r.shiftNumber)}
+              onOpen={(id) => navigate(`/crm/inventory/rolls/${id}`)}
+            />
+          </div>
+
+          <div className="hidden rounded-md border border-border md:block">
             <Table>
               <TableHeader>
                 <TableRow className="bg-primary hover:bg-primary">
@@ -345,6 +359,7 @@ const Rolls = () => {
               </TableBody>
             </Table>
           </div>
+          </>
         )}
       </div>
     </CrmLayout>
