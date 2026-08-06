@@ -14,8 +14,6 @@ import {
   type UserRoleEntry,
   type RegistrationForm as RegistrationFormData,
 } from '@/lib/authApi';
-import type { TestAccount } from '@/lib/authApi';
-import TestAccountsPanel from '@/components/auth/TestAccountsPanel';
 import OnlineNowBadge from '@/components/auth/OnlineNowBadge';
 import RoleSelectScreen from '@/components/auth/RoleSelectScreen';
 import RegistrationForm from '@/components/auth/RegistrationForm';
@@ -166,11 +164,6 @@ const Index = () => {
     }
   };
 
-  const handleTestAccountSelect = (account: TestAccount) => {
-    login({ ...account, availableRoles: [account.role], isDemo: true });
-    navigate('/crm');
-  };
-
   const handleBackToStart = () => {
     setStep('start');
     setCode('');
@@ -257,16 +250,6 @@ const Index = () => {
               </p>
             </div>
 
-            <div className="mt-8 space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="h-px flex-1 bg-border" />
-                <p className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                  Демо-вход без пароля
-                </p>
-                <div className="h-px flex-1 bg-border" />
-              </div>
-              <TestAccountsPanel onSelect={handleTestAccountSelect} />
-            </div>
           </div>
         )}
 

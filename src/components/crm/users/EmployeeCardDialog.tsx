@@ -72,7 +72,9 @@ const EmployeeCardDialog = ({
 
   return (
     <Dialog open={cardEmployee !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      {/* Карточка длинная (аватар, график, QR, должности) — ограничиваем высоту экраном
+          и прокручиваем содержимое, иначе низ окна уезжает за край и кнопки не достать. */}
+      <DialogContent className="max-h-[90vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Карточка сотрудника</DialogTitle>
         </DialogHeader>
