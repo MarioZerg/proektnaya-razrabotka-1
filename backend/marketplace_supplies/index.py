@@ -584,7 +584,14 @@ def handler(event: dict, context) -> dict:
                 f"s.ship_to_gazelka_at, s.ship_to_marketplace_at, s.completed_at, "
                 f"(SELECT COUNT(*) FROM marketplace_supply_items msi WHERE msi.supply_id = s.id), "
                 f"u.full_name, s.ozon_delivery_method, s.ozon_application_number, s.ozon_status, "
-                f"(SELECT COUNT(*) FROM wb_supply_orders wso WHERE wso.supply_id = s.id) "
+                f"(SELECT COUNT(*) FROM wb_supply_orders wso WHERE wso.supply_id = s.id), "
+                # Прогресс пошива по поставке: всего изделий в производстве и сколько уже
+                # готово. Считаем подзапросами, чтобы список грузился одним обращением к базе.
+                f"(SELECT COUNT(*) FROM orders o WHERE o.supply_id = s.id "
+                f" AND COALESCE(o.status, '') <> 'Отменён'), "
+                f"(SELECT COUNT(*) FROM orders o WHERE o.supply_id = s.id "
+                f" AND COALESCE(o.status, '') <> 'Отменён' "
+                f" AND o.sewing_status IN ('Готовые', 'Со склада')) "
                 f"FROM marketplace_supplies s "
                 f"LEFT JOIN users u ON u.id = s.created_by "
                 f"{where_clause} "
@@ -613,6 +620,9 @@ def handler(event: dict, context) -> dict:
                     'ozonApplicationNumber': r[16],
                     'ozonStatus': r[17],
                     'wbOrdersCount': r[18],
+                    # Пошив по поставке: сколько изделий всего и сколько уже сшито.
+                    'sewingTotal': int(r[19] or 0),
+                    'sewingDone': int(r[20] or 0),
                 }
                 for r in cur.fetchall()
             ]

@@ -37,6 +37,7 @@ import {
   type OzonDeliveryMethod,
 } from '@/lib/marketplaceSuppliesApi';
 import CreateOzonFboDialog from '@/components/crm/marketplaceSupplies/CreateOzonFboDialog';
+import SupplySewingProgress from '@/components/crm/marketplaceSupplies/SupplySewingProgress';
 import { importOzonFboComposition } from '@/lib/ozonFboApi';
 import { formatDate, formatDateTime } from '@/lib/dateUtils';
 
@@ -294,6 +295,7 @@ const ToMarketplace = () => {
                   <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
                   <TableHead className="text-primary-foreground">Тип</TableHead>
                   <TableHead className="text-primary-foreground">Товаров</TableHead>
+                  <TableHead className="text-primary-foreground">Сшито</TableHead>
                   <TableHead className="text-primary-foreground">Создан</TableHead>
                   <TableHead className="text-primary-foreground">Отгрузка в Газельку</TableHead>
                   <TableHead className="text-primary-foreground">Отгрузка в маркетплейс</TableHead>
@@ -336,6 +338,9 @@ const ToMarketplace = () => {
                       ) : (
                         `${s.itemsCount} шт.`
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <SupplySewingProgress total={s.sewingTotal || 0} done={s.sewingDone || 0} />
                     </TableCell>
                     <TableCell>{formatDateTime(s.createdAt)}</TableCell>
                     <TableCell>{s.shipToGazelkaAt ? formatDate(s.shipToGazelkaAt) : '—'}</TableCell>

@@ -27,6 +27,10 @@ export interface Supply {
   ozonApplicationNumber: string | null;
   ozonStatus: string | null;
   wbOrdersCount?: number;
+  /** Изделий в производстве по этой поставке (отменённые не в счёт). */
+  sewingTotal?: number;
+  /** Сколько из них уже сшито. */
+  sewingDone?: number;
 }
 
 export interface SupplyItem {
