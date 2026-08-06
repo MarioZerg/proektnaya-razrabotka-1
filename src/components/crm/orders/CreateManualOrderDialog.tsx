@@ -59,7 +59,7 @@ const CreateManualOrderDialog = ({
         <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
           {rows.map((row, idx) => (
             <div key={row.key} className="space-y-2 rounded-md border border-border p-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <span className="text-xs font-medium text-muted-foreground">Заказ #{idx + 1}</span>
                 {rows.length > 1 && (
                   <Button

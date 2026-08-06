@@ -102,7 +102,7 @@ const OrdersToolbar = ({
 
       <div className="flex flex-wrap gap-3">
         <Select value={statusFilter} onValueChange={(v) => onStatusChange(v as StatusFilter)}>
-          <SelectTrigger className="w-[200px]">
+          <SelectTrigger className="w-full sm:w-[200px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -116,7 +116,7 @@ const OrdersToolbar = ({
           value={marketplaceFilter}
           onValueChange={(v) => onMarketplaceChange(v as MarketplaceFilter)}
         >
-          <SelectTrigger className="w-[160px]">
+          <SelectTrigger className="w-full sm:w-[160px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -127,7 +127,7 @@ const OrdersToolbar = ({
           </SelectContent>
         </Select>
         <Select value={typeFilter} onValueChange={(v) => onTypeChange(v as TypeFilter)}>
-          <SelectTrigger className="w-[160px]">
+          <SelectTrigger className="w-full sm:w-[160px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

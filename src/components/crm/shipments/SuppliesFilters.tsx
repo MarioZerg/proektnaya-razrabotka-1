@@ -43,7 +43,7 @@ const SuppliesFilters = ({
       <div className="space-y-1.5">
         <Label className="text-xs">Статус</Label>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-full sm:w-[180px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -57,7 +57,7 @@ const SuppliesFilters = ({
       <div className="space-y-1.5">
         <Label className="text-xs">Поставщик</Label>
         <Select value={supplierFilter} onValueChange={setSupplierFilter}>
-          <SelectTrigger className="w-[200px]">
+          <SelectTrigger className="w-full sm:w-[200px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -72,11 +72,11 @@ const SuppliesFilters = ({
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs">Дата от</Label>
-        <Input type="date" className="w-[160px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        <Input type="date" className="w-full sm:w-[160px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs">Дата до</Label>
-        <Input type="date" className="w-[160px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        <Input type="date" className="w-full sm:w-[160px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
       </div>
       {activeFiltersCount > 0 && (
         <Button variant="ghost" size="sm" onClick={onReset}>

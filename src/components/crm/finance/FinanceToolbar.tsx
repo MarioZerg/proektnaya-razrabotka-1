@@ -49,7 +49,7 @@ const FinanceToolbar = ({
 
       <div className="flex flex-wrap items-end gap-3">
         <Select value={userFilter} onValueChange={setUserFilter}>
-          <SelectTrigger className="w-[220px]">
+          <SelectTrigger className="w-full sm:w-[220px]">
             <SelectValue placeholder="Все" />
           </SelectTrigger>
           <SelectContent>
@@ -63,7 +63,7 @@ const FinanceToolbar = ({
         </Select>
 
         <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[220px]">
+          <SelectTrigger className="w-full sm:w-[220px]">
             <SelectValue placeholder="Все" />
           </SelectTrigger>
           <SelectContent>

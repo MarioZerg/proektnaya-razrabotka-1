@@ -139,7 +139,9 @@ const SidebarProvider = React.forwardRef<
               } as React.CSSProperties
             }
             className={cn(
-              "group/sidebar-wrapper flex min-h-svh w-full has-[[data-variant=inset]]:bg-sidebar",
+              // max-w-full + overflow-x-hidden: широкая таблица внутри страницы не
+              // должна растягивать весь экран на телефоне — она прокручивается сама.
+              "group/sidebar-wrapper flex min-h-svh w-full max-w-full overflow-x-hidden has-[[data-variant=inset]]:bg-sidebar",
               className
             )}
             ref={ref}

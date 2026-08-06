@@ -313,13 +313,13 @@ const GoodsPicking = () => {
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="font-semibold">На хранении ({filteredInStock.length})</h2>
             <Input
               placeholder="Поиск по заказу/штрихкоду/товару"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-72"
+              className="w-full sm:w-72"
             />
           </div>
           {loading ? (

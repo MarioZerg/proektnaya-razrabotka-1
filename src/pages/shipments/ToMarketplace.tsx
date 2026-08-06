@@ -209,7 +209,7 @@ const ToMarketplace = () => {
           <div className="space-y-1.5">
             <Label className="text-xs">Статус</Label>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[150px]">
+              <SelectTrigger className="w-full sm:w-[150px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -224,7 +224,7 @@ const ToMarketplace = () => {
           <div className="space-y-1.5">
             <Label className="text-xs">Тип</Label>
             <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-[130px]">
+              <SelectTrigger className="w-full sm:w-[130px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -237,7 +237,7 @@ const ToMarketplace = () => {
           <div className="space-y-1.5">
             <Label className="text-xs">Маркетплейс</Label>
             <Select value={marketplaceFilter} onValueChange={setMarketplaceFilter}>
-              <SelectTrigger className="w-[170px]">
+              <SelectTrigger className="w-full sm:w-[170px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -250,17 +250,17 @@ const ToMarketplace = () => {
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Отгрузка от</Label>
-            <Input type="date" className="w-[150px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            <Input type="date" className="w-full sm:w-[150px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Отгрузка до</Label>
-            <Input type="date" className="w-[150px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <Input type="date" className="w-full sm:w-[150px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
           <form onSubmit={handleSearch} className="flex items-end gap-1.5">
             <div className="space-y-1.5">
               <Label className="text-xs">Поиск</Label>
               <Input
-                className="w-[180px]"
+                className="w-full sm:w-[180px]"
                 placeholder="Номер поставки"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}

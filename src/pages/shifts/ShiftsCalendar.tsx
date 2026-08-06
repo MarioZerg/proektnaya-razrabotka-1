@@ -163,7 +163,7 @@ const ShiftsCalendar = () => {
           <div className="space-y-1.5">
             <Label>Смена:</Label>
             <Select value={shiftId} onValueChange={setShiftId} disabled={loading}>
-              <SelectTrigger className="w-[260px]">
+              <SelectTrigger className="w-full sm:w-[260px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

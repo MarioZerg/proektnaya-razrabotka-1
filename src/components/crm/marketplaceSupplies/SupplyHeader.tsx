@@ -54,7 +54,7 @@ const SupplyHeader = ({
 }: SupplyHeaderProps) => {
   return (
     <>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <Button variant="ghost" size="sm" onClick={onBack} className="mb-2 -ml-2">
             <Icon name="ChevronLeft" size={16} className="mr-1" />

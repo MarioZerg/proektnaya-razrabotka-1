@@ -120,7 +120,7 @@ const Reviews = () => {
 
         <div className="flex flex-wrap items-center gap-3">
           <Select value={marketplace} onValueChange={(v) => setMarketplace(v as typeof marketplace)}>
-            <SelectTrigger className="w-44">
+            <SelectTrigger className="w-full sm:w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -130,7 +130,7 @@ const Reviews = () => {
             </SelectContent>
           </Select>
           <Select value={ratingFilter} onValueChange={(v) => setRatingFilter(v as typeof ratingFilter)}>
-            <SelectTrigger className="w-44">
+            <SelectTrigger className="w-full sm:w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

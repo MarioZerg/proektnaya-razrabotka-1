@@ -282,7 +282,10 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
         />
       )}
 
-      <main className="flex-1 overflow-x-hidden">
+      {/* min-w-0 обязателен: без него широкая таблица внутри распирает всю страницу,
+          и на телефоне появляется горизонтальная прокрутка всего экрана вместо
+          аккуратной прокрутки самой таблицы. */}
+      <main className="w-full min-w-0 flex-1 overflow-x-hidden">
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
           <SidebarTrigger />
           {/* Персональный QR сотрудника — рядом с меню, чтобы быстро показать его сканеру. */}

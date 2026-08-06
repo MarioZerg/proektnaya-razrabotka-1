@@ -29,7 +29,7 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
     return (
       <Card className="border-border shadow-none">
         <CardContent className="space-y-2 pt-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="flex items-center gap-1.5 text-sm font-semibold">
               <Icon name={icon} size={15} className="text-muted-foreground" />
               {title}

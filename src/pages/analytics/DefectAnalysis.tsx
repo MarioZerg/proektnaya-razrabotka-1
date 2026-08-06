@@ -72,7 +72,7 @@ const DefectAnalysis = () => {
             </p>
           </div>
           <Select value={months} onValueChange={setMonths}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

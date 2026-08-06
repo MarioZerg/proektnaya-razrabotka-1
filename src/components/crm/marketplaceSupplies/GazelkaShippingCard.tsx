@@ -196,7 +196,7 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
         {linkedPlan && (
           <>
             <div className="space-y-1 rounded-md bg-muted/40 p-3 text-xs">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <span className="text-muted-foreground">Статус Газельки</span>
                 <Badge variant="secondary">{linkedPlan.statusLabel}</Badge>
               </div>

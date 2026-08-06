@@ -109,7 +109,7 @@ const WorkshopMaterials = () => {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-56">Материал</TableHead>
+                      <TableHead className="w-full sm:w-56">Материал</TableHead>
                       {visibleColumns.map((col) => (
                         <TableHead
                           key={`${col.workshopId}-${col.shiftNumber}`}

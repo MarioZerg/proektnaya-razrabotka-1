@@ -96,7 +96,7 @@ const SupplyFboFieldsCard = ({
               {supply.shipToMarketplaceAt ? formatDateTime(supply.shipToMarketplaceAt) : '—'}
             </span>
           </div>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="text-muted-foreground">Выполнена</span>
             <span className="font-medium">
               {supply.completedAt ? formatDateTime(supply.completedAt) : '—'}

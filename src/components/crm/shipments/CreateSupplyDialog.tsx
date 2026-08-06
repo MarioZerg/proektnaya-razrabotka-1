@@ -61,7 +61,7 @@ const CreateSupplyDialog = ({
   const materialUnit = (materialId: string) => materials.find((m) => String(m.id) === materialId)?.unit || '';
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h1 className="text-xl font-bold">Отгрузка от поставщика</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -99,7 +99,7 @@ const CreateSupplyDialog = ({
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <Label>Материалы</Label>
                 <Button type="button" size="sm" variant="outline" onClick={addRow}>
                   <Icon name="Plus" size={14} className="mr-1" />

@@ -217,7 +217,7 @@ const ReceiveReturns = () => {
 
         <div className="flex flex-wrap gap-3">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[190px]">
+            <SelectTrigger className="w-full sm:w-[190px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -229,7 +229,7 @@ const ReceiveReturns = () => {
             </SelectContent>
           </Select>
           <Select value={marketplaceFilter} onValueChange={setMarketplaceFilter}>
-            <SelectTrigger className="w-[190px]">
+            <SelectTrigger className="w-full sm:w-[190px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

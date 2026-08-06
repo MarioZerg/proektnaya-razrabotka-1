@@ -199,7 +199,7 @@ const ShiftCycleSetup = ({
             <Label>Первый выход</Label>
             <Input
               type="date"
-              className="w-44"
+              className="w-full sm:w-44"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
             />

@@ -125,7 +125,7 @@ const WbFboSupplyCard = ({ supply, onReload, isManager }: WbFboSupplyCardProps) 
             <span className="text-muted-foreground">Количество {packagingUnit}</span>
             <span className="font-medium">{supply.packagingCount ?? '—'}</span>
           </div>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="text-muted-foreground">Статус (наша система)</span>
             <Badge variant={supply.status === 'Выполнена' ? 'default' : 'secondary'}>{supply.status}</Badge>
           </div>

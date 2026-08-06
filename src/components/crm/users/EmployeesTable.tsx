@@ -45,7 +45,7 @@ const EmployeesTable = ({
     <>
       <div className="flex flex-wrap gap-3">
         <Select value={roleFilter} onValueChange={setRoleFilter}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-full sm:w-[180px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -58,7 +58,7 @@ const EmployeesTable = ({
           </SelectContent>
         </Select>
         <Select value={workshopFilter} onValueChange={setWorkshopFilter}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-full sm:w-[180px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

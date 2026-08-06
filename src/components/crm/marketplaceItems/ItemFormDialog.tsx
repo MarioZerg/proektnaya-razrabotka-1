@@ -134,7 +134,7 @@ const ItemFormDialog = ({
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <Label>Материалы для изделия</Label>
               <Button type="button" size="sm" variant="outline" onClick={addMaterialRow}>
                 <Icon name="Plus" size={14} className="mr-1" />

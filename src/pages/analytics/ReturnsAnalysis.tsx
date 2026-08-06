@@ -60,7 +60,7 @@ const ReturnsAnalysis = () => {
             </p>
           </div>
           <Select value={days} onValueChange={setDays}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

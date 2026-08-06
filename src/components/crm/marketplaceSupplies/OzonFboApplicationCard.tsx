@@ -97,7 +97,7 @@ const OzonFboApplicationCard = ({ supply, onImportComposition, importing }: Ozon
             {supply.shipToGazelkaAt ? formatDateTime(supply.shipToGazelkaAt) : '—'}
           </span>
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <span className="text-muted-foreground">Забор Газелькой</span>
           {supply.gazelkaPickup ? (
             <Badge>Забор Газелькой со склада</Badge>

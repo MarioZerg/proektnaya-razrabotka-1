@@ -82,11 +82,11 @@ const RollShortageAnalysis = () => {
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1.5">
             <Label>Период с</Label>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-44" />
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-full sm:w-44" />
           </div>
           <div className="space-y-1.5">
             <Label>по</Label>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-44" />
+            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-full sm:w-44" />
           </div>
           <Button onClick={load} disabled={loading}>
             <Icon name={loading ? 'Loader2' : 'Search'} size={16} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
