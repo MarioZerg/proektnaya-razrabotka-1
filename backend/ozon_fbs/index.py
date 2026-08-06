@@ -55,7 +55,7 @@ def ozon_post(path, client_id, api_key, payload):
     req.add_header('Api-Key', api_key)
     req.add_header('Content-Type', 'application/json')
     try:
-        with urllib.request.urlopen(req, timeout=25) as r:
+        with urllib.request.urlopen(req, timeout=20) as r:
             data = r.read().decode('utf-8')
             return r.status, (json.loads(data) if data else {})
     except urllib.error.HTTPError as e:
@@ -156,7 +156,10 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
             'cutoff_to': '2030-01-01T00:00:00Z',
             'status': OZON_NEW_STATUS,
         },
-        'limit': 100,
+        # Берём заказы небольшими порциями: OZON отвечает тем дольше, чем больше просим,
+        # а функции отведено мало времени. Планировщик ходит часто, поэтому остаток
+        # подтянется следующим запуском — заказы не потеряются.
+        'limit': 50,
         'offset': 0,
         'with': {},
     }
