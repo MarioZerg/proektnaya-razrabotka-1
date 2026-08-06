@@ -123,6 +123,22 @@ export const moveGoodsShelfByBarcode = (barcode: string, shelfId: number | null)
 export const returnGoodsToWorkshop = (id: number) => postAction({ action: 'return_to_workshop', id });
 
 // Сканер подбора: отмечает товар (по штрихкоду хранения) как нужный для будущей поставки FBS.
+/** Сколько вещей уже подобрано под заказы и ждёт стикера отправления у кладовщика. */
+export interface PickingPending {
+  pendingLabel: number;
+  awaitingShelf: number;
+}
+
+export const fetchPickingPending = async (): Promise<PickingPending> => {
+  const res = await fetch(`${GOODS_WAREHOUSE_URL}?pending_count=1`);
+  const data = await res.json();
+  return { pendingLabel: data.pendingLabel || 0, awaitingShelf: data.awaitingShelf || 0 };
+};
+
+/** Ручной пересчёт подбора по всему складу — страховка, если что-то не подхватилось. */
+export const rematchStock = () =>
+  postAction({ action: 'rematch_stock' }) as Promise<{ matched: number }>;
+
 export const startPicking = (barcode: string) => postAction({ action: 'start_picking', barcode });
 
 export const cancelPicking = (id: number) => postAction({ action: 'cancel_picking', id });

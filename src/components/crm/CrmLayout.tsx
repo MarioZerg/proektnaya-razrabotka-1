@@ -31,6 +31,7 @@ import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
 import { useMarketplaceAutoSync } from '@/hooks/useMarketplaceAutoSync';
+import { usePickingPending } from '@/hooks/usePickingPending';
 import KioskPreviewDialog from '@/components/crm/kiosk/KioskPreviewDialog';
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
@@ -44,6 +45,13 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     { id: user?.id, name: user?.name },
     user?.role === 'admin' || user?.role === 'storekeeper',
   );
+
+  // Счётчик работы по подбору у кладовщика: вещи, подобранные под заказы и ждущие стикера.
+  // Обновляется сам каждые 30 секунд, при появлении новых — звуковой сигнал.
+  const { pending: pickingPending } = usePickingPending(
+    user?.role === 'storekeeper' || user?.role === 'admin',
+  );
+
   const navigate = useNavigate();
   const location = useLocation();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
@@ -150,6 +158,13 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                               >
                                 <Link to={child.path}>
                                   <span>{child.label}</span>
+                                  {/* Новая работа по подбору: вещь уже подобрана под заказ
+                                      и ждёт, чтобы кладовщик наклеил стикер отправления. */}
+                                  {child.path === '/crm/inventory/goods-picking' && pickingPending > 0 && (
+                                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
+                                      {pickingPending}
+                                    </span>
+                                  )}
                                 </Link>
                               </SidebarMenuSubButton>
                             </SidebarMenuSubItem>

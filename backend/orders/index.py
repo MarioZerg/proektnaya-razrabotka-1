@@ -578,11 +578,19 @@ def handler(event: dict, context) -> dict:
                 names_csv = ','.join("'" + n.replace("'", "''") + "'" for n in allowed_names)
                 # FBS-заказы раскраиваются первыми (жёсткое правило по всему конвейеру —
                 # сжатые сроки отгрузки), при равенстве — FIFO по дате попадания в систему.
+                # FOR UPDATE SKIP LOCKED: строки блокируются на время транзакции, поэтому
+                # один и тот же заказ не уйдёт одновременно двум закройщикам и не будет
+                # подобран со склада, пока мы его забираем в раскрой.
+                # fulfilled_from_stock_id IS NULL — заказ, уже закрытый вещью со склада,
+                # шить не нужно (он ждёт стикеровки у кладовщика).
                 cur.execute(
                     "SELECT id, group_key FROM orders WHERE sewing_status = 'Новый' "
+                    "AND fulfilled_from_stock_id IS NULL "
+                    "AND COALESCE(status, '') <> 'Отменён' "
                     "AND material IN (" + names_csv + ") "
                     "ORDER BY (order_type = 'FBS') DESC, created_at ASC, "
-                    "group_key NULLS FIRST, group_position ASC NULLS LAST, id ASC LIMIT %s",
+                    "group_key NULLS FIRST, group_position ASC NULLS LAST, id ASC LIMIT %s "
+                    "FOR UPDATE SKIP LOCKED",
                     (stack_size,),
                 )
                 picked = cur.fetchall()
@@ -597,8 +605,11 @@ def handler(event: dict, context) -> dict:
                     keys_csv = ','.join("'" + k.replace("'", "''") + "'" for k in group_keys)
                     cur.execute(
                         "SELECT id FROM orders WHERE sewing_status = 'Новый' "
+                        "AND fulfilled_from_stock_id IS NULL "
+                        "AND COALESCE(status, '') <> 'Отменён' "
                         f"AND group_key IN ({keys_csv}) "
-                        "AND material IN (" + names_csv + ")"
+                        "AND material IN (" + names_csv + ") "
+                        "FOR UPDATE SKIP LOCKED"
                     )
                     order_ids = sorted({r[0] for r in cur.fetchall()} | set(order_ids))
 

@@ -38,6 +38,21 @@
         "action": "receive_return"
       },
       "expectedStatus": 400
+    },
+    {
+      "name": "Pending count for storekeeper",
+      "method": "GET",
+      "path": "/?pending_count=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Rematch stock runs",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "rematch_stock"
+      },
+      "expectedStatus": 200
     }
   ]
 }

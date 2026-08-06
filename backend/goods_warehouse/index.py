@@ -22,6 +22,159 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
+# Этапы, после которых вещь уже в производстве: ткань раскроена, потрачен труд.
+# Такой заказ подбирать со склада поздно — иначе работа цеха пропадёт впустую.
+NOT_STARTED_SEWING = 'Новый'
+
+
+def try_match_orders_from_stock(cur, gw_id=None):
+    """Ищет заказы, которые можно закрыть вещами со склада, и резервирует их.
+
+    Раньше подбор срабатывал ТОЛЬКО в момент прихода заказа с маркетплейса: если вещь
+    появлялась на полке позже (швея дошила, вернули возврат, принял админ), заказ так и
+    уходил в пошив, хотя на складе уже лежала готовая вещь.
+    Теперь подбор запускается и в обратную сторону — когда вещь легла на полку.
+
+    Правила:
+      * берём только заказы, к которым ЕЩЁ НЕ ПРИСТУПИЛИ (sewing_status='Новый'):
+        если закройщик уже взял заказ в раскрой, вещь со склада ему не подсунуть;
+      * одна вещь — один заказ (reserved_order_id), двойного резерва не бывает;
+      * OZON и WB подбираются поштучно, а заказ Яндекса — только целиком (см. ниже);
+      * FIFO: сначала уходят вещи, дольше всех лежащие на полке.
+
+    Возвращает список подобранных пар для журнала и уведомления кладовщику.
+    """
+    matched = []
+
+    # Свободные вещи на полке: не зарезервированы, лежат в наличии.
+    where_gw = "gw.status = 'in_stock' AND gw.reserved_order_id IS NULL"
+    if gw_id:
+        where_gw += f" AND gw.id = {int(gw_id)}"
+    # FOR UPDATE OF gw SKIP LOCKED: вещь, которую параллельно резервирует другой процесс,
+    # пропускаем — так одна вещь физически не может уйти в два заказа сразу.
+    cur.execute(
+        "SELECT gw.id, src.marketplace_item_id FROM goods_warehouse gw "
+        "JOIN orders src ON src.id = gw.order_id "
+        f"WHERE {where_gw} AND src.marketplace_item_id IS NOT NULL "
+        "ORDER BY gw.received_at ASC "
+        "FOR UPDATE OF gw SKIP LOCKED"
+    )
+    free_stock = cur.fetchall()
+    if not free_stock:
+        return matched
+
+    # Складываем свободные вещи по товару справочника: ключ — marketplace_item_id.
+    by_item = {}
+    for row_gw_id, item_id in free_stock:
+        by_item.setdefault(int(item_id), []).append(int(row_gw_id))
+
+    item_ids_csv = ','.join(str(i) for i in by_item)
+
+    # --- 1. Яндекс: заказ покупателя закрывается ТОЛЬКО целиком -------------------
+    # У Яндекса на весь заказ один ярлык, вещи едут вместе. Закрыть часть заказа со
+    # склада нельзя: половина уедет, половина будет шиться, а ярлык один. Поэтому
+    # берём связку только если на складе есть ВСЕ её вещи; иначе не трогаем склад —
+    # заказ шьётся целиком, а вещи остаются свободны для других заказов.
+    cur.execute(
+        "SELECT group_key FROM orders "
+        "WHERE marketplace = 'Yandex' AND group_key IS NOT NULL "
+        f"AND sewing_status = '{NOT_STARTED_SEWING}' AND fulfilled_from_stock_id IS NULL "
+        "AND COALESCE(status, '') <> 'Отменён' "
+        "GROUP BY group_key ORDER BY min(created_at) ASC"
+    )
+    group_keys = [r[0] for r in cur.fetchall()]
+
+    for gkey in group_keys:
+        # SKIP LOCKED: строки, которые прямо сейчас забирает закройщик, не попадут в выборку.
+        # Тогда связка окажется неполной и мы её просто пропустим — работу из цеха не отбираем.
+        cur.execute(
+            "SELECT id, marketplace_item_id FROM orders "
+            "WHERE group_key = %s AND fulfilled_from_stock_id IS NULL "
+            f"AND sewing_status = '{NOT_STARTED_SEWING}' "
+            "AND COALESCE(status, '') <> 'Отменён' ORDER BY group_position, id "
+            "FOR UPDATE SKIP LOCKED",
+            (gkey,),
+        )
+        units = cur.fetchall()
+        if not units:
+            continue
+
+        # Все вещи связки должны быть доступны: если часть заблокирована цехом или уже
+        # закрыта, размер выборки не совпадёт с реальным размером заказа — не трогаем.
+        cur.execute(
+            "SELECT count(*) FROM orders WHERE group_key = %s "
+            "AND COALESCE(status, '') <> 'Отменён'",
+            (gkey,),
+        )
+        if len(units) != int(cur.fetchone()[0]):
+            continue
+        # Вся связка должна быть ещё не начата: если хоть одну вещь уже кроят, заказ
+        # доделывает цех целиком.
+        cur.execute(
+            "SELECT count(*) FROM orders WHERE group_key = %s "
+            f"AND sewing_status <> '{NOT_STARTED_SEWING}' AND COALESCE(status, '') <> 'Отменён'",
+            (gkey,),
+        )
+        if int(cur.fetchone()[0]) > 0:
+            continue
+
+        # Хватит ли склада на ВСЮ связку: считаем потребность по каждому товару.
+        need = {}
+        for _, unit_item in units:
+            if not unit_item:
+                need = None
+                break
+            need[int(unit_item)] = need.get(int(unit_item), 0) + 1
+        if not need:
+            continue
+        if any(len(by_item.get(k, [])) < n for k, n in need.items()):
+            continue  # склад не покрывает заказ целиком — шьём всё, склад не трогаем
+
+        for unit_id, unit_item in units:
+            pick_id = by_item[int(unit_item)].pop(0)
+            cur.execute(
+                "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
+                (int(unit_id), pick_id),
+            )
+            cur.execute(
+                "UPDATE orders SET fulfilled_from_stock_id = %s, sewing_status = 'Со склада' "
+                "WHERE id = %s",
+                (pick_id, int(unit_id)),
+            )
+            matched.append({'gwId': pick_id, 'orderId': int(unit_id), 'groupKey': gkey})
+
+    # --- 2. OZON и WB: вещи штучные, подбираем по одной ---------------------------
+    if item_ids_csv:
+        # SKIP LOCKED: заказы, которые прямо сейчас забирает закройщик, пропускаем —
+        # вещь со склада под них подберётся в следующий раз, если они вернутся в очередь.
+        cur.execute(
+            "SELECT id, marketplace_item_id FROM orders "
+            "WHERE marketplace <> 'Yandex' AND group_key IS NULL "
+            f"AND sewing_status = '{NOT_STARTED_SEWING}' AND fulfilled_from_stock_id IS NULL "
+            "AND COALESCE(status, '') <> 'Отменён' "
+            f"AND marketplace_item_id IN ({item_ids_csv}) "
+            "ORDER BY (order_type = 'FBS') DESC, created_at ASC, id ASC "
+            "FOR UPDATE SKIP LOCKED"
+        )
+        for order_id, item_id in cur.fetchall():
+            pool = by_item.get(int(item_id))
+            if not pool:
+                continue
+            pick_id = pool.pop(0)
+            cur.execute(
+                "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
+                (int(order_id), pick_id),
+            )
+            cur.execute(
+                "UPDATE orders SET fulfilled_from_stock_id = %s, sewing_status = 'Со склада' "
+                "WHERE id = %s",
+                (pick_id, int(order_id)),
+            )
+            matched.append({'gwId': pick_id, 'orderId': int(order_id), 'groupKey': None})
+
+    return matched
+
+
 def next_storage_barcode(cur) -> str:
     """Генерирует следующий штрихкод хранения вида GW-000001 (по максимальному текущему)."""
     cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE storage_barcode LIKE 'GW-%'")
@@ -115,6 +268,25 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            # Счётчик для кладовщика: сколько вещей на полках уже подобрано под заказы и
+            # ждёт, чтобы он наклеил стикер отправления. По нему в меню горит значок.
+            if params.get('pending_count'):
+                cur.execute(
+                    "SELECT count(*) FROM goods_warehouse "
+                    "WHERE reserved_order_id IS NOT NULL AND status = 'in_stock' "
+                    "AND shipping_labeled_at IS NULL"
+                )
+                pending = int(cur.fetchone()[0])
+                cur.execute(
+                    "SELECT count(*) FROM goods_warehouse WHERE status = 'awaiting_shelf'"
+                )
+                awaiting = int(cur.fetchone()[0])
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'pendingLabel': pending, 'awaitingShelf': awaiting}),
+                }
 
             if barcode:
                 barcode_esc = barcode.strip().replace("'", "''")
@@ -274,6 +446,9 @@ def handler(event: dict, context) -> dict:
                     cur, actor_id, actor_name, 'admin_receive', 'goods_warehouse', new_gw_id,
                     f'Администратор принял товар вручную: {product} ({storage_barcode})',
                 )
+                # Принятая вещь сразу на полке — вдруг её уже ждёт незапущенный заказ.
+                if status_val == 'in_stock':
+                    try_match_orders_from_stock(cur, gw_id=new_gw_id)
                 conn.commit()
                 return {
                     'statusCode': 200,
@@ -392,6 +567,14 @@ def handler(event: dict, context) -> dict:
                     cur, actor_id, actor_name, 'place_on_shelf', 'goods_warehouse', gw_id,
                     f'Положил на полку {shelf_name or shelf_id}: заказ #{gw_order_number} ({scan_barcode})',
                 )
+                # Вещь появилась на полке — сразу проверяем, не ждёт ли её какой-то заказ.
+                # Если ждёт, заказ закрывается складом и не уходит в пошив.
+                auto_matched = try_match_orders_from_stock(cur, gw_id=gw_id)
+                if auto_matched:
+                    log_action(
+                        cur, actor_id, actor_name, 'auto_match', 'goods_warehouse', gw_id,
+                        f'Вещь подобрана под заказ автоматически ({len(auto_matched)})',
+                    )
                 conn.commit()
                 return {
                     'statusCode': 200,
@@ -399,6 +582,7 @@ def handler(event: dict, context) -> dict:
                     'body': json.dumps({
                         'id': gw_id, 'orderNumber': gw_order_number,
                         'product': gw_product, 'shelfName': shelf_name,
+                        'autoMatched': len(auto_matched),
                     }),
                 }
 
@@ -475,6 +659,23 @@ def handler(event: dict, context) -> dict:
                 log_action(cur, actor_id, actor_name, 'return_to_workshop', 'order', row[0], f'Вернул товар #{item_id} в цех')
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'rematch_stock':
+                # Ручной перезапуск подбора по всему складу. Нужен как страховка: если
+                # заказы пришли раньше, чем вещи легли на полку, или подбор пропустил
+                # заказ из-за параллельной работы цеха — эта кнопка всё пересчитает.
+                rematched = try_match_orders_from_stock(cur)
+                if rematched:
+                    log_action(
+                        cur, actor_id, actor_name, 'rematch_stock', 'goods_warehouse', None,
+                        f'Пересчёт подбора: закрыто складом заказов {len(rematched)}',
+                    )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'matched': len(rematched)}),
+                }
 
             if action == 'start_picking':
                 barcode = (body_data.get('barcode') or '').strip()

@@ -18,8 +18,10 @@ import {
   fetchGoodsWarehouse,
   startPicking,
   cancelPicking,
+  rematchStock,
   type GoodsWarehouseItem,
 } from '@/lib/goodsWarehouseApi';
+import ShipLabelDialog from '@/components/crm/goodsWarehouse/ShipLabelDialog';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 
@@ -36,6 +38,9 @@ const GoodsPicking = () => {
   const [scanning, setScanning] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
 
+  const [shipLabelOpen, setShipLabelOpen] = useState(false);
+  const [rematching, setRematching] = useState(false);
+
   const load = () => {
     setLoading(true);
     Promise.all([fetchGoodsWarehouse('in_stock'), fetchGoodsWarehouse('picking')])
@@ -48,7 +53,33 @@ const GoodsPicking = () => {
 
   useEffect(() => {
     load();
+    // Подбор срабатывает и во время работы цеха (швея дошила вещь → она легла на полку),
+    // поэтому список обновляем сами — кладовщику не нужно жать F5.
+    const timer = setInterval(load, 30000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleRematch = async () => {
+    setRematching(true);
+    try {
+      const res = await rematchStock();
+      toast({
+        title: res.matched
+          ? `Подобрано заказов со склада: ${res.matched}`
+          : 'Новых совпадений нет — всё уже подобрано',
+      });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Ошибка',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setRematching(false);
+    }
+  };
 
   useEffect(() => {
     scanInputRef.current?.focus();
@@ -85,6 +116,10 @@ const GoodsPicking = () => {
     }
   };
 
+  // Вещи, которые система сама подобрала под заказы: ждут, чтобы кладовщик наклеил
+  // стикер отправления. Это и есть «новая работа», прилетающая в течение дня.
+  const awaitingLabel = inStock.filter((i) => i.reservedOrderId && !i.shippingLabeledAt);
+
   const filteredInStock = inStock.filter((i) => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
@@ -103,11 +138,77 @@ const GoodsPicking = () => {
             <Icon name="ChevronLeft" size={16} className="mr-1" />
             К складу товара
           </Button>
-          <h1 className="text-xl font-bold">Товар к подбору</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Отсканируйте штрихкод хранения, чтобы отметить товар как отобранный для будущей поставки FBS
-          </p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-xl font-bold">Товар к подбору</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Отсканируйте штрихкод хранения, чтобы отметить товар как отобранный для будущей поставки FBS
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleRematch} disabled={rematching}>
+              <Icon
+                name={rematching ? 'Loader2' : 'RefreshCw'}
+                size={14}
+                className={`mr-1.5 ${rematching ? 'animate-spin' : ''}`}
+              />
+              Проверить подбор
+            </Button>
+          </div>
         </div>
+
+        {awaitingLabel.length > 0 && (
+          <Card className="border-destructive/40 bg-destructive/5 shadow-none">
+            <CardContent className="space-y-3 pt-6">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Icon name="BellRing" size={20} className="text-destructive" />
+                  <div>
+                    <p className="font-semibold">
+                      Новая работа: {awaitingLabel.length} шт. подобрано под заказы
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Заберите вещи с полок и наклейте стикеры отправления — шить их не нужно
+                    </p>
+                  </div>
+                </div>
+                <Button onClick={() => setShipLabelOpen(true)}>
+                  <Icon name="Tag" size={16} className="mr-2" />
+                  Наклеить стикеры
+                </Button>
+              </div>
+
+              <div className="rounded-md border border-border bg-background">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Штрихкод</TableHead>
+                      <TableHead>Полка</TableHead>
+                      <TableHead>Товар</TableHead>
+                      <TableHead>Под заказ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {awaitingLabel.map((i) => (
+                      <TableRow key={i.id}>
+                        <TableCell className="font-mono-tech">{i.storageBarcode}</TableCell>
+                        <TableCell>{i.shelfName || '—'}</TableCell>
+                        <TableCell>{i.product || '—'}</TableCell>
+                        <TableCell className="font-medium">{i.reservedOrderNumber || '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <ShipLabelDialog
+          open={shipLabelOpen}
+          onOpenChange={setShipLabelOpen}
+          matched={awaitingLabel}
+          onDone={load}
+        />
 
         <Card className="border-primary/30 bg-primary/5 shadow-none">
           <CardContent
