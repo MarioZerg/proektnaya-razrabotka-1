@@ -71,10 +71,12 @@ export const useSewingItemsData = () => {
   }, []);
 
   // Настройка "печать листа закройщика при взятии стека" + список материалов цеха —
-  // читаются из настроек ТЕКУЩЕГО цеха закройщика. Ткани в фильтре ограничиваем материалами,
-  // присущими его цеху (allowedMaterials из настроек).
+  // читаются из настроек ТЕКУЩЕГО цеха сотрудника. Ткани в фильтре ограничиваем
+  // материалами его цеха (allowedMaterials из настроек).
   useEffect(() => {
-    if (!isCutter || !effectiveWorkshopId) {
+    // Ткани цеха нужны ВСЕМ производственным ролям, а не только закройщику: швея и
+    // упаковщица работают в том же цехе и не должны видеть в фильтре чужие материалы.
+    if (!isProductionRole || !effectiveWorkshopId) {
       setAllowedMaterialIds(null);
       return;
     }
@@ -84,17 +86,17 @@ export const useSewingItemsData = () => {
       const penaltyRaw = w.settings.cancel_order_penalty?.value ?? w.settings.cancel_order_penalty?.global;
       setCancelOrderPenalty(Number(penaltyRaw) || 0);
     });
-  }, [isCutter, effectiveWorkshopId]);
+  }, [isProductionRole, effectiveWorkshopId]);
 
-  // Итоговый список тканей для фильтра: у закройщика — только материалы его цеха
-  // (allowedMaterialIds), у остальных ролей — все ткани.
+  // Итоговый список тканей: у производственных ролей — только материалы их цеха,
+  // у админа/менеджера/кладовщика — все ткани (они работают со всеми цехами).
   const visibleMaterials = useMemo(() => {
-    if (isCutter && allowedMaterialIds) {
+    if (isProductionRole && allowedMaterialIds) {
       const allowed = new Set(allowedMaterialIds);
       return materials.filter((m) => allowed.has(m.id));
     }
     return materials;
-  }, [isCutter, allowedMaterialIds, materials]);
+  }, [isProductionRole, allowedMaterialIds, materials]);
 
   return {
     user,

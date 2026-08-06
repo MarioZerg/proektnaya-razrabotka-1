@@ -59,7 +59,6 @@ const productionNav: NavItem[] = [
     icon: 'Truck',
     children: [
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
-      { label: 'Передать брак на склад', path: '/crm/shipments/defect-to-warehouse' },
     ],
   },
   {
@@ -88,7 +87,6 @@ const packerNav: NavItem[] = [
     icon: 'Truck',
     children: [
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
-      { label: 'Передать брак на склад', path: '/crm/shipments/defect-to-warehouse' },
     ],
   },
   {
@@ -112,7 +110,6 @@ const storekeeperNav: NavItem[] = [
       { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
       { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
       { label: 'Товар к подбору', path: '/crm/inventory/goods-picking' },
-      { label: 'Возвраты на осмотр', path: '/crm/inventory/returns-inspection' },
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
@@ -128,7 +125,6 @@ const storekeeperNav: NavItem[] = [
       { label: 'Возврат поставщику', path: '/crm/shipments/return-to-supplier' },
       { label: 'Списание брака', path: '/crm/shipments/defect-writeoff' },
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
-      { label: 'Передать брак на склад', path: '/crm/shipments/defect-to-warehouse' },
       { label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' },
       { label: 'Получение возвратов', path: '/crm/shipments/receive-returns' },
     ],
@@ -186,7 +182,6 @@ const adminNav: NavItem[] = [
       { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
       { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
       { label: 'Товар к подбору', path: '/crm/inventory/goods-picking' },
-      { label: 'Возвраты на осмотр', path: '/crm/inventory/returns-inspection' },
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
@@ -202,7 +197,6 @@ const adminNav: NavItem[] = [
       { label: 'Возврат поставщику', path: '/crm/shipments/return-to-supplier' },
       { label: 'Списание брака', path: '/crm/shipments/defect-writeoff' },
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
-      { label: 'Передать брак на склад', path: '/crm/shipments/defect-to-warehouse' },
       { label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' },
       { label: 'Получение возвратов', path: '/crm/shipments/receive-returns' },
     ],
@@ -237,7 +231,6 @@ const adminNav: NavItem[] = [
       { label: 'Поставщики', path: '/crm/settings/suppliers' },
       { label: 'Товары на маркетплейсе', path: '/crm/settings/marketplace-items' },
       { label: 'Интеграции маркетплейсов', path: '/crm/settings/marketplace-integrations' },
-      { label: 'Стикеры товаров', path: '/crm/settings/item-stickers' },
       { label: 'Полки на складе', path: '/crm/settings/shelves' },
       { label: 'Вешалки', path: '/crm/settings/hangers' },
     ],

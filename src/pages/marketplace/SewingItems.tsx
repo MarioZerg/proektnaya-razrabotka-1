@@ -129,6 +129,26 @@ const SewingItems = () => {
       <div className="space-y-4 sm:space-y-6">
         <h1 className="text-xl font-bold">Товары для пошива</h1>
 
+        {/* Конвейер по цехам: у каждого цеха свои ткани и свои сотрудники, поэтому
+            смешанный список читать неудобно. Переключатель открывает конвейер одного
+            цеха. Производственным ролям он не нужен — они и так видят только свой цех. */}
+        {!isProductionRole && workshops.filter((w) => w.isActive).length > 1 && (
+          <Tabs value={workshopFilter} onValueChange={setWorkshopFilter}>
+            <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
+              <TabsTrigger value="all" className="shrink-0">
+                Все цеха
+              </TabsTrigger>
+              {workshops
+                .filter((w) => w.isActive)
+                .map((w) => (
+                  <TabsTrigger key={w.id} value={String(w.id)} className="shrink-0">
+                    {w.name}
+                  </TabsTrigger>
+                ))}
+            </TabsList>
+          </Tabs>
+        )}
+
         {!isProductionRole && (
           <div className="relative">
             <Icon
@@ -167,7 +187,7 @@ const SewingItems = () => {
           marketplaceFilter={marketplaceFilter}
           setMarketplaceFilter={setMarketplaceFilter}
           showEmployeeFilter={!isCutter && !isSewer}
-          showWorkshopFilter={!isCutter && !isSewer}
+          showWorkshopFilter={false}
         />
 
         {(isCutter || isSewer) && (
