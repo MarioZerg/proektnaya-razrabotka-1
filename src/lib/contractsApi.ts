@@ -34,10 +34,12 @@ export const fetchMyContracts = async (userId: number): Promise<Contract[]> => {
   return data.contracts || [];
 };
 
-/** Все договоры всех сотрудников — для администратора. */
-export const fetchAllContracts = async (): Promise<Contract[]> => {
-  const res = await fetch(`${CONTRACTS_URL}?all=1`);
+/** Все договоры всех сотрудников — только для администратора. Роль проверяется на
+ * сервере по actorId, поэтому подменить её на стороне браузера нельзя. */
+export const fetchAllContracts = async (actorId: number): Promise<Contract[]> => {
+  const res = await fetch(`${CONTRACTS_URL}?all=1&actorId=${actorId}`);
   const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Нет доступа');
   return data.contracts || [];
 };
 

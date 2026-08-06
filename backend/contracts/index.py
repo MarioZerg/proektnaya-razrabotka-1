@@ -13,6 +13,8 @@ import requests
 
 
 MAX_API_URL = 'https://platform-api2.max.ru'
+# Доступ к чужим договорам закрыт: все документы видит только администратор.
+ACCESS_RULES_VERSION = 2
 # Код на подпись живёт дольше кода входа: человек читает документ, прежде чем подписать.
 CODE_TTL_MINUTES = 15
 
@@ -186,7 +188,9 @@ def handler(event: dict, context) -> dict:
     он видит документ и подписывает его кодом, который бот присылает в MAX.
 
     GET  /?userId=5           - договоры сотрудника (его личная вкладка «Договоры»)
-    GET  /?all=1              - все договоры всех сотрудников (для администратора)
+    GET  /?all=1&actorId=1    - все договоры всех сотрудников. Только для администратора:
+                                роль проверяется в базе по actorId, поэтому подменить её
+                                в запросе нельзя. Остальные роли видят только свои договоры
     GET  /?pending=1&userId=5 - есть ли у сотрудника неподписанные договоры (блокировка входа)
 
     POST / { action: 'create', userId, title, fileBase64, fileName, actorId, actorName }
@@ -241,6 +245,24 @@ def handler(event: dict, context) -> dict:
                 }
 
             if params.get('all'):
+                # Все договоры видит ТОЛЬКО администратор. Роль берём из базы по
+                # actorId, а не из параметра запроса: параметр можно подделать, а запись
+                # в базе — нет. Иначе любой сотрудник увидел бы документы коллег.
+                actor_id = params.get('actorId')
+                if not actor_id:
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Нет доступа к чужим документам'}, ensure_ascii=False),
+                    }
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                actor_row = cur.fetchone()
+                if not actor_row or actor_row[0] != 'admin':
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Договоры сотрудников доступны только администратору'}, ensure_ascii=False),
+                    }
                 cur.execute(
                     "SELECT c.id, c.user_id, u.full_name, c.title, c.file_url, c.file_name, "
                     "c.status, c.created_at, c.signed_at, c.signed_phone "

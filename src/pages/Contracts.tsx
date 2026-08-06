@@ -36,8 +36,9 @@ const Contracts = () => {
   const load = () => {
     if (!user) return;
     setLoading(true);
-    (isAdmin ? fetchAllContracts() : fetchMyContracts(user.id))
+    (isAdmin ? fetchAllContracts(user.id) : fetchMyContracts(user.id))
       .then(setItems)
+      .catch(() => setItems([]))
       .finally(() => setLoading(false));
   };
 

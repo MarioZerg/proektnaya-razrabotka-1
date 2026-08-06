@@ -1,12 +1,88 @@
 {
   "tests": [
-    {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
-    {"name": "Get contracts without userId fails", "method": "GET", "path": "/", "expectedStatus": 400},
-    {"name": "Get all contracts", "method": "GET", "path": "/?all=1", "expectedStatus": 200},
-    {"name": "Create contract by non-admin fails", "method": "POST", "path": "/", "body": {"action": "create", "actorRole": "sewer", "userId": 1, "title": "x", "fileBase64": "data:,x"}, "expectedStatus": 403},
-    {"name": "Create contract without data fails", "method": "POST", "path": "/", "body": {"action": "create", "actorRole": "admin"}, "expectedStatus": 400},
-    {"name": "Send code without contract fails", "method": "POST", "path": "/", "body": {"action": "send_code"}, "expectedStatus": 400},
-    {"name": "Sign without code fails", "method": "POST", "path": "/", "body": {"action": "sign", "contractId": 1, "userId": 1}, "expectedStatus": 400},
-    {"name": "Cancel by non-admin fails", "method": "POST", "path": "/", "body": {"action": "cancel", "id": 1, "actorRole": "manager"}, "expectedStatus": 403}
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get contracts without userId fails",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 400
+    },
+    {
+      "name": "Create contract by non-admin fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "create",
+        "actorRole": "sewer",
+        "userId": 1,
+        "title": "x",
+        "fileBase64": "data:,x"
+      },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Create contract without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "create",
+        "actorRole": "admin"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Send code without contract fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "send_code"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Sign without code fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "sign",
+        "contractId": 1,
+        "userId": 1
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Cancel by non-admin fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "cancel",
+        "id": 1,
+        "actorRole": "manager"
+      },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Get all contracts without actor fails",
+      "method": "GET",
+      "path": "/?all=1",
+      "expectedStatus": 403
+    },
+    {
+      "name": "Get all contracts by non-admin fails",
+      "method": "GET",
+      "path": "/?all=1&actorId=3",
+      "expectedStatus": 403
+    },
+    {
+      "name": "Get all contracts by admin works",
+      "method": "GET",
+      "path": "/?all=1&actorId=1",
+      "expectedStatus": 200
+    }
   ]
 }
