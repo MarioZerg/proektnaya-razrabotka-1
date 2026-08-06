@@ -58,6 +58,9 @@ def handler(event: dict, context) -> dict:
           и при открытии смены сам выбирает, в какой цех/смену зайти сегодня (см.
           backend/shift_sessions). shiftFree=false возвращает жёсткую привязку
     POST /  { action: 'delete', id }
+    POST /  { action: 'unlock_salary', id, actorRole } — админ открывает сотруднику
+            зарплату досрочно, не дожидаясь двух недель (для опытных работников,
+            взятых сразу в работу)
     POST /  { action: 'add_role', id, role, approved? } — добавляет пользователю новую
         должность. approved (по умолчанию true) — сразу утверждённая или нет
     POST /  { action: 'approve_role', id, role, password? } — утверждает заявку
@@ -102,7 +105,8 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "SELECT id, login, email, full_name, role, workshop, salary, "
                 "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number, "
-                "max_user_id, phone, registered_via_max, shift_free "
+                "max_user_id, phone, registered_via_max, shift_free, salary_unlock_at, "
+                "CEIL(GREATEST(0, EXTRACT(EPOCH FROM (salary_unlock_at - now())) / 86400))::int "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -132,6 +136,10 @@ def handler(event: dict, context) -> dict:
                     'phone': r[15],
                     'registeredViaMax': r[16],
                     'shiftFree': r[17],
+                    # Зарплата новичка закрыта первые 2 недели. Админ видит, сколько
+                    # осталось, и может открыть раньше опытному работнику.
+                    'salaryUnlockAt': (r[18].isoformat() + 'Z') if r[18] else None,
+                    'salaryDaysLeft': int(r[19]) if r[19] is not None else 0,
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows
@@ -284,6 +292,33 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"DELETE FROM users WHERE id = {int(user_id)}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'unlock_salary':
+                # Опытного работника берут сразу в дело — двухнедельная выдержка ему не
+                # нужна. Админ открывает зарплату досрочно: ставим дату открытия «сейчас»,
+                # и сотрудник сразу видит свой баланс.
+                user_id = body_data.get('id')
+                if not user_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                if (body_data.get('actorRole') or '') != 'admin':
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Открыть зарплату может только администратор'}, ensure_ascii=False),
+                    }
+                cur.execute(
+                    "UPDATE users SET salary_unlock_at = now() WHERE id = %s RETURNING full_name",
+                    (int(user_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник не найден'})}
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'fullName': row[0]}, ensure_ascii=False),
+                }
 
             if action == 'add_role':
                 user_id = body_data.get('id')

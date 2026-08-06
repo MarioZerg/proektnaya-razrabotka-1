@@ -28,6 +28,10 @@ export interface Employee {
   /** Гостевой режим ("смена выключена" сотруднику) — не привязан жёстко к штатной смене,
    * при открытии смены сам выбирает цех/смену на сегодня. */
   shiftFree: boolean;
+  /** Когда сотруднику откроется зарплата (новичкам — через 2 недели). */
+  salaryUnlockAt: string | null;
+  /** Сколько дней осталось до открытия зарплаты, 0 — уже открыта. */
+  salaryDaysLeft: number;
   roles: UserRoleEntry[];
 }
 
@@ -84,6 +88,14 @@ export const deleteEmployee = (id: number) => postAction({ action: 'delete', id 
 
 export const addEmployeeRole = (id: number, role: Role, approved = true) =>
   postAction({ action: 'add_role', id, role, approved });
+
+/** Открывает сотруднику зарплату досрочно, не дожидаясь двух недель — для опытных
+ * работников, которых берут сразу в дело. */
+export const unlockEmployeeSalary = (id: number) =>
+  postAction({ action: 'unlock_salary', id, actorRole: 'admin' }) as Promise<{
+    success: true;
+    fullName: string;
+  }>;
 
 /** Утверждает должность сотрудника и заодно задаёт ему пароль для входа по логину.
  * Возвращает логин — админ диктует сотруднику логин с паролем. */

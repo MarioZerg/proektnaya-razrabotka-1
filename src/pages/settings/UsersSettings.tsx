@@ -9,6 +9,7 @@ import {
   addEmployeeRole,
   approveEmployeeRole,
   removeEmployeeRole,
+  unlockEmployeeSalary,
   type Employee,
 } from '@/lib/usersApi';
 import type { Role } from '@/lib/roles';
@@ -177,6 +178,31 @@ const UsersSettings = () => {
     }
   };
 
+  // Опытного работника берут сразу в дело — двухнедельная выдержка ему ни к чему.
+  const handleUnlockSalary = async () => {
+    if (!cardEmployee) return;
+    setRoleActionLoading(true);
+    try {
+      await unlockEmployeeSalary(cardEmployee.id);
+      const updated = await fetchEmployees();
+      setEmployees(updated);
+      const fresh = updated.find((e) => e.id === cardEmployee.id);
+      if (fresh) setCardEmployee(fresh);
+      toast({
+        title: 'Зарплата открыта',
+        description: `${cardEmployee.fullName} уже видит свой баланс`,
+      });
+    } catch (err) {
+      toast({
+        title: 'Не удалось открыть зарплату',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setRoleActionLoading(false);
+    }
+  };
+
   const handleRemoveRole = async (role: Role) => {
     if (!cardEmployee) return;
     setRoleActionLoading(true);
@@ -261,6 +287,7 @@ const UsersSettings = () => {
         onApproveRole={handleApproveRole}
         onAddRole={handleAddRole}
         onRemoveRole={handleRemoveRole}
+        onUnlockSalary={handleUnlockSalary}
         roleActionLoading={roleActionLoading}
       />
 

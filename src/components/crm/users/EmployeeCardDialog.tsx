@@ -25,6 +25,16 @@ import {
 } from '@/components/crm/users/usersShared';
 import EmployeeKioskQr from '@/components/crm/users/EmployeeKioskQr';
 
+/** «1 день», «3 дня», «7 дней» — чтобы подпись читалась по-русски. */
+const dayWord = (n: number) => {
+  const last = n % 10;
+  const twoLast = n % 100;
+  if (twoLast >= 11 && twoLast <= 14) return 'дней';
+  if (last === 1) return 'день';
+  if (last >= 2 && last <= 4) return 'дня';
+  return 'дней';
+};
+
 interface EmployeeCardDialogProps {
   cardEmployee: Employee | null;
   cardForm: CardFormState | null;
@@ -36,6 +46,8 @@ interface EmployeeCardDialogProps {
   onApproveRole: (role: Role) => void;
   onAddRole: (role: Role) => void;
   onRemoveRole: (role: Role) => void;
+  /** Открыть зарплату досрочно, не дожидаясь двух недель. */
+  onUnlockSalary: () => void;
   roleActionLoading: boolean;
 }
 
@@ -50,6 +62,7 @@ const EmployeeCardDialog = ({
   onApproveRole,
   onAddRole,
   onRemoveRole,
+  onUnlockSalary,
   roleActionLoading,
 }: EmployeeCardDialogProps) => {
   const { toast } = useToast();
@@ -183,6 +196,45 @@ const EmployeeCardDialog = ({
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Зарплата новичка закрыта первые 2 недели: человек осваивается, суммы
+                скачут. Но опытного работника берут сразу в дело — ему выдержка не нужна,
+                и админ открывает баланс досрочно. */}
+            <div className="space-y-2 rounded-md border border-border p-3">
+              <div className="flex items-center gap-2">
+                <Icon
+                  name={cardEmployee.salaryDaysLeft > 0 ? 'Lock' : 'LockOpen'}
+                  size={16}
+                  className={
+                    cardEmployee.salaryDaysLeft > 0 ? 'text-amber-600' : 'text-emerald-600'
+                  }
+                />
+                <Label className="cursor-default">Доступ к зарплате</Label>
+              </div>
+              {cardEmployee.salaryDaysLeft > 0 ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Закрыт ещё {cardEmployee.salaryDaysLeft}{' '}
+                    {dayWord(cardEmployee.salaryDaysLeft)} — откроется сам. Если сотрудник
+                    опытный и взят сразу в работу, можно открыть сейчас.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={roleActionLoading}
+                    onClick={onUnlockSalary}
+                  >
+                    <Icon name="LockOpen" size={14} className="mr-1.5" />
+                    Открыть зарплату сейчас
+                  </Button>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Открыт — сотрудник видит свой баланс
+                </p>
+              )}
             </div>
 
             <EmployeeKioskQr
