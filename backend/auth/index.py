@@ -8,13 +8,16 @@ ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'cleaner', 'admin', 'manage
 
 
 def handler(event: dict, context) -> dict:
-    """Авторизация сотрудников ТОЛЬКО через мессенджер MAX (без логина/пароля).
+    """Авторизация сотрудников через мессенджеры MAX и Telegram (без логина/пароля).
 
     Полный сценарий входа:
-    1. Сотрудник жмёт «Войти через MAX» на сайте → открывается бот (backend/max_bot
-       обрабатывает webhook MAX, присылает код после того как человек поделился
+    1. Сотрудник жмёт «Войти через MAX» или «Войти через Telegram» на сайте →
+       открывается бот (backend/max_bot либо backend/telegram_bot обрабатывает
+       webhook мессенджера и присылает код после того, как человек поделился
        номером телефона в боте).
-    2. POST { action: 'max_verify_code', code } — сайт отправляет введённый код.
+    2. POST { action: 'max_verify_code' | 'telegram_verify_code', code } — сайт
+       отправляет введённый код. Оба действия работают одинаково, отличается
+       только таблица одноразовых сессий.
        Возвращает данные пользователя и список его ролей (роль + утверждена ли
        админом). Если ролей нет вообще — это новый человек, нужно выбрать желаемую
        должность (см. select_role). Если есть роли, но НИ ОДНА не утверждена —
@@ -28,8 +31,8 @@ def handler(event: dict, context) -> dict:
        роль пользователя. Проверяет, что роль утверждена, возвращает полные данные
        сессии (id, name, role, workshopId, workshopName, shiftNumber).
 
-    POST { action: 'bot_info' } — отдаёт публичную ссылку на бота MAX (кнопка
-    «Войти через MAX» на сайте открывает её в новой вкладке).
+    POST { action: 'bot_info' } — отдаёт публичные ссылки на ботов MAX и Telegram
+    (кнопки входа на сайте открывают их в новой вкладке).
 
     POST { action: 'test_accounts' } — демо-вход: по одному активному сотруднику
     на каждую основную роль (без проверки кода), для ознакомительного режима.
@@ -66,10 +69,16 @@ def handler(event: dict, context) -> dict:
 
     if action == 'bot_info':
         username = os.environ.get('MAX_BOT_USERNAME', '')
+        tg_username = os.environ.get('TELEGRAM_BOT_USERNAME', '')
         return {
             'statusCode': 200,
             'headers': headers,
-            'body': json.dumps({'botUrl': f'https://max.ru/{username}' if username else None}),
+            'body': json.dumps(
+                {
+                    'botUrl': f'https://max.ru/{username}' if username else None,
+                    'telegramBotUrl': f'https://t.me/{tg_username}' if tg_username else None,
+                }
+            ),
         }
 
     if action == 'test_accounts':
@@ -100,7 +109,13 @@ def handler(event: dict, context) -> dict:
         ]
         return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'accounts': accounts})}
 
-    if action == 'max_verify_code':
+    if action in ('max_verify_code', 'telegram_verify_code'):
+        # Оба мессенджера работают одинаково: бот кладёт одноразовый код в свою таблицу
+        # сессий, сайт его проверяет. Отличаются только названия таблицы и колонки.
+        is_telegram = action == 'telegram_verify_code'
+        sessions_table = 'telegram_auth_sessions' if is_telegram else 'max_auth_sessions'
+        id_column = 'telegram_user_id' if is_telegram else 'max_user_id'
+
         code = (body_data.get('code') or '').strip()
         if not code:
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Введите код'})}
@@ -109,7 +124,7 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             cur.execute(
-                "SELECT id, max_user_id FROM max_auth_sessions "
+                f"SELECT id, {id_column} FROM {sessions_table} "
                 "WHERE code = %s AND used = false AND expires_at > now() ORDER BY id DESC LIMIT 1",
                 (code,),
             )
@@ -117,13 +132,13 @@ def handler(event: dict, context) -> dict:
             if not session_row:
                 return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Неверный или устаревший код'})}
 
-            session_id, max_user_id = session_row
-            cur.execute('UPDATE max_auth_sessions SET used = true WHERE id = %s', (session_id,))
+            session_id, messenger_user_id = session_row
+            cur.execute(f'UPDATE {sessions_table} SET used = true WHERE id = %s', (session_id,))
 
             cur.execute(
                 "SELECT id, full_name, is_active, workshop, shift_number, phone "
-                "FROM users WHERE max_user_id = %s",
-                (max_user_id,),
+                f"FROM users WHERE {id_column} = %s",
+                (messenger_user_id,),
             )
             user_row = cur.fetchone()
             if not user_row:

@@ -6,11 +6,13 @@ import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import type { Role } from '@/lib/roles';
 import {
-  fetchMaxBotUrl,
-  verifyMaxCode,
+  fetchBotUrls,
+  verifyMessengerCode,
   selectDesiredRole,
   enterRole,
   type UserRoleEntry,
+  type BotUrls,
+  type Messenger,
 } from '@/lib/authApi';
 import type { TestAccount } from '@/lib/authApi';
 import TestAccountsPanel from '@/components/auth/TestAccountsPanel';
@@ -25,8 +27,11 @@ const Index = () => {
   const { login } = useAuth();
 
   const [step, setStep] = useState<Step>('start');
-  const [botUrl, setBotUrl] = useState<string | null>(null);
+  const [botUrls, setBotUrls] = useState<BotUrls>({ max: null, telegram: null });
   const [botOpened, setBotOpened] = useState(false);
+  // Через какой мессенджер сотрудник вошёл — от этого зависит, в какой таблице
+  // сессий backend будет искать введённый код.
+  const [messenger, setMessenger] = useState<Messenger>('max');
 
   const [code, setCode] = useState('');
   const [verifying, setVerifying] = useState(false);
@@ -37,13 +42,15 @@ const Index = () => {
   const [entering, setEntering] = useState(false);
 
   useEffect(() => {
-    fetchMaxBotUrl().then(setBotUrl);
+    fetchBotUrls().then(setBotUrls);
   }, []);
 
-  const handleOpenBot = () => {
-    if (botUrl) {
-      window.open(botUrl, '_blank', 'noopener,noreferrer');
+  const handleOpenBot = (target: Messenger) => {
+    const url = target === 'telegram' ? botUrls.telegram : botUrls.max;
+    if (url) {
+      window.open(url, '_blank', 'noopener,noreferrer');
     }
+    setMessenger(target);
     setBotOpened(true);
     setStep('code');
   };
@@ -75,7 +82,7 @@ const Index = () => {
     setError('');
     setVerifying(true);
     try {
-      const result = await verifyMaxCode(code.trim());
+      const result = await verifyMessengerCode(code.trim(), messenger);
       const approvedRoles = result.roles.filter((r) => r.isApproved);
 
       if (result.roles.length === 0) {
@@ -145,6 +152,7 @@ const Index = () => {
     setError('');
     setPendingUser(null);
     setBotOpened(false);
+    setMessenger('max');
   };
 
   return (
@@ -163,12 +171,21 @@ const Index = () => {
           <div className="space-y-4">
             <Button
               type="button"
-              onClick={handleOpenBot}
-              disabled={!botUrl}
+              onClick={() => handleOpenBot('max')}
+              disabled={!botUrls.max}
               className="h-12 w-full rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <Icon name="MessageCircle" size={18} className="mr-2" />
               Войти через MAX
+            </Button>
+            <Button
+              type="button"
+              onClick={() => handleOpenBot('telegram')}
+              disabled={!botUrls.telegram}
+              className="h-12 w-full rounded-sm bg-[#229ED9] text-white hover:bg-[#1c8ac0]"
+            >
+              <Icon name="Send" size={18} className="mr-2" />
+              Войти через Telegram
             </Button>
             <p className="text-center text-xs text-muted-foreground">
               Откроется бот МЕГАТЮЛЬ — поделитесь номером телефона, и бот пришлёт код для входа
@@ -191,13 +208,14 @@ const Index = () => {
           <form onSubmit={handleVerifyCode} className="space-y-3">
             {botOpened && (
               <p className="text-center text-sm text-muted-foreground">
-                Бот открылся в новой вкладке. Поделитесь номером телефона в чате — код придёт сообщением.
+                Бот {messenger === 'telegram' ? 'Telegram' : 'MAX'} открылся в новой вкладке.
+                Поделитесь номером телефона в чате — код придёт сообщением.
               </p>
             )}
             <Input
               type="text"
               inputMode="numeric"
-              placeholder="Код из MAX"
+              placeholder={messenger === 'telegram' ? 'Код из Telegram' : 'Код из MAX'}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               className="h-11 rounded-sm border-border bg-transparent text-center font-mono-tech text-lg tracking-[0.3em]"

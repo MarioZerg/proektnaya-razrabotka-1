@@ -1,0 +1,37 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Empty update is ignored gracefully",
+      "method": "POST",
+      "path": "/",
+      "body": {"update_id": 1},
+      "expectedStatus": 200
+    },
+    {
+      "name": "Register webhook without url fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "register_webhook"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "nope"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "GET not allowed",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 405
+    }
+  ]
+}
