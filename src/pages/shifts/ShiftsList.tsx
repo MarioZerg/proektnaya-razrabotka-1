@@ -40,6 +40,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { fetchShifts, createShift, deleteShift, type ShiftListItem } from '@/lib/shiftsApi';
+import { autoCloseShifts } from '@/lib/shiftSessionsApi';
 
 const ShiftsList = () => {
   const navigate = useNavigate();
@@ -48,6 +49,7 @@ const ShiftsList = () => {
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [autoClosing, setAutoClosing] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState('');
   const [createWorkshopId, setCreateWorkshopId] = useState('');
@@ -117,12 +119,52 @@ const ShiftsList = () => {
     }
   };
 
+  // Смены, которые сотрудники забыли закрыть, закрываются концом рабочего дня из настроек
+  // цеха. За забытую смену начисляется штраф, а если за швеёй/закройщиком ещё висели
+  // заказы — повышенный, отдельной настройкой.
+  const handleAutoClose = async () => {
+    setAutoClosing(true);
+    try {
+      const res = await autoCloseShifts();
+      if (res.closedCount === 0) {
+        toast({ title: 'Забытых смен нет', description: 'Все смены закрыты вовремя' });
+      } else {
+        const withOrders = res.closed.filter((c) => c.ordersInWork > 0).length;
+        toast({
+          title: `Закрыто смен: ${res.closedCount}`,
+          description: withOrders > 0 ? `Из них с заказами в работе: ${withOrders}` : undefined,
+        });
+      }
+    } catch (err) {
+      toast({
+        title: 'Не удалось закрыть смены',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setAutoClosing(false);
+    }
+  };
+
   return (
     <CrmLayout>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold">Смены</h1>
           <div className="flex gap-3">
+            <Button
+              variant="outline"
+              onClick={handleAutoClose}
+              disabled={autoClosing}
+              title="Закрыть смены, которые сотрудники забыли закрыть"
+            >
+              <Icon
+                name={autoClosing ? 'Loader2' : 'MoonStar'}
+                size={16}
+                className={`mr-1.5 ${autoClosing ? 'animate-spin' : ''}`}
+              />
+              Закрыть забытые смены
+            </Button>
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
               <Button onClick={openCreate} className="bg-blue-600 text-white hover:bg-blue-700">
                 <Icon name="Plus" size={16} className="mr-1.5" />

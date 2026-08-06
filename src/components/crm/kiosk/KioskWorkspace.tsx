@@ -27,6 +27,9 @@ interface KioskWorkspaceProps {
   shiftSaving: boolean;
   defectCheck: DefectCheck | null;
   setDefectCheck: (check: DefectCheck | null) => void;
+  /** Сообщение о том, что смену нельзя закрыть из-за незавершённых заказов. */
+  closeBlocked: string;
+  onDismissCloseBlocked: () => void;
   onLogout: () => void;
   onOpenShift: () => void;
   onCloseShift: () => void;
@@ -47,6 +50,8 @@ const KioskWorkspace = ({
   shiftSaving,
   defectCheck,
   setDefectCheck,
+  closeBlocked,
+  onDismissCloseBlocked,
   onLogout,
   onOpenShift,
   onCloseShift,
@@ -57,6 +62,43 @@ const KioskWorkspace = ({
       {/* Автовыход из профиля при бездействии: предупреждение через минуту, отсчёт 30 сек.
           В режиме проверки таймер не нужен — админ может спокойно изучать экраны. */}
       {!isPreview && <KioskIdleTimer onTimeout={onLogout} />}
+
+      {/* Смену не дали закрыть: за швеёй или закройщиком ещё числятся заказы. Показываем
+          это во весь экран — на планшете в цеху всплывашку легко не заметить. */}
+      {closeBlocked && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+          <div className="w-full max-w-lg space-y-4 rounded-lg bg-background p-6">
+            <div className="flex items-start gap-3">
+              <Icon name="TriangleAlert" size={32} className="mt-0.5 shrink-0 text-amber-600" />
+              <div>
+                <p className="text-2xl font-bold">Смену закрыть нельзя</p>
+                <p className="mt-1 text-base text-muted-foreground">{closeBlocked}</p>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                size="lg"
+                className="h-16 flex-1 text-lg"
+                onClick={() => {
+                  onDismissCloseBlocked();
+                  setScreen('orders');
+                }}
+              >
+                <Icon name="ClipboardList" size={22} className="mr-2" />
+                Мои заказы
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-16 flex-1 text-lg"
+                onClick={onDismissCloseBlocked}
+              >
+                Понятно
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Напоминание про брак перед закрытием смены. Текст свой для каждой роли:
           закройщику про ткань, швее про тесьму — так вопрос попадает в её работу. */}

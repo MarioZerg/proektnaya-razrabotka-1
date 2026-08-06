@@ -61,6 +61,19 @@ def get_setting(cur, workshop_id, key, default=None):
     return default
 
 
+def count_orders_in_work(cur, user_id):
+    """Сколько у сотрудника заказов, которые он ещё не довёл до конца. Считаем и раскрой,
+    и пошив, и уже отшитое, но ждущее стикеровки: пока заказ числится за человеком,
+    смену закрывать нельзя — иначе работа зависает и её никто не подхватит."""
+    cur.execute(
+        "SELECT COUNT(*) FROM orders "
+        "WHERE (assigned_user_id = %s OR sewer_user_id = %s OR cutter_user_id = %s) "
+        "AND sewing_status IN ('На раскрое', 'В работе', 'Стикеровка')",
+        (int(user_id), int(user_id), int(user_id)),
+    )
+    return int(cur.fetchone()[0])
+
+
 def apply_penalty(cur, user_id, amount, description, shift_session_id=None):
     """Начисляет автоматический штраф сотруднику (salary_accruals, type='penalty').
     Если shift_session_id указан, защищено уникальным индексом (shift_session_id, type) —
@@ -114,6 +127,20 @@ def handler(event: dict, context) -> dict:
                                       смена + сегодня не отмечено выходным в календаре).
                                       Если у userId штатная смена ещё рабочая — она тоже
                                       входит в список, помечена isHome=true
+    POST /  { action: 'auto_close' }
+                                    - закрывает смены, которые сотрудники забыли закрыть:
+                                      время конца рабочего дня берётся из настроек цеха
+                                      (working_day_end), смена закрывается этим временем,
+                                      а не моментом запуска. Если за швеёй/закройщиком ещё
+                                      числились заказы — штраф unclosed_shift_with_orders_penalty,
+                                      иначе обычный unclosed_shift_penalty. Повторный запуск
+                                      безопасен: закрытые смены пропускаются, штраф за одну
+                                      смену начисляется один раз
+    POST /  { action: 'close', userId, closedByAdmin? }
+                                    - закрывает смену. Швее и закройщику закрыть смену
+                                      нельзя, пока за ними числятся заказы (409) — сначала
+                                      надо их завершить. Администратор закрывает принудительно
+                                      через closedByAdmin=true
     POST /  { action: 'open', userId, workshopId?, shiftNumber?, openedByAdmin?, role? }
         - швея/закройщик/упаковщик работают гибко: цех и смену выбирают при КАЖДОМ открытии
           (можно работать в разных цехах), обязанность закрыть смену сохраняется. Должность
@@ -574,6 +601,27 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Открытой смены не найдено'})}
                 session_id, session_workshop_id = row
 
+                # Швея и закройщик не закрывают смену, пока за ними числятся заказы: иначе
+                # работа зависает до утра и её никто не подхватит. Администратор закрыть
+                # может (closedByAdmin) — он разбирается с зависшими заказами вручную.
+                closed_by_admin = bool(body_data.get('closedByAdmin'))
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(user_id),))
+                role_row = cur.fetchone()
+                if not closed_by_admin and role_row and role_row[0] in ('sewer', 'cutter'):
+                    orders_left = count_orders_in_work(cur, user_id)
+                    if orders_left > 0:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {
+                                    'error': f'У вас {orders_left} заказов в работе — '
+                                             f'сначала завершите их, потом закрывайте смену',
+                                    'ordersInWork': orders_left,
+                                }
+                            ),
+                        }
+
                 cur.execute("UPDATE shift_sessions SET closed_at = now() WHERE id = %s", (session_id,))
 
                 # Уборщица получает оклад за смену при её закрытии (salary_rates, role='cleaner'),
@@ -603,6 +651,76 @@ def handler(event: dict, context) -> dict:
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'auto_close':
+                # Ночной обход: закрываем смены, которые сотрудники забыли закрыть сами.
+                # Время конца рабочего дня у каждого цеха своё (working_day_end), поэтому
+                # смотрим смены по одной и сравниваем с настройкой именно её цеха.
+                cur.execute(
+                    "SELECT s.id, s.user_id, s.workshop_id, s.opened_at, u.role, u.full_name "
+                    "FROM shift_sessions s JOIN users u ON u.id = s.user_id "
+                    "WHERE s.closed_at IS NULL ORDER BY s.opened_at"
+                )
+                open_sessions = cur.fetchall()
+
+                closed = []
+                for session_id, s_user_id, s_workshop_id, opened_at, s_role, s_name in open_sessions:
+                    end_str = get_setting(cur, s_workshop_id, 'working_day_end')
+                    if not end_str:
+                        continue
+
+                    # Рабочий день кончился, если с момента конца дня уже прошло время.
+                    # Смены, открытые ПОСЛЕ конца дня (ночная работа), не трогаем в тот же
+                    # день — они закроются на следующем обходе, когда день кончится снова.
+                    cur.execute(
+                        "SELECT now() > (%s::date + %s::time) AND %s < (%s::date + %s::time)",
+                        (opened_at, end_str, opened_at, opened_at, end_str),
+                    )
+                    should_close = bool(cur.fetchone()[0])
+                    if not should_close:
+                        continue
+
+                    orders_left = (
+                        count_orders_in_work(cur, s_user_id) if s_role in ('sewer', 'cutter') else 0
+                    )
+
+                    cur.execute(
+                        "UPDATE shift_sessions SET closed_at = (%s::date + %s::time) WHERE id = %s",
+                        (opened_at, end_str, session_id),
+                    )
+
+                    # Смену закрыли за сотрудника — значит он забыл это сделать сам.
+                    # Если при этом за ним ещё висели заказы, штраф отдельный и обычно
+                    # больше: незавершённая работа дороже, чем просто забытая смена.
+                    if orders_left > 0:
+                        penalty = get_setting(cur, s_workshop_id, 'unclosed_shift_with_orders_penalty')
+                        description = f'Штраф за незакрытую смену с заказами ({orders_left} шт.)'
+                    else:
+                        penalty = get_setting(cur, s_workshop_id, 'unclosed_shift_penalty')
+                        description = 'Штраф за незакрытую смену'
+
+                    try:
+                        penalty_amount = float(penalty) if penalty else 0
+                    except ValueError:
+                        penalty_amount = 0
+                    if penalty_amount > 0:
+                        apply_penalty(cur, s_user_id, penalty_amount, description, session_id)
+
+                    closed.append(
+                        {
+                            'userId': s_user_id,
+                            'name': s_name,
+                            'ordersInWork': orders_left,
+                            'penalty': penalty_amount,
+                        }
+                    )
+
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'closedCount': len(closed), 'closed': closed}),
+                }
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
         finally:

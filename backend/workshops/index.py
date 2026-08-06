@@ -14,6 +14,7 @@ SETTINGS_KEYS = [
     'orders_priority',
     'late_opened_shift_penalty',
     'unclosed_shift_penalty',
+    'unclosed_shift_with_orders_penalty',
     'is_enabled_work_shift',
     'max_quantity_orders_to_cutter',
     'cutter_daily_limit',

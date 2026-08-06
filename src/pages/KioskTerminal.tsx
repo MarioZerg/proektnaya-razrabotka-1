@@ -30,6 +30,9 @@ const KioskTerminal = () => {
   const [shift, setShift] = useState<KioskShift | null>(null);
   const [shiftSaving, setShiftSaving] = useState(false);
   const [defectCheck, setDefectCheck] = useState<DefectCheck | null>(null);
+  // Смену не дали закрыть из-за незавершённых заказов — показываем это крупно на экране,
+  // а не всплывашкой: на планшете в цеху её легко пропустить.
+  const [closeBlocked, setCloseBlocked] = useState<string>('');
   const [screen, setScreen] = useState<KioskScreen>('menu');
   // После скана QR сотрудник сначала попадает на экран смены и только потом, нажав
   // «Войти в терминал», переходит в меню с плитками.
@@ -227,11 +230,12 @@ const KioskTerminal = () => {
       toast({ title: 'Смена закрыта' });
     } catch (e) {
       playScanErrorSound();
-      toast({
-        title: 'Не удалось закрыть смену',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
+      const message = e instanceof Error ? e.message : 'Попробуйте ещё раз';
+      if (message.includes('заказ')) {
+        setCloseBlocked(message);
+      } else {
+        toast({ title: 'Не удалось закрыть смену', description: message, variant: 'destructive' });
+      }
     } finally {
       setShiftSaving(false);
     }
@@ -268,6 +272,8 @@ const KioskTerminal = () => {
         shiftSaving={shiftSaving}
         defectCheck={defectCheck}
         setDefectCheck={setDefectCheck}
+        closeBlocked={closeBlocked}
+        onDismissCloseBlocked={() => setCloseBlocked('')}
         onLogout={handleLogout}
         onOpenShift={handleOpenShift}
         onCloseShift={handleCloseShift}

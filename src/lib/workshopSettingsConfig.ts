@@ -47,6 +47,11 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
   },
   { key: 'late_opened_shift_penalty', label: 'Штраф за опоздание, руб.', type: 'number' },
   { key: 'unclosed_shift_penalty', label: 'Штраф за не закрытую смену, руб.', type: 'number' },
+  {
+    key: 'unclosed_shift_with_orders_penalty',
+    label: 'Штраф за незакрытую смену с заказами, руб.',
+    type: 'number',
+  },
   { key: 'max_quantity_orders_to_cutter', label: 'Макс. заказов у закройщика', type: 'number' },
   { key: 'cutter_daily_limit', label: 'Метраж в день у закройщика, м', type: 'number' },
   { key: 'cancel_order_penalty', label: 'Штраф за отмену заказа, руб.', type: 'number' },

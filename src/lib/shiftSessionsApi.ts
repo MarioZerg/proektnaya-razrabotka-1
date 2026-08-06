@@ -82,7 +82,25 @@ export const openShift = (
 ): Promise<OpenShiftResult> =>
   postAction({ action: 'open', userId, workshopId, shiftNumber, openedByAdmin, role });
 
-export const closeShift = (userId: number) => postAction({ action: 'close', userId });
+/** Закрывает смену. Швее и закройщику нельзя, пока за ними числятся заказы — придёт
+ * ошибка с их количеством. Администратор закрывает принудительно (closedByAdmin). */
+export const closeShift = (userId: number, closedByAdmin = false) =>
+  postAction({ action: 'close', userId, ...(closedByAdmin ? { closedByAdmin: true } : {}) });
+
+export interface AutoClosedShift {
+  userId: number;
+  name: string;
+  ordersInWork: number;
+  penalty: number;
+}
+
+/** Закрывает смены, которые сотрудники забыли закрыть: время берётся из настроек цеха
+ * (конец рабочего дня), при заказах в работе начисляется повышенный штраф. */
+export const autoCloseShifts = (): Promise<{
+  success: true;
+  closedCount: number;
+  closed: AutoClosedShift[];
+}> => postAction({ action: 'auto_close' });
 export interface DefectCheck {
   ask: boolean;
   question: string;
