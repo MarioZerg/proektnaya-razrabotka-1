@@ -60,8 +60,10 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'delete', id }
     POST /  { action: 'add_role', id, role, approved? } — добавляет пользователю новую
         должность. approved (по умолчанию true) — сразу утверждённая или нет
-    POST /  { action: 'approve_role', id, role } — утверждает ранее выбранную
-        пользователем должность (после регистрации через MAX она ждёт подтверждения)
+    POST /  { action: 'approve_role', id, role, password? } — утверждает заявку
+        сотрудника на должность и заодно задаёт ему пароль для входа по логину
+        (до утверждения пароля у него нет). В ответе возвращает login, чтобы админ
+        сразу продиктовал сотруднику логин и пароль
     POST /  { action: 'reject_role', id, role } — отклоняет заявку новичка на должность:
         убирает её и отключает учётную запись, если других должностей не осталось
     POST /  { action: 'remove_role', id, role } — убирает должность у пользователя
@@ -300,14 +302,39 @@ def handler(event: dict, context) -> dict:
             if action == 'approve_role':
                 user_id = body_data.get('id')
                 role = (body_data.get('role') or '').strip()
+                password = (body_data.get('password') or '').strip()
                 if not user_id or not role:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректные данные'})}
+
                 cur.execute(
                     'UPDATE user_roles SET is_approved = true WHERE user_id = %s AND role = %s',
                     (int(user_id), role),
                 )
+
+                # При утверждении заявки админ задаёт сотруднику пароль — до этого момента
+                # войти по паролю нельзя. Логин отдаём обратно, чтобы админ продиктовал
+                # сотруднику обе части доступа сразу.
+                if password:
+                    if len(password) < 6:
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'Пароль должен быть не короче 6 символов'}),
+                        }
+                    salt = secrets.token_hex(16)
+                    cur.execute(
+                        'UPDATE users SET password_hash = %s, password_salt = %s WHERE id = %s',
+                        (hash_password(password, salt), salt, int(user_id)),
+                    )
+
+                cur.execute('SELECT login FROM users WHERE id = %s', (int(user_id),))
+                login_row = cur.fetchone()
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'login': login_row[0] if login_row else None}),
+                }
 
             if action == 'reject_role':
                 # Отклонение заявки новичка: убираем запрошенную должность и отключаем

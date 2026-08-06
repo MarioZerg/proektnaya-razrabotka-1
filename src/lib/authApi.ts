@@ -68,13 +68,15 @@ export interface RegistrationForm {
   phone: string;
 }
 
-/** Новый сотрудник заполняет анкету (ФИО, должность, почта, телефон) — заявка уходит
- * на утверждение администратором. */
-export const submitRegistration = (
-  userId: number,
-  form: RegistrationForm
-): Promise<{ success: true }> =>
-  postAuthAction({ action: 'select_role', userId, ...form });
+/** Заявка на регистрацию от нового человека, которого ещё нет в системе. Пароль ему
+ * задаст администратор при утверждении — до этого войти нельзя. */
+export const submitRegistration = (form: RegistrationForm): Promise<{ success: true }> =>
+  postAuthAction({ action: 'register_request', ...form });
+
+/** Вход по логину и паролю — запасной путь, когда MAX недоступен. Возвращает то же,
+ * что и проверка кода: пользователя и список его должностей. */
+export const passwordLogin = (login: string, password: string): Promise<MaxVerifyResult> =>
+  postAuthAction({ action: 'password_login', login, password });
 
 export interface EnterRoleResult {
   id: number;

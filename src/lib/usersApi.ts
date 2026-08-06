@@ -85,8 +85,14 @@ export const deleteEmployee = (id: number) => postAction({ action: 'delete', id 
 export const addEmployeeRole = (id: number, role: Role, approved = true) =>
   postAction({ action: 'add_role', id, role, approved });
 
-export const approveEmployeeRole = (id: number, role: Role) =>
-  postAction({ action: 'approve_role', id, role });
+/** Утверждает должность сотрудника и заодно задаёт ему пароль для входа по логину.
+ * Возвращает логин — админ диктует сотруднику логин с паролем. */
+export const approveEmployeeRole = (
+  id: number,
+  role: Role,
+  password?: string
+): Promise<{ success: true; login: string | null }> =>
+  postAction({ action: 'approve_role', id, role, ...(password ? { password } : {}) });
 
 export const removeEmployeeRole = (id: number, role: Role) =>
   postAction({ action: 'remove_role', id, role });

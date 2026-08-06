@@ -37,29 +37,20 @@ const phoneDigits = (formatted: string): string => formatted.replace(/\D/g, '').
 
 interface RegistrationFormProps {
   roles: Role[];
-  /** Телефон из мессенджера — подставляем сразу, чтобы человек не вводил его заново. */
-  initialPhone?: string | null;
-  /** Имя из профиля мессенджера — сотрудник поправит его на полное ФИО. */
-  initialName?: string;
   submitting: boolean;
   error?: string;
   onSubmit: (form: RegistrationFormData) => void;
+  onBack: () => void;
 }
 
-/** Анкета нового сотрудника: ФИО, должность, почта для восстановления доступа и телефон.
- * Заполняется один раз после входа через бота — заявка уходит администратору. */
-const RegistrationForm = ({
-  roles,
-  initialPhone,
-  initialName,
-  submitting,
-  error,
-  onSubmit,
-}: RegistrationFormProps) => {
-  const [fullName, setFullName] = useState(initialName || '');
+/** Заявка нового сотрудника: ФИО, должность, почта для восстановления доступа и телефон.
+ * Заполняет человек, которого ещё нет в системе — заявка уходит администратору, тот
+ * утверждает её и выдаёт логин с паролем. */
+const RegistrationForm = ({ roles, submitting, error, onSubmit, onBack }: RegistrationFormProps) => {
+  const [fullName, setFullName] = useState('');
   const [role, setRole] = useState<Role | null>(null);
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState(formatPhone(initialPhone || ''));
+  const [phone, setPhone] = useState('+7');
   const [touched, setTouched] = useState(false);
 
   const nameValid = fullName.trim().length >= 3;
@@ -77,9 +68,9 @@ const RegistrationForm = ({
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="text-center">
-        <h2 className="text-base font-semibold">Расскажите о себе</h2>
+        <h2 className="text-base font-semibold">Заявка на доступ</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Администратор проверит анкету и откроет доступ
+          Администратор проверит заявку и выдаст вам логин с паролем
         </p>
       </div>
 
@@ -165,9 +156,17 @@ const RegistrationForm = ({
         {submitting ? (
           <Icon name="Loader2" size={18} className="animate-spin" />
         ) : (
-          'Отправить анкету'
+          'Отправить заявку'
         )}
       </Button>
+
+      <button
+        type="button"
+        onClick={onBack}
+        className="w-full text-center text-xs text-muted-foreground hover:text-foreground"
+      >
+        Назад
+      </button>
     </form>
   );
 };

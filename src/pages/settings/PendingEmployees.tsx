@@ -21,6 +21,9 @@ import {
 } from '@/lib/usersApi';
 import { roleLabels, type Role } from '@/lib/roles';
 import PendingApprovalCard from '@/components/crm/users/PendingApprovalCard';
+import ApproveWithPasswordDialog, {
+  type IssuedCredentials,
+} from '@/components/crm/users/ApproveWithPasswordDialog';
 
 interface PendingRequest {
   employee: Employee;
@@ -36,6 +39,8 @@ const PendingEmployees = () => {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [rejectTarget, setRejectTarget] = useState<PendingRequest | null>(null);
+  const [approveTarget, setApproveTarget] = useState<PendingRequest | null>(null);
+  const [issued, setIssued] = useState<IssuedCredentials | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -60,11 +65,18 @@ const PendingEmployees = () => {
     load();
   }, []);
 
-  const handleApprove = async (employee: Employee, role: Role) => {
+  const handleApprove = async (password: string) => {
+    if (!approveTarget) return;
+    const { employee, role } = approveTarget;
     setBusyId(employee.id);
     try {
-      await approveEmployeeRole(employee.id, role);
+      const res = await approveEmployeeRole(employee.id, role, password);
       setRequests((prev) => prev.filter((r) => r.employee.id !== employee.id));
+      setIssued({
+        fullName: employee.fullName,
+        login: res.login || employee.login,
+        password,
+      });
       toast({
         title: 'Сотрудник допущен к работе',
         description: `${employee.fullName} — ${roleLabels[role] || role}`,
@@ -141,13 +153,25 @@ const PendingEmployees = () => {
                 employee={req.employee}
                 role={req.role}
                 busy={busyId === req.employee.id}
-                onApprove={handleApprove}
+                onApprove={(emp, r) => setApproveTarget({ employee: emp, role: r })}
                 onReject={(employee, role) => setRejectTarget({ employee, role })}
               />
             ))}
           </div>
         )}
       </div>
+
+      <ApproveWithPasswordDialog
+        employee={approveTarget?.employee ?? null}
+        role={approveTarget?.role ?? null}
+        saving={busyId === approveTarget?.employee.id}
+        issued={issued}
+        onClose={() => {
+          setApproveTarget(null);
+          setIssued(null);
+        }}
+        onApprove={handleApprove}
+      />
 
       <AlertDialog open={!!rejectTarget} onOpenChange={(open) => !open && setRejectTarget(null)}>
         <AlertDialogContent>

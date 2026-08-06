@@ -9,6 +9,7 @@ import {
   fetchMaxBotUrl,
   verifyMaxCode,
   submitRegistration,
+  passwordLogin,
   enterRole,
   type UserRoleEntry,
   type RegistrationForm as RegistrationFormData,
@@ -17,10 +18,18 @@ import type { TestAccount } from '@/lib/authApi';
 import TestAccountsPanel from '@/components/auth/TestAccountsPanel';
 import RoleSelectScreen from '@/components/auth/RoleSelectScreen';
 import RegistrationForm from '@/components/auth/RegistrationForm';
+import PasswordLoginForm from '@/components/auth/PasswordLoginForm';
 import PendingApprovalScreen from '@/components/auth/PendingApprovalScreen';
 import { roleOptions } from '@/components/crm/users/usersShared';
 
-type Step = 'start' | 'code' | 'pickDesiredRole' | 'pendingApproval' | 'pickActiveRole';
+type Step =
+  | 'start'
+  | 'code'
+  | 'register'
+  | 'registerDone'
+  | 'passwordLogin'
+  | 'pendingApproval'
+  | 'pickActiveRole';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -77,34 +86,39 @@ const Index = () => {
     navigate('/crm');
   };
 
+  // Вход через MAX и вход по паролю возвращают одно и то же — пользователя со списком
+  // должностей, поэтому дальше оба идут по общему пути.
+  const applyAuthResult = async (result: {
+    id: number;
+    name: string;
+    phone: string | null;
+    roles: UserRoleEntry[];
+  }) => {
+    const approvedRoles = result.roles.filter((r) => r.isApproved);
+    const user = { id: result.id, name: result.name, phone: result.phone, roles: result.roles };
+
+    if (approvedRoles.length === 0) {
+      setPendingUser(user);
+      setStep('pendingApproval');
+      return;
+    }
+
+    if (approvedRoles.length === 1) {
+      const data = await enterRole(result.id, approvedRoles[0].role);
+      finishLogin(data);
+      return;
+    }
+
+    setPendingUser(user);
+    setStep('pickActiveRole');
+  };
+
   const handleVerifyCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setVerifying(true);
     try {
-      const result = await verifyMaxCode(code.trim());
-      const approvedRoles = result.roles.filter((r) => r.isApproved);
-
-      if (result.roles.length === 0) {
-        setPendingUser({ id: result.id, name: result.name, phone: result.phone, roles: result.roles });
-        setStep('pickDesiredRole');
-        return;
-      }
-
-      if (approvedRoles.length === 0) {
-        setPendingUser({ id: result.id, name: result.name, phone: result.phone, roles: result.roles });
-        setStep('pendingApproval');
-        return;
-      }
-
-      if (approvedRoles.length === 1) {
-        const data = await enterRole(result.id, approvedRoles[0].role);
-        finishLogin(data);
-        return;
-      }
-
-      setPendingUser({ id: result.id, name: result.name, phone: result.phone, roles: result.roles });
-      setStep('pickActiveRole');
+      await applyAuthResult(await verifyMaxCode(code.trim()));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось подтвердить код');
     } finally {
@@ -112,16 +126,26 @@ const Index = () => {
     }
   };
 
+  const handlePasswordLogin = async (userLogin: string, password: string) => {
+    setError('');
+    setVerifying(true);
+    try {
+      await applyAuthResult(await passwordLogin(userLogin, password));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось войти');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   const handleSubmitRegistration = async (form: RegistrationFormData) => {
-    if (!pendingUser) return;
     setSelecting(true);
     setError('');
     try {
-      await submitRegistration(pendingUser.id, form);
-      setPendingUser({ ...pendingUser, roles: [{ role: form.role, isApproved: false }] });
-      setStep('pendingApproval');
+      await submitRegistration(form);
+      setStep('registerDone');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось отправить анкету');
+      setError(err instanceof Error ? err.message : 'Не удалось отправить заявку');
     } finally {
       setSelecting(false);
     }
@@ -181,6 +205,40 @@ const Index = () => {
               Откроется бот МЕГАТЮЛЬ — поделитесь номером телефона, и бот пришлёт код для входа
             </p>
 
+            <div className="flex items-center gap-3 pt-2">
+              <div className="h-px flex-1 bg-border" />
+              <p className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                или
+              </p>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setError('');
+                setStep('register');
+              }}
+              className="h-12 w-full rounded-sm"
+            >
+              <Icon name="UserPlus" size={18} className="mr-2" />
+              Подать заявку на доступ
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setError('');
+                setStep('passwordLogin');
+              }}
+              className="h-12 w-full rounded-sm"
+            >
+              <Icon name="KeyRound" size={18} className="mr-2" />
+              Вход по паролю
+            </Button>
+
             <div className="mt-8 space-y-3">
               <div className="flex items-center gap-3">
                 <div className="h-px flex-1 bg-border" />
@@ -233,14 +291,40 @@ const Index = () => {
           </form>
         )}
 
-        {step === 'pickDesiredRole' && pendingUser && (
+        {step === 'register' && (
           <RegistrationForm
             roles={roleOptions.filter((r) => r !== 'admin')}
-            initialName={pendingUser.name}
-            initialPhone={pendingUser.phone}
             submitting={selecting}
             error={error}
             onSubmit={handleSubmitRegistration}
+            onBack={handleBackToStart}
+          />
+        )}
+
+        {step === 'registerDone' && (
+          <div className="space-y-4 text-center">
+            <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-500/10 text-emerald-600">
+              <Icon name="MailCheck" size={28} />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold">Заявка отправлена</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Администратор проверит её и выдаст вам логин с паролем. После этого
+                возвращайтесь и заходите через «Вход по паролю».
+              </p>
+            </div>
+            <Button variant="outline" className="h-11 w-full rounded-sm" onClick={handleBackToStart}>
+              На главную
+            </Button>
+          </div>
+        )}
+
+        {step === 'passwordLogin' && (
+          <PasswordLoginForm
+            submitting={verifying}
+            error={error}
+            onSubmit={handlePasswordLogin}
+            onBack={handleBackToStart}
           />
         )}
 

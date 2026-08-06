@@ -1,8 +1,16 @@
+import hashlib
 import json
 import os
 import re
+import secrets
 
 import psycopg2
+
+
+def hash_password(password: str, salt: str) -> str:
+    """Тот же алгоритм, что и в backend/users — иначе пароли, заданные админом
+    в карточке сотрудника, не подойдут при входе."""
+    return hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(salt), 100000).hex()
 
 
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'cleaner', 'admin', 'manager'}
@@ -21,26 +29,30 @@ def normalize_phone(raw: str) -> str | None:
 
 
 def handler(event: dict, context) -> dict:
-    """Авторизация сотрудников через мессенджер MAX (без логина/пароля).
+    """Авторизация сотрудников. Три независимых способа попасть в систему.
 
-    Полный сценарий входа:
-    1. Сотрудник жмёт «Войти через MAX» на сайте → открывается бот (backend/max_bot
-       обрабатывает webhook MAX, присылает код после того как человек поделился
-       номером телефона в боте).
-    2. POST { action: 'max_verify_code', code } — сайт отправляет введённый код.
-       Возвращает данные пользователя и список его ролей (роль + утверждена ли
-       админом). Если ролей нет вообще — это новый человек, нужно выбрать желаемую
-       должность (см. select_role). Если есть роли, но НИ ОДНА не утверждена —
-       показываем экран ожидания. Если утверждена ровно одна — сразу входим в неё
-       (это уже делает фронтенд, вызывая enter_role). Если утверждено несколько —
-       фронтенд показывает выбор роли.
-    3. POST { action: 'select_role', userId, role, fullName, email, phone } — новый
-       пользователь заполняет анкету: ФИО, должность, почта для восстановления
-       доступа и телефон. Данные пишутся в его профиль, а в user_roles создаётся
-       запись с is_approved = false — заявка ждёт утверждения администратором.
-    4. POST { action: 'enter_role', userId, role } — вход в конкретную утверждённую
-       роль пользователя. Проверяет, что роль утверждена, возвращает полные данные
-       сессии (id, name, role, workshopId, workshopName, shiftNumber).
+    1. Вход через MAX (быстрый, для тех, кто уже работает):
+       сотрудник жмёт «Войти через MAX» → открывается бот (backend/max_bot присылает
+       код после того, как человек поделился номером телефона).
+       POST { action: 'max_verify_code', code } — сайт проверяет код и возвращает
+       пользователя со списком его должностей. Никаких данных вводить не нужно.
+
+    2. Заявка на регистрацию (для новеньких, кого ещё нет в системе):
+       POST { action: 'register_request', fullName, role, email, phone } — создаёт
+       пользователя без роли и запись в user_roles с is_approved = false. Пароля у него
+       пока нет: администратор задаст его, когда утвердит заявку (см. backend/users).
+
+    3. Вход по логину и паролю (когда MAX недоступен):
+       POST { action: 'password_login', login, password } — возвращает то же, что и
+       проверка кода: пользователя и список его должностей.
+
+    После любого из способов фронтенд смотрит на роли:
+    нет ни одной утверждённой — показываем экран ожидания; утверждена ровно одна —
+    сразу входим в неё; утверждено несколько — сотрудник выбирает, кем работать сегодня.
+
+    POST { action: 'enter_role', userId, role } — вход в конкретную утверждённую роль.
+    Проверяет, что роль утверждена, и возвращает полные данные сессии
+    (id, name, role, workshopId, workshopName, shiftNumber).
 
     POST { action: 'bot_info' } — отдаёт публичную ссылку на бота MAX (кнопка
     «Войти через MAX» на сайте открывает её в новой вкладке).
@@ -172,15 +184,17 @@ def handler(event: dict, context) -> dict:
             ),
         }
 
-    if action == 'select_role':
-        user_id = body_data.get('userId')
+    if action == 'register_request':
+        # Самостоятельная заявка: человек ещё не заходил в систему и никак с ней не связан,
+        # поэтому создаём для него нового пользователя без роли. Пароль ему задаст
+        # администратор в момент утверждения заявки — до этого войти нельзя.
         role = (body_data.get('role') or '').strip()
         full_name = (body_data.get('fullName') or '').strip()
         email = (body_data.get('email') or '').strip().lower()
         phone = normalize_phone(body_data.get('phone') or '')
 
-        if not user_id or role not in ROLES:
-            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректные данные'})}
+        if role not in ROLES or role == 'admin':
+            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите должность'})}
         if len(full_name) < 3:
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите фамилию, имя и отчество'})}
         if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email):
@@ -191,28 +205,17 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
-            cur.execute('SELECT COUNT(*) FROM user_roles WHERE user_id = %s', (int(user_id),))
-            has_roles = cur.fetchone()[0] > 0
-            if has_roles:
-                return {
-                    'statusCode': 409,
-                    'headers': headers,
-                    'body': json.dumps({'error': 'Анкета уже отправлена — дождитесь утверждения администратором'}),
-                }
 
-            # Почта нужна для восстановления доступа, поэтому она должна быть уникальной:
-            # иначе по одному адресу нельзя понять, чей аккаунт восстанавливать.
-            cur.execute('SELECT id FROM users WHERE lower(email) = %s AND id <> %s', (email, int(user_id)))
+            # Почта и телефон — единственные приметы, по которым администратор узнаёт
+            # человека в списке заявок, поэтому они должны быть уникальными.
+            cur.execute('SELECT id FROM users WHERE lower(email) = %s', (email,))
             if cur.fetchone():
                 return {
                     'statusCode': 409,
                     'headers': headers,
-                    'body': json.dumps({'error': 'Эта почта уже занята другим сотрудником'}),
+                    'body': json.dumps({'error': 'Эта почта уже занята — возможно, заявка уже отправлена'}),
                 }
-
-            # Телефон из анкеты может отличаться от того, которым человек вошёл в боте
-            # (личный и рабочий), но он тоже должен остаться уникальным.
-            cur.execute('SELECT id FROM users WHERE phone = %s AND id <> %s', (phone, int(user_id)))
+            cur.execute('SELECT id FROM users WHERE phone = %s', (phone,))
             if cur.fetchone():
                 return {
                     'statusCode': 409,
@@ -220,19 +223,67 @@ def handler(event: dict, context) -> dict:
                     'body': json.dumps({'error': 'Этот номер телефона уже занят'}),
                 }
 
+            # Пароля пока нет: кладём случайный хеш, который не подойдёт ни к одной строке.
+            # Настоящий пароль появится, когда админ утвердит заявку.
+            salt = secrets.token_hex(16)
+            dummy_hash = hashlib.sha256(secrets.token_bytes(16)).hexdigest()
+            login = email.split('@')[0][:50] or f'user{secrets.token_hex(3)}'
+            cur.execute('SELECT id FROM users WHERE login = %s', (login,))
+            if cur.fetchone():
+                login = f'{login}{secrets.token_hex(2)}'[:50]
+
             cur.execute(
-                'UPDATE users SET full_name = %s, email = %s, phone = %s WHERE id = %s',
-                (full_name[:200], email, phone, int(user_id)),
+                "INSERT INTO users (login, password_hash, password_salt, full_name, role, email, phone, is_active) "
+                "VALUES (%s, %s, %s, %s, '', %s, %s, true) RETURNING id",
+                (login, dummy_hash, salt, full_name[:200], email, phone),
             )
+            user_id = cur.fetchone()[0]
             cur.execute(
                 'INSERT INTO user_roles (user_id, role, is_approved) VALUES (%s, %s, false)',
-                (int(user_id), role),
+                (user_id, role),
             )
             conn.commit()
         finally:
             conn.close()
 
         return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+    if action == 'password_login':
+        login = (body_data.get('login') or '').strip()
+        password = body_data.get('password') or ''
+        if not login or not password:
+            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Введите логин и пароль'})}
+
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                'SELECT id, full_name, is_active, phone, password_hash, password_salt '
+                'FROM users WHERE lower(login) = lower(%s)',
+                (login,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Неверный логин или пароль'})}
+
+            user_id, full_name, is_active, phone, pwd_hash, pwd_salt = row
+            # Пароль сверяем всегда, даже если аккаунт отключён — иначе по разнице
+            # в ответах можно перебором узнать, какие логины существуют.
+            if not pwd_salt or hash_password(password, pwd_salt) != pwd_hash:
+                return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Неверный логин или пароль'})}
+            if not is_active:
+                return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Учётная запись отключена'})}
+
+            cur.execute('SELECT role, is_approved FROM user_roles WHERE user_id = %s ORDER BY id', (user_id,))
+            roles = [{'role': r[0], 'isApproved': r[1]} for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': json.dumps({'id': user_id, 'name': full_name, 'phone': phone, 'roles': roles}),
+        }
 
     if action == 'enter_role':
         user_id = body_data.get('userId')
