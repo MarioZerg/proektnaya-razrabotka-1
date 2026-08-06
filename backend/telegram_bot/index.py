@@ -119,11 +119,20 @@ def handler(event: dict, context) -> dict:
             if not url:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите url'})}
             token = os.environ['TELEGRAM_BOT_TOKEN']
-            resp = requests.post(
-                f'{TELEGRAM_API_URL}/bot{token}/setWebhook',
-                json={'url': url, 'allowed_updates': ['message']},
-                timeout=10,
-            )
+            try:
+                resp = requests.post(
+                    f'{TELEGRAM_API_URL}/bot{token}/setWebhook',
+                    json={'url': url, 'allowed_updates': ['message']},
+                    timeout=3,
+                )
+            except Exception as e:
+                # Текст исключения requests содержит полный URL вместе с токеном бота,
+                # поэтому наружу отдаём только тип ошибки — токен в ответ не попадает.
+                return {
+                    'statusCode': 502,
+                    'headers': headers,
+                    'body': json.dumps({'success': False, 'error': type(e).__name__}),
+                }
             ok = resp.status_code < 300
             return {
                 'statusCode': 200 if ok else 502,
