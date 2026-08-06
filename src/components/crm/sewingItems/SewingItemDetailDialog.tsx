@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAuth } from '@/context/AuthContext';
 import {
   Dialog,
   DialogContent,
@@ -79,6 +80,9 @@ const SewingItemDetailDialog = ({
   isPackerView = false,
   onOrderUpdated,
 }: SewingItemDetailDialogProps) => {
+  const { user } = useAuth();
+  // Менеджер смотрит заказы только как справку и стикерами не занимается.
+  const isManager = user?.role === 'manager';
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
 
   const canCancel =
@@ -181,9 +185,10 @@ const SewingItemDetailDialog = ({
               detailLoading={detailLoading}
             />
 
-            {/* Привязка стикера FBO — задача администратора и кладовщика. Упаковщик печатает
-                стикер на терминале в цехе, в карточке эта плашка ему только мешает. */}
-            {selectedOrder.orderType === 'FBO' && !isPackerView && (
+            {/* Привязка стикера FBO — задача администратора и кладовщика. Упаковщик
+                печатает стикер на терминале в цехе, а менеджер заказами не занимается:
+                обоим эта плашка в карточке только мешает. */}
+            {selectedOrder.orderType === 'FBO' && !isPackerView && !isManager && (
               <FboStickerCard
                 order={selectedOrder}
                 orderDetail={orderDetail}
