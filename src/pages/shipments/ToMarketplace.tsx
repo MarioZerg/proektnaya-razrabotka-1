@@ -308,7 +308,17 @@ const ToMarketplace = () => {
                   <TableRow key={s.id}>
                     <TableCell>{s.id}</TableCell>
                     <TableCell>
-                      <Badge className={statusVariant[s.status]?.className}>{s.status}</Badge>
+                      <div className="flex flex-col items-start gap-1">
+                        <Badge className={statusVariant[s.status]?.className}>{s.status}</Badge>
+                        {/* Поставку уже собирает другой кладовщик — видно сразу в списке,
+                            чтобы человек не заходил внутрь впустую. */}
+                        {s.lockedByName && (
+                          <span className="inline-flex items-center gap-1 rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
+                            <Icon name="Lock" size={11} />
+                            Собирает: {s.lockedByName}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       {s.supplyNumber ? (
