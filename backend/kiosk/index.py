@@ -1184,7 +1184,7 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'Причина не подходит к этому материалу'}, ensure_ascii=False),
                     }
 
-                if au[1] not in ('admin', 'storekeeper', 'manager') and rr[0] and rr[0] != au[2]:
+                if au[1] not in ('admin', 'storekeeper', 'senior_storekeeper', 'manager') and rr[0] and rr[0] != au[2]:
                     return {'statusCode': 403, 'headers': headers, 'body': json.dumps({
                         'error': f'{au[0]} не относится к цеху «{rr[2]}» — брак может списать только '
                                  f'штатный сотрудник этого цеха'})}

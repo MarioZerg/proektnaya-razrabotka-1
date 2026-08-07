@@ -25,6 +25,7 @@ import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
 import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import { isMetersUnit } from '@/lib/stockLevels';
+import { isStorekeeperRole } from '@/lib/roles';
 
 const CrmDashboard = () => {
   const { user, setActiveShift } = useAuth();
@@ -32,10 +33,10 @@ const CrmDashboard = () => {
   const isAdmin = user?.role === 'admin';
   const isCleaner = user?.role === 'cleaner';
   const isCutter = user?.role === 'cutter';
-  const canSeeWarehouseWidgets = user?.role === 'admin' || user?.role === 'storekeeper';
+  const canSeeWarehouseWidgets = user?.role === 'admin' || isStorekeeperRole(user?.role);
   // Кладовщик и менеджер видят календарь-график смен (какие смены сегодня работают),
   // но без управления сменами сотрудников — это только для админа.
-  const canSeeShiftCalendar = isAdmin || user?.role === 'storekeeper' || user?.role === 'manager';
+  const canSeeShiftCalendar = isAdmin || isStorekeeperRole(user?.role) || user?.role === 'manager';
   // Кто сегодня работает — управленческая информация. Производственным ролям (швея,
   // закройщик, упаковщица, уборщица) она не нужна и только загромождает их кабинет.
   const canSeeWorkingToday = canSeeShiftCalendar;

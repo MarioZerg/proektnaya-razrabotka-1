@@ -4,6 +4,7 @@ import { roleLabels, type Role } from '@/lib/roles';
 const roleIcons: Record<Role, string> = {
   admin: 'ShieldCheck',
   storekeeper: 'Warehouse',
+  senior_storekeeper: 'Star',
   sewer: 'Shirt',
   cutter: 'Scissors',
   packer: 'PackageCheck',

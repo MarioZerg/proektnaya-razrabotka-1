@@ -28,7 +28,7 @@ import Icon from '@/components/ui/icon';
 import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
 import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
 import { useAuth } from '@/context/AuthContext';
-import { navByRole, roleLabels } from '@/lib/roles';
+import { navByRole, roleLabels, isStorekeeperRole } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
 import { useMarketplaceAutoSync } from '@/hooks/useMarketplaceAutoSync';
 import { usePickingPending } from '@/hooks/usePickingPending';
@@ -45,13 +45,13 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   useMarketplaceAutoSync(
     user?.role === 'admin',
     { id: user?.id, name: user?.name },
-    user?.role === 'admin' || user?.role === 'storekeeper',
+    user?.role === 'admin' || isStorekeeperRole(user?.role),
   );
 
   // Счётчик работы по подбору у кладовщика: вещи, подобранные под заказы и ждущие стикера.
   // Обновляется сам каждые 30 секунд, при появлении новых — звуковой сигнал.
   const { pending: pickingPending } = usePickingPending(
-    user?.role === 'storekeeper' || user?.role === 'admin',
+    isStorekeeperRole(user?.role) || user?.role === 'admin',
   );
 
   const navigate = useNavigate();

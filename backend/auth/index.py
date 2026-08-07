@@ -13,7 +13,7 @@ def hash_password(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(salt), 100000).hex()
 
 
-ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'cleaner', 'admin', 'manager'}
+ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner', 'admin', 'manager'}
 
 
 def normalize_phone(raw: str) -> str | None:

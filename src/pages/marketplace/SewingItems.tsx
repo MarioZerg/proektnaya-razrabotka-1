@@ -12,6 +12,7 @@ import { useSewingItemsData } from '@/components/crm/sewingItems/useSewingItemsD
 import { useSewingItemsFilters } from '@/components/crm/sewingItems/useSewingItemsFilters';
 import { useSewingItemOrderDetail } from '@/components/crm/sewingItems/useSewingItemOrderDetail';
 import { useSewingItemsQueueActions } from '@/components/crm/sewingItems/useSewingItemsQueueActions';
+import { isStorekeeperRole } from '@/lib/roles';
 
 const SewingItems = () => {
   const {
@@ -295,7 +296,7 @@ const SewingItems = () => {
           setPage={setPage}
           totalPages={totalPages}
           totalCount={filteredOrders.length}
-          canPrintSticker={user?.role === 'storekeeper' || user?.role === 'admin'}
+          canPrintSticker={isStorekeeperRole(user?.role) || user?.role === 'admin'}
         />
 
         <SewingItemDetailDialog

@@ -6,6 +6,7 @@ import { roleLabels } from '@/lib/roles';
 const roleIcons: Record<TestAccount['role'], string> = {
   admin: 'ShieldCheck',
   storekeeper: 'Warehouse',
+  senior_storekeeper: 'Star',
   sewer: 'Shirt',
   cutter: 'Scissors',
   packer: 'PackageCheck',

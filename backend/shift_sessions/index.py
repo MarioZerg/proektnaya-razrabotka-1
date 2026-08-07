@@ -353,7 +353,7 @@ def handler(event: dict, context) -> dict:
                 # Кладовщик не привязан ни к цеху, ни к смене: он открывает и закрывает смену
                 # по личному графику из профиля (shift_from). Цех/смену ему не требуем и не
                 # проверяем ни выходные, ни активность смен.
-                if user_role == 'storekeeper':
+                if user_role in ('storekeeper', 'senior_storekeeper'):
                     is_late = False
                     if shift_from:
                         cur.execute(

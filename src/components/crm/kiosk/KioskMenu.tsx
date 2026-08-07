@@ -1,4 +1,5 @@
 import Icon from '@/components/ui/icon';
+import { isStorekeeperRole, type Role } from '@/lib/roles';
 
 export type KioskScreen =
   | 'menu'
@@ -14,7 +15,7 @@ export type KioskScreen =
 interface KioskMenuProps {
   onSelect: (screen: KioskScreen) => void;
   /** Роль сотрудника — кладовщику на терминале доступны смена и поиск вещей без стикера. */
-  role: string;
+  role: Role;
 }
 
 const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className: string }> = [
@@ -78,7 +79,7 @@ const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
   // «Брак из рулона» — для тех, кто работает с материалом: закройщик режет ткань, швея шьёт
   // тесьмой, именно они видят дефекты. Кладовщику нужен обратный экран — «Приём брака».
   const visibleTiles =
-    role === 'storekeeper'
+    isStorekeeperRole(role)
       ? tiles.filter((t) => ['shift', 'unlabeled', 'defect-receive'].includes(t.screen))
       : tiles.filter((t) => !['unlabeled', 'defect-receive'].includes(t.screen));
 

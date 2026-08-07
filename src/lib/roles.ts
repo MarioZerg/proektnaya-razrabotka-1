@@ -1,4 +1,12 @@
-export type Role = 'sewer' | 'cutter' | 'packer' | 'storekeeper' | 'cleaner' | 'admin' | 'manager';
+export type Role =
+  | 'sewer'
+  | 'cutter'
+  | 'packer'
+  | 'storekeeper'
+  | 'senior_storekeeper'
+  | 'cleaner'
+  | 'admin'
+  | 'manager';
 
 /**
  * Зона доступа — укрупнённая группировка ролей, используется для разграничения прав
@@ -15,10 +23,23 @@ export type AccessZone = 'admin' | 'warehouse' | 'workshop' | 'none';
 export const getAccessZone = (role: Role | undefined | null): AccessZone => {
   if (role === 'admin') return 'admin';
   // Менеджер работает с поставками маркетплейса — относим к складской зоне (доступ к отгрузкам).
-  if (role === 'storekeeper' || role === 'manager') return 'warehouse';
+  // Старший кладовщик работает наравне с обычным — та же складская зона.
+  if (role === 'storekeeper' || role === 'senior_storekeeper' || role === 'manager')
+    return 'warehouse';
   if (role === 'sewer' || role === 'cutter' || role === 'packer') return 'workshop';
   return 'none';
 };
+
+/**
+ * Кладовщик — обычный или старший.
+ *
+ * Старший кладовщик отличается от обычного ТОЛЬКО ставками в тарифах: прав, страниц
+ * и кнопок у них поровну. Поэтому везде, где раньше проверялась роль 'storekeeper',
+ * теперь используется эта функция — иначе при добавлении роли часть возможностей
+ * незаметно осталась бы недоступной старшему.
+ */
+export const isStorekeeperRole = (role: Role | undefined | null): boolean =>
+  role === 'storekeeper' || role === 'senior_storekeeper';
 
 export interface NavChild {
   label: string;
@@ -37,6 +58,7 @@ export const roleLabels: Record<Role, string> = {
   cutter: 'Закройщик',
   packer: 'Упаковщик',
   storekeeper: 'Кладовщик',
+  senior_storekeeper: 'Старший кладовщик',
   cleaner: 'Уборщица',
   admin: 'Администратор',
   manager: 'Менеджер',
@@ -247,6 +269,9 @@ export const navByRole: Record<Role, NavItem[]> = {
   cutter: productionNav,
   packer: packerNav,
   storekeeper: storekeeperNav,
+  // Права у старшего кладовщика те же, что у обычного — отличаются только ставки
+  // в тарифах, поэтому меню переиспользуем как есть.
+  senior_storekeeper: storekeeperNav,
   cleaner: cleanerNav,
   admin: adminNav,
   manager: managerNav,

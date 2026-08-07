@@ -15,7 +15,7 @@ import requests
 MAX_API_URL = 'https://platform-api2.max.ru'
 CODE_TTL_MINUTES = 5
 
-ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'cleaner', 'admin'}
+ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner', 'admin'}
 
 # Сайт MAX (platform-api2.max.ru) использует сертификат, выпущенный российским
 # удостоверяющим центром (Минцифры РФ), которого нет в стандартном хранилище

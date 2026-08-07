@@ -367,7 +367,7 @@ def handler(event: dict, context) -> dict:
                     au = cur.fetchone()
                     home_ws_id = au[0] if au else None
                     actor_role = au[1] if au else None
-                    if actor_role not in ('admin', 'storekeeper', 'manager'):
+                    if actor_role not in ('admin', 'storekeeper', 'senior_storekeeper', 'manager'):
                         for item in items:
                             if not item.get('rollId'):
                                 continue
@@ -795,7 +795,7 @@ def handler(event: dict, context) -> dict:
                 if actor_id:
                     cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
                     actor_row = cur.fetchone()
-                    if actor_row and actor_row[0] not in ('storekeeper', 'admin'):
+                    if actor_row and actor_row[0] not in ('storekeeper', 'senior_storekeeper', 'admin'):
                         return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Отправлять заявку может только кладовщик или администратор'})}
 
                 cur.execute("SELECT type, status, workshop_id, shift_number, reject_reason FROM shipments WHERE id = %s", (int(shipment_id),))

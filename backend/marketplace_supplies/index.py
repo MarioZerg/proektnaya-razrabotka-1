@@ -235,7 +235,8 @@ def handler(event: dict, context) -> dict:
           "Выполнена" — фиксирует completed_at (и ship_to_marketplace_at, если не указана).
           При переходе в "На сборке"/"Отгрузка": если создатель поставки (created_by) —
           кладовщик с открытой сменой, начисляет ему оклад за смену (salary_accruals,
-          type='storekeeper_shift'). Ставка (salary_rates, role='storekeeper') берётся из
+          type='storekeeper_shift'). Ставка (salary_rates) берётся по фактической роли
+          сотрудника — 'storekeeper' или 'senior_storekeeper' — из
           тарифов цеха этой смены (workshop_id смены), либо из цеха профиля кладовщика, если
           у смены цех не указан. Не больше одного начисления на одну смену (shift_session_id)
     POST /  { action: 'force_complete', supplyId, confirmIncomplete? }
@@ -1233,7 +1234,7 @@ def handler(event: dict, context) -> dict:
                     if creator_id:
                         cur.execute("SELECT role, workshop FROM users WHERE id = %s", (creator_id,))
                         user_row = cur.fetchone()
-                        if user_row and user_row[0] == 'storekeeper':
+                        if user_row and user_row[0] in ('storekeeper', 'senior_storekeeper'):
                             cur.execute(
                                 "SELECT id, workshop_id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
                                 "ORDER BY opened_at DESC LIMIT 1",
@@ -1251,8 +1252,8 @@ def handler(event: dict, context) -> dict:
                                     rate_workshop_id = w_row[0] if w_row else None
                                 if rate_workshop_id:
                                     cur.execute(
-                                        "SELECT rate FROM salary_rates WHERE role = 'storekeeper' AND workshop_id = %s",
-                                        (rate_workshop_id,),
+                                        "SELECT rate FROM salary_rates WHERE role = %s AND workshop_id = %s",
+                                        (user_row[0], rate_workshop_id),
                                     )
                                     rate_row = cur.fetchone()
                                     rate = float(rate_row[0]) if rate_row else 0

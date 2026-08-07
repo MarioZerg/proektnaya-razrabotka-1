@@ -78,6 +78,7 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
     'packer',
     'packer_repack',
     'storekeeper',
+    'senior_storekeeper',
     'cleaner',
     'admin',
   ];

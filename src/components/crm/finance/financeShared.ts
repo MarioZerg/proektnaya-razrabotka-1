@@ -21,6 +21,7 @@ export const roleRateLabels: Record<string, string> = {
   packer: 'Упаковщик — за пог.м. на стикеровке',
   packer_repack: 'Упаковщик — за штуку на перепаковке возвратов',
   storekeeper: 'Кладовщик — оклад за смену',
+  senior_storekeeper: 'Старший кладовщик — оклад за смену',
   cleaner: 'Уборщица — оклад за смену',
   admin: 'Администратор — оклад за день',
 };

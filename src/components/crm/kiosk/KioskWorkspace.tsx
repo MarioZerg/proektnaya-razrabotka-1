@@ -155,7 +155,7 @@ const KioskWorkspace = ({
       </div>
 
       <div className="p-4">
-        {screen === 'menu' && <KioskMenu onSelect={setScreen} role={user.role} />}
+        {screen === 'menu' && <KioskMenu onSelect={setScreen} role={user.role as Role} />}
 
         {screen === 'shift' && (
           <div className="mx-auto max-w-xl space-y-4">
