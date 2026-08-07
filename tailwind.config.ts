@@ -109,6 +109,16 @@ export default {
 				'shimmer': {
 					'0%': { transform: 'translateX(-150%)' },
 					'18%, 100%': { transform: 'translateX(150%)' }
+				},
+				// Свечение бежит по кругу логотипа: вращаем конический градиент.
+				'logo-spin': {
+					from: { transform: 'rotate(0deg)' },
+					to: { transform: 'rotate(360deg)' }
+				},
+				// Мягкое «дыхание» ореола, чтобы свечение не выглядело механическим.
+				'logo-glow': {
+					'0%, 100%': { opacity: '0.45' },
+					'50%': { opacity: '0.85' }
 				}
 			},
 			animation: {
@@ -118,7 +128,9 @@ export default {
 				'scale-in': 'scale-in 0.5s ease-out both',
 				'float': 'float 6s ease-in-out infinite',
 				'logo-zoom': 'logo-zoom 1.1s cubic-bezier(0.22, 1, 0.36, 1) both',
-				'shimmer': 'shimmer 7s ease-in-out infinite'
+				'shimmer': 'shimmer 7s ease-in-out infinite',
+				'logo-spin': 'logo-spin 3.5s linear infinite',
+				'logo-glow': 'logo-glow 3.5s ease-in-out infinite'
 			}
 		}
 	},

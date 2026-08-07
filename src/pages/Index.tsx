@@ -189,12 +189,35 @@ const Index = () => {
 
       <div className="relative w-full max-w-[360px] animate-fade-in">
         <div className="mb-10 flex flex-col items-center gap-4 text-center">
-          {/* Логотип с названием плавно наезжает при открытии страницы. */}
-          <img
-            src="/assets/megatul-logo.png"
-            alt="МЕГАТЮЛЬ"
-            className="h-28 w-auto animate-logo-zoom"
-          />
+          {/* Круглый логотип со светящимся ободом.
+              Свечение — вращающийся конический градиент под логотипом: яркий участок
+              бежит по окружности по часовой стрелке. Сам логотип лежит сверху и
+              не крутится, вращается только подсветка. */}
+          <div className="relative h-32 w-32 animate-logo-zoom">
+            {/* Размытый ореол снаружи — мягкое сияние, «выходящее» за круг. */}
+            <div
+              className="absolute -inset-5 animate-logo-spin rounded-full blur-2xl"
+              style={{
+                background:
+                  'conic-gradient(from 0deg, transparent 120deg, hsl(var(--primary) / 0.7) 240deg, hsl(var(--primary)) 300deg, hsl(var(--primary) / 0.7) 350deg, transparent 360deg)',
+              }}
+            />
+            {/* Яркий бегущий блик по самому краю круга. */}
+            <div
+              className="absolute -inset-[7px] animate-logo-spin rounded-full blur-[3px]"
+              style={{
+                background:
+                  'conic-gradient(from 0deg, hsl(var(--primary) / 0.2) 0deg, hsl(var(--primary) / 0.2) 190deg, hsl(120 45% 45%) 280deg, hsl(var(--primary)) 305deg, hsl(var(--primary) / 0.6) 335deg, hsl(var(--primary) / 0.2) 360deg)',
+              }}
+            />
+            {/* Ровное тонкое кольцо — держит форму круга, пока блик пробегает мимо. */}
+            <div className="absolute -inset-[1px] rounded-full ring-1 ring-primary/25" />
+            <img
+              src="/assets/megatul-round-logo.png"
+              alt="МЕГАТЮЛЬ"
+              className="absolute inset-0 h-full w-full rounded-full object-cover"
+            />
+          </div>
           <OnlineNowBadge />
         </div>
 
