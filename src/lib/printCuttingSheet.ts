@@ -66,8 +66,12 @@ const sizeLabel = (o: TakenOrder) => `${o.material || '—'} ${o.width ?? '—'}
 
 // Ячейка одной позиции: слева крупно материал+размер и мелко маркетплейс+номер (+ID закройщика
 // на QR-листе), справа узкая колонка (пустая — под галочку/крепление бирки), как в образце.
-const cell = (inner: string) =>
-  `<div style="display:grid;grid-template-columns:1fr 44px;border:1px solid #000;box-sizing:border-box;">
+/** Ячейка одной позиции. Вещи связки выделяем жирной рамкой и серой заливкой: на листе
+ * из 20 позиций закройщик должен видеть их с одного взгляда, а не вычитывать подписи. */
+const cell = (inner: string, isGroup = false) =>
+  `<div style="display:grid;grid-template-columns:1fr 44px;border:${
+    isGroup ? '3px solid #000' : '1px solid #000'
+  };box-sizing:border-box;${isGroup ? 'background:#e8e8e8;' : ''}">
      ${inner}
      <div style="border-left:1px solid #000;"></div>
    </div>`;
@@ -87,7 +91,7 @@ const groupedGrid = (pageOrders: TakenOrder[], renderInner: (o: TakenOrder) => s
     const key = o.material || '—';
     if (current !== null && key !== current) flush();
     current = key;
-    rows.push(cell(renderInner(o)));
+    rows.push(cell(renderInner(o), !!(o.groupSize && o.groupSize > 1)));
   }
   flush();
   return `<div style="display:flex;flex-direction:column;gap:10px;">${blocks.join('')}</div>`;
@@ -106,11 +110,16 @@ const buildChecklistPageHtml = (pageOrders: TakenOrder[], cutterName: string, da
     }
   }
   const groupsBanner = groupCounts.size
-    ? `<div style="border:2px solid #000;padding:6px 12px;margin-bottom:10px;font-size:12px;font-weight:700;">
-         ВНИМАНИЕ: на листе есть связки — вещи одного заказа вешать ВМЕСТЕ на одну вешалку:
-         ${Array.from(groupCounts.entries())
-           .map(([key, cnt]) => `${key} (${cnt} шт.)`)
-           .join(', ')}
+    ? `<div style="border:3px solid #000;background:#e8e8e8;padding:8px 12px;margin-bottom:10px;font-size:13px;font-weight:700;">
+         <div style="font-size:15px;margin-bottom:3px;">НА ЛИСТЕ ЕСТЬ СВЯЗКИ — ВЕШАТЬ ВМЕСТЕ НА ОДНУ ВЕШАЛКУ</div>
+         <div style="font-size:12px;">
+           ${Array.from(groupCounts.entries())
+             .map(([key, cnt]) => `${key} — ${cnt} шт.`)
+             .join(' &nbsp;·&nbsp; ')}
+         </div>
+         <div style="font-size:11px;font-weight:400;margin-top:3px;">
+           Позиции связок выделены жирной рамкой и серым фоном
+         </div>
        </div>`
     : '';
   const header = `
