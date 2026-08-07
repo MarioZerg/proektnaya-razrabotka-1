@@ -32,6 +32,33 @@ export const fetchMaterialsData = async (): Promise<MaterialsData> => {
   return { types: data.types || [], materials: data.materials || [] };
 };
 
+/** Одна строка справочника упаковки: для такой ткани и такой ширины — такой пакет. */
+export interface PackagingRow {
+  fabric: string;
+  width: number;
+  bag: string;
+  itemsCount: number;
+}
+
+export interface PackagingGuide {
+  rows: PackagingRow[];
+  fabrics: string[];
+  widths: number[];
+  bags: string[];
+}
+
+/** Справочник «какой пакет к какому товару» для упаковщицы. */
+export const fetchPackagingGuide = async (): Promise<PackagingGuide> => {
+  const res = await fetch(`${MATERIALS_URL}?view=packaging`);
+  const data = await res.json();
+  return {
+    rows: data.rows || [],
+    fabrics: data.fabrics || [],
+    widths: data.widths || [],
+    bags: data.bags || [],
+  };
+};
+
 /** Удаление группы материалов. Разрешено только для пустой группы — если в ней есть
  * материалы, сервер вернёт ошибку и подскажет перенести их. */
 export const deleteMaterialType = async (id: number) => {

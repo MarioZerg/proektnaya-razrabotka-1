@@ -18,6 +18,9 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'create_material', typeId, name, unit, cost, status }
     POST /  { action: 'update_material', id, name?, unit?, cost?, status?, typeId? }
     POST /  { action: 'delete_material', id }
+    GET  /?view=packaging       - справочник упаковки для упаковщицы: какой пакет
+                                   к какому товару подходит. Строится по фактическим
+                                   привязкам материалов к товарам маркетплейса
 
     Args:
         event: dict с httpMethod, body
@@ -42,6 +45,51 @@ def handler(event: dict, context) -> dict:
 
     headers = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
     dsn = os.environ['DATABASE_URL']
+
+    params = event.get('queryStringParameters') or {}
+
+    # Справочник упаковки для упаковщицы.
+    #
+    # Пакет подбирается по ДВУМ параметрам: ширине изделия и ткани. Высота на выбор
+    # пакета не влияет — товар складывается, и высота уходит в толщину свёртка.
+    # Плотные ткани (мрамор, лён) при той же ширине требуют пакет побольше, поэтому
+    # одной таблицей «ширина → пакет» обойтись нельзя.
+    #
+    # Данные не хранятся отдельно, а собираются из фактических привязок материалов
+    # к товарам: так справочник не разъедется с реальностью, если упаковку у товаров
+    # поменяют.
+    if method == 'GET' and params.get('view') == 'packaging':
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT mi.material, mi.width, m.name, COUNT(*) "
+                "FROM marketplace_item_materials mim "
+                "JOIN materials m ON m.id = mim.material_id "
+                "JOIN marketplace_items mi ON mi.id = mim.marketplace_item_id "
+                "WHERE m.name ILIKE 'Пакет%' AND mi.material IS NOT NULL AND mi.width IS NOT NULL "
+                "GROUP BY mi.material, mi.width, m.name "
+                "ORDER BY mi.material, mi.width"
+            )
+            rows = [
+                {'fabric': r[0], 'width': r[1], 'bag': r[2], 'itemsCount': r[3]}
+                for r in cur.fetchall()
+            ]
+        finally:
+            conn.close()
+
+        fabrics = sorted({r['fabric'] for r in rows})
+        widths = sorted({r['width'] for r in rows})
+        bags = sorted({r['bag'] for r in rows})
+
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': json.dumps(
+                {'rows': rows, 'fabrics': fabrics, 'widths': widths, 'bags': bags},
+                ensure_ascii=False,
+            ),
+        }
 
     if method == 'GET':
         conn = psycopg2.connect(dsn)

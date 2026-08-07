@@ -72,6 +72,9 @@ const productionNav: NavItem[] = [
 
 const packerNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
+  // Подбор пакетов — ежедневный инструмент упаковщицы, поэтому отдельным пунктом
+  // верхнего уровня, а не спрятан внутри раздела.
+  { label: 'Подбор пакетов', icon: 'Package', path: '/crm/inventory/packaging-guide' },
   {
     label: 'Инвентаризация',
     icon: 'Boxes',
@@ -110,6 +113,7 @@ const storekeeperNav: NavItem[] = [
       { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
       { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
       { label: 'Товар к подбору', path: '/crm/inventory/goods-picking' },
+      { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
@@ -182,6 +186,7 @@ const adminNav: NavItem[] = [
       { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
       { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
       { label: 'Товар к подбору', path: '/crm/inventory/goods-picking' },
+      { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
