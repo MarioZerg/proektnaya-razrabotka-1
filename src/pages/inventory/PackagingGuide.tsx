@@ -106,7 +106,7 @@ const PackagingGuidePage = () => {
               </div>
             </div>
 
-            <div className="overflow-x-auto rounded-md border border-border">
+            <div className="rounded-md border border-border">
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr className="bg-muted/60">

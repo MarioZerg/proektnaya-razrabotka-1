@@ -41,7 +41,68 @@ const OperationsTable = ({
 }: OperationsTableProps) => {
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-border">
+      {/* Телефон: девять колонок в строку не помещаются — половину таблицы
+          (сумму, описание, даты) просто срезало за краем экрана. Показываем
+          то же самое карточками. На компьютере остаётся обычная таблица. */}
+      <div className="space-y-2 md:hidden">
+        {loading ? (
+          <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+            <Icon name="Loader2" size={16} className="animate-spin" />
+            Загрузка...
+          </div>
+        ) : operations.length === 0 ? (
+          <p className="p-4 text-center text-sm text-muted-foreground">Начислений пока нет</p>
+        ) : (
+          operations.map((op) => (
+            <div key={op.id} className="rounded-md border border-border bg-card p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Icon
+                    name={op.amount < 0 ? 'MinusCircle' : 'PlusCircle'}
+                    size={15}
+                    className={op.amount < 0 ? 'text-destructive' : 'text-emerald-600'}
+                  />
+                  <span className="text-sm font-medium">
+                    {accrualTypeLabels[op.type] || op.type}
+                  </span>
+                </div>
+                <span
+                  className={`whitespace-nowrap text-base font-bold ${
+                    op.amount < 0 ? 'text-destructive' : 'text-emerald-600'
+                  }`}
+                >
+                  {formatMoney(op.amount)} ₽
+                </span>
+              </div>
+
+              <p className="mt-1 text-sm font-semibold">{op.userName}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {op.orderNumber ? `Заказ #${op.orderNumber} — ` : ''}
+                {op.description}
+              </p>
+
+              <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                <p>Начислено за: {op.accruedFor}</p>
+                <p>Создано: {formatDateTime(op.createdAt)}</p>
+                <p>{op.paidAt ? `Выплачено: ${formatDateTime(op.paidAt)}` : 'Ожидает выплаты'}</p>
+              </div>
+
+              {!op.paidAt && (
+                <div className="mt-2 flex items-center gap-1 border-t border-border pt-2">
+                  <EditAccrualDialog operation={op} saving={savingAccrual} onSubmit={onEdit} />
+                  <ConfirmDeleteButton
+                    title="Удалить начисление?"
+                    description={`Начисление #${op.id} на сумму ${formatMoney(op.amount)} ₽ будет удалено безвозвратно.`}
+                    onConfirm={() => onDelete(op.id)}
+                  />
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="hidden rounded-md border border-border md:block">
         <Table>
           <TableHeader>
             <TableRow className="bg-primary hover:bg-primary">

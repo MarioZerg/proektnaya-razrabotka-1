@@ -125,7 +125,7 @@ const ReprintReportDialog = ({ open, onOpenChange }: ReprintReportDialogProps) =
 
               <div>
                 <p className="mb-2 text-sm font-semibold">Последние случаи</p>
-                <div className="max-h-64 overflow-y-auto rounded-md border border-border">
+                <div className="overflow-x-auto max-h-64 overflow-y-auto rounded-md border border-border">
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-primary hover:bg-primary">

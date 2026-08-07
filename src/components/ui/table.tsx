@@ -9,7 +9,12 @@ const Table = React.forwardRef<
   <div className="relative w-full overflow-x-auto [-webkit-overflow-scrolling:touch]">
     <table
       ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
+      // min-w-max — чтобы на узком экране таблица не сжимала колонки до нечитаемого
+      // состояния (текст обрезался, часть колонок пропадала за краем), а сохраняла
+      // естественную ширину и прокручивалась вбок внутри обёртки выше.
+      // На широком экране w-full больше min-w-max, поэтому таблица как и раньше
+      // растягивается на всю ширину.
+      className={cn("w-full min-w-max caption-bottom text-sm", className)}
       {...props}
     />
   </div>
