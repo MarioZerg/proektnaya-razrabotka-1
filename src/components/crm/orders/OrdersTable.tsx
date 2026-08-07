@@ -120,7 +120,7 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete, canManage }: OrdersTab
             <TableHead className="text-primary-foreground">Статус OZON</TableHead>
             <TableHead className="text-primary-foreground">Кластер</TableHead>
             <TableHead className="text-primary-foreground">Товары</TableHead>
-            <TableHead className="text-primary-foreground">Создан</TableHead>
+            <TableHead className="text-primary-foreground">Заказан</TableHead>
             <TableHead className="text-primary-foreground">Выполнен</TableHead>
             <TableHead className="text-primary-foreground" />
           </TableRow>
@@ -155,9 +155,15 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete, canManage }: OrdersTab
                 {o.product} - {o.quantity} шт.
               </TableCell>
               <TableCell>
-                <div className="whitespace-nowrap">{formatDate(o.createdAt)}</div>
+                {/* Показываем, когда покупатель оформил заказ, а не когда мы его
+                    загрузили: заказы приезжают из маркетплейса пачками, и дата
+                    загрузки у сотни заказов одинаковая — по ней не понять, какой
+                    заказ ждёт дольше всех. По этой же дате список и отсортирован. */}
+                <div className="whitespace-nowrap">
+                  {formatDate(o.marketplaceCreatedAt || o.createdAt)}
+                </div>
                 <Badge variant="destructive" className="mt-1 font-normal">
-                  {timeAgo(o.createdAt)}
+                  {timeAgo(o.marketplaceCreatedAt || o.createdAt)}
                 </Badge>
               </TableCell>
               <TableCell>{o.completedAt ? formatDate(o.completedAt) : ''}</TableCell>

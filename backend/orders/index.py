@@ -448,7 +448,13 @@ def handler(event: dict, context) -> dict:
                 "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                 "LEFT JOIN users su ON su.id = o.sewer_user_id "
                 "LEFT JOIN users pu ON pu.id = o.packer_user_id "
-                "ORDER BY o.created_at DESC, o.id DESC"
+                # Сверху — самые давние заказы покупателей: они горят и разбираются
+                # первыми. Раньше сортировали по дате загрузки к нам и по убыванию,
+                # из-за чего список заказов шёл в обратном порядке относительно
+                # очереди конвейера. Дата загрузки для очереди вообще не годится:
+                # заказы приезжают из маркетплейса пачками, и у сотни заказов она
+                # одинаковая. У ручных заказов даты покупателя нет — берём нашу.
+                "ORDER BY COALESCE(o.marketplace_created_at, o.created_at) ASC, o.id ASC"
             )
             orders = [
                 {

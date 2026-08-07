@@ -105,7 +105,7 @@ const SewingItemsTable = ({
               <TableHead className="text-primary-foreground">Тип</TableHead>
               <TableHead className="text-primary-foreground">Этапы</TableHead>
               <TableHead className="text-primary-foreground">Вешалка</TableHead>
-              <TableHead className="text-primary-foreground">Создан</TableHead>
+              <TableHead className="text-primary-foreground">Заказан</TableHead>
               <TableHead className="text-primary-foreground">Выполнен</TableHead>
               <TableHead className="text-primary-foreground" />
             </TableRow>
