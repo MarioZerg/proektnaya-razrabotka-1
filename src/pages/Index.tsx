@@ -32,7 +32,7 @@ type Step =
 
 const Index = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, user } = useAuth();
 
   const [step, setStep] = useState<Step>('start');
   const [botUrl, setBotUrl] = useState<string | null>(null);
@@ -50,6 +50,17 @@ const Index = () => {
   } | null>(null);
   const [selecting, setSelecting] = useState(false);
   const [entering, setEntering] = useState(false);
+
+  // Уже вошедшего сотрудника сразу уводим в систему.
+  //
+  // Зачем: на несуществующий адрес (404) человек попадает вместе с открытой сессией,
+  // а экран 404 через 3 секунды уводит на главную. Главная — это страница входа, и
+  // раньше она показывала форму «Войти через MAX», будто сессии нет: выглядело как
+  // разлогин, приходилось заходить заново. Сессия при этом никуда не пропадала —
+  // её просто не проверяли.
+  useEffect(() => {
+    if (user) navigate('/crm', { replace: true });
+  }, [user, navigate]);
 
   useEffect(() => {
     fetchMaxBotUrl().then(setBotUrl);

@@ -1,23 +1,28 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/context/AuthContext";
 import NotFound from "./NotFound";
 
 /**
- * Обёртка над страницей 404: показывает стандартный экран NotFound и через 3 секунды
- * возвращает пользователя назад — на ту страницу, с которой он перешёл на несуществующий
- * адрес. Если истории переходов нет (прямой заход по ссылке) — уводит на главную.
+ * Обёртка над страницей 404: показывает экран NotFound и через 3 секунды уводит
+ * пользователя оттуда.
+ *
+ * Куда возвращать — зависит от того, вошёл ли человек. Вошедшего сотрудника уводим
+ * в систему (/crm), а не на главную: главная — это страница входа, и попадание на
+ * неё выглядело как вылет из учётной записи, хотя сессия оставалась активной.
  */
 const NotFoundRedirect = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   useEffect(() => {
     const canGoBack = window.history.length > 1;
     const timer = setTimeout(() => {
       if (canGoBack) navigate(-1);
-      else navigate("/");
+      else navigate(user ? "/crm" : "/", { replace: true });
     }, 3000);
     return () => clearTimeout(timer);
-  }, [navigate]);
+  }, [navigate, user]);
 
   return <NotFound />;
 };
