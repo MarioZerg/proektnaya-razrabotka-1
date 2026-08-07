@@ -21,6 +21,8 @@ import {
   addOrderToBox,
   removeBoxItem,
   updateSupply,
+  lockSupply,
+  unlockSupply,
   type SupplyDetail,
   type SupplyCandidate,
 } from '@/lib/marketplaceSuppliesApi';
@@ -52,6 +54,9 @@ const MarketplaceSupplyAssemble = () => {
   const [closingBoxes, setClosingBoxes] = useState(false);
   const [cargoType, setCargoType] = useState<'BOX' | 'PALLET'>('BOX');
 
+  // Поставку собирает кто-то другой: показываем предупреждение вместо рабочего экрана.
+  const [lockedByOther, setLockedByOther] = useState<string | null>(null);
+
   const load = () => {
     setLoading(true);
     fetchSupplyDetail(supplyId)
@@ -65,6 +70,41 @@ const MarketplaceSupplyAssemble = () => {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplyId]);
+
+  /**
+   * Занимаем поставку на время сборки.
+   *
+   * Двое кладовщиков в одной поставке ломают раскладку по коробам: каждый видит
+   * свою картину экрана и кладёт заказы в чужие короба. Поэтому первый вошедший
+   * забирает поставку себе, второй видит предупреждение.
+   *
+   * Раз в минуту продлеваем блокировку — сервер по этому сигналу понимает, что
+   * человек ещё на месте. Если планшет разрядился или вкладку закрыли, через
+   * 5 минут тишины поставка освободится сама и не останется занятой навсегда.
+   */
+  useEffect(() => {
+    if (!supplyId) return;
+    let alive = true;
+
+    const take = async () => {
+      try {
+        await lockSupply(supplyId);
+        if (alive) setLockedByOther(null);
+      } catch (e) {
+        if (alive) setLockedByOther(e instanceof Error ? e.message : 'Поставку собирает другой сотрудник');
+      }
+    };
+
+    take();
+    const timer = setInterval(take, 60_000);
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      // Уходим со страницы — отпускаем поставку, чтобы её сразу мог взять другой.
+      unlockSupply(supplyId).catch(() => undefined);
+    };
   }, [supplyId]);
 
   useEffect(() => {
@@ -177,6 +217,38 @@ const MarketplaceSupplyAssemble = () => {
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Загрузка...
+        </div>
+      </CrmLayout>
+    );
+  }
+
+  // Поставку уже собирает другой кладовщик — вместо рабочего экрана показываем
+  // предупреждение. Так двое не разложат заказы по чужим коробам.
+  if (lockedByOther) {
+    return (
+      <CrmLayout>
+        <div className="mx-auto max-w-md space-y-5 py-16 text-center">
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-amber-100 text-amber-700">
+            <Icon name="Lock" size={28} />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-lg font-semibold">Поставка занята</h1>
+            <p className="text-sm text-muted-foreground">{lockedByOther}</p>
+            <p className="text-sm text-muted-foreground">
+              Дождитесь, пока он закончит: одну поставку одновременно собирает только
+              один сотрудник.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Button onClick={() => navigate('/crm/shipments/to-marketplace')}>
+              <Icon name="ArrowLeft" size={16} className="mr-2" />
+              К списку поставок
+            </Button>
+            <Button variant="outline" onClick={() => window.location.reload()}>
+              <Icon name="RefreshCw" size={16} className="mr-2" />
+              Проверить снова
+            </Button>
+          </div>
         </div>
       </CrmLayout>
     );

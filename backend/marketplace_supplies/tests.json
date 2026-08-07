@@ -197,6 +197,24 @@
         "id": 999999
       },
       "expectedStatus": 404
+    },
+    {
+      "name": "Lock supply without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "lock_supply"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Unlock supply without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "unlock_supply"
+      },
+      "expectedStatus": 400
     }
   ]
 }

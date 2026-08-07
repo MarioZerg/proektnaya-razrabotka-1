@@ -85,6 +85,48 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
+# Сколько поставка остаётся «занятой» без обновления от кладовщика.
+# Страница шлёт сигнал «я здесь» каждую минуту; 5 минут тишины — значит человек
+# закрыл вкладку, ушёл со смены или у него сел планшет. После этого поставку
+# может взять другой, иначе она осталась бы заблокированной навсегда.
+SUPPLY_LOCK_TTL_MINUTES = 5
+
+
+def release_stale_supply_locks(cur):
+    """Снимает блокировки, по которым давно нет признаков жизни."""
+    cur.execute(
+        "UPDATE marketplace_supplies SET locked_by = NULL, locked_at = NULL "
+        f"WHERE locked_by IS NOT NULL AND locked_at < now() - interval '{SUPPLY_LOCK_TTL_MINUTES} minutes'"
+    )
+
+
+def get_supply_lock(cur, supply_id):
+    """Кто сейчас занимает поставку: (id сотрудника, имя) или (None, None)."""
+    cur.execute(
+        "SELECT s.locked_by, u.full_name FROM marketplace_supplies s "
+        "LEFT JOIN users u ON u.id = s.locked_by WHERE s.id = %s",
+        (int(supply_id),),
+    )
+    r = cur.fetchone()
+    return (r[0], r[1]) if r else (None, None)
+
+
+def deny_if_locked_by_other(cur, supply_id, actor_id):
+    """Текст ошибки, если поставку собирает другой сотрудник, иначе None.
+
+    Проверяем на КАЖДОМ действии сборки, а не только при входе: без этого двое
+    кладовщиков, открывших страницу одновременно, продолжали бы раскладывать
+    заказы по чужим коробам.
+    """
+    if not actor_id:
+        return None
+    release_stale_supply_locks(cur)
+    locked_by, locked_name = get_supply_lock(cur, supply_id)
+    if locked_by and int(locked_by) != int(actor_id):
+        return f'Поставку уже собирает {locked_name or "другой сотрудник"}'
+    return None
+
+
 def find_cancelled_items(cur, supply_id):
     """Товары поставки, чьи заказы отменены маркетплейсом.
 
@@ -246,6 +288,14 @@ def handler(event: dict, context) -> dict:
           фиксируются все даты этапов, поставка сразу переходит в "Выполнена"
     POST /  { action: 'delete', id }
         - удаляет поставку (разрешено только для статуса "Открытая", товары возвращаются на склад)
+    POST /  { action: 'lock_supply', supplyId, actorId }
+        - занимает поставку под сборку: пока её собирает один кладовщик, второй не может
+          менять её состав. Кто зашёл первым — тот и собирает. Страница повторяет запрос
+          раз в минуту, продлевая блокировку; после 5 минут тишины (закрыли вкладку,
+          разрядился планшет) поставка освобождается сама. Если занята другим — 409
+    POST /  { action: 'unlock_supply', supplyId, actorId }
+        - освобождает поставку при уходе со страницы сборки. Снять блокировку может
+          только тот, кто её поставил
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -322,6 +372,10 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'candidates': candidates})}
 
             if supply_id:
+                # Снимаем блокировки, по которым давно нет активности, чтобы поставка
+                # не осталась «занятой» после закрытой вкладки.
+                release_stale_supply_locks(cur)
+                conn.commit()
                 cur.execute(
                     "SELECT s.id, s.marketplace, s.type, s.status, s.comment, s.created_at, "
                     "s.supply_number, s.supply_barcode, s.cluster, s.gazelka_id, "
@@ -331,9 +385,11 @@ def handler(event: dict, context) -> dict:
                     "s.ozon_delivery_method, s.ozon_application_number, s.ozon_status, "
                     "s.supply_date, s.timeslot, s.shipment_type, s.packaging_type, "
                     "s.packaging_count, s.gazelka_pickup, s.ozon_supply_order_id, s.ozon_cargo_type, "
-                    "s.gazelka_plan_id, s.gazelka_ids, s.gazelka_idm "
+                    "s.gazelka_plan_id, s.gazelka_ids, s.gazelka_idm, "
+                    "s.locked_by, lu.full_name, s.locked_at "
                     "FROM marketplace_supplies s "
                     "LEFT JOIN users u ON u.id = s.created_by "
+                    "LEFT JOIN users lu ON lu.id = s.locked_by "
                     "WHERE s.id = %s",
                     (int(supply_id),),
                 )
@@ -539,6 +595,11 @@ def handler(event: dict, context) -> dict:
                     'gazelkaPlanId': row[29],
                     'gazelkaIds': row[30],
                     'gazelkaIdm': row[31],
+                    # Кто сейчас собирает поставку: фронт по этим полям решает,
+                    # показать рабочий экран или предупреждение «занято».
+                    'lockedBy': row[32],
+                    'lockedByName': row[33],
+                    'lockedAt': (row[34].isoformat() + 'Z') if row[34] else None,
                 }
                 # Реквизиты клиента для упаковочного листа Газельки — общие настройки.
                 cur.execute(
@@ -555,6 +616,11 @@ def handler(event: dict, context) -> dict:
             date_from = params.get('date_from')
             date_to = params.get('date_to')
             search = params.get('search')
+
+            # Снимаем протухшие блокировки перед показом списка: иначе поставка,
+            # оставленная в закрытой вкладке, вечно числилась бы занятой.
+            release_stale_supply_locks(cur)
+            conn.commit()
 
             conditions = []
             if status_filter:
@@ -592,9 +658,13 @@ def handler(event: dict, context) -> dict:
                 f" AND COALESCE(o.status, '') <> 'Отменён'), "
                 f"(SELECT COUNT(*) FROM orders o WHERE o.supply_id = s.id "
                 f" AND COALESCE(o.status, '') <> 'Отменён' "
-                f" AND o.sewing_status IN ('Готовые', 'Со склада')) "
+                f" AND o.sewing_status IN ('Готовые', 'Со склада')), "
+                # Кто сейчас собирает поставку — чтобы кладовщик видел занятость
+                # прямо в списке и не заходил внутрь впустую.
+                f"s.locked_by, lu.full_name "
                 f"FROM marketplace_supplies s "
                 f"LEFT JOIN users u ON u.id = s.created_by "
+                f"LEFT JOIN users lu ON lu.id = s.locked_by "
                 f"{where_clause} "
                 f"ORDER BY s.created_at DESC, s.id DESC"
             )
@@ -624,6 +694,8 @@ def handler(event: dict, context) -> dict:
                     # Пошив по поставке: сколько изделий всего и сколько уже сшито.
                     'sewingTotal': int(r[19] or 0),
                     'sewingDone': int(r[20] or 0),
+                    'lockedBy': r[21],
+                    'lockedByName': r[22],
                 }
                 for r in cur.fetchall()
             ]
@@ -636,6 +708,7 @@ def handler(event: dict, context) -> dict:
         body_data = json.loads(event.get('body') or '{}')
         action = body_data.get('action')
         actor_role = (body_data.get('actorRole') or '').strip()
+        actor_id = body_data.get('actorId')
 
         # Действия, меняющие FBS-поставку. Менеджеру они закрыты: FBS собирает кладовщик,
         # сканируя товар со своих полок, а менеджер только наблюдает за ходом сборки.
@@ -643,6 +716,14 @@ def handler(event: dict, context) -> dict:
             'scan_order', 'remove_item', 'create_box', 'delete_box', 'close_box',
             'add_order_to_box', 'remove_box_item', 'move_status', 'force_complete',
             'update', 'delete', 'add_sewing_orders',
+        )
+
+        # Действия сборки: пока поставку держит один кладовщик, второй их выполнить
+        # не может. 'move_status'/'force_complete'/'delete' сюда НЕ входят намеренно —
+        # это решения по поставке целиком, их принимает администратор.
+        ASSEMBLY_ACTIONS = (
+            'scan_order', 'remove_item', 'create_box', 'delete_box', 'close_box',
+            'add_order_to_box', 'remove_box_item', 'cancelled_to_shelf', 'add_sewing_orders',
         )
 
         conn = psycopg2.connect(dsn)
@@ -670,6 +751,80 @@ def handler(event: dict, context) -> dict:
                 denied = deny_manager_fbs(cur, supply_id=target_supply, actor_role=actor_role)
                 if denied:
                     return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': denied}, ensure_ascii=False)}
+
+            # Поставку собирает кто-то другой — любое изменение её состава отклоняем.
+            # Проверяем на сервере, а не только на экране: два планшета могли открыть
+            # страницу одновременно, до того как блокировка появилась.
+            if action in ASSEMBLY_ACTIONS and actor_id:
+                lock_supply = body_data.get('supplyId') or body_data.get('id')
+                if not lock_supply and body_data.get('boxId'):
+                    cur.execute(
+                        "SELECT supply_id FROM marketplace_supply_boxes WHERE id = %s",
+                        (int(body_data['boxId']),),
+                    )
+                    lb = cur.fetchone()
+                    lock_supply = lb[0] if lb else None
+                if not lock_supply and body_data.get('itemId'):
+                    cur.execute(
+                        "SELECT supply_id FROM marketplace_supply_items WHERE id = %s",
+                        (int(body_data['itemId']),),
+                    )
+                    li = cur.fetchone()
+                    lock_supply = li[0] if li else None
+                if lock_supply:
+                    lock_err = deny_if_locked_by_other(cur, lock_supply, actor_id)
+                    conn.commit()
+                    if lock_err:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({'error': lock_err}, ensure_ascii=False),
+                        }
+
+            # Захват поставки: кладовщик открыл экран сборки. Кто первый — тот и собирает.
+            # Страница повторяет запрос раз в минуту, продлевая блокировку (heartbeat).
+            if action == 'lock_supply':
+                lock_supply_id = body_data.get('supplyId')
+                if not lock_supply_id or not actor_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку и сотрудника'})}
+                release_stale_supply_locks(cur)
+                # Ставим блокировку одним запросом: условие в WHERE не даст двум
+                # одновременным нажатиям перехватить поставку друг у друга.
+                cur.execute(
+                    "UPDATE marketplace_supplies SET locked_by = %s, locked_at = now() "
+                    "WHERE id = %s AND (locked_by IS NULL OR locked_by = %s) "
+                    "RETURNING locked_by",
+                    (int(actor_id), int(lock_supply_id), int(actor_id)),
+                )
+                got = cur.fetchone()
+                conn.commit()
+                if not got:
+                    _, holder_name = get_supply_lock(cur, lock_supply_id)
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Поставку уже собирает {holder_name or "другой сотрудник"}',
+                             'lockedByName': holder_name},
+                            ensure_ascii=False,
+                        ),
+                    }
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'locked': True})}
+
+            # Освобождение: кладовщик ушёл со страницы сборки.
+            if action == 'unlock_supply':
+                unlock_id = body_data.get('supplyId')
+                if not unlock_id or not actor_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку и сотрудника'})}
+                # Снять блокировку может только тот, кто её поставил, — иначе один
+                # кладовщик мог бы «выбить» другого прямо во время сборки.
+                cur.execute(
+                    "UPDATE marketplace_supplies SET locked_by = NULL, locked_at = NULL "
+                    "WHERE id = %s AND locked_by = %s",
+                    (int(unlock_id), int(actor_id)),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'unlocked': True})}
 
             if action == 'create':
                 marketplace = (body_data.get('marketplace') or '').strip()
@@ -1222,6 +1377,11 @@ def handler(event: dict, context) -> dict:
                 elif new_status == 'Выполнена':
                     extra_sql = ", completed_at = now(), ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now())"
 
+                # Поставка ушла со сборки — снимаем блокировку, иначе она осталась бы
+                # висеть на кладовщике и мешала бы вернуться к поставке при исправлении.
+                if new_status in ('Отгрузка', 'Выполнена'):
+                    extra_sql += ", locked_by = NULL, locked_at = NULL"
+
                 cur.execute(f"UPDATE marketplace_supplies SET status = '{new_status}'{extra_sql} WHERE id = {int(supply_id)}")
 
                 # Кладовщик получает оклад за смену, если он открыл смену И довёл хотя бы одну
@@ -1312,6 +1472,7 @@ def handler(event: dict, context) -> dict:
                     f"UPDATE marketplace_supplies SET status = 'Выполнена', "
                     f"ship_to_gazelka_at = COALESCE(ship_to_gazelka_at, now()), "
                     f"completed_at = now(), "
+                    f"locked_by = NULL, locked_at = NULL, "
                     f"ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now()) "
                     f"WHERE id = {int(supply_id)}"
                 )

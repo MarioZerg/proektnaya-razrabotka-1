@@ -31,6 +31,9 @@ export interface Supply {
   sewingTotal?: number;
   /** Сколько из них уже сшито. */
   sewingDone?: number;
+  /** Кто сейчас собирает поставку — показываем занятость прямо в списке. */
+  lockedBy?: number | null;
+  lockedByName?: string | null;
 }
 
 export interface SupplyItem {
@@ -134,6 +137,10 @@ export interface SupplyDetail extends Supply {
   ozonSupplyOrderId: number | null;
   /** Тип грузоместа OZON FBO при закрытии коробов: 'BOX' (короб) или 'PALLET' (палета). */
   ozonCargoType: string | null;
+  /** Кто сейчас собирает поставку. Пока она занята, другой кладовщик менять её не может. */
+  lockedBy: number | null;
+  lockedByName: string | null;
+  lockedAt: string | null;
   /** id привязанной заявки в сервисе грузоперевозок Газелька (для печати стикеров коробов). */
   gazelkaPlanId: number | null;
   /** IDS (id склада поставки) и IDM для штрихкода упаковочного листа Газельки (ручной ввод). */
@@ -200,11 +207,21 @@ const currentRole = (): string | undefined => {
   }
 };
 
+/** id текущего сотрудника — сервер по нему проверяет, кто занял поставку под сборку. */
+const currentUserId = (): number | undefined => {
+  try {
+    const raw = localStorage.getItem('megatul_user');
+    return raw ? JSON.parse(raw).id : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const postAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(SUPPLIES_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ actorRole: currentRole(), ...payload }),
+    body: JSON.stringify({ actorRole: currentRole(), actorId: currentUserId(), ...payload }),
   });
   const data = await res.json();
   if (!res.ok) {
@@ -273,6 +290,17 @@ export interface CloseBoxResult {
   success: true;
   closedAt: string | null;
 }
+
+/**
+ * Занять поставку под сборку. Кто зашёл первым — тот и собирает.
+ * Если её уже собирает другой, сервер вернёт ошибку с его именем.
+ */
+export const lockSupply = (supplyId: number) =>
+  postAction({ action: 'lock_supply', supplyId });
+
+/** Освободить поставку при уходе со страницы сборки. */
+export const unlockSupply = (supplyId: number) =>
+  postAction({ action: 'unlock_supply', supplyId });
 
 export const closeSupplyBox = (boxId: number): Promise<CloseBoxResult> =>
   postAction({ action: 'close_box', boxId });
