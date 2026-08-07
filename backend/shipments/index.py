@@ -338,6 +338,16 @@ def handler(event: dict, context) -> dict:
                         number_rolls = int(number_rolls)
                         if number_rolls < 1:
                             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Число рулонов должно быть не меньше 1'})}
+                        # Принять «минус метров» нельзя: такой рулон создал бы отрицательный
+                        # остаток на складе, и вся аналитика по материалу поехала бы.
+                        if quantity <= 0:
+                            return {
+                                'statusCode': 400,
+                                'headers': headers,
+                                'body': json.dumps(
+                                    {'error': 'Количество должно быть больше нуля'}, ensure_ascii=False
+                                ),
+                            }
 
                         cur.execute("SELECT id FROM materials WHERE id = %s", (material_id,))
                         if not cur.fetchone():
@@ -462,6 +472,22 @@ def handler(event: dict, context) -> dict:
                             'headers': headers,
                             'body': json.dumps({'error': 'Для каждой позиции укажите материал, количество и число рулонов'}),
                         }
+                    if float(quantity) <= 0:
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Количество должно быть больше нуля'}, ensure_ascii=False
+                            ),
+                        }
+                    if int(number_rolls) < 1:
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Число рулонов должно быть не меньше 1'}, ensure_ascii=False
+                            ),
+                        }
                     cur.execute(
                         f"INSERT INTO shipment_items (shipment_id, material_id, quantity, number_rolls) "
                         f"VALUES ({int(shipment_id)}, {int(material_id)}, {float(quantity)}, {int(number_rolls)})"
@@ -506,6 +532,17 @@ def handler(event: dict, context) -> dict:
                 for item_id, material_id, quantity, number_rolls in pending_items:
                     quantity = float(quantity)
                     number_rolls = int(number_rolls)
+                    # Последняя проверка перед созданием реальных рулонов на складе.
+                    if quantity <= 0 or number_rolls < 1:
+                        conn.rollback()
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'В поставке есть позиция с некорректным количеством — исправьте её перед подтверждением'},
+                                ensure_ascii=False,
+                            ),
+                        }
 
                     cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
                     type_id = cur.fetchone()[0]

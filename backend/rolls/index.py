@@ -427,6 +427,17 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'Укажите штрихкод, материал и начальное количество'}),
                     }
 
+                # Метраж рулона всегда положительный: рулон «на минус метров» дал бы
+                # отрицательный остаток материала на складе.
+                if float(initial_quantity) <= 0:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Количество должно быть больше нуля'}, ensure_ascii=False
+                        ),
+                    }
+
                 # Рулон, отправленный сразу в цех, обязан принадлежать конкретной смене —
                 # "ничейных" рулонов в цехе быть не должно (проверяется и на уровне БД).
                 if workshop_id not in (None, '') and shift_number in (None, ''):

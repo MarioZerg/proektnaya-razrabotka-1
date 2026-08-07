@@ -92,9 +92,14 @@ const FromSupplier = () => {
     setDialogOpen(true);
   };
 
+  // Отрицательное и нулевое количество отбрасываем ещё до отправки: такой рулон
+  // создал бы минусовой остаток на складе.
   const rowsToItems = (list: ItemRow[]) =>
     list
-      .filter((r) => r.materialId && r.quantity && r.numberRolls)
+      .filter(
+        (r) =>
+          r.materialId && Number(r.quantity) > 0 && Number(r.numberRolls) >= 1
+      )
       .map((r) => ({
         materialId: Number(r.materialId),
         quantity: Number(r.quantity),

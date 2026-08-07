@@ -123,6 +123,7 @@ const CreateSupplyDialog = ({
                   <Input
                     type="number"
                     step="0.01"
+                    min="0.01"
                     placeholder={materialUnit(row.materialId) || 'метр/шт'}
                     value={row.quantity}
                     onChange={(e) => updateRow(idx, 'quantity', e.target.value)}
