@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import Icon from '@/components/ui/icon';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
 import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
 import { useAuth } from '@/context/AuthContext';
@@ -320,7 +321,13 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
             <HeaderSalaryWidget />
           </div>
         </div>
-        <div className="p-3 sm:p-6">{children}</div>
+        {/* Сбой внутри страницы не должен гасить меню и весь экран. */}
+        <div className="p-3 sm:p-6">
+          {/* key по адресу: при переходе на другую страницу защита пересоздаётся,
+              иначе экран ошибки «залипал» бы и на исправных разделах. Роль в ключе —
+              чтобы после переключения должности страница отрисовалась заново. */}
+          <ErrorBoundary key={`${location.pathname}-${user.role}`}>{children}</ErrorBoundary>
+        </div>
       </main>
     </SidebarProvider>
   );

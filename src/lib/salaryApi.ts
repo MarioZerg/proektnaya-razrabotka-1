@@ -56,7 +56,19 @@ export const fetchSalarySummary = async (filters?: {
   if (filters?.page) params.set('page', String(filters.page));
   const qs = params.toString();
   const res = await fetch(qs ? `${SALARY_URL}?${qs}` : SALARY_URL);
-  return res.json();
+  const data = res.ok ? await res.json() : {};
+  // Страница финансов рисует таблицу и суммы сразу из ответа. Если запрос не удался
+  // (сеть моргнула, сервер ответил ошибкой), полей в ответе нет — без подстановки
+  // пустых значений таблица падала и весь раздел становился белым экраном.
+  return {
+    operations: Array.isArray(data.operations) ? data.operations : [],
+    totalCount: data.totalCount ?? 0,
+    totalPages: data.totalPages ?? 1,
+    totalToAccrue: data.totalToAccrue ?? 0,
+    totalDebts: data.totalDebts ?? 0,
+    period1Total: data.period1Total ?? 0,
+    period2Total: data.period2Total ?? 0,
+  };
 };
 
 export interface SalaryPayout {
@@ -108,7 +120,14 @@ export interface MySalaryData {
 
 export const fetchMySalary = async (userId: number): Promise<MySalaryData> => {
   const res = await fetch(`${SALARY_URL}?my=1&userId=${userId}`);
-  return res.json();
+  const data = res.ok ? await res.json() : {};
+  // Пустые списки вместо отсутствующих полей — иначе экран «Моя зарплата» падает.
+  return {
+    ...data,
+    accruals: Array.isArray(data.accruals) ? data.accruals : [],
+    payouts: Array.isArray(data.payouts) ? data.payouts : [],
+    balance: data.balance ?? 0,
+  };
 };
 
 const postAction = async (payload: Record<string, unknown>) => {
@@ -181,7 +200,11 @@ export interface CashBoxData {
 
 export const fetchCashBox = async (): Promise<CashBoxData> => {
   const res = await fetch(`${SALARY_URL}?cashBox=1`);
-  return res.json();
+  const data = res.ok ? await res.json() : {};
+  return {
+    balance: data.balance ?? 0,
+    transactions: Array.isArray(data.transactions) ? data.transactions : [],
+  };
 };
 
 export const cashDeposit = (payload: { amount: number; description: string; actorId?: number; actorName?: string }) =>
