@@ -313,6 +313,11 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
     skipped_no_item = 0
     unmatched = []
     rows = []  # накапливаем все заказы, вставляем одним запросом (быстро)
+    # Сквозной счётчик вещей внутри заявки: номер вида «заявка-1», «заявка-2».
+    # Артикул в номер больше не подставляем — он делал номер нечитаемым, и сотрудник
+    # не мог сверить его с документами OZON. Счётчик общий на все товары заявки,
+    # иначе разные позиции получили бы одинаковые номера.
+    unit_seq = 0
     for it in items:
         ozon_sku = it.get('sku')
         offer_id = it.get('offer_id')
@@ -324,11 +329,12 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
             continue
         material, width, height, item_name, barcode, item_id, item_ozon_sku = found
         product = f"{material} {width}x{height}" if material and width and height else item_name
-        for n in range(1, qty + 1):
-            # order_number уникален (индекс в БД), поэтому каждой штуке даём отдельный номер:
-            # {номер заявки}-{артикул}-{порядковый}. ON CONFLICT DO NOTHING делает импорт
-            # идемпотентным: повторная загрузка той же заявки не задваивает заказы.
-            unique_number = f"{order_number}-{offer_id or ozon_sku}-{n}"
+        for _n in range(1, qty + 1):
+            # order_number уникален (индекс в БД), поэтому каждой штуке даём отдельный
+            # номер: {номер заявки}-{порядковый номер вещи}. ON CONFLICT DO NOTHING делает
+            # импорт идемпотентным: повторная загрузка той же заявки не задваивает заказы.
+            unit_seq += 1
+            unique_number = f"{order_number}-{unit_seq}"
             rows.append((
                 unique_number, product, material,
                 int(width) if width else None,

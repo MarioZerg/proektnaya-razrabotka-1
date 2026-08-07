@@ -214,6 +214,13 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         # с учётом количества.
         products = p.get('products', []) or []
         made_any = False
+        # Сквозной счётчик вещей ВНУТРИ отправления. Раньше в номер подставлялся артикул
+        # («...-1-2vyal2_250-1») — получалась нечитаемая каша, которую сотрудник не мог
+        # сверить с ярлыком OZON. Теперь номер вида «отправление-1», «отправление-2»:
+        # видно номер отправления как есть, а хвост — просто порядок вещи в нём.
+        # Счётчик общий на все товары отправления, иначе две разные позиции получили бы
+        # одинаковые номера и вторая потерялась бы при загрузке.
+        unit_seq = 0
         for pr in products:
             ozon_sku = pr.get('sku')
             offer_id = pr.get('offer_id')
@@ -225,13 +232,13 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
                 continue
             material, width, height, item_name, item_id = item
             product = f"{material} {width}x{height}" if material and width and height else item_name
-            for n in range(1, qty + 1):
-                # Номер заказа для каждой штуки свой: "{отправление}-{артикул}-{номер штуки}".
-                # Так несколько товаров одного покупателя становятся отдельными позициями на
-                # конвейере, а повторная загрузка не создаёт дублей (ON CONFLICT DO NOTHING).
-                # Само отправление хранится в ozon_posting_number — по нему заказы собираются
-                # обратно при отгрузке.
-                unique_number = f"{posting_number}-{offer_id or ozon_sku}-{n}"
+            for _n in range(1, qty + 1):
+                # Номер вещи на конвейере: "{номер отправления}-{порядковый номер вещи}".
+                # Повторная загрузка дублей не создаёт (ON CONFLICT DO NOTHING).
+                # Само отправление хранится в ozon_posting_number — по нему заказы
+                # собираются обратно при отгрузке.
+                unit_seq += 1
+                unique_number = f"{posting_number}-{unit_seq}"
                 cur.execute(
                     "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                     "quantity, source, material, width, height, ozon_posting_number, ozon_status, "
