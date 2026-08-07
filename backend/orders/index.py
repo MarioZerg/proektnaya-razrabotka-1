@@ -998,14 +998,30 @@ def handler(event: dict, context) -> dict:
                 for item_id in cut_queue:
 
                     cur.execute(
-                        "SELECT material, width, height, workshop_id, assigned_user_id FROM orders WHERE id = %s",
+                        "SELECT material, width, height, workshop_id, assigned_user_id, sewing_status FROM orders WHERE id = %s",
                         (int(item_id),),
                     )
                     order_row = cur.fetchone()
                     if not order_row:
                             conn.rollback()
                             return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-                    material, width, height, order_workshop_id, order_assigned_user_id = order_row
+                    material, width, height, order_workshop_id, order_assigned_user_id, current_sewing_status = order_row
+
+                    # Раскроить можно ТОЛЬКО заказ, который сейчас на раскрое. Без этой
+                    # проверки закройщик мог выбрать рулон и вешалку у заказа, уже ушедшего
+                    # дальше по конвейеру (в работе, на стикеровке, в готовых) — материал
+                    # списался бы повторно, зарплата начислилась второй раз, а вешалка
+                    # заменилась бы посреди работы швеи.
+                    if current_sewing_status != 'На раскрое':
+                            conn.rollback()
+                            return {
+                                    'statusCode': 409,
+                                    'headers': headers,
+                                    'body': json.dumps(
+                                            {'error': f'Заказ уже в статусе «{current_sewing_status}» — раскроить можно только заказ на раскрое'},
+                                            ensure_ascii=False,
+                                    ),
+                            }
 
                     # Лимит метража и макс. число рулонов на смену закройщика (cutter_daily_limit,
                     # max_fabric_rolls_per_shift) — считаются в пределах ТЕКУЩЕЙ открытой рабочей
@@ -1625,6 +1641,18 @@ def handler(event: dict, context) -> dict:
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({'error': 'Заказ уже отправлен на стикеровку'}),
+                    }
+                # Отправить на стикеровку можно только заказ, который швея сейчас шьёт.
+                # Иначе на уже готовом заказе повторно списалась бы тесьма и начислилась
+                # зарплата, а заказ откатился бы из «Готовых» назад на стикеровку.
+                if current_status not in ('Раскроено', 'В работе'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Заказ в статусе «{current_status}» — на стикеровку отправляют только из работы'},
+                            ensure_ascii=False,
+                        ),
                     }
 
                 # Текущая смена швеи берётся из её ОТКРЫТОЙ shift_sessions (учитывает

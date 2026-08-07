@@ -75,13 +75,35 @@ const SewingItemActionsSection = ({
     }
   }, [dialogOpen, orderDetail?.lastHangerNumber]);
 
-  const isAlreadyCut = selectedOrder?.sewingStatus === 'Раскроено';
-  const isAlreadyStickering = selectedOrder?.sewingStatus === 'Стикеровка';
+  // Раскрой доступен ТОЛЬКО пока заказ на раскрое. Раньше блок выбора рулона и вешалки
+  // оставался рабочим и на заказах, ушедших дальше по конвейеру («В работе», «Стикеровка»,
+  // «Готовые») — закройщик мог случайно списать материал второй раз и сменить вешалку
+  // у заказа, который швея уже шьёт.
+  const canCut = selectedOrder?.sewingStatus === 'На раскрое';
+  const isAlreadyCut = !canCut;
+  // Швея отправляет на стикеровку только то, что сейчас в работе (или лежит раскроенным).
+  const canSendToStickering =
+    selectedOrder?.sewingStatus === 'Раскроено' || selectedOrder?.sewingStatus === 'В работе';
+  const isAlreadyStickering = !canSendToStickering;
   // Тесьма нужна только если у товара задан требуемый материал тесьмы. Товары без тесьмы
   // швея отправляет на стикеровку без выбора рулона.
   const trimNeeded = orderDetail?.requiredTrimMaterialId != null;
 
   if (isCutterView) {
+    // Заказ уже ушёл дальше по конвейеру — раскраивать нечего, показываем причину,
+    // а не молча заблокированные поля.
+    if (!canCut) {
+      return (
+        <Card className="border-border shadow-none">
+          <CardContent className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+            <Icon name="Info" size={16} />
+            Заказ уже в статусе «{selectedOrder?.sewingStatus}» — раскрой завершён, рулон и
+            вешалку изменить нельзя.
+          </CardContent>
+        </Card>
+      );
+    }
+
     return (
       <Card className="border-border shadow-none">
         <CardHeader className="pb-3">
@@ -182,6 +204,17 @@ const SewingItemActionsSection = ({
   }
 
   if (isSewerView) {
+    if (!canSendToStickering) {
+      return (
+        <Card className="border-border shadow-none">
+          <CardContent className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+            <Icon name="Info" size={16} />
+            Заказ уже в статусе «{selectedOrder?.sewingStatus}» — тесьму списывать не нужно.
+          </CardContent>
+        </Card>
+      );
+    }
+
     return (
       <Card className="border-border shadow-none">
         <CardHeader className="pb-3">
