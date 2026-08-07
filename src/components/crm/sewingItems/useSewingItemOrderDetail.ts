@@ -115,7 +115,7 @@ export const useSewingItemOrderDetail = ({
     if (!selectedOrder) return;
     setCutting(true);
     try {
-      const res = await cutOrderGroup(selectedOrder.id, rollId, hangerNumber);
+      const res = await cutOrderGroup(selectedOrder.id, rollId, hangerNumber, actorId);
       toast({
         title: `Связка раскроена: ${res.cutCount} вещей`,
         description: 'Повесьте их вместе — заказ целиком возьмёт одна швея',
@@ -138,7 +138,7 @@ export const useSewingItemOrderDetail = ({
     if (!selectedOrder) return;
     setCutting(true);
     try {
-      await cutOrder(selectedOrder.id, rollId, hangerNumber);
+      await cutOrder(selectedOrder.id, rollId, hangerNumber, actorId);
       toast({ title: 'Раскрой выполнен', description: 'Тюль списан, тесьму укажет швея перед стикеровкой' });
       setSelectedOrder({ ...selectedOrder, sewingStatus: 'Раскроено' });
       load();
@@ -162,7 +162,7 @@ export const useSewingItemOrderDetail = ({
     if (trimNeeded && !rollId) return;
     setCutting(true);
     try {
-      await sendToStickering(selectedOrder.id, rollId);
+      await sendToStickering(selectedOrder.id, rollId, actorId);
       toast({
         title: 'Заказ отправлен на стикеровку',
         description: trimNeeded ? 'Тесьма списана с рулона' : undefined,

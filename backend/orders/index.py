@@ -632,11 +632,22 @@ def handler(event: dict, context) -> dict:
                 picked = cur.fetchall()
                 order_ids = [r[0] for r in picked]
 
+                # Связка Яндекса выдаётся ОТДЕЛЬНО от обычного стека. Заказ покупателя из
+                # десятков вещей — это самостоятельная порция работы: закройщик раскраивает
+                # его целиком, вешает на одну вешалку и отдаёт швее. Если подмешать к связке
+                # ещё и обычные заказы, закройщик получает гору вещей, часть которых надо
+                # вешать вместе, а часть — по отдельности, и связка растворяется в стеке.
+                # Поэтому: первая же встреченная связка становится всей выдачей, а обычный
+                # стек закройщик возьмёт следующим нажатием, закончив с ней.
+                first_group_key = next((r[1] for r in picked if r[1]), None)
+                if first_group_key:
+                    order_ids = []
+
                 # Заказ Яндекс Маркета из нескольких вещей едет по одному общему ярлыку, поэтому
                 # его нельзя разрезать границей стека: если в стек попала часть связки, добираем
                 # остальные её вещи — иначе хвост заказа уйдёт другому закройщику и вещи
                 # разъедутся по цеху, а собрать их к отгрузке будет нечем.
-                group_keys = {r[1] for r in picked if r[1]}
+                group_keys = {first_group_key} if first_group_key else set()
                 if group_keys:
                     keys_csv = ','.join("'" + k.replace("'", "''") + "'" for k in group_keys)
                     cur.execute(
@@ -648,6 +659,68 @@ def handler(event: dict, context) -> dict:
                         "FOR UPDATE SKIP LOCKED"
                     )
                     order_ids = sorted({r[0] for r in cur.fetchall()} | set(order_ids))
+
+                    # Связку отдаём закройщику ТОЛЬКО если тюля в его цехе хватит на ВСЕ её
+                    # вещи. Заказ покупателя раскраивается по принципу «всё или ничего»:
+                    # если материал кончится на середине, связка застрянет разорванной —
+                    # часть вещей раскроена, часть нет, и отгрузить заказ нечем.
+                    # Считаем суммарную потребность по каждому материалу и сравниваем с
+                    # остатком рулонов, доступных этому цеху.
+                    group_need = {}
+                    cur.execute(
+                        "SELECT material, width, height FROM orders WHERE id IN ("
+                        + ','.join(str(int(i)) for i in order_ids) + ")"
+                    )
+                    for g_material, g_width, g_height in cur.fetchall():
+                        if not (g_material and g_width and g_height):
+                            continue
+                        cur.execute(
+                            "SELECT id FROM marketplace_items WHERE material = %s AND width = %s "
+                            "AND height = %s LIMIT 1",
+                            (g_material, g_width, g_height),
+                        )
+                        gi_row = cur.fetchone()
+                        if not gi_row:
+                            continue
+                        cur.execute(
+                            "SELECT mim.material_id, mim.quantity FROM marketplace_item_materials mim "
+                            "JOIN materials m ON m.id = mim.material_id "
+                            "JOIN material_types mt ON mt.id = m.type_id "
+                            "WHERE mim.marketplace_item_id = %s AND mt.name = 'Тюль'",
+                            (gi_row[0],),
+                        )
+                        for gm_id, gm_qty in cur.fetchall():
+                            group_need[gm_id] = group_need.get(gm_id, 0) + float(gm_qty)
+
+                    group_shortages = []
+                    for gm_id, gm_total in group_need.items():
+                        cur.execute(
+                            "SELECT COALESCE(SUM(remaining_quantity), 0) FROM rolls "
+                            "WHERE material_id = %s AND status IN ('in_storage', 'in_workshop') "
+                            "AND remaining_quantity > 0",
+                            (gm_id,),
+                        )
+                        gm_available = float(cur.fetchone()[0] or 0)
+                        if gm_available < gm_total:
+                            cur.execute("SELECT name, unit FROM materials WHERE id = %s", (gm_id,))
+                            gm_row = cur.fetchone()
+                            gm_name, gm_unit = (gm_row[0], gm_row[1]) if gm_row else ('материал', '')
+                            group_shortages.append(
+                                f'{gm_name}: на связку нужно {round(gm_total, 2)} {gm_unit}, '
+                                f'доступно {round(gm_available, 2)} {gm_unit}'
+                            )
+
+                    if group_shortages:
+                        conn.rollback()
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Не хватает материала на всю связку — обратитесь к кладовщику. '
+                                          + '; '.join(group_shortages)},
+                                ensure_ascii=False,
+                            ),
+                        }
 
                 if not order_ids:
                     return {
@@ -956,6 +1029,23 @@ def handler(event: dict, context) -> dict:
                     hanger_number = None
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+                # Раскраивать и списывать материал может только закройщик (и администратор).
+                # Остальные роли — швея, упаковщица, кладовщик, менеджер — к материалам
+                # заказа отношения не имеют, иначе списание ушло бы мимо реального этапа.
+                if actor_id:
+                    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                    cut_role_row = cur.fetchone()
+                    cut_actor_role = cut_role_row[0] if cut_role_row else None
+                    if cut_actor_role not in ('cutter', 'admin'):
+                        return {
+                            'statusCode': 403,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Раскраивать заказы и выбирать рулон может только закройщик'},
+                                ensure_ascii=False,
+                            ),
+                        }
 
                 # Для связки собираем все её ещё не раскроенные вещи, закреплённые за этим же
                 # закройщиком, и обрабатываем их одну за другой в общей транзакции: либо
@@ -1627,6 +1717,21 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': 'Укажите id заказа'}),
                     }
+
+                # Тесьму списывает только швея (и администратор): это её этап работы.
+                if actor_id:
+                    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                    st_role_row = cur.fetchone()
+                    st_actor_role = st_role_row[0] if st_role_row else None
+                    if st_actor_role not in ('sewer', 'admin'):
+                        return {
+                            'statusCode': 403,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Отправлять на стикеровку и выбирать тесьму может только швея'},
+                                ensure_ascii=False,
+                            ),
+                        }
 
                 cur.execute(
                     "SELECT material, width, height, workshop_id, sewing_status, assigned_user_id FROM orders WHERE id = %s",

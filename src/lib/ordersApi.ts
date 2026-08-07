@@ -154,22 +154,24 @@ export const updateOrder = (
   }>
 ) => postAction({ action: 'update_order', id, ...fields });
 
-export const cutOrder = (id: number, rollId?: number, hangerNumber?: number) =>
-  postAction({ action: 'cut', id, rollId, hangerNumber });
+// actorId обязателен: по нему сервер проверяет, что раскраивает именно закройщик.
+export const cutOrder = (id: number, rollId?: number, hangerNumber?: number, actorId?: number) =>
+  postAction({ action: 'cut', id, rollId, hangerNumber, actorId });
 
 /** Раскроить и отправить в цех ВСЮ связку Яндекса разом — заказ покупателя из десятков вещей
  * закройщик не должен раскраивать по одной кнопке на каждую вещь. */
 export const cutOrderGroup = async (
   id: number,
   rollId?: number,
-  hangerNumber?: number
+  hangerNumber?: number,
+  actorId?: number
 ): Promise<{ cutCount: number }> => {
   // Большая связка раскраивается порциями: за один вызов сервер обрабатывает несколько вещей,
   // иначе упирается в лимит времени. Повторяем, пока в связке остаются нераскроенные вещи —
   // для закройщика это по-прежнему одно нажатие кнопки.
   let total = 0;
   for (let pass = 0; pass < 30; pass += 1) {
-    const res = (await postAction({ action: 'cut_group', id, rollId, hangerNumber })) as {
+    const res = (await postAction({ action: 'cut_group', id, rollId, hangerNumber, actorId })) as {
       cutCount: number;
       groupRemaining?: number;
     };
@@ -217,7 +219,8 @@ export interface TakeOrderResult {
 export const takeOrder = (userId: number): Promise<TakeOrderResult> =>
   postAction({ action: 'take_order', userId });
 
-export const sendToStickering = (id: number, rollId?: number) =>
-  postAction({ action: 'send_to_stickering', id, rollId });
+// actorId обязателен: по нему сервер проверяет, что тесьму списывает именно швея.
+export const sendToStickering = (id: number, rollId?: number, actorId?: number) =>
+  postAction({ action: 'send_to_stickering', id, rollId, actorId });
 
 export const cancelOrder = (id: number) => postAction({ action: 'cancel_order', id });
