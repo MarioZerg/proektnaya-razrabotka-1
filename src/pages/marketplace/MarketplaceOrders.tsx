@@ -164,6 +164,18 @@ const MarketplaceOrders = () => {
           variant: 'destructive',
         });
       }
+      // Задвоение — серьёзно: одна вещь попала в систему дважды, значит дважды спишется
+      // материал и дважды начислится зарплата. Сообщаем сразу и называем отправления.
+      if (r.duplicates && r.duplicates.length > 0) {
+        const list = r.duplicates
+          .map((d) => `${d.postingNumber} (в системе ${d.actual}, у OZON ${d.expected})`)
+          .join('; ');
+        toast({
+          title: `Обнаружено задвоение заказов: ${r.duplicates.length}`,
+          description: `Проверьте отправления — лишние вещи нужно отменить: ${list}`,
+          variant: 'destructive',
+        });
+      }
       load();
     } catch (err) {
       toast({

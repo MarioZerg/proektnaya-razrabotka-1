@@ -54,6 +54,17 @@ export const useMarketplaceAutoSync = (
             description: 'Заказы автоматически добавлены в очередь производства.',
           });
         }
+        // Автозагрузка идёт фоном каждые 15 минут — о задвоении нужно узнать сразу,
+        // иначе лишние вещи уйдут в раскрой и спишут материал повторно.
+        if (ozon && ozon.duplicates && ozon.duplicates.length > 0) {
+          toast({
+            title: `Задвоение заказов OZON: ${ozon.duplicates.length}`,
+            description: `Проверьте отправления: ${ozon.duplicates
+              .map((d) => d.postingNumber)
+              .join(', ')}`,
+            variant: 'destructive',
+          });
+        }
       } finally {
         running.current = false;
       }

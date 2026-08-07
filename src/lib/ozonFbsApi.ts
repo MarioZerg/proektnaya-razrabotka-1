@@ -6,6 +6,15 @@ export interface OzonUnmatchedOrder {
   offerId: string | null;
 }
 
+/** Задвоенное отправление: в системе вещей больше, чем реально прислал OZON. */
+export interface OzonDuplicate {
+  postingNumber: string;
+  /** Сколько вещей должно быть по данным OZON. */
+  expected: number;
+  /** Сколько числится в системе. */
+  actual: number;
+}
+
 export interface OzonSyncResult {
   created: number;
   skippedExisting: number;
@@ -13,6 +22,8 @@ export interface OzonSyncResult {
   totalFromOzon: number;
   unmatched: OzonUnmatchedOrder[];
   createdNumbers: string[];
+  /** Непустой список = обнаружено задвоение заказов, нужно вмешательство. */
+  duplicates?: OzonDuplicate[];
 }
 
 const post = async (payload: Record<string, unknown>) => {

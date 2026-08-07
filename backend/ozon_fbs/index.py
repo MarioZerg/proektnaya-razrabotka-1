@@ -186,6 +186,22 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
     skipped_no_item = 0
     unmatched = []
     created_numbers = []
+    # Сколько вещей ДОЛЖНО быть у каждого отправления по данным OZON — эталон для
+    # проверки на задвоение в конце загрузки.
+    expected_units = {}
+
+    # Как уже названы вещи отправлений, которые есть в системе. Читаем ОДНИМ запросом
+    # заранее: запрос внутри цикла по 50 отправлениям упирал функцию в таймаут.
+    all_postings = [p.get('posting_number') for p in postings if p.get('posting_number')]
+    existing_format = {}
+    if all_postings:
+        cur.execute(
+            "SELECT ozon_posting_number, min(order_number) FROM orders "
+            "WHERE ozon_posting_number = ANY(%s) GROUP BY ozon_posting_number",
+            (all_postings,),
+        )
+        for pn, first_number in cur.fetchall():
+            existing_format[pn] = (first_number == pn)
 
     for p in postings:
         posting_number = p.get('posting_number')
@@ -223,9 +239,15 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         # сверять номер с ярлыком OZON один в один, без лишнего хвоста. Хвост нужен
         # только когда вещей несколько: каждая шьётся отдельно, и номера обязаны
         # различаться, иначе часть вещей потеряется при загрузке.
+        # Товары ищем ОДИН раз и запоминаем: раньше поиск шёл дважды (сначала для
+        # подсчёта вещей, потом в основном цикле) — это удваивало число запросов к базе
+        # и упирало загрузку в таймаут.
+        resolved = []
         total_units = 0
         for pr in products:
-            if find_marketplace_item(cur, pr.get('sku'), pr.get('offer_id')):
+            found = find_marketplace_item(cur, pr.get('sku'), pr.get('offer_id'))
+            resolved.append((pr, found))
+            if found:
                 total_units += int(pr.get('quantity') or 1)
 
         # Если вещи этого отправления уже заводились — НЕ меняем формат их номеров.
@@ -233,23 +255,18 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         # защита от дублей (ON CONFLICT по order_number) не сработала бы, и заказ
         # задвоился бы. Поэтому смотрим, как назван первый уже существующий заказ
         # отправления, и продолжаем в том же формате.
-        cur.execute(
-            "SELECT order_number FROM orders WHERE ozon_posting_number = %s LIMIT 1",
-            (posting_number,),
-        )
-        existing_row = cur.fetchone()
-        keep_plain_number = None
-        if existing_row:
-            keep_plain_number = existing_row[0] == posting_number
+        keep_plain_number = existing_format.get(posting_number)
+
+        if total_units:
+            expected_units[posting_number] = total_units
 
         # Сквозной счётчик вещей ВНУТРИ отправления: общий на все товары, иначе две
         # разные позиции получили бы одинаковые номера и вторая потерялась бы.
         unit_seq = 0
-        for pr in products:
+        for pr, item in resolved:
             ozon_sku = pr.get('sku')
             offer_id = pr.get('offer_id')
             qty = int(pr.get('quantity') or 1)
-            item = find_marketplace_item(cur, ozon_sku, offer_id)
             if not item:
                 skipped_no_item += 1
                 unmatched.append({'postingNumber': posting_number, 'ozonSku': ozon_sku, 'offerId': offer_id})
@@ -315,6 +332,45 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         if made_any:
             created_numbers.append(posting_number)
 
+    # Самопроверка на задвоение. Одна вещь отправления должна существовать в системе
+    # ровно один раз. Если формат номера когда-нибудь снова изменится, та же вещь
+    # заедет повторно под новым номером — молча этого допускать нельзя, деньги и
+    # материалы спишутся дважды. Поэтому сверяем: сколько вещей числится у каждого
+    # затронутого отправления и сколько их реально прислал OZON.
+    # Проверяем ТОЛЬКО отправления, куда эта загрузка реально добавила вещи. Иначе
+    # сигнал сыпался бы на исторические заказы: у давних отправлений OZON со временем
+    # отдаёт другой состав (часть вещей уже отгружена или отменена на его стороне),
+    # и расхождение с системой там нормальное, а не задвоение.
+    duplicates = []
+    if created_numbers:
+        checked = created_numbers[:200]
+        placeholders = ','.join(['%s'] * len(checked))
+        cur.execute(
+            f"SELECT ozon_posting_number, count(*) FROM orders "
+            f"WHERE ozon_posting_number IN ({placeholders}) "
+            f"AND COALESCE(status, '') <> 'Отменён' "
+            f"GROUP BY ozon_posting_number",
+            checked,
+        )
+        actual = {r[0]: r[1] for r in cur.fetchall()}
+        for posting_number, expected in expected_units.items():
+            if posting_number in actual and actual[posting_number] > expected:
+                duplicates.append({
+                    'postingNumber': posting_number,
+                    'expected': expected,
+                    'actual': actual[posting_number],
+                })
+
+    if duplicates:
+        log_action(
+            cur, actor_id, actor_name, 'ozon_sync_duplicates',
+            f'ВНИМАНИЕ: обнаружено задвоение заказов OZON в {len(duplicates)} отправлениях: '
+            + ', '.join(
+                f"{d['postingNumber']} (в системе {d['actual']}, у OZON {d['expected']})"
+                for d in duplicates[:10]
+            ),
+        )
+
     if created > 0:
         log_action(
             cur, actor_id, actor_name, 'ozon_sync_orders',
@@ -331,6 +387,8 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         'totalFromOzon': len(postings),
         'unmatched': unmatched[:50],
         'createdNumbers': created_numbers[:50],
+        # Непустой список = сигнал тревоги для интерфейса.
+        'duplicates': duplicates[:20],
     })
 
 
