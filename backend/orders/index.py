@@ -307,6 +307,88 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
+            # Предпросмотр очереди для закройщика: что лежит следующим для его цеха.
+            # Ничего не занимает и не меняет — просто заглядывает в очередь, чтобы
+            # закройщик заранее знал, получит он связку Яндекса или обычный стек.
+            if params.get('stackPreview') and params.get('workshopId'):
+                preview_workshop_id = int(params['workshopId'])
+                cur.execute(
+                    "SELECT allowed_materials FROM workshops WHERE id = %s", (preview_workshop_id,)
+                )
+                pw_row = cur.fetchone()
+                p_allowed = pw_row[0] if pw_row and pw_row[0] else []
+                if isinstance(p_allowed, str):
+                    p_allowed = json.loads(p_allowed or '[]')
+                if not p_allowed:
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'kind': 'none', 'count': 0}),
+                    }
+                p_ids_csv = ','.join(str(int(i)) for i in p_allowed)
+                cur.execute("SELECT name FROM materials WHERE id IN (" + p_ids_csv + ")")
+                p_names = [r[0] for r in cur.fetchall()]
+                if not p_names:
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'kind': 'none', 'count': 0}),
+                    }
+                p_names_csv = ','.join("'" + n.replace("'", "''") + "'" for n in p_names)
+                # Размер стека берём тот же, что и при реальной выдаче (настройка цеха),
+                # иначе подсказка обещала бы больше заказов, чем закройщик получит.
+                cur.execute(
+                    "SELECT value FROM workshop_settings WHERE workshop_id = %s "
+                    "AND key = 'max_quantity_orders_to_cutter'",
+                    (preview_workshop_id,),
+                )
+                ps_row = cur.fetchone()
+                if not ps_row:
+                    cur.execute(
+                        "SELECT value FROM system_settings WHERE key = 'max_quantity_orders_to_cutter'"
+                    )
+                    ps_row = cur.fetchone()
+                p_stack_size = int(ps_row[0]) if ps_row and ps_row[0] else 20
+                # Порядок ТОЧНО такой же, как при реальной выдаче стека — иначе предпросмотр
+                # показывал бы одно, а выдавалось другое.
+                cur.execute(
+                    "SELECT id, group_key, group_size FROM orders WHERE sewing_status = 'Новый' "
+                    "AND fulfilled_from_stock_id IS NULL "
+                    "AND COALESCE(status, '') <> 'Отменён' "
+                    "AND material IN (" + p_names_csv + ") "
+                    "ORDER BY (order_type = 'FBS') DESC, "
+                    "COALESCE(marketplace_created_at, created_at) ASC, "
+                    "group_key NULLS FIRST, group_position ASC NULLS LAST, id ASC LIMIT %s",
+                    (p_stack_size,),
+                )
+                p_rows = cur.fetchall()
+                if not p_rows:
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'kind': 'none', 'count': 0}),
+                    }
+                p_group_key = next((r[1] for r in p_rows if r[1]), None)
+                if p_group_key:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM orders WHERE sewing_status = 'Новый' "
+                        "AND fulfilled_from_stock_id IS NULL "
+                        "AND COALESCE(status, '') <> 'Отменён' "
+                        "AND group_key = %s AND material IN (" + p_names_csv + ")",
+                        (p_group_key,),
+                    )
+                    p_count = cur.fetchone()[0]
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'kind': 'group', 'count': p_count}),
+                    }
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'kind': 'stack', 'count': len(p_rows)}),
+                }
+
             if order_id:
                 cur.execute(
                     "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "

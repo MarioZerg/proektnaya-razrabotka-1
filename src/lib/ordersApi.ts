@@ -101,6 +101,20 @@ export interface OrderDetail extends Order {
   lastHangerNumber: number | null;
 }
 
+/** Что лежит следующим в очереди раскроя для цеха: связка Яндекса или обычный стек.
+ * Только для показа закройщику — очередь не занимает и ничего не меняет. */
+export interface StackPreview {
+  kind: 'group' | 'stack' | 'none';
+  count: number;
+}
+
+export const fetchStackPreview = async (workshopId: number): Promise<StackPreview> => {
+  const res = await fetch(`${ORDERS_URL}?stackPreview=1&workshopId=${workshopId}`);
+  if (!res.ok) return { kind: 'none', count: 0 };
+  const data = await res.json();
+  return { kind: data.kind ?? 'none', count: data.count ?? 0 };
+};
+
 export const fetchOrders = async (): Promise<Order[]> => {
   const res = await fetch(ORDERS_URL);
   const data = await res.json();

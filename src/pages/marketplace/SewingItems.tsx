@@ -13,6 +13,7 @@ import { useSewingItemsFilters } from '@/components/crm/sewingItems/useSewingIte
 import { useSewingItemOrderDetail } from '@/components/crm/sewingItems/useSewingItemOrderDetail';
 import { useSewingItemsQueueActions } from '@/components/crm/sewingItems/useSewingItemsQueueActions';
 import { isStorekeeperRole } from '@/lib/roles';
+import NextStackHint from '@/components/crm/sewingItems/NextStackHint';
 
 const SewingItems = () => {
   const {
@@ -193,6 +194,13 @@ const SewingItems = () => {
 
         {(isCutter || isSewer) && (
           <div className="flex flex-col gap-2">
+            {/* Что сейчас первое в общей очереди цеха — связка или обычный стек. */}
+            {isCutter && (
+              <NextStackHint
+                workshopId={effectiveWorkshopId}
+                refreshKey={lastTakenStack.length}
+              />
+            )}
             {isCutter && (
               <div className="flex flex-wrap gap-2">
                 <Button onClick={handleTakeStack} disabled={takingStack || myUnfinishedCount > 0} className="w-full sm:w-auto">
