@@ -193,29 +193,25 @@ const Index = () => {
               Свечение — вращающийся конический градиент под логотипом: яркий участок
               бежит по окружности по часовой стрелке. Сам логотип лежит сверху и
               не крутится, вращается только подсветка. */}
-          <div className="relative h-32 w-32 animate-logo-zoom">
-            {/* Размытый ореол снаружи — мягкое сияние, «выходящее» за круг. */}
-            <div
-              className="absolute -inset-5 animate-logo-spin rounded-full blur-2xl"
-              style={{
-                background:
-                  'conic-gradient(from 0deg, transparent 120deg, hsl(var(--primary) / 0.7) 240deg, hsl(var(--primary)) 300deg, hsl(var(--primary) / 0.7) 350deg, transparent 360deg)',
-              }}
-            />
-            {/* Яркий бегущий блик по самому краю круга. */}
-            <div
-              className="absolute -inset-[7px] animate-logo-spin rounded-full blur-[3px]"
-              style={{
-                background:
-                  'conic-gradient(from 0deg, hsl(var(--primary) / 0.2) 0deg, hsl(var(--primary) / 0.2) 190deg, hsl(120 45% 45%) 280deg, hsl(var(--primary)) 305deg, hsl(var(--primary) / 0.6) 335deg, hsl(var(--primary) / 0.2) 360deg)',
-              }}
-            />
-            {/* Ровное тонкое кольцо — держит форму круга, пока блик пробегает мимо. */}
-            <div className="absolute -inset-[1px] rounded-full ring-1 ring-primary/25" />
+          <div className="relative h-36 w-36 animate-logo-zoom">
+            {/* Один вращающийся градиент — светящийся сгусток бежит по кругу по
+                часовой стрелке. Внутренний кружок цвета фона превращает заливку в
+                кольцо: у логотипа больше нет своей подложки, и сплошная заливка
+                перекрыла бы надпись. */}
+            <div className="absolute inset-0 overflow-hidden rounded-full blur-[1px]">
+              <div
+                className="absolute inset-0 animate-logo-spin"
+                style={{
+                  background:
+                    'conic-gradient(from 0deg, transparent 0deg, transparent 180deg, hsl(var(--primary) / 0.5) 270deg, hsl(var(--primary)) 312deg, hsl(var(--primary) / 0.5) 350deg, transparent 360deg)',
+                }}
+              />
+              <div className="absolute inset-[6px] rounded-full bg-background" />
+            </div>
             <img
               src="/assets/megatul-round-logo.png"
               alt="МЕГАТЮЛЬ"
-              className="absolute inset-0 h-full w-full rounded-full object-cover"
+              className="absolute inset-0 h-full w-full object-contain p-3"
             />
           </div>
           <OnlineNowBadge />
