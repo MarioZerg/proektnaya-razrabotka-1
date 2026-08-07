@@ -3,7 +3,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskApi';
+import {
+  fetchKioskOrder,
+  closeKioskOrder,
+  fetchTerminalSettings,
+  type KioskOrder,
+} from '@/lib/kioskApi';
 import { fetchOrderDetail } from '@/lib/ordersApi';
 import { printFboSticker } from '@/lib/printFboSticker';
 import { printStorageSticker } from '@/lib/printStorageSticker';
@@ -37,11 +42,20 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   // видно, кто шил именно эту штуку — на FBO маркетплейс такой информации не даёт.
   const [tracePrinted, setTracePrinted] = useState(false);
   const [closing, setClosing] = useState(false);
+  // Ручной поиск заказа — обход сканера, поэтому показываем его только если цех
+  // это разрешил в настройках. По умолчанию скрыт: стикеруем строго по QR-коду.
+  const [manualSearchAllowed, setManualSearchAllowed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, [order]);
+
+  useEffect(() => {
+    fetchTerminalSettings(workshopId)
+      .then((s) => setManualSearchAllowed(s.manualStickering))
+      .catch(() => setManualSearchAllowed(false));
+  }, [workshopId]);
 
   const handleSearch = async () => {
     const value = (inputRef.current?.value || code).trim();
@@ -180,17 +194,20 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
           <p className="text-center text-muted-foreground">
             Сканируются только заказы на стикеровке
           </p>
-          {/* Запасной путь, если сканер сломался или QR затёрт: найти заказ по размеру. */}
-          <div className="w-full max-w-md">
-            <KioskManualSearch
-              workshopId={workshopId}
-              role={role}
-              onSelect={(found) => {
-                setOrder(found);
-                setPrinted(false);
-              }}
-            />
-          </div>
+          {/* Запасной путь, если сканер сломался или QR затёрт: найти заказ по размеру.
+              Включается настройкой цеха «Ручной поиск заказа на терминале». */}
+          {manualSearchAllowed && (
+            <div className="w-full max-w-md">
+              <KioskManualSearch
+                workshopId={workshopId}
+                role={role}
+                onSelect={(found) => {
+                  setOrder(found);
+                  setPrinted(false);
+                }}
+              />
+            </div>
+          )}
         </div>
       ) : (
         <Card className="border-border shadow-none">

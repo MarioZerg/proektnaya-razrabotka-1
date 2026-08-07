@@ -37,6 +37,26 @@ export const fetchKioskOrder = async (orderNumber: string): Promise<KioskOrder> 
 
 /** Ручной поиск заказов на стикеровке, когда сканер не работает или штрихкод не читается.
  * Ищет по размеру, материалу и швее — упаковщик выбирает нужный заказ из списка. */
+/** Настройки цеха, влияющие на вид терминала. */
+export interface KioskTerminalSettings {
+  /** Показывать ли ручной поиск заказа (обход сканера). */
+  manualStickering: boolean;
+  /** Может ли швея упаковывать сама после закрытия смены упаковщицей. */
+  sewerPackingAfterPackerShift: boolean;
+}
+
+export const fetchTerminalSettings = async (
+  workshopId?: number | null
+): Promise<KioskTerminalSettings> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'terminal_settings', workshopId }),
+  });
+  if (!res.ok) return { manualStickering: false, sewerPackingAfterPackerShift: false };
+  return res.json();
+};
+
 export const findStickeringOrders = async (filters: {
   sewerId?: number | null;
   width?: number | null;

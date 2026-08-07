@@ -31,6 +31,10 @@ SETTINGS_KEYS = [
     'print_qr_cutting',
     'sticking_otk',
     'sticking_seamstress',
+    # Ручной поиск заказа на терминале (обход сканера) — по умолчанию выключен.
+    'manual_stickering',
+    # Разрешить швее упаковывать самой после закрытия смены упаковщицей.
+    'sewer_packing_after_packer_shift',
     'orders_filter',
     'orders_cluster_priority',
     'max_fabric_rolls_per_shift',

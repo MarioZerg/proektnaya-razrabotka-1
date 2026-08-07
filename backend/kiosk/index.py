@@ -419,7 +419,23 @@ def handler(event: dict, context) -> dict:
                 )
                 pr = cur.fetchone()
                 packer_shift_role = pr[0] if pr else None
+                if packer_shift_role == 'sewer' and order_workshop_id:
+                    # Швея упаковывает сама только если цех это разрешил. Иначе вещи
+                    # идут через упаковщицу, даже когда её смена уже закрыта.
+                    if get_setting(
+                        cur, order_workshop_id, 'sewer_packing_after_packer_shift', 'false'
+                    ) != 'true':
+                        return {
+                            'statusCode': 403,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Упаковка швеёй не разрешена в вашем цехе — заказ упакует упаковщица'
+                            }),
+                        }
+
                 if packer_shift_role and packer_shift_role != 'packer' and order_workshop_id:
+                    # Пока упаковщица на смене — упаковывает она. Швея подключается
+                    # только после того, как упаковщица ЗАКРЫЛА смену (closed_at).
                     cur.execute(
                         "SELECT u.full_name FROM shift_sessions ss JOIN users u ON u.id = ss.user_id "
                         "WHERE ss.closed_at IS NULL AND ss.workshop_id = %s "
@@ -745,6 +761,26 @@ def handler(event: dict, context) -> dict:
                     }),
                 }
 
+            if action == 'terminal_settings':
+                # Настройки цеха, влияющие на вид терминала: показывать ли ручной
+                # поиск заказа и можно ли швее упаковывать самой.
+                ws_id = body_data.get('workshopId')
+                manual = 'false'
+                sewer_after = 'false'
+                if ws_id not in (None, ''):
+                    manual = get_setting(cur, int(ws_id), 'manual_stickering', 'false')
+                    sewer_after = get_setting(
+                        cur, int(ws_id), 'sewer_packing_after_packer_shift', 'false'
+                    )
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'manualStickering': manual == 'true',
+                        'sewerPackingAfterPackerShift': sewer_after == 'true',
+                    }),
+                }
+
             if action == 'find_stickering':
                 # Сканер сломался или штрихкод не читается — упаковщик ищет заказ на
                 # стикеровке вручную: по размеру (ширина/высота), швее или материалу.
@@ -770,9 +806,17 @@ def handler(event: dict, context) -> dict:
                     conditions.append(f"o.workshop_id = {int(workshop_id)}")
                 where_sql = ' AND '.join(conditions)
 
-                # Ручной поиск доступен, если для роли не выбран режим «только сканером»:
-                # так админ может заставить стикеровать строго по QR-коду.
                 if workshop_id not in (None, ''):
+                    # Ручной поиск — обход сканера: сотрудник находит заказ по размеру и
+                    # закрывает его, не сканируя QR закройщика. Так легко закрыть чужой
+                    # заказ, поэтому по умолчанию он выключен и включается настройкой цеха.
+                    if get_setting(cur, int(workshop_id), 'manual_stickering', 'false') != 'true':
+                        return {
+                            'statusCode': 403,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'Ручной поиск заказа отключён. Отсканируйте QR-код с листка закройщика'}),
+                        }
+                    # Стикеровка для роли может быть запрещена совсем.
                     role_key = 'sticking_seamstress' if body_data.get('role') == 'sewer' else 'sticking_otk'
                     mode = get_setting(cur, int(workshop_id), role_key, 'scanner')
                     if mode == 'forbidden':

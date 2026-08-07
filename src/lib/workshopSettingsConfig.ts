@@ -92,6 +92,29 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
     ],
   },
   {
+    // Ручной поиск на терминале — обходной путь мимо сканера: сотрудник находит
+    // заказ по размеру и стикерует, не сканируя QR закройщика. Удобно, когда QR
+    // затёрся, но так же легко закрыть чужой заказ. По умолчанию выключен.
+    key: 'manual_stickering',
+    label: 'Ручной поиск заказа на терминале',
+    type: 'select',
+    options: [
+      { value: 'false', label: 'Нет' },
+      { value: 'true', label: 'Да' },
+    ],
+  },
+  {
+    // Швея может упаковывать сама только после того, как упаковщица закрыла смену:
+    // пока упаковщица работает, вещи идут через неё.
+    key: 'sewer_packing_after_packer_shift',
+    label: 'Упаковка швеёй после закрытия смены упаковщицы',
+    type: 'select',
+    options: [
+      { value: 'false', label: 'Нет' },
+      { value: 'true', label: 'Да' },
+    ],
+  },
+  {
     key: 'orders_filter',
     label: 'Фильтр заказов',
     type: 'select',
