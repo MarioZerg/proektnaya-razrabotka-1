@@ -121,11 +121,16 @@ const postAction = async (payload: Record<string, unknown>) => {
   return data;
 };
 
+/**
+ * Создать заказы вручную. quantity — сколько одинаковых изделий нужно отшить:
+ * сервер заведёт столько отдельных заявок с автоматическими номерами.
+ */
 export const createManualOrder = (order: {
-  marketplace: Marketplace;
+  marketplace?: Marketplace | string;
   orderType: OrderType;
   cluster?: string;
   marketplaceItemId: number;
+  quantity?: number;
 }) => postAction({ action: 'create_manual', ...order });
 
 export const updateOrder = (

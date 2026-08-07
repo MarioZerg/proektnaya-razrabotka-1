@@ -43,17 +43,24 @@ export const emptyManualForm: EditFormState = {
 
 /** Одна строка мульти-формы создания заказов вручную — каждая строка это отдельный
  * будущий заказ (1 заказ = 1 заявка). Номер заказа присваивается автоматически на сервере. */
+/**
+ * Строка формы ручного добавления заказов.
+ *
+ * Маркетплейса здесь нет намеренно: вручную заводят только индивидуальный пошив,
+ * заказы маркетплейсов приходят из интеграций автоматически. quantity — сколько
+ * одинаковых изделий отшить: система создаст столько отдельных заявок.
+ */
 export interface ManualOrderRow {
   key: string;
-  marketplace: Marketplace;
   orderType: OrderType;
   marketplaceItemId: number | null;
+  quantity: number;
 }
 
 let manualRowSeq = 0;
 export const emptyManualRow = (): ManualOrderRow => ({
   key: `row-${Date.now()}-${manualRowSeq++}`,
-  marketplace: 'OZON',
-  orderType: 'FBO',
+  orderType: 'Индивидуальный',
   marketplaceItemId: null,
+  quantity: 1,
 });

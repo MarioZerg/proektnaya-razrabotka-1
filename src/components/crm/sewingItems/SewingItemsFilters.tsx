@@ -109,6 +109,7 @@ const SewingItemsFilters = ({
           <SelectItem value="all">Все типы</SelectItem>
           <SelectItem value="FBO">FBO</SelectItem>
           <SelectItem value="FBS">FBS</SelectItem>
+          <SelectItem value="Индивидуальный">Индивидуальный</SelectItem>
         </SelectContent>
       </Select>
 

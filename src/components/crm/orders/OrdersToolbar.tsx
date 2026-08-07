@@ -59,7 +59,7 @@ const OrdersToolbar = ({
       <div className="flex flex-wrap gap-3">
         <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={onOpenManual}>
           <Icon name="Plus" size={16} className="mr-1.5" />
-          Добавить заказ вручную
+          Индивидуальный заказ
         </Button>
         <Button
           className="bg-emerald-600 text-white hover:bg-emerald-700"

@@ -2,15 +2,8 @@ import { Dispatch, SetStateAction } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
-import type { Marketplace, OrderType } from '@/lib/ordersApi';
+import { Input } from '@/components/ui/input';
 import type { MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { emptyManualRow, type ManualOrderRow } from '@/components/crm/orders/ordersShared';
 import MarketplaceItemPicker from '@/components/crm/orders/MarketplaceItemPicker';
@@ -44,23 +37,27 @@ const CreateManualOrderDialog = ({
   const canCreate =
     !manualSaving && rows.length > 0 && rows.every((r) => r.marketplaceItemId);
 
+  // Сколько изделий получится всего по всем позициям — это и создастся.
+  const totalItems = rows.reduce((sum, r) => sum + (r.quantity || 1), 0);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Добавить заказы вручную</DialogTitle>
+          <DialogTitle>Индивидуальный заказ</DialogTitle>
         </DialogHeader>
 
         <p className="text-xs text-muted-foreground">
-          Каждая строка — отдельный уникальный заказ (1 заказ = 1 заявка). Номер заказа
-          присваивается автоматически. Нажмите «+», чтобы добавить ещё один заказ в этом же окне.
+          Пошив не под маркетплейс. Выберите размер и количество — номера заявок
+          присвоятся автоматически, заказы сразу уйдут на конвейер. Кнопка ниже добавляет
+          ещё одну позицию с другим размером.
         </p>
 
         <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
           {rows.map((row, idx) => (
             <div key={row.key} className="space-y-2 rounded-md border border-border p-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <span className="text-xs font-medium text-muted-foreground">Заказ #{idx + 1}</span>
+                <span className="text-xs font-medium text-muted-foreground">Позиция #{idx + 1}</span>
                 {rows.length > 1 && (
                   <Button
                     variant="ghost"
@@ -73,41 +70,6 @@ const CreateManualOrderDialog = ({
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Маркетплейс</Label>
-                  <Select
-                    value={row.marketplace}
-                    onValueChange={(v) => updateRow(row.key, { marketplace: v as Marketplace })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="OZON">OZON</SelectItem>
-                      <SelectItem value="WB">Wildberries</SelectItem>
-                      <SelectItem value="Yandex">Яндекс.Маркет</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Тип</Label>
-                  <Select
-                    value={row.orderType}
-                    onValueChange={(v) => updateRow(row.key, { orderType: v as OrderType })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="FBO">FBO</SelectItem>
-                      <SelectItem value="FBS">FBS</SelectItem>
-                      <SelectItem value="Индивидуальный">Индивидуальный</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
               <div className="space-y-1.5">
                 <Label>Материал и размер</Label>
                 <MarketplaceItemPicker
@@ -116,13 +78,59 @@ const CreateManualOrderDialog = ({
                   onChange={(itemId) => updateRow(row.key, { marketplaceItemId: itemId })}
                 />
               </div>
+
+              <div className="space-y-1.5">
+                <Label>Количество, шт.</Label>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-10 w-10 shrink-0"
+                    onClick={() =>
+                      updateRow(row.key, { quantity: Math.max(1, (row.quantity || 1) - 1) })
+                    }
+                    disabled={(row.quantity || 1) <= 1}
+                  >
+                    <Icon name="Minus" size={16} />
+                  </Button>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={row.quantity}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      updateRow(row.key, {
+                        quantity: Number.isFinite(n) ? Math.min(200, Math.max(1, n)) : 1,
+                      });
+                    }}
+                    className="h-10 text-center font-mono-tech text-base"
+                  />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-10 w-10 shrink-0"
+                    onClick={() =>
+                      updateRow(row.key, { quantity: Math.min(200, (row.quantity || 1) + 1) })
+                    }
+                    disabled={(row.quantity || 1) >= 200}
+                  >
+                    <Icon name="Plus" size={16} />
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Система создаст {row.quantity || 1}{' '}
+                  {(row.quantity || 1) === 1 ? 'заявку' : 'отдельных заявок'} — каждая пойдёт
+                  по конвейеру сама
+                </p>
+              </div>
             </div>
           ))}
         </div>
 
         <Button variant="outline" onClick={addRow} className="w-full">
           <Icon name="Plus" size={16} className="mr-1.5" />
-          Добавить ещё заказ
+          Добавить другой размер
         </Button>
 
         <Button
@@ -133,7 +141,7 @@ const CreateManualOrderDialog = ({
           {manualSaving ? (
             <Icon name="Loader2" size={16} className="animate-spin" />
           ) : (
-            `Создать ${rows.length > 1 ? `заказы (${rows.length})` : 'заказ'}`
+            `Создать ${totalItems} ${totalItems === 1 ? 'заказ' : 'заказов'}`
           )}
         </Button>
       </DialogContent>

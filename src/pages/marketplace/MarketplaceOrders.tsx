@@ -248,12 +248,13 @@ const MarketplaceOrders = () => {
         if (!row.marketplaceItemId) continue;
         try {
           // Номер заказа присваивается автоматически на сервере (сквозной счётчик 00000-01).
-          await createManualOrder({
-            marketplace: row.marketplace,
+          // За один вызов сервер создаёт столько заявок, сколько изделий заказали.
+          const res = await createManualOrder({
             orderType: row.orderType,
             marketplaceItemId: row.marketplaceItemId,
+            quantity: row.quantity,
           });
-          createdCount += 1;
+          createdCount += Number(res?.created) || row.quantity || 1;
         } catch (err) {
           failed.push(`Заказ #${idx + 1}: ${err instanceof Error ? err.message : 'ошибка'}`);
         }

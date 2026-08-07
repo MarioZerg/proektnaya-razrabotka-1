@@ -98,10 +98,32 @@ export const useSewingItemsData = () => {
     return materials;
   }, [isProductionRole, allowedMaterialIds, materials]);
 
+  // Сотрудники в фильтре для производственных ролей: только СВОЙ цех и только те
+  // должности, что работают на конвейере.
+  //
+  // Раньше в списке были все подряд — админы, кладовщики, менеджеры и сотрудники
+  // чужого цеха, хотя заказов за ними в этом цехе нет и быть не может. Искать в
+  // таком списке неудобно.
+  //
+  // Должности оставляем все производственные, а не только свою: упаковщица
+  // фильтрует заказы по ШВЕЯМ (видит, кто что отшил), и список одних упаковщиц был
+  // бы для неё бесполезен.
+  const visibleEmployees = useMemo(() => {
+    if (!isProductionRole) return employees;
+    const workshopName = workshops.find((w) => w.id === effectiveWorkshopId)?.name;
+    const shopRoles = ['sewer', 'cutter', 'packer'];
+    return employees.filter(
+      (e) =>
+        shopRoles.includes(e.role) &&
+        e.isActive &&
+        (!workshopName || e.workshop === workshopName)
+    );
+  }, [isProductionRole, employees, workshops, effectiveWorkshopId]);
+
   return {
     user,
     orders,
-    employees,
+    employees: visibleEmployees,
     materials: visibleMaterials,
     workshops,
     rolls,

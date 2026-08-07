@@ -198,7 +198,11 @@ def handler(event: dict, context) -> dict:
                                     requiredTrimMaterialId/Name — конкретный материал тюля и тесьмы,
                                     нужный именно для этого товара (чтобы на фронте показывать
                                     только подходящие рулоны, а не всю категорию)
-    POST /  { action: 'create_manual', orderNumber, marketplace, orderType, cluster?, marketplaceItemId }
+    POST /  { action: 'create_manual', marketplace, orderType, cluster?, marketplaceItemId, quantity? }
+        - создаёт заказы вручную с автоматическими номерами (00000-01, 00000-02, ...).
+          quantity — сколько одинаковых изделий нужно отшить: система заведёт столько
+          отдельных заявок, каждая пойдёт по конвейеру сама. По умолчанию 1, максимум 200.
+          Для orderType='Индивидуальный' маркетплейс не требуется
         - marketplaceItemId — id товара из справочника "Товары на маркетплейсе" (marketplace_items);
           заказ наследует его material/width/height (нужны конвейеру раскроя) и текстовый product
           формируется автоматически как "{material} {width}x{height}"
@@ -682,10 +686,35 @@ def handler(event: dict, context) -> dict:
                 }
 
             if action == 'create_manual':
+                # Индивидуальные заказы (пошив не под маркетплейс) заводятся партией:
+                # выбрали размер и количество — система сама создаёт нужное число заявок
+                # с автономерами. Раньше приходилось добавлять их по одной.
                 marketplace = (body_data.get('marketplace') or '').strip()
                 order_type = (body_data.get('orderType') or 'FBO').strip()
                 cluster = (body_data.get('cluster') or '').strip()
                 marketplace_item_id = body_data.get('marketplaceItemId')
+                # Сколько одинаковых изделий нужно отшить. По умолчанию 1 —
+                # так старые вызовы продолжают работать без изменений.
+                try:
+                    quantity = int(body_data.get('quantity') or 1)
+                except (TypeError, ValueError):
+                    quantity = 1
+                if quantity < 1:
+                    quantity = 1
+                if quantity > 200:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'За один раз можно создать не больше 200 заказов'},
+                            ensure_ascii=False,
+                        ),
+                    }
+
+                # У индивидуального пошива маркетплейса нет — подставляем метку,
+                # чтобы поле не было пустым и заказ корректно отображался в списках.
+                if order_type == 'Индивидуальный' and not marketplace:
+                    marketplace = 'Индивидуальный'
 
                 if not marketplace or not marketplace_item_id:
                     return {
@@ -704,7 +733,6 @@ def handler(event: dict, context) -> dict:
                 )
                 last_row = cur.fetchone()
                 next_seq = (int(last_row[0].split('-')[1]) + 1) if last_row else 1
-                order_number = f"00000-{next_seq:02d}"
 
                 # Товар выбирается из справочника "Товары на маркетплейсе" — берём его
                 # material/width/height, чтобы заказ сразу попал в очередь раскроя (конвейер
@@ -720,20 +748,6 @@ def handler(event: dict, context) -> dict:
                 item_name, item_material, item_width, item_height, item_barcode, item_ozon_sku = item_row
                 product = f"{item_material} {item_width}x{item_height}" if item_material and item_width and item_height else item_name
 
-                order_number_esc = order_number.replace("'", "''")
-                cur.execute(
-                    f"SELECT id FROM orders WHERE order_number = '{order_number_esc}'"
-                )
-                existing = cur.fetchone()
-                if existing:
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps(
-                            {'error': f'Заказ с номером {order_number} уже есть в системе — дубль не создан'}
-                        ),
-                    }
-
                 marketplace_esc = marketplace.replace("'", "''")
                 order_type_esc = order_type.replace("'", "''")
                 cluster_esc = cluster.replace("'", "''")
@@ -745,21 +759,52 @@ def handler(event: dict, context) -> dict:
                 barcode_sql = f"'{item_barcode.replace(chr(39), chr(39)*2)}'" if item_barcode else 'NULL'
                 ozon_sku_sql = f"'{item_ozon_sku.replace(chr(39), chr(39)*2)}'" if item_ozon_sku else 'NULL'
 
-                cur.execute(
-                    f"INSERT INTO orders (order_number, marketplace, order_type, status, cluster, product, "
-                    f"quantity, source, material, width, height, marketplace_item_id, product_barcode, product_ozon_sku) "
-                    f"VALUES ('{order_number_esc}', '{marketplace_esc}', '{order_type_esc}', 'Новый', "
-                    f"'{cluster_esc}', '{product_esc}', 1, 'manual', {material_sql}, {width_sql}, {height_sql}, "
-                    f"{int(marketplace_item_id)}, {barcode_sql}, {ozon_sku_sql}) "
-                    f"RETURNING id"
-                )
-                new_id = cur.fetchone()[0]
+                # Создаём столько отдельных заявок, сколько изделий заказали: каждая
+                # идёт по конвейеру самостоятельно (своя раскройка, свой пошив), но
+                # заводить их руками по одной больше не нужно.
+                created_ids = []
+                created_numbers = []
+                seq = next_seq
+                for _ in range(quantity):
+                    # Номер могли занять параллельно (другой сотрудник тоже создаёт
+                    # заказы) — сдвигаемся дальше, пока не найдём свободный.
+                    while True:
+                        candidate = f"00000-{seq:02d}"
+                        cand_esc = candidate.replace("'", "''")
+                        cur.execute(f"SELECT 1 FROM orders WHERE order_number = '{cand_esc}'")
+                        if not cur.fetchone():
+                            break
+                        seq += 1
+                    order_number_esc = candidate.replace("'", "''")
+                    cur.execute(
+                        f"INSERT INTO orders (order_number, marketplace, order_type, status, cluster, product, "
+                        f"quantity, source, material, width, height, marketplace_item_id, product_barcode, product_ozon_sku) "
+                        f"VALUES ('{order_number_esc}', '{marketplace_esc}', '{order_type_esc}', 'Новый', "
+                        f"'{cluster_esc}', '{product_esc}', 1, 'manual', {material_sql}, {width_sql}, {height_sql}, "
+                        f"{int(marketplace_item_id)}, {barcode_sql}, {ozon_sku_sql}) "
+                        f"RETURNING id"
+                    )
+                    created_ids.append(cur.fetchone()[0])
+                    created_numbers.append(candidate)
+                    seq += 1
+
                 log_action(
-                    cur, actor_id, actor_name, 'create_manual', 'order', new_id,
-                    f'Создал заказ {order_number} вручную ({marketplace}, {product})',
+                    cur, actor_id, actor_name, 'create_manual', 'order', created_ids[0],
+                    f'Создал заказов вручную: {len(created_ids)} шт. '
+                    f'({created_numbers[0]}–{created_numbers[-1]}, {marketplace}, {product})'
+                    if len(created_ids) > 1 else
+                    f'Создал заказ {created_numbers[0]} вручную ({marketplace}, {product})',
                 )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps(
+                        {'id': created_ids[0], 'ids': created_ids,
+                         'orderNumbers': created_numbers, 'created': len(created_ids)},
+                        ensure_ascii=False,
+                    ),
+                }
 
             if action == 'update_order':
                 item_id = body_data.get('id')

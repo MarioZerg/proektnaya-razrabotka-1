@@ -187,7 +187,7 @@ const SewingItems = () => {
           setWorkshopFilter={setWorkshopFilter}
           marketplaceFilter={marketplaceFilter}
           setMarketplaceFilter={setMarketplaceFilter}
-          showEmployeeFilter={!isCutter && !isSewer}
+          showEmployeeFilter
           showWorkshopFilter={false}
         />
 
