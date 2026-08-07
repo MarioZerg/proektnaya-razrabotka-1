@@ -214,12 +214,36 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         # с учётом количества.
         products = p.get('products', []) or []
         made_any = False
-        # Сквозной счётчик вещей ВНУТРИ отправления. Раньше в номер подставлялся артикул
-        # («...-1-2vyal2_250-1») — получалась нечитаемая каша, которую сотрудник не мог
-        # сверить с ярлыком OZON. Теперь номер вида «отправление-1», «отправление-2»:
-        # видно номер отправления как есть, а хвост — просто порядок вещи в нём.
-        # Счётчик общий на все товары отправления, иначе две разные позиции получили бы
-        # одинаковые номера и вторая потерялась бы при загрузке.
+
+        # Сколько ВСЕГО вещей приедет в этом отправлении (по всем товарам, с учётом
+        # количества). Считаем заранее, потому что от этого зависит формат номера:
+        #   одна вещь  -> номер РОВНО как у OZON: «52019137-0148-1»
+        #   несколько  -> с порядковым хвостом:   «52019137-0148-1-1», «...-2»
+        # Отправление с одним товаром — самый частый случай, и сотруднику удобнее
+        # сверять номер с ярлыком OZON один в один, без лишнего хвоста. Хвост нужен
+        # только когда вещей несколько: каждая шьётся отдельно, и номера обязаны
+        # различаться, иначе часть вещей потеряется при загрузке.
+        total_units = 0
+        for pr in products:
+            if find_marketplace_item(cur, pr.get('sku'), pr.get('offer_id')):
+                total_units += int(pr.get('quantity') or 1)
+
+        # Если вещи этого отправления уже заводились — НЕ меняем формат их номеров.
+        # Иначе при повторной загрузке та же вещь приехала бы под другим номером,
+        # защита от дублей (ON CONFLICT по order_number) не сработала бы, и заказ
+        # задвоился бы. Поэтому смотрим, как назван первый уже существующий заказ
+        # отправления, и продолжаем в том же формате.
+        cur.execute(
+            "SELECT order_number FROM orders WHERE ozon_posting_number = %s LIMIT 1",
+            (posting_number,),
+        )
+        existing_row = cur.fetchone()
+        keep_plain_number = None
+        if existing_row:
+            keep_plain_number = existing_row[0] == posting_number
+
+        # Сквозной счётчик вещей ВНУТРИ отправления: общий на все товары, иначе две
+        # разные позиции получили бы одинаковые номера и вторая потерялась бы.
         unit_seq = 0
         for pr in products:
             ozon_sku = pr.get('sku')
@@ -233,12 +257,16 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
             material, width, height, item_name, item_id = item
             product = f"{material} {width}x{height}" if material and width and height else item_name
             for _n in range(1, qty + 1):
-                # Номер вещи на конвейере: "{номер отправления}-{порядковый номер вещи}".
                 # Повторная загрузка дублей не создаёт (ON CONFLICT DO NOTHING).
                 # Само отправление хранится в ozon_posting_number — по нему заказы
                 # собираются обратно при отгрузке.
                 unit_seq += 1
-                unique_number = f"{posting_number}-{unit_seq}"
+                use_plain = (
+                    keep_plain_number if keep_plain_number is not None else total_units <= 1
+                )
+                unique_number = (
+                    posting_number if use_plain else f"{posting_number}-{unit_seq}"
+                )
                 cur.execute(
                     "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                     "quantity, source, material, width, height, ozon_posting_number, ozon_status, "

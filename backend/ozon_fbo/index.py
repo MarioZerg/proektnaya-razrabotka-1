@@ -313,10 +313,29 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
     skipped_no_item = 0
     unmatched = []
     rows = []  # накапливаем все заказы, вставляем одним запросом (быстро)
-    # Сквозной счётчик вещей внутри заявки: номер вида «заявка-1», «заявка-2».
-    # Артикул в номер больше не подставляем — он делал номер нечитаемым, и сотрудник
-    # не мог сверить его с документами OZON. Счётчик общий на все товары заявки,
-    # иначе разные позиции получили бы одинаковые номера.
+
+    # Сколько ВСЕГО вещей в заявке — от этого зависит формат номера:
+    #   одна вещь  -> номер РОВНО как у OZON, без хвоста
+    #   несколько  -> с порядковым хвостом «-1», «-2» (каждая вещь шьётся отдельно,
+    #                 номера обязаны различаться)
+    total_units = 0
+    for it in items:
+        if match_item(by_ozon_sku, by_offer, it.get('sku'), it.get('offer_id')):
+            total_units += int(it.get('quantity') or 1)
+
+    # Если вещи этой заявки уже заводились — сохраняем прежний формат номера, иначе
+    # повторная загрузка создала бы дубли (защита ON CONFLICT сверяет именно номер).
+    cur.execute(
+        "SELECT order_number FROM orders WHERE supply_id = %s LIMIT 1",
+        (int(supply_id),),
+    )
+    existing_row = cur.fetchone()
+    keep_plain_number = None
+    if existing_row:
+        keep_plain_number = existing_row[0] == order_number
+
+    # Сквозной счётчик вещей внутри заявки: общий на все товары, иначе разные позиции
+    # получили бы одинаковые номера.
     unit_seq = 0
     for it in items:
         ozon_sku = it.get('sku')
@@ -334,7 +353,10 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
             # номер: {номер заявки}-{порядковый номер вещи}. ON CONFLICT DO NOTHING делает
             # импорт идемпотентным: повторная загрузка той же заявки не задваивает заказы.
             unit_seq += 1
-            unique_number = f"{order_number}-{unit_seq}"
+            use_plain = (
+                keep_plain_number if keep_plain_number is not None else total_units <= 1
+            )
+            unique_number = order_number if use_plain else f"{order_number}-{unit_seq}"
             rows.append((
                 unique_number, product, material,
                 int(width) if width else None,
