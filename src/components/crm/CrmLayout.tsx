@@ -35,6 +35,7 @@ import { useMarketplaceAutoSync } from '@/hooks/useMarketplaceAutoSync';
 import { usePickingPending } from '@/hooks/usePickingPending';
 import KioskPreviewDialog from '@/components/crm/kiosk/KioskPreviewDialog';
 import ContractGate from '@/components/crm/contracts/ContractGate';
+import CloseSidebarOnNavigate from '@/components/crm/CloseSidebarOnNavigate';
 import { fetchPendingContracts } from '@/lib/contractsApi';
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
@@ -133,6 +134,8 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
 
   return (
     <SidebarProvider>
+      {/* На телефоне меню выезжает поверх страницы — после выбора раздела закрываем его. */}
+      <CloseSidebarOnNavigate />
       <Sidebar>
         <SidebarContent>
           <SidebarGroup>

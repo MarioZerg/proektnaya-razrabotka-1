@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { VariantProps, cva } from "class-variance-authority"
-import { PanelLeft } from "lucide-react"
+import { PanelLeft, X } from "lucide-react"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
@@ -176,6 +176,8 @@ const Sidebar = React.forwardRef<
     ref
   ) => {
     const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+    // Точка начала касания — для закрытия меню смахиванием.
+    const touchStartX = React.useRef<number | null>(null)
 
     if (collapsible === "none") {
       return (
@@ -205,8 +207,34 @@ const Sidebar = React.forwardRef<
               } as React.CSSProperties
             }
             side={side}
+            // Закрытие смахиванием: на телефоне меню занимает почти весь экран, и
+            // тянуть его пальцем в сторону — привычный жест. Без этого убрать меню
+            // можно было только точным попаданием по узкой полоске сбоку.
+            onTouchStart={(e) => {
+              touchStartX.current = e.touches[0].clientX
+            }}
+            onTouchEnd={(e) => {
+              const startX = touchStartX.current
+              if (startX === null) return
+              touchStartX.current = null
+              const delta = e.changedTouches[0].clientX - startX
+              // Порог в 60px, чтобы обычный тап или прокрутка списка не считались свайпом.
+              const closed = side === "left" ? delta < -60 : delta > 60
+              if (closed) setOpenMobile(false)
+            }}
           >
-            <div className="flex h-full w-full flex-col">{children}</div>
+            <div className="flex h-full w-full flex-col">
+              {/* Явная кнопка закрытия — для тех, кто не пользуется жестами. */}
+              <button
+                type="button"
+                aria-label="Закрыть меню"
+                onClick={() => setOpenMobile(false)}
+                className="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+              {children}
+            </div>
           </SheetContent>
         </Sheet>
       )
