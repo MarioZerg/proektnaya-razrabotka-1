@@ -162,7 +162,18 @@ export const closeKioskOrder = async (
   packerId: number,
   actorId?: number,
   actorName?: string
-): Promise<{ success: true; isCancelled: boolean; storageBarcode: string | null }> => {
+): Promise<{
+  success: true;
+  isCancelled: boolean;
+  /** Индивидуальный пошив — печатается свой стикер, вещь уходит на полку. */
+  isIndividual?: boolean;
+  storageBarcode: string | null;
+  orderNumber?: string;
+  material?: string | null;
+  width?: number | null;
+  height?: number | null;
+  product?: string | null;
+}> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

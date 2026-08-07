@@ -384,15 +384,20 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(
                     "SELECT sewing_status, width, assigned_user_id, order_number, workshop_id, "
-                    "status, ozon_status FROM orders WHERE id = %s",
+                    "status, ozon_status, order_type, material, height, product FROM orders WHERE id = %s",
                     (int(order_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
                 (sewing_status, width, assigned_user_id, order_number, order_workshop_id,
-                 order_status, order_ozon_status) = row
+                 order_status, order_ozon_status, order_type, order_material,
+                 order_height, order_product) = row
                 is_cancelled = order_status == 'Отменён' or 'cancel' in (order_ozon_status or '').lower()
+                # Индивидуальный пошив не едет на маркетплейс: у него нет стикера
+                # маркетплейса, и вещь до выдачи клиенту лежит на полке. Поэтому ему
+                # тоже заводим складской штрихкод и печатаем свой стикер.
+                is_individual = (order_type or '') == 'Индивидуальный'
                 if sewing_status != 'Стикеровка':
                     return {
                         'statusCode': 409,
@@ -462,17 +467,18 @@ def handler(event: dict, context) -> dict:
                 # в статусе awaiting_shelf: упаковщик клеит стикер хранения, а кладовщик потом
                 # заберёт вещь из цеха и отсканирует на конкретную полку у себя на компьютере.
                 storage_barcode = None
-                if is_cancelled:
+                if is_cancelled or is_individual:
                     cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
                     gw_existing = cur.fetchone()
                     if gw_existing:
                         storage_barcode = gw_existing[0]
                     else:
                         storage_barcode = next_storage_barcode(cur)
+                        reason = 'cancelled' if is_cancelled else 'individual'
                         cur.execute(
                             "INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason) "
-                            "VALUES (%s, 'awaiting_shelf', %s, 'cancelled')",
-                            (int(order_id), storage_barcode),
+                            "VALUES (%s, 'awaiting_shelf', %s, %s)",
+                            (int(order_id), storage_barcode, reason),
                         )
 
                 # Швея получает фиксированную ставку за штуку по ширине товара — именно сейчас,
@@ -545,8 +551,15 @@ def handler(event: dict, context) -> dict:
                     'body': json.dumps({
                         'success': True,
                         'isCancelled': is_cancelled,
+                        'isIndividual': is_individual,
                         'storageBarcode': storage_barcode,
-                    }),
+                        # Данные для стикера индивидуального заказа
+                        'orderNumber': order_number,
+                        'material': order_material,
+                        'width': width,
+                        'height': order_height,
+                        'product': order_product,
+                    }, ensure_ascii=False),
                 }
 
             if action == 'repack_list':

@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { printStorageSticker } from '@/lib/printStorageSticker';
+import { printIndividualSticker } from '@/lib/printIndividualSticker';
 import {
   formatDate,
   statusLabels,
@@ -51,11 +52,20 @@ const GoodsWarehouseCards = ({
             <button
               type="button"
               onClick={() =>
-                printStorageSticker({
-                  storageBarcode: i.storageBarcode,
-                  title: i.product,
-                  orderNumber: i.orderNumber,
-                })
+                i.receiveReason === 'individual'
+                  ? printIndividualSticker({
+                      orderNumber: i.orderNumber || '',
+                      material: i.material,
+                      width: i.width,
+                      height: i.height,
+                      storageBarcode: i.storageBarcode,
+                      product: i.product,
+                    })
+                  : printStorageSticker({
+                      storageBarcode: i.storageBarcode,
+                      title: i.product,
+                      orderNumber: i.orderNumber,
+                    })
               }
               className="mt-2 flex items-center gap-1.5 font-mono-tech text-xs text-muted-foreground underline-offset-2 hover:underline"
             >

@@ -7,6 +7,7 @@ import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskAp
 import { fetchOrderDetail } from '@/lib/ordersApi';
 import { printFboSticker } from '@/lib/printFboSticker';
 import { printStorageSticker } from '@/lib/printStorageSticker';
+import { printIndividualSticker } from '@/lib/printIndividualSticker';
 import { printLabelPng, printLabelPdf } from '@/lib/printMarketplaceLabel';
 import { fetchWbLabel } from '@/lib/wbFbsApi';
 import { fetchOzonLabel } from '@/lib/ozonFbsApi';
@@ -120,6 +121,27 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         toast({
           title: `Заказ ${order.orderNumber} отменён клиентом`,
           description: 'Наклейте стикер хранения — вещь заберёт кладовщик на полку',
+        });
+        setOrder(null);
+        setPrinted(false);
+        setTracePrinted(false);
+        setTimeout(() => inputRef.current?.focus(), 0);
+        return;
+      }
+      // Индивидуальный пошив на маркетплейс не едет: вещь до выдачи клиенту лежит
+      // на полке. Печатаем свой стикер — с тканью, размерами и складским штрихкодом.
+      if (res.isIndividual && res.storageBarcode) {
+        printIndividualSticker({
+          orderNumber: res.orderNumber || order.orderNumber,
+          material: res.material ?? order.material,
+          width: res.width ?? order.width,
+          height: res.height ?? order.height,
+          storageBarcode: res.storageBarcode,
+          product: res.product ?? order.product,
+        });
+        toast({
+          title: `Заказ ${order.orderNumber} закрыт`,
+          description: 'Наклейте стикер и передайте вещь на полку хранения',
         });
         setOrder(null);
         setPrinted(false);

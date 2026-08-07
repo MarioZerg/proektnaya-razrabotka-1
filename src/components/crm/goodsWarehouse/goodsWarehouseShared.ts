@@ -26,6 +26,7 @@ export const reasonLabels: Record<ReceiveReason, string> = {
   return: 'Возврат',
   manual: 'Принят вручную',
   admin: 'Добавил админ',
+  individual: 'Индивидуальный пошив',
 };
 
 export const reasonIcons: Record<ReceiveReason, string> = {
@@ -33,6 +34,7 @@ export const reasonIcons: Record<ReceiveReason, string> = {
   return: 'Undo2',
   manual: 'Hand',
   admin: 'ShieldCheck',
+  individual: 'UserCheck',
 };
 
 export const reasonClass: Record<ReceiveReason, string> = {
@@ -40,4 +42,5 @@ export const reasonClass: Record<ReceiveReason, string> = {
   return: 'bg-sky-100 text-sky-700 hover:bg-sky-100',
   manual: 'bg-slate-100 text-slate-700 hover:bg-slate-100',
   admin: 'bg-violet-100 text-violet-700 hover:bg-violet-100',
+  individual: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100',
 };

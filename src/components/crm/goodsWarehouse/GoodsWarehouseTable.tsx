@@ -24,6 +24,7 @@ import Icon from '@/components/ui/icon';
 import GoodsWarehouseCards from '@/components/crm/goodsWarehouse/GoodsWarehouseCards';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { printStorageSticker } from '@/lib/printStorageSticker';
+import { printIndividualSticker } from '@/lib/printIndividualSticker';
 import {
   formatDate,
   statusLabels,
@@ -117,11 +118,22 @@ const GoodsWarehouseTable = ({ loading, items, onReturnToWorkshop, onMarkLost }:
                       size="icon"
                       className="h-6 w-6"
                       onClick={() =>
-                        printStorageSticker({
-                          storageBarcode: i.storageBarcode,
-                          title: i.product,
-                          orderNumber: i.orderNumber,
-                        })
+                        // Индивидуальному пошиву — свой стикер с тканью и размерами:
+                        // такие вещи опознают на полке по ним, а не по артикулу.
+                        i.receiveReason === 'individual'
+                          ? printIndividualSticker({
+                              orderNumber: i.orderNumber || '',
+                              material: i.material,
+                              width: i.width,
+                              height: i.height,
+                              storageBarcode: i.storageBarcode,
+                              product: i.product,
+                            })
+                          : printStorageSticker({
+                              storageBarcode: i.storageBarcode,
+                              title: i.product,
+                              orderNumber: i.orderNumber,
+                            })
                       }
                     >
                       <Icon name="Barcode" size={12} />

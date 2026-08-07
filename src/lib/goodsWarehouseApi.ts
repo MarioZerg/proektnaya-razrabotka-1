@@ -13,7 +13,7 @@ export type GoodsStatus =
  * return — возврат с маркетплейса, принят вручную по номеру заказа;
  * manual — принят вручную (старые записи);
  * admin — администратор добавил вещь на склад вручную по товару из справочника. */
-export type ReceiveReason = 'cancelled' | 'return' | 'manual' | 'admin';
+export type ReceiveReason = 'cancelled' | 'return' | 'manual' | 'admin' | 'individual';
 
 export interface GoodsWarehouseItem {
   id: number;
