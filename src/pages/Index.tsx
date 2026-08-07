@@ -184,34 +184,47 @@ const Index = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-background px-6">
+    <div className="relative flex min-h-screen items-center justify-center bg-background px-6 py-12 sm:py-16">
       <div className="pointer-events-none absolute inset-0 grid-bg opacity-[0.25]" />
 
       <div className="relative w-full max-w-[360px] animate-fade-in">
-        <div className="mb-10 flex flex-col items-center gap-4 text-center">
-          {/* Круглый логотип со светящимся ободом.
-              Свечение — вращающийся конический градиент под логотипом: яркий участок
-              бежит по окружности по часовой стрелке. Сам логотип лежит сверху и
-              не крутится, вращается только подсветка. */}
+        <div className="mb-10 mt-2 flex flex-col items-center gap-4 text-center">
+          {/* Круглый логотип со светящейся дугой, бегущей по часовой стрелке.
+              Рисуем через SVG, а не CSS-градиентом: conic-gradient вместе с
+              обрезкой по кругу не работал в мобильных браузерах — на телефоне
+              вращение просто не показывалось. SVG-дуга с обводкой крутится
+              одинаково и на телефоне, и на компьютере. */}
           <div className="relative h-36 w-36 animate-logo-zoom">
-            {/* Один вращающийся градиент — светящийся сгусток бежит по кругу по
-                часовой стрелке. Внутренний кружок цвета фона превращает заливку в
-                кольцо: у логотипа больше нет своей подложки, и сплошная заливка
-                перекрыла бы надпись. */}
-            <div className="absolute inset-0 overflow-hidden rounded-full blur-[1px]">
-              <div
-                className="absolute inset-0 animate-logo-spin"
-                style={{
-                  background:
-                    'conic-gradient(from 0deg, transparent 0deg, transparent 180deg, hsl(var(--primary) / 0.5) 270deg, hsl(var(--primary)) 312deg, hsl(var(--primary) / 0.5) 350deg, transparent 360deg)',
-                }}
+            <svg
+              viewBox="0 0 100 100"
+              className="absolute inset-0 h-full w-full animate-logo-spin"
+              aria-hidden="true"
+            >
+              <defs>
+                {/* Градиент вдоль дуги: от прозрачного к насыщенному — получается
+                    ощущение бегущего по кругу светового сгустка. */}
+                <linearGradient id="logoArc" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity="0" />
+                  <stop offset="55%" stopColor="hsl(var(--primary))" stopOpacity="0.55" />
+                  <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity="1" />
+                </linearGradient>
+              </defs>
+              {/* Дуга примерно на 3/4 окружности: разрыв показывает начало и конец. */}
+              <circle
+                cx="50"
+                cy="50"
+                r="47"
+                fill="none"
+                stroke="url(#logoArc)"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeDasharray="210 85"
               />
-              <div className="absolute inset-[6px] rounded-full bg-background" />
-            </div>
+            </svg>
             <img
               src="/assets/megatul-round-logo.png"
               alt="МЕГАТЮЛЬ"
-              className="absolute inset-0 h-full w-full object-contain p-3"
+              className="absolute inset-0 h-full w-full object-contain p-[6px]"
             />
           </div>
           <OnlineNowBadge />
