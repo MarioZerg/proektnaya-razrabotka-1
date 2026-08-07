@@ -9,7 +9,12 @@ import {
   checkShiftDefects,
   type DefectCheck,
 } from '@/lib/shiftSessionsApi';
-import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import {
+  playScanSound,
+  playScanErrorSound,
+  playShiftOpenSound,
+  playShiftCloseSound,
+} from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
 import KioskScanLogin from '@/components/crm/kiosk/KioskScanLogin';
@@ -165,7 +170,7 @@ const KioskTerminal = () => {
     setShiftSaving(true);
     try {
       const res = await openShift(user.id, Number(workshopId) || null, user.shiftFromCode ?? null);
-      playScanSound();
+      playShiftOpenSound();
       setShift({
         isOpen: true,
         openedAt: res.openedAt,
@@ -222,7 +227,7 @@ const KioskTerminal = () => {
     setShiftSaving(true);
     try {
       await closeShift(user.id);
-      playScanSound();
+      playShiftCloseSound();
       setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null });
       // Смена закрыта — возвращаем сотрудника на стартовый экран терминала.
       setEnteredMenu(false);

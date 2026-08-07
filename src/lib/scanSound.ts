@@ -34,3 +34,30 @@ export const playScanErrorSound = () => {
     // Аудио недоступно (например, в тестовом окружении) — не мешаем основной логике.
   }
 };
+
+// Открытие и закрытие смены на терминале цеха звучат по-разному: сотрудник понимает
+// на слух, что именно произошло, не вчитываясь в экран планшета.
+let shiftOpenAudio: HTMLAudioElement | null = null;
+let shiftCloseAudio: HTMLAudioElement | null = null;
+
+export const playShiftOpenSound = () => {
+  try {
+    if (!shiftOpenAudio) {
+      shiftOpenAudio = new Audio('/sounds/shift-open.mp3');
+    }
+    play(shiftOpenAudio);
+  } catch {
+    // Аудио недоступно (например, в тестовом окружении) — не мешаем основной логике.
+  }
+};
+
+export const playShiftCloseSound = () => {
+  try {
+    if (!shiftCloseAudio) {
+      shiftCloseAudio = new Audio('/sounds/shift-close.mp3');
+    }
+    play(shiftCloseAudio);
+  } catch {
+    // Аудио недоступно (например, в тестовом окружении) — не мешаем основной логике.
+  }
+};
