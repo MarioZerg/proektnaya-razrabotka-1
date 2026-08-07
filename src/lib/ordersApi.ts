@@ -68,6 +68,11 @@ export interface Order {
   groupKey?: string | null;
   groupSize?: number | null;
   groupPosition?: number | null;
+  /** Заказ юридического лица (B2B с OZON). Шьётся как обычный, но помечается в цехе. */
+  isLegalEntity?: boolean;
+  /** Название компании-покупателя и её ИНН — приходят от OZON вместе с заказом. */
+  legalCompanyName?: string | null;
+  legalInn?: string | null;
   /** Сколько ткани реально уйдёт со склада на одно изделие (пог.м., с запасом на
    * подгибку) — из карточки товара. null, если карточка такого размера не заведена. */
   fabricPerItem?: number | null;

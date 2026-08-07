@@ -149,7 +149,18 @@ const SewingItemsTable = ({
                     {marketplaceLogo[o.marketplace]?.label || o.marketplace}
                   </span>
                 </TableCell>
-                <TableCell>{o.orderType}</TableCell>
+                <TableCell>
+                  <div className="flex flex-col items-start gap-1">
+                    <span>{o.orderType}</span>
+                    {/* Покупатель — компания: заказ шьётся так же, но пометка нужна,
+                        чтобы в цехе понимали, кому уйдёт вещь. */}
+                    {o.isLegalEntity && (
+                      <span className="whitespace-nowrap rounded-sm bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800">
+                        Юр. лицо
+                      </span>
+                    )}
+                  </div>
+                </TableCell>
                 <TableCell>
                   <OrderStagesDiagram order={o} />
                 </TableCell>

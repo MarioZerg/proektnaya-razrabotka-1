@@ -50,7 +50,10 @@ export const useSewingItemsFilters = ({
 
   const filteredOrders = ordersInTab.filter((o) => {
     if (searchQuery.trim() && !o.orderNumber.toLowerCase().includes(searchQuery.trim().toLowerCase())) return false;
-    if (typeFilter !== 'all' && o.orderType !== typeFilter) return false;
+    // «Юр. лицо» — не тип заказа, а признак покупателя: такие заказы бывают
+    // и FBS, и FBO, поэтому проверяем отдельным условием.
+    if (typeFilter === 'legal' && !o.isLegalEntity) return false;
+    if (typeFilter !== 'all' && typeFilter !== 'legal' && o.orderType !== typeFilter) return false;
     if (employeeFilter !== 'all' && String(o.assignedUserId) !== employeeFilter) return false;
     if (materialFilter !== 'all' && o.material !== materials.find((m) => String(m.id) === materialFilter)?.name) return false;
     if (widthFilter !== 'all' && String(o.width) !== widthFilter) return false;

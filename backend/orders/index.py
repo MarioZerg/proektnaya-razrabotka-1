@@ -430,6 +430,9 @@ def handler(event: dict, context) -> dict:
                 "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
                 "o.ozon_status, o.ozon_posting_number, o.product_barcode, o.product_ozon_sku, "
                 "o.marketplace_created_at, o.group_key, o.group_size, o.group_position, "
+                # Заказ юридического лица (B2B с OZON): цех должен видеть пометку прямо
+                # в списке, а реквизиты компании — в карточке заказа.
+                "o.is_legal_entity, o.legal_company_name, o.legal_inn, "
                 # Реальный расход ткани на одно изделие из карточки товара: он включает
                 # запас на подгибку и потому больше «чистой» ширины. Именно эту цифру
                 # кладовщик должен видеть в сводке — столько ткани уйдёт со склада.
@@ -487,7 +490,10 @@ def handler(event: dict, context) -> dict:
                     'groupPosition': r[33],
                     # Сколько ткани реально уйдёт со склада на одно изделие (с запасом на
                     # подгибку). None — если карточка товара с таким размером не заведена.
-                    'fabricPerItem': float(r[34]) if r[34] is not None else None,
+                    'isLegalEntity': bool(r[34]),
+                    'legalCompanyName': r[35],
+                    'legalInn': r[36],
+                    'fabricPerItem': float(r[37]) if r[37] is not None else None,
                 }
                 for r in cur.fetchall()
             ]

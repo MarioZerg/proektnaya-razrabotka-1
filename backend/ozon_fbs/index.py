@@ -12,6 +12,9 @@ import psycopg2
 # заказы на стороне OZON (не собирает и не отгружает).
 OZON_API_BASE = 'https://api-seller.ozon.ru'
 
+# Сколько отправлений просим у OZON за один запрос.
+OZON_SYNC_PAGE = 50
+
 # Только заказы, требующие сборки, попадают на конвейер производства.
 OZON_NEW_STATUS = 'awaiting_packaging'
 
@@ -150,18 +153,24 @@ def match_from_stock(cur, order_id, item_id) -> bool:
 def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
     """Тянет новые FBS-заказы OZON (status=awaiting_packaging) и создаёт их в системе."""
     payload = {
-        'dir': 'ASC',
+        'dir': 'DESC',
         'filter': {
             'cutoff_from': '2020-01-01T00:00:00Z',
             'cutoff_to': '2030-01-01T00:00:00Z',
             'status': OZON_NEW_STATUS,
         },
-        # Берём заказы небольшими порциями: OZON отвечает тем дольше, чем больше просим,
-        # а функции отведено мало времени. Планировщик ходит часто, поэтому остаток
-        # подтянется следующим запуском — заказы не потеряются.
-        'limit': 50,
+        # Раньше брали 50 штук по возрастанию — и это была ошибка: список всегда
+        # начинался с одних и тех же самых старых отправлений, уже загруженных.
+        # Всё, что дальше 50-й позиции (а их бывает под 300), не попадало в систему
+        # НИКОГДА — именно так терялись заказы юрлиц.
+        #
+        # Сортируем по убыванию: свежие отправления идут первыми, и новый заказ
+        # попадает в цех сразу, а не встаёт в конец длинной очереди.
+        'limit': OZON_SYNC_PAGE,
         'offset': 0,
-        'with': {},
+        # legal_info — реквизиты покупателя-компании. Без этого флага OZON блок не
+        # присылает, и заказ юрлица выглядел на конвейере как обычный розничный.
+        'with': {'legal_info': True},
     }
     status_code, data = ozon_post('/v3/posting/fbs/unfulfilled/list', client_id, api_key, payload)
     if status_code in (401, 403):
@@ -193,6 +202,14 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         # ушло в работу), с фолбэком на created_at. По нему считаем ожидание заказа.
         mp_created_at = p.get('in_process_at') or p.get('created_at') or None
 
+        # Заказ юридического лица: OZON присылает название компании, ИНН и КПП.
+        # Признаком считаем заполненный ИНН или название — у розничных покупателей
+        # блок приходит пустым.
+        legal = p.get('legal_info') or {}
+        legal_company = (legal.get('company_name') or '').strip()
+        legal_inn = (legal.get('inn') or '').strip()
+        is_legal = bool(legal_company or legal_inn)
+
         # Каждый товар отправления = отдельная штука на конвейере (1 заказ = 1 штука),
         # с учётом количества.
         products = p.get('products', []) or []
@@ -218,8 +235,10 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
                 cur.execute(
                     "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                     "quantity, source, material, width, height, ozon_posting_number, ozon_status, "
-                    "marketplace_created_at, marketplace_item_id) "
-                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s) "
+                    "marketplace_created_at, marketplace_item_id, "
+                    "is_legal_entity, legal_company_name, legal_inn) "
+                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, "
+                    "%s, %s, %s) "
                     "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                     (
                         unique_number,
@@ -231,11 +250,24 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
                         ozon_status,
                         mp_created_at,
                         int(item_id) if item_id else None,
+                        is_legal,
+                        legal_company or None,
+                        legal_inn or None,
                     ),
                 )
                 inserted = cur.fetchone()
                 if not inserted:
-                    # Эта штука уже загружена ранее — пропускаем, дубль не создаём.
+                    # Эта штука уже загружена ранее — дубль не создаём. Но если заказ
+                    # завели до того, как мы научились различать юрлиц, пометку нужно
+                    # проставить задним числом, иначе цех её не увидит.
+                    if is_legal:
+                        cur.execute(
+                            "UPDATE orders SET is_legal_entity = true, "
+                            "legal_company_name = COALESCE(legal_company_name, %s), "
+                            "legal_inn = COALESCE(legal_inn, %s) "
+                            "WHERE order_number = %s AND is_legal_entity = false",
+                            (legal_company or None, legal_inn or None, unique_number),
+                        )
                     skipped_existing += 1
                     continue
                 new_order_id = inserted[0]

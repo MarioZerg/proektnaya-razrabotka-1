@@ -110,6 +110,7 @@ const SewingItemsFilters = ({
           <SelectItem value="FBO">FBO</SelectItem>
           <SelectItem value="FBS">FBS</SelectItem>
           <SelectItem value="Индивидуальный">Индивидуальный</SelectItem>
+          <SelectItem value="legal">Юр. лицо</SelectItem>
         </SelectContent>
       </Select>
 

@@ -36,6 +36,23 @@ const SewingItemInfoCards = ({
                   {selectedOrder.material} {selectedOrder.width}×{selectedOrder.height}
                 </TableCell>
               </TableRow>
+              {/* Покупатель-компания: реквизиты приходят от OZON вместе с заказом. */}
+              {selectedOrder.isLegalEntity && (
+                <TableRow>
+                  <TableCell className="font-medium text-muted-foreground">Покупатель</TableCell>
+                  <TableCell>
+                    <span className="mr-2 inline-block rounded-sm bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800">
+                      Юр. лицо
+                    </span>
+                    {selectedOrder.legalCompanyName || 'Компания'}
+                    {selectedOrder.legalInn && (
+                      <div className="font-mono-tech text-xs text-muted-foreground">
+                        ИНН {selectedOrder.legalInn}
+                      </div>
+                    )}
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </CardContent>

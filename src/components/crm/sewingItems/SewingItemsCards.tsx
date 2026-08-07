@@ -96,6 +96,13 @@ const SewingItemsCards = ({
                         Заказ {o.groupPosition} из {o.groupSize}
                       </Badge>
                     )}
+                    {/* Заказ юридического лица (B2B с OZON): такие заказы шьются так же,
+                        но цех должен видеть, что покупатель — компания. */}
+                    {o.isLegalEntity && (
+                      <Badge className="bg-indigo-600 px-1.5 py-0 text-[10px] text-white hover:bg-indigo-600">
+                        Юр. лицо
+                      </Badge>
+                    )}
                   </p>
                   <p className="break-all font-mono-tech text-[11px] text-muted-foreground">
                     {o.orderNumber}
