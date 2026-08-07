@@ -46,7 +46,20 @@ export const useSewingItemsFilters = ({
   const isReadOnlyTab =
     isPacker || (activeTab === 'Раскроено' && (isSewer || isCutter)) || (activeTab === 'Стикеровка' && isSewer);
 
-  const ordersInTab = orders.filter((o) => o.sewingStatus === activeTab);
+  const ordersInTab = orders
+    .filter((o) => o.sewingStatus === activeTab)
+    // На вкладке «Новый» показываем очередь так же, как её раздаёт система: сначала
+    // FBS, затем самые давние заказы покупателей. Раньше список шёл от свежих, и
+    // сотрудник видел наверху вчерашние заказы, хотя в раскрой уходили позавчерашние —
+    // выглядело как несоответствие.
+    .sort((a, b) => {
+      if (activeTab !== 'Новый') return 0;
+      const fbs = Number(b.orderType === 'FBS') - Number(a.orderType === 'FBS');
+      if (fbs !== 0) return fbs;
+      const da = new Date(a.marketplaceCreatedAt || a.createdAt).getTime();
+      const db = new Date(b.marketplaceCreatedAt || b.createdAt).getTime();
+      return da - db;
+    });
 
   const filteredOrders = ordersInTab.filter((o) => {
     if (searchQuery.trim() && !o.orderNumber.toLowerCase().includes(searchQuery.trim().toLowerCase())) return false;

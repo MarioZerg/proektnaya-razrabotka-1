@@ -197,6 +197,20 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
           <CardContent className="space-y-4 pt-6">
             {/* Заказ Яндекса из нескольких вещей отгружается по одному общему ярлыку —
                 упаковщица должна дождаться все вещи и упаковать их вместе. */}
+            {/* Покупатель — компания. Шьётся и упаковывается как обычно, но
+                упаковщица должна видеть, кому уйдёт вещь. */}
+            {order.isLegalEntity && (
+              <div className="flex items-start gap-3 rounded-md border border-indigo-300 bg-indigo-50 p-3 text-indigo-900">
+                <Icon name="Building2" size={22} className="mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-bold">Заказ юридического лица</p>
+                  <p className="text-sm">
+                    {order.legalCompanyName || 'Покупатель — компания'}. Собирается как обычный
+                    заказ, ярлык отправления печатается так же
+                  </p>
+                </div>
+              </div>
+            )}
             {order.groupSize && order.groupSize > 1 && (
               <div className="flex items-start gap-3 rounded-md border border-violet-300 bg-violet-50 p-3 text-violet-900">
                 <Icon name="Package" size={22} className="mt-0.5 shrink-0" />

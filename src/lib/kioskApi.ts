@@ -19,6 +19,9 @@ export interface KioskOrder {
   groupKey?: string | null;
   groupSize?: number | null;
   groupPosition?: number | null;
+  /** Покупатель — юридическое лицо (B2B с OZON). Терминал показывает пометку. */
+  isLegalEntity?: boolean;
+  legalCompanyName?: string | null;
   /** FBS — ярлык отправления выдаёт маркетплейс по API; FBO — печатаем свой стикер товара. */
   orderType?: string | null;
 }

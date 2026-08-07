@@ -599,7 +599,14 @@ def handler(event: dict, context) -> dict:
 
                 names_csv = ','.join("'" + n.replace("'", "''") + "'" for n in allowed_names)
                 # FBS-заказы раскраиваются первыми (жёсткое правило по всему конвейеру —
-                # сжатые сроки отгрузки), при равенстве — FIFO по дате попадания в систему.
+                # сжатые сроки отгрузки), при равенстве — сначала самые давние заказы.
+                #
+                # Считаем по дате заказа У ПОКУПАТЕЛЯ (marketplace_created_at), а не по
+                # дате загрузки к нам. Это принципиально: заказы приезжают из маркетплейса
+                # пачками, и у сотни заказов дата загрузки одна и та же — по ней очередь
+                # не выстроить. Покупатель, ждущий третий день, должен уходить в раскрой
+                # раньше сегодняшнего. Для ручных заказов даты покупателя нет — берём дату
+                # создания в системе.
                 # FOR UPDATE SKIP LOCKED: строки блокируются на время транзакции, поэтому
                 # один и тот же заказ не уйдёт одновременно двум закройщикам и не будет
                 # подобран со склада, пока мы его забираем в раскрой.
@@ -610,7 +617,8 @@ def handler(event: dict, context) -> dict:
                     "AND fulfilled_from_stock_id IS NULL "
                     "AND COALESCE(status, '') <> 'Отменён' "
                     "AND material IN (" + names_csv + ") "
-                    "ORDER BY (order_type = 'FBS') DESC, created_at ASC, "
+                    "ORDER BY (order_type = 'FBS') DESC, "
+                    "COALESCE(marketplace_created_at, created_at) ASC, "
                     "group_key NULLS FIRST, group_position ASC NULLS LAST, id ASC LIMIT %s "
                     "FOR UPDATE SKIP LOCKED",
                     (stack_size,),
@@ -1462,6 +1470,9 @@ def handler(event: dict, context) -> dict:
                     order_parts.append("(marketplace = 'WB') DESC")
                 elif orders_priority_setting == 'yandex_first':
                     order_parts.append("(marketplace = 'Yandex') DESC")
+                # Раскроенные раньше — шьются раньше. Порядок сюда уже пришёл от
+                # закройщика (он берёт в раскрой самые давние заказы), поэтому
+                # дополнительно сортировать по дате заказа не нужно.
                 order_parts.append("cut_at ASC NULLS LAST")
                 # Внутри одного заказа покупателя вещи выдаются по порядку — «1 из 3», «2 из 3».
                 order_parts.append("group_key NULLS FIRST")

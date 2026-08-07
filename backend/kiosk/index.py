@@ -267,7 +267,8 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.status, o.ozon_status, "
-                "o.marketplace, o.group_key, o.group_size, o.group_position, o.order_type "
+                "o.marketplace, o.group_key, o.group_size, o.group_position, o.order_type, "
+                "o.is_legal_entity, o.legal_company_name "
                 "FROM orders o LEFT JOIN users u ON u.id = o.assigned_user_id "
                 f"WHERE o.order_number = '{order_number_esc}'"
             )
@@ -303,6 +304,9 @@ def handler(event: dict, context) -> dict:
                 # FBS/FBO: у FBS ярлык отправления выдаёт маркетплейс по API, у FBO мы
                 # печатаем свой стикер товара — терминал выбирает по этому полю.
                 'orderType': row[15],
+                # Покупатель — компания: упаковщица должна видеть это на терминале.
+                'isLegalEntity': bool(row[16]),
+                'legalCompanyName': row[17],
             }
         finally:
             conn.close()
