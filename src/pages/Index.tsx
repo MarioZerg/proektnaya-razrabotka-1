@@ -34,9 +34,28 @@ const Index = () => {
   const navigate = useNavigate();
   const { login, user } = useAuth();
 
-  const [step, setStep] = useState<Step>('start');
+  // Шаг входа переживает перезагрузку страницы.
+  //
+  // Зачем: в приложении MAX сайт открыт внутри самого мессенджера. Когда мы открываем
+  // бота, система переключается на чат, а окно с сайтом выгружается. Человек получает
+  // код, возвращается — и видит снова «Войти через MAX», потому что шаг жил только в
+  // памяти вкладки. Ввести код было некуда, вход зацикливался.
+  // Теперь шаг лежит в sessionStorage: вернувшись, человек попадает сразу на ввод кода.
+  const [step, setStep] = useState<Step>(() => {
+    const saved = sessionStorage.getItem('megatul_login_step');
+    return saved === 'code' ? 'code' : 'start';
+  });
   const [botUrl, setBotUrl] = useState<string | null>(null);
-  const [botOpened, setBotOpened] = useState(false);
+  const [botOpened, setBotOpened] = useState(
+    () => sessionStorage.getItem('megatul_login_step') === 'code'
+  );
+
+  // Запоминаем только ожидание кода. Остальные шаги привязаны к данным в памяти
+  // (выбор роли, ожидание утверждения) — восстанавливать их без данных нельзя.
+  useEffect(() => {
+    if (step === 'code') sessionStorage.setItem('megatul_login_step', 'code');
+    else sessionStorage.removeItem('megatul_login_step');
+  }, [step]);
 
   const [code, setCode] = useState('');
   const [verifying, setVerifying] = useState(false);
@@ -67,11 +86,21 @@ const Index = () => {
   }, []);
 
   const handleOpenBot = () => {
-    if (botUrl) {
-      window.open(botUrl, '_blank', 'noopener,noreferrer');
-    }
+    // Сначала переводим экран на ввод кода и только потом открываем бота: внутри
+    // приложения MAX переход в чат может выгрузить страницу сразу, и шаг не успел бы
+    // сохраниться — человек вернулся бы на начало.
     setBotOpened(true);
     setStep('code');
+    sessionStorage.setItem('megatul_login_step', 'code');
+    if (botUrl) {
+      // В приложении MAX сайт уже открыт внутри мессенджера, и новая вкладка там не
+      // создаётся — открываем бота в текущем окне, чтобы возврат работал системной
+      // кнопкой «назад». В обычном браузере оставляем отдельную вкладку: так сайт
+      // остаётся открытым рядом.
+      const inMaxApp = /MAX/i.test(navigator.userAgent) || window.self !== window.top;
+      if (inMaxApp) window.location.href = botUrl;
+      else window.open(botUrl, '_blank', 'noopener,noreferrer');
+    }
   };
 
   const finishLogin = (data: {
@@ -93,6 +122,9 @@ const Index = () => {
       workshopName: data.workshopName ?? null,
       shiftNumber: data.shiftNumber ?? null,
     });
+    // Вход завершён — снимаем метку ожидания кода, иначе при следующем выходе
+    // человек сразу попал бы на экран ввода кода вместо кнопки входа.
+    sessionStorage.removeItem('megatul_login_step');
     navigate('/crm');
   };
 
@@ -309,7 +341,13 @@ const Index = () => {
           <form onSubmit={handleVerifyCode} className="space-y-3">
             {botOpened && (
               <p className="text-center text-sm text-muted-foreground">
-                Бот открылся в новой вкладке. Поделитесь номером телефона в чате — код придёт сообщением.
+                Поделитесь номером телефона в чате с ботом — код придёт сообщением. Затем
+                вернитесь сюда и введите его.
+              </p>
+            )}
+            {!botOpened && (
+              <p className="text-center text-sm text-muted-foreground">
+                Введите код, который прислал бот в MAX.
               </p>
             )}
             <Input
