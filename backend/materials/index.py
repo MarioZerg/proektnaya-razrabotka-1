@@ -15,8 +15,8 @@ def handler(event: dict, context) -> dict:
                                    (action 'approve_supply' в backend/shipments создаёт рулоны
                                    in_storage); списание/отгрузка в цех эти остатки уменьшает
     POST /  { action: 'create_type', name }
-    POST /  { action: 'create_material', typeId, name, unit, cost, status }
-    POST /  { action: 'update_material', id, name?, unit?, cost?, status?, typeId? }
+    POST /  { action: 'create_material', typeId, name, unit, status }
+    POST /  { action: 'update_material', id, name?, unit?, status?, typeId? }
     POST /  { action: 'delete_material', id }
     GET  /?view=packaging       - справочник упаковки для упаковщицы: какой пакет
                                    к какому товару подходит. Строится по фактическим
@@ -98,8 +98,14 @@ def handler(event: dict, context) -> dict:
             cur.execute("SELECT id, name, sort_order FROM material_types ORDER BY sort_order, id")
             types = [{'id': r[0], 'name': r[1], 'sortOrder': r[2]} for r in cur.fetchall()]
 
+            # Справочной цены у материала больше нет — себестоимость приходит от поставщика
+            # и хранится на каждом рулоне. Для справки отдаём среднюю цену по тем рулонам,
+            # что сейчас лежат на складе: видно, почём материал обходится на самом деле.
             cur.execute(
-                "SELECT m.id, m.type_id, m.name, m.unit, m.cost, m.status, m.sort_order, "
+                "SELECT m.id, m.type_id, m.name, m.unit, "
+                "COALESCE((SELECT AVG(NULLIF(r.cost_per_unit, 0)) FROM rolls r "
+                "WHERE r.material_id = m.id AND r.status IN ('in_storage', 'in_workshop')), 0), "
+                "m.status, m.sort_order, "
                 "EXISTS(SELECT 1 FROM material_movements mm WHERE mm.material_id = m.id), "
                 "COALESCE((SELECT SUM(r.remaining_quantity) FROM rolls r "
                 "WHERE r.material_id = m.id AND r.status = 'in_storage'), 0), "
@@ -113,7 +119,8 @@ def handler(event: dict, context) -> dict:
                     'typeId': r[1],
                     'name': r[2],
                     'unit': r[3],
-                    'cost': float(r[4]),
+                    # Средняя себестоимость по рулонам на складе, не редактируется вручную.
+                    'avgCost': float(r[4]),
                     'status': r[5],
                     'sortOrder': r[6],
                     'hasMovements': r[7],
@@ -158,16 +165,16 @@ def handler(event: dict, context) -> dict:
                 type_id = body_data.get('typeId')
                 name = (body_data.get('name') or '').strip()
                 unit = (body_data.get('unit') or 'шт').strip()
-                cost = body_data.get('cost', 0)
                 status = (body_data.get('status') or 'active').strip()
                 if not type_id or not name:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите тип и название'})}
                 name_esc = name.replace("'", "''")
                 unit_esc = unit.replace("'", "''")
                 status_esc = status.replace("'", "''")
+                # Цену при создании не задаём: она придёт от поставщика при первой приёмке.
                 cur.execute(
-                    f"INSERT INTO materials (type_id, name, unit, cost, status, sort_order) "
-                    f"VALUES ({int(type_id)}, '{name_esc}', '{unit_esc}', {float(cost)}, '{status_esc}', "
+                    f"INSERT INTO materials (type_id, name, unit, status, sort_order) "
+                    f"VALUES ({int(type_id)}, '{name_esc}', '{unit_esc}', '{status_esc}', "
                     f"(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM materials WHERE type_id = {int(type_id)})) "
                     f"RETURNING id"
                 )
@@ -184,8 +191,6 @@ def handler(event: dict, context) -> dict:
                     fields.append(f"name = '{str(body_data['name']).replace(chr(39), chr(39)*2)}'")
                 if 'unit' in body_data:
                     fields.append(f"unit = '{str(body_data['unit']).replace(chr(39), chr(39)*2)}'")
-                if 'cost' in body_data:
-                    fields.append(f"cost = {float(body_data['cost'])}")
                 if 'status' in body_data:
                     fields.append(f"status = '{str(body_data['status']).replace(chr(39), chr(39)*2)}'")
                 if 'typeId' in body_data:

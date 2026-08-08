@@ -143,19 +143,21 @@ def handler(event: dict, context) -> dict:
                 # по средней цене материала: один и тот же материал у разных поставщиков
                 # стоит по-разному, плюс в себестоимость входит курс валюты и логистика
                 # конкретной поставки. Только так сумма недостачи получается точной.
-                # Если у старого рулона себестоимости нет — подставляем цену из справочника.
+                # Цена берётся только с рулона: справочная цена материала убрана, все рулоны
+                # получают себестоимость при приёмке от поставщика.
                 cur.execute(
-                    "SELECT m.id, m.name, m.unit, COALESCE(m.cost, 0), m.shortage_norm_percent, "
+                    "SELECT m.id, m.name, m.unit, COALESCE(AVG(NULLIF(r.cost_per_unit, 0)), 0), "
+                    "m.shortage_norm_percent, "
                     "COUNT(*), "
                     "COALESCE(SUM(r.shortage_quantity), 0), "
                     "COALESCE(AVG(r.shortage_quantity / r.initial_quantity * 100), 0), "
                     "COALESCE(MAX(r.shortage_quantity / r.initial_quantity * 100), 0), "
                     "COUNT(*) FILTER (WHERE r.shortage_quantity > 0), "
-                    "COALESCE(SUM(r.shortage_quantity * COALESCE(r.cost_per_unit, m.cost, 0)), 0), "
+                    "COALESCE(SUM(r.shortage_quantity * COALESCE(r.cost_per_unit, 0)), 0), "
                     "COALESCE(AVG(NULLIF(r.cost_per_unit, 0)), 0) "
                     "FROM rolls r JOIN materials m ON m.id = r.material_id "
                     f"WHERE {where_sql} "
-                    "GROUP BY m.id, m.name, m.unit, m.cost, m.shortage_norm_percent "
+                    "GROUP BY m.id, m.name, m.unit, m.shortage_norm_percent "
                     "ORDER BY 8 DESC"
                 )
                 by_material = [
@@ -184,7 +186,7 @@ def handler(event: dict, context) -> dict:
                     "SELECT r.closed_by_user_id, COALESCE(r.closed_by_name, 'Не указан'), "
                     "COUNT(*), COALESCE(SUM(r.shortage_quantity), 0), "
                     "COALESCE(AVG(r.shortage_quantity / r.initial_quantity * 100), 0), "
-                    "COALESCE(SUM(r.shortage_quantity * COALESCE(r.cost_per_unit, m.cost, 0)), 0) "
+                    "COALESCE(SUM(r.shortage_quantity * COALESCE(r.cost_per_unit, 0)), 0) "
                     "FROM rolls r JOIN materials m ON m.id = r.material_id "
                     f"WHERE {where_sql} "
                     "GROUP BY r.closed_by_user_id, r.closed_by_name "
@@ -209,7 +211,9 @@ def handler(event: dict, context) -> dict:
                     "CASE WHEN r.initial_quantity > 0 "
                     "THEN r.shortage_quantity / r.initial_quantity * 100 ELSE 0 END, "
                     "COALESCE(r.closed_by_name, ''), r.completed_at, "
-                    "r.shortage_quantity * COALESCE(m.cost, 0) "
+                    # Себестоимость именно этого рулона: раньше здесь бралась общая цена
+                    # материала, из-за чего детализация расходилась с итоговой суммой.
+                    "r.shortage_quantity * COALESCE(r.cost_per_unit, 0) "
                     "FROM rolls r JOIN materials m ON m.id = r.material_id "
                     f"WHERE {where_sql} "
                     "ORDER BY r.completed_at DESC LIMIT 500"

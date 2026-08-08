@@ -62,7 +62,6 @@ interface MaterialFormState {
   newTypeName: string;
   name: string;
   unit: string;
-  cost: string;
   status: 'active' | 'archive';
 }
 
@@ -71,7 +70,6 @@ const emptyForm: MaterialFormState = {
   newTypeName: '',
   name: '',
   unit: 'шт',
-  cost: '',
   status: 'active',
 };
 
@@ -124,7 +122,6 @@ const MaterialsSettings = () => {
       newTypeName: '',
       name: m.name,
       unit: m.unit,
-      cost: String(m.cost),
       status: m.status,
     });
     setDialogOpen(true);
@@ -151,18 +148,15 @@ const MaterialsSettings = () => {
         return;
       }
 
-      const cost = parseFloat(form.cost.replace(',', '.')) || 0;
-
       if (editingId) {
         await updateMaterial(editingId, {
           name: form.name.trim(),
           unit: form.unit.trim() || 'шт',
-          cost,
           status: form.status,
           typeId,
         });
       } else {
-        await createMaterial(typeId, form.name.trim(), form.unit.trim() || 'шт', cost, form.status);
+        await createMaterial(typeId, form.name.trim(), form.unit.trim() || 'шт', form.status);
       }
 
       setDialogOpen(false);
@@ -266,23 +260,16 @@ const MaterialsSettings = () => {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Ед. измерения</Label>
-                    <Input
-                      placeholder="п.м. / шт"
-                      value={form.unit}
-                      onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Себестоимость</Label>
-                    <Input
-                      placeholder="0"
-                      value={form.cost}
-                      onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
-                    />
-                  </div>
+                {/* Себестоимость здесь больше не задаётся: цену материала определяет прайс
+                    поставщика, а точная себестоимость считается при приёмке (цена × курс +
+                    логистика) и хранится на каждом рулоне отдельно. */}
+                <div className="space-y-1.5">
+                  <Label>Ед. измерения</Label>
+                  <Input
+                    placeholder="п.м. / шт"
+                    value={form.unit}
+                    onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
+                  />
                 </div>
 
                 <div className="space-y-1.5">
@@ -362,7 +349,7 @@ const MaterialsSettings = () => {
                   <TableHead className="text-primary-foreground">Тип</TableHead>
                   <TableHead className="text-primary-foreground">Название</TableHead>
                   <TableHead className="text-primary-foreground">Ед.измерения</TableHead>
-                  <TableHead className="text-primary-foreground">Себестоимость</TableHead>
+                  <TableHead className="text-primary-foreground">Средняя цена</TableHead>
                   <TableHead className="text-primary-foreground">Статус</TableHead>
                   <TableHead className="text-primary-foreground" />
                 </TableRow>
@@ -374,7 +361,14 @@ const MaterialsSettings = () => {
                     <TableCell>{typeById.get(m.typeId) || '—'}</TableCell>
                     <TableCell className="font-medium">{m.name}</TableCell>
                     <TableCell>{m.unit}</TableCell>
-                    <TableCell>{m.cost} руб.</TableCell>
+                    {/* Средняя цена по рулонам на складе — справочно, вручную не задаётся. */}
+                    <TableCell>
+                      {m.avgCost > 0 ? (
+                        `${m.avgCost.toFixed(2)} ₽`
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={m.status === 'active' ? 'secondary' : 'outline'}>
                         {m.status === 'active' ? 'Активен' : 'Архив'}

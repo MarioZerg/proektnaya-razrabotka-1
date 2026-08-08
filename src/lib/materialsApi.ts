@@ -11,7 +11,12 @@ export interface Material {
   typeId: number;
   name: string;
   unit: string;
-  cost: number;
+  /**
+   * Средняя себестоимость единицы по рулонам на складе и в цехах — только для справки.
+   * Вручную не задаётся: цену материала определяет прайс поставщика, а точная себестоимость
+   * (цена × курс + логистика) считается при приёмке и хранится на каждом рулоне.
+   */
+  avgCost: number;
   status: 'active' | 'archive';
   sortOrder: number;
   hasMovements: boolean;
@@ -85,20 +90,19 @@ export const createMaterial = async (
   typeId: number,
   name: string,
   unit: string,
-  cost: number,
   status: string
 ) => {
   const res = await fetch(MATERIALS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'create_material', typeId, name, unit, cost, status }),
+    body: JSON.stringify({ action: 'create_material', typeId, name, unit, status }),
   });
   return res.json();
 };
 
 export const updateMaterial = async (
   id: number,
-  fields: Partial<{ name: string; unit: string; cost: number; status: string; typeId: number }>
+  fields: Partial<{ name: string; unit: string; status: string; typeId: number }>
 ) => {
   const res = await fetch(MATERIALS_URL, {
     method: 'POST',
