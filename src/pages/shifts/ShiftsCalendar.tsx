@@ -26,6 +26,7 @@ import {
   type ShiftCycle,
 } from '@/lib/shiftsApi';
 import ShiftCycleSetup from '@/components/crm/shifts/ShiftCycleSetup';
+import { fetchVacations, type Vacation } from '@/lib/vacationsApi';
 
 const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -78,6 +79,15 @@ const ShiftsCalendar = () => {
   // по дням в календаре отключаются — иначе ручные отметки конфликтовали бы с расчётом.
   const [cycle, setCycle] = useState<ShiftCycle | null>(null);
   const [workWeekdays, setWorkWeekdays] = useState<number[] | null>(null);
+  // Отпуска сотрудников: в календаре сразу видно, кто и когда отдыхает, чтобы при
+  // планировании не оставить смену без людей.
+  const [vacations, setVacations] = useState<Vacation[]>([]);
+
+  useEffect(() => {
+    fetchVacations()
+      .then((list) => setVacations(list.filter((v) => !v.cancelled)))
+      .catch(() => setVacations([]));
+  }, []);
 
   const today = new Date();
   const [monthOffset, setMonthOffset] = useState(0);
@@ -194,6 +204,18 @@ const ShiftsCalendar = () => {
           </div>
         </div>
 
+        {/* Подписи к цветам: без них жёлтая плашка в календаре ни о чём не говорит. */}
+        <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded bg-destructive" />
+            Выходной смены
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded bg-amber-500" />
+            Отпуск сотрудника
+          </span>
+        </div>
+
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -221,6 +243,17 @@ const ShiftsCalendar = () => {
                       const iso = toIsoDate(date);
                       const isDayOff = daysOff.has(iso);
                       const isSaving = savingDate === iso;
+                      // Кто из этой смены в отпуске в этот день.
+                      const dayVacations = selectedShift
+                        ? vacations.filter(
+                            (v) =>
+                              v.shiftNumber === selectedShift.shiftNumber &&
+                              (v.workshopName === selectedShift.workshopName ||
+                                v.workshopName === null) &&
+                              iso >= v.startsOn.slice(0, 10) &&
+                              iso <= v.endsOn.slice(0, 10)
+                          )
+                        : [];
                       return (
                         <TableCell
                           key={dIdx}
@@ -238,6 +271,17 @@ const ShiftsCalendar = () => {
                               Выходной
                             </div>
                           )}
+                          {/* Отпуска показываем и в чужих месяцах: отпуск часто
+                              переходит через границу месяца. */}
+                          {dayVacations.map((v) => (
+                            <div
+                              key={v.id}
+                              className="mt-1 truncate rounded bg-amber-500 px-2 py-1 text-xs text-white"
+                              title={`${v.userName} — отпуск`}
+                            >
+                              {v.userName.split(' ')[0]}
+                            </div>
+                          ))}
                         </TableCell>
                       );
                     })}
