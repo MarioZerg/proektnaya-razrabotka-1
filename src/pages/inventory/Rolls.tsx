@@ -29,6 +29,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import RollsCards from '@/components/crm/rolls/RollsCards';
+import StockValueCard from '@/components/crm/rolls/StockValueCard';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { fetchRolls, createRoll, type Roll, type RollStatus } from '@/lib/rollsApi';
@@ -76,6 +77,8 @@ const Rolls = () => {
   // так у каждого рулона есть документ прихода, поставщик и цена. Ручное создание оставлено
   // администратору на случай исправления данных.
   const canCreateRoll = user?.role === 'admin';
+  // Закупочные цены и стоимость склада видит только администратор.
+  const isAdmin = user?.role === 'admin';
 
   const load = () => {
     setLoading(true);
@@ -269,6 +272,9 @@ const Rolls = () => {
             </DialogContent>
           </Dialog>
         </div>
+
+        {/* Сколько денег лежит в остатках — коммерческая информация, только админу. */}
+        {isAdmin && <StockValueCard />}
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Select value={statusFilter} onValueChange={setStatusFilter}>

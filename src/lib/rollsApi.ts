@@ -72,6 +72,37 @@ export interface RollDetail {
   history: RollMovement[];
 }
 
+/** Стоимость остатков одного материала на складе и в цехах. */
+export interface StockValueMaterial {
+  materialId: number;
+  material: string;
+  unit: string;
+  materialType: string | null;
+  /** Остаток в метрах или штуках. */
+  remaining: number;
+  /** Во сколько этот остаток обошёлся, ₽. */
+  value: number;
+  rolls: number;
+  /** Рулоны без себестоимости — их стоимость в сумму не вошла. */
+  rollsWithoutCost: number;
+  inStorage: number;
+  inWorkshop: number;
+}
+
+export interface StockValue {
+  byMaterial: StockValueMaterial[];
+  totalValue: number;
+  rollsWithoutCost: number;
+}
+
+/** Сколько денег лежит в остатках материалов. Только для администратора. */
+export const fetchStockValue = async (): Promise<StockValue> => {
+  const res = await fetch(`${ROLLS_URL}?stock_value=1`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось посчитать стоимость склада');
+  return data as StockValue;
+};
+
 export const fetchRollDetail = async (id: number): Promise<RollDetail> => {
   const res = await fetch(`${ROLLS_URL}?id=${id}`);
   const data = await res.json();

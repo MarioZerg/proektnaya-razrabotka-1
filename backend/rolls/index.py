@@ -69,6 +69,60 @@ def handler(event: dict, context) -> dict:
         # Статистика недостач по закрытым рулонам: сколько метров в среднем «не хватает»
         # в целом рулоне по каждому материалу. Нужна, чтобы за месяц набрать реальные цифры
         # и на их основе задать нормы недостачи. Пока никого не штрафуем — только считаем.
+        if params.get('stock_value'):
+            # Сколько денег лежит в остатках материалов. Считаем по себестоимости КАЖДОГО
+            # рулона: один материал у разных поставщиков стоит по-разному, плюс в цену
+            # входят курс и логистика конкретной поставки. Показывается только админу.
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT m.id, m.name, m.unit, mt.name, "
+                    "COALESCE(SUM(r.remaining_quantity), 0), "
+                    "COALESCE(SUM(r.remaining_quantity * r.cost_per_unit), 0), "
+                    "COUNT(*), "
+                    "COUNT(*) FILTER (WHERE r.cost_per_unit IS NULL), "
+                    "COALESCE(SUM(r.remaining_quantity) FILTER (WHERE r.status = 'in_storage'), 0), "
+                    "COALESCE(SUM(r.remaining_quantity) FILTER (WHERE r.status = 'in_workshop'), 0) "
+                    "FROM rolls r "
+                    "JOIN materials m ON m.id = r.material_id "
+                    "LEFT JOIN material_types mt ON mt.id = m.type_id "
+                    "WHERE r.status IN ('in_storage', 'in_workshop') AND r.remaining_quantity > 0 "
+                    "GROUP BY m.id, m.name, m.unit, mt.name "
+                    "ORDER BY 6 DESC"
+                )
+                by_material = [
+                    {
+                        'materialId': row[0],
+                        'material': row[1],
+                        'unit': row[2],
+                        'materialType': row[3],
+                        'remaining': float(row[4]),
+                        'value': float(row[5]),
+                        'rolls': row[6],
+                        # Рулоны без себестоимости — их стоимость в сумму не попала.
+                        'rollsWithoutCost': row[7],
+                        'inStorage': float(row[8]),
+                        'inWorkshop': float(row[9]),
+                    }
+                    for row in cur.fetchall()
+                ]
+
+                total_value = sum(m['value'] for m in by_material)
+                without_cost = sum(m['rollsWithoutCost'] for m in by_material)
+            finally:
+                conn.close()
+
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({
+                    'byMaterial': by_material,
+                    'totalValue': total_value,
+                    'rollsWithoutCost': without_cost,
+                }, ensure_ascii=False),
+            }
+
         if params.get('shortage_stats'):
             date_from = (params.get('from') or '').strip()
             date_to = (params.get('to') or '').strip()
