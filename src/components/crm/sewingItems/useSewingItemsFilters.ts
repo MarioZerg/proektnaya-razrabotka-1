@@ -32,7 +32,13 @@ export const useSewingItemsFilters = ({
   const [page, setPage] = useState(1);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [typeFilter, setTypeFilter] = useState('all');
+  /**
+   * Тип заказа можно задать в ссылке (?type=FBS) — так виджет «Срочные заказы (FBS)»
+   * на дашборде открывает страницу сразу с нужным фильтром, а не со всем списком.
+   */
+  const [typeFilter, setTypeFilter] = useState(
+    () => new URLSearchParams(window.location.search).get('type') || 'all'
+  );
   const [employeeFilter, setEmployeeFilter] = useState('all');
   const [materialFilter, setMaterialFilter] = useState('all');
   const [widthFilter, setWidthFilter] = useState('all');

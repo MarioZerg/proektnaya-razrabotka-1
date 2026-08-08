@@ -188,7 +188,8 @@ const CrmDashboard = () => {
       { label: 'Новые задания на пошив', value: newOrders, icon: 'ListPlus', tone: 'default', path: '/crm/marketplace/sewing-items' },
       { label: 'Товары в пошиве', value: inSewing, icon: 'Shirt', tone: 'default', path: '/crm/marketplace/sewing-items' },
       { label: 'Товары в закрое', value: inCutting, icon: 'Scissors', tone: 'default', path: '/crm/marketplace/sewing-items' },
-      { label: 'Срочные заказы (FBS)', value: urgentFbs, icon: 'Zap', tone: 'urgent', path: '/crm/marketplace/sewing-items' },
+      // ?type=FBS — страница откроется сразу с фильтром по FBS, иначе показывала все заказы
+      { label: 'Срочные заказы (FBS)', value: urgentFbs, icon: 'Zap', tone: 'urgent', path: '/crm/marketplace/sewing-items?type=FBS' },
       { label: 'Не отгруженные поставки в цех', value: notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop' },
       { label: 'Не принятые поставки в цехе', value: notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop' },
       { label: 'Товары на стикеровке', value: inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items' },
