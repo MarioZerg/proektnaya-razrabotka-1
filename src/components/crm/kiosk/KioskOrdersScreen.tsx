@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
@@ -252,14 +253,52 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
                 <span className="font-semibold">{order.product}</span>
               </div>
               <div className="flex items-center justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Материал / размер</span>
+                <span className="text-muted-foreground">Материал</span>
+                <span className="font-semibold">{order.material || '—'}</span>
+              </div>
+              <div className="flex items-center justify-between border-b border-border pb-2">
+                <span className="text-muted-foreground">Размер</span>
                 <span className="font-semibold">
-                  {order.material} {order.width}×{order.height}
+                  {order.width && order.height ? `${order.width}×${order.height}` : '—'}
                 </span>
+              </div>
+              <div className="flex items-center justify-between border-b border-border pb-2">
+                <span className="text-muted-foreground">Маркетплейс</span>
+                <span className="font-semibold">
+                  {order.marketplace || 'Индивидуальный'}
+                  {order.orderType && order.orderType !== 'Индивидуальный' && (
+                    <Badge variant="secondary" className="ml-2">
+                      {order.orderType}
+                    </Badge>
+                  )}
+                </span>
+              </div>
+              {/* Кластер FBO — город, куда уедет поставка. Нужен, чтобы не смешать
+                  вещи из разных поставок в одну коробку. */}
+              {order.orderType === 'FBO' && order.cluster && (
+                <div className="flex items-center justify-between border-b border-border pb-2">
+                  <span className="text-muted-foreground">Город назначения</span>
+                  <span className="font-semibold">{order.cluster}</span>
+                </div>
+              )}
+              {/* Вещь из связки: показываем, какая она по счёту в заказе покупателя. */}
+              {order.groupSize && order.groupSize > 1 && (
+                <div className="flex items-center justify-between border-b border-border pb-2">
+                  <span className="text-muted-foreground">Связка</span>
+                  <span className="font-semibold">
+                    {order.groupPosition} из {order.groupSize}
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center justify-between border-b border-border pb-2">
+                <span className="text-muted-foreground">Закройщик</span>
+                <span className="font-semibold">{order.cutterName || '—'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Швея</span>
-                <span className="font-semibold">{order.assignedUserName || '—'}</span>
+                <span className="font-semibold">
+                  {order.sewerName || order.assignedUserName || '—'}
+                </span>
               </div>
             </div>
 

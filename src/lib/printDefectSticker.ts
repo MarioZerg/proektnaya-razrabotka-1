@@ -1,3 +1,4 @@
+import printHtmlInIframe from '@/lib/printInIframe';
 import JsBarcode from 'jsbarcode';
 
 export interface DefectStickerData {
@@ -35,10 +36,7 @@ export const printDefectSticker = (data: DefectStickerData) => {
     margin: 2,
   });
 
-  const win = window.open('', '_blank', 'width=420,height=340');
-  if (!win) return;
-
-  win.document.write(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -79,11 +77,7 @@ export const printDefectSticker = (data: DefectStickerData) => {
   <div class="bc"><img src="${canvas.toDataURL('image/png')}" alt="${esc(data.barcode)}" /></div>
   <div class="meta">${esc(data.reasonLabel)} · ID ${esc(data.userId)}</div>
 </body>
-</html>`);
-  win.document.close();
-  win.focus();
-  setTimeout(() => {
-    win.print();
-    win.close();
-  }, 300);
+</html>`;
+
+  printHtmlInIframe(html);
 };

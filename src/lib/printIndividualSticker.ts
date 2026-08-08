@@ -1,3 +1,4 @@
+import printHtmlInIframe from '@/lib/printInIframe';
 import JsBarcode from 'jsbarcode';
 
 export interface IndividualStickerData {
@@ -52,10 +53,7 @@ export const printIndividualSticker = (data: IndividualStickerData) => {
   // и обрезаются на половине буквы. Уменьшаем шрифт, чтобы название читалось целиком.
   const titleFont = title.length > 26 ? '7pt' : title.length > 18 ? '8.5pt' : '10pt';
 
-  const win = window.open('', '_blank', 'width=420,height=340');
-  if (!win) return;
-
-  win.document.write(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -124,11 +122,7 @@ export const printIndividualSticker = (data: IndividualStickerData) => {
   <div class="bc"><img src="${barcode}" alt="${esc(codeValue)}" /></div>
   <div class="order">Заказ ${esc(data.orderNumber)}</div>
 </body>
-</html>`);
-  win.document.close();
-  win.focus();
-  setTimeout(() => {
-    win.print();
-    win.close();
-  }, 300);
+</html>`;
+
+  printHtmlInIframe(html);
 };

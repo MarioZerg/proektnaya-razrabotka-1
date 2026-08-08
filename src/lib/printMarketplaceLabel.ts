@@ -1,3 +1,5 @@
+import printHtmlInIframe from '@/lib/printInIframe';
+
 /**
  * Печать маркетплейсного ярлыка отправления FBS на термонаклейке 58×40 мм.
  *
@@ -7,9 +9,7 @@
  */
 
 const openPrintWindow = (title: string, bodyHtml: string) => {
-  const win = window.open('', '_blank', 'width=420,height=340');
-  if (!win) return;
-  win.document.write(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -28,13 +28,9 @@ const openPrintWindow = (title: string, bodyHtml: string) => {
   </style>
 </head>
 <body>${bodyHtml}</body>
-</html>`);
-  win.document.close();
-  win.focus();
-  setTimeout(() => {
-    win.print();
-    win.close();
-  }, 600);
+</html>`;
+
+  printHtmlInIframe(html);
 };
 
 /** Ярлык-картинка (WB отдаёт PNG в base64). */
@@ -52,11 +48,10 @@ export const printLabelPdf = (pdfBase64: string, title = 'Ярлык отпра�
   const src = pdfBase64.startsWith('data:')
     ? pdfBase64
     : `data:application/pdf;base64,${pdfBase64}`;
-  // Ярлык открываем во встроенном просмотрщике: он сам отдаёт PDF на принтер как есть,
-  // сохраняя исходные размеры страницы.
-  const win = window.open('', '_blank', 'width=520,height=640');
-  if (!win) return;
-  win.document.write(`<!DOCTYPE html>
+  // Ярлык печатаем прямо с терминала: встроенный просмотрщик PDF отдаёт файл на принтер
+  // как есть, сохраняя исходный размер страницы. Открывается обычный диалог печати —
+  // упаковщица не уходит с экрана заказа.
+  const html = `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -68,9 +63,9 @@ export const printLabelPdf = (pdfBase64: string, title = 'Ярлык отпра�
   </style>
 </head>
 <body><iframe src="${src}"></iframe></body>
-</html>`);
-  win.document.close();
-  win.focus();
+</html>`;
+
+  printHtmlInIframe(html);
 };
 
 /**
@@ -82,9 +77,7 @@ export const printLabelPdf = (pdfBase64: string, title = 'Ярлык отпра�
  */
 export const printBoxLabelFromUrl = (url: string, title = 'Стикер короба') => {
   if (!url) return;
-  const win = window.open('', '_blank', 'width=560,height=760');
-  if (!win) return;
-  win.document.write(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -96,7 +89,7 @@ export const printBoxLabelFromUrl = (url: string, title = 'Стикер коро
   </style>
 </head>
 <body><iframe src="${url}"></iframe></body>
-</html>`);
-  win.document.close();
-  win.focus();
+</html>`;
+
+  printHtmlInIframe(html);
 };

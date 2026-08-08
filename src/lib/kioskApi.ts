@@ -24,6 +24,12 @@ export interface KioskOrder {
   legalCompanyName?: string | null;
   /** FBS — ярлык отправления выдаёт маркетплейс по API; FBO — печатаем свой стикер товара. */
   orderType?: string | null;
+  /** Кластер FBO — город назначения поставки. Упаковщица видит, куда уедет вещь. */
+  cluster?: string | null;
+  /** Кто кроил эту вещь. */
+  cutterName?: string | null;
+  /** Кто шил эту вещь. */
+  sewerName?: string | null;
 }
 
 export const fetchKioskOrder = async (orderNumber: string): Promise<KioskOrder> => {

@@ -392,18 +392,27 @@ def handler(event: dict, context) -> dict:
                 "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.status, o.ozon_status, "
                 "o.marketplace, o.group_key, o.group_size, o.group_position, o.order_type, "
-                "o.is_legal_entity, o.legal_company_name "
+                "o.is_legal_entity, o.legal_company_name, o.cluster, cu.full_name, su.full_name "
                 "FROM orders o LEFT JOIN users u ON u.id = o.assigned_user_id "
+                "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+                "LEFT JOIN users su ON su.id = o.sewer_user_id "
                 f"WHERE o.order_number = '{order_number_esc}'"
             )
             row = cur.fetchone()
             if not row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Заказ {order_number} не найден'})}
             if row[6] != 'Стикеровка':
+                # Уже застикерованный заказ на терминал не пускаем: иначе на вещь наклеят
+                # второй ярлык. Говорим прямо, что работа по нему закончена.
+                msg = (
+                    f'Заказ {order_number} уже застикерован и закрыт'
+                    if row[6] == 'Готовые'
+                    else f'Заказ {order_number} не на стикеровке (статус: {row[6]})'
+                )
                 return {
                     'statusCode': 409,
                     'headers': headers,
-                    'body': json.dumps({'error': f'Заказ {order_number} не на стикеровке (статус: {row[6]})'}),
+                    'body': json.dumps({'error': msg}),
                 }
 
             order = {
@@ -431,6 +440,12 @@ def handler(event: dict, context) -> dict:
                 # Покупатель — компания: упаковщица должна видеть это на терминале.
                 'isLegalEntity': bool(row[16]),
                 'legalCompanyName': row[17],
+                # Кластер FBO — город назначения поставки. Упаковщица видит, куда уедет
+                # вещь, и не смешивает товар из разных поставок.
+                'cluster': row[18],
+                # Кто кроил и кто шил — по ним разбирают брак и возвраты.
+                'cutterName': row[19],
+                'sewerName': row[20],
             }
         finally:
             conn.close()

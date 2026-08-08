@@ -1,3 +1,4 @@
+import printHtmlInIframe from '@/lib/printInIframe';
 import JsBarcode from 'jsbarcode';
 
 export interface StorageStickerData {
@@ -35,10 +36,7 @@ export const printStorageSticker = (data: StorageStickerData) => {
   // Чем длиннее номер, тем мельче шрифт — иначе он не влезает в 58 мм по ширине.
   const orderFont = order.length > 34 ? '4.5pt' : order.length > 22 ? '5.5pt' : '6.5pt';
 
-  const win = window.open('', '_blank', 'width=420,height=340');
-  if (!win) return;
-
-  win.document.write(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -85,11 +83,7 @@ export const printStorageSticker = (data: StorageStickerData) => {
   <div class="bc"><img src="${barcode}" alt="${esc(data.storageBarcode)}" /></div>
   ${order ? `<div class="order">${esc(order)}</div>` : ''}
 </body>
-</html>`);
-  win.document.close();
-  win.focus();
-  setTimeout(() => {
-    win.print();
-    win.close();
-  }, 300);
+</html>`;
+
+  printHtmlInIframe(html);
 };

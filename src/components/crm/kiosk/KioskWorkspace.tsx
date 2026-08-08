@@ -204,7 +204,31 @@ const KioskWorkspace = ({
       </div>
 
       <div className="p-4">
-        {screen === 'menu' && <KioskMenu onSelect={setScreen} role={user.role as Role} />}
+        {/* Плитки разделов доступны только на открытой смене: пока смена не начата,
+            работать на терминале нельзя — иначе заказы и брак попадут в систему без
+            привязки к смене, и по ним не начислится зарплата. Показываем одну кнопку
+            открытия смены. В режиме проверки админ смотрит терминал без ограничений. */}
+        {screen === 'menu' &&
+          (shift?.isOpen || isPreview ? (
+            <KioskMenu onSelect={setScreen} role={user.role as Role} />
+          ) : (
+            <div className="mx-auto max-w-xl space-y-4 pt-8 text-center">
+              <Icon name="Clock" size={56} className="mx-auto text-muted-foreground" />
+              <p className="text-2xl font-bold">Смена не открыта</p>
+              <p className="text-muted-foreground">
+                Откройте смену — после этого станут доступны заказы, рулоны и остальные
+                разделы
+              </p>
+              <Button
+                size="lg"
+                className="h-20 w-full bg-emerald-600 text-xl text-white hover:bg-emerald-700"
+                onClick={() => setScreen('shift')}
+              >
+                <Icon name="Play" size={28} className="mr-2" />
+                Открыть смену
+              </Button>
+            </div>
+          ))}
 
         {screen === 'shift' && (
           <div className="mx-auto max-w-xl space-y-4">
