@@ -31,7 +31,6 @@ import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
 import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels, isStorekeeperRole } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
-import { useMarketplaceAutoSync } from '@/hooks/useMarketplaceAutoSync';
 import { usePickingPending } from '@/hooks/usePickingPending';
 import KioskPreviewDialog from '@/components/crm/kiosk/KioskPreviewDialog';
 import ContractGate from '@/components/crm/contracts/ContractGate';
@@ -41,16 +40,10 @@ import { fetchPendingContracts } from '@/lib/contractsApi';
 const CrmLayout = ({ children }: { children: ReactNode }) => {
   const { user, login, logout, switchRole } = useAuth();
 
-  // Заявки на возврат подтягиваются раз в час, пока открыта CRM, — админу и кладовщику.
-  //
-  // Заказы здесь БОЛЬШЕ НЕ ТЯНЕМ: их забирает внешний планировщик по расписанию, поэтому
-  // они приезжают круглосуточно, а не только когда кто-то открыл систему. Раньше загрузку
-  // запускал каждый открытый планшет — одни и те же заказы тянулись по многу раз подряд.
-  useMarketplaceAutoSync(
-    false,
-    { id: user?.id, name: user?.name },
-    user?.role === 'admin' || isStorekeeperRole(user?.role),
-  );
+  // Загрузка с маркетплейсов ПОЛНОСТЬЮ передана внешнему планировщику: и заказы, и заявки
+  // на возврат приезжают по расписанию — круглосуточно, а не только когда кто-то открыл
+  // систему. Раньше её запускал каждый открытый планшет, и одно и то же тянулось по многу
+  // раз подряд. Вручную загрузка доступна кнопкой в разделе маркетплейсов.
 
   // Счётчик работы по подбору у кладовщика: вещи, подобранные под заказы и ждущие стикера.
   // Обновляется сам каждые 30 секунд, при появлении новых — звуковой сигнал.
