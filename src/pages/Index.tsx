@@ -236,10 +236,14 @@ const Index = () => {
               <defs>
                 {/* Градиент вдоль дуги: от прозрачного к насыщенному — получается
                     ощущение бегущего по кругу светового сгустка. */}
+                {/* Цвет задаём готовым значением, а не переменной темы: мобильные
+                    браузеры (в частности Яндекс.Браузер) не подставляют CSS-переменные
+                    внутрь SVG-градиента — дуга получалась прозрачной и казалось, что
+                    анимации нет. Это цвет primary из темы. */}
                 <linearGradient id="logoArc" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity="0" />
-                  <stop offset="55%" stopColor="hsl(var(--primary))" stopOpacity="0.55" />
-                  <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity="1" />
+                  <stop offset="0%" stopColor="#424d38" stopOpacity="0" />
+                  <stop offset="55%" stopColor="#424d38" stopOpacity="0.55" />
+                  <stop offset="100%" stopColor="#424d38" stopOpacity="1" />
                 </linearGradient>
               </defs>
               {/* Дуга примерно на 3/4 окружности: разрыв показывает начало и конец. */}
