@@ -1,0 +1,23 @@
+name: Создать ключ подписи
+on:
+  workflow_dispatch:
+jobs:
+  key:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - run: |
+          keytool -genkeypair -v -keystore megatul.keystore \
+            -alias megatul -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass MegaTul2026 -keypass MegaTul2026 \
+            -dname "CN=MEGATUL, O=IP Levkin, L=Yaroslavl, C=RU"
+          base64 -w 0 megatul.keystore > keystore-base64.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keystore
+          path: |
+            megatul.keystore
+            keystore-base64.txt
