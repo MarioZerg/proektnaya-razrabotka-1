@@ -369,3 +369,48 @@ export const addSewingOrdersToSupply = (
     actorId: actor?.id,
     actorName: actor?.name,
   }) as Promise<{ created: number; fromStock: number; toSewing: number }>;
+
+/** Строка сводки отгрузок FBO на дашборде. */
+export interface FboBoardItem {
+  id: number;
+  supplyNumber: string | null;
+  marketplace: string;
+  cluster: string | null;
+  status: string;
+  /** План: когда поставка должна уехать в газельку. */
+  shipToGazelkaAt: string | null;
+  /** Факт: когда кладовщик подтвердил, что поставка уехала. */
+  gazelkaShippedAt: string | null;
+  /** Когда сдали на воротах маркетплейса. */
+  shipToMarketplaceAt: string | null;
+  /** true — газелька забирает с нашего склада, false — везём до склада сами. */
+  gazelkaPickup: boolean;
+  supplyDate: string | null;
+  timeslot: string | null;
+  completedAt: string | null;
+  ordersCount: number;
+  /**
+   * Дата отгрузки прошла, а поставка так и не отмечена отгруженной — вероятно,
+   * кладовщик забыл нажать. Дашборд задаёт вопрос «уехала в газельку?».
+   */
+  needsShipConfirm: boolean;
+}
+
+/** Отгрузки FBO для дашборда: что собирается, что уехало, что сдано. */
+export const fetchFboBoard = async (): Promise<FboBoardItem[]> => {
+  const res = await fetch(`${SUPPLIES_URL}?fbo_board=1`);
+  const data = await res.json();
+  return data.items || [];
+};
+
+/** Ответ кладовщика на вопрос «поставка уехала в газельку?». */
+export const confirmGazelkaShip = async (supplyId: number, shipped: boolean) => {
+  const res = await fetch(SUPPLIES_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'confirm_gazelka_ship', supplyId, shipped }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось сохранить');
+  return data;
+};

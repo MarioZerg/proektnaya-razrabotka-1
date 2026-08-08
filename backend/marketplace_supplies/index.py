@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import uuid
+from datetime import datetime
 
 import boto3
 import psycopg2
@@ -328,6 +329,57 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            # Сводка отгрузок FBO для дашборда: что собирается, что уехало в газельку,
+            # что сдано на воротах маркетплейса. Кладовщик по ней видит, не забыл ли
+            # отметить отгрузку — машина уехала, а в системе поставка висит на сборке.
+            if params.get('fbo_board'):
+                cur.execute(
+                    "SELECT s.id, s.supply_number, s.marketplace, s.cluster, s.status, "
+                    "s.ship_to_gazelka_at, s.ship_to_marketplace_at, s.gazelka_pickup, "
+                    "s.supply_date, s.timeslot, s.completed_at, "
+                    "(SELECT COUNT(*) FROM marketplace_supply_items msi WHERE msi.supply_id = s.id), "
+                    "s.gazelka_shipped_at "
+                    "FROM marketplace_supplies s "
+                    "WHERE s.type = 'FBO' AND s.status <> 'Выполнена' "
+                    "ORDER BY COALESCE(s.ship_to_gazelka_at, s.supply_date::timestamp) NULLS LAST, s.id DESC "
+                    "LIMIT 50"
+                )
+                items = []
+                for r in cur.fetchall():
+                    ship_gazelka = r[5]
+                    shipped_fact = r[12]
+                    # Плановое время отгрузки прошло, а факта нет — кладовщик, скорее
+                    # всего, забыл отметить. Спрашиваем прямо.
+                    needs_confirm = bool(
+                        ship_gazelka
+                        and not shipped_fact
+                        and ship_gazelka <= datetime.now()
+                        and r[4] in ('Открытая', 'На сборке', 'Отгрузка')
+                    )
+                    items.append({
+                        'id': r[0],
+                        'supplyNumber': r[1],
+                        'marketplace': r[2],
+                        'cluster': r[3],
+                        'status': r[4],
+                        # План отгрузки и факт — разные вещи: план мог сдвинуться.
+                        'shipToGazelkaAt': (ship_gazelka.isoformat() + 'Z') if ship_gazelka else None,
+                        'gazelkaShippedAt': (shipped_fact.isoformat() + 'Z') if shipped_fact else None,
+                        'shipToMarketplaceAt': (r[6].isoformat() + 'Z') if r[6] else None,
+                        # Забирает газелька с нашего склада или везём до склада сами.
+                        'gazelkaPickup': bool(r[7]),
+                        'supplyDate': r[8].isoformat() if r[8] else None,
+                        'timeslot': r[9],
+                        'completedAt': (r[10].isoformat() + 'Z') if r[10] else None,
+                        'ordersCount': r[11],
+                        'needsShipConfirm': needs_confirm,
+                    })
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'items': items}, ensure_ascii=False),
+                }
 
             if supply_id and params.get('candidates'):
                 cur.execute(
@@ -1306,6 +1358,42 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нечего обновлять'})}
 
                 cur.execute(f"UPDATE marketplace_supplies SET {', '.join(fields)} WHERE id = {int(supply_id)}")
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            # Кладовщик отвечает на вопрос дашборда «поставка уехала в газельку?».
+            # Да — фиксируем факт отгрузки. Нет — переносим напоминание, чтобы система
+            # спросила снова: поставка могла задержаться, но забывать про неё нельзя.
+            if action == 'confirm_gazelka_ship':
+                supply_id = body_data.get('supplyId')
+                if not supply_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку'})}
+                shipped = bool(body_data.get('shipped'))
+
+                cur.execute(
+                    "SELECT status FROM marketplace_supplies WHERE id = %s", (int(supply_id),)
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
+
+                if shipped:
+                    # Отмечаем факт отгрузки. Статус двигаем в «Отгрузка», если поставка
+                    # ещё собиралась: машина уехала — сборка закончена.
+                    status_sql = ", status = 'Отгрузка'" if row[0] in ('Открытая', 'На сборке') else ""
+                    cur.execute(
+                        f"UPDATE marketplace_supplies SET gazelka_shipped_at = now(){status_sql}, "
+                        f"locked_by = NULL, locked_at = NULL WHERE id = {int(supply_id)}"
+                    )
+                else:
+                    # Не уехала — сдвигаем плановую дату на завтра, чтобы напоминание
+                    # не висело постоянно, но и не потерялось.
+                    cur.execute(
+                        "UPDATE marketplace_supplies "
+                        "SET ship_to_gazelka_at = ship_to_gazelka_at + interval '1 day' "
+                        "WHERE id = %s",
+                        (int(supply_id),),
+                    )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 

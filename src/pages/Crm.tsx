@@ -24,6 +24,7 @@ import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard'
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
 import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
+import FboShipmentsCard from '@/components/crm/dashboard/FboShipmentsCard';
 import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import { isMetersUnit } from '@/lib/stockLevels';
 import { isStorekeeperRole } from '@/lib/roles';
@@ -39,6 +40,8 @@ const CrmDashboard = () => {
   // Кладовщик и менеджер видят календарь-график смен (какие смены сегодня работают),
   // но без управления сменами сотрудников — это только для админа.
   const canSeeShiftCalendar = isAdmin || isStorekeeperRole(user?.role) || user?.role === 'manager';
+  // Отгрузки FBO ведут склад и менеджер маркетплейса, администратор смотрит за всеми.
+  const canSeeFboBoard = isAdmin || isStorekeeperRole(user?.role) || user?.role === 'manager';
   // Кто сегодня работает — управленческая информация. Производственным ролям (швея,
   // закройщик, упаковщица, уборщица) она не нужна и только загромождает их кабинет.
   const canSeeWorkingToday = canSeeShiftCalendar;
@@ -300,6 +303,10 @@ const CrmDashboard = () => {
           с сотрудников или списать на поставщика. Карточка сама скрывается, когда
           нерассмотренных рулонов нет. */}
       {isAdmin && <ShortagePenaltyCard />}
+
+      {/* Отгрузки FBO: путь поставки от сборки до сдачи на воротах маркетплейса.
+          Нужен тем, кто отвечает за отгрузку — складу, менеджеру и администратору. */}
+      {canSeeFboBoard && <FboShipmentsCard />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         {isAdmin ? (
