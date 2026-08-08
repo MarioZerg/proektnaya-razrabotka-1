@@ -10,12 +10,17 @@ export interface ReturnPickupCode {
   codeType: string;
   comment: string;
   updatedAt: string | null;
+  /** Сколько возвратов уже одобрено и ждёт забора на ПВЗ этой площадки. */
+  waitingCount: number;
 }
 
-export const fetchReturnCodes = async (): Promise<ReturnPickupCode[]> => {
+export const fetchReturnCodes = async (): Promise<{
+  items: ReturnPickupCode[];
+  totalWaiting: number;
+}> => {
   const res = await fetch(RETURN_CODES_URL);
   const data = await res.json();
-  return data.items || [];
+  return { items: data.items || [], totalWaiting: data.totalWaiting || 0 };
 };
 
 export const saveReturnCode = async (payload: {

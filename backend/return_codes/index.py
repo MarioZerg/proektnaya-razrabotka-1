@@ -38,6 +38,26 @@ def handler(event: dict, context) -> dict:
         cur = conn.cursor()
 
         if method == 'GET':
+            # Сколько возвратов ждёт забора на ПВЗ по каждой площадке. Одобренные, но ещё
+            # не принятые — это ровно те посылки, за которыми нужно ехать. По счётчику
+            # кладовщик понимает, есть ли смысл в поездке и сколько мест забирать.
+            cur.execute(
+                "SELECT marketplace, COUNT(*) FROM marketplace_returns "
+                "WHERE status = 'approved' GROUP BY marketplace"
+            )
+            # В возвратах площадка записана коротким именем (WB, OZON), а у кодов —
+            # системным (wildberries, ozon). Сводим их вместе.
+            alias = {
+                'WB': 'wildberries',
+                'OZON': 'ozon',
+                'Yandex': 'yandex_market',
+                'YANDEX': 'yandex_market',
+            }
+            waiting = {}
+            for mp, cnt in cur.fetchall():
+                key = alias.get((mp or '').strip(), (mp or '').strip().lower())
+                waiting[key] = waiting.get(key, 0) + int(cnt)
+
             cur.execute(
                 "SELECT marketplace_code, title, code, code_type, COALESCE(comment, ''), updated_at "
                 "FROM return_pickup_codes ORDER BY title"
@@ -50,10 +70,12 @@ def handler(event: dict, context) -> dict:
                     'codeType': r[3],
                     'comment': r[4],
                     'updatedAt': r[5].isoformat() + 'Z' if r[5] else None,
+                    # Сколько посылок ждёт на ПВЗ по этой площадке.
+                    'waitingCount': waiting.get(r[0], 0),
                 }
                 for r in cur.fetchall()
             ]
-            return _resp(200, {'items': items})
+            return _resp(200, {'items': items, 'totalWaiting': sum(waiting.values())})
 
         body_data = json.loads(event.get('body') or '{}')
         if body_data.get('action') == 'save':

@@ -51,6 +51,7 @@ const ReturnPickupCodes = () => {
   const canView = isAdmin || isStorekeeperRole(user?.role);
 
   const [items, setItems] = useState<ReturnPickupCode[]>([]);
+  const [totalWaiting, setTotalWaiting] = useState(0);
   const [loading, setLoading] = useState(true);
   const [shown, setShown] = useState<ReturnPickupCode | null>(null);
   const [editing, setEditing] = useState<ReturnPickupCode | null>(null);
@@ -61,7 +62,10 @@ const ReturnPickupCodes = () => {
   const load = () => {
     setLoading(true);
     fetchReturnCodes()
-      .then(setItems)
+      .then((d) => {
+        setItems(d.items);
+        setTotalWaiting(d.totalWaiting);
+      })
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
   };
@@ -128,6 +132,23 @@ const ReturnPickupCodes = () => {
           </p>
         </div>
 
+        {/* Общий счётчик: сразу видно, есть ли смысл ехать на пункты выдачи. */}
+        {totalWaiting > 0 && (
+          <Card className="border-amber-300 bg-amber-50 shadow-none">
+            <CardContent className="flex items-center gap-3 py-4">
+              <Icon name="PackageCheck" size={28} className="shrink-0 text-amber-600" />
+              <div>
+                <p className="text-lg font-bold text-amber-900">
+                  Ждёт на ПВЗ: {totalWaiting} шт.
+                </p>
+                <p className="text-sm text-amber-900">
+                  Возвраты одобрены и готовы к выдаче — заберите их с пунктов выдачи
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -154,6 +175,17 @@ const ReturnPickupCodes = () => {
                     />
                     <span className="text-lg font-bold">{item.title}</span>
                   </button>
+
+                  {/* Сколько посылок ждёт именно на этой площадке. */}
+                  <p
+                    className={`text-center text-sm font-medium ${
+                      item.waitingCount > 0 ? 'text-amber-600' : 'text-muted-foreground'
+                    }`}
+                  >
+                    {item.waitingCount > 0
+                      ? `Ждёт к забору: ${item.waitingCount} шт.`
+                      : 'Нет возвратов к забору'}
+                  </p>
 
                   {item.code ? (
                     <p className="text-center font-mono-tech text-sm text-muted-foreground">
