@@ -654,6 +654,77 @@ def handler(event: dict, context) -> dict:
                     }, ensure_ascii=False),
                 }
 
+            if action == 'move_workshop':
+                # Сотрудник перешёл работать в другой цех посреди дня. Смену НЕ закрываем
+                # и не открываем заново — она одна на весь рабочий день. Просто переносим
+                # текущую смену в новый цех, чтобы заказы, лимиты и настройки брались из
+                # того цеха, где человек реально стоит.
+                user_id = body_data.get('userId')
+                new_workshop_id = body_data.get('workshopId')
+                if not user_id or not new_workshop_id:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите userId и workshopId'}),
+                    }
+
+                cur.execute(
+                    "SELECT id, workshop_id, shift_number FROM shift_sessions "
+                    "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+                    (int(user_id),),
+                )
+                sess = cur.fetchone()
+                if not sess:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Смена не открыта'}),
+                    }
+                session_id, old_workshop_id, session_shift_number = sess
+
+                if old_workshop_id == int(new_workshop_id):
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'success': True, 'moved': False}),
+                    }
+
+                cur.execute(
+                    "SELECT is_active FROM workshops WHERE id = %s", (int(new_workshop_id),)
+                )
+                w_row = cur.fetchone()
+                if not w_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Цех не найден'})}
+                if not w_row[0]:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Цех сейчас выключен'})}
+
+                # Номер смены сохраняем, если он есть в новом цехе; иначе берём первую активную.
+                new_shift_number = session_shift_number
+                cur.execute(
+                    "SELECT shift_number FROM shifts WHERE workshop_id = %s AND is_active = true "
+                    "ORDER BY shift_number",
+                    (int(new_workshop_id),),
+                )
+                active_shifts = [r[0] for r in cur.fetchall()]
+                if new_shift_number not in active_shifts:
+                    new_shift_number = active_shifts[0] if active_shifts else None
+
+                cur.execute(
+                    "UPDATE shift_sessions SET workshop_id = %s, shift_number = %s WHERE id = %s",
+                    (int(new_workshop_id), new_shift_number, session_id),
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'moved': True,
+                        'workshopId': int(new_workshop_id),
+                        'shiftNumber': new_shift_number,
+                    }),
+                }
+
             if action == 'close':
                 user_id = body_data.get('userId')
                 if not user_id:

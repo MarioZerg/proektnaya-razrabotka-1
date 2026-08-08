@@ -65,6 +65,15 @@ const KioskShiftGate = ({
 
   const currentWorkshop = workshops.find((w) => w.id === selectedWorkshop);
   const availableShifts = currentWorkshop?.shifts || [];
+  // Смена открыта в одном цехе, а сотрудник стоит у терминала другого — значит перешёл
+  // работать сюда. Открывать смену заново не нужно: она одна на весь рабочий день.
+  const movedToAnotherWorkshop = !!(
+    shift?.isOpen &&
+    shift.workshopId &&
+    Number(workshopId) &&
+    shift.workshopId !== Number(workshopId)
+  );
+  const openedShiftWorkshop = workshops.find((w) => w.id === shift?.workshopId);
   const isGuestChoice = !!(
     user.homeWorkshopId &&
     selectedWorkshop &&
@@ -98,14 +107,27 @@ const KioskShiftGate = ({
         {shift?.isOpen ? (
           // Закрытие смены доступно внутри терминала (плитка «Открытие / Закрытие смены»),
           // поэтому здесь только вход.
-          <Button
-            size="lg"
-            className="h-20 w-full bg-blue-600 text-xl text-white hover:bg-blue-700"
-            onClick={onEnterMenu}
-          >
-            <Icon name="LayoutGrid" size={28} className="mr-2" />
-            Войти в терминал
-          </Button>
+          <>
+            {movedToAnotherWorkshop && (
+              <div className="flex items-start gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-emerald-900">
+                <Icon name="CircleCheck" size={18} className="mt-0.5 shrink-0" />
+                <p className="text-base">
+                  Смена уже открыта
+                  {openedShiftWorkshop ? ` в ${openedShiftWorkshop.name}` : ''} — открывать
+                  заново не нужно. Работайте здесь как обычно, а закройте смену один раз в
+                  конце рабочего дня.
+                </p>
+              </div>
+            )}
+            <Button
+              size="lg"
+              className="h-20 w-full bg-blue-600 text-xl text-white hover:bg-blue-700"
+              onClick={onEnterMenu}
+            >
+              <Icon name="LayoutGrid" size={28} className="mr-2" />
+              Войти в терминал
+            </Button>
+          </>
         ) : (
           <>
             {workshops.length > 1 && (

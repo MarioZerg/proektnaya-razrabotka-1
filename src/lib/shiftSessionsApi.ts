@@ -110,6 +110,14 @@ export const openShift = (
 ): Promise<OpenShiftResult> =>
   postAction({ action: 'open', userId, workshopId, shiftNumber, openedByAdmin, role });
 
+/** Переносит открытую смену сотрудника в другой цех — когда он перешёл работать туда
+ * посреди дня. Смена не закрывается и не открывается заново: она одна на рабочий день. */
+export const moveShiftToWorkshop = (
+  userId: number,
+  workshopId: number
+): Promise<{ success: boolean; moved: boolean; workshopId?: number; shiftNumber?: number }> =>
+  postAction({ action: 'move_workshop', userId, workshopId });
+
 /** Закрывает смену. Швее и закройщику нельзя, пока за ними числятся заказы — придёт
  * ошибка с их количеством. Администратор закрывает принудительно (closedByAdmin). */
 export const closeShift = (userId: number, closedByAdmin = false) =>

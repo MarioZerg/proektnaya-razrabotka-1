@@ -7,6 +7,7 @@ import {
   closeShift,
   fetchEmployeeShifts,
   checkShiftDefects,
+  moveShiftToWorkshop,
   type DefectCheck,
 } from '@/lib/shiftSessionsApi';
 import {
@@ -28,6 +29,11 @@ const KioskTerminal = () => {
   const { workshopId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
+
+  // Режим проверки для администратора: /kiosk/1?preview=1&role=sewer&name=Иван. Терминал
+  // открывается глазами выбранной должности без сканирования QR и без открытия смены —
+  // ничего не пишется в отчёты, админ просто смотрит, что видит сотрудник.
+  const isPreview = searchParams.get('preview') === '1';
 
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -68,7 +74,38 @@ const KioskTerminal = () => {
         const data = await kioskLoginByCode(value);
         playScanSound();
         setUser(data.user);
-        setShift(data.shift);
+
+        // Смена одна на весь рабочий день. Если сотрудник открыл её в своём цехе, а потом
+        // пришёл работать сюда — переносим смену в этот цех, а не заставляем открывать
+        // новую. Так заказы, лимиты и настройки берутся из того цеха, где он реально
+        // стоит, а закрыть смену нужно один раз в конце дня.
+        const terminalWorkshopId = Number(workshopId) || null;
+        if (
+          !isPreview &&
+          data.shift?.isOpen &&
+          terminalWorkshopId &&
+          data.shift.workshopId &&
+          data.shift.workshopId !== terminalWorkshopId
+        ) {
+          const moved = await moveShiftToWorkshop(data.user.id, terminalWorkshopId).catch(
+            () => null
+          );
+          if (moved?.moved) {
+            setShift({
+              ...data.shift,
+              workshopId: moved.workshopId ?? terminalWorkshopId,
+              shiftNumber: moved.shiftNumber ?? data.shift.shiftNumber,
+            });
+            toast({
+              title: 'Смена перенесена в этот цех',
+              description: 'Открывать смену заново не нужно — закройте её в конце дня',
+            });
+          } else {
+            setShift(data.shift);
+          }
+        } else {
+          setShift(data.shift);
+        }
       } catch (e) {
         playScanErrorSound();
         toast({
@@ -81,7 +118,7 @@ const KioskTerminal = () => {
         setTimeout(() => inputRef.current?.focus(), 0);
       }
     },
-    [toast]
+    [toast, workshopId, isPreview]
   );
 
   // Значение читаем прямо из поля: сканер вводит длинную строку очень быстро и может нажать
@@ -89,10 +126,6 @@ const KioskTerminal = () => {
   // тогда ушёл бы обрывок кода.
   const handleLogin = () => loginWithCode((inputRef.current?.value || code).trim());
 
-  // Режим проверки для администратора: /kiosk/1?preview=1&role=sewer&name=Иван. Терминал
-  // открывается глазами выбранной должности без сканирования QR и без открытия смены —
-  // ничего не пишется в отчёты, админ просто смотрит, что видит сотрудник.
-  const isPreview = searchParams.get('preview') === '1';
   useEffect(() => {
     if (!isPreview || user) return;
     const previewRole = searchParams.get('role') || 'sewer';
