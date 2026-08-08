@@ -53,6 +53,18 @@ export interface RollDetailInfo extends Roll {
   kind: 'fabric' | 'trim';
   defectRole?: 'cutter' | 'sewer' | 'packer' | null;
   defectRoleLabel?: string | null;
+  /** Себестоимость рулона — видит только администратор. */
+  supplierName?: string | null;
+  shipmentId?: number | null;
+  /** Цена за единицу в валюте поставщика на момент приёмки. */
+  purchasePrice?: number | null;
+  purchaseCurrency?: string | null;
+  /** Курс валюты, по которому приняли (у рублёвых позиций — 1). */
+  purchaseRate?: number | null;
+  /** Логистика, пришедшаяся на единицу. */
+  logisticsPerUnit?: number | null;
+  /** Итог: сколько стоит 1 пог.м. или 1 шт в рублях. */
+  costPerUnit?: number | null;
 }
 
 export interface RollDetail {

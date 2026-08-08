@@ -198,11 +198,14 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT r.id, r.barcode, r.material_id, m.name, m.unit, r.workshop_id, w.name, "
                     "r.shift_number, r.initial_quantity, r.remaining_quantity, r.status, "
-                    "r.created_at, r.completed_at, mt.name "
+                    "r.created_at, r.completed_at, mt.name, "
+                    "r.purchase_price, r.purchase_currency, r.purchase_rate, "
+                    "r.logistics_per_unit, r.cost_per_unit, s.name, r.shipment_id "
                     "FROM rolls r "
                     "LEFT JOIN materials m ON m.id = r.material_id "
                     "LEFT JOIN material_types mt ON mt.id = m.type_id "
                     "LEFT JOIN workshops w ON w.id = r.workshop_id "
+                    "LEFT JOIN suppliers s ON s.id = r.supplier_id "
                     "WHERE r.id = %s",
                     (int(roll_id),),
                 )
@@ -232,6 +235,15 @@ def handler(event: dict, context) -> dict:
                     'kind': 'fabric' if is_fabric else 'trim',
                     'defectRole': defect_role,
                     'defectRoleLabel': defect_role_label,
+                    # Себестоимость рулона: из чего сложилась цена единицы. Показывается
+                    # ТОЛЬКО администратору — на фронте блок скрыт от остальных ролей.
+                    'supplierName': r[19],
+                    'shipmentId': r[20],
+                    'purchasePrice': float(r[14]) if r[14] is not None else None,
+                    'purchaseCurrency': r[15],
+                    'purchaseRate': float(r[16]) if r[16] is not None else None,
+                    'logisticsPerUnit': float(r[17]) if r[17] is not None else 0.0,
+                    'costPerUnit': float(r[18]) if r[18] is not None else None,
                 }
 
                 history = []

@@ -8,6 +8,8 @@ import Icon from '@/components/ui/icon';
 import { fetchRollDetail, type RollDetail, type RollMovement, type RollStatus } from '@/lib/rollsApi';
 import { formatDateTime } from '@/lib/dateUtils';
 import { formatQuantity } from '@/lib/formatQuantity';
+import { useAuth } from '@/context/AuthContext';
+import { currencySymbols } from '@/lib/suppliersApi';
 
 const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | 'default' | 'outline' }> = {
   in_storage: { label: 'На складе', variant: 'secondary' },
@@ -30,6 +32,9 @@ const stageIcon: Record<string, string> = {
 
 const RollShow = () => {
   const { id } = useParams();
+  const { user } = useAuth();
+  // Закупочные цены — коммерческая тайна, их видит только администратор.
+  const isAdmin = user?.role === 'admin';
   const rollId = Number(id);
   const navigate = useNavigate();
   const [data, setData] = useState<RollDetail | null>(null);
@@ -151,6 +156,53 @@ const RollShow = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* Себестоимость рулона — коммерческая информация, показываем ТОЛЬКО
+            администратору. Закройщику и кладовщику знать закупочные цены не нужно. */}
+        {isAdmin && roll.costPerUnit != null && (
+          <Card className="border-border shadow-none">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Себестоимость</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Поставщик</span>
+                <span className="font-medium">{roll.supplierName || '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Цена закупки</span>
+                <span className="font-medium">
+                  {roll.purchasePrice != null
+                    ? `${roll.purchasePrice} ${currencySymbols[roll.purchaseCurrency || 'RUB'] || roll.purchaseCurrency || ''}`
+                    : '—'}
+                </span>
+              </div>
+              {/* Курс показываем только для валютных закупок — у рублёвых он равен 1. */}
+              {roll.purchaseCurrency && roll.purchaseCurrency !== 'RUB' && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Курс на день приёмки</span>
+                  <span className="font-medium">{roll.purchaseRate ?? '—'} ₽</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Логистика на {unit}</span>
+                <span className="font-medium">
+                  {(roll.logisticsPerUnit ?? 0).toFixed(2)} ₽
+                </span>
+              </div>
+              <div className="flex justify-between border-t border-border pt-2">
+                <span className="font-medium">Итого за 1 {unit}</span>
+                <span className="text-base font-bold">{roll.costPerUnit.toFixed(2)} ₽</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Стоимость остатка</span>
+                <span className="font-medium">
+                  {(roll.remainingQuantity * roll.costPerUnit).toFixed(2)} ₽
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="space-y-2">
           <h2 className="font-semibold">История использования ({history.length})</h2>
