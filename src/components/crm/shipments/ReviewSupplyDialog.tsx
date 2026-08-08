@@ -83,6 +83,18 @@ const ReviewSupplyDialog = ({
   const totalUnits = reviewRows.reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
   const logisticsPerUnit =
     totalUnits > 0 ? (Number(logisticsCost.replace(',', '.')) || 0) / totalUnits : 0;
+
+  // Подпись единиц для расчёта логистики. Если вся поставка в одних единицах (только ткань
+  // в метрах или только фурнитура в штуках) — пишем их, иначе обобщённо «ед.».
+  const rowUnits = Array.from(
+    new Set(
+      reviewRows
+        .filter((r) => r.materialId && Number(r.quantity) > 0)
+        .map((r) => materials.find((m) => String(m.id) === r.materialId)?.unit || '')
+        .filter(Boolean)
+    )
+  );
+  const unitsLabel = rowUnits.length === 1 ? rowUnits[0] : 'ед.';
   const rateValue = Number(exchangeRate.replace(',', '.')) || 0;
 
   // Предпросчёт себестоимости — что получится после подтверждения.
@@ -249,9 +261,18 @@ const ReviewSupplyDialog = ({
                     value={logisticsCost}
                     onChange={(e) => setLogisticsCost(e.target.value)}
                   />
+                  {/* Показываем сам расчёт: «160 ₽ на единицу» без цифр выглядит ошибкой,
+                      а с делением сразу видно, из какого количества это вышло. */}
                   <p className="text-xs text-muted-foreground">
-                    Разделится поровну на все метры и штуки
-                    {totalUnits > 0 ? ` — по ${logisticsPerUnit.toFixed(2)} ₽ на единицу` : ''}
+                    {totalUnits > 0 ? (
+                      <>
+                        {(Number(logisticsCost.replace(',', '.')) || 0).toFixed(0)} ₽ ÷{' '}
+                        {totalUnits.toLocaleString('ru-RU')} {unitsLabel} ={' '}
+                        <b>{logisticsPerUnit.toFixed(2)} ₽</b> на 1 {unitsLabel}
+                      </>
+                    ) : (
+                      'Разделится поровну на все метры и штуки поставки'
+                    )}
                   </p>
                 </div>
               </div>
@@ -271,7 +292,8 @@ const ReviewSupplyDialog = ({
                     ))}
                   </div>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Цена × курс + логистика на единицу. По этой сумме считаются недостачи.
+                    Цена × курс + {logisticsPerUnit.toFixed(2)} ₽ логистики на 1 {unitsLabel}.
+                    По этой сумме считаются недостачи.
                   </p>
                 </div>
               )}
