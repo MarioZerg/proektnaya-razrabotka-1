@@ -222,3 +222,58 @@ export const fetchShortageStats = async (params?: {
   const data = await res.json();
   return { byMaterial: data.byMaterial || [], byUser: data.byUser || [], rolls: data.rolls || [] };
 };
+/** Закрытый рулон с недостачей, ожидающий решения администратора. */
+export interface PendingPenalty {
+  rollId: number;
+  barcode: string;
+  materialName: string;
+  unit: string;
+  initialQuantity: number;
+  shortage: number;
+  normPercent: number | null;
+  costPerUnit: number;
+  /** Допустимая недостача в единицах — сколько прощается по норме поставщика. */
+  allowed?: number;
+  /** Метраж сверх нормы, за который начисляется штраф. */
+  excess: number;
+  /** Сумма удержания по рулону. */
+  total: number;
+  /** Сколько снимут с каждого. */
+  perUser?: number;
+  /** Кого коснётся: «Швеи» для тесьмы, «Закройщицы» для ткани. */
+  role?: string;
+  users: Array<{ id: number; name: string; amount: number }>;
+  /** Почему штраф начислить нельзя. Пусто — можно начислять. */
+  reason: string | null;
+}
+
+/** Рулоны с недостачей, по которым решение ещё не принято. */
+export const fetchPendingPenalties = async (): Promise<PendingPenalty[]> => {
+  const res = await fetch(`${ROLLS_URL}?shortage_pending=1`);
+  const data = await res.json();
+  return data.items || [];
+};
+
+/** Удержать деньги с сотрудников за недостачу сверх нормы. */
+export const chargePenalty = async (rollId: number) => {
+  const res = await fetch(ROLLS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'charge_penalty', id: rollId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось начислить штраф');
+  return data;
+};
+
+/** Признать недостачу виной поставщика и никого не штрафовать. */
+export const dismissPenalty = async (rollId: number) => {
+  const res = await fetch(ROLLS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'dismiss_penalty', id: rollId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось выполнить');
+  return data;
+};

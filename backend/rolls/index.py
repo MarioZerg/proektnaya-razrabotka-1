@@ -4,6 +4,103 @@ import os
 import psycopg2
 
 
+def calc_shortage_penalty(cur, roll_id):
+    """Считает штраф по рулону, НИЧЕГО не начисляя — для предпросмотра на дашборде.
+
+    Возвращает словарь с суммой, превышением над нормой и списком сотрудников,
+    которых коснётся удержание, либо причину, по которой штрафовать нельзя.
+    """
+    cur.execute(
+        "SELECT r.initial_quantity, r.shortage_quantity, r.shortage_norm_percent, "
+        "r.cost_per_unit, mt.name, r.barcode, m.name, m.unit, r.penalty_total "
+        "FROM rolls r "
+        "JOIN materials m ON m.id = r.material_id "
+        "LEFT JOIN material_types mt ON mt.id = m.type_id "
+        "WHERE r.id = %s",
+        (roll_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+
+    initial_qty = float(row[0] or 0)
+    shortage = float(row[1] or 0)
+    norm_percent = float(row[2]) if row[2] is not None else None
+    cost_per_unit = float(row[3]) if row[3] is not None else 0.0
+    type_name = row[4] or ''
+
+    info = {
+        'rollId': roll_id,
+        'barcode': row[5],
+        'materialName': row[6],
+        'unit': row[7],
+        'initialQuantity': initial_qty,
+        'shortage': shortage,
+        'normPercent': norm_percent,
+        'costPerUnit': cost_per_unit,
+        'alreadyCharged': float(row[8]) if row[8] is not None else None,
+        'total': 0.0,
+        'excess': 0.0,
+        'users': [],
+        'reason': None,
+    }
+
+    if shortage <= 0:
+        info['reason'] = 'Недостачи нет'
+        return info
+    if norm_percent is None:
+        info['reason'] = 'У поставщика не задана норма недостачи'
+        return info
+    if cost_per_unit <= 0:
+        info['reason'] = 'У рулона нет себестоимости'
+        return info
+
+    allowed = initial_qty * norm_percent / 100
+    excess = shortage - allowed
+    info['allowed'] = round(allowed, 3)
+    if excess <= 0:
+        info['reason'] = 'Недостача в пределах нормы'
+        return info
+
+    info['excess'] = round(excess, 3)
+    info['total'] = round(excess * cost_per_unit, 2)
+
+    # Тесьма и упаковка — на швеях, ткань — на закройщицах.
+    is_trim = type_name in ('Аксессуары', 'Упаковка')
+    role_column = 'sewer_user_id' if is_trim else 'cutter_user_id'
+
+    cur.execute(
+        f"SELECT DISTINCT o.{role_column}, u.full_name FROM order_material_usage omu "
+        f"JOIN orders o ON o.id = omu.order_id "
+        f"LEFT JOIN users u ON u.id = o.{role_column} "
+        f"WHERE omu.roll_id = %s AND o.{role_column} IS NOT NULL",
+        (roll_id,),
+    )
+    users = [{'id': r[0], 'name': r[1] or 'Без имени'} for r in cur.fetchall()]
+
+    if not users:
+        cur.execute(
+            "SELECT r.closed_by_user_id, COALESCE(u.full_name, r.closed_by_name) "
+            "FROM rolls r LEFT JOIN users u ON u.id = r.closed_by_user_id WHERE r.id = %s",
+            (roll_id,),
+        )
+        closed_row = cur.fetchone()
+        if closed_row and closed_row[0]:
+            users = [{'id': closed_row[0], 'name': closed_row[1] or 'Без имени'}]
+
+    if not users:
+        info['reason'] = 'Не удалось определить, кто работал с рулоном'
+        return info
+
+    share = round(info['total'] / len(users), 2)
+    for u in users:
+        u['amount'] = share
+    info['users'] = users
+    info['perUser'] = share
+    info['role'] = 'Швеи' if is_trim else 'Закройщицы'
+    return info
+
+
 def charge_shortage_penalty(cur, roll_id, shortage):
     """Штраф за недостачу в рулоне сверх нормы поставщика.
 
@@ -172,6 +269,29 @@ def handler(event: dict, context) -> dict:
         # Статистика недостач по закрытым рулонам: сколько метров в среднем «не хватает»
         # в целом рулоне по каждому материалу. Нужна, чтобы за месяц набрать реальные цифры
         # и на их основе задать нормы недостачи. Пока никого не штрафуем — только считаем.
+        # Закрытые рулоны с недостачей, по которым штраф ещё не начислен — очередь
+        # на рассмотрение администратором. Решение он принимает вручную: недостача бывает
+        # и не по вине сотрудника (поставщик недомотал, брак ткани).
+        if params.get('shortage_pending'):
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT r.id FROM rolls r "
+                    "WHERE r.status = 'completed' AND r.shortage_quantity > 0 "
+                    "AND r.penalty_total IS NULL "
+                    "ORDER BY r.completed_at DESC LIMIT 100"
+                )
+                pending = [calc_shortage_penalty(cur, r[0]) for r in cur.fetchall()]
+                pending = [p for p in pending if p]
+            finally:
+                conn.close()
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'items': pending}, ensure_ascii=False, default=str),
+            }
+
         if params.get('stock_value'):
             # Сколько денег лежит в остатках материалов. Считаем по себестоимости КАЖДОГО
             # рулона: один материал у разных поставщиков стоит по-разному, плюс в цену
@@ -809,13 +929,49 @@ def handler(event: dict, context) -> dict:
                     ),
                 )
 
-                penalty = charge_shortage_penalty(cur, int(item_id), shortage)
+                # Штраф здесь НЕ начисляется. Недостача может быть и не виной сотрудника
+                # (поставщик недомотал, брак ткани), поэтому решение принимает администратор
+                # вручную на дашборде — там видно рулон, сумму и кого коснётся удержание.
                 conn.commit()
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'success': True, 'shortage': shortage, 'penalty': penalty}),
+                    'body': json.dumps({'success': True, 'shortage': shortage}),
                 }
+
+            # Администратор рассмотрел недостачу и решил удержать деньги с сотрудников.
+            if action == 'charge_penalty':
+                item_id = body_data.get('id')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                cur.execute("SELECT shortage_quantity, penalty_total FROM rolls WHERE id = %s", (int(item_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+                if row[1] is not None:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Штраф по этому рулону уже начислен'}, ensure_ascii=False)}
+                penalty = charge_shortage_penalty(cur, int(item_id), float(row[0] or 0))
+                if not penalty:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Начислять нечего: недостача в пределах нормы '
+                                                         'или не заданы норма и себестоимость'}, ensure_ascii=False)}
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'penalty': penalty}, ensure_ascii=False)}
+
+            # Администратор решил не штрафовать: недостача признана виной поставщика.
+            # Помечаем нулём, чтобы рулон ушёл из очереди и не мозолил глаза.
+            if action == 'dismiss_penalty':
+                item_id = body_data.get('id')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                cur.execute(
+                    "UPDATE rolls SET penalty_total = 0 WHERE id = %s AND penalty_total IS NULL",
+                    (int(item_id),),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'delete':
                 item_id = body_data.get('id')

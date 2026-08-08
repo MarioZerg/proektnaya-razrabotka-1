@@ -461,3 +461,61 @@ export const fetchDefectReport = async (months = 6): Promise<DefectReport> => {
     pendingQuantity: data.pendingQuantity || 0,
   };
 };
+
+/** Сколько брака списал сотрудник за период. */
+export interface DefectByUser {
+  userId: number;
+  userName: string;
+  role: string;
+  /** Сколько раз оформлял брак. */
+  times: number;
+  /** Общий метраж/количество. */
+  quantity: number;
+  /** Во сколько это обошлось по себестоимости рулонов. */
+  costTotal: number;
+  /** На скольких сменах оформлял брак. */
+  shifts: number;
+  /** Средний брак за смену — по нему видно, кто выбивается из общего ряда. */
+  perShift: number;
+  firstAt: string | null;
+  lastAt: string | null;
+}
+
+export interface DefectByReason {
+  reason: string;
+  times: number;
+  quantity: number;
+  costTotal: number;
+}
+
+export interface DefectItem {
+  barcode: string;
+  createdAt: string | null;
+  userName: string;
+  role: string;
+  materialName: string;
+  unit: string;
+  quantity: number;
+  reason: string;
+  comment: string;
+  cost: number;
+  workshop: string;
+  received: boolean;
+}
+
+/** Статистика брака по сотрудникам: кто сколько списал за все смены. */
+export const fetchDefectStats = async (params?: {
+  from?: string;
+  to?: string;
+}): Promise<{
+  byUser: DefectByUser[];
+  byReason: DefectByReason[];
+  items: DefectItem[];
+}> => {
+  const qs = new URLSearchParams({ defect_stats: '1' });
+  if (params?.from) qs.set('from', params.from);
+  if (params?.to) qs.set('to', params.to);
+  const res = await fetch(`${KIOSK_URL}?${qs.toString()}`);
+  const data = await res.json();
+  return { byUser: data.byUser || [], byReason: data.byReason || [], items: data.items || [] };
+};

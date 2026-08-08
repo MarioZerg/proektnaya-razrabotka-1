@@ -23,6 +23,7 @@ import WorkingTodayCard from '@/components/crm/dashboard/WorkingTodayCard';
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
+import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
 import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import { isMetersUnit } from '@/lib/stockLevels';
 import { isStorekeeperRole } from '@/lib/roles';
@@ -293,6 +294,11 @@ const CrmDashboard = () => {
       {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
 
       {canSeeWorkingToday && <WorkingTodayCard />}
+
+      {/* Недостача в закрытых рулонах: администратор решает, удерживать ли деньги
+          с сотрудников или списать на поставщика. Карточка сама скрывается, когда
+          нерассмотренных рулонов нет. */}
+      {isAdmin && <ShortagePenaltyCard />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         {isAdmin ? (

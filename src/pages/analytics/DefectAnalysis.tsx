@@ -18,7 +18,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
-import { fetchDefectReport, type DefectReport } from '@/lib/kioskApi';
+import {
+  fetchDefectReport,
+  fetchDefectStats,
+  type DefectReport,
+  type DefectByUser,
+} from '@/lib/kioskApi';
 import { formatQuantity } from '@/lib/formatQuantity';
 
 const roleLabel: Record<string, string> = {
@@ -50,6 +55,8 @@ const DefectAnalysis = () => {
   const [report, setReport] = useState<DefectReport | null>(null);
   const [months, setMonths] = useState('6');
   const [loading, setLoading] = useState(true);
+  // Сводка за ВСЁ время: по ней видно, кто списывает брака заметно больше остальных.
+  const [byUserAll, setByUserAll] = useState<DefectByUser[]>([]);
 
   useEffect(() => {
     setLoading(true);
@@ -57,6 +64,12 @@ const DefectAnalysis = () => {
       .then(setReport)
       .finally(() => setLoading(false));
   }, [months]);
+
+  useEffect(() => {
+    fetchDefectStats()
+      .then((d) => setByUserAll(d.byUser))
+      .catch(() => setByUserAll([]));
+  }, []);
 
   const totalQty = report?.byUser.reduce((s, r) => s + r.quantity, 0) || 0;
   const totalCount = report?.byUser.reduce((s, r) => s + r.count, 0) || 0;
@@ -128,6 +141,76 @@ const DefectAnalysis = () => {
                         {u.userName} · {roleLabel[u.role] || u.role}
                       </Badge>
                     ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Сводка за всё время. Главное здесь — «в среднем за смену»: по нему сразу
+                видно, кто списывает брака кратно больше коллег на той же работе. Разовый
+                всплеск ни о чём не говорит, а стабильно высокая цифра — повод проверить. */}
+            {byUserAll.length > 0 && (
+              <Card className="border-border shadow-none">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">
+                    Кто сколько списал за всё время
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Отсортировано по сумме. Сравнивайте сотрудников одной должности между
+                    собой: сильный отрыв от коллег — повод разобраться.
+                  </p>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="text-primary-foreground">Сотрудник</TableHead>
+                          <TableHead className="text-primary-foreground">Должность</TableHead>
+                          <TableHead className="text-primary-foreground text-right">
+                            Записей
+                          </TableHead>
+                          <TableHead className="text-primary-foreground text-right">
+                            Метраж
+                          </TableHead>
+                          <TableHead className="text-primary-foreground text-right">
+                            Смен
+                          </TableHead>
+                          <TableHead className="text-primary-foreground text-right">
+                            В среднем за смену
+                          </TableHead>
+                          <TableHead className="text-primary-foreground text-right">
+                            На сумму
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {byUserAll.map((r) => (
+                          <TableRow key={r.userId}>
+                            <TableCell className="font-medium">{r.userName}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {roleLabel[r.role] || r.role || '—'}
+                            </TableCell>
+                            <TableCell className="text-right">{r.times}</TableCell>
+                            <TableCell className="text-right">
+                              {formatQuantity(r.quantity)}
+                            </TableCell>
+                            <TableCell className="text-right">{r.shifts || '—'}</TableCell>
+                            <TableCell className="text-right font-semibold">
+                              {formatQuantity(r.perShift)}
+                            </TableCell>
+                            <TableCell className="text-right font-medium">
+                              {r.costTotal > 0
+                                ? `${r.costTotal.toLocaleString('ru-RU', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })} ₽`
+                                : '—'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
                 </CardContent>
               </Card>

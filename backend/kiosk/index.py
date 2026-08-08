@@ -274,6 +274,111 @@ def handler(event: dict, context) -> dict:
 
     if method == 'GET':
         params = event.get('queryStringParameters') or {}
+
+        # Статистика брака по сотрудникам за все смены. Нужна, чтобы увидеть, кто
+        # списывает брака заметно больше остальных: причиной может быть и неаккуратная
+        # работа, и попытка вынести материал под видом брака.
+        if params.get('defect_stats'):
+            date_from = (params.get('from') or '').strip()
+            date_to = (params.get('to') or '').strip()
+            where = ['1=1']
+            if date_from:
+                where.append(f"d.created_at >= '{date_from.replace(chr(39), '')}'")
+            if date_to:
+                where.append(f"d.created_at < '{date_to.replace(chr(39), '')}'::date + 1")
+            where_sql = ' AND '.join(where)
+
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                # По сотрудникам: сколько раз оформлял брак, на сколько метров и денег.
+                # Деньги — по себестоимости рулона, с которого списан брак.
+                cur.execute(
+                    "SELECT d.user_id, COALESCE(d.user_name, 'Не указан'), COALESCE(d.user_role, ''), "
+                    "COUNT(*), COALESCE(SUM(d.quantity), 0), "
+                    "COALESCE(SUM(d.quantity * COALESCE(r.cost_per_unit, 0)), 0), "
+                    "COUNT(DISTINCT d.shift_session_id), "
+                    "MIN(d.created_at), MAX(d.created_at) "
+                    "FROM material_defects d "
+                    "LEFT JOIN rolls r ON r.id = d.roll_id "
+                    f"WHERE {where_sql} "
+                    "GROUP BY d.user_id, d.user_name, d.user_role "
+                    "ORDER BY 6 DESC"
+                )
+                by_user = []
+                for r in cur.fetchall():
+                    shifts = r[6] or 0
+                    qty = float(r[4])
+                    by_user.append({
+                        'userId': r[0],
+                        'userName': r[1],
+                        'role': r[2],
+                        'times': r[3],
+                        'quantity': qty,
+                        'costTotal': float(r[5]),
+                        'shifts': shifts,
+                        # Средний брак за смену — с ним видно, кто выбивается из общего ряда.
+                        'perShift': round(qty / shifts, 3) if shifts else qty,
+                        'firstAt': r[7].isoformat() + 'Z' if r[7] else None,
+                        'lastAt': r[8].isoformat() + 'Z' if r[8] else None,
+                    })
+
+                # По причинам: на что чаще всего ссылаются.
+                cur.execute(
+                    "SELECT d.reason_label, COUNT(*), COALESCE(SUM(d.quantity), 0), "
+                    "COALESCE(SUM(d.quantity * COALESCE(r.cost_per_unit, 0)), 0) "
+                    "FROM material_defects d "
+                    "LEFT JOIN rolls r ON r.id = d.roll_id "
+                    f"WHERE {where_sql} "
+                    "GROUP BY d.reason_label ORDER BY 4 DESC"
+                )
+                by_reason = [
+                    {'reason': r[0], 'times': r[1], 'quantity': float(r[2]), 'costTotal': float(r[3])}
+                    for r in cur.fetchall()
+                ]
+
+                # Список оформлений: чтобы посмотреть конкретные случаи.
+                cur.execute(
+                    "SELECT d.barcode, d.created_at, COALESCE(d.user_name, ''), COALESCE(d.user_role, ''), "
+                    "m.name, m.unit, d.quantity, d.reason_label, COALESCE(d.comment, ''), "
+                    "d.quantity * COALESCE(r.cost_per_unit, 0), COALESCE(w.name, ''), "
+                    "d.received_at IS NOT NULL "
+                    "FROM material_defects d "
+                    "JOIN materials m ON m.id = d.material_id "
+                    "LEFT JOIN rolls r ON r.id = d.roll_id "
+                    "LEFT JOIN workshops w ON w.id = d.workshop_id "
+                    f"WHERE {where_sql} "
+                    "ORDER BY d.created_at DESC LIMIT 500"
+                )
+                items = [
+                    {
+                        'barcode': r[0],
+                        'createdAt': r[1].isoformat() + 'Z' if r[1] else None,
+                        'userName': r[2],
+                        'role': r[3],
+                        'materialName': r[4],
+                        'unit': r[5],
+                        'quantity': float(r[6]),
+                        'reason': r[7],
+                        'comment': r[8],
+                        'cost': float(r[9] or 0),
+                        'workshop': r[10],
+                        'received': r[11],
+                    }
+                    for r in cur.fetchall()
+                ]
+            finally:
+                conn.close()
+
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps(
+                    {'byUser': by_user, 'byReason': by_reason, 'items': items},
+                    ensure_ascii=False,
+                ),
+            }
+
         order_number = (params.get('orderNumber') or '').strip()
         if not order_number:
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите orderNumber'})}
