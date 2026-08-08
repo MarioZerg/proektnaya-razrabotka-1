@@ -9,6 +9,8 @@ import { fetchRollDetail, type RollDetail, type RollMovement, type RollStatus } 
 import { formatDateTime } from '@/lib/dateUtils';
 import { formatQuantity } from '@/lib/formatQuantity';
 import { useAuth } from '@/context/AuthContext';
+import { isStorekeeperRole } from '@/lib/roles';
+import { printBarcodes } from '@/lib/printBarcodes';
 import { currencySymbols } from '@/lib/suppliersApi';
 
 const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | 'default' | 'outline' }> = {
@@ -35,6 +37,9 @@ const RollShow = () => {
   const { user } = useAuth();
   // Закупочные цены — коммерческая тайна, их видит только администратор.
   const isAdmin = user?.role === 'admin';
+  // Стикер рулона перепечатывают те, кто работает с рулонами руками: кладовщики
+  // (включая старшего) и администратор. Производственным ролям это не нужно.
+  const canPrintSticker = isAdmin || isStorekeeperRole(user?.role);
   const rollId = Number(id);
   const navigate = useNavigate();
   const [data, setData] = useState<RollDetail | null>(null);
@@ -99,6 +104,32 @@ const RollShow = () => {
               {roll.materialType || 'Тип не указан'}
               {roll.defectRoleLabel ? ` · брак: ${roll.defectRoleLabel}` : ''}
             </Badge>
+
+            {/* Перепечатка стикера рулона: наклейка теряется и затирается на складе,
+                а без штрихкода рулон не отсканировать при отгрузке в цех. Доступна
+                кладовщикам и администратору — они работают с рулонами физически. */}
+            {canPrintSticker && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  printBarcodes(
+                    [
+                      {
+                        code: roll.barcode,
+                        label: `${roll.materialName || ''} ${formatQuantity(roll.initialQuantity)} ${unit}`.trim(),
+                        supplier: roll.supplierName,
+                        receivedAt: roll.createdAt,
+                      },
+                    ],
+                    `Стикер рулона ${roll.barcode}`
+                  )
+                }
+              >
+                <Icon name="Printer" size={14} className="mr-1" />
+                Стикер рулона
+              </Button>
+            )}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             {roll.materialName || 'Материал —'}

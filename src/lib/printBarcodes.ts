@@ -1,3 +1,4 @@
+import printHtmlInIframe from '@/lib/printInIframe';
 import JsBarcode from 'jsbarcode';
 
 export interface BarcodePrintItem {
@@ -61,10 +62,7 @@ export const printBarcodes = (items: BarcodePrintItem[], title = 'Штрихко
     </div>`;
   });
 
-  const printWindow = window.open('', '_blank', 'width=520,height=700');
-  if (!printWindow) return;
-
-  printWindow.document.write(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -110,10 +108,8 @@ export const printBarcodes = (items: BarcodePrintItem[], title = 'Штрихко
 </head>
 <body>
   ${stickers.join('')}
-  <script>
-    window.onload = function () { window.print(); };
-  </script>
 </body>
-</html>`);
-  printWindow.document.close();
+</html>`;
+
+  printHtmlInIframe(html);
 };
