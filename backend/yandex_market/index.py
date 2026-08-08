@@ -69,11 +69,26 @@ def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None):
     по очереди все известные коды: артикул, затем штрихкод из карточки Яндекса. По
     штрихкоду товар находится, даже если артикулы в системах разошлись.
     """
+    # Сначала — артикул, заполненный специально для Яндекса: он главнее общего,
+    # потому что в кабинете Яндекса артикул может отличаться от внутреннего.
     for code in (offer_id, shop_sku):
-        if not code:
+        if not code or not str(code).strip():
             continue
         cur.execute(
-            "SELECT material, width, height, name, id FROM marketplace_items WHERE sku = %s LIMIT 1",
+            "SELECT material, width, height, name, id FROM marketplace_items "
+            "WHERE ym_sku = %s AND ym_sku <> '' LIMIT 1",
+            (str(code).strip(),),
+        )
+        row = cur.fetchone()
+        if row:
+            return row
+
+    for code in (offer_id, shop_sku):
+        if not code or not str(code).strip():
+            continue
+        cur.execute(
+            "SELECT material, width, height, name, id FROM marketplace_items "
+            "WHERE sku = %s AND sku <> '' LIMIT 1",
             (str(code).strip(),),
         )
         row = cur.fetchone()
@@ -81,11 +96,11 @@ def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None):
             return row
 
     for code in (barcodes or []):
-        if not code:
+        if not code or not str(code).strip():
             continue
         cur.execute(
             "SELECT material, width, height, name, id FROM marketplace_items "
-            "WHERE barcode = %s LIMIT 1",
+            "WHERE barcode = %s AND barcode <> '' LIMIT 1",
             (str(code).strip(),),
         )
         row = cur.fetchone()

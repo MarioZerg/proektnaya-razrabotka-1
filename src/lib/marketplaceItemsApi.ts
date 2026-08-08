@@ -8,6 +8,8 @@ export interface MarketplaceItem {
   height: number | null;
   ozonSku: string | null;
   wbSku: string | null;
+  /** Артикул в Яндекс Маркете. */
+  ymSku: string | null;
   material: string | null;
   barcode: string | null;
   createdAt: string;
@@ -58,6 +60,7 @@ export const createMarketplaceItem = (payload: {
   height?: number;
   ozonSku?: string;
   wbSku?: string;
+  ymSku?: string;
   material?: string;
   barcode?: string;
 }) => postAction({ action: 'create', ...payload });
@@ -71,6 +74,7 @@ export const updateMarketplaceItem = (
     height: number;
     ozonSku: string;
     wbSku: string;
+    ymSku: string;
     material: string;
     barcode: string;
   }>

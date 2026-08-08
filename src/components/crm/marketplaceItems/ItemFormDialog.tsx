@@ -124,6 +124,16 @@ const ItemFormDialog = ({
               />
             </div>
           </div>
+          {/* Артикул Яндекса заполняется, только если в его кабинете он отличается от
+              общего. Пусто — заказы найдут товар по общему артикулу или штрихкоду. */}
+          <div className="space-y-1.5">
+            <Label>Яндекс Маркет</Label>
+            <Input
+              placeholder="Артикул в Яндексе, если отличается от общего"
+              value={form.ymSku}
+              onChange={(e) => setForm((f) => ({ ...f, ymSku: e.target.value }))}
+            />
+          </div>
           <div className="space-y-1.5">
             <Label>Баркод</Label>
             <Input

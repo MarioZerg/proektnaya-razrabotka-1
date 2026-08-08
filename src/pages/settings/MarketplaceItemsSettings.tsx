@@ -75,6 +75,7 @@ const MarketplaceItemsSettings = () => {
       article: item.article || '',
       ozonSku: item.ozonSku || '',
       wbSku: item.wbSku || '',
+      ymSku: item.ymSku || '',
       material: item.material || '',
       barcode: item.barcode || '',
     });
@@ -108,6 +109,7 @@ const MarketplaceItemsSettings = () => {
         article: form.article.trim(),
         ozonSku: form.ozonSku.trim(),
         wbSku: form.wbSku.trim(),
+        ymSku: form.ymSku.trim(),
         material: form.material.trim(),
         barcode: form.barcode.trim(),
         width: form.width ? Number(form.width) : undefined,
