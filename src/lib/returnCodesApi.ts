@@ -12,8 +12,6 @@ export interface ReturnPickupCode {
   updatedAt: string | null;
   /** Сколько возвратов уже одобрено и ждёт забора на ПВЗ этой площадки. */
   waitingCount: number;
-  /** Где взять код в личном кабинете площадки. */
-  hint: string;
   /** Код обновляется раз в сутки (OZON) — вчерашний на ПВЗ не примут. */
   dailyRefresh: boolean;
   /** Код обновляли сегодня. */
@@ -44,4 +42,16 @@ export const saveReturnCode = async (payload: {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось сохранить код');
   return data;
+};
+
+/** Подтянуть свежий код из личного кабинета маркетплейса. */
+export const refreshReturnCode = async (marketplaceCode: string, actorId?: number | null) => {
+  const res = await fetch(RETURN_CODES_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'refresh', marketplaceCode, actorId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось обновить код');
+  return data as { code: string };
 };

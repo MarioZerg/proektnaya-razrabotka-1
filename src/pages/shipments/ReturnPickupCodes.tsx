@@ -17,6 +17,7 @@ import { isStorekeeperRole } from '@/lib/roles';
 import {
   fetchReturnCodes,
   saveReturnCode,
+  refreshReturnCode,
   type ReturnPickupCode,
 } from '@/lib/returnCodesApi';
 import JsBarcode from 'jsbarcode';
@@ -57,6 +58,7 @@ const ReturnPickupCodes = () => {
   const [editing, setEditing] = useState<ReturnPickupCode | null>(null);
   const [codeValue, setCodeValue] = useState('');
   const [saving, setSaving] = useState(false);
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const load = () => {
@@ -89,6 +91,25 @@ const ReturnPickupCodes = () => {
       });
     }
   }, [shown]);
+
+  // Свежий код из личного кабинета. Кнопка доступна и кладовщику: код OZON живёт сутки,
+  // и перед выездом на пункт выдачи человек должен получить актуальный сам.
+  const handleRefresh = async (item: ReturnPickupCode) => {
+    setRefreshingId(item.marketplaceCode);
+    try {
+      await refreshReturnCode(item.marketplaceCode, user?.id);
+      toast({ title: 'Код обновлён' });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось обновить код',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setRefreshingId(null);
+    }
+  };
 
   const handleSave = async () => {
     if (!editing) return;
@@ -206,9 +227,22 @@ const ReturnPickupCodes = () => {
                     </p>
                   )}
 
-                  {/* Где именно взять код в кабинете площадки. */}
-                  {item.hint && (
-                    <p className="text-xs text-muted-foreground">{item.hint}</p>
+
+                  {/* Обновление по API — только там, где код меняется ежедневно. */}
+                  {item.dailyRefresh && (
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      onClick={() => handleRefresh(item)}
+                      disabled={refreshingId === item.marketplaceCode}
+                    >
+                      <Icon
+                        name={refreshingId === item.marketplaceCode ? 'Loader2' : 'RefreshCw'}
+                        size={14}
+                        className={`mr-1 ${refreshingId === item.marketplaceCode ? 'animate-spin' : ''}`}
+                      />
+                      Обновить код
+                    </Button>
                   )}
 
                   {isAdmin && (
@@ -267,7 +301,7 @@ const ReturnPickupCodes = () => {
                   placeholder="Например: 1234567890"
                 />
                 <p className="text-xs text-muted-foreground">
-                  {editing?.hint || 'Код продавца — по нему на ПВЗ выдают все возвраты'}
+                  Код продавца — по нему на ПВЗ выдают все возвраты
                 </p>
                 {editing?.dailyRefresh && (
                   <p className="rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
