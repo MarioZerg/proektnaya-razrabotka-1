@@ -16,7 +16,35 @@ export interface EmployeeShiftStatus {
   sessionShiftNumber: number | null;
   /** Должность, в которой сотрудник работает в текущей открытой смене. */
   sessionRole?: string | null;
+  /** Название цеха, в котором сотрудник работает прямо сейчас. */
+  sessionWorkshopName?: string | null;
+  /** Штатный цех сотрудника из его профиля. */
+  homeWorkshopName?: string | null;
+  /** Сотрудник вышел в чужой цех — работает гостем. */
+  isGuest?: boolean;
 }
+
+/** Гостевая смена: сотрудник выходил работать в чужой цех. */
+export interface GuestShiftSession {
+  id: number;
+  fullName: string;
+  role: string;
+  /** Штатный цех сотрудника. */
+  homeWorkshopName: string;
+  /** Цех, в который он вышел. */
+  workshopName: string;
+  shiftNumber: number | null;
+  openedAt: string;
+  closedAt: string | null;
+}
+
+/** История гостевых смен за последние дни — кто и в какой чужой цех выходил. */
+export const fetchGuestShiftHistory = async (days = 30): Promise<GuestShiftSession[]> => {
+  const res = await fetch(`${SHIFT_SESSIONS_URL}?guest_history=1&days=${days}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить историю');
+  return data.sessions || [];
+};
 
 export const fetchEmployeeShifts = async (): Promise<EmployeeShiftStatus[]> => {
   const res = await fetch(SHIFT_SESSIONS_URL);

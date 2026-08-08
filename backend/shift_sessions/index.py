@@ -234,6 +234,45 @@ def handler(event: dict, context) -> dict:
                     days[key]['employees'].append(full_name)
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'days': list(days.values())})}
 
+            if params.get('guest_history'):
+                # История гостевых смен: кто выходил в чужой цех и когда. Нужна отчётом,
+                # потому что текущий статус показывает только открытые прямо сейчас смены,
+                # а разбираться с гостевыми выходами приходится задним числом.
+                days_back = params.get('days') or '30'
+                try:
+                    days_back = max(1, min(365, int(days_back)))
+                except ValueError:
+                    days_back = 30
+                cur.execute(
+                    "SELECT ss.id, u.full_name, COALESCE(ss.role, u.role), "
+                    "u.workshop, w.name, ss.shift_number, ss.opened_at, ss.closed_at "
+                    "FROM shift_sessions ss "
+                    "JOIN users u ON u.id = ss.user_id "
+                    "JOIN workshops w ON w.id = ss.workshop_id "
+                    "WHERE ss.opened_at >= now() - make_interval(days => %s) "
+                    "AND u.workshop IS NOT NULL AND u.workshop <> w.name "
+                    "ORDER BY ss.opened_at DESC",
+                    (days_back,),
+                )
+                sessions = [
+                    {
+                        'id': r[0],
+                        'fullName': r[1],
+                        'role': r[2],
+                        'homeWorkshopName': r[3],
+                        'workshopName': r[4],
+                        'shiftNumber': r[5],
+                        'openedAt': r[6].isoformat() + 'Z',
+                        'closedAt': (r[7].isoformat() + 'Z') if r[7] else None,
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'sessions': sessions}, ensure_ascii=False),
+                }
+
             if params.get('available_shifts'):
                 user_id = params.get('userId')
                 if not user_id:
@@ -281,10 +320,12 @@ def handler(event: dict, context) -> dict:
             employee_rows = cur.fetchall()
 
             cur.execute(
-                "SELECT DISTINCT ON (user_id) user_id, opened_at, closed_at, workshop_id, shift_number, role "
-                "FROM shift_sessions ORDER BY user_id, opened_at DESC"
+                "SELECT DISTINCT ON (ss.user_id) ss.user_id, ss.opened_at, ss.closed_at, "
+                "ss.workshop_id, ss.shift_number, ss.role, w.name "
+                "FROM shift_sessions ss LEFT JOIN workshops w ON w.id = ss.workshop_id "
+                "ORDER BY ss.user_id, ss.opened_at DESC"
             )
-            latest_by_user = {r[0]: (r[1], r[2], r[3], r[4], r[5]) for r in cur.fetchall()}
+            latest_by_user = {r[0]: (r[1], r[2], r[3], r[4], r[5], r[6]) for r in cur.fetchall()}
 
             employees = []
             for uid, full_name, role, shift_number, shift_from, shift_to, workshop_name, shift_free in employee_rows:
@@ -299,6 +340,13 @@ def handler(event: dict, context) -> dict:
                     can_close_at = close_dt.isoformat() + 'Z'
                 session_workshop_id = latest[2] if is_open else None
                 session_shift_number = latest[3] if is_open else None
+                session_workshop_name = latest[5] if is_open else None
+                # Гость — сотрудник открыл смену не в своём штатном цехе. Сравниваем по
+                # названию цеха: у сотрудника цех хранится названием, у смены — номером.
+                is_guest = bool(
+                    is_open and workshop_name and session_workshop_name
+                    and workshop_name != session_workshop_name
+                )
                 employees.append({
                     'id': uid,
                     'fullName': full_name,
@@ -310,6 +358,9 @@ def handler(event: dict, context) -> dict:
                     'shiftFree': shift_free,
                     'sessionWorkshopId': session_workshop_id,
                     'sessionShiftNumber': session_shift_number,
+                    'sessionWorkshopName': session_workshop_name,
+                    'homeWorkshopName': workshop_name,
+                    'isGuest': is_guest,
                     'sessionRole': (latest[4] if is_open else None) or (role if is_open else None),
                 })
         finally:

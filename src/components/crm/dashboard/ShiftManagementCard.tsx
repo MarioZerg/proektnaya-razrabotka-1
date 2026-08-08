@@ -138,12 +138,26 @@ const ShiftManagementCard = ({
                   }`}
                 />
                 <div className="min-w-[160px] flex-1">
-                  <p className="truncate text-sm font-medium">{s.fullName}</p>
+                  <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                    {s.fullName}
+                    {/* Гость — сотрудник вышел в чужой цех. Видно сразу, кто где работает. */}
+                    {s.isGuest && (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 border-amber-400 bg-amber-50 px-1.5 py-0 text-[11px] font-normal text-amber-900"
+                      >
+                        гость
+                      </Badge>
+                    )}
+                  </p>
                   <p className="truncate text-xs text-muted-foreground">
                     {roleLabels[s.role as Role] || s.role}
                     {s.shiftNumber ? ` · смена ${s.shiftNumber}` : ''}
                     {s.shiftFree ? ' · свободный график' : ''}
                     {s.isOpen && s.openedAt ? ` · с ${formatTime(s.openedAt)}` : ''}
+                    {s.isGuest && s.sessionWorkshopName
+                      ? ` · в ${s.sessionWorkshopName} (свой — ${s.homeWorkshopName})`
+                      : ''}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">

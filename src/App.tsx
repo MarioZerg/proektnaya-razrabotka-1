@@ -35,6 +35,7 @@ import Finance from "./pages/Finance";
 import Workshops from "./pages/shifts/Workshops";
 import WorkshopEdit from "./pages/shifts/WorkshopEdit";
 import ShiftsList from "./pages/shifts/ShiftsList";
+import GuestShifts from "./pages/shifts/GuestShifts";
 import ShiftDetail from "./pages/shifts/ShiftDetail";
 import ShiftsCalendar from "./pages/shifts/ShiftsCalendar";
 import SuppliersSettings from "./pages/settings/SuppliersSettings";
@@ -99,6 +100,7 @@ const App = () => (
             <Route path="/crm/shifts/list" element={<ShiftsList />} />
             <Route path="/crm/shifts/:id" element={<ShiftDetail />} />
             <Route path="/crm/shifts/calendar" element={<ShiftsCalendar />} />
+            <Route path="/crm/shifts/guests" element={<GuestShifts />} />
             <Route path="/crm/settings/suppliers" element={<SuppliersSettings />} />
             <Route path="/crm/settings/marketplace-items" element={<MarketplaceItemsSettings />} />
             <Route path="/crm/settings/marketplace-integrations" element={<MarketplaceIntegrationsSettings />} />

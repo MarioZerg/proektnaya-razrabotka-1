@@ -246,6 +246,7 @@ const adminNav: NavItem[] = [
       { label: 'Цеха', path: '/crm/shifts/workshops' },
       { label: 'Список смен', path: '/crm/shifts/list' },
       { label: 'Календарь смен', path: '/crm/shifts/calendar' },
+      { label: 'Гостевые смены', path: '/crm/shifts/guests' },
     ],
   },
   {
