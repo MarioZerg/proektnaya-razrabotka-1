@@ -4,50 +4,58 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { lazy, Suspense } from "react";
+
+// Страницы загружаются по мере открытия, а не все сразу при входе.
+// Раньше в первый файл попадали все 45 страниц — он весил 2.4 МБ, и на телефоне
+// вход открывался очень долго. Экран входа и терминал цеха грузим сразу: это
+// первые экраны, их ждать нельзя.
+const Crm = lazy(() => import("./pages/Crm"));
+const WarehouseMaterials = lazy(() => import("./pages/inventory/WarehouseMaterials"));
+const WorkshopMaterials = lazy(() => import("./pages/inventory/WorkshopMaterials"));
+const Rolls = lazy(() => import("./pages/inventory/Rolls"));
+const RollShow = lazy(() => import("./pages/inventory/RollShow"));
+const FromSupplier = lazy(() => import("./pages/shipments/FromSupplier"));
+const ToWorkshop = lazy(() => import("./pages/shipments/ToWorkshop"));
+const ReturnToSupplier = lazy(() => import("./pages/shipments/ReturnToSupplier"));
+const DefectWriteoff = lazy(() => import("./pages/shipments/DefectWriteoff"));
+const ToMarketplace = lazy(() => import("./pages/shipments/ToMarketplace"));
+const ReceiveReturns = lazy(() => import("./pages/shipments/ReceiveReturns"));
+const MarketplaceSupplyShow = lazy(() => import("./pages/shipments/MarketplaceSupplyShow"));
+const MarketplaceSupplyAssemble = lazy(() => import("./pages/shipments/MarketplaceSupplyAssemble"));
+const GoodsWarehouse = lazy(() => import("./pages/inventory/GoodsWarehouse"));
+const GoodsPicking = lazy(() => import("./pages/inventory/GoodsPicking"));
+const PackagingGuide = lazy(() => import("./pages/inventory/PackagingGuide"));
+const ShelvesSettings = lazy(() => import("./pages/settings/ShelvesSettings"));
+const MaterialsSettings = lazy(() => import("./pages/settings/MaterialsSettings"));
+const HangersSettings = lazy(() => import("./pages/settings/HangersSettings"));
+const UsersSettings = lazy(() => import("./pages/settings/UsersSettings"));
+const PendingEmployees = lazy(() => import("./pages/settings/PendingEmployees"));
+const MarketplaceOrders = lazy(() => import("./pages/marketplace/MarketplaceOrders"));
+const SewingItems = lazy(() => import("./pages/marketplace/SewingItems"));
+const FboStickers = lazy(() => import("./pages/marketplace/FboStickers"));
+const Reviews = lazy(() => import("./pages/marketplace/Reviews"));
+const Finance = lazy(() => import("./pages/Finance"));
+const Workshops = lazy(() => import("./pages/shifts/Workshops"));
+const WorkshopEdit = lazy(() => import("./pages/shifts/WorkshopEdit"));
+const ShiftsList = lazy(() => import("./pages/shifts/ShiftsList"));
+const GuestShifts = lazy(() => import("./pages/shifts/GuestShifts"));
+const ShiftDetail = lazy(() => import("./pages/shifts/ShiftDetail"));
+const ShiftsCalendar = lazy(() => import("./pages/shifts/ShiftsCalendar"));
+const SuppliersSettings = lazy(() => import("./pages/settings/SuppliersSettings"));
+const MarketplaceItemsSettings = lazy(() => import("./pages/settings/MarketplaceItemsSettings"));
+const MarketplaceIntegrationsSettings = lazy(() => import("./pages/settings/MarketplaceIntegrationsSettings"));
+const Kiosk = lazy(() => import("./pages/Kiosk"));
+const Contracts = lazy(() => import("./pages/Contracts"));
+const PrivacyPolicy = lazy(() => import("./pages/legal/PrivacyPolicy"));
+const PersonalDataConsent = lazy(() => import("./pages/legal/PersonalDataConsent"));
+const RollShortageAnalysis = lazy(() => import("./pages/analytics/RollShortageAnalysis"));
+const ReturnsAnalysis = lazy(() => import("./pages/analytics/ReturnsAnalysis"));
+const DefectAnalysis = lazy(() => import("./pages/analytics/DefectAnalysis"));
 import Index from "./pages/Index";
-import Crm from "./pages/Crm";
+
 import NotFoundRedirect from "./pages/NotFoundRedirect";
-import WarehouseMaterials from "./pages/inventory/WarehouseMaterials";
-import WorkshopMaterials from "./pages/inventory/WorkshopMaterials";
-import Rolls from "./pages/inventory/Rolls";
-import RollShow from "./pages/inventory/RollShow";
-import FromSupplier from "./pages/shipments/FromSupplier";
-import ToWorkshop from "./pages/shipments/ToWorkshop";
-import ReturnToSupplier from "./pages/shipments/ReturnToSupplier";
-import DefectWriteoff from "./pages/shipments/DefectWriteoff";
-import ToMarketplace from "./pages/shipments/ToMarketplace";
-import ReceiveReturns from "./pages/shipments/ReceiveReturns";
-import MarketplaceSupplyShow from "./pages/shipments/MarketplaceSupplyShow";
-import MarketplaceSupplyAssemble from "./pages/shipments/MarketplaceSupplyAssemble";
-import GoodsWarehouse from "./pages/inventory/GoodsWarehouse";
-import GoodsPicking from "./pages/inventory/GoodsPicking";
-import PackagingGuide from "./pages/inventory/PackagingGuide";
-import ShelvesSettings from "./pages/settings/ShelvesSettings";
-import MaterialsSettings from "./pages/settings/MaterialsSettings";
-import HangersSettings from "./pages/settings/HangersSettings";
-import UsersSettings from "./pages/settings/UsersSettings";
-import PendingEmployees from "./pages/settings/PendingEmployees";
-import MarketplaceOrders from "./pages/marketplace/MarketplaceOrders";
-import SewingItems from "./pages/marketplace/SewingItems";
-import FboStickers from "./pages/marketplace/FboStickers";
-import Reviews from "./pages/marketplace/Reviews";
-import Finance from "./pages/Finance";
-import Workshops from "./pages/shifts/Workshops";
-import WorkshopEdit from "./pages/shifts/WorkshopEdit";
-import ShiftsList from "./pages/shifts/ShiftsList";
-import GuestShifts from "./pages/shifts/GuestShifts";
-import ShiftDetail from "./pages/shifts/ShiftDetail";
-import ShiftsCalendar from "./pages/shifts/ShiftsCalendar";
-import SuppliersSettings from "./pages/settings/SuppliersSettings";
-import MarketplaceItemsSettings from "./pages/settings/MarketplaceItemsSettings";
-import MarketplaceIntegrationsSettings from "./pages/settings/MarketplaceIntegrationsSettings";
-import Kiosk from "./pages/Kiosk";
-import Contracts from "./pages/Contracts";
-import PrivacyPolicy from "./pages/legal/PrivacyPolicy";
-import PersonalDataConsent from "./pages/legal/PersonalDataConsent";
-import RollShortageAnalysis from "./pages/analytics/RollShortageAnalysis";
-import ReturnsAnalysis from "./pages/analytics/ReturnsAnalysis";
-import DefectAnalysis from "./pages/analytics/DefectAnalysis";
+
 import KioskTerminal from "./pages/KioskTerminal";
 import { AuthProvider } from "@/context/AuthContext";
 
@@ -60,6 +68,15 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          {/* Пока подгружается страница, показываем спокойную заглушку —
+              иначе на секунду мелькал бы пустой белый экран. */}
+          <Suspense
+            fallback={
+              <div className="flex min-h-screen items-center justify-center bg-background">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-primary" />
+              </div>
+            }
+          >
           <Routes>
             <Route path="/" element={<Index />} />
             {/* Терминал цеха: вход по личному QR-коду сотрудника, без пароля. */}
@@ -112,6 +129,7 @@ const App = () => (
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFoundRedirect />} />
           </Routes>
+          </Suspense>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
