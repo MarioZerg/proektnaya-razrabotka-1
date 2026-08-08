@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import InstallAppButton from '@/components/InstallAppButton';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
@@ -312,6 +313,10 @@ const Index = () => {
               <Icon name="KeyRound" size={18} className="mr-2" />
               Вход по паролю
             </Button>
+
+            {/* Установка на главный экран планшета/телефона. Кнопка появляется только
+                когда установка возможна и приложение ещё не установлено. */}
+            <InstallAppButton />
 
             {/* Реквизиты компании и юридические документы. */}
             <div className="space-y-0.5 pt-2 text-center text-[11px] leading-relaxed text-muted-foreground">
