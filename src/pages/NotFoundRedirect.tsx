@@ -15,6 +15,24 @@ const NotFoundRedirect = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
 
+  /**
+   * Запрещаем поисковикам индексировать несуществующие страницы.
+   *
+   * Приложение отдаёт index.html на любой адрес, поэтому сервер отвечает 200 даже
+   * на выдуманную ссылку — по одному коду ответа робот не поймёт, что страницы нет.
+   * Мета-тег читают и Яндекс, и Google, так что мусорные адреса в индекс не попадут.
+   * При уходе со страницы тег убираем, иначе он останется висеть на обычных разделах.
+   */
+  useEffect(() => {
+    const meta = document.createElement('meta');
+    meta.name = 'robots';
+    meta.content = 'noindex, nofollow';
+    document.head.appendChild(meta);
+    return () => {
+      meta.remove();
+    };
+  }, []);
+
   useEffect(() => {
     const canGoBack = window.history.length > 1;
     const timer = setTimeout(() => {

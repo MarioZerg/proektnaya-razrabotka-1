@@ -1,8 +1,26 @@
+# Рабочие разделы системы закрыты от индексации: это экраны за входом по паролю,
+# в поиске им делать нечего. Открыты только главная и правовые страницы.
+
 User-agent: Googlebot
-Allow: /
+Allow: /$
+Allow: /privacy
+Allow: /consent
+Disallow: /crm
+Disallow: /kiosk
+
+User-agent: Yandex
+Allow: /$
+Allow: /privacy
+Allow: /consent
+Disallow: /crm
+Disallow: /kiosk
 
 User-agent: Bingbot
-Allow: /
+Allow: /$
+Allow: /privacy
+Allow: /consent
+Disallow: /crm
+Disallow: /kiosk
 
 User-agent: Twitterbot
 Allow: /
@@ -11,4 +29,10 @@ User-agent: facebookexternalhit
 Allow: /
 
 User-agent: *
-Allow: /
+Allow: /$
+Allow: /privacy
+Allow: /consent
+Disallow: /crm
+Disallow: /kiosk
+
+Sitemap: https://yarplan.ru/sitemap.xml
