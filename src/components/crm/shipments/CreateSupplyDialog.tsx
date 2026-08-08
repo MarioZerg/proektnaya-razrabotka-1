@@ -120,10 +120,12 @@ const CreateSupplyDialog = ({
                       ))}
                     </SelectContent>
                   </Select>
+                  {/* Метраж ОДНОГО рулона — как написано на самом рулоне. */}
                   <Input
                     type="number"
                     step="0.01"
                     min="0.01"
+                    title="Сколько в одном рулоне"
                     placeholder={materialUnit(row.materialId) || 'метр/шт'}
                     value={row.quantity}
                     onChange={(e) => updateRow(idx, 'quantity', e.target.value)}
@@ -132,6 +134,7 @@ const CreateSupplyDialog = ({
                     type="number"
                     step="1"
                     min="1"
+                    title="Сколько таких рулонов пришло"
                     placeholder="Рулонов"
                     value={row.numberRolls}
                     onChange={(e) => updateRow(idx, 'numberRolls', e.target.value)}
@@ -148,9 +151,10 @@ const CreateSupplyDialog = ({
                 </div>
               ))}
               <p className="text-xs text-muted-foreground">
-                Например: пришло 3 пачки пакетов по 1000 шт — материал «Пакет 25х30»,
-                количество 3000, рулонов 3. Штрихкоды рулонов система присвоит сама
-                после подтверждения администратором.
+                Количество указывается <b>на один рулон или пачку</b>. Пришло 10 рулонов по
+                100 пог.м. — пишем 100 и 10 рулонов. Пришло 3 пачки пакетов по 1000 шт —
+                пишем 1000 и 3. Штрихкоды система присвоит сама после подтверждения
+                администратором.
               </p>
             </div>
 

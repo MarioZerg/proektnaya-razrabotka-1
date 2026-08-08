@@ -79,8 +79,12 @@ const ReviewSupplyDialog = ({
   const supplier = suppliers.find((s) => String(s.id) === reviewSupplierId);
   const supplierCurrency = supplier?.currency || 'RUB';
 
-  // Логистика делится поровну на все метры и штуки поставки.
-  const totalUnits = reviewRows.reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
+  // Логистика делится поровну на все метры и штуки поставки. В строке указан метраж ОДНОГО
+  // рулона, поэтому общий объём — метраж × число рулонов.
+  const totalUnits = reviewRows.reduce(
+    (sum, r) => sum + (Number(r.quantity) || 0) * (Number(r.numberRolls) || 0),
+    0
+  );
   const logisticsPerUnit =
     totalUnits > 0 ? (Number(logisticsCost.replace(',', '.')) || 0) / totalUnits : 0;
 
@@ -170,13 +174,13 @@ const ReviewSupplyDialog = ({
                         ))}
                       </SelectContent>
                     </Select>
-                    {/* Общее количество по позиции — не на один рулон. */}
+                    {/* Метраж ОДНОГО рулона — как написано на самом рулоне. */}
                     <Input
                       type="number"
                       step="0.01"
                       min="0.01"
-                      title="Общее количество по позиции"
-                      placeholder={`Всего ${materialUnit(row.materialId) || 'метр/шт'}`}
+                      title="Сколько в одном рулоне"
+                      placeholder={materialUnit(row.materialId) || 'метр/шт'}
                       value={row.quantity}
                       onChange={(e) => updateReviewRow(idx, 'quantity', e.target.value)}
                     />
@@ -227,24 +231,23 @@ const ReviewSupplyDialog = ({
                       <Icon name="Trash2" size={16} />
                     </Button>
                   </div>
-                  {/* Сразу показываем, сколько ляжет в один рулон: если в позиции указали
-                      метраж ОДНОГО рулона вместо общего, это видно здесь, а не после приёмки. */}
-                  {Number(row.quantity) > 0 && Number(row.numberRolls) > 1 && (
+                  {/* Показываем общий метраж позиции: по нему считается склад и логистика. */}
+                  {Number(row.quantity) > 0 && Number(row.numberRolls) >= 1 && (
                     <p className="pl-1 text-xs text-muted-foreground">
-                      {Number(row.quantity)} {materialUnit(row.materialId) || 'ед.'} всего ÷{' '}
+                      {Number(row.quantity)} {materialUnit(row.materialId) || 'ед.'} ×{' '}
                       {Number(row.numberRolls)} рул. ={' '}
                       <b>
-                        {(Number(row.quantity) / Number(row.numberRolls)).toFixed(2)}{' '}
+                        {(Number(row.quantity) * Number(row.numberRolls)).toLocaleString('ru-RU')}{' '}
                         {materialUnit(row.materialId) || 'ед.'}
                       </b>{' '}
-                      в одном рулоне
+                      всего
                     </p>
                   )}
                   </div>
                 ))}
                 <p className="text-xs text-muted-foreground">
-                  Метраж указывается <b>общий на всю позицию</b>, а не на один рулон: 100 м и
-                  10 рулонов — это 100 м всего, по 10 м в рулоне. Пустая цена подставится из
+                  Метраж указывается <b>на один рулон</b> — как написано на самом рулоне:
+                  100 пог.м. и 10 рулонов = 1000 пог.м. на складе. Пустая цена подставится из
                   прайса поставщика. Штрихкоды рулонов система присвоит после подтверждения.
                 </p>
               </div>

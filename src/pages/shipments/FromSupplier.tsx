@@ -97,6 +97,10 @@ const FromSupplier = () => {
 
   // Отрицательное и нулевое количество отбрасываем ещё до отправки: такой рулон
   // создал бы минусовой остаток на складе.
+  //
+  // ВАЖНО про количество. В форме сотрудник указывает метраж ОДНОГО рулона (как написано
+  // на самом рулоне) и сколько таких рулонов пришло: «100 пог.м.» и «10 рулонов» = 1000 м.
+  // В систему уходит общий метраж — по нему считается склад и логистика на единицу.
   const rowsToItems = (list: ItemRow[]) =>
     list
       .filter(
@@ -105,7 +109,7 @@ const FromSupplier = () => {
       )
       .map((r) => ({
         materialId: Number(r.materialId),
-        quantity: Number(r.quantity),
+        quantity: Number(r.quantity) * Number(r.numberRolls),
         numberRolls: Number(r.numberRolls),
         // Цена за единицу в валюте поставщика. Пусто — подставится прайс поставщика.
         price: r.price && r.price.trim() !== '' ? Number(r.price.replace(',', '.')) : null,
@@ -187,7 +191,12 @@ const FromSupplier = () => {
     setReviewRows(
       detail.items.map((i) => ({
         materialId: String(i.materialId),
-        quantity: String(i.quantity ?? ''),
+        // В базе лежит ОБЩИЙ метраж позиции, а в форме показываем метраж одного рулона —
+        // так же, как он написан на самом рулоне. Делим обратно на число рулонов.
+        quantity:
+          i.quantity != null && i.numberRolls
+            ? String(Number(i.quantity) / Number(i.numberRolls))
+            : String(i.quantity ?? ''),
         numberRolls: String(i.numberRolls ?? ''),
         // Цена: что уже указана, иначе подставляем прайс поставщика.
         price: i.price != null ? String(i.price) : i.supplierPrice != null ? String(i.supplierPrice) : '',
