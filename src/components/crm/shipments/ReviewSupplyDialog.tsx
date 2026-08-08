@@ -156,7 +156,8 @@ const ReviewSupplyDialog = ({
                   </Button>
                 </div>
                 {reviewRows.map((row, idx) => (
-                  <div key={idx} className="grid grid-cols-[1fr_90px_80px_90px_90px_auto] gap-2">
+                  <div key={idx} className="space-y-1">
+                  <div className="grid grid-cols-[1fr_90px_80px_90px_90px_auto] gap-2">
                     <Select value={row.materialId} onValueChange={(v) => updateReviewRow(idx, 'materialId', v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Материал" />
@@ -169,11 +170,13 @@ const ReviewSupplyDialog = ({
                         ))}
                       </SelectContent>
                     </Select>
+                    {/* Общее количество по позиции — не на один рулон. */}
                     <Input
                       type="number"
                       step="0.01"
                       min="0.01"
-                      placeholder={materialUnit(row.materialId) || 'метр/шт'}
+                      title="Общее количество по позиции"
+                      placeholder={`Всего ${materialUnit(row.materialId) || 'метр/шт'}`}
                       value={row.quantity}
                       onChange={(e) => updateReviewRow(idx, 'quantity', e.target.value)}
                     />
@@ -224,10 +227,25 @@ const ReviewSupplyDialog = ({
                       <Icon name="Trash2" size={16} />
                     </Button>
                   </div>
+                  {/* Сразу показываем, сколько ляжет в один рулон: если в позиции указали
+                      метраж ОДНОГО рулона вместо общего, это видно здесь, а не после приёмки. */}
+                  {Number(row.quantity) > 0 && Number(row.numberRolls) > 1 && (
+                    <p className="pl-1 text-xs text-muted-foreground">
+                      {Number(row.quantity)} {materialUnit(row.materialId) || 'ед.'} всего ÷{' '}
+                      {Number(row.numberRolls)} рул. ={' '}
+                      <b>
+                        {(Number(row.quantity) / Number(row.numberRolls)).toFixed(2)}{' '}
+                        {materialUnit(row.materialId) || 'ед.'}
+                      </b>{' '}
+                      в одном рулоне
+                    </p>
+                  )}
+                  </div>
                 ))}
                 <p className="text-xs text-muted-foreground">
-                  Проверьте метраж, число рулонов и цены. Пустая цена — подставится из прайса
-                  поставщика. Штрихкоды рулонов система присвоит после подтверждения.
+                  Метраж указывается <b>общий на всю позицию</b>, а не на один рулон: 100 м и
+                  10 рулонов — это 100 м всего, по 10 м в рулоне. Пустая цена подставится из
+                  прайса поставщика. Штрихкоды рулонов система присвоит после подтверждения.
                 </p>
               </div>
 
