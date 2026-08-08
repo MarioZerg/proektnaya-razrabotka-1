@@ -2,64 +2,38 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 
-/** Событие Android/Chrome «страницу можно установить как приложение». */
-interface InstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
-
 /**
- * Кнопка «Установить приложение».
+ * Кнопка «Скачать для Android».
  *
- * Браузер прячет установку глубоко в меню, и сотруднику это не объяснить. Здесь —
- * обычная кнопка: нажал, подтвердил, на экране появилась иконка «МЕГАТЮЛЬ».
+ * Отдаёт готовый файл приложения. Сотруднику не нужно искать установку в меню
+ * браузера: нажал, файл скачался, открыл — приложение на экране.
  *
- * Кнопка показывается только когда установка реально возможна: если приложение уже
- * стоит или браузер её не поддерживает (например, iPhone), кнопки не будет — вместо
- * неё на iPhone показываем короткую подсказку.
+ * Кнопка прячется, когда приложение уже открыто как приложение, и на компьютерах
+ * с iPhone/iPad, где файл всё равно не установить.
  */
 const InstallAppButton = () => {
-  const [promptEvent, setPromptEvent] = useState<InstallPromptEvent | null>(null);
-  const [installed, setInstalled] = useState(false);
+  const [hidden, setHidden] = useState(false);
 
   useEffect(() => {
-    // Приложение уже открыто как приложение — предлагать установку незачем.
-    if (window.matchMedia('(display-mode: standalone)').matches) {
-      setInstalled(true);
-      return;
-    }
-
-    const onPrompt = (e: Event) => {
-      e.preventDefault();
-      setPromptEvent(e as InstallPromptEvent);
-    };
-    const onInstalled = () => {
-      setInstalled(true);
-      setPromptEvent(null);
-    };
-
-    window.addEventListener('beforeinstallprompt', onPrompt);
-    window.addEventListener('appinstalled', onInstalled);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onPrompt);
-      window.removeEventListener('appinstalled', onInstalled);
-    };
+    const standalone = window.matchMedia('(display-mode: standalone)').matches;
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    if (standalone || ios) setHidden(true);
   }, []);
 
-  const handleInstall = async () => {
-    if (!promptEvent) return;
-    await promptEvent.prompt();
-    await promptEvent.userChoice;
-    setPromptEvent(null);
-  };
-
-  if (installed || !promptEvent) return null;
+  if (hidden) return null;
 
   return (
-    <Button variant="outline" className="w-full" onClick={handleInstall}>
-      <Icon name="Download" size={16} className="mr-2" />
-      Установить приложение
-    </Button>
+    <div className="space-y-1.5">
+      <Button asChild variant="outline" className="h-12 w-full rounded-sm">
+        <a href="/download/megatul.apk" download="megatul.apk">
+          <Icon name="Smartphone" size={18} className="mr-2" />
+          Скачать для Android
+        </a>
+      </Button>
+      <p className="text-center text-xs text-muted-foreground">
+        Откройте скачанный файл и разрешите установку — приложение появится на экране
+      </p>
+    </div>
   );
 };
 
