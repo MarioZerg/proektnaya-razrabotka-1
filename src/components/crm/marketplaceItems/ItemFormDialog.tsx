@@ -92,12 +92,15 @@ const ItemFormDialog = ({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>SKU / Артикул</Label>
+              <Label>Артикул продавца</Label>
               <Input
-                placeholder="Артикул"
+                placeholder="Например: vyal2_240"
                 value={form.article}
                 onChange={(e) => setForm((f) => ({ ...f, article: e.target.value }))}
               />
+              <p className="text-xs text-muted-foreground">
+                Ваш внутренний код товара — общий для всех площадок
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label>Материал</Label>
@@ -108,39 +111,65 @@ const ItemFormDialog = ({
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>OZON</Label>
-              <Input
-                value={form.ozonSku}
-                onChange={(e) => setForm((f) => ({ ...f, ozonSku: e.target.value }))}
-              />
+          {/* Коды площадок. По ним заказ из маркетплейса находит этот товар и встаёт
+              на конвейер: не совпал код — вещь не подхватится и заказ потеряется. */}
+          <div className="space-y-3 rounded-md border border-border p-3">
+            <div>
+              <p className="text-sm font-medium">Коды на площадках</p>
+              <p className="text-xs text-muted-foreground">
+                По ним заказы находят этот товар. Заполняйте те площадки, где он продаётся
+              </p>
             </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>OZON · SKU</Label>
+                <Input
+                  placeholder="Например: 1207100335"
+                  value={form.ozonSku}
+                  onChange={(e) => setForm((f) => ({ ...f, ozonSku: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Числовой код из кабинета OZON
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Wildberries · Артикул WB</Label>
+                <Input
+                  placeholder="Например: 178830571"
+                  value={form.wbSku}
+                  onChange={(e) => setForm((f) => ({ ...f, wbSku: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Номер номенклатуры из кабинета WB
+                </p>
+              </div>
+            </div>
+
             <div className="space-y-1.5">
-              <Label>WB</Label>
+              <Label>Яндекс Маркет · Ваш SKU</Label>
               <Input
-                value={form.wbSku}
-                onChange={(e) => setForm((f) => ({ ...f, wbSku: e.target.value }))}
+                placeholder="Например: vyal2_240"
+                value={form.ymSku}
+                onChange={(e) => setForm((f) => ({ ...f, ymSku: e.target.value }))}
               />
+              <p className="text-xs text-muted-foreground">
+                Обычно совпадает с артикулом продавца. Заполните, если в кабинете Яндекса
+                код другой — иначе заказ не найдёт товар
+              </p>
             </div>
           </div>
-          {/* Артикул Яндекса заполняется, только если в его кабинете он отличается от
-              общего. Пусто — заказы найдут товар по общему артикулу или штрихкоду. */}
+
           <div className="space-y-1.5">
-            <Label>Яндекс Маркет</Label>
+            <Label>Штрихкод товара</Label>
             <Input
-              placeholder="Артикул в Яндексе, если отличается от общего"
-              value={form.ymSku}
-              onChange={(e) => setForm((f) => ({ ...f, ymSku: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Баркод</Label>
-            <Input
-              placeholder="Штрихкод товара"
+              placeholder="13 цифр, например: 2038683173023"
               value={form.barcode}
               onChange={(e) => setForm((f) => ({ ...f, barcode: e.target.value }))}
             />
+            <p className="text-xs text-muted-foreground">
+              Печатается на этикетке и сканируется упаковщицей при стикеровке
+            </p>
           </div>
 
           <div className="space-y-2">

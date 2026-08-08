@@ -119,7 +119,7 @@ const ItemsGrid = ({
                           if (e.key === 'Enter' || e.key === ' ') copyOzonCode(item.ozonSku!);
                         }}
                         className="cursor-pointer gap-1 bg-blue-600 font-mono-tech text-white hover:bg-blue-700"
-                        title="Скопировать код для поставки FBO"
+                        title="SKU товара в OZON. Нажмите, чтобы скопировать код для поставки FBO"
                       >
                         OZN{item.ozonSku}
                         <Icon name="Copy" size={11} />
@@ -129,13 +129,25 @@ const ItemsGrid = ({
                   <div className="text-sm text-muted-foreground">
                     {item.width && item.height ? `${item.width}×${item.height}` : '—'}
                   </div>
+                  {/* Коды площадок и штрихкод — подписаны так же, как в карточке
+                      товара, чтобы не гадать, какое поле к какому маркетплейсу. */}
                   {(item.wbSku || item.ymSku || item.barcode) && (
-                    <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      {item.wbSku && <span>WB: {item.wbSku}</span>}
-                      {/* Артикул Яндекса — только если он отличается от общего.
-                          Пусто — заказы находят товар по общему артикулу или штрихкоду. */}
-                      {item.ymSku && <span>Яндекс: {item.ymSku}</span>}
-                      {item.barcode && <span>Баркод: {item.barcode}</span>}
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      {item.wbSku && (
+                        <span>
+                          Wildberries: <span className="font-mono-tech">{item.wbSku}</span>
+                        </span>
+                      )}
+                      {item.ymSku && (
+                        <span>
+                          Яндекс: <span className="font-mono-tech">{item.ymSku}</span>
+                        </span>
+                      )}
+                      {item.barcode && (
+                        <span>
+                          Штрихкод: <span className="font-mono-tech">{item.barcode}</span>
+                        </span>
+                      )}
                     </div>
                   )}
                 </CardContent>
