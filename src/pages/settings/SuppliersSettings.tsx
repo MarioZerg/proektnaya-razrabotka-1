@@ -57,6 +57,8 @@ interface SupplierFormState {
   currency: string;
   /** Курс к рублю. Подставится при приёмке, администратор сможет поправить. */
   exchangeRate: string;
+  /** Допустимая недостача в рулоне, %. Пусто — штрафы по этому поставщику не начисляются. */
+  shortageNormPercent: string;
 }
 
 const emptyForm: SupplierFormState = {
@@ -66,6 +68,7 @@ const emptyForm: SupplierFormState = {
   comment: '',
   currency: 'RUB',
   exchangeRate: '',
+  shortageNormPercent: '',
 };
 const PAGE_SIZE = 10;
 
@@ -109,6 +112,8 @@ const SuppliersSettings = () => {
       comment: s.comment || '',
       currency: s.currency || 'RUB',
       exchangeRate: s.exchangeRate != null ? String(s.exchangeRate) : '',
+      shortageNormPercent:
+        s.shortageNormPercent != null ? String(s.shortageNormPercent) : '',
     });
     setDialogOpen(true);
   };
@@ -128,6 +133,10 @@ const SuppliersSettings = () => {
           form.currency === 'RUB' || !form.exchangeRate.trim()
             ? null
             : Number(form.exchangeRate.replace(',', '.')),
+        // Пустая норма — штрафы за недостачу по этому поставщику не начисляются.
+        shortageNormPercent: form.shortageNormPercent.trim()
+          ? Number(form.shortageNormPercent.replace(',', '.'))
+          : null,
       };
       if (editingId) {
         await updateSupplier(editingId, payload);
@@ -267,6 +276,27 @@ const SuppliersSettings = () => {
                     реальный курс дня.
                   </p>
                 )}
+
+                {/* Норма недостачи. Поставщик мотает рулон с погрешностью: часть метража
+                    просто не доложена. Пока недостача в пределах нормы — это нормально,
+                    штраф начисляется только за превышение. */}
+                <div className="space-y-1.5">
+                  <Label>Допустимая недостача в рулоне, %</Label>
+                  <Input
+                    inputMode="decimal"
+                    placeholder="Не задана — штрафов нет"
+                    value={form.shortageNormPercent}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, shortageNormPercent: e.target.value }))
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Сколько метров может не хватить в рулоне без штрафа. Например, 2% — в
+                    рулоне 100 м допустимо 2 м недостачи. За превышение сотрудники платят
+                    по себестоимости рулона. Оставьте пустым, чтобы не штрафовать.
+                  </p>
+                </div>
+
                 <Button onClick={handleSave} disabled={saving} className="w-full">
                   {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Сохранить'}
                 </Button>
@@ -293,6 +323,7 @@ const SuppliersSettings = () => {
                   <TableHead className="text-primary-foreground">Адрес</TableHead>
                   <TableHead className="text-primary-foreground">Валюта / курс</TableHead>
                   <TableHead className="text-primary-foreground">Цен в прайсе</TableHead>
+                  <TableHead className="text-primary-foreground">Норма недостачи</TableHead>
                   <TableHead className="text-primary-foreground" />
                 </TableRow>
               </TableHeader>
@@ -321,6 +352,14 @@ const SuppliersSettings = () => {
                       )}
                     </TableCell>
                     <TableCell>{s.prices?.length || 0}</TableCell>
+                    {/* Норма недостачи: видно, по кому штрафы включены, а по кому нет. */}
+                    <TableCell>
+                      {s.shortageNormPercent != null ? (
+                        `${s.shortageNormPercent}%`
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-2">
                         <Button

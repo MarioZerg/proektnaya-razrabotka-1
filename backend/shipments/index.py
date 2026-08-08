@@ -567,15 +567,19 @@ def handler(event: dict, context) -> dict:
 
                 supplier_currency = 'RUB'
                 supplier_rate = None
+                # Норму недостачи фиксируем на рулоне в момент приёмки: если поставщику
+                # потом поменяют норму, уже закрытые рулоны пересчитываться не должны.
+                supplier_norm = None
                 if supplier_id:
                     cur.execute(
-                        "SELECT currency, exchange_rate FROM suppliers WHERE id = %s",
+                        "SELECT currency, exchange_rate, shortage_norm_percent FROM suppliers WHERE id = %s",
                         (int(supplier_id),),
                     )
                     sup = cur.fetchone()
                     if sup:
                         supplier_currency = sup[0] or 'RUB'
                         supplier_rate = float(sup[1]) if sup[1] is not None else None
+                        supplier_norm = float(sup[2]) if sup[2] is not None else None
                 shipment_rate = float(req_rate) if req_rate not in (None, '') else supplier_rate
 
                 # Прайс поставщика — подставляем цену тем позициям, где её не указали руками.
@@ -618,6 +622,7 @@ def handler(event: dict, context) -> dict:
                         cost_per_unit = round(price * unit_rate + logistics_per_unit, 4)
 
                     price_sql = 'NULL' if price is None else str(price)
+                    norm_sql = 'NULL' if supplier_norm is None else str(supplier_norm)
                     cost_sql = 'NULL' if cost_per_unit is None else str(cost_per_unit)
                     supplier_sql = 'NULL' if not supplier_id else str(int(supplier_id))
                     # Последняя проверка перед созданием реальных рулонов на складе.
@@ -651,10 +656,10 @@ def handler(event: dict, context) -> dict:
                         cur.execute(
                             f"INSERT INTO rolls (barcode, material_id, initial_quantity, remaining_quantity, status, "
                             f"supplier_id, shipment_id, purchase_price, purchase_currency, purchase_rate, "
-                            f"logistics_per_unit, cost_per_unit) "
+                            f"logistics_per_unit, cost_per_unit, shortage_norm_percent) "
                             f"VALUES ('{barcode}', {material_id}, {per_roll_qty}, {per_roll_qty}, 'in_storage', "
                             f"{supplier_sql}, {int(shipment_id)}, {price_sql}, '{currency}', {unit_rate}, "
-                            f"{round(logistics_per_unit, 4)}, {cost_sql}) "
+                            f"{round(logistics_per_unit, 4)}, {cost_sql}, {norm_sql}) "
                             f"RETURNING id"
                         )
                         new_rolls.append((cur.fetchone()[0], barcode))

@@ -4,6 +4,109 @@ import os
 import psycopg2
 
 
+def charge_shortage_penalty(cur, roll_id, shortage):
+    """Штраф за недостачу в рулоне сверх нормы поставщика.
+
+    Недостача — метраж, которого не оказалось в рулоне. Часть её нормальна (поставщик
+    мотает с погрешностью) и задаётся нормой в его карточке. Штраф начисляется только
+    за превышение нормы и только по себестоимости этого рулона.
+
+    Кого штрафуем — зависит от материала:
+      * ткань (Тюль) — закройщиц, которые реально кроили из этого рулона. Кто с рулоном
+        не работал, тот не платит, даже если закрывал его кто-то другой;
+      * тесьма и аксессуары — швей, работавших с рулоном: тесьму расходуют они.
+    Сумма делится поровну между причастными.
+
+    Возвращает словарь с итогом или None, если штрафовать не за что.
+    """
+    if not shortage or shortage <= 0:
+        return None
+
+    cur.execute(
+        "SELECT r.initial_quantity, r.shortage_norm_percent, r.cost_per_unit, mt.name "
+        "FROM rolls r "
+        "JOIN materials m ON m.id = r.material_id "
+        "LEFT JOIN material_types mt ON mt.id = m.type_id "
+        "WHERE r.id = %s",
+        (roll_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+
+    initial_qty = float(row[0] or 0)
+    norm_percent = float(row[1]) if row[1] is not None else None
+    cost_per_unit = float(row[2]) if row[2] is not None else 0.0
+    type_name = row[3] or ''
+
+    # Норма не задана — только копим статистику, никого не штрафуем.
+    if norm_percent is None or initial_qty <= 0 or cost_per_unit <= 0:
+        return None
+
+    allowed = initial_qty * norm_percent / 100
+    excess = float(shortage) - allowed
+    if excess <= 0:
+        return None
+
+    penalty_total = round(excess * cost_per_unit, 2)
+    if penalty_total <= 0:
+        return None
+
+    # Тесьма и прочие аксессуары — на швеях, ткань — на закройщицах.
+    is_trim = type_name in ('Аксессуары', 'Упаковка')
+    role_column = 'sewer_user_id' if is_trim else 'cutter_user_id'
+
+    cur.execute(
+        f"SELECT DISTINCT o.{role_column} FROM order_material_usage omu "
+        f"JOIN orders o ON o.id = omu.order_id "
+        f"WHERE omu.roll_id = %s AND o.{role_column} IS NOT NULL",
+        (roll_id,),
+    )
+    user_ids = [r[0] for r in cur.fetchall()]
+
+    # Никто не отмечен на заказах — спрашиваем с того, кто закрыл рулон.
+    if not user_ids:
+        cur.execute("SELECT closed_by_user_id FROM rolls WHERE id = %s", (roll_id,))
+        closed_row = cur.fetchone()
+        if closed_row and closed_row[0]:
+            user_ids = [closed_row[0]]
+
+    if not user_ids:
+        return None
+
+    share = round(penalty_total / len(user_ids), 2)
+    if share <= 0:
+        return None
+
+    cur.execute("SELECT barcode FROM rolls WHERE id = %s", (roll_id,))
+    barcode = cur.fetchone()[0]
+
+    for user_id in user_ids:
+        cur.execute(
+            "INSERT INTO salary_accruals (user_id, type, amount, roll_id, description) "
+            "VALUES (%s, 'penalty', %s, %s, %s)",
+            (
+                int(user_id),
+                -share,
+                roll_id,
+                f'Недостача по рулону {barcode}: сверх нормы {round(excess, 2)} '
+                f'при норме {norm_percent}%',
+            ),
+        )
+
+    cur.execute(
+        "UPDATE rolls SET penalty_total = %s WHERE id = %s",
+        (penalty_total, roll_id),
+    )
+
+    return {
+        'total': penalty_total,
+        'excess': round(excess, 3),
+        'perUser': share,
+        'users': len(user_ids),
+    }
+
+
 def handler(event: dict, context) -> dict:
     """Управляет рулонами материалов на складе и в цехах.
 
@@ -705,11 +808,13 @@ def handler(event: dict, context) -> dict:
                         int(item_id),
                     ),
                 )
+
+                penalty = charge_shortage_penalty(cur, int(item_id), shortage)
                 conn.commit()
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'success': True, 'shortage': shortage}),
+                    'body': json.dumps({'success': True, 'shortage': shortage, 'penalty': penalty}),
                 }
 
             if action == 'delete':

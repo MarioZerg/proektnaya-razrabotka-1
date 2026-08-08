@@ -48,7 +48,7 @@ def handler(event: dict, context) -> dict:
             cur = conn.cursor()
             cur.execute(
                 "SELECT id, name, phone, address, comment, created_at, updated_at, "
-                "currency, exchange_rate "
+                "currency, exchange_rate, shortage_norm_percent "
                 "FROM suppliers ORDER BY id"
             )
             suppliers = [
@@ -62,6 +62,8 @@ def handler(event: dict, context) -> dict:
                     'updatedAt': r[6].isoformat() + 'Z',
                     'currency': r[7] or 'RUB',
                     'exchangeRate': float(r[8]) if r[8] is not None else None,
+                    # Допустимая недостача в рулоне, %. NULL — норма не задана, штрафов нет.
+                    'shortageNormPercent': float(r[9]) if r[9] is not None else None,
                     'prices': [],
                 }
                 for r in cur.fetchall()
@@ -114,11 +116,14 @@ def handler(event: dict, context) -> dict:
                 currency = (body_data.get('currency') or 'RUB').strip().upper()[:10]
                 rate = body_data.get('exchangeRate')
                 rate_sql = 'NULL' if rate in (None, '') else str(float(rate))
+                norm = body_data.get('shortageNormPercent')
+                norm_sql = 'NULL' if norm in (None, '') else str(float(norm))
 
                 cur.execute(
-                    f"INSERT INTO suppliers (name, phone, address, comment, currency, exchange_rate) "
+                    f"INSERT INTO suppliers (name, phone, address, comment, currency, exchange_rate, "
+                    f"shortage_norm_percent) "
                     f"VALUES ('{name_esc}', '{phone_esc}', '{address_esc}', '{comment_esc}', "
-                    f"'{currency}', {rate_sql}) "
+                    f"'{currency}', {rate_sql}, {norm_sql}) "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
@@ -147,6 +152,12 @@ def handler(event: dict, context) -> dict:
                     fields.append(
                         "exchange_rate = NULL" if rate in (None, '')
                         else f"exchange_rate = {float(rate)}"
+                    )
+                if 'shortageNormPercent' in body_data:
+                    norm = body_data['shortageNormPercent']
+                    fields.append(
+                        "shortage_norm_percent = NULL" if norm in (None, '')
+                        else f"shortage_norm_percent = {float(norm)}"
                     )
                 fields.append("updated_at = now()")
 

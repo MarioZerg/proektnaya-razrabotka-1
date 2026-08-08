@@ -33,6 +33,12 @@ export interface Supplier {
   currency: string;
   /** Курс валюты к рублю по умолчанию — подставляется при приёмке. */
   exchangeRate: number | null;
+  /**
+   * Допустимая недостача в рулоне, % от метража. Поставщики мотают с погрешностью:
+   * пока недостача в пределах нормы — это нормально. За превышение сотрудникам
+   * начисляется штраф. NULL — норма не задана, штрафы не начисляются.
+   */
+  shortageNormPercent: number | null;
   /** Прайс поставщика по материалам. */
   prices: SupplierPrice[];
 }
@@ -63,6 +69,7 @@ export const createSupplier = (payload: {
   comment?: string;
   currency?: string;
   exchangeRate?: number | null;
+  shortageNormPercent?: number | null;
 }) => postAction({ action: 'create', ...payload });
 
 export const updateSupplier = (
@@ -74,6 +81,7 @@ export const updateSupplier = (
     comment: string;
     currency: string;
     exchangeRate: number | null;
+    shortageNormPercent: number | null;
   }>
 ) => postAction({ action: 'update', id, ...fields });
 
