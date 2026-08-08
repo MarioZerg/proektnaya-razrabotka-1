@@ -61,14 +61,32 @@ def ym_get(path, api_key):
         return 0, {'raw': str(e)[:500]}
 
 
-def find_marketplace_item(cur, offer_id, shop_sku):
-    """Ищет товар справочника по артикулу продавца (offerId / shopSku = наш sku)."""
+def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None):
+    """Ищет товар справочника по кодам из заказа Яндекса.
+
+    Раньше искали только по артикулу продавца (sku) — если в Яндексе артикул отличался
+    хоть одним символом, вещь не попадала на конвейер и заказ терялся. Теперь пробуем
+    по очереди все известные коды: артикул, затем штрихкод из карточки Яндекса. По
+    штрихкоду товар находится, даже если артикулы в системах разошлись.
+    """
     for code in (offer_id, shop_sku):
         if not code:
             continue
         cur.execute(
             "SELECT material, width, height, name, id FROM marketplace_items WHERE sku = %s LIMIT 1",
-            (str(code),),
+            (str(code).strip(),),
+        )
+        row = cur.fetchone()
+        if row:
+            return row
+
+    for code in (barcodes or []):
+        if not code:
+            continue
+        cur.execute(
+            "SELECT material, width, height, name, id FROM marketplace_items "
+            "WHERE barcode = %s LIMIT 1",
+            (str(code).strip(),),
         )
         row = cur.fetchone()
         if row:
@@ -155,10 +173,20 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
         for it in o.get('items', []) or []:
             offer_id = it.get('offerId')
             shop_sku = it.get('shopSku')
-            item = find_marketplace_item(cur, offer_id, shop_sku)
+            # Штрихкоды из карточки Яндекса — запасной способ найти товар, если артикулы
+            # в системах разошлись. Яндекс отдаёт их списком в barcodes.
+            barcodes = it.get('barcodes') or []
+            item = find_marketplace_item(cur, offer_id, shop_sku, barcodes)
             if not item:
                 skipped_no_item += 1
-                unmatched.append({'orderId': ym_id, 'offerId': offer_id, 'shopSku': shop_sku})
+                unmatched.append({
+                    'orderId': ym_id,
+                    'offerId': offer_id,
+                    'shopSku': shop_sku,
+                    'barcodes': barcodes,
+                    # Название из заказа — по нему видно, что за товар не нашёлся.
+                    'name': it.get('offerName') or '',
+                })
                 continue
             for _ in range(int(it.get('count') or 1)):
                 units.append(item)
