@@ -518,10 +518,19 @@ def handler(event: dict, context) -> dict:
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
 
-    if method != 'POST':
+    # Планировщики (cron-job.org и подобные) умеют дёргать только простую ссылку — GET
+    # без тела запроса. Поэтому для запуска по расписанию разрешаем GET с параметрами
+    # в адресе: ?action=sync_orders&cronSecret=... Ключ обязателен, иначе отказ.
+    if method == 'GET':
+        params = event.get('queryStringParameters') or {}
+        if not params.get('cronSecret'):
+            return _resp(405, {'error': 'Method not allowed'})
+        body_data = dict(params)
+    elif method == 'POST':
+        body_data = json.loads(event.get('body') or '{}')
+    else:
         return _resp(405, {'error': 'Method not allowed'})
 
-    body_data = json.loads(event.get('body') or '{}')
     action = body_data.get('action')
     actor_id = body_data.get('actorId')
     actor_name = body_data.get('actorName')

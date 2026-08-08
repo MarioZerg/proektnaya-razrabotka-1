@@ -574,10 +574,18 @@ def handler(event: dict, context) -> dict:
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
-    if method != 'POST':
+    # Планировщик умеет только простую ссылку (GET без тела) — разрешаем такой запуск,
+    # если в адресе есть ключ: ?action=sync_orders&cronSecret=...
+    if method == 'GET':
+        params = event.get('queryStringParameters') or {}
+        if not params.get('cronSecret'):
+            return _resp(405, {'error': 'Method not allowed'})
+        body_data = dict(params)
+    elif method == 'POST':
+        body_data = json.loads(event.get('body') or '{}')
+    else:
         return _resp(405, {'error': 'Method not allowed'})
 
-    body_data = json.loads(event.get('body') or '{}')
     action = body_data.get('action')
     actor_id = body_data.get('actorId')
     actor_name = body_data.get('actorName')

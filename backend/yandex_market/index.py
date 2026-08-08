@@ -300,9 +300,11 @@ def handler(event: dict, context) -> dict:
 
     # Ночной планировщик тянет заказы сам, без открытой CRM. Ключ сверяем только если он
     # пришёл: из интерфейса вызов идёт как раньше, без ключа.
-    if body_data.get('cronSecret'):
+    # Ключ берём и из адреса — планировщик умеет дёргать только простую ссылку.
+    cron_key = body_data.get('cronSecret') or params.get('cronSecret')
+    if cron_key:
         cron_secret = os.environ.get('CRON_SECRET', '')
-        if not cron_secret or body_data['cronSecret'] != cron_secret:
+        if not cron_secret or cron_key != cron_secret:
             return _resp(403, {'error': 'Неверный ключ планировщика'})
         # В журнале должно быть видно, что заказы подтянул планировщик, а не сотрудник.
         actor_id, actor_name = None, 'Планировщик'

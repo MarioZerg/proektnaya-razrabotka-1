@@ -334,6 +334,33 @@ def handler(event: dict, context) -> dict:
 
     if method == 'GET':
         params = event.get('queryStringParameters') or {}
+
+        # Запуск по расписанию. Планировщик умеет дёргать только простую ссылку без тела
+        # запроса, поэтому загрузку возвратов разрешаем и через адрес:
+        # ?action=sync&cronSecret=... Ключ обязателен — иначе загрузку запустит любой,
+        # кто знает адрес.
+        if params.get('action') == 'sync':
+            cron_secret = os.environ.get('CRON_SECRET', '')
+            if not cron_secret or params.get('cronSecret') != cron_secret:
+                return _resp(403, {'error': 'Неверный ключ планировщика'})
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                days = int(params.get('days') or 30)
+                ozon = sync_ozon(cur, days)
+                wb = sync_wb(cur, days)
+                total_created = ozon['created'] + wb['created']
+                if total_created:
+                    log_action(
+                        cur, None, 'Планировщик', 'sync',
+                        f'Загрузка возвратов: новых {total_created}',
+                        {'ozon': ozon, 'wb': wb},
+                    )
+                conn.commit()
+                return _resp(200, {'ozon': ozon, 'wildberries': wb, 'created': total_created})
+            finally:
+                conn.close()
+
         status_filter = (params.get('status') or '').strip()
         mp_filter = (params.get('marketplace') or '').strip()
 
