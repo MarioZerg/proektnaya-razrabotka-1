@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
@@ -59,6 +60,17 @@ const KioskWorkspace = ({
   onCloseShift,
   onCloseShiftClick,
 }: KioskWorkspaceProps) => {
+  // Раз в полминуты сверяем текущее время с разрешённым: как только смена отработана,
+  // кнопка закрытия включается сама — сотруднику не нужно перезаходить в терминал.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const closeAt = shift?.canCloseAt ? new Date(shift.canCloseAt) : null;
+  const canCloseNow = !closeAt || now >= closeAt.getTime();
+
   return (
     <div className="min-h-screen bg-background">
       {/* Автовыход из профиля при бездействии: предупреждение через минуту, отсчёт 30 сек.
@@ -162,20 +174,38 @@ const KioskWorkspace = ({
         {screen === 'shift' && (
           <div className="mx-auto max-w-xl space-y-4">
             {shift?.isOpen ? (
-              <Button
-                size="lg"
-                variant="destructive"
-                className="h-20 w-full text-xl"
-                onClick={onCloseShiftClick}
-                disabled={shiftSaving}
-              >
-                <Icon
-                  name={shiftSaving ? 'Loader2' : 'LogOut'}
-                  size={28}
-                  className={`mr-2 ${shiftSaving ? 'animate-spin' : ''}`}
-                />
-                Закрыть смену
-              </Button>
+              <>
+                {/* Пока рабочее время не вышло, кнопка неактивна и показывает, когда
+                    смену можно будет закрыть. Досрочно закрывает только администратор. */}
+                {closeAt && !canCloseNow && (
+                  <div className="rounded-md border border-border p-4 text-center">
+                    <p className="text-muted-foreground">Смену можно закрыть в</p>
+                    <p className="font-mono-tech text-4xl font-bold">
+                      {closeAt.toLocaleTimeString('ru-RU', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Раньше смену закроет только администратор
+                    </p>
+                  </div>
+                )}
+                <Button
+                  size="lg"
+                  variant="destructive"
+                  className="h-20 w-full text-xl"
+                  onClick={onCloseShiftClick}
+                  disabled={shiftSaving || !canCloseNow}
+                >
+                  <Icon
+                    name={shiftSaving ? 'Loader2' : 'LogOut'}
+                    size={28}
+                    className={`mr-2 ${shiftSaving ? 'animate-spin' : ''}`}
+                  />
+                  Закрыть смену
+                </Button>
+              </>
             ) : (
               <Button
                 size="lg"

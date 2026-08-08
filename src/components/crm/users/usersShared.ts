@@ -46,6 +46,10 @@ export interface CardFormState {
   workshop: string;
   shiftFrom: string;
   shiftTo: string;
+  /** График работы: '2/2', '5/2' или пусто, если не задан. */
+  workSchedule: string;
+  /** Допустимое опоздание в минутах (строкой — поле ввода). */
+  lateToleranceMinutes: string;
   newPassword: string;
   avatarBase64: string;
   maxUserId: string;

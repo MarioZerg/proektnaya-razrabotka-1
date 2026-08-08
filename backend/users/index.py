@@ -13,6 +13,24 @@ import psycopg2
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner', 'admin', 'manager'}
 
 
+# График по умолчанию для каждой должности. Цех работает сменами 2/2 по 12 часов,
+# склад и офис — обычной пятидневкой. Нужен, чтобы новичку не выставлять время вручную.
+SCHEDULE_BY_ROLE = {
+    'sewer': ('2/2', '07:00', '19:00'),
+    'cutter': ('2/2', '07:00', '19:00'),
+    'packer': ('2/2', '07:00', '19:00'),
+    'storekeeper': ('5/2', '08:00', '17:00'),
+    'senior_storekeeper': ('5/2', '08:00', '17:00'),
+    'manager': ('5/2', '08:00', '17:00'),
+    'cleaner': ('5/2', '08:00', '17:00'),
+}
+
+
+def default_schedule_for_role(role):
+    """Возвращает (график, начало, конец) по должности или (None, None, None)."""
+    return SCHEDULE_BY_ROLE.get((role or '').strip(), (None, None, None))
+
+
 def hash_password(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(salt), 100000).hex()
 
@@ -106,7 +124,8 @@ def handler(event: dict, context) -> dict:
                 "SELECT id, login, email, full_name, role, workshop, salary, "
                 "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number, "
                 "max_user_id, phone, registered_via_max, shift_free, salary_unlock_at, "
-                "CEIL(GREATEST(0, EXTRACT(EPOCH FROM (salary_unlock_at - now())) / 86400))::int "
+                "CEIL(GREATEST(0, EXTRACT(EPOCH FROM (salary_unlock_at - now())) / 86400))::int, "
+                "work_schedule, COALESCE(late_tolerance_minutes, 15) "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -140,6 +159,10 @@ def handler(event: dict, context) -> dict:
                     # осталось, и может открыть раньше опытному работнику.
                     'salaryUnlockAt': (r[18].isoformat() + 'Z') if r[18] else None,
                     'salaryDaysLeft': int(r[19]) if r[19] is not None else 0,
+                    # График работы: 2/2 (цех, 12 часов) или 5/2 (склад и офис).
+                    'workSchedule': r[20],
+                    # Сколько минут опоздания прощается, прежде чем начислится штраф.
+                    'lateToleranceMinutes': r[21],
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows
@@ -255,6 +278,24 @@ def handler(event: dict, context) -> dict:
                     val = body_data['shiftTo']
                     shift_to_val = f"'{val}'" if val else 'NULL'
                     fields.append(f"shift_to = {shift_to_val}")
+                # Выбор графика сразу проставляет часы работы: 2/2 — с 07:00 до 19:00,
+                # 5/2 — с 08:00 до 17:00. Часы потом можно поправить вручную.
+                if 'workSchedule' in body_data:
+                    sched = (body_data['workSchedule'] or '').strip()
+                    if sched in ('2/2', '5/2'):
+                        fields.append(f"work_schedule = '{sched}'")
+                        if 'shiftFrom' not in body_data and 'shiftTo' not in body_data:
+                            hours = ('07:00', '19:00') if sched == '2/2' else ('08:00', '17:00')
+                            fields.append(f"shift_from = '{hours[0]}'")
+                            fields.append(f"shift_to = '{hours[1]}'")
+                    else:
+                        fields.append("work_schedule = NULL")
+                if 'lateToleranceMinutes' in body_data:
+                    try:
+                        tol = max(0, int(body_data['lateToleranceMinutes']))
+                    except (TypeError, ValueError):
+                        tol = 15
+                    fields.append(f"late_tolerance_minutes = {tol}")
                 if 'isActive' in body_data:
                     fields.append(f"is_active = {'true' if body_data['isActive'] else 'false'}")
                 if 'maxUserId' in body_data:
@@ -345,6 +386,19 @@ def handler(event: dict, context) -> dict:
                     'UPDATE user_roles SET is_approved = true WHERE user_id = %s AND role = %s',
                     (int(user_id), role),
                 )
+
+                # График новичку подставляем сразу, чтобы админу не вводить его руками:
+                # цех работает 2/2 с 07:00 до 19:00, офисные должности — 5/2 с 08:00 до 17:00.
+                # Если админ уже задал время вручную, не трогаем.
+                schedule, t_from, t_to = default_schedule_for_role(role)
+                if schedule:
+                    cur.execute(
+                        "UPDATE users SET work_schedule = COALESCE(work_schedule, %s), "
+                        "shift_from = COALESCE(shift_from, %s::time), "
+                        "shift_to = COALESCE(shift_to, %s::time), updated_at = now() "
+                        "WHERE id = %s",
+                        (schedule, t_from, t_to, int(user_id)),
+                    )
 
                 # При утверждении заявки админ задаёт сотруднику пароль — до этого момента
                 # войти по паролю нельзя. Логин отдаём обратно, чтобы админ продиктовал

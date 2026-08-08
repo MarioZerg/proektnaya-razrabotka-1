@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from datetime import datetime, timedelta
 
 import psycopg2
 
@@ -483,6 +484,24 @@ def handler(event: dict, context) -> dict:
                 )
                 s_row = cur.fetchone()
 
+                # Во сколько сотрудник сможет закрыть смену: отсчёт от фактического
+                # прихода, длительность — по графику из профиля. Терминал показывает
+                # это время и до него держит кнопку закрытия неактивной.
+                can_close_at = None
+                if s_row:
+                    cur.execute(
+                        "SELECT shift_from, shift_to FROM users WHERE id = %s", (user_id,)
+                    )
+                    sch = cur.fetchone()
+                    if sch and sch[0] and sch[1]:
+                        opened = s_row[1]
+                        start_dt = datetime.combine(opened.date(), sch[0])
+                        end_dt = datetime.combine(opened.date(), sch[1])
+                        if end_dt <= start_dt:
+                            end_dt += timedelta(days=1)
+                        base = opened if opened > start_dt else start_dt
+                        can_close_at = (base + (end_dt - start_dt)).isoformat() + 'Z'
+
                 return {
                     'statusCode': 200,
                     'headers': headers,
@@ -499,6 +518,7 @@ def handler(event: dict, context) -> dict:
                             'openedAt': (s_row[1].isoformat() + 'Z') if s_row else None,
                             'workshopId': s_row[2] if s_row else None,
                             'shiftNumber': s_row[3] if s_row else None,
+                            'canCloseAt': can_close_at,
                         },
                     }),
                 }

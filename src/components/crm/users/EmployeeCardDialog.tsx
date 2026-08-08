@@ -178,8 +178,38 @@ const EmployeeCardDialog = ({
               </div>
             </div>
 
+            {/* Выбор графика сам проставляет часы: 2/2 — цеховая смена 12 часов,
+                5/2 — обычная пятидневка. Часы ниже можно поправить вручную. */}
+            <div className="space-y-1.5">
+              <Label>График работы</Label>
+              <Select
+                value={cardForm.workSchedule || 'none'}
+                onValueChange={(v) =>
+                  setCardForm((f) => {
+                    if (!f) return f;
+                    if (v === '2/2') {
+                      return { ...f, workSchedule: v, shiftFrom: '07:00', shiftTo: '19:00' };
+                    }
+                    if (v === '5/2') {
+                      return { ...f, workSchedule: v, shiftFrom: '08:00', shiftTo: '17:00' };
+                    }
+                    return { ...f, workSchedule: '' };
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Не задан" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="2/2">2/2 — смена 12 часов (07:00–19:00)</SelectItem>
+                  <SelectItem value="5/2">5/2 — пятидневка (08:00–17:00)</SelectItem>
+                  <SelectItem value="none">Не задан</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <div>
-              <Label>График — когда можно открыть смену</Label>
+              <Label>Часы работы</Label>
               <div className="mt-1.5 grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">С</Label>
@@ -198,6 +228,25 @@ const EmployeeCardDialog = ({
                   />
                 </div>
               </div>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Столько длится смена. Закрыть её можно через это время после прихода:
+                пришёл в 7:14 — закроет в 19:14
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Допустимое опоздание, минут</Label>
+              <Input
+                type="number"
+                min={0}
+                value={cardForm.lateToleranceMinutes}
+                onChange={(e) =>
+                  setCardForm((f) => f && { ...f, lateToleranceMinutes: e.target.value })
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Опоздание в пределах этого времени не штрафуется
+              </p>
             </div>
 
             {/* Зарплата новичка закрыта первые 2 недели: человек осваивается, суммы

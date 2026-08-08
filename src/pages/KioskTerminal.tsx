@@ -152,13 +152,14 @@ const KioskTerminal = () => {
             openedAt: found?.openedAt ?? null,
             workshopId: found?.sessionWorkshopId ?? null,
             shiftNumber: found?.sessionShiftNumber ?? found?.shiftNumber ?? null,
+            canCloseAt: found?.canCloseAt ?? null,
           });
         })
         .catch(() =>
-          setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null }),
+          setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null, canCloseAt: null }),
         );
     } else {
-      setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null });
+      setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null, canCloseAt: null });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPreview, user]);
@@ -217,6 +218,8 @@ const KioskTerminal = () => {
         openedAt: res.openedAt,
         workshopId: res.workshopId,
         shiftNumber: res.shiftNumber,
+        // Время закрытия приходит сразу при открытии — сотрудник видит его на экране.
+        canCloseAt: res.canCloseAt ?? null,
       });
       toast({
         title: 'Смена открыта',
@@ -269,7 +272,7 @@ const KioskTerminal = () => {
     try {
       await closeShift(user.id);
       playShiftCloseSound();
-      setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null });
+      setShift({ isOpen: false, openedAt: null, workshopId: null, shiftNumber: null, canCloseAt: null });
       // Смена закрыта — возвращаем сотрудника на стартовый экран терминала.
       setEnteredMenu(false);
       setScreen('menu');

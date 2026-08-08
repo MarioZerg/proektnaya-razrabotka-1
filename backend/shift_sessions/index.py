@@ -61,6 +61,37 @@ def get_setting(cur, workshop_id, key, default=None):
     return default
 
 
+def shift_close_allowed_at(cur, user_id, opened_at):
+    """Во сколько сотрудник сможет закрыть смену.
+
+    Считаем от фактического прихода, а не от расписания: график 07:00–19:00 — это
+    12 часов работы, значит пришедший в 7:14 закрывает смену в 19:14. Опоздавший
+    дорабатывает своё, а не уходит вместе со всеми.
+
+    Возвращает datetime или None, если график не задан (тогда не ограничиваем).
+    """
+    cur.execute(
+        "SELECT shift_from, shift_to FROM users WHERE id = %s",
+        (int(user_id),),
+    )
+    row = cur.fetchone()
+    if not row or not row[0] or not row[1]:
+        return None
+
+    start, end = row[0], row[1]
+    start_dt = datetime.combine(opened_at.date(), start)
+    end_dt = datetime.combine(opened_at.date(), end)
+    # Ночная смена (например с 19:00 до 07:00) заканчивается на следующий день.
+    if end_dt <= start_dt:
+        end_dt += timedelta(days=1)
+
+    duration = end_dt - start_dt
+    # Пришёл раньше начала смены — отсчёт всё равно ведём от её начала по графику,
+    # иначе ранний приход сокращал бы рабочий день.
+    base = opened_at if opened_at > start_dt else start_dt
+    return base + duration
+
+
 def count_orders_in_work(cur, user_id, role):
     """Сколько у сотрудника незавершённых заказов — тех, из-за которых нельзя закрыть смену.
 
@@ -332,12 +363,17 @@ def handler(event: dict, context) -> dict:
                 latest = latest_by_user.get(uid)
                 is_open = bool(latest and latest[1] is None)
                 opened_at = (latest[0].isoformat() + 'Z') if is_open else None
+                # Время закрытия считаем от фактического прихода: смена длится столько,
+                # сколько заложено графиком. Пришёл в 7:14 при графике 07:00-19:00 —
+                # закроет в 19:14, то есть отработает свои 12 часов.
                 can_close_at = None
-                if is_open and shift_to:
-                    close_dt = datetime.combine(latest[0].date(), shift_to)
-                    if shift_from and shift_to < shift_from:
-                        close_dt += timedelta(days=1)
-                    can_close_at = close_dt.isoformat() + 'Z'
+                if is_open and shift_from and shift_to:
+                    start_dt = datetime.combine(latest[0].date(), shift_from)
+                    end_dt = datetime.combine(latest[0].date(), shift_to)
+                    if end_dt <= start_dt:
+                        end_dt += timedelta(days=1)
+                    base = latest[0] if latest[0] > start_dt else start_dt
+                    can_close_at = (base + (end_dt - start_dt)).isoformat() + 'Z'
                 session_workshop_id = latest[2] if is_open else None
                 session_shift_number = latest[3] if is_open else None
                 session_workshop_name = latest[5] if is_open else None
@@ -550,7 +586,16 @@ def handler(event: dict, context) -> dict:
                         start_time = datetime.strptime(str(start_time_str)[:5], '%H:%M').time()
                         now_dt = datetime.now()
                         start_dt = datetime.combine(now_dt.date(), start_time)
-                        is_late = now_dt > start_dt
+                        # Небольшая задержка опозданием не считается: пробки, очередь
+                        # к терминалу. Допуск берём из профиля сотрудника (по умолчанию
+                        # 15 минут) — штраф начисляется только за выход за его пределы.
+                        cur.execute(
+                            "SELECT COALESCE(late_tolerance_minutes, 15) FROM users WHERE id = %s",
+                            (int(user_id),),
+                        )
+                        tol_row = cur.fetchone()
+                        tolerance = int(tol_row[0]) if tol_row else 15
+                        is_late = now_dt > start_dt + timedelta(minutes=tolerance)
                     except ValueError:
                         is_late = False
 
@@ -591,6 +636,10 @@ def handler(event: dict, context) -> dict:
                             shift_session_id=new_id,
                         )
 
+                # Сразу говорим, во сколько смену можно будет закрыть — сотрудник видит
+                # это на терминале при открытии и не подходит к кнопке раньше времени.
+                close_at = shift_close_allowed_at(cur, user_id, opened_at)
+
                 conn.commit()
                 return {
                     'statusCode': 200,
@@ -601,6 +650,7 @@ def handler(event: dict, context) -> dict:
                         'workshopId': workshop_id,
                         'shiftNumber': shift_number,
                         'isLate': is_late,
+                        'canCloseAt': (close_at.isoformat() + 'Z') if close_at else None,
                     }),
                 }
 
@@ -731,14 +781,33 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
 
                 cur.execute(
-                    "SELECT id, workshop_id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "SELECT id, workshop_id, opened_at FROM shift_sessions "
+                    "WHERE user_id = %s AND closed_at IS NULL "
                     "ORDER BY opened_at DESC LIMIT 1",
                     (int(user_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Открытой смены не найдено'})}
-                session_id, session_workshop_id = row
+                session_id, session_workshop_id, session_opened_at = row
+
+                # Смену нельзя закрыть раньше, чем отработана её длительность по графику.
+                # Отсчёт идёт от фактического прихода: пришёл в 7:14 при графике 12 часов —
+                # закрыть сможет в 19:14. Так смена не закрывается раньше времени, а тот,
+                # кто опоздал, не уходит вместе со всеми. Администратор закрывает в любой
+                # момент — он разбирает нештатные ситуации вручную.
+                can_close_at = shift_close_allowed_at(cur, user_id, session_opened_at)
+                if can_close_at and not bool(body_data.get('closedByAdmin')):
+                    if datetime.now() < can_close_at:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Смену можно закрыть в {can_close_at.strftime("%H:%M")} — '
+                                         f'рабочее время ещё не вышло',
+                                'canCloseAt': can_close_at.isoformat() + 'Z',
+                            }, ensure_ascii=False),
+                        }
 
                 # Швея и закройщик не закрывают смену, пока за ними числятся заказы на их
                 # этапе: иначе работа зависает до утра и её никто не подхватит. Администратор закрыть

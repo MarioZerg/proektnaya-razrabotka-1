@@ -98,6 +98,11 @@ export interface OpenShiftResult {
   shiftNumber: number;
   /** Смена открыта позже начала рабочего дня — зафиксировано опоздание. */
   isLate?: boolean;
+  /**
+   * Во сколько смену можно будет закрыть: время прихода плюс длительность смены
+   * по графику. До этого момента кнопка закрытия на терминале неактивна.
+   */
+  canCloseAt?: string | null;
 }
 
 export const openShift = (
