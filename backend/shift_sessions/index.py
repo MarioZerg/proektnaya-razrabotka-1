@@ -623,6 +623,7 @@ def handler(event: dict, context) -> dict:
                 # (shift_session_id, type) на случай повторного вызова. Если смену открыл
                 # администратор ЗА сотрудника (с дашборда) — сотрудник не виноват в том,
                 # когда именно за него открыли смену, поэтому штраф не начисляется.
+                charged_penalty = 0
                 if is_late and not opened_by_admin:
                     penalty = get_setting(cur, workshop_id, 'late_opened_shift_penalty')
                     try:
@@ -635,6 +636,18 @@ def handler(event: dict, context) -> dict:
                             f'Опоздание при открытии смены (после {start_time_str})',
                             shift_session_id=new_id,
                         )
+                        charged_penalty = penalty_amount
+
+                # На сколько именно опоздал — считаем от начала смены по графику,
+                # чтобы показать сотруднику конкретное время, а не просто «опоздание».
+                late_minutes = 0
+                if is_late and start_time_str:
+                    try:
+                        st = datetime.strptime(str(start_time_str)[:5], '%H:%M').time()
+                        st_dt = datetime.combine(opened_at.date(), st)
+                        late_minutes = max(0, int((opened_at - st_dt).total_seconds() // 60))
+                    except ValueError:
+                        late_minutes = 0
 
                 # Сразу говорим, во сколько смену можно будет закрыть — сотрудник видит
                 # это на терминале при открытии и не подходит к кнопке раньше времени.
@@ -650,6 +663,11 @@ def handler(event: dict, context) -> dict:
                         'workshopId': workshop_id,
                         'shiftNumber': shift_number,
                         'isLate': is_late,
+                        # На сколько минут опоздал и сколько за это удержано —
+                        # терминал показывает это сотруднику сразу после открытия.
+                        'lateMinutes': late_minutes,
+                        'penaltyAmount': charged_penalty,
+                        'shiftStart': str(start_time_str)[:5] if start_time_str else None,
                         'canCloseAt': (close_at.isoformat() + 'Z') if close_at else None,
                     }),
                 }

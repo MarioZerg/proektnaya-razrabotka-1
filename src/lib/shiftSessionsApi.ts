@@ -103,6 +103,12 @@ export interface OpenShiftResult {
    * по графику. До этого момента кнопка закрытия на терминале неактивна.
    */
   canCloseAt?: string | null;
+  /** На сколько минут сотрудник опоздал к началу смены. */
+  lateMinutes?: number;
+  /** Сколько удержано за опоздание, рублей. */
+  penaltyAmount?: number;
+  /** Во сколько смена должна была начаться по графику. */
+  shiftStart?: string | null;
 }
 
 export const openShift = (

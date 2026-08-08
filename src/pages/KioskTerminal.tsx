@@ -44,6 +44,12 @@ const KioskTerminal = () => {
   // Смену не дали закрыть из-за незавершённых заказов — показываем это крупно на экране,
   // а не всплывашкой: на планшете в цеху её легко пропустить.
   const [closeBlocked, setCloseBlocked] = useState<string>('');
+  // Опоздание показываем во весь экран сразу после открытия смены.
+  const [lateInfo, setLateInfo] = useState<{
+    minutes: number;
+    penalty: number;
+    start: string | null;
+  } | null>(null);
   const [screen, setScreen] = useState<KioskScreen>('menu');
   // После скана QR сотрудник сначала попадает на экран смены и только потом, нажав
   // «Войти в терминал», переходит в меню с плитками.
@@ -221,10 +227,18 @@ const KioskTerminal = () => {
         // Время закрытия приходит сразу при открытии — сотрудник видит его на экране.
         canCloseAt: res.canCloseAt ?? null,
       });
-      toast({
-        title: 'Смена открыта',
-        description: res.isLate ? 'Отмечено опоздание' : `Смена №${res.shiftNumber ?? '—'}`,
-      });
+      if (res.isLate && (res.lateMinutes ?? 0) > 0) {
+        setLateInfo({
+          minutes: res.lateMinutes ?? 0,
+          penalty: res.penaltyAmount ?? 0,
+          start: res.shiftStart ?? null,
+        });
+      } else {
+        toast({
+          title: 'Смена открыта',
+          description: `Смена №${res.shiftNumber ?? '—'}`,
+        });
+      }
     } catch (e) {
       playScanErrorSound();
       toast({
@@ -322,6 +336,8 @@ const KioskTerminal = () => {
         defectCheck={defectCheck}
         setDefectCheck={setDefectCheck}
         closeBlocked={closeBlocked}
+        lateInfo={lateInfo}
+        onDismissLate={() => setLateInfo(null)}
         onDismissCloseBlocked={() => setCloseBlocked('')}
         onLogout={handleLogout}
         onOpenShift={handleOpenShift}

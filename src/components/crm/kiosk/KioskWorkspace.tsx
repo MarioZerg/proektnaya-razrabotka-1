@@ -31,6 +31,9 @@ interface KioskWorkspaceProps {
   /** Сообщение о том, что смену нельзя закрыть из-за незавершённых заказов. */
   closeBlocked: string;
   onDismissCloseBlocked: () => void;
+  /** Данные об опоздании — показываем во весь экран сразу после открытия смены. */
+  lateInfo: { minutes: number; penalty: number; start: string | null } | null;
+  onDismissLate: () => void;
   onLogout: () => void;
   /** Открыть смену. Внутри терминала цех и смена уже известны — передаём null,
    * и они берутся те же, что при входе. */
@@ -55,6 +58,8 @@ const KioskWorkspace = ({
   setDefectCheck,
   closeBlocked,
   onDismissCloseBlocked,
+  lateInfo,
+  onDismissLate,
   onLogout,
   onOpenShift,
   onCloseShift,
@@ -76,6 +81,36 @@ const KioskWorkspace = ({
       {/* Автовыход из профиля при бездействии: предупреждение через минуту, отсчёт 30 сек.
           В режиме проверки таймер не нужен — админ может спокойно изучать экраны. */}
       {!isPreview && <KioskIdleTimer onTimeout={onLogout} />}
+
+      {/* Опоздание. Смену открыть дали — работа важнее, но человек должен увидеть,
+          на сколько опоздал и что за это удержано. Во весь экран: на планшете в цеху
+          маленькое уведомление легко пропустить. */}
+      {lateInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+          <div className="w-full max-w-lg space-y-4 rounded-lg bg-background p-6 text-center">
+            <Icon name="Clock" size={48} className="mx-auto text-amber-600" />
+            <p className="text-2xl font-bold">Вы опоздали</p>
+            <p className="font-mono-tech text-5xl font-bold text-amber-600">
+              {lateInfo.minutes >= 60
+                ? `${Math.floor(lateInfo.minutes / 60)} ч ${lateInfo.minutes % 60} мин`
+                : `${lateInfo.minutes} мин`}
+            </p>
+            {lateInfo.start && (
+              <p className="text-base text-muted-foreground">
+                Смена начинается в {lateInfo.start}
+              </p>
+            )}
+            {lateInfo.penalty > 0 && (
+              <p className="text-lg font-medium">
+                Удержано {lateInfo.penalty.toLocaleString('ru-RU')} ₽
+              </p>
+            )}
+            <Button size="lg" className="h-16 w-full text-lg" onClick={onDismissLate}>
+              Понятно, начать работу
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Смену не дали закрыть: за швеёй или закройщиком ещё числятся заказы. Показываем
           это во весь экран — на планшете в цеху всплывашку легко не заметить. */}

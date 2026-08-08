@@ -232,18 +232,30 @@ def handler(event: dict, context) -> dict:
 
                 avatar_url = upload_avatar(avatar_base64) if avatar_base64 else None
 
+                # График и цех подставляем по должности, если админ не указал их сам:
+                # цеховые роли — 2/2 с 07:00 до 19:00 в Цехе №1, остальные — 5/2 с 08:00 до 17:00.
+                schedule, def_from, def_to = default_schedule_for_role(role)
+                if not shift_from and def_from:
+                    shift_from = def_from
+                if not shift_to and def_to:
+                    shift_to = def_to
+                if not workshop and schedule == '2/2':
+                    workshop = 'Цех №1'
+
                 full_name_esc = full_name.replace("'", "''")
                 role_esc = role.replace("'", "''")
                 workshop_esc = workshop.replace("'", "''")
                 avatar_sql = f"'{avatar_url}'" if avatar_url else 'NULL'
                 shift_from_sql = f"'{shift_from}'" if shift_from else 'NULL'
                 shift_to_sql = f"'{shift_to}'" if shift_to else 'NULL'
+                schedule_sql = f"'{schedule}'" if schedule else 'NULL'
 
                 cur.execute(
                     f"INSERT INTO users (login, password_hash, password_salt, full_name, email, role, "
-                    f"workshop, salary, shift_from, shift_to, avatar_url) "
+                    f"workshop, salary, shift_from, shift_to, avatar_url, work_schedule) "
                     f"VALUES ('{login_esc}', '{pwd_hash}', '{salt}', '{full_name_esc}', '{email_esc}', "
-                    f"'{role_esc}', '{workshop_esc}', {float(salary)}, {shift_from_sql}, {shift_to_sql}, {avatar_sql}) "
+                    f"'{role_esc}', '{workshop_esc}', {float(salary)}, {shift_from_sql}, {shift_to_sql}, {avatar_sql}, "
+                    f"{schedule_sql}) "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
@@ -392,12 +404,17 @@ def handler(event: dict, context) -> dict:
                 # Если админ уже задал время вручную, не трогаем.
                 schedule, t_from, t_to = default_schedule_for_role(role)
                 if schedule:
+                    # Производственные должности сажаем в Цех №1 — основной. Если админ
+                    # уже выбрал цех вручную, оставляем его.
+                    default_workshop = 'Цех №1' if schedule == '2/2' else None
                     cur.execute(
                         "UPDATE users SET work_schedule = COALESCE(work_schedule, %s), "
                         "shift_from = COALESCE(shift_from, %s::time), "
-                        "shift_to = COALESCE(shift_to, %s::time), updated_at = now() "
+                        "shift_to = COALESCE(shift_to, %s::time), "
+                        "workshop = COALESCE(NULLIF(workshop, ''), %s), "
+                        "updated_at = now() "
                         "WHERE id = %s",
-                        (schedule, t_from, t_to, int(user_id)),
+                        (schedule, t_from, t_to, default_workshop, int(user_id)),
                     )
 
                 # При утверждении заявки админ задаёт сотруднику пароль — до этого момента
