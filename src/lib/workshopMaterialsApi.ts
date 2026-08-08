@@ -5,6 +5,9 @@ export interface WorkshopMaterialCell {
   shiftNumber: number | null;
   quantity: number;
   rollCount: number;
+  /** Сколько из этого остатка ещё не принято сменой (материал в пути). */
+  pendingQuantity?: number;
+  pendingRolls?: number;
 }
 
 export interface WorkshopMaterialRow {
@@ -14,6 +17,12 @@ export interface WorkshopMaterialRow {
   cells: WorkshopMaterialCell[];
   totalQuantity: number;
   totalRolls: number;
+  /**
+   * Отгружено в цех, но смена не подтвердила приёмку. Такой материал числится
+   * на остатках, но в раскрой не идёт, пока поставку не примут.
+   */
+  pendingQuantity?: number;
+  pendingRolls?: number;
 }
 
 export interface WorkshopMaterialType {

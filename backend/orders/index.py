@@ -74,7 +74,10 @@ def write_off_materials_once(cur, order_id, material, width, height):
         qty_needed = float(qty_needed)
         cur.execute(
             "SELECT id, remaining_quantity FROM rolls "
-            "WHERE material_id = %s AND status IN ('in_storage', 'in_workshop') AND remaining_quantity > 0 "
+            # Рулон «в пути» (отгружен в цех, но не принят сменой) в раскрой не идёт:
+            # материал мог не доехать. Такой рулон ждёт подтверждения приёмки.
+            "WHERE material_id = %s AND remaining_quantity > 0 "
+            "AND (status = 'in_storage' OR (status = 'in_workshop' AND accepted_at IS NOT NULL)) "
             "ORDER BY created_at ASC",
             (material_id,),
         )
@@ -791,7 +794,8 @@ def handler(event: dict, context) -> dict:
                     for gm_id, gm_total in group_need.items():
                         cur.execute(
                             "SELECT COALESCE(SUM(remaining_quantity), 0) FROM rolls "
-                            "WHERE material_id = %s AND status IN ('in_storage', 'in_workshop') "
+                            "WHERE material_id = %s "
+                            "AND (status = 'in_storage' OR (status = 'in_workshop' AND accepted_at IS NOT NULL)) "
                             "AND remaining_quantity > 0",
                             (gm_id,),
                         )
@@ -1399,7 +1403,10 @@ def handler(event: dict, context) -> dict:
 
                             cur.execute(
                                     "SELECT id, remaining_quantity FROM rolls "
-                                    "WHERE material_id = %s AND status IN ('in_storage', 'in_workshop') AND remaining_quantity > 0 "
+                                    # Рулон «в пути» (отгружен в цех, но не принят сменой) в раскрой не идёт:
+            # материал мог не доехать. Такой рулон ждёт подтверждения приёмки.
+            "WHERE material_id = %s AND remaining_quantity > 0 "
+            "AND (status = 'in_storage' OR (status = 'in_workshop' AND accepted_at IS NOT NULL)) "
                                     "ORDER BY created_at ASC",
                                     (material_id,),
                             )

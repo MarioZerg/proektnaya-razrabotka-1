@@ -965,10 +965,12 @@ def handler(event: dict, context) -> dict:
                 if not roll_ids:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Соберите хотя бы один рулон перед отправкой'})}
 
+                # accepted_at = NULL — рулон уехал в цех, но пока «в пути»: в раскрой он
+                # не идёт, пока смена не пересчитает привезённое и не примет заявку.
                 for roll_id in roll_ids:
                     cur.execute(
                         f"UPDATE rolls SET status = 'in_workshop', workshop_id = {int(workshop_id)}, "
-                        f"shift_number = {int(shift_number)} WHERE id = {roll_id}"
+                        f"shift_number = {int(shift_number)}, accepted_at = NULL WHERE id = {roll_id}"
                     )
 
                 cur.execute(
@@ -1018,6 +1020,17 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     f"UPDATE shipments SET status = 'Получено', completed_at = now(), reject_reason = NULL "
                     f"WHERE id = {int(shipment_id)}"
+                )
+
+                # Только теперь рулоны заявки становятся рабочими: до подтверждения они
+                # числились «в пути» и в раскрой не шли. Смена пересчитала привезённое —
+                # значит, материал реально доехал и его можно резать.
+                cur.execute(
+                    "UPDATE rolls SET accepted_at = now() "
+                    "WHERE id IN (SELECT roll_id FROM shipment_items "
+                    "WHERE shipment_id = %s AND roll_id IS NOT NULL) "
+                    "AND accepted_at IS NULL",
+                    (int(shipment_id),),
                 )
 
                 # Успешное получение этой заявки снимает блокировку автозаказа (если она

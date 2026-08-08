@@ -171,6 +171,13 @@ const WorkshopMaterials = () => {
                                   : `0 ${m.unit}, 0 рул.`;
                               })()
                             : `${formatQuantity(m.totalQuantity)} ${m.unit}, ${m.totalRolls} рул.`}
+                          {/* Часть остатка ещё не принята сменой: материал доехал до цеха,
+                              но в работу не пойдёт, пока поставку не подтвердят. */}
+                          {(m.pendingQuantity ?? 0) > 0 && (
+                            <div className="text-xs font-medium text-amber-600">
+                              в пути: {formatQuantity(m.pendingQuantity ?? 0)} {m.unit}
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}

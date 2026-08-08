@@ -117,7 +117,11 @@ def handler(event: dict, context) -> dict:
         cur.execute(
             f"SELECT mt.id, mt.name, mt.sort_order, m.id, m.name, m.unit, m.sort_order, "
             f"r.workshop_id, r.shift_number, "
-            f"SUM(r.remaining_quantity), COUNT(r.id) "
+            f"SUM(r.remaining_quantity), COUNT(r.id), "
+            # Отдельно считаем непринятое: рулон отгружен в цех, но смена его ещё
+            # не подтвердила. Такой материал показывается как «в пути» и в раскрой не идёт.
+            f"COALESCE(SUM(r.remaining_quantity) FILTER (WHERE r.accepted_at IS NULL), 0), "
+            f"COUNT(r.id) FILTER (WHERE r.accepted_at IS NULL) "
             f"FROM rolls r "
             f"JOIN materials m ON m.id = r.material_id "
             f"JOIN material_types mt ON mt.id = m.type_id "
@@ -131,7 +135,7 @@ def handler(event: dict, context) -> dict:
         types_map = {}
         materials_map = {}
         for (type_id, type_name, _type_sort, material_id, material_name, unit, _mat_sort,
-             r_workshop_id, shift_number, qty, roll_count) in rows:
+             r_workshop_id, shift_number, qty, roll_count, pending_qty, pending_rolls) in rows:
             if type_id not in types_map:
                 types_map[type_id] = {'id': type_id, 'name': type_name, 'materials': []}
             if material_id not in materials_map:
@@ -142,6 +146,9 @@ def handler(event: dict, context) -> dict:
                     'cells': [],
                     'totalQuantity': 0.0,
                     'totalRolls': 0,
+                    # Сколько из остатка ещё не принято сменой.
+                    'pendingQuantity': 0.0,
+                    'pendingRolls': 0,
                 }
                 materials_map[material_id] = mat_entry
                 types_map[type_id]['materials'].append(mat_entry)
@@ -152,9 +159,13 @@ def handler(event: dict, context) -> dict:
                 'shiftNumber': shift_number,
                 'quantity': float(qty),
                 'rollCount': roll_count,
+                'pendingQuantity': float(pending_qty or 0),
+                'pendingRolls': pending_rolls or 0,
             })
             entry['totalQuantity'] += float(qty)
             entry['totalRolls'] += roll_count
+            entry['pendingQuantity'] += float(pending_qty or 0)
+            entry['pendingRolls'] += pending_rolls or 0
 
         result = list(types_map.values())
     finally:

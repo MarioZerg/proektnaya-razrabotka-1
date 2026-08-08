@@ -211,8 +211,9 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
         </p>
       ) : (
         visibleRolls.map((r) => {
-          // Рулон доступен, только если по нему уже было движение материала в этой смене.
-          const active = !!r.usedInShift;
+          // Рулон доступен, только если по нему уже было движение материала в этой смене
+          // и поставка принята: непринятый материал мог не доехать, работать с ним нельзя.
+          const active = !!r.usedInShift && !r.pendingAcceptance;
           return (
             <button
               key={r.id}
@@ -225,8 +226,14 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
               <div className="min-w-0">
                 <div className="font-mono-tech text-lg font-bold">#{r.barcode}</div>
                 <div className="text-muted-foreground">{r.materialName}</div>
-                {!active && (
-                  <div className="text-xs text-muted-foreground">Нет движения в смене</div>
+                {r.pendingAcceptance ? (
+                  <div className="text-xs font-medium text-amber-600">
+                    Не принят — подтвердите поставку
+                  </div>
+                ) : (
+                  !active && (
+                    <div className="text-xs text-muted-foreground">Нет движения в смене</div>
+                  )
                 )}
               </div>
               <Badge variant="secondary" className="shrink-0 text-base">

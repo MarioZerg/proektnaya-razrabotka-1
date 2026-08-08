@@ -663,7 +663,7 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 f"SELECT r.id, r.barcode, r.material_id, m.name, m.unit, r.workshop_id, w.name, "
                 f"r.shift_number, r.initial_quantity, r.remaining_quantity, r.status, "
-                f"r.created_at, r.completed_at, COALESCE(r.shortage_quantity, 0) "
+                f"r.created_at, r.completed_at, COALESCE(r.shortage_quantity, 0), r.accepted_at "
                 f"FROM rolls r "
                 f"LEFT JOIN materials m ON m.id = r.material_id "
                 f"LEFT JOIN workshops w ON w.id = r.workshop_id "
@@ -686,6 +686,9 @@ def handler(event: dict, context) -> dict:
                     'createdAt': r[11].isoformat() + 'Z',
                     'completedAt': (r[12].isoformat() + 'Z') if r[12] else None,
                     'shortageQuantity': float(r[13] or 0),
+                    # Рулон отгружен в цех, но смена его ещё не приняла: работать с ним
+                    # нельзя, пока заявку не подтвердят. Терминал помечает такие рулоны.
+                    'pendingAcceptance': r[10] == 'in_workshop' and r[14] is None,
                     'usedInShift': r[0] in used_roll_ids,
                 }
                 for r in cur.fetchall()
@@ -831,12 +834,23 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id и quantity'})}
 
                 cur.execute(
-                    "SELECT remaining_quantity, material_id FROM rolls WHERE id = %s",
+                    "SELECT remaining_quantity, material_id, status, accepted_at FROM rolls WHERE id = %s",
                     (int(item_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+                # Рулон отгружен в цех, но смена его не приняла — материал мог не доехать
+                # или приехать не в том количестве. Сначала приёмка, потом работа.
+                if row[2] == 'in_workshop' and row[3] is None:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Рулон ещё не принят сменой. Подтвердите приёмку поставки, '
+                                     'потом списывайте материал'
+                        }, ensure_ascii=False),
+                    }
 
                 remaining, material_id = row
                 new_remaining = float(remaining) - float(quantity)
