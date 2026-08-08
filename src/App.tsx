@@ -21,6 +21,7 @@ const ReturnToSupplier = lazy(() => import("./pages/shipments/ReturnToSupplier")
 const DefectWriteoff = lazy(() => import("./pages/shipments/DefectWriteoff"));
 const ToMarketplace = lazy(() => import("./pages/shipments/ToMarketplace"));
 const ReceiveReturns = lazy(() => import("./pages/shipments/ReceiveReturns"));
+const ReturnPickupCodes = lazy(() => import("./pages/shipments/ReturnPickupCodes"));
 const MarketplaceSupplyShow = lazy(() => import("./pages/shipments/MarketplaceSupplyShow"));
 const MarketplaceSupplyAssemble = lazy(() => import("./pages/shipments/MarketplaceSupplyAssemble"));
 const GoodsWarehouse = lazy(() => import("./pages/inventory/GoodsWarehouse"));
@@ -94,6 +95,7 @@ const App = () => (
             <Route path="/crm/shipments/return-to-supplier" element={<ReturnToSupplier />} />
             <Route path="/crm/shipments/defect-writeoff" element={<DefectWriteoff />} />
             <Route path="/crm/shipments/receive-returns" element={<ReceiveReturns />} />
+            <Route path="/crm/shipments/return-codes" element={<ReturnPickupCodes />} />
             <Route path="/crm/shipments/to-marketplace" element={<ToMarketplace />} />
             <Route path="/crm/shipments/to-marketplace/:id" element={<MarketplaceSupplyShow />} />
             <Route path="/crm/shipments/to-marketplace/:id/assemble" element={<MarketplaceSupplyAssemble />} />

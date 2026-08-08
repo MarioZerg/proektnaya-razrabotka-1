@@ -153,6 +153,8 @@ const storekeeperNav: NavItem[] = [
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
       { label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' },
       { label: 'Получение возвратов', path: '/crm/shipments/receive-returns' },
+      // Штрихкоды продавца: без них возвраты на ПВЗ не выдают.
+      { label: 'Коды для ПВЗ', path: '/crm/shipments/return-codes' },
     ],
   },
   {
@@ -226,6 +228,8 @@ const adminNav: NavItem[] = [
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
       { label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' },
       { label: 'Получение возвратов', path: '/crm/shipments/receive-returns' },
+      // Штрихкоды продавца: без них возвраты на ПВЗ не выдают.
+      { label: 'Коды для ПВЗ', path: '/crm/shipments/return-codes' },
     ],
   },
   {
