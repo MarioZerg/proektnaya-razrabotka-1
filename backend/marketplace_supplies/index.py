@@ -1418,12 +1418,25 @@ def handler(event: dict, context) -> dict:
                                     rate_row = cur.fetchone()
                                     rate = float(rate_row[0]) if rate_row else 0
                                     if rate > 0:
+                                        # Оклад за смену — один раз в день. Две смены за день
+                                        # (своя и гостевая в другом цехе) — это разные записи
+                                        # смен, защита по смене их не ловит. От задвоения
+                                        # спасает дневной уникальный индекс, но он бьёт
+                                        # ошибкой и рвёт сборку поставки, поэтому проверяем
+                                        # день заранее.
                                         cur.execute(
-                                            f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
-                                            f"VALUES ({creator_id}, 'storekeeper_shift', {rate}, {session_id}, "
-                                            f"'Оклад за смену (сборка поставки #{supply_id})') "
-                                            f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                                            "SELECT 1 FROM salary_accruals WHERE user_id = %s "
+                                            "AND type = 'storekeeper_shift' "
+                                            "AND accrued_for = CURRENT_DATE",
+                                            (int(creator_id),),
                                         )
+                                        if not cur.fetchone():
+                                            cur.execute(
+                                                f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
+                                                f"VALUES ({creator_id}, 'storekeeper_shift', {rate}, {session_id}, "
+                                                f"'Оклад за смену (сборка поставки #{supply_id})') "
+                                                f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                                            )
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

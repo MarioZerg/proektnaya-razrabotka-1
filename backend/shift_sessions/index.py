@@ -712,11 +712,23 @@ def handler(event: dict, context) -> dict:
                         rate_row = cur.fetchone()
                         rate = float(rate_row[0]) if rate_row else 0
                         if rate > 0:
+                            # Оклад за смену платим ОДИН раз в день. Если сотрудник за день
+                            # отработал две смены (свою и гостевую в другом цехе), это разные
+                            # записи смен, и защита по смене их не ловит — от задвоения
+                            # спасает дневной уникальный индекс. Но он бьёт ошибкой и рвёт
+                            # закрытие смены, поэтому проверяем день заранее и просто не
+                            # начисляем второй оклад.
                             cur.execute(
-                                f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
-                                f"VALUES ({int(user_id)}, 'cleaner_shift', {rate}, {session_id}, 'Оклад за смену') "
-                                f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                                "SELECT 1 FROM salary_accruals WHERE user_id = %s "
+                                "AND type = 'cleaner_shift' AND accrued_for = CURRENT_DATE",
+                                (int(user_id),),
                             )
+                            if not cur.fetchone():
+                                cur.execute(
+                                    f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
+                                    f"VALUES ({int(user_id)}, 'cleaner_shift', {rate}, {session_id}, 'Оклад за смену') "
+                                    f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                                )
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
