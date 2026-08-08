@@ -1,0 +1,37 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get vacations list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Create without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Cancel without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "cancel"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "nope"},
+      "expectedStatus": 400
+    }
+  ]
+}

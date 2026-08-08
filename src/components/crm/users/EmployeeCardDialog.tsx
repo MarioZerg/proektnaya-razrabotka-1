@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/select';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import Icon from '@/components/ui/icon';
+import VacationSection from '@/components/crm/users/VacationSection';
 import { useToast } from '@/hooks/use-toast';
 import { roleLabels, type Role } from '@/lib/roles';
 import type { Employee } from '@/lib/usersApi';
@@ -387,6 +388,10 @@ const EmployeeCardDialog = ({
                 </Select>
               )}
             </div>
+
+            {/* Отпуска: две недели, дважды за рабочий год, и только один человек
+                от смены одновременно. Показывается лишь тем должностям, кому положен. */}
+            <VacationSection userId={cardEmployee.id} role={cardForm.role} />
 
             <Button
               onClick={onSave}
