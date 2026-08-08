@@ -280,10 +280,17 @@ def handler(event: dict, context) -> dict:
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
 
+                # Вместе с начислением отдаём смену, за которую оно сделано (цех, номер,
+                # время). Нужно для окладов: если сотрудник за день отработал две смены —
+                # свою и гостевую в чужом цехе — по отчёту сразу видно, что оклад
+                # начислен один раз и за какую именно смену.
                 cur.execute(
                     "SELECT sa.id, sa.type, sa.amount, sa.description, o.order_number, "
-                    "sa.accrued_for, sa.created_at, sa.paid_at "
+                    "sa.accrued_for, sa.created_at, sa.paid_at, "
+                    "w.name, ss.shift_number, ss.opened_at "
                     "FROM salary_accruals sa LEFT JOIN orders o ON o.id = sa.order_id "
+                    "LEFT JOIN shift_sessions ss ON ss.id = sa.shift_session_id "
+                    "LEFT JOIN workshops w ON w.id = ss.workshop_id "
                     "WHERE sa.user_id = %s ORDER BY sa.created_at DESC LIMIT 200",
                     (int(user_id),),
                 )
@@ -297,6 +304,9 @@ def handler(event: dict, context) -> dict:
                         'accruedFor': r[5].isoformat(),
                         'createdAt': r[6].isoformat() + 'Z',
                         'paidAt': (r[7].isoformat() + 'Z') if r[7] else None,
+                        'shiftWorkshopName': r[8],
+                        'shiftNumber': r[9],
+                        'shiftOpenedAt': (r[10].isoformat() + 'Z') if r[10] else None,
                     }
                     for r in cur.fetchall()
                 ]
@@ -363,9 +373,12 @@ def handler(event: dict, context) -> dict:
 
             cur.execute(
                 f"SELECT sa.id, sa.user_id, u.full_name, sa.type, sa.amount, sa.description, "
-                f"o.order_number, sa.accrued_for, sa.created_at, sa.paid_at "
+                f"o.order_number, sa.accrued_for, sa.created_at, sa.paid_at, "
+                f"w.name, ss.shift_number, ss.opened_at, u.workshop "
                 f"FROM salary_accruals sa JOIN users u ON u.id = sa.user_id "
                 f"LEFT JOIN orders o ON o.id = sa.order_id "
+                f"LEFT JOIN shift_sessions ss ON ss.id = sa.shift_session_id "
+                f"LEFT JOIN workshops w ON w.id = ss.workshop_id "
                 f"{where_clause} "
                 f"ORDER BY sa.created_at DESC LIMIT {per_page} OFFSET {offset}"
             )
@@ -381,6 +394,11 @@ def handler(event: dict, context) -> dict:
                     'accruedFor': r[7].isoformat(),
                     'createdAt': r[8].isoformat() + 'Z',
                     'paidAt': (r[9].isoformat() + 'Z') if r[9] else None,
+                    'shiftWorkshopName': r[10],
+                    'shiftNumber': r[11],
+                    'shiftOpenedAt': (r[12].isoformat() + 'Z') if r[12] else None,
+                    # Оклад начислен за смену в чужом цехе — сотрудник работал гостем.
+                    'shiftIsGuest': bool(r[10] and r[13] and r[10] != r[13]),
                 }
                 for r in cur.fetchall()
             ]

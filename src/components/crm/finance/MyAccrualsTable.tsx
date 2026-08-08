@@ -8,7 +8,12 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import type { MyAccrual } from '@/lib/salaryApi';
-import { accrualTypeLabels, formatDate, formatMoney } from '@/components/crm/finance/financeShared';
+import {
+  accrualTypeLabels,
+  formatAccrualShift,
+  formatDate,
+  formatMoney,
+} from '@/components/crm/finance/financeShared';
 
 interface MyAccrualsTableProps {
   accruals: MyAccrual[];
@@ -43,6 +48,10 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">{a.description}</p>
+            {/* За какую смену начислен оклад — видно, что за день заплатили один раз. */}
+            {formatAccrualShift(a) && (
+              <p className="mt-0.5 text-xs text-muted-foreground">{formatAccrualShift(a)}</p>
+            )}
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
               <span className="text-muted-foreground">{formatDate(a.accruedFor)}</span>
               {a.paidAt ? (
@@ -87,8 +96,15 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
               <TableRow key={a.id}>
                 <TableCell className="text-xs">{accrualTypeLabels[a.type] || a.type}</TableCell>
                 <TableCell className="font-mono-tech text-xs">{a.orderNumber || '—'}</TableCell>
-                <TableCell className="max-w-[280px] truncate text-xs" title={a.description}>
-                  {a.description}
+                <TableCell className="max-w-[280px] text-xs">
+                  <p className="truncate" title={a.description}>
+                    {a.description}
+                  </p>
+                  {formatAccrualShift(a) && (
+                    <p className="mt-0.5 truncate text-muted-foreground">
+                      {formatAccrualShift(a)}
+                    </p>
+                  )}
                 </TableCell>
                 <TableCell className={`whitespace-nowrap font-medium ${a.amount < 0 ? 'text-destructive' : ''}`}>
                   {formatMoney(a.amount)} ₽

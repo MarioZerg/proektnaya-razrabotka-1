@@ -14,7 +14,12 @@ import {
 } from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
 import type { SalaryOperation } from '@/lib/salaryApi';
-import { accrualTypeLabels, formatDateTime, formatMoney } from '@/components/crm/finance/financeShared';
+import {
+  accrualTypeLabels,
+  formatAccrualShift,
+  formatDateTime,
+  formatMoney,
+} from '@/components/crm/finance/financeShared';
 import EditAccrualDialog from '@/components/crm/finance/EditAccrualDialog';
 import ConfirmDeleteButton from '@/components/crm/finance/ConfirmDeleteButton';
 
@@ -80,6 +85,12 @@ const OperationsTable = ({
                 {op.orderNumber ? `Заказ #${op.orderNumber} — ` : ''}
                 {op.description}
               </p>
+              {formatAccrualShift(op) && (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {formatAccrualShift(op)}
+                  {op.shiftIsGuest ? ' · гость' : ''}
+                </p>
+              )}
 
               <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
                 <p>Начислено за: {op.accruedFor}</p>
@@ -148,9 +159,19 @@ const OperationsTable = ({
                   <TableCell>{op.userName}</TableCell>
                   <TableCell>{op.accruedFor}</TableCell>
                   <TableCell className="whitespace-nowrap">{formatMoney(op.amount)} ₽</TableCell>
-                  <TableCell className="max-w-[280px] truncate" title={op.description}>
-                    {op.orderNumber ? `Заказ #${op.orderNumber} — ` : ''}
-                    {op.description}
+                  <TableCell className="max-w-[280px]">
+                    <p className="truncate" title={op.description}>
+                      {op.orderNumber ? `Заказ #${op.orderNumber} — ` : ''}
+                      {op.description}
+                    </p>
+                    {/* За какую смену начислен оклад: при двух сменах за день видно,
+                        что заплачено один раз и именно за эту смену. */}
+                    {formatAccrualShift(op) && (
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {formatAccrualShift(op)}
+                        {op.shiftIsGuest ? ' · гость' : ''}
+                      </p>
+                    )}
                   </TableCell>
                   <TableCell className="whitespace-nowrap">{formatDateTime(op.createdAt)}</TableCell>
                   <TableCell className="whitespace-nowrap">{op.paidAt ? formatDateTime(op.paidAt) : '—'}</TableCell>

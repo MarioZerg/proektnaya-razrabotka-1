@@ -17,7 +17,15 @@ export const fetchSalaryRates = async (workshopId: number): Promise<SalaryRate[]
   return data.rates || [];
 };
 
-export interface SalaryOperation {
+/** Смена, за которую сделано начисление оклада (у сдельных начислений пусто). */
+export interface AccrualShiftInfo {
+  /** Цех, в котором сотрудник работал в эту смену. */
+  shiftWorkshopName?: string | null;
+  shiftNumber?: number | null;
+  shiftOpenedAt?: string | null;
+}
+
+export interface SalaryOperation extends AccrualShiftInfo {
   id: number;
   userId: number;
   userName: string;
@@ -26,6 +34,8 @@ export interface SalaryOperation {
   description: string;
   orderNumber: string | null;
   accruedFor: string;
+  /** Оклад начислен за смену в чужом цехе — сотрудник работал гостем. */
+  shiftIsGuest?: boolean;
   createdAt: string;
   paidAt: string | null;
 }
@@ -89,7 +99,7 @@ export const fetchSalaryPayouts = async (userId?: number): Promise<SalaryPayout[
   return data.payouts || [];
 };
 
-export interface MyAccrual {
+export interface MyAccrual extends AccrualShiftInfo {
   id: number;
   type: string;
   amount: number;
