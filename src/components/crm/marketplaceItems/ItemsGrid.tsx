@@ -129,9 +129,12 @@ const ItemsGrid = ({
                   <div className="text-sm text-muted-foreground">
                     {item.width && item.height ? `${item.width}×${item.height}` : '—'}
                   </div>
-                  {(item.wbSku || item.barcode) && (
+                  {(item.wbSku || item.ymSku || item.barcode) && (
                     <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                       {item.wbSku && <span>WB: {item.wbSku}</span>}
+                      {/* Артикул Яндекса — только если он отличается от общего.
+                          Пусто — заказы находят товар по общему артикулу или штрихкоду. */}
+                      {item.ymSku && <span>Яндекс: {item.ymSku}</span>}
                       {item.barcode && <span>Баркод: {item.barcode}</span>}
                     </div>
                   )}

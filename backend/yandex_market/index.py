@@ -61,6 +61,26 @@ def ym_get(path, api_key):
         return 0, {'raw': str(e)[:500]}
 
 
+def ym_post(path, api_key, payload=None):
+    """POST к Partner API. Каталог товаров отдаётся только этим методом."""
+    body = json.dumps(payload or {}).encode('utf-8')
+    req = urllib.request.Request(YM_API_BASE + path, data=body, method='POST')
+    req.add_header('Api-Key', api_key)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = r.read().decode('utf-8')
+            return r.status, (json.loads(data) if data else {})
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode('utf-8', 'replace')
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {'raw': raw[:500]}
+    except Exception as e:
+        return 0, {'raw': str(e)[:500]}
+
+
 def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None):
     """Ищет товар справочника по кодам из заказа Яндекса.
 
@@ -376,6 +396,92 @@ def handler(event: dict, context) -> dict:
                     }
                     for c in (data.get('campaigns') or [])
                 ] if isinstance(data, dict) else data,
+            })
+
+        if action == 'match_items':
+            # Проставляет товарам артикул Яндекса: тянет каталог кабинета и сопоставляет
+            # его с нашим справочником по штрихкоду, а затем по общему артикулу.
+            # Штрихкод надёжнее — он одинаков во всех системах, а артикулы расходятся.
+            # businessId экран передаёт со второго вызова — экономим запрос к Яндексу,
+            # иначе на каждую страницу каталога уходило бы два обращения вместо одного.
+            business_id = (body_data.get('businessId') or '').strip()
+            if not business_id:
+                st, camp = ym_get(f'/campaigns/{campaign_id}', api_key)
+                business_id = (((camp or {}).get('campaign') or {}).get('business') or {}).get('id')
+                if not business_id:
+                    return _resp(200, {'ok': False, 'error': 'Не удалось определить кабинет',
+                                       'status': st, 'details': camp})
+
+            # Каталог большой, за один вызов целиком не проходит — берём по одной странице
+            # и возвращаем метку следующей. Экран вызывает действие повторно, пока метка
+            # не опустеет: так укладываемся в лимит времени на вызов.
+            page_token = (body_data.get('pageToken') or '').strip() or None
+            path = f'/businesses/{business_id}/offer-mappings?limit=50'
+            if page_token:
+                path += f'&page_token={page_token}'
+            st, data = ym_post(path, api_key, {})
+            if st != 200:
+                return _resp(200, {'ok': False, 'error': 'Каталог недоступен',
+                                   'status': st, 'details': data})
+            result = (data or {}).get('result') or {}
+            offers = result.get('offerMappings') or []
+            next_token = (result.get('paging') or {}).get('nextPageToken')
+
+            # Справочник маленький (сотни строк) — читаем его целиком одним запросом
+            # и сопоставляем в памяти. Так на страницу каталога уходит один поход в базу
+            # вместо сотни, иначе функция не укладывается в отведённое время.
+            cur.execute(
+                "SELECT id, sku, barcode, COALESCE(ym_sku, '') FROM marketplace_items"
+            )
+            by_barcode, by_sku = {}, {}
+            for r in cur.fetchall():
+                if r[2]:
+                    by_barcode.setdefault(str(r[2]).strip(), r)
+                if r[1]:
+                    by_sku.setdefault(str(r[1]).strip(), r)
+
+            updated, already, not_found, to_update = 0, 0, [], []
+            for om in offers:
+                offer = om.get('offer') or {}
+                ym_code = (offer.get('offerId') or '').strip()
+                if not ym_code:
+                    continue
+
+                row = None
+                for b in (offer.get('barcodes') or []):
+                    row = by_barcode.get(str(b).strip())
+                    if row:
+                        break
+                if not row:
+                    row = by_sku.get(ym_code)
+
+                if not row:
+                    not_found.append({'offerId': ym_code, 'name': offer.get('name') or ''})
+                    continue
+                if row[3] == ym_code:
+                    already += 1
+                    continue
+                to_update.append((ym_code, row[0]))
+
+            for ym_code, item_id in to_update:
+                cur.execute(
+                    "UPDATE marketplace_items SET ym_sku = %s, updated_at = now() WHERE id = %s",
+                    (ym_code, item_id),
+                )
+                updated += 1
+
+            conn.commit()
+            return _resp(200, {
+                'ok': True,
+                'offersInYandex': len(offers),
+                'updated': updated,
+                'alreadySet': already,
+                'notFound': len(not_found),
+                'notFoundSample': not_found[:20],
+                # Пока метка не пуста — есть ещё страницы каталога.
+                'nextPageToken': next_token or '',
+                'businessId': str(business_id),
+                'done': not next_token,
             })
 
         if action == 'check':
