@@ -315,6 +315,26 @@ export interface DefectRoll {
   reasons: DefectReason[];
 }
 
+/** Цех, куда сотрудник может выйти сегодня, и его активные смены. */
+export interface OpenShiftWorkshop {
+  id: number;
+  name: string;
+  shifts: number[];
+}
+
+/** Активные цеха и смены — из чего сотрудник выбирает при открытии смены на терминале.
+ * Производственные роли работают гибко и могут выйти в любой цех, а не только в свой. */
+export const fetchOpenShiftOptions = async (): Promise<OpenShiftWorkshop[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'open_shift_options' }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить цеха');
+  return data.workshops || [];
+};
+
 /** Рулоны цеха, по которым можно оформить брак, вместе с подходящими причинами.
  * Пакеты и этикетки сюда не попадают — по ним брак не ведут. */
 export const fetchDefectRolls = async (

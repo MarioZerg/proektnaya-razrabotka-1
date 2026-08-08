@@ -158,9 +158,13 @@ const KioskTerminal = () => {
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
-  // Открытие/закрытие смены прямо на терминале: цех берётся из адреса киоска, смена — из
-  // персонального QR-кода сотрудника (или из его профиля, если в коде её нет).
-  const handleOpenShift = async () => {
+  // Открытие/закрытие смены прямо на терминале. Цех и смену сотрудник выбирает на экране
+  // входа: производственные роли работают гибко и могут выйти в чужой цех как гости.
+  // По умолчанию подставлен цех этого терминала, поэтому в обычный день выбирать нечего.
+  const handleOpenShift = async (
+    chosenWorkshopId: number | null,
+    chosenShiftNumber: number | null
+  ) => {
     if (!user) return;
     // В режиме проверки смену не открываем: админ смотрит терминал, а не работает за него.
     if (isPreview) {
@@ -169,7 +173,11 @@ const KioskTerminal = () => {
     }
     setShiftSaving(true);
     try {
-      const res = await openShift(user.id, Number(workshopId) || null, user.shiftFromCode ?? null);
+      const res = await openShift(
+        user.id,
+        chosenWorkshopId ?? Number(workshopId) ?? null,
+        chosenShiftNumber ?? user.shiftFromCode ?? null
+      );
       playShiftOpenSound();
       setShift({
         isOpen: true,

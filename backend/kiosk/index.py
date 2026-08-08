@@ -1162,6 +1162,30 @@ def handler(event: dict, context) -> dict:
                     }, ensure_ascii=False),
                 }
 
+            if action == 'open_shift_options':
+                # Куда сотрудник может выйти сегодня: активные цеха и их активные смены.
+                # Нужно для терминала — производственные роли (швея, закройщик, упаковщица)
+                # работают гибко и могут открыть смену в любом цехе, а не только в своём.
+                # Без этого списка терминал подставлял цех «по адресу» и смену не указывал,
+                # из-за чего открыть смену в чужом цехе было невозможно.
+                cur.execute(
+                    "SELECT w.id, w.name, s.shift_number "
+                    "FROM workshops w JOIN shifts s ON s.workshop_id = w.id "
+                    "WHERE w.is_active = true AND s.is_active = true "
+                    "ORDER BY w.id, s.shift_number"
+                )
+                by_workshop = {}
+                for w_id, w_name, s_num in cur.fetchall():
+                    entry = by_workshop.setdefault(
+                        w_id, {'id': w_id, 'name': w_name, 'shifts': []}
+                    )
+                    entry['shifts'].append(s_num)
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'workshops': list(by_workshop.values())}, ensure_ascii=False),
+                }
+
             if action == 'defect_reasons':
                 # Рулоны цеха, по которым можно оформить брак, и причины для каждого.
                 # Отдаём вместе: терминалу нужен и список рулонов, и подходящие причины —

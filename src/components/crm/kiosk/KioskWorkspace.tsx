@@ -31,7 +31,9 @@ interface KioskWorkspaceProps {
   closeBlocked: string;
   onDismissCloseBlocked: () => void;
   onLogout: () => void;
-  onOpenShift: () => void;
+  /** Открыть смену. Внутри терминала цех и смена уже известны — передаём null,
+   * и они берутся те же, что при входе. */
+  onOpenShift: (workshopId: number | null, shiftNumber: number | null) => void;
   onCloseShift: () => void;
   onCloseShiftClick: () => void;
 }
@@ -178,7 +180,7 @@ const KioskWorkspace = ({
               <Button
                 size="lg"
                 className="h-20 w-full bg-emerald-600 text-xl text-white hover:bg-emerald-700"
-                onClick={onOpenShift}
+                onClick={() => onOpenShift(null, null)}
                 disabled={shiftSaving}
               >
                 <Icon
