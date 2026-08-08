@@ -188,13 +188,27 @@ const ReturnPickupCodes = () => {
                   </p>
 
                   {item.code ? (
-                    <p className="text-center font-mono-tech text-sm text-muted-foreground">
-                      {item.code}
-                    </p>
+                    <>
+                      <p className="text-center font-mono-tech text-sm text-muted-foreground">
+                        {item.code}
+                      </p>
+                      {/* У OZON код меняется каждый день: вчерашний на ПВЗ не примут,
+                          поэтому прямо предупреждаем, что нужно обновить. */}
+                      {item.dailyRefresh && !item.updatedToday && (
+                        <p className="rounded bg-destructive/10 px-2 py-1 text-center text-sm font-medium text-destructive">
+                          Код устарел — обновите его сегодня
+                        </p>
+                      )}
+                    </>
                   ) : (
                     <p className="text-center text-sm text-amber-600">
                       Код не заполнен — возврат не получить
                     </p>
+                  )}
+
+                  {/* Где именно взять код в кабинете площадки. */}
+                  {item.hint && (
+                    <p className="text-xs text-muted-foreground">{item.hint}</p>
                   )}
 
                   {isAdmin && (
@@ -229,6 +243,12 @@ const ReturnPickupCodes = () => {
               <p className="text-center text-sm text-muted-foreground">
                 Покажите этот код приёмщику на пункте выдачи
               </p>
+              {shown?.dailyRefresh && !shown?.updatedToday && (
+                <p className="rounded-md bg-destructive/10 px-3 py-2 text-center text-sm font-medium text-destructive">
+                  Код обновляется раз в сутки, а этот сохранён не сегодня — возьмите
+                  свежий в личном кабинете, иначе возврат не выдадут
+                </p>
+              )}
             </div>
           </DialogContent>
         </Dialog>
@@ -247,8 +267,14 @@ const ReturnPickupCodes = () => {
                   placeholder="Например: 1234567890"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Постоянный код продавца — по нему на ПВЗ выдают все возвраты
+                  {editing?.hint || 'Код продавца — по нему на ПВЗ выдают все возвраты'}
                 </p>
+                {editing?.dailyRefresh && (
+                  <p className="rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                    Этот код меняется каждый день — обновляйте его утром перед поездкой
+                    на пункт выдачи
+                  </p>
+                )}
               </div>
               <Button onClick={handleSave} disabled={saving} className="w-full">
                 {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Сохранить'}

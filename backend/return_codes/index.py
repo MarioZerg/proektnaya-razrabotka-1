@@ -59,7 +59,10 @@ def handler(event: dict, context) -> dict:
                 waiting[key] = waiting.get(key, 0) + int(cnt)
 
             cur.execute(
-                "SELECT marketplace_code, title, code, code_type, COALESCE(comment, ''), updated_at "
+                "SELECT marketplace_code, title, code, code_type, COALESCE(comment, ''), updated_at, "
+                "COALESCE(hint, ''), daily_refresh, "
+                # Свежесть кода: у площадок с ежедневным обновлением вчерашний уже не примут.
+                "(updated_at::date = CURRENT_DATE) "
                 "FROM return_pickup_codes ORDER BY title"
             )
             items = [
@@ -72,6 +75,11 @@ def handler(event: dict, context) -> dict:
                     'updatedAt': r[5].isoformat() + 'Z' if r[5] else None,
                     # Сколько посылок ждёт на ПВЗ по этой площадке.
                     'waitingCount': waiting.get(r[0], 0),
+                    # Где взять код в личном кабинете площадки.
+                    'hint': r[6],
+                    # Код обновляется раз в сутки (OZON) — вчерашний не сработает.
+                    'dailyRefresh': bool(r[7]),
+                    'updatedToday': bool(r[8]),
                 }
                 for r in cur.fetchall()
             ]

@@ -12,6 +12,12 @@ export interface ReturnPickupCode {
   updatedAt: string | null;
   /** Сколько возвратов уже одобрено и ждёт забора на ПВЗ этой площадки. */
   waitingCount: number;
+  /** Где взять код в личном кабинете площадки. */
+  hint: string;
+  /** Код обновляется раз в сутки (OZON) — вчерашний на ПВЗ не примут. */
+  dailyRefresh: boolean;
+  /** Код обновляли сегодня. */
+  updatedToday: boolean;
 }
 
 export const fetchReturnCodes = async (): Promise<{
