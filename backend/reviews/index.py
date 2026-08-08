@@ -125,41 +125,57 @@ def fetch_ozon_reviews(client_id, api_key):
 
 # ---------- WB ----------
 
-def fetch_wb_reviews(api_key):
-    """Отзывы WB (feedbacks-api /api/v1/feedbacks). Тянем обработанные и необработанные."""
-    reviews = []
-    for is_answered in ('false', 'true'):
-        skip = 0
-        for _ in range(50):
-            url = f'{WB_FEEDBACKS_BASE}/api/v1/feedbacks?isAnswered={is_answered}&take=1000&skip={skip}'
-            req = urllib.request.Request(url, method='GET')
-            req.add_header('Authorization', api_key)
-            try:
-                with urllib.request.urlopen(req, timeout=25) as r:
-                    data = json.loads(r.read().decode('utf-8'))
-            except urllib.error.HTTPError as e:
-                detail = e.read().decode('utf-8', errors='replace')
-                raise RuntimeError(f'WB отзывы недоступны (код {e.code}): {detail[:200]}')
-            except Exception as e:
-                raise RuntimeError(f'WB отзывы: ошибка соединения ({e})')
+def wb_get(path, api_key):
+    """GET к feedbacks-api WB. Возвращает (код ответа, разобранный JSON)."""
+    req = urllib.request.Request(WB_FEEDBACKS_BASE + path, method='GET')
+    req.add_header('Authorization', api_key)
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return r.status, json.loads(r.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode('utf-8', 'replace')
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {'raw': raw[:300]}
+    except Exception as e:
+        return 0, {'raw': str(e)[:300]}
 
-            feedbacks = ((data.get('data') or {}).get('feedbacks')) or []
-            for f in feedbacks:
-                prod = f.get('productDetails') or {}
-                reviews.append({
-                    'external_id': str(f.get('id') or ''),
-                    'srid': (f.get('srid') or '').strip(),
-                    'order_id': prod.get('orderId') or f.get('orderId'),
-                    'nm_id': str(prod.get('nmId') or ''),
-                    'product_name': (prod.get('productName') or '').strip(),
-                    'rating': f.get('productValuation'),
-                    'text': (f.get('text') or '').strip(),
-                    'review_date': _parse_dt(f.get('createdDate')),
-                })
-            if len(feedbacks) < 1000:
-                break
-            skip += 1000
-    return reviews
+
+def fetch_wb_reviews(api_key, is_answered='false', skip=0, take=1000):
+    """Одна страница отзывов WB (feedbacks-api /api/v1/feedbacks).
+
+    Раньше тянули весь архив за один вызов и упирались в лимит времени: функция
+    обрывалась на середине, в базу попадала лишь малая часть отзывов. Теперь берём
+    по одной странице, а обход всего архива идёт вызовами подряд.
+    """
+    url = f'{WB_FEEDBACKS_BASE}/api/v1/feedbacks?isAnswered={is_answered}&take={take}&skip={skip}'
+    req = urllib.request.Request(url, method='GET')
+    req.add_header('Authorization', api_key)
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = json.loads(r.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode('utf-8', errors='replace')
+        raise RuntimeError(f'WB отзывы недоступны (код {e.code}): {detail[:200]}')
+    except Exception as e:
+        raise RuntimeError(f'WB отзывы: ошибка соединения ({e})')
+
+    feedbacks = ((data.get('data') or {}).get('feedbacks')) or []
+    reviews = []
+    for f in feedbacks:
+        prod = f.get('productDetails') or {}
+        reviews.append({
+            'external_id': str(f.get('id') or ''),
+            'srid': (f.get('srid') or '').strip(),
+            'order_id': prod.get('orderId') or f.get('orderId'),
+            'nm_id': str(prod.get('nmId') or ''),
+            'product_name': (prod.get('productName') or '').strip(),
+            'rating': f.get('productValuation'),
+            'text': (f.get('text') or '').strip(),
+            'review_date': _parse_dt(f.get('createdDate')),
+        })
+    return reviews, len(feedbacks)
 
 
 # ---------- Сопоставление и сохранение ----------
@@ -200,40 +216,115 @@ def upsert_review(cur, marketplace, external_id, order_id, product_sku, product_
     return 1
 
 
-def handle_sync(cur):
+def handle_sync(cur, body_data=None):
+    """Загружает отзывы порциями.
+
+    Архив WB большой (тысячи отзывов) и целиком за один вызов не проходит — функция
+    обрывается по времени. Поэтому за раз берём одну страницу и возвращаем позицию,
+    с которой продолжить: экран вызывает синхронизацию повторно, пока не дойдёт до конца.
+    """
+    body_data = body_data or {}
     client_id, ozon_key, ozon_on = get_ozon_credentials(cur)
     wb_key, wb_on = get_wb_credentials(cur)
 
     created = 0
     warnings = []
 
-    if ozon_on and client_id and ozon_key:
-        try:
-            for rv in fetch_ozon_reviews(client_id, ozon_key):
-                order_id = match_order_ozon(cur, rv['posting_number'])
-                created += upsert_review(
-                    cur, 'OZON', rv['external_id'], order_id, rv['sku'],
-                    rv['product_name'], rv['rating'], rv['text'], rv['review_date'],
-                )
-        except Exception as e:
-            warnings.append(f'OZON: {e}')
-    elif ozon_on:
-        warnings.append('OZON: не заполнены ключи')
+    # Сколько отзывов WB уже просмотрено и какую выборку сейчас обходим.
+    wb_stage = (body_data.get('wbStage') or 'false').strip()
+    wb_skip = int(body_data.get('wbSkip') or 0)
+    # По 200 за вызов: 1000 отзывов не успевают сопоставиться с заказами за отведённое
+    # функции время, и синхронизация обрывалась на середине.
+    page_size = 200
+    done = True
+
+    # OZON тянем только на первом шаге: его отзывов немного, они проходят за раз.
+    if wb_skip == 0 and wb_stage == 'false':
+        if ozon_on and client_id and ozon_key:
+            try:
+                for rv in fetch_ozon_reviews(client_id, ozon_key):
+                    order_id = match_order_ozon(cur, rv['posting_number'])
+                    created += upsert_review(
+                        cur, 'OZON', rv['external_id'], order_id, rv['sku'],
+                        rv['product_name'], rv['rating'], rv['text'], rv['review_date'],
+                    )
+            except Exception as e:
+                # Отзывы OZON доступны только на платной подписке Premium Plus. Без неё
+                # площадка отвечает отказом — это не поломка, поэтому пишем понятно.
+                msg = str(e)
+                if 'PermissionDenied' in msg or 'subscription' in msg:
+                    warnings.append('OZON: отзывы доступны только с подпиской Premium Plus')
+                else:
+                    warnings.append(f'OZON: {msg}')
+        elif ozon_on:
+            warnings.append('OZON: не заполнены ключи')
 
     if wb_on and wb_key:
         try:
-            for rv in fetch_wb_reviews(wb_key):
-                order_id = match_order_wb(cur, rv.get('order_id'), rv.get('srid'))
+            reviews, got = fetch_wb_reviews(wb_key, wb_stage, wb_skip, page_size)
+
+            # Заказы и уже сохранённые отзывы поднимаем разом, а не по одному на отзыв:
+            # иначе на порцию уходят сотни запросов и функция не укладывается по времени.
+            ext_ids = [r['external_id'] for r in reviews if r.get('external_id')]
+            existing = set()
+            if ext_ids:
+                cur.execute(
+                    "SELECT external_id FROM reviews WHERE marketplace = 'WB' "
+                    "AND external_id = ANY(%s)",
+                    (ext_ids,),
+                )
+                existing = {r[0] for r in cur.fetchall()}
+
+            order_ids = [int(r['order_id']) for r in reviews if r.get('order_id')]
+            srids = [r['srid'] for r in reviews if r.get('srid')]
+            by_wb_order, by_number = {}, {}
+            if order_ids:
+                cur.execute(
+                    "SELECT wb_order_id, id FROM orders WHERE wb_order_id = ANY(%s)",
+                    (order_ids,),
+                )
+                by_wb_order = {r[0]: r[1] for r in cur.fetchall()}
+            if srids:
+                cur.execute(
+                    "SELECT order_number, id FROM orders WHERE order_number = ANY(%s)",
+                    (srids,),
+                )
+                by_number = {r[0]: r[1] for r in cur.fetchall()}
+
+            for rv in reviews:
+                if not rv['external_id'] or rv['external_id'] in existing:
+                    continue
+                order_id = None
+                if rv.get('order_id'):
+                    order_id = by_wb_order.get(int(rv['order_id']))
+                if not order_id and rv.get('srid'):
+                    order_id = by_number.get(rv['srid'])
                 created += upsert_review(
                     cur, 'WB', rv['external_id'], order_id, rv['nm_id'],
                     rv['product_name'], rv['rating'], rv['text'], rv['review_date'],
                 )
+            if got >= page_size:
+                wb_skip += page_size
+                done = False
+            elif wb_stage == 'false':
+                # Необработанные закончились — переходим к отвеченным, их основная масса.
+                wb_stage, wb_skip, done = 'true', 0, False
         except Exception as e:
             warnings.append(f'WB: {e}')
     elif wb_on:
         warnings.append('WB: не заполнен ключ')
 
-    return _resp(200, {'created': created, 'warnings': warnings})
+    cur.execute("SELECT COUNT(*) FROM reviews")
+    total = cur.fetchone()[0]
+
+    return _resp(200, {
+        'created': created,
+        'warnings': warnings,
+        'done': done,
+        'wbStage': wb_stage,
+        'wbSkip': wb_skip,
+        'totalInDatabase': total,
+    })
 
 
 # ---------- Выборка отзывов с циклом ----------
@@ -315,11 +406,36 @@ def handler(event: dict, context) -> dict:
             action = (event.get('queryStringParameters') or {}).get('action', 'list')
             if action == 'rating':
                 return handle_rating(cur)
+            if action == 'wb_debug':
+                # Диагностика: сколько отзывов WB реально отдаёт по каждому виду выборки.
+                # Нужна, чтобы понять, ограничение это на стороне WB или наша выгрузка.
+                wb_key, wb_on = get_wb_credentials(cur)
+                if not wb_key:
+                    return _resp(200, {'ok': False, 'error': 'Не заполнен ключ WB'})
+                out = {'enabled': wb_on}
+                st, cnt = wb_get('/api/v1/feedbacks/count', wb_key)
+                out['countEndpoint'] = {'status': st, 'data': cnt}
+                st, unans = wb_get('/api/v1/feedbacks/count-unanswered', wb_key)
+                out['unansweredEndpoint'] = {'status': st, 'data': unans}
+                for flag in ('false', 'true'):
+                    st, data = wb_get(
+                        f'/api/v1/feedbacks?isAnswered={flag}&take=1000&skip=0', wb_key
+                    )
+                    fb = ((data or {}).get('data') or {}).get('feedbacks') or []
+                    out[f'isAnswered={flag}'] = {
+                        'status': st,
+                        'returned': len(fb),
+                        'countInResponse': ((data or {}).get('data') or {}).get('countUnanswered'),
+                        'error': (data or {}).get('errorText') or '',
+                    }
+                cur.execute("SELECT COUNT(*) FROM reviews WHERE marketplace = 'WB'")
+                out['inDatabase'] = cur.fetchone()[0]
+                return _resp(200, out)
             return handle_list(cur)
         if method == 'POST':
             body_data = json.loads(event.get('body') or '{}')
             if body_data.get('action') == 'sync':
-                result = handle_sync(cur)
+                result = handle_sync(cur, body_data)
                 conn.commit()
                 return result
             return _resp(400, {'error': 'Неизвестное действие'})

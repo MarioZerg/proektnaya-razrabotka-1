@@ -49,15 +49,53 @@ export const fetchReviewsRating = async (): Promise<RatingResult> => {
   return { cutter: data.cutter || [], sewer: data.sewer || [], packer: data.packer || [] };
 };
 
+/**
+ * Загружает отзывы, проходя весь архив.
+ *
+ * Отзывов у WB тысячи, и за один запрос они не выгружаются — площадка отдаёт их
+ * страницами. Поэтому вызываем синхронизацию по кругу, пока не дойдём до конца.
+ * Если очередная страница сорвалась, пробуем её ещё раз: WB иногда отвечает не сразу.
+ */
 export const syncReviews = async (): Promise<SyncReviewsResult> => {
-  const res = await fetch(REVIEWS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'sync' }),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'Ошибка синхронизации отзывов');
+  let stage = 'false';
+  let skip = 0;
+  let created = 0;
+  const warnings: string[] = [];
+  let fails = 0;
+
+  for (let step = 0; step < 80; step += 1) {
+    let data: SyncReviewsResult & {
+      done?: boolean;
+      wbStage?: string;
+      wbSkip?: number;
+      error?: string;
+    };
+    try {
+      const res = await fetch(REVIEWS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync', wbStage: stage, wbSkip: skip }),
+      });
+      data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка синхронизации отзывов');
+      fails = 0;
+    } catch (e) {
+      fails += 1;
+      if (fails >= 3) {
+        if (created === 0) throw e;
+        break;
+      }
+      continue;
+    }
+
+    created += data.created || 0;
+    for (const w of data.warnings || []) {
+      if (!warnings.includes(w)) warnings.push(w);
+    }
+    if (data.done) break;
+    stage = data.wbStage || stage;
+    skip = data.wbSkip ?? skip;
   }
-  return data;
+
+  return { created, warnings };
 };
