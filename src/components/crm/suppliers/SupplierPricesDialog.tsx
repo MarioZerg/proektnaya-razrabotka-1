@@ -58,6 +58,9 @@ const SupplierPricesDialog = ({ supplier, onClose, onSaved }: SupplierPricesDial
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Курс поставщика — по нему сразу показываем, во что превратится валютная цена.
+  const rate = supplier?.exchangeRate ?? null;
+
   useEffect(() => {
     if (!supplier) return;
     setLoading(true);
@@ -129,6 +132,21 @@ const SupplierPricesDialog = ({ supplier, onClose, onSaved }: SupplierPricesDial
           рублёвая берётся как есть.
         </p>
 
+        {/* Курс показываем прямо здесь: иначе непонятно, во что превратится цена в долларах. */}
+        {rate ? (
+          <p className="text-sm">
+            Курс поставщика:{' '}
+            <b>
+              1 {currencySymbols[supplier?.currency || 'RUB']} = {rate} ₽
+            </b>
+          </p>
+        ) : supplier && supplier.currency !== 'RUB' ? (
+          <p className="text-sm text-destructive">
+            У поставщика не указан курс {supplier.currency} — валютные цены не пересчитаются
+            в рубли. Укажите курс в карточке поставщика.
+          </p>
+        ) : null}
+
         {loading ? (
           <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -142,6 +160,7 @@ const SupplierPricesDialog = ({ supplier, onClose, onSaved }: SupplierPricesDial
                   <TableHead>Материал</TableHead>
                   <TableHead className="w-[140px]">Цена за единицу</TableHead>
                   <TableHead className="w-[120px]">Валюта</TableHead>
+                  <TableHead className="w-[130px]">В рублях</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -152,17 +171,24 @@ const SupplierPricesDialog = ({ supplier, onClose, onSaved }: SupplierPricesDial
                       <p className="text-xs text-muted-foreground">за 1 {m.unit}</p>
                     </TableCell>
                     <TableCell>
-                      <Input
-                        inputMode="decimal"
-                        placeholder="—"
-                        value={rows[m.id]?.price ?? ''}
-                        onChange={(e) =>
-                          setRows((prev) => ({
-                            ...prev,
-                            [m.id]: { ...prev[m.id], price: e.target.value },
-                          }))
-                        }
-                      />
+                      {/* Значок валюты прямо в поле — видно, что вводишь доллары, а не рубли. */}
+                      <div className="relative">
+                        <Input
+                          inputMode="decimal"
+                          placeholder="—"
+                          className="pr-7"
+                          value={rows[m.id]?.price ?? ''}
+                          onChange={(e) =>
+                            setRows((prev) => ({
+                              ...prev,
+                              [m.id]: { ...prev[m.id], price: e.target.value },
+                            }))
+                          }
+                        />
+                        <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                          {currencySymbols[rows[m.id]?.currency || 'RUB']}
+                        </span>
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Select
@@ -185,6 +211,24 @@ const SupplierPricesDialog = ({ supplier, onClose, onSaved }: SupplierPricesDial
                           ))}
                         </SelectContent>
                       </Select>
+                    </TableCell>
+                    {/* Сразу показываем, во что превратится валютная цена — чтобы «1.4 $»
+                        не выглядело как «1.4 ₽» и ошибку было видно на месте. */}
+                    <TableCell className="text-sm">
+                      {(() => {
+                        const value = Number((rows[m.id]?.price || '').replace(',', '.'));
+                        const cur = rows[m.id]?.currency || 'RUB';
+                        if (!value) return <span className="text-muted-foreground">—</span>;
+                        if (cur === 'RUB') {
+                          return <span className="font-medium">{value.toFixed(2)} ₽</span>;
+                        }
+                        if (!rate) {
+                          return <span className="text-destructive">нужен курс</span>;
+                        }
+                        return (
+                          <span className="font-medium">{(value * rate).toFixed(2)} ₽</span>
+                        );
+                      })()}
                     </TableCell>
                   </TableRow>
                 ))}

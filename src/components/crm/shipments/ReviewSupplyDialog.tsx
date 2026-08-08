@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
-import { CURRENCIES, type Supplier } from '@/lib/suppliersApi';
+import { CURRENCIES, currencySymbols, type Supplier } from '@/lib/suppliersApi';
 import type { Material } from '@/lib/materialsApi';
 import type { ShipmentDetail } from '@/lib/shipmentsApi';
 import {
@@ -173,13 +173,20 @@ const ReviewSupplyDialog = ({
                       value={row.numberRolls}
                       onChange={(e) => updateReviewRow(idx, 'numberRolls', e.target.value)}
                     />
-                    {/* Цена за единицу у этого поставщика. Пусто — подставится прайс. */}
-                    <Input
-                      inputMode="decimal"
-                      placeholder="Цена"
-                      value={row.price ?? ''}
-                      onChange={(e) => updateReviewRow(idx, 'price', e.target.value)}
-                    />
+                    {/* Цена за единицу у этого поставщика. Пусто — подставится прайс.
+                        Значок валюты в поле: иначе «1.4» читается как рубли. */}
+                    <div className="relative">
+                      <Input
+                        inputMode="decimal"
+                        placeholder="Цена"
+                        className="pr-7"
+                        value={row.price ?? ''}
+                        onChange={(e) => updateReviewRow(idx, 'price', e.target.value)}
+                      />
+                      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                        {currencySymbols[row.currency || supplierCurrency] || ''}
+                      </span>
+                    </div>
                     <Select
                       value={row.currency || supplierCurrency}
                       onValueChange={(v) => updateReviewRow(idx, 'currency', v)}
@@ -215,7 +222,12 @@ const ReviewSupplyDialog = ({
               {/* Курс и логистика — из них складывается итоговая себестоимость метра. */}
               <div className="grid grid-cols-2 gap-3 rounded-md border border-border p-3">
                 <div className="space-y-1.5">
-                  <Label>Курс {supplierCurrency !== 'RUB' ? `${supplierCurrency} к рублю` : ''}</Label>
+                  {/* Пишем формулой: «Курс USD к рублю» не объясняет, что именно вводить. */}
+                  <Label>
+                    {supplierCurrency === 'RUB'
+                      ? 'Курс'
+                      : `Рублей за 1 ${currencySymbols[supplierCurrency] || supplierCurrency}`}
+                  </Label>
                   <Input
                     inputMode="decimal"
                     placeholder="65"

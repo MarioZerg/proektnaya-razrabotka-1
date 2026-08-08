@@ -247,7 +247,11 @@ const SuppliersSettings = () => {
                   </div>
                   {form.currency !== 'RUB' && (
                     <div className="space-y-1.5">
-                      <Label>Курс к рублю</Label>
+                      {/* Формулировка «Курс к рублю» путала: непонятно, что вводить.
+                          Пишем прямо — сколько рублей стоит одна единица валюты. */}
+                      <Label>
+                        Рублей за 1 {currencySymbols[form.currency] || form.currency}
+                      </Label>
                       <Input
                         inputMode="decimal"
                         placeholder="65"
@@ -299,11 +303,22 @@ const SuppliersSettings = () => {
                     <TableCell className="font-medium">{s.name}</TableCell>
                     <TableCell>{s.phone || '—'}</TableCell>
                     <TableCell>{s.address || '—'}</TableCell>
+                    {/* Курс пишем формулой «1 $ = 65 ₽»: просто «USD · 65» читается неоднозначно. */}
                     <TableCell>
-                      {s.currency || 'RUB'}
-                      {s.currency && s.currency !== 'RUB' && s.exchangeRate
-                        ? ` · ${s.exchangeRate} ₽`
-                        : ''}
+                      {s.currency && s.currency !== 'RUB' ? (
+                        s.exchangeRate ? (
+                          <span>
+                            1 {currencySymbols[s.currency] || s.currency} ={' '}
+                            <b>{s.exchangeRate}</b> ₽
+                          </span>
+                        ) : (
+                          <span className="text-destructive">
+                            {s.currency} — курс не указан
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-muted-foreground">Рубли</span>
+                      )}
                     </TableCell>
                     <TableCell>{s.prices?.length || 0}</TableCell>
                     <TableCell>
