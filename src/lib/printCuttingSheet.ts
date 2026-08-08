@@ -1,7 +1,12 @@
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import QRCode from 'qrcode';
+import type jsPDFType from 'jspdf';
 import type { TakenOrder } from '@/lib/ordersApi';
+
+/*
+ * Библиотеки для PDF (jspdf, html2canvas, qrcode) весят вместе больше 400 КБ и нужны
+ * ТОЛЬКО в момент печати листа закройщика. Раньше они грузились при каждом открытии
+ * страницы «Товары для пошива» — страница открывалась долго, хотя печатают редко.
+ * Теперь подгружаем их в момент нажатия на печать.
+ */
 
 /**
  * Печать "листа закройщика" по взятому стеку заказов — генерирует один PDF-файл из
@@ -161,7 +166,7 @@ const buildQrPageHtml = (
   return page(grid);
 };
 
-const renderPageToPdf = async (pdf: jsPDF, html: string, isFirstPage: boolean) => {
+const renderPageToPdf = async (pdf: jsPDFType, html: string, isFirstPage: boolean) => {
   const container = document.createElement('div');
   container.style.position = 'fixed';
   container.style.left = '-99999px';
@@ -169,6 +174,7 @@ const renderPageToPdf = async (pdf: jsPDF, html: string, isFirstPage: boolean) =
   container.innerHTML = html;
   document.body.appendChild(container);
   try {
+    const { default: html2canvas } = await import('html2canvas');
     const canvas = await html2canvas(container.firstElementChild as HTMLElement, { scale: 2 });
     const imgData = canvas.toDataURL('image/png');
     if (!isFirstPage) pdf.addPage();
@@ -188,6 +194,12 @@ export const printCuttingSheet = async (
   const grouped = groupByMaterial(orders);
   const checklistPages = chunk(grouped, ITEMS_PER_PAGE);
   const date = formatToday();
+
+  // Подгружаем тяжёлые библиотеки только сейчас — когда печать действительно нужна.
+  const [{ default: jsPDF }, { default: QRCode }] = await Promise.all([
+    import('jspdf'),
+    import('qrcode'),
+  ]);
 
   const qrEntries = await Promise.all(
     grouped.map(async (o) => [o.id, await QRCode.toDataURL(o.orderNumber, { width: 120, margin: 1 })] as const)

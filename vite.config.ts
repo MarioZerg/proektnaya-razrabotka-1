@@ -35,6 +35,25 @@ export default defineConfig(({mode}) => ({
             "@": path.resolve(__dirname, "./src"),
         },
     },
+    build: {
+        rollupOptions: {
+            output: {
+                // Раскладываем внешние библиотеки по отдельным файлам, чтобы при входе
+                // не качалось лишнее. Библиотеки печати (штрихкоды, QR, PDF) нужны только
+                // на страницах печати — пусть грузятся там, а не на экране входа.
+                // ВАЖНО: библиотеки печати (jspdf, html2canvas, qrcode, jsbarcode) здесь
+                // НЕ перечисляем. Если задать им общий файл, сборщик считает его нужным
+                // сразу и подключает к странице входа — тяжёлый PDF качался бы всем.
+                // Они подгружаются сами в момент печати (динамический import).
+                manualChunks(id: string) {
+                    if (!id.includes('node_modules')) return;
+                    if (id.includes('react-router')) return 'router';
+                    if (id.includes('@radix-ui')) return 'ui';
+                    if (id.includes('react-dom') || id.includes('/react/')) return 'react';
+                },
+            },
+        },
+    },
     server: {
         host: '0.0.0.0',
         port: 5173,
