@@ -23,6 +23,8 @@ import OrdersTable from '@/components/crm/orders/OrdersTable';
 import OrdersSummary from '@/components/crm/orders/OrdersSummary';
 import EditOrderDialog from '@/components/crm/orders/EditOrderDialog';
 import CreateManualOrderDialog from '@/components/crm/orders/CreateManualOrderDialog';
+import { findDuplicateOrders } from '@/lib/findDuplicateOrders';
+import Icon from '@/components/ui/icon';
 
 const MarketplaceOrders = () => {
   const { toast } = useToast();
@@ -304,6 +306,9 @@ const MarketplaceOrders = () => {
     return true;
   };
 
+  // Задвоенные заказы — одна вещь заведена дважды. Показываем предупреждение вверху.
+  const duplicates = findDuplicateOrders(orders);
+
   const filteredOrders = orders.filter(
     (o) =>
       matchesStatus(o) &&
@@ -315,6 +320,22 @@ const MarketplaceOrders = () => {
     <CrmLayout>
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Заказы</h1>
+
+        {!loading && duplicates.length > 0 && (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+            <Icon name="CopyX" size={18} className="mt-0.5 shrink-0 text-destructive" />
+            <div className="min-w-0">
+              <p className="font-medium text-destructive">
+                Задвоенные заказы: {duplicates.length}
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                Одна вещь попала в систему дважды — лишнюю нужно отменить, иначе на неё
+                спишется материал и начислится зарплата. Отправления:{' '}
+                {duplicates.map((d) => d.postingNumber).join(', ')}
+              </p>
+            </div>
+          </div>
+        )}
 
         {!loading && <OrdersSummary orders={orders} />}
 

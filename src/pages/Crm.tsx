@@ -26,6 +26,7 @@ import LototronCard from '@/components/crm/dashboard/LototronCard';
 import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import { isMetersUnit } from '@/lib/stockLevels';
 import { isStorekeeperRole } from '@/lib/roles';
+import { countDuplicateOrders } from '@/lib/findDuplicateOrders';
 
 const CrmDashboard = () => {
   const { user, setActiveShift } = useAuth();
@@ -245,6 +246,20 @@ const CrmDashboard = () => {
         icon: 'AlertTriangle',
         tone: 'urgent',
         path: '/crm/inventory/rolls',
+      });
+    }
+
+    // Задвоенные заказы: одна вещь попала в систему дважды. Показываем плитку ТОЛЬКО
+    // когда такие есть — в обычной ситуации она не занимает место на дашборде.
+    // Молчать нельзя: на лишнюю вещь спишется материал и начислится зарплата.
+    const duplicates = countDuplicateOrders(orders);
+    if (duplicates > 0) {
+      list.unshift({
+        label: 'Задвоенные заказы — проверить',
+        value: duplicates,
+        icon: 'CopyX',
+        tone: 'urgent',
+        path: '/crm/marketplace/orders',
       });
     }
 
