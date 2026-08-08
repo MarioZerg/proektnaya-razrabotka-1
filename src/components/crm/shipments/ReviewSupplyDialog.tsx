@@ -21,10 +21,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
-import type { Supplier } from '@/lib/suppliersApi';
+import { CURRENCIES, type Supplier } from '@/lib/suppliersApi';
 import type { Material } from '@/lib/materialsApi';
 import type { ShipmentDetail } from '@/lib/shipmentsApi';
-import { emptyRow, type ItemRow } from '@/components/crm/shipments/fromSupplierShared';
+import {
+  emptyRow,
+  calcCostPerUnit,
+  type ItemRow,
+} from '@/components/crm/shipments/fromSupplierShared';
 
 interface ReviewSupplyDialogProps {
   reviewShipment: ShipmentDetail | null;
@@ -41,6 +45,12 @@ interface ReviewSupplyDialogProps {
   rejectId: number | null;
   setRejectId: (id: number | null) => void;
   onReject: () => void;
+  /** Курс валюты на момент приёмки — подставляется из карточки поставщика. */
+  exchangeRate: string;
+  setExchangeRate: (value: string) => void;
+  /** Стоимость логистики поставки, делится поровну на все метры и штуки. */
+  logisticsCost: string;
+  setLogisticsCost: (value: string) => void;
 }
 
 const ReviewSupplyDialog = ({
@@ -58,9 +68,42 @@ const ReviewSupplyDialog = ({
   rejectId,
   setRejectId,
   onReject,
+  exchangeRate,
+  setExchangeRate,
+  logisticsCost,
+  setLogisticsCost,
 }: ReviewSupplyDialogProps) => {
   const updateReviewRow = (idx: number, field: keyof ItemRow, value: string) =>
     setReviewRows((r) => r.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
+
+  const supplier = suppliers.find((s) => String(s.id) === reviewSupplierId);
+  const supplierCurrency = supplier?.currency || 'RUB';
+
+  // Логистика делится поровну на все метры и штуки поставки.
+  const totalUnits = reviewRows.reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
+  const logisticsPerUnit =
+    totalUnits > 0 ? (Number(logisticsCost.replace(',', '.')) || 0) / totalUnits : 0;
+  const rateValue = Number(exchangeRate.replace(',', '.')) || 0;
+
+  // Предпросчёт себестоимости — что получится после подтверждения.
+  const preview = reviewRows
+    .filter((r) => r.materialId && Number(r.quantity) > 0)
+    .map((r) => {
+      const material = materials.find((m) => String(m.id) === r.materialId);
+      // Цена: что ввёл администратор, иначе прайс поставщика.
+      const fromPrice = supplier?.prices?.find((p) => p.materialId === Number(r.materialId));
+      const price =
+        r.price && r.price.trim() !== ''
+          ? Number(r.price.replace(',', '.'))
+          : (fromPrice?.price ?? 0);
+      const currency = r.currency || fromPrice?.currency || supplierCurrency;
+      return {
+        name: material?.name || 'Материал',
+        unit: material?.unit || '',
+        cost: calcCostPerUnit(price || 0, currency, rateValue, logisticsPerUnit),
+      };
+    })
+    .filter((p) => p.cost > 0);
   const addReviewRow = () => setReviewRows((r) => [...r, { ...emptyRow }]);
   const removeReviewRow = (idx: number) => setReviewRows((r) => r.filter((_, i) => i !== idx));
 
@@ -101,7 +144,7 @@ const ReviewSupplyDialog = ({
                   </Button>
                 </div>
                 {reviewRows.map((row, idx) => (
-                  <div key={idx} className="grid grid-cols-[1fr_100px_100px_auto] gap-2">
+                  <div key={idx} className="grid grid-cols-[1fr_90px_80px_90px_90px_auto] gap-2">
                     <Select value={row.materialId} onValueChange={(v) => updateReviewRow(idx, 'materialId', v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Материал" />
@@ -130,6 +173,28 @@ const ReviewSupplyDialog = ({
                       value={row.numberRolls}
                       onChange={(e) => updateReviewRow(idx, 'numberRolls', e.target.value)}
                     />
+                    {/* Цена за единицу у этого поставщика. Пусто — подставится прайс. */}
+                    <Input
+                      inputMode="decimal"
+                      placeholder="Цена"
+                      value={row.price ?? ''}
+                      onChange={(e) => updateReviewRow(idx, 'price', e.target.value)}
+                    />
+                    <Select
+                      value={row.currency || supplierCurrency}
+                      onValueChange={(v) => updateReviewRow(idx, 'currency', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CURRENCIES.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <Button
                       type="button"
                       size="icon"
@@ -142,10 +207,62 @@ const ReviewSupplyDialog = ({
                   </div>
                 ))}
                 <p className="text-xs text-muted-foreground">
-                  Проверьте метраж/количество и число рулонов — при необходимости поправьте
-                  перед подтверждением (штрихкоды рулонов система присвоит после подтверждения).
+                  Проверьте метраж, число рулонов и цены. Пустая цена — подставится из прайса
+                  поставщика. Штрихкоды рулонов система присвоит после подтверждения.
                 </p>
               </div>
+
+              {/* Курс и логистика — из них складывается итоговая себестоимость метра. */}
+              <div className="grid grid-cols-2 gap-3 rounded-md border border-border p-3">
+                <div className="space-y-1.5">
+                  <Label>Курс {supplierCurrency !== 'RUB' ? `${supplierCurrency} к рублю` : ''}</Label>
+                  <Input
+                    inputMode="decimal"
+                    placeholder="65"
+                    value={exchangeRate}
+                    onChange={(e) => setExchangeRate(e.target.value)}
+                    disabled={supplierCurrency === 'RUB'}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {supplierCurrency === 'RUB'
+                      ? 'Поставщик работает в рублях — курс не нужен'
+                      : 'Подставлен курс поставщика, можно поправить'}
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Логистика за поставку, ₽</Label>
+                  <Input
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={logisticsCost}
+                    onChange={(e) => setLogisticsCost(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Разделится поровну на все метры и штуки
+                    {totalUnits > 0 ? ` — по ${logisticsPerUnit.toFixed(2)} ₽ на единицу` : ''}
+                  </p>
+                </div>
+              </div>
+
+              {/* Предпросчёт: сколько будет стоить 1 метр или штука после приёмки. */}
+              {preview.length > 0 && (
+                <div className="rounded-md border border-border p-3">
+                  <p className="text-sm font-medium">Себестоимость после подтверждения</p>
+                  <div className="mt-2 space-y-1">
+                    {preview.map((p) => (
+                      <div key={p.name} className="flex justify-between gap-3 text-sm">
+                        <span className="min-w-0 truncate text-muted-foreground">{p.name}</span>
+                        <span className="shrink-0 font-medium">
+                          {p.cost.toFixed(2)} ₽ / {p.unit || 'ед.'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Цена × курс + логистика на единицу. По этой сумме считаются недостачи.
+                  </p>
+                </div>
+              )}
 
               <div className="flex gap-2">
                 <Button variant="outline" className="flex-1" onClick={onSaveReview} disabled={reviewSaving}>

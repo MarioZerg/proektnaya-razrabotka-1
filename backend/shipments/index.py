@@ -170,10 +170,14 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(
                     "SELECT si.id, si.material_id, m.name, m.unit, si.barcode, si.roll_id, r.barcode, "
-                    "si.quantity, si.requested_quantity, si.number_rolls "
+                    "si.quantity, si.requested_quantity, si.number_rolls, si.price, si.currency, "
+                    "r.cost_per_unit, sp.price, sp.currency "
                     "FROM shipment_items si "
                     "LEFT JOIN materials m ON m.id = si.material_id "
                     "LEFT JOIN rolls r ON r.id = si.roll_id "
+                    "LEFT JOIN shipments sh ON sh.id = si.shipment_id "
+                    "LEFT JOIN supplier_prices sp ON sp.supplier_id = sh.supplier_id "
+                    "AND sp.material_id = si.material_id "
                     "WHERE si.shipment_id = %s ORDER BY si.id",
                     (int(shipment_id),),
                 )
@@ -189,6 +193,14 @@ def handler(event: dict, context) -> dict:
                         'quantity': float(r[7]) if r[7] is not None else None,
                         'requestedQuantity': float(r[8]) if r[8] is not None else None,
                         'numberRolls': r[9],
+                        # Цена, которую указал администратор при проверке поставки.
+                        'price': float(r[10]) if r[10] is not None else None,
+                        'currency': r[11],
+                        # Итоговая себестоимость 1 единицы (появляется после подтверждения).
+                        'costPerUnit': float(r[12]) if r[12] is not None else None,
+                        # Цена из прайса поставщика — подставляется в форму по умолчанию.
+                        'supplierPrice': float(r[13]) if r[13] is not None else None,
+                        'supplierCurrency': r[14],
                     }
                     for r in cur.fetchall()
                 ]
@@ -488,9 +500,23 @@ def handler(event: dict, context) -> dict:
                                 {'error': 'Число рулонов должно быть не меньше 1'}, ensure_ascii=False
                             ),
                         }
+                    # Цена за единицу в валюте поставщика — администратор указывает её
+                    # при проверке поставки. Пусто = подставится прайс поставщика.
+                    price = item.get('price')
+                    currency = (item.get('currency') or '').strip().upper()[:10]
+                    price_sql = 'NULL' if price in (None, '') else str(float(price))
+                    currency_sql = 'NULL' if not currency else f"'{currency}'"
+                    if price not in (None, '') and float(price) < 0:
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'Цена не может быть отрицательной'}, ensure_ascii=False),
+                        }
                     cur.execute(
-                        f"INSERT INTO shipment_items (shipment_id, material_id, quantity, number_rolls) "
-                        f"VALUES ({int(shipment_id)}, {int(material_id)}, {float(quantity)}, {int(number_rolls)})"
+                        f"INSERT INTO shipment_items (shipment_id, material_id, quantity, number_rolls, "
+                        f"price, currency) "
+                        f"VALUES ({int(shipment_id)}, {int(material_id)}, {float(quantity)}, {int(number_rolls)}, "
+                        f"{price_sql}, {currency_sql})"
                     )
 
                 if 'supplierId' in body_data:
@@ -513,25 +539,87 @@ def handler(event: dict, context) -> dict:
                 if not shipment_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
 
-                cur.execute("SELECT type, status FROM shipments WHERE id = %s", (int(shipment_id),))
+                cur.execute(
+                    "SELECT type, status, supplier_id FROM shipments WHERE id = %s",
+                    (int(shipment_id),),
+                )
                 sh_row = cur.fetchone()
                 if not sh_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
                 if sh_row[0] != 'from_supplier' or sh_row[1] != 'Новый':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Поставка уже обработана'})}
+                supplier_id = sh_row[2]
 
                 cur.execute(
-                    "SELECT id, material_id, quantity, number_rolls FROM shipment_items WHERE shipment_id = %s",
+                    "SELECT id, material_id, quantity, number_rolls, price, currency "
+                    "FROM shipment_items WHERE shipment_id = %s",
                     (int(shipment_id),),
                 )
                 pending_items = cur.fetchall()
                 if not pending_items:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'В поставке нет позиций'})}
 
+                # ---- СЕБЕСТОИМОСТЬ ----
+                # Курс: администратор мог задать свой при подтверждении, иначе берём
+                # курс из карточки поставщика.
+                req_rate = body_data.get('exchangeRate')
+                logistics_cost = float(body_data.get('logisticsCost') or 0)
+
+                supplier_currency = 'RUB'
+                supplier_rate = None
+                if supplier_id:
+                    cur.execute(
+                        "SELECT currency, exchange_rate FROM suppliers WHERE id = %s",
+                        (int(supplier_id),),
+                    )
+                    sup = cur.fetchone()
+                    if sup:
+                        supplier_currency = sup[0] or 'RUB'
+                        supplier_rate = float(sup[1]) if sup[1] is not None else None
+                shipment_rate = float(req_rate) if req_rate not in (None, '') else supplier_rate
+
+                # Прайс поставщика — подставляем цену тем позициям, где её не указали руками.
+                supplier_price_map = {}
+                if supplier_id:
+                    cur.execute(
+                        "SELECT material_id, price, currency FROM supplier_prices WHERE supplier_id = %s",
+                        (int(supplier_id),),
+                    )
+                    supplier_price_map = {r[0]: (float(r[1]), r[2] or 'RUB') for r in cur.fetchall()}
+
+                # Логистика делится ПОРОВНУ на каждый метр и штуку поставки.
+                total_units = sum(float(it[2]) for it in pending_items)
+                logistics_per_unit = (logistics_cost / total_units) if total_units > 0 else 0.0
+
+                cur.execute(
+                    "UPDATE shipments SET logistics_cost = %s, exchange_rate = %s WHERE id = %s",
+                    (logistics_cost, shipment_rate, int(shipment_id)),
+                )
+
                 created_rolls = []
-                for item_id, material_id, quantity, number_rolls in pending_items:
+                for item_id, material_id, quantity, number_rolls, item_price, item_currency in pending_items:
                     quantity = float(quantity)
                     number_rolls = int(number_rolls)
+
+                    # Цена позиции: что указал администратор, иначе прайс поставщика.
+                    price = float(item_price) if item_price is not None else None
+                    currency = item_currency
+                    if price is None and material_id in supplier_price_map:
+                        price, currency = supplier_price_map[material_id]
+                    currency = (currency or supplier_currency or 'RUB').upper()
+
+                    # Себестоимость 1 единицы в рублях. Цена в валюте умножается на курс;
+                    # у рублёвых позиций (тесьма, пакеты) курс не нужен — он равен 1.
+                    unit_rate = 1.0
+                    if currency != 'RUB':
+                        unit_rate = shipment_rate if shipment_rate else 1.0
+                    cost_per_unit = None
+                    if price is not None:
+                        cost_per_unit = round(price * unit_rate + logistics_per_unit, 4)
+
+                    price_sql = 'NULL' if price is None else str(price)
+                    cost_sql = 'NULL' if cost_per_unit is None else str(cost_per_unit)
+                    supplier_sql = 'NULL' if not supplier_id else str(int(supplier_id))
                     # Последняя проверка перед созданием реальных рулонов на складе.
                     if quantity <= 0 or number_rolls < 1:
                         conn.rollback()
@@ -561,8 +649,12 @@ def handler(event: dict, context) -> dict:
                         max_seq += 1
                         barcode = f"{type_id}-{max_seq:06d}"
                         cur.execute(
-                            f"INSERT INTO rolls (barcode, material_id, initial_quantity, remaining_quantity, status) "
-                            f"VALUES ('{barcode}', {material_id}, {per_roll_qty}, {per_roll_qty}, 'in_storage') "
+                            f"INSERT INTO rolls (barcode, material_id, initial_quantity, remaining_quantity, status, "
+                            f"supplier_id, shipment_id, purchase_price, purchase_currency, purchase_rate, "
+                            f"logistics_per_unit, cost_per_unit) "
+                            f"VALUES ('{barcode}', {material_id}, {per_roll_qty}, {per_roll_qty}, 'in_storage', "
+                            f"{supplier_sql}, {int(shipment_id)}, {price_sql}, '{currency}', {unit_rate}, "
+                            f"{round(logistics_per_unit, 4)}, {cost_sql}) "
                             f"RETURNING id"
                         )
                         new_rolls.append((cur.fetchone()[0], barcode))
@@ -573,12 +665,15 @@ def handler(event: dict, context) -> dict:
                     first_roll_id, first_barcode = new_rolls[0]
                     cur.execute(
                         f"UPDATE shipment_items SET roll_id = {first_roll_id}, barcode = '{first_barcode}', "
-                        f"quantity = {per_roll_qty} WHERE id = {item_id}"
+                        f"quantity = {per_roll_qty}, price = {price_sql}, currency = '{currency}' "
+                        f"WHERE id = {item_id}"
                     )
                     for extra_roll_id, extra_barcode in new_rolls[1:]:
                         cur.execute(
-                            f"INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity) "
-                            f"VALUES ({int(shipment_id)}, {material_id}, '{extra_barcode}', {extra_roll_id}, {per_roll_qty})"
+                            f"INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity, "
+                            f"price, currency) "
+                            f"VALUES ({int(shipment_id)}, {material_id}, '{extra_barcode}', {extra_roll_id}, "
+                            f"{per_roll_qty}, {price_sql}, '{currency}')"
                         )
 
                 cur.execute(f"UPDATE shipments SET status = 'Завершено', completed_at = now() WHERE id = {int(shipment_id)}")

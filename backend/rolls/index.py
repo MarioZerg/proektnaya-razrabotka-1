@@ -83,14 +83,22 @@ def handler(event: dict, context) -> dict:
             try:
                 cur = conn.cursor()
                 # По каждому материалу: сколько рулонов закрыто, средняя/макс недостача в
-                # процентах от рулона и во что она обошлась по себестоимости материала.
+                # процентах и во что она обошлась В ДЕНЬГАХ.
+                #
+                # Деньги считаем по себестоимости КАЖДОГО рулона (rolls.cost_per_unit), а не
+                # по средней цене материала: один и тот же материал у разных поставщиков
+                # стоит по-разному, плюс в себестоимость входит курс валюты и логистика
+                # конкретной поставки. Только так сумма недостачи получается точной.
+                # Если у старого рулона себестоимости нет — подставляем цену из справочника.
                 cur.execute(
                     "SELECT m.id, m.name, m.unit, COALESCE(m.cost, 0), m.shortage_norm_percent, "
                     "COUNT(*), "
                     "COALESCE(SUM(r.shortage_quantity), 0), "
                     "COALESCE(AVG(r.shortage_quantity / r.initial_quantity * 100), 0), "
                     "COALESCE(MAX(r.shortage_quantity / r.initial_quantity * 100), 0), "
-                    "COUNT(*) FILTER (WHERE r.shortage_quantity > 0) "
+                    "COUNT(*) FILTER (WHERE r.shortage_quantity > 0), "
+                    "COALESCE(SUM(r.shortage_quantity * COALESCE(r.cost_per_unit, m.cost, 0)), 0), "
+                    "COALESCE(AVG(NULLIF(r.cost_per_unit, 0)), 0) "
                     "FROM rolls r JOIN materials m ON m.id = r.material_id "
                     f"WHERE {where_sql} "
                     "GROUP BY m.id, m.name, m.unit, m.cost, m.shortage_norm_percent "
@@ -108,7 +116,10 @@ def handler(event: dict, context) -> dict:
                         'avgPercent': float(row[7]),
                         'maxPercent': float(row[8]),
                         'rollsWithShortage': row[9],
-                        'costTotal': float(row[6]) * float(row[3]),
+                        # Точная сумма недостачи — по себестоимости каждого рулона.
+                        'costTotal': float(row[10]),
+                        # Средняя себестоимость единицы по закрытым рулонам материала.
+                        'avgCostPerUnit': float(row[11]),
                     }
                     for row in cur.fetchall()
                 ]
@@ -119,7 +130,7 @@ def handler(event: dict, context) -> dict:
                     "SELECT r.closed_by_user_id, COALESCE(r.closed_by_name, 'Не указан'), "
                     "COUNT(*), COALESCE(SUM(r.shortage_quantity), 0), "
                     "COALESCE(AVG(r.shortage_quantity / r.initial_quantity * 100), 0), "
-                    "COALESCE(SUM(r.shortage_quantity * COALESCE(m.cost, 0)), 0) "
+                    "COALESCE(SUM(r.shortage_quantity * COALESCE(r.cost_per_unit, m.cost, 0)), 0) "
                     "FROM rolls r JOIN materials m ON m.id = r.material_id "
                     f"WHERE {where_sql} "
                     "GROUP BY r.closed_by_user_id, r.closed_by_name "

@@ -50,6 +50,9 @@ const FromSupplier = () => {
 
   // Карточка подтверждения неподтверждённой поставки (только для админа)
   const [reviewShipment, setReviewShipment] = useState<ShipmentDetail | null>(null);
+  // Курс и логистика при подтверждении — из них складывается себестоимость метра.
+  const [exchangeRate, setExchangeRate] = useState('');
+  const [logisticsCost, setLogisticsCost] = useState('');
   const [reviewRows, setReviewRows] = useState<ItemRow[]>([]);
   const [reviewSupplierId, setReviewSupplierId] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
@@ -104,6 +107,9 @@ const FromSupplier = () => {
         materialId: Number(r.materialId),
         quantity: Number(r.quantity),
         numberRolls: Number(r.numberRolls),
+        // Цена за единицу в валюте поставщика. Пусто — подставится прайс поставщика.
+        price: r.price && r.price.trim() !== '' ? Number(r.price.replace(',', '.')) : null,
+        currency: r.currency || null,
       }));
 
   const handleSave = async () => {
@@ -183,8 +189,15 @@ const FromSupplier = () => {
         materialId: String(i.materialId),
         quantity: String(i.quantity ?? ''),
         numberRolls: String(i.numberRolls ?? ''),
+        // Цена: что уже указана, иначе подставляем прайс поставщика.
+        price: i.price != null ? String(i.price) : i.supplierPrice != null ? String(i.supplierPrice) : '',
+        currency: i.currency || i.supplierCurrency || '',
       }))
     );
+    // Курс подставляем из карточки поставщика — администратор поправит при необходимости.
+    const supplier = suppliers.find((s) => s.id === detail.supplierId);
+    setExchangeRate(supplier?.exchangeRate != null ? String(supplier.exchangeRate) : '');
+    setLogisticsCost('');
     setLastCreatedRolls(null);
   };
 
@@ -215,7 +228,10 @@ const FromSupplier = () => {
     if (!reviewShipment) return;
     setReviewSaving(true);
     try {
-      const res = await approveSupply(reviewShipment.id);
+      const res = await approveSupply(reviewShipment.id, {
+        exchangeRate: exchangeRate.trim() ? Number(exchangeRate.replace(',', '.')) : null,
+        logisticsCost: logisticsCost.trim() ? Number(logisticsCost.replace(',', '.')) : 0,
+      });
       toast({ title: 'Поставка подтверждена', description: `Создано рулонов: ${res.createdRolls.length}` });
       setLastCreatedRolls({ shipmentId: reviewShipment.id, rolls: res.createdRolls });
       setReviewShipment(null);
@@ -346,6 +362,10 @@ const FromSupplier = () => {
         rejectId={rejectId}
         setRejectId={setRejectId}
         onReject={handleReject}
+        exchangeRate={exchangeRate}
+        setExchangeRate={setExchangeRate}
+        logisticsCost={logisticsCost}
+        setLogisticsCost={setLogisticsCost}
       />
     </CrmLayout>
   );

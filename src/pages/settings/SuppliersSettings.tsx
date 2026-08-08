@@ -35,17 +35,38 @@ import {
   createSupplier,
   updateSupplier,
   deleteSupplier,
+  CURRENCIES,
+  currencySymbols,
   type Supplier,
 } from '@/lib/suppliersApi';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import SupplierPricesDialog from '@/components/crm/suppliers/SupplierPricesDialog';
 
 interface SupplierFormState {
   name: string;
   phone: string;
   address: string;
   comment: string;
+  /** Валюта прайса: цены ткани часто в долларах, тесьма — в рублях. */
+  currency: string;
+  /** Курс к рублю. Подставится при приёмке, администратор сможет поправить. */
+  exchangeRate: string;
 }
 
-const emptyForm: SupplierFormState = { name: '', phone: '', address: '', comment: '' };
+const emptyForm: SupplierFormState = {
+  name: '',
+  phone: '',
+  address: '',
+  comment: '',
+  currency: 'RUB',
+  exchangeRate: '',
+};
 const PAGE_SIZE = 10;
 
 const SuppliersSettings = () => {
@@ -59,6 +80,8 @@ const SuppliersSettings = () => {
   const [form, setForm] = useState<SupplierFormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  // Поставщик, у которого сейчас открыт прайс.
+  const [pricesFor, setPricesFor] = useState<Supplier | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -84,6 +107,8 @@ const SuppliersSettings = () => {
       phone: s.phone || '',
       address: s.address || '',
       comment: s.comment || '',
+      currency: s.currency || 'RUB',
+      exchangeRate: s.exchangeRate != null ? String(s.exchangeRate) : '',
     });
     setDialogOpen(true);
   };
@@ -92,10 +117,22 @@ const SuppliersSettings = () => {
     if (!form.name.trim()) return;
     setSaving(true);
     try {
+      const payload = {
+        name: form.name,
+        phone: form.phone,
+        address: form.address,
+        comment: form.comment,
+        currency: form.currency,
+        // Для рублёвого поставщика курс не нужен — он всегда 1.
+        exchangeRate:
+          form.currency === 'RUB' || !form.exchangeRate.trim()
+            ? null
+            : Number(form.exchangeRate.replace(',', '.')),
+      };
       if (editingId) {
-        await updateSupplier(editingId, form);
+        await updateSupplier(editingId, payload);
       } else {
-        await createSupplier(form);
+        await createSupplier(payload);
       }
       setDialogOpen(false);
       setForm(emptyForm);
@@ -186,6 +223,46 @@ const SuppliersSettings = () => {
                     onChange={(e) => setForm((f) => ({ ...f, comment: e.target.value }))}
                   />
                 </div>
+
+                {/* Валюта и курс: у валютного поставщика цена умножается на курс при
+                    приёмке. У рублёвого курс не нужен — цена фиксированная. */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Валюта прайса</Label>
+                    <Select
+                      value={form.currency}
+                      onValueChange={(v) => setForm((f) => ({ ...f, currency: v }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CURRENCIES.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c} {currencySymbols[c]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {form.currency !== 'RUB' && (
+                    <div className="space-y-1.5">
+                      <Label>Курс к рублю</Label>
+                      <Input
+                        inputMode="decimal"
+                        placeholder="65"
+                        value={form.exchangeRate}
+                        onChange={(e) => setForm((f) => ({ ...f, exchangeRate: e.target.value }))}
+                      />
+                    </div>
+                  )}
+                </div>
+                {form.currency !== 'RUB' && (
+                  <p className="text-xs text-muted-foreground">
+                    Курс подставится при приёмке — администратор сможет поправить его под
+                    реальный курс дня.
+                  </p>
+                )}
                 <Button onClick={handleSave} disabled={saving} className="w-full">
                   {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Сохранить'}
                 </Button>
@@ -210,7 +287,8 @@ const SuppliersSettings = () => {
                   <TableHead className="text-primary-foreground">Название</TableHead>
                   <TableHead className="text-primary-foreground">Телефон</TableHead>
                   <TableHead className="text-primary-foreground">Адрес</TableHead>
-                  <TableHead className="text-primary-foreground">Комментарий</TableHead>
+                  <TableHead className="text-primary-foreground">Валюта / курс</TableHead>
+                  <TableHead className="text-primary-foreground">Цен в прайсе</TableHead>
                   <TableHead className="text-primary-foreground" />
                 </TableRow>
               </TableHeader>
@@ -221,9 +299,23 @@ const SuppliersSettings = () => {
                     <TableCell className="font-medium">{s.name}</TableCell>
                     <TableCell>{s.phone || '—'}</TableCell>
                     <TableCell>{s.address || '—'}</TableCell>
-                    <TableCell>{s.comment || '—'}</TableCell>
+                    <TableCell>
+                      {s.currency || 'RUB'}
+                      {s.currency && s.currency !== 'RUB' && s.exchangeRate
+                        ? ` · ${s.exchangeRate} ₽`
+                        : ''}
+                    </TableCell>
+                    <TableCell>{s.prices?.length || 0}</TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-2">
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          title="Прайс материалов"
+                          onClick={() => setPricesFor(s)}
+                        >
+                          <Icon name="Tags" size={14} />
+                        </Button>
                         <Button size="icon" variant="secondary" onClick={() => openEdit(s)}>
                           <Icon name="Pencil" size={14} />
                         </Button>
@@ -283,6 +375,12 @@ const SuppliersSettings = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <SupplierPricesDialog
+        supplier={pricesFor}
+        onClose={() => setPricesFor(null)}
+        onSaved={load}
+      />
     </CrmLayout>
   );
 };

@@ -43,6 +43,14 @@ export interface ShipmentItem {
   quantity: number | null;
   requestedQuantity: number | null;
   numberRolls: number | null;
+  /** Цена за единицу в валюте, указанная администратором при проверке. */
+  price?: number | null;
+  currency?: string | null;
+  /** Итоговая себестоимость 1 единицы в рублях (после подтверждения). */
+  costPerUnit?: number | null;
+  /** Цена из прайса поставщика — подставляется в форму по умолчанию. */
+  supplierPrice?: number | null;
+  supplierCurrency?: string | null;
 }
 
 export interface ShipmentDetail extends Shipment {
@@ -108,7 +116,17 @@ export const createShipmentFromSupplier = (payload: {
 // Правка позиций неподтверждённой поставки (например, кладовщик ошибся в метраже)
 export const updatePendingSupply = (
   id: number,
-  payload: { supplierId?: number; items: Array<{ materialId: number; quantity: number; numberRolls: number }> }
+  payload: {
+    supplierId?: number;
+    items: Array<{
+      materialId: number;
+      quantity: number;
+      numberRolls: number;
+      /** Цена за единицу в валюте поставщика. Пусто — подставится прайс поставщика. */
+      price?: number | null;
+      currency?: string | null;
+    }>;
+  }
 ) => postAction({ action: 'update_pending_supply', id, ...payload });
 
 export interface ApproveSupplyResult {
@@ -116,8 +134,14 @@ export interface ApproveSupplyResult {
   createdRolls: string[];
 }
 
-// Подтверждение поставки: только теперь создаются реальные рулоны на складе
-export const approveSupply = (id: number): Promise<ApproveSupplyResult> => postAction({ action: 'approve_supply', id });
+/** Подтверждение поставки: только теперь создаются реальные рулоны на складе и
+ * рассчитывается себестоимость каждого — цена умножается на курс, сверху добавляется
+ * логистика, разделённая поровну на все метры и штуки поставки. */
+export const approveSupply = (
+  id: number,
+  payload?: { exchangeRate?: number | null; logisticsCost?: number }
+): Promise<ApproveSupplyResult> =>
+  postAction({ action: 'approve_supply', id, ...(payload || {}) });
 
 export const rejectSupply = (id: number) => postAction({ action: 'reject_supply', id });
 
