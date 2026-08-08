@@ -21,19 +21,28 @@ interface KioskDefectWriteoffPanelProps {
   workshopId: number;
   /** Сотрудник работает в чужом цехе — сам оформить брак не может, нужен штатный работник. */
   isGuest: boolean;
+  /** Должность: от неё зависит, какие материалы показываем — упаковщице пакеты и
+   * этикетки, швее и закройщику ткань и тесьму. */
+  role?: string;
 }
 
 /**
- * Плашка учёта брака на терминале — для швеи и закройщика.
+ * Плашка учёта брака на терминале.
  *
- * Брак ведём только по ТКАНИ и ТЕСЬМЕ: пакеты и этикетки не считаем, их брак копеечный, а
- * время сотрудника на оформление дороже. Причины подставляются по материалу рулона: у тюля
- * это затяжки, полосы, дырки и брак утяжелителя, у тесьмы — брак петель и заводской брак.
+ * Каждая роль видит только свой материал: швея и закройщик — ткань и тесьму, упаковщица —
+ * пакеты и этикетки. Так в списке не появляются чужие рулоны, которые легко выбрать по
+ * ошибке. Причины подставляются по материалу рулона: у тюля это затяжки, полосы, дырки и
+ * брак утяжелителя, у тесьмы — брак петель, у упаковки — порван или грязный пакет,
+ * не клеится этикетка, брак печати.
  *
  * После оформления сразу печатается стикер брака 58×40: его клеят на бракованный кусок и
  * откладывают в контейнер, а кладовщик потом сканирует и принимает брак на склад.
  */
-const KioskDefectWriteoffPanel = ({ workshopId, isGuest }: KioskDefectWriteoffPanelProps) => {
+const KioskDefectWriteoffPanel = ({
+  workshopId,
+  isGuest,
+  role,
+}: KioskDefectWriteoffPanelProps) => {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [rolls, setRolls] = useState<DefectRoll[]>([]);
@@ -46,13 +55,20 @@ const KioskDefectWriteoffPanel = ({ workshopId, isGuest }: KioskDefectWriteoffPa
 
   useEffect(() => {
     if (!open) return;
-    fetchDefectRolls(workshopId)
+    fetchDefectRolls(workshopId, role)
       .then(setRolls)
       .catch(() => setRolls([]));
-  }, [open, workshopId]);
+  }, [open, workshopId, role]);
 
+  const isPacker = role === 'packer';
   const selectedRoll = rolls.find((r) => String(r.id) === rollId);
-  const isFabric = selectedRoll?.materialType === 'Тюль';
+  // Подпись у выбранного материала: ткань / тесьма / упаковка.
+  const materialLabel =
+    selectedRoll?.materialType === 'Тюль'
+      ? 'ткань'
+      : selectedRoll?.materialType === 'Упаковка'
+        ? 'упаковка'
+        : 'тесьма';
 
   const reset = () => {
     setRollId('');
@@ -110,7 +126,9 @@ const KioskDefectWriteoffPanel = ({ workshopId, isGuest }: KioskDefectWriteoffPa
           <p className="mt-1 text-base text-muted-foreground">
             {isGuest
               ? 'Вы работаете в чужом цехе — позовите штатного сотрудника этого цеха, он отсканирует свой штрихкод и оформит брак за вас.'
-              : 'Ткань и тесьма: выберите рулон, укажите метраж и причину. Стикер напечатается сам.'}
+              : isPacker
+                ? 'Пакеты и этикетки: выберите пачку, укажите количество и причину. Стикер напечатается сам.'
+                : 'Ткань и тесьма: выберите рулон, укажите метраж и причину. Стикер напечатается сам.'}
           </p>
         </div>
       </div>
@@ -133,7 +151,9 @@ const KioskDefectWriteoffPanel = ({ workshopId, isGuest }: KioskDefectWriteoffPa
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-sm">Рулон (ткань или тесьма)</Label>
+            <Label className="text-sm">
+              {isPacker ? 'Пачка (пакеты или этикетки)' : 'Рулон (ткань или тесьма)'}
+            </Label>
             <Select
               value={rollId}
               onValueChange={(v) => {
@@ -148,7 +168,7 @@ const KioskDefectWriteoffPanel = ({ workshopId, isGuest }: KioskDefectWriteoffPa
               <SelectContent>
                 {rolls.length === 0 ? (
                   <SelectItem value="none" disabled>
-                    Нет рулонов в цехе
+                    {isPacker ? 'Нет пакетов и этикеток в цехе' : 'Нет рулонов в цехе'}
                   </SelectItem>
                 ) : (
                   rolls.map((r) => (
@@ -166,7 +186,7 @@ const KioskDefectWriteoffPanel = ({ workshopId, isGuest }: KioskDefectWriteoffPa
               <Label className="text-sm">
                 Причина брака
                 <Badge variant="secondary" className="ml-2">
-                  {isFabric ? 'ткань' : 'тесьма'}
+                  {materialLabel}
                 </Badge>
               </Label>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -188,7 +208,8 @@ const KioskDefectWriteoffPanel = ({ workshopId, isGuest }: KioskDefectWriteoffPa
 
           <div className="space-y-1.5">
             <Label className="text-sm">
-              Метраж брака{selectedRoll?.unit ? `, ${selectedRoll.unit}` : ''}
+              {isPacker ? 'Количество брака' : 'Метраж брака'}
+              {selectedRoll?.unit ? `, ${selectedRoll.unit}` : ''}
             </Label>
             <Input
               inputMode="decimal"
@@ -204,7 +225,9 @@ const KioskDefectWriteoffPanel = ({ workshopId, isGuest }: KioskDefectWriteoffPa
             <Input
               value={comment}
               onChange={(e) => setComment(e.target.value)}
-              placeholder="Например: по всей длине кромки"
+              placeholder={
+                isPacker ? 'Например: вся пачка слиплась' : 'Например: по всей длине кромки'
+              }
               className="h-14 text-lg"
             />
           </div>

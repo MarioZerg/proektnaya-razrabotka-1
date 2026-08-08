@@ -71,17 +71,27 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
 
 /** Главное меню терминала — крупные плитки под сенсорный экран. */
 const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
-  // Кладовщик на терминале открывает смену и ищет вещи, оставшиеся без стикера хранения.
-  // «Товар без стикера» — его зона ответственности, остальным эта плитка не нужна.
-  // «Перепаковка» — вещи, вернувшиеся от покупателя годными, но с мятой упаковкой:
-  // их переупаковывает упаковщик, кладовщику эта плитка не нужна.
-  // «Приём брака» — тоже зона кладовщика: он забирает брак из контейнеров цеха на склад.
-  // «Брак из рулона» — для тех, кто работает с материалом: закройщик режет ткань, швея шьёт
-  // тесьмой, именно они видят дефекты. Кладовщику нужен обратный экран — «Приём брака».
-  const visibleTiles =
-    isStorekeeperRole(role)
-      ? tiles.filter((t) => ['shift', 'unlabeled', 'defect-receive'].includes(t.screen))
-      : tiles.filter((t) => !['unlabeled', 'defect-receive'].includes(t.screen));
+  // Кто что видит на терминале:
+  //
+  // «Товар без стикера» и «Приём брака» — зона кладовщика: он ищет вещи, оставшиеся без
+  //   стикера хранения, и забирает брак из контейнеров цеха на склад.
+  // «Перепаковка» — вещи вернулись от покупателя годными, но с мятой упаковкой. Их
+  //   переупаковывает ТОЛЬКО упаковщица: швея и закройщик упаковкой не занимаются, и
+  //   лишняя плитка на их экране мешает.
+  // «Брак из рулона» — видят все, кто работает с материалом, но каждый по своему:
+  //   закройщик режет ткань, швея шьёт тесьмой, упаковщица портит пакеты и этикетки.
+  // «Отзывы» — доступны всем ролям на терминале.
+  const hiddenByRole: Record<string, KioskScreen[]> = {
+    storekeeper: ['orders', 'rolls', 'defect', 'repack'],
+    sewer: ['unlabeled', 'defect-receive', 'repack'],
+    cutter: ['unlabeled', 'defect-receive', 'repack'],
+  };
+
+  const hidden = isStorekeeperRole(role)
+    ? hiddenByRole.storekeeper
+    : hiddenByRole[role] || ['unlabeled', 'defect-receive'];
+
+  const visibleTiles = tiles.filter((t) => !hidden.includes(t.screen));
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

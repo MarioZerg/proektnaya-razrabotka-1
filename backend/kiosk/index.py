@@ -163,7 +163,25 @@ DEFECT_REASONS = {
         {'code': 'trim_loops', 'label': 'Брак петель'},
         {'code': 'trim_factory', 'label': 'Заводской брак'},
     ],
+    # Упаковка — пакеты и этикетки: дефекты видит упаковщица, когда фасует готовый товар.
+    'Упаковка': [
+        {'code': 'pack_torn', 'label': 'Порван пакет'},
+        {'code': 'pack_dirty', 'label': 'Грязный пакет'},
+        {'code': 'pack_no_glue', 'label': 'Не клеится этикетка'},
+        {'code': 'pack_misprint', 'label': 'Брак печати'},
+        {'code': 'pack_factory', 'label': 'Заводской брак'},
+    ],
 }
+
+# Какие материалы доступны роли на экране «Брак из рулона».
+# Упаковщица фасует готовый товар — её брак это пакеты и этикетки, ткань и тесьму она
+# в руках не держит. Швея и закройщик наоборот: работают с полотном и тесьмой.
+DEFECT_TYPES_BY_ROLE = {
+    'packer': ['Упаковка'],
+    'sewer': ['Тюль', 'Аксессуары'],
+    'cutter': ['Тюль', 'Аксессуары'],
+}
+ALL_DEFECT_TYPES = ['Тюль', 'Аксессуары', 'Упаковка']
 
 
 def defect_reason_label(material_type, code):
@@ -1149,16 +1167,22 @@ def handler(event: dict, context) -> dict:
                 # Отдаём вместе: терминалу нужен и список рулонов, и подходящие причины —
                 # у ткани и тесьмы они разные.
                 workshop_id = body_data.get('workshopId')
+                # Показываем только те материалы, с которыми роль реально работает:
+                # упаковщице — пакеты и этикетки, швее и закройщику — ткань и тесьму.
+                # Иначе в списке из десятков рулонов легко выбрать чужой по ошибке.
+                role = (body_data.get('role') or '').strip()
+                allowed_types = DEFECT_TYPES_BY_ROLE.get(role, ALL_DEFECT_TYPES)
+                type_placeholders = ','.join(['%s'] * len(allowed_types))
                 cur.execute(
                     "SELECT r.id, r.barcode, m.name, m.unit, mt.name, r.remaining_quantity "
                     "FROM rolls r "
                     "JOIN materials m ON m.id = r.material_id "
                     "JOIN material_types mt ON mt.id = m.type_id "
                     "WHERE r.status = 'in_workshop' AND r.remaining_quantity > 0 "
-                    "AND mt.name IN ('Тюль', 'Аксессуары') "
+                    f"AND mt.name IN ({type_placeholders}) "
                     "AND (%s IS NULL OR r.workshop_id = %s) "
                     "ORDER BY mt.name, m.name, r.barcode",
-                    (workshop_id, workshop_id),
+                    (*allowed_types, workshop_id, workshop_id),
                 )
                 rolls = [
                     {
@@ -1228,13 +1252,13 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
 
                 material_type = rr[4]
-                # Брак ведём только по ткани и тесьме: по пакетам и этикеткам его не считают.
+                # Брак ведём по ткани, тесьме и упаковке — по остальному материалу нет.
                 if material_type not in DEFECT_REASONS:
                     return {
                         'statusCode': 400,
                         'headers': headers,
                         'body': json.dumps(
-                            {'error': f'По материалу «{material_type}» брак не ведётся — только ткань и тесьма'},
+                            {'error': f'По материалу «{material_type}» брак не ведётся'},
                             ensure_ascii=False),
                     }
                 reason_label = defect_reason_label(material_type, reason_code)

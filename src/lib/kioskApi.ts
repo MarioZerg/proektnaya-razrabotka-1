@@ -308,7 +308,8 @@ export interface DefectRoll {
   barcode: string;
   materialName: string;
   unit: string | null;
-  /** «Тюль» (ткань) или «Аксессуары» (тесьма) — от типа зависят причины брака. */
+  /** «Тюль» (ткань), «Аксессуары» (тесьма) или «Упаковка» (пакеты и этикетки) —
+   * от типа зависят причины брака. */
   materialType: string;
   remaining: number;
   reasons: DefectReason[];
@@ -316,11 +317,16 @@ export interface DefectRoll {
 
 /** Рулоны цеха, по которым можно оформить брак, вместе с подходящими причинами.
  * Пакеты и этикетки сюда не попадают — по ним брак не ведут. */
-export const fetchDefectRolls = async (workshopId?: number): Promise<DefectRoll[]> => {
+export const fetchDefectRolls = async (
+  workshopId?: number,
+  /** Должность сотрудника: упаковщице отдаём пакеты и этикетки, швее и закройщику —
+   * ткань и тесьму. Без роли вернутся все материалы. */
+  role?: string
+): Promise<DefectRoll[]> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'defect_reasons', workshopId }),
+    body: JSON.stringify({ action: 'defect_reasons', workshopId, role }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось загрузить рулоны');
