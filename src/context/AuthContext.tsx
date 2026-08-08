@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import type { Role } from '@/lib/roles';
+import { checkAccess } from '@/lib/authApi';
 
 export interface User {
   id: number;
@@ -66,6 +67,42 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       return next;
     });
   };
+
+  /**
+   * Сверка доступа с сервером.
+   *
+   * Сотрудник входит один раз и работает без выхода — это осознанное решение: в цехе
+   * терминал общий, а вспоминать пароль каждую смену неудобно. Но раз выхода нет,
+   * доступ должен уметь отзываться: как только администратор отключит учётную запись
+   * или снимет должность, приложение выйдет само.
+   *
+   * Проверяем при запуске и раз в 10 минут. Если сервер недоступен, работу не прерываем:
+   * в цехе связь может пропадать, а из-за этого нельзя терять рабочую сессию.
+   */
+  useEffect(() => {
+    if (!user || user.isDemo) return;
+
+    let stopped = false;
+    const verify = async () => {
+      try {
+        const res = await checkAccess(user.id, user.role);
+        if (!stopped && res.active === false) {
+          localStorage.removeItem(STORAGE_KEY);
+          setUser(null);
+          if (res.reason) window.alert(res.reason);
+        }
+      } catch {
+        // Нет связи — оставляем сотрудника работать.
+      }
+    };
+
+    verify();
+    const timer = setInterval(verify, 10 * 60 * 1000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [user?.id, user?.role, user?.isDemo]);
 
   return (
     <AuthContext.Provider value={{ user, login, logout, switchRole, setActiveShift }}>

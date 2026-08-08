@@ -110,3 +110,24 @@ export const enterRole = (userId: number, role: Role): Promise<EnterRoleResult> 
   postAuthAction({ action: 'enter_role', userId, role });
 
 export { AUTH_URL };
+
+/**
+ * Проверяет, действует ли ещё доступ вошедшего сотрудника.
+ *
+ * Вход в систему бессрочный: человек авторизуется один раз и работает, пока
+ * администратор не закроет доступ. Раз выхода нет, доступ нужно уметь отзывать —
+ * приложение периодически сверяется с сервером и выходит само, если учётную запись
+ * отключили или сняли должность.
+ */
+export const checkAccess = async (
+  userId: number,
+  role?: string
+): Promise<{ active: boolean; reason?: string }> => {
+  const res = await fetch(AUTH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'check_access', userId, role }),
+  });
+  if (!res.ok) return { active: true };
+  return res.json();
+};

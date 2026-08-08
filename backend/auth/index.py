@@ -28,6 +28,15 @@ def normalize_phone(raw: str) -> str | None:
     return '+' + digits
 
 
+def _resp_access(active, reason=None):
+    """Ответ на сверку доступа: действует ли учётная запись и почему нет."""
+    return {
+        'statusCode': 200,
+        'headers': {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'},
+        'body': json.dumps({'active': active, 'reason': reason}, ensure_ascii=False),
+    }
+
+
 def handler(event: dict, context) -> dict:
     """Авторизация сотрудников. Три независимых способа попасть в систему.
 
@@ -288,6 +297,46 @@ def handler(event: dict, context) -> dict:
             conn.close()
 
         return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+    if action == 'check_access':
+        # Сверка доступа для уже вошедшего сотрудника.
+        #
+        # Вход в системе бессрочный: человек авторизуется один раз и работает, пока
+        # администратор не закроет ему доступ. Но раз выхода нет, нужно уметь этот
+        # доступ отзывать — приложение периодически спрашивает сервер, действует ли
+        # ещё учётная запись и осталась ли у сотрудника его должность.
+        user_id = body_data.get('userId')
+        role = (body_data.get('role') or '').strip()
+        if not user_id:
+            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
+
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                'SELECT is_active, full_name FROM users WHERE id = %s', (int(user_id),)
+            )
+            row = cur.fetchone()
+            if not row:
+                return _resp_access(False, 'Учётная запись удалена')
+            if not row[0]:
+                return _resp_access(False, 'Администратор закрыл доступ к профилю')
+
+            cur.execute(
+                'SELECT role FROM user_roles WHERE user_id = %s AND is_approved = true',
+                (int(user_id),),
+            )
+            roles = [r[0] for r in cur.fetchall()]
+            if role and role not in roles:
+                return _resp_access(False, 'Должность больше не подтверждена администратором')
+
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'active': True, 'roles': roles}),
+            }
+        finally:
+            conn.close()
 
     if action == 'password_login':
         login = (body_data.get('login') or '').strip()
