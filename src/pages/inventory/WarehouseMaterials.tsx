@@ -27,7 +27,10 @@ const WarehouseMaterials = () => {
       <div className="space-y-6">
         <div>
           <h1 className="text-xl font-bold">Материалы на складе</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Остатки материалов по типам</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Что физически лежит на складе. Материал, выданный в цеха, сюда не входит —
+            его видно в «Стоимости остатков» на странице рулонов
+          </p>
         </div>
 
         {loading ? (
