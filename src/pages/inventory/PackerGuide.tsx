@@ -10,6 +10,8 @@ const IMG_HEIGHT =
   'https://cdn.poehali.dev/projects/e7a17910-1e21-4649-8728-8d926705d44e/files/4c4ca7be-5b23-42c7-a02b-fe532f6057d2.jpg';
 const IMG_TAPE =
   'https://cdn.poehali.dev/projects/e7a17910-1e21-4649-8728-8d926705d44e/files/29f9e997-7fa1-4320-9c99-2c615ba22e33.jpg';
+const IMG_CONTAINERS =
+  'https://cdn.poehali.dev/projects/e7a17910-1e21-4649-8728-8d926705d44e/files/af23276c-62aa-4a52-92db-5f10c2a5e187.jpg';
 const IMG_SORT =
   'https://cdn.poehali.dev/projects/e7a17910-1e21-4649-8728-8d926705d44e/files/ad69feec-2cc4-4674-ac8c-aae88ea0f2d9.jpg';
 
@@ -52,6 +54,32 @@ const packSteps: Step[] = [
     num: 5,
     title: 'Отсканируйте и наклейте стикер',
     text: 'Работайте на терминале в цехе. Отсканируйте вещь, система покажет заказ и напечатает нужный стикер.',
+  },
+  {
+    num: 6,
+    title: 'Положите вещь в свой контейнер',
+    text: 'После стикеровки терминал пишет, в какой контейнер класть. FBS и FBO не смешиваем, а FBO ещё и раскладываем по городам — склад назначения написан на стикере. Подробнее ниже, в блоке «Сортировка по контейнерам».',
+    image: IMG_CONTAINERS,
+  },
+];
+
+/** Как разложены контейнеры в цехе: по типу отгрузки, а FBO ещё и по городам. */
+const containers = [
+  {
+    icon: 'Truck',
+    title: 'FBS — свой контейнер',
+    tone: 'border-emerald-300 bg-emerald-50',
+    iconTone: 'text-emerald-600',
+    titleTone: 'text-emerald-900',
+    text: 'Заказы конкретных покупателей: OZON, Wildberries, Яндекс. Едут по своим ярлыкам отправления. Все вместе в контейнер FBS, по городам не делим.',
+  },
+  {
+    icon: 'Warehouse',
+    title: 'FBO — контейнер по городу',
+    tone: 'border-sky-300 bg-sky-50',
+    iconTone: 'text-sky-600',
+    titleTone: 'text-sky-900',
+    text: 'Товар едет на склад маркетплейса. На стикере написан кластер — склад назначения. Для каждого города свой контейнер: Хоругвино к Хоругвино, Казань к Казани.',
   },
 ];
 
@@ -124,6 +152,14 @@ const faq = [
   {
     q: 'Печатать один ярлык на всю связку?',
     a: 'Нет. У каждой вещи свой ярлык — на нём написано «1 из 2», «2 из 2». Отсканируйте каждую вещь отдельно и наклейте её собственный ярлык. Один ярлык на несколько пакетов клеить нельзя.',
+  },
+  {
+    q: 'Где на стикере искать склад назначения',
+    a: 'На стикере FBO написан кластер — это и есть склад, куда уедет товар. Он же показан на терминале после сканирования, в строке «Город назначения».',
+  },
+  {
+    q: 'Куда класть, если города на стикере нет',
+    a: 'Значит это заказ FBS — конкретному покупателю. Кладите в общий контейнер FBS, по городам такие заказы не делим.',
   },
   {
     q: 'Не знаю, какой пакет брать',
@@ -258,6 +294,42 @@ const PackerGuide = () => {
               </CardContent>
             </Card>
           ))}
+        </div>
+
+        {/* Сортировка по контейнерам — из-за ошибок здесь кладовщик не находит товар. */}
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-base font-bold">Сортировка по контейнерам</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Контейнеры в цехе разделены — товар должен лечь в свой
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {containers.map((c) => (
+              <Card key={c.title} className={`${c.tone} shadow-none`}>
+                <CardContent className="space-y-2 py-5">
+                  <Icon name={c.icon} size={26} className={c.iconTone} />
+                  <p className={`font-bold ${c.titleTone}`}>{c.title}</p>
+                  <p className="text-sm text-muted-foreground">{c.text}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <Card className="border-destructive/40 bg-destructive/5 shadow-none">
+            <CardContent className="flex items-start gap-3 py-4">
+              <Icon name="TriangleAlert" size={22} className="mt-0.5 shrink-0 text-destructive" />
+              <div>
+                <p className="font-bold text-destructive">Не смешивайте контейнеры</p>
+                <p className="text-sm text-destructive">
+                  Если вещь FBO попадёт в чужой город или в контейнер FBS, кладовщик не
+                  найдёт её при сборке поставки. Товар уедет не на тот склад или зависнет
+                  в цехе. Терминал после стикеровки пишет нужный контейнер — смотрите на него.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Куда возвращать брак. */}

@@ -233,6 +233,37 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
       ) : (
         <Card className="border-border shadow-none">
           <CardContent className="space-y-4 pt-6">
+            {/* Куда класть вещь после стикеровки. Контейнеры в цехе разделены:
+                FBS едут по отправлениям, FBO — по складам назначения. Если упаковщица
+                положит вещь не в тот контейнер, кладовщик не найдёт её при сборке
+                поставки, поэтому пишем адрес крупно и прямо на экране. */}
+            {order.orderType === 'FBO' ? (
+              <div className="flex items-start gap-3 rounded-md border border-sky-300 bg-sky-50 p-3 text-sky-900">
+                <Icon name="Container" size={22} className="mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-bold">
+                    Контейнер FBO
+                    {order.cluster ? ` · ${order.cluster}` : ''}
+                  </p>
+                  <p className="text-sm">
+                    {order.cluster
+                      ? `Положите вещь в контейнер склада ${order.cluster} — не смешивайте с другими городами и с FBS`
+                      : 'Склад назначения указан на стикере — положите вещь в контейнер этого склада, отдельно от FBS'}
+                  </p>
+                </div>
+              </div>
+            ) : order.orderType === 'FBS' ? (
+              <div className="flex items-start gap-3 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-emerald-900">
+                <Icon name="Container" size={22} className="mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-bold">Контейнер FBS</p>
+                  <p className="text-sm">
+                    Положите вещь в контейнер FBS — отдельно от товара FBO
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
             {/* Вещь из связки Яндекса: ярлык у каждой вещи свой, но уезжают они вместе.
                 Предупреждаем прямо на терминале, иначе упаковщица может напечатать один
                 ярлык на всю связку — и остальные пакеты уедут без ярлыков. */}
