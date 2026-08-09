@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "Состояние переноса доступно",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "status"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "chunks": {}
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Неизвестное действие отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "nope"
+      },
+      "expectedStatus": 400,
+      "expectedBody": {
+        "error": "string"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}
