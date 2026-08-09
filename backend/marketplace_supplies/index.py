@@ -183,6 +183,38 @@ def find_cancelled_items(cur, supply_id):
     return direct
 
 
+def check_fbo_underfilled(cur, supply_id):
+    """Проверяет, собрана ли поставка FBO полностью.
+
+    В заявке на маркетплейс указано, сколько единиц мы обещали привезти. Если отгрузить
+    меньше, маркетплейс засчитает недовоз: заявка закроется частично, а остаток товара
+    зависнет на складе до следующей поставки. Поэтому недособранную поставку не отдаём.
+
+    Возвращает (собрано, план) — или None, если план не указан и проверять нечего.
+    """
+    cur.execute(
+        "SELECT type, total_quantity_marketplace FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    supply_type, planned = row
+    # Проверка только для FBO: в FBS каждая вещь едет по своему ярлыку, и отгрузить
+    # часть отправлений — нормальная ситуация.
+    if supply_type != 'FBO' or not planned:
+        return None
+
+    cur.execute(
+        "SELECT COUNT(*) FROM marketplace_supply_items WHERE supply_id = %s",
+        (int(supply_id),),
+    )
+    collected = int(cur.fetchone()[0])
+    if collected >= int(planned):
+        return None
+    return collected, int(planned)
+
+
 def check_incomplete_groups(cur, supply_id):
     """Ищет в поставке заказы Яндекса, собранные не полностью.
 
@@ -1454,6 +1486,23 @@ def handler(event: dict, context) -> dict:
                                 'incompleteGroups': incomplete,
                             }, ensure_ascii=False),
                         }
+                    # Поставка FBO едет по заявке: привезти меньше обещанного нельзя —
+                    # маркетплейс засчитает недовоз, а остаток зависнет на складе.
+                    underfilled = check_fbo_underfilled(cur, supply_id)
+                    if underfilled:
+                        collected, planned = underfilled
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Поставка собрана не полностью: {collected} из '
+                                         f'{planned} шт. по заявке. Дособерите товар или '
+                                         f'уменьшите количество в заявке.',
+                                'collected': collected,
+                                'planned': planned,
+                            }, ensure_ascii=False),
+                        }
+
                     extra_sql = ", ship_to_gazelka_at = COALESCE(ship_to_gazelka_at, now())"
                     cur.execute(
                         "SELECT goods_warehouse_id FROM marketplace_supply_items WHERE supply_id = %s",
