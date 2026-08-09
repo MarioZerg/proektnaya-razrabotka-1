@@ -431,7 +431,41 @@ export interface PendingDefect {
   userName: string;
   workshopName: string | null;
   createdAt: string;
+  /** Кто нашёл брак: закройщик, швея или упаковщица. */
+  userRole: string | null;
+  /** Рулон, из которого вырезан кусок, и его поставщик. */
+  rollBarcode: string | null;
+  supplierName: string | null;
+  comment: string | null;
+  /** Кусок от 2 пог.м — крупный, осматриваем тщательно. */
+  isLarge: boolean;
 }
+
+/** Принятый брак: по нему собирается статистика по рулонам и поставщикам. */
+export interface DefectHistoryRow {
+  barcode: string;
+  materialName: string;
+  unit: string | null;
+  quantity: number;
+  reasonLabel: string;
+  userName: string;
+  userRole: string | null;
+  rollBarcode: string | null;
+  supplierName: string | null;
+  receivedAt: string | null;
+  receivedByName: string | null;
+  comment: string | null;
+}
+
+export const fetchDefectHistory = async (days = 30): Promise<DefectHistoryRow[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_history', days }),
+  });
+  const data = await res.json();
+  return data.items || [];
+};
 
 /** Брак, который ещё лежит в контейнерах и не доехал до склада. */
 export const fetchPendingDefects = async (): Promise<PendingDefect[]> => {

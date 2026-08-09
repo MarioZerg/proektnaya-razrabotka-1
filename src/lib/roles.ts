@@ -144,6 +144,7 @@ const storekeeperNav: NavItem[] = [
       { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
       // «Товар к подбору» и инструкции убраны из меню: подбор открывается кнопкой
       // со склада товара, инструкции собраны в отдельном разделе «Инструкции».
+      { label: 'Приём брака из цеха', path: '/crm/inventory/defect-receive' },
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
@@ -231,6 +232,7 @@ const adminNav: NavItem[] = [
       { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
       // «Товар к подбору» и инструкции убраны из меню: подбор открывается кнопкой
       // со склада товара, инструкции собраны в отдельном разделе «Инструкции».
+      { label: 'Приём брака из цеха', path: '/crm/inventory/defect-receive' },
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },

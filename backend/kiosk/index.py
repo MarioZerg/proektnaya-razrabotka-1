@@ -1257,11 +1257,17 @@ def handler(event: dict, context) -> dict:
 
             if action == 'defect_pending':
                 # Брак, который лежит в контейнерах и ещё не доехал до склада.
+                # Тянем сразу рулон и поставщика: отрезанные куски поставщик обратно не
+                # берёт, но статистику «какой брак из какого рулона» мы ему показываем —
+                # это единственный рычаг в разговоре о качестве партии.
                 cur.execute(
                     "SELECT d.barcode, m.name, m.unit, d.quantity, d.reason_label, d.user_name, "
-                    "w.name, d.created_at FROM material_defects d "
+                    "w.name, d.created_at, d.user_role, r.barcode, s.name, d.comment "
+                    "FROM material_defects d "
                     "JOIN materials m ON m.id = d.material_id "
                     "LEFT JOIN workshops w ON w.id = d.workshop_id "
+                    "LEFT JOIN rolls r ON r.id = d.roll_id "
+                    "LEFT JOIN suppliers s ON s.id = r.supplier_id "
                     "WHERE d.received_at IS NULL ORDER BY d.created_at"
                 )
                 return {
@@ -1272,6 +1278,44 @@ def handler(event: dict, context) -> dict:
                             'barcode': r[0], 'materialName': r[1], 'unit': r[2],
                             'quantity': float(r[3]), 'reasonLabel': r[4], 'userName': r[5],
                             'workshopName': r[6], 'createdAt': r[7].isoformat() + 'Z',
+                            'userRole': r[8],
+                            'rollBarcode': r[9],
+                            'supplierName': r[10],
+                            'comment': r[11],
+                            # Кусок от 2 пог.м — крупный: такой кладовщик осматривает
+                            # тщательно, из него ещё может получиться изделие.
+                            'isLarge': float(r[3]) >= 2 and 'м' in (r[2] or ''),
+                        }
+                        for r in cur.fetchall()
+                    ]}, ensure_ascii=False),
+                }
+
+            if action == 'defect_history':
+                # Принятый брак за период: по нему видно, из каких рулонов и от каких
+                # поставщиков идёт плохая ткань. Куски поставщик не забирает, но такую
+                # выборку ему показывают как претензию по качеству партии.
+                days = int(body_data.get('days') or 30)
+                cur.execute(
+                    "SELECT d.barcode, m.name, m.unit, d.quantity, d.reason_label, d.user_name, "
+                    "d.user_role, r.barcode, s.name, d.received_at, d.received_by_name, d.comment "
+                    "FROM material_defects d "
+                    "JOIN materials m ON m.id = d.material_id "
+                    "LEFT JOIN rolls r ON r.id = d.roll_id "
+                    "LEFT JOIN suppliers s ON s.id = r.supplier_id "
+                    "WHERE d.received_at IS NOT NULL "
+                    f"AND d.received_at >= now() - interval '{days} days' "
+                    "ORDER BY d.received_at DESC LIMIT 500"
+                )
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'items': [
+                        {
+                            'barcode': r[0], 'materialName': r[1], 'unit': r[2],
+                            'quantity': float(r[3]), 'reasonLabel': r[4], 'userName': r[5],
+                            'userRole': r[6], 'rollBarcode': r[7], 'supplierName': r[8],
+                            'receivedAt': r[9].isoformat() + 'Z' if r[9] else None,
+                            'receivedByName': r[10], 'comment': r[11],
                         }
                         for r in cur.fetchall()
                     ]}, ensure_ascii=False),

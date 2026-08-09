@@ -31,6 +31,7 @@ const WarehouseGuide = lazy(() => import("./pages/inventory/WarehouseGuide"));
 const RollsGuide = lazy(() => import("./pages/inventory/RollsGuide"));
 const PackerGuide = lazy(() => import("./pages/inventory/PackerGuide"));
 const DefectGuide = lazy(() => import("./pages/inventory/DefectGuide"));
+const DefectReceive = lazy(() => import("./pages/inventory/DefectReceive"));
 const ShelvesSettings = lazy(() => import("./pages/settings/ShelvesSettings"));
 const MaterialsSettings = lazy(() => import("./pages/settings/MaterialsSettings"));
 const HangersSettings = lazy(() => import("./pages/settings/HangersSettings"));
@@ -110,6 +111,7 @@ const App = () => (
             <Route path="/crm/inventory/rolls-guide" element={<RollsGuide />} />
             <Route path="/crm/inventory/packer-guide" element={<PackerGuide />} />
             <Route path="/crm/inventory/defect-guide" element={<DefectGuide />} />
+            <Route path="/crm/inventory/defect-receive" element={<DefectReceive />} />
             <Route path="/crm/settings/shelves" element={<ShelvesSettings />} />
             <Route path="/crm/settings/materials" element={<MaterialsSettings />} />
             <Route path="/crm/settings/hangers" element={<HangersSettings />} />
