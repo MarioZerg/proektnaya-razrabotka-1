@@ -12,6 +12,7 @@ import psycopg2
 OZON_API_BASE = 'https://api-seller.ozon.ru'
 # Заявки покупателей на возврат WB отдаёт отдельный хост returns-api (не marketplace-api).
 WB_RETURNS_API_BASE = 'https://returns-api.wildberries.ru'
+YM_API_BASE = 'https://api.partner.market.yandex.ru'
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -107,6 +108,7 @@ def find_order(cur, marketplace, posting_number):
 
     У OZON это номер отправления (ozon_posting_number), у WB — srid заявки, который
     совпадает с order_number заказа (там он берётся из поля rid сборочного задания).
+    У Яндекса — номер заказа кампании, он же order_number.
     """
     if not posting_number:
         return None
@@ -116,10 +118,12 @@ def find_order(cur, marketplace, posting_number):
             (str(posting_number),),
         )
     else:
+        # Ищем строго среди заказов своей площадки: номера у разных маркетплейсов
+        # могут совпасть, и возврат прицепился бы к чужому заказу.
         cur.execute(
-            "SELECT id FROM orders WHERE order_number = %s AND marketplace = 'WB' "
+            "SELECT id FROM orders WHERE order_number = %s AND marketplace = %s "
             "ORDER BY id LIMIT 1",
-            (str(posting_number),),
+            (str(posting_number), marketplace),
         )
     row = cur.fetchone()
     return row[0] if row else None
@@ -295,6 +299,80 @@ def sync_wb(cur, days):
     return {'created': created, 'updated': updated, 'error': None}
 
 
+def sync_yandex(cur, days):
+    """Возвраты Яндекс Маркета.
+
+    Яндекс отдаёт возвраты по кампании и требует период — просим за последние дни.
+    Отдельного «статуса заявки» как у WB здесь нет: возврат уже согласован площадкой,
+    поэтому показываем его состояние доставки.
+    """
+    creds, enabled = get_credentials(cur, 'yandex_market')
+    if not enabled:
+        return {'created': 0, 'updated': 0, 'error': 'Интеграция Яндекс Маркета выключена'}
+    api_key = (creds.get('apiKey') or '').strip()
+    campaign_id = (creds.get('campaignId') or '').strip()
+    if not api_key or not campaign_id:
+        return {'created': 0, 'updated': 0, 'error': 'Не заполнены Api Key и Campaign Id Яндекс Маркета'}
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%d-%m-%Y')
+    created = updated = 0
+    page_token = None
+
+    for _ in range(10):
+        path = (
+            f'/campaigns/{campaign_id}/returns'
+            f'?fromDate={since}&limit=50'
+        )
+        if page_token:
+            path += f'&page_token={page_token}'
+        status, data = http_json(
+            YM_API_BASE + path, 'GET', {'Api-Key': api_key},
+        )
+        if status != 200:
+            return {'created': created, 'updated': updated, 'error': error_text(data)}
+
+        result = (data or {}).get('result') or {}
+        rows = result.get('returns') or []
+        if not rows:
+            break
+
+        for it in rows:
+            # В одном возврате может быть несколько позиций — заводим каждую отдельно,
+            # чтобы кладовщик сканировал вещи поштучно, как и у других площадок.
+            items = it.get('items') or [{}]
+            for idx, item in enumerate(items):
+                ret_id = str(it.get('id') or '')
+                if not ret_id:
+                    continue
+                decision = (item.get('decision') or {}) if isinstance(item, dict) else {}
+                rec = {
+                    # У Яндекса номер один на весь возврат — добавляем номер позиции,
+                    # иначе вторая вещь затрёт первую.
+                    'externalId': ret_id if len(items) == 1 else f'{ret_id}-{idx + 1}',
+                    'postingNumber': str(it.get('orderId') or ''),
+                    'offerId': str(item.get('offerId') or '') or None,
+                    'sku': item.get('marketSku'),
+                    'productName': item.get('offerName') or item.get('offerId'),
+                    'quantity': item.get('count') or 1,
+                    'mpStatus': it.get('logisticPickupPoint', {}).get('name')
+                    or it.get('refundStatus') or it.get('status'),
+                    'reason': decision.get('reasonType')
+                    or item.get('reasonType')
+                    or it.get('returnReason'),
+                    'createdAt': it.get('creationDate') or it.get('createdAt'),
+                }
+                if save_return(cur, 'Yandex', rec) == 'created':
+                    created += 1
+                else:
+                    updated += 1
+
+        page_token = ((data or {}).get('paging') or {}).get('nextPageToken')
+        if not page_token:
+            break
+
+    return {'created': created, 'updated': updated, 'error': None}
+
+
 def next_storage_barcode(cur):
     cur.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM goods_warehouse")
     return 'GW-' + str(cur.fetchone()[0]).zfill(6)
@@ -349,15 +427,21 @@ def handler(event: dict, context) -> dict:
                 days = int(params.get('days') or 30)
                 ozon = sync_ozon(cur, days)
                 wb = sync_wb(cur, days)
-                total_created = ozon['created'] + wb['created']
+                yandex = sync_yandex(cur, days)
+                total_created = ozon['created'] + wb['created'] + yandex['created']
                 if total_created:
                     log_action(
                         cur, None, 'Планировщик', 'sync',
                         f'Загрузка возвратов: новых {total_created}',
-                        {'ozon': ozon, 'wb': wb},
+                        {'ozon': ozon, 'wb': wb, 'yandex': yandex},
                     )
                 conn.commit()
-                return _resp(200, {'ozon': ozon, 'wildberries': wb, 'created': total_created})
+                return _resp(200, {
+                    'ozon': ozon,
+                    'wildberries': wb,
+                    'yandexMarket': yandex,
+                    'created': total_created,
+                })
             finally:
                 conn.close()
 
@@ -510,15 +594,21 @@ def handler(event: dict, context) -> dict:
                 days = int(body_data.get('days') or 30)
                 ozon = sync_ozon(cur, days)
                 wb = sync_wb(cur, days)
-                total_created = ozon['created'] + wb['created']
+                yandex = sync_yandex(cur, days)
+                total_created = ozon['created'] + wb['created'] + yandex['created']
                 if total_created:
                     log_action(
                         cur, actor_id, actor_name, 'sync',
                         f'Загрузка возвратов: новых {total_created}',
-                        {'ozon': ozon, 'wb': wb},
+                        {'ozon': ozon, 'wb': wb, 'yandex': yandex},
                     )
                 conn.commit()
-                return _resp(200, {'ozon': ozon, 'wildberries': wb, 'created': total_created})
+                return _resp(200, {
+                    'ozon': ozon,
+                    'wildberries': wb,
+                    'yandexMarket': yandex,
+                    'created': total_created,
+                })
 
             if action == 'approve':
                 # Решение по заявке принимает ТОЛЬКО админ: одобрил — вещь поедет к нам,

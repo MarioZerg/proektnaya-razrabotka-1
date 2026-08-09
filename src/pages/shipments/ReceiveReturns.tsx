@@ -48,9 +48,16 @@ const outcomeLabels: Record<string, { label: string; className: string }> = {
   stored: { label: 'На складе', className: 'text-emerald-600' },
 };
 
+/** В базе площадки записаны кодом — в списке показываем привычные названия. */
+const marketplaceNames: Record<string, string> = {
+  WB: 'Wildberries',
+  Yandex: 'Яндекс Маркет',
+};
+
 const marketplaceClass: Record<string, string> = {
   OZON: 'text-[#005BFF] font-bold',
   WB: 'text-[#CB11AB] font-bold',
+  Yandex: 'text-[#FC3F1D] font-bold',
 };
 
 const formatDate = (iso: string | null) =>
@@ -250,6 +257,7 @@ const ReceiveReturns = () => {
               <SelectItem value="all">Все маркетплейсы</SelectItem>
               <SelectItem value="OZON">OZON</SelectItem>
               <SelectItem value="WB">Wildberries</SelectItem>
+              <SelectItem value="Yandex">Яндекс Маркет</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -282,7 +290,7 @@ const ReceiveReturns = () => {
                   <TableRow key={r.id}>
                     <TableCell>
                       <span className={marketplaceClass[r.marketplace] || 'font-bold'}>
-                        {r.marketplace}
+                        {marketplaceNames[r.marketplace] || r.marketplace}
                       </span>
                     </TableCell>
                     <TableCell>
