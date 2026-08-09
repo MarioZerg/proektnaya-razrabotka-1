@@ -14,6 +14,14 @@ OZON_API_BASE = 'https://api-seller.ozon.ru'
 
 # Сколько отправлений просим у OZON за один запрос.
 OZON_SYNC_PAGE = 50
+# Сколько страниц забираем за один запуск.
+#
+# У функции всего 5 секунд на всю работу: запрос к OZON, разбор отправлений и запись
+# в базу. На нескольких страницах она в это время не укладывалась и обрывалась, ничего
+# не сохранив. Берём ОДНУ страницу (50 отправлений) за раз, а место остановки
+# запоминаем — следующий запуск продолжит оттуда. Заказы не теряются: они висят
+# в «ожидает сборки», пока их не соберут.
+OZON_SYNC_MAX_PAGES = 1
 
 # Только заказы, требующие сборки, попадают на конвейер производства.
 OZON_NEW_STATUS = 'awaiting_packaging'
@@ -172,13 +180,49 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         # присылает, и заказ юрлица выглядел на конвейере как обычный розничный.
         'with': {'legal_info': True},
     }
-    status_code, data = ozon_post('/v3/posting/fbs/unfulfilled/list', client_id, api_key, payload)
-    if status_code in (401, 403):
-        return _resp(400, {'error': 'OZON отклонил ключ (проверьте Client ID и API-ключ в настройках интеграции).'})
-    if status_code != 200:
-        return _resp(502, {'error': f'OZON вернул ошибку ({status_code}): {ozon_error_text(status_code, data)}'})
+    # Забираем ВСЕ страницы, а не первую.
+    #
+    # Раньше тянулась ровно одна страница на 50 отправлений. Пока их было немного,
+    # это работало, но в сезон в статусе «ожидает сборки» скапливается 200-300 штук —
+    # и всё, что не поместилось в первые 50, не попадало в систему вообще. Цех про
+    # такие заказы просто не знал.
+    postings = []
+    # С какой позиции продолжать. Заказов в «ожидает сборки» бывает больше, чем
+    # успевает обработать один запуск, поэтому запоминаем, где остановились, и
+    # следующий запуск продолжает с этого места, а не перебирает те же 200 штук.
+    cur.execute(
+        "SELECT value FROM system_settings WHERE key = 'ozon_sync_offset'"
+    )
+    row = cur.fetchone()
+    offset = int(row[0]) if row and str(row[0]).isdigit() else 0
+    reached_end = False
+    for _ in range(OZON_SYNC_MAX_PAGES):
+        payload['offset'] = offset
+        status_code, data = ozon_post(
+            '/v3/posting/fbs/unfulfilled/list', client_id, api_key, payload
+        )
+        if status_code in (401, 403):
+            return _resp(400, {'error': 'OZON отклонил ключ (проверьте Client ID и API-ключ в настройках интеграции).'})
+        if status_code != 200:
+            return _resp(502, {'error': f'OZON вернул ошибку ({status_code}): {ozon_error_text(status_code, data)}'})
 
-    postings = (data.get('result', {}) or {}).get('postings', []) if isinstance(data, dict) else []
+        result = (data.get('result', {}) or {}) if isinstance(data, dict) else {}
+        page = result.get('postings', []) or []
+        postings.extend(page)
+        offset += OZON_SYNC_PAGE
+        # Страница пришла неполной — значит она последняя, начинаем следующий
+        # запуск с начала списка.
+        if len(page) < OZON_SYNC_PAGE:
+            reached_end = True
+            break
+
+    next_offset = 0 if reached_end else offset
+    cur.execute(
+        "INSERT INTO system_settings (key, value) VALUES ('ozon_sync_offset', %s) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        (str(next_offset),),
+    )
+    conn.commit()
 
     created = 0
     matched = 0
