@@ -45,6 +45,14 @@ const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | '
   completed: { label: 'Завершён', variant: 'outline' },
 };
 
+/** Подпись статуса с запасным вариантом.
+ *
+ * Раньше обращались к словарю напрямую, и один неизвестный статус (такие приходят
+ * при переносе данных из другой системы) ронял всю страницу с ошибкой. Теперь
+ * незнакомое значение показывается как есть, а список остаётся рабочим. */
+export const rollStatusLabel = (status: string) =>
+  statusLabels[status as RollStatus] || { label: status, variant: 'outline' as const };
+
 const Rolls = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -58,6 +66,8 @@ const Rolls = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [materialFilter, setMaterialFilter] = useState('all');
   const [search, setSearch] = useState('');
+  // Сколько рулонов показываем сейчас. Сбрасывается при смене фильтра.
+  const [visibleCount, setVisibleCount] = useState(100);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -116,12 +126,21 @@ const Rolls = () => {
     ? materials.filter((m) => m.typeId === myTypeId)
     : materials;
 
-  const filtered = rolls.filter((r) => {
+  // За полтора года работы рулонов накопились тысячи. Рисовать их все разом
+  // браузер не успевает — планшет в цехе просто зависал. Показываем частями,
+  // кнопка внизу догружает следующие. Поиск и фильтры работают по всему списку.
+  useEffect(() => {
+    setVisibleCount(100);
+  }, [statusFilter, materialFilter, search]);
+
+  const allFiltered = rolls.filter((r) => {
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     if (materialFilter !== 'all' && String(r.materialId) !== materialFilter) return false;
     if (search && !r.barcode.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+
+  const filtered = allFiltered.slice(0, visibleCount);
 
   const openCreate = () => {
     setForm({ barcode: '', materialId: '', initialQuantity: '', workshopId: '', shiftNumber: '' });
@@ -315,7 +334,7 @@ const Rolls = () => {
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
-        ) : filtered.length === 0 ? (
+        ) : allFiltered.length === 0 ? (
           <p className="text-sm text-muted-foreground">Рулонов не найдено</p>
         ) : (
           <>
@@ -356,8 +375,8 @@ const Rolls = () => {
                   >
                     <TableCell>{r.id}</TableCell>
                     <TableCell>
-                      <Badge variant={statusLabels[r.status].variant}>
-                        {statusLabels[r.status].label}
+                      <Badge variant={rollStatusLabel(r.status).variant}>
+                        {rollStatusLabel(r.status).label}
                       </Badge>
                     </TableCell>
                     <TableCell className="font-mono-tech">{r.barcode}</TableCell>
@@ -383,6 +402,21 @@ const Rolls = () => {
               </TableBody>
             </Table>
           </div>
+
+          {/* Список длинный — показываем частями, иначе браузер не справляется. */}
+          {allFiltered.length > filtered.length && (
+            <div className="flex flex-col items-center gap-2 py-4">
+              <p className="text-sm text-muted-foreground">
+                Показано {filtered.length} из {allFiltered.length}
+              </p>
+              <Button
+                variant="outline"
+                onClick={() => setVisibleCount((n) => n + 200)}
+              >
+                Показать ещё
+              </Button>
+            </div>
+          )}
           </>
         )}
       </div>

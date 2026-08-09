@@ -97,7 +97,9 @@ const RollShow = () => {
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-xl font-bold">Рулон #{roll.id}</h1>
             <span className="font-mono-tech text-sm text-muted-foreground">{roll.barcode}</span>
-            <Badge variant={statusLabels[roll.status].variant}>{statusLabels[roll.status].label}</Badge>
+            <Badge variant={(statusLabels[roll.status] || { variant: 'outline' as const }).variant}>
+              {(statusLabels[roll.status] || { label: roll.status }).label}
+            </Badge>
             {/* Тип материала и кто отвечает за брак именно по нему: Тюль — закройщик,
                 Аксессуары — швея, Упаковка — упаковщик. */}
             <Badge variant="outline">

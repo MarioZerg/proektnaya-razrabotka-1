@@ -35,7 +35,9 @@ const RollsCards = ({
               <div className="font-semibold">{r.materialName || '—'}</div>
               <div className="font-mono-tech text-xs text-muted-foreground">{r.barcode}</div>
             </div>
-            <Badge variant={statusLabels[r.status].variant}>{statusLabels[r.status].label}</Badge>
+            <Badge variant={(statusLabels[r.status] || { variant: 'outline' as const }).variant}>
+              {(statusLabels[r.status] || { label: r.status }).label}
+            </Badge>
           </div>
 
           <div className="mt-2 text-sm">
