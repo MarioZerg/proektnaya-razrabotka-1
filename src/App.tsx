@@ -43,6 +43,7 @@ const MaterialsSettings = lazy(() => import("./pages/settings/MaterialsSettings"
 const HangersSettings = lazy(() => import("./pages/settings/HangersSettings"));
 const UsersSettings = lazy(() => import("./pages/settings/UsersSettings"));
 const CompanySettings = lazy(() => import("./pages/settings/CompanySettings"));
+const SystemCleanup = lazy(() => import("./pages/settings/SystemCleanup"));
 const PendingEmployees = lazy(() => import("./pages/settings/PendingEmployees"));
 const MarketplaceOrders = lazy(() => import("./pages/marketplace/MarketplaceOrders"));
 const SewingItems = lazy(() => import("./pages/marketplace/SewingItems"));
@@ -130,6 +131,7 @@ const App = () => (
             <Route path="/crm/settings/hangers" element={<HangersSettings />} />
             <Route path="/crm/settings/users" element={<UsersSettings />} />
             <Route path="/crm/settings/company" element={<CompanySettings />} />
+            <Route path="/crm/settings/cleanup" element={<SystemCleanup />} />
             <Route path="/crm/settings/pending-employees" element={<PendingEmployees />} />
             <Route path="/crm/marketplace/orders" element={<MarketplaceOrders />} />
             <Route path="/crm/marketplace/sewing-items" element={<SewingItems />} />

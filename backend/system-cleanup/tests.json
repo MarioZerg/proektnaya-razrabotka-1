@@ -1,0 +1,56 @@
+{
+  "tests": [
+    {
+      "name": "Сводка доступна только админу",
+      "method": "GET",
+      "path": "/?actorId=999999",
+      "expectedStatus": 403,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Очистка не админом отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "clear", "actorId": 999999, "groups": ["audit"], "confirm": "ОЧИСТИТЬ"},
+      "expectedStatus": 403,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Без слова подтверждения очистка не идёт",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "clear", "actorId": 1, "groups": ["audit"], "confirm": "да"},
+      "expectedStatus": 400,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Без выбранных групп очистка не идёт",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "clear", "actorId": 1, "groups": [], "confirm": "ОЧИСТИТЬ"},
+      "expectedStatus": 400,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Неизвестное действие отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "nope"},
+      "expectedStatus": 400,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Админ видит сводку по данным",
+      "method": "GET",
+      "path": "/?actorId=1",
+      "expectedStatus": 200,
+      "expectedBody": {"confirmPhrase": "string"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}
