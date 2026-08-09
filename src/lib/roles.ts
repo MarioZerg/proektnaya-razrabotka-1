@@ -134,15 +134,22 @@ const storekeeperNav: NavItem[] = [
       { label: 'Материалы на складе', path: '/crm/inventory/warehouse-materials' },
       { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
       { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
-      // Пошаговая инструкция по возвратам — кладовщику и админу.
-      { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
-      { label: 'Товар к подбору', path: '/crm/inventory/goods-picking' },
-      { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
+      // «Товар к подбору» и инструкции убраны из меню: подбор открывается кнопкой
+      // со склада товара, инструкции собраны в отдельном разделе «Инструкции».
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
       { label: 'Анализ возвратов', path: '/crm/analytics/returns' },
       { label: 'Анализ брака', path: '/crm/analytics/defects' },
+    ],
+  },
+  {
+    // Всё «как делать» в одном месте — чтобы не искать инструкции по разделам.
+    label: 'Инструкции',
+    icon: 'BookOpen',
+    children: [
+      { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
+      { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
     ],
   },
   {
@@ -211,15 +218,22 @@ const adminNav: NavItem[] = [
       { label: 'Материалы на складе', path: '/crm/inventory/warehouse-materials' },
       { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
       { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
-      // Пошаговая инструкция по возвратам — кладовщику и админу.
-      { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
-      { label: 'Товар к подбору', path: '/crm/inventory/goods-picking' },
-      { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
+      // «Товар к подбору» и инструкции убраны из меню: подбор открывается кнопкой
+      // со склада товара, инструкции собраны в отдельном разделе «Инструкции».
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
       { label: 'Анализ возвратов', path: '/crm/analytics/returns' },
       { label: 'Анализ брака', path: '/crm/analytics/defects' },
+    ],
+  },
+  {
+    // Всё «как делать» в одном месте — чтобы не искать инструкции по разделам.
+    label: 'Инструкции',
+    icon: 'BookOpen',
+    children: [
+      { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
+      { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
     ],
   },
   {

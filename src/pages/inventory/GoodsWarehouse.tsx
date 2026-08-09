@@ -15,6 +15,7 @@ import {
 } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { fetchMarketplaceReturns } from '@/lib/marketplaceReturnsApi';
+import { usePickingPending } from '@/hooks/usePickingPending';
 import ReceiveReturnDialog from '@/components/crm/goodsWarehouse/ReceiveReturnDialog';
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
@@ -81,6 +82,11 @@ const GoodsWarehouse = () => {
   // а решение (полка / перепаковка / утиль) кладовщик ещё не принял. Пока вещь не
   // лежит на полке, она считается непроверенной и в подбор не попадает.
   const [uncheckedReturns, setUncheckedReturns] = useState(0);
+
+  // Подбор теперь открывается только отсюда — держим на кнопке живой счётчик,
+  // чтобы кладовщик видел работу, не заходя внутрь. Звук не нужен: он уже есть
+  // в общем меню, дублировать сигнал на этой странице ни к чему.
+  const { pending: pickingPending } = usePickingPending(true, false);
 
   useEffect(() => {
     fetchMarketplaceReturns({ status: 'picked_up' })
@@ -257,9 +263,17 @@ const GoodsWarehouse = () => {
               saving={returnSaving}
               onSave={handleReceiveReturn}
             />
-            <Button variant="outline" onClick={() => navigate('/crm/inventory/goods-picking')}>
+            <Button
+              variant={pickingPending > 0 ? 'default' : 'outline'}
+              onClick={() => navigate('/crm/inventory/goods-picking')}
+            >
               <Icon name="ScanLine" size={16} className="mr-2" />
               Товар к подбору
+              {pickingPending > 0 && (
+                <span className="ml-2 rounded-full bg-background/25 px-2 text-xs">
+                  {pickingPending}
+                </span>
+              )}
             </Button>
             <Button
               variant={pendingShelf.length > 0 ? 'default' : 'outline'}
