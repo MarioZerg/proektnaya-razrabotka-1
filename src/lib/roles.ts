@@ -120,6 +120,11 @@ export const guideItems: GuideItem[] = [
     roles: ALL_STOREKEEPERS,
   },
   {
+    label: 'Крой продукции',
+    path: '/crm/inventory/cutting-guide',
+    roles: ['cutter'],
+  },
+  {
     label: 'Работа с браком из цеха',
     path: '/crm/inventory/defect-guide',
     roles: ALL_STOREKEEPERS,
