@@ -101,7 +101,13 @@ const ReceiveReturns = () => {
     setSyncing(true);
     try {
       const res = await syncMarketplaceReturns(30, user?.id, user?.name);
-      const errors = [res.ozon.error, res.wildberries.error].filter(Boolean);
+      // Ошибку любой площадки нужно показать: иначе «новых нет» будет означать
+      // и «действительно нет», и «интеграция отвалилась».
+      const errors = [
+        res.ozon.error,
+        res.wildberries.error,
+        res.yandexMarket?.error,
+      ].filter(Boolean);
       toast({
         title: res.created > 0 ? `Загружено новых возвратов: ${res.created}` : 'Новых возвратов нет',
         description: errors.length > 0 ? errors.join('; ') : undefined,

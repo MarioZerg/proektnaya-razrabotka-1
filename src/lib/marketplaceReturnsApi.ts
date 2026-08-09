@@ -108,6 +108,7 @@ export const syncMarketplaceReturns = (
 ): Promise<{
   ozon: ReturnsSyncResult;
   wildberries: ReturnsSyncResult;
+  yandexMarket: ReturnsSyncResult;
   created: number;
 }> => postAction({ action: 'sync', days, actorId, actorName });
 
