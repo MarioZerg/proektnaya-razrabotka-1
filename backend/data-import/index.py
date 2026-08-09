@@ -58,6 +58,66 @@ def handler(event: dict, context) -> dict:
         )
         conn.commit()
 
+        if action == 'fbo_supplies':
+            # Перенос незакрытых поставок FBO из старой системы вместе с заказами.
+            # Порядок обязателен: поставка -> короб -> заказы, потому что заказ
+            # ссылается на поставку, а короб — на неё же.
+            payload = json.loads(
+                gzip.decompress(base64.b64decode(body.get('data') or '')).decode()
+            )
+
+            for r in payload['supplies']:
+                cur.execute(
+                    "INSERT INTO marketplace_supplies (id, marketplace, type, status, "
+                    "ozon_application_number, cluster, supply_date, created_at, "
+                    "packaging_count, ozon_delivery_method, comment) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                    "'Перенесена из старой системы') ON CONFLICT (id) DO NOTHING",
+                    r,
+                )
+            cur.execute("SELECT setval(pg_get_serial_sequence('marketplace_supplies','id'), "
+                        "COALESCE((SELECT max(id) FROM marketplace_supplies), 1))")
+
+            for r in payload['boxes']:
+                # Номер короба у нас числовой, а в старой системе — строка вида
+                # FBO-OZON_0708260000366. Строку кладём в штрихкод, номер ставим по порядку.
+                cur.execute(
+                    "INSERT INTO marketplace_supply_boxes (id, supply_id, box_number, "
+                    "barcode, created_at, closed_at) VALUES (%s,%s,1,%s,%s,%s) "
+                    "ON CONFLICT (id) DO NOTHING",
+                    r,
+                )
+            cur.execute("SELECT setval(pg_get_serial_sequence('marketplace_supply_boxes','id'), "
+                        "COALESCE((SELECT max(id) FROM marketplace_supply_boxes), 1))")
+
+            # Пишем пачками: по одному 424 заказа не укладывались в отведённое
+            # функции время и загрузка обрывалась на середине.
+            created = 0
+            rows = payload['orders']
+            for i in range(0, len(rows), 100):
+                batch = rows[i:i + 100]
+                values = ','.join(
+                    cur.mogrify(
+                        "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", r
+                    ).decode()
+                    for r in batch
+                )
+                cur.execute(
+                    "INSERT INTO orders (order_number, marketplace, order_type, status, "
+                    "product, quantity, source, created_at, material, width, height, "
+                    "sewing_status, marketplace_item_id, product_barcode, supply_id, "
+                    "cut_at, taken_at, completed_at) "
+                    f"VALUES {values} ON CONFLICT (order_number) DO NOTHING"
+                )
+                created += cur.rowcount
+            conn.commit()
+
+            cur.execute("SELECT count(*) FROM marketplace_supplies WHERE type = 'FBO'")
+            fbo = cur.fetchone()[0]
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({'supplies': fbo, 'ordersCreated': created,
+                                        'boxes': len(payload['boxes'])})}
+
         if action == 'goods':
             # Товар на полках. Порядок обязателен: номенклатура -> заказы -> товар,
             # потому что у каждой единицы товара жёсткая ссылка на заказ, а у заказа —
