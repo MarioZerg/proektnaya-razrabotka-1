@@ -1,15 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
@@ -24,21 +15,12 @@ import {
   type ReturnGiveout,
   type GiveoutProgress,
 } from '@/lib/returnCodesApi';
+import ReturnCodeCard from '@/components/crm/returnCodes/ReturnCodeCard';
+import GiveoutList from '@/components/crm/returnCodes/GiveoutList';
+import GiveoutProgressDialog from '@/components/crm/returnCodes/GiveoutProgressDialog';
+import ReturnCodeDialogs from '@/components/crm/returnCodes/ReturnCodeDialogs';
 import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
-
-/** Цвет плитки под фирменный цвет площадки — так кладовщик находит нужную не читая. */
-const tileClass: Record<string, string> = {
-  ozon: 'bg-blue-600 hover:bg-blue-700',
-  wildberries: 'bg-purple-600 hover:bg-purple-700',
-  yandex_market: 'bg-yellow-500 hover:bg-yellow-600',
-};
-
-const iconByMarketplace: Record<string, string> = {
-  ozon: 'ShoppingBag',
-  wildberries: 'ShoppingCart',
-  yandex_market: 'Store',
-};
 
 /**
  * Штрихкоды для получения возвратов в пунктах выдачи.
@@ -237,134 +219,31 @@ const ReturnPickupCodes = () => {
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {items.map((item) => (
-              <Card key={item.marketplaceCode} className="border-border shadow-none">
-                <CardContent className="space-y-3 pt-6">
-                  <button
-                    type="button"
-                    disabled={!item.code}
-                    onClick={() => setShown(item)}
-                    className={`flex h-28 w-full flex-col items-center justify-center gap-2 rounded-lg text-white ${
-                      item.code
-                        ? tileClass[item.marketplaceCode] || 'bg-primary hover:bg-primary/90'
-                        : 'cursor-not-allowed bg-muted text-muted-foreground'
-                    }`}
-                  >
-                    <Icon
-                      name={iconByMarketplace[item.marketplaceCode] || 'Package'}
-                      size={32}
-                    />
-                    <span className="text-lg font-bold">{item.title}</span>
-                  </button>
-
-                  {/* Сколько посылок ждёт именно на этой площадке. */}
-                  <p
-                    className={`text-center text-sm font-medium ${
-                      item.waitingCount > 0 ? 'text-amber-600' : 'text-muted-foreground'
-                    }`}
-                  >
-                    {item.waitingCount > 0
-                      ? `Ждёт к забору: ${item.waitingCount} шт.`
-                      : 'Нет возвратов к забору'}
-                  </p>
-
-                  {item.code ? (
-                    <>
-                      <p className="text-center font-mono-tech text-sm text-muted-foreground">
-                        {item.code}
-                      </p>
-                      {/* У OZON код меняется каждый день: вчерашний на ПВЗ не примут,
-                          поэтому прямо предупреждаем, что нужно обновить. */}
-                      {item.dailyRefresh && !item.updatedToday && (
-                        <p className="rounded bg-destructive/10 px-2 py-1 text-center text-sm font-medium text-destructive">
-                          Код устарел — обновите его сегодня
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-center text-sm text-amber-600">
-                      Код не заполнен — возврат не получить
-                    </p>
-                  )}
-
-
-                  {/* Обновление по API — только там, где код меняется ежедневно. */}
-                  {item.dailyRefresh && (
-                    <Button
-                      size="sm"
-                      className="w-full"
-                      onClick={() => handleRefresh(item)}
-                      disabled={refreshingId === item.marketplaceCode}
-                    >
-                      <Icon
-                        name={refreshingId === item.marketplaceCode ? 'Loader2' : 'RefreshCw'}
-                        size={14}
-                        className={`mr-1 ${refreshingId === item.marketplaceCode ? 'animate-spin' : ''}`}
-                      />
-                      Обновить код
-                    </Button>
-                  )}
-
-                  {isAdmin && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      onClick={() => {
-                        setEditing(item);
-                        setCodeValue(item.code || '');
-                      }}
-                    >
-                      <Icon name="Pencil" size={14} className="mr-1" />
-                      {item.code ? 'Изменить код' : 'Задать код'}
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
+              <ReturnCodeCard
+                key={item.marketplaceCode}
+                item={item}
+                isAdmin={isAdmin}
+                refreshingId={refreshingId}
+                onShow={setShown}
+                onRefresh={handleRefresh}
+                onEdit={(it) => {
+                  setEditing(it);
+                  setCodeValue(it.code || '');
+                }}
+              />
             ))}
           </div>
         )}
 
-        {/* Что ждёт получения в пункте выдачи. */}
-        <div className="space-y-2">
-          <h2 className="text-base font-bold">Ожидают получения в пункте выдачи</h2>
-          {listLoading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Icon name="Loader2" size={16} className="animate-spin" />
-              Загрузка…
-            </div>
-          ) : giveouts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Сейчас в пунктах выдачи ничего не ждёт — забирать нечего
-            </p>
-          ) : (
-            giveouts.map((g) => (
-              <Card key={g.giveoutId} className="border-emerald-300 bg-emerald-50 shadow-none">
-                <CardContent className="space-y-3 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-bold text-emerald-900">{g.placeName}</p>
-                      {g.status && <p className="text-sm text-emerald-800">{g.status}</p>}
-                    </div>
-                    <p className="shrink-0 text-lg font-bold text-emerald-900">{g.count} шт.</p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => setWatchingId(g.giveoutId)}
-                  >
-                    <Icon name="ScanLine" size={14} className="mr-1" />
-                    Следить за приёмкой
-                  </Button>
-                </CardContent>
-              </Card>
-            ))
-          )}
-        </div>
+        <GiveoutList
+          giveouts={giveouts}
+          listLoading={listLoading}
+          onWatch={setWatchingId}
+        />
 
-        {/* Живой счётчик: сколько коробок сотрудник ПВЗ уже отсканировал. */}
-        <Dialog
-          open={!!watchingId}
+        <GiveoutProgressDialog
+          watchingId={watchingId}
+          progress={progress}
           onOpenChange={(open) => {
             if (!open) {
               setWatchingId(null);
@@ -372,125 +251,19 @@ const ReturnPickupCodes = () => {
               loadGiveouts();
             }
           }}
-        >
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Приёмка возвратов</DialogTitle>
-            </DialogHeader>
-            {!progress ? (
-              <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-                <Icon name="Loader2" size={16} className="animate-spin" />
-                Ждём данные от OZON…
-              </div>
-            ) : (
-              <div className="space-y-4 py-2">
-                <div className="text-center">
-                  <p className="text-4xl font-bold">
-                    {progress.scanned}
-                    <span className="text-2xl text-muted-foreground"> / {progress.total}</span>
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    отсканировано сотрудником пункта выдачи
-                  </p>
-                </div>
+        />
 
-                <div className="h-3 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full bg-emerald-500 transition-all"
-                    style={{
-                      width: `${progress.total ? (progress.scanned / progress.total) * 100 : 0}%`,
-                    }}
-                  />
-                </div>
-
-                {progress.scanned >= progress.total && progress.total > 0 ? (
-                  <p className="rounded-md bg-emerald-50 px-3 py-2 text-center text-sm font-medium text-emerald-900">
-                    Все возвраты приняты — можно забирать
-                  </p>
-                ) : (
-                  <p className="text-center text-sm text-muted-foreground">
-                    Осталось принять: {Math.max(progress.total - progress.scanned, 0)} шт.
-                  </p>
-                )}
-
-                {progress.items.length > 0 && (
-                  <div className="max-h-52 space-y-1 overflow-y-auto rounded-md border p-2">
-                    {progress.items.map((it, idx) => (
-                      <div key={idx} className="flex items-center gap-2 text-sm">
-                        <Icon
-                          name={it.approved ? 'CircleCheck' : 'Circle'}
-                          size={14}
-                          className={it.approved ? 'text-emerald-600' : 'text-muted-foreground'}
-                        />
-                        <span className="truncate">{it.name || 'Товар'}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-
-        {/* Код во весь экран: приёмщик на ПВЗ сканирует его прямо с телефона. */}
-        <Dialog open={!!shown} onOpenChange={(open) => !open && setShown(null)}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>{shown?.title}</DialogTitle>
-            </DialogHeader>
-            <div className="flex flex-col items-center gap-3 py-4">
-              {shown?.codeImage ? (
-                <img
-                  src={`data:image/png;base64,${shown.codeImage}`}
-                  alt="Штрихкод выдачи возвратов"
-                  className="w-full max-w-[300px]"
-                />
-              ) : (
-                <canvas ref={canvasRef} />
-              )}
-              <p className="font-mono-tech text-lg font-bold">{shown?.code}</p>
-              <p className="text-center text-sm text-muted-foreground">
-                Покажите этот код приёмщику на пункте выдачи
-              </p>
-              {shown?.dailyRefresh && !shown?.updatedToday && (
-                <p className="rounded-md bg-destructive/10 px-3 py-2 text-center text-sm font-medium text-destructive">
-                  Код обновляется раз в сутки, а этот сохранён не сегодня — возьмите
-                  свежий в личном кабинете, иначе возврат не выдадут
-                </p>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Код возвратов · {editing?.title}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label>Штрихкод из личного кабинета</Label>
-                <Input
-                  value={codeValue}
-                  onChange={(e) => setCodeValue(e.target.value)}
-                  placeholder="Например: 1234567890"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Код продавца — по нему на ПВЗ выдают все возвраты
-                </p>
-                {editing?.dailyRefresh && (
-                  <p className="rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
-                    Этот код меняется каждый день — обновляйте его утром перед поездкой
-                    на пункт выдачи
-                  </p>
-                )}
-              </div>
-              <Button onClick={handleSave} disabled={saving} className="w-full">
-                {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Сохранить'}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+        <ReturnCodeDialogs
+          shown={shown}
+          setShown={setShown}
+          canvasRef={canvasRef}
+          editing={editing}
+          setEditing={setEditing}
+          codeValue={codeValue}
+          setCodeValue={setCodeValue}
+          saving={saving}
+          onSave={handleSave}
+        />
       </div>
     </CrmLayout>
   );
