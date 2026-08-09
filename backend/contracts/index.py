@@ -477,12 +477,34 @@ def handler(event: dict, context) -> dict:
                         }, ensure_ascii=False),
                     }
 
+                # Реквизиты ИП нужны до проверок: без адреса и города в договоре
+                # встанут прочерки, поэтому это тоже блокировка.
+                cur.execute(
+                    "SELECT key, value FROM system_settings WHERE key IN "
+                    "('company_name','company_ogrnip','company_inn','company_address',"
+                    "'company_phone','company_city')"
+                )
+                s_row = {k: v for k, v in cur.fetchall()}
+                company = {
+                    'name': s_row.get('company_name'),
+                    'ogrnip': s_row.get('company_ogrnip'),
+                    'inn': s_row.get('company_inn'),
+                    'address': s_row.get('company_address'),
+                    'phone': s_row.get('company_phone'),
+                    'city': s_row.get('company_city'),
+                }
+
                 # Договор с пустой графой паспорта или с неподтверждённым номером для
                 # выплат отправлять нельзя: первый недействителен, по второму деньги
                 # уйдут на чужой счёт. Поэтому проверки жёсткие, а не предупреждения.
                 blockers = []
                 if not u[14]:
                     blockers.append('паспортные данные не проверены администратором')
+                if not company.get('name') or not company.get('address') \
+                        or not company.get('city'):
+                    blockers.append(
+                        'не заполнены реквизиты ИП в настройках (ФИО, адрес и город)'
+                    )
                 if not u[11]:
                     blockers.append('сотрудник не указал номер телефона для выплат по СБП')
                 elif not u[13]:
@@ -510,21 +532,6 @@ def handler(event: dict, context) -> dict:
                     'inn': u[10],
                     'sbpPhone': u[11],
                     'sbpBank': u[12],
-                }
-
-                cur.execute(
-                    "SELECT key, value FROM system_settings WHERE key IN "
-                    "('company_name','company_ogrnip','company_inn','company_address',"
-                    "'company_phone','company_city')"
-                )
-                s = {k: v for k, v in cur.fetchall()}
-                company = {
-                    'name': s.get('company_name'),
-                    'ogrnip': s.get('company_ogrnip'),
-                    'inn': s.get('company_inn'),
-                    'address': s.get('company_address'),
-                    'phone': s.get('company_phone'),
-                    'city': s.get('company_city'),
                 }
 
                 # Номер договора — сквозной по сотруднику, чтобы перевыпуск был виден.

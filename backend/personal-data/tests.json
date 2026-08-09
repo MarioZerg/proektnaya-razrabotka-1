@@ -5,26 +5,61 @@
       "method": "GET",
       "path": "/",
       "expectedStatus": 400,
-      "expectedBody": {"error": "string"},
+      "expectedBody": {
+        "error": "string"
+      },
       "bodyMatcher": "partial"
     },
     {
       "name": "Неизвестное действие отклоняется",
       "method": "POST",
       "path": "/",
-      "body": {"action": "nope"},
+      "body": {
+        "action": "nope"
+      },
       "expectedStatus": 400,
-      "expectedBody": {"error": "string"},
+      "expectedBody": {
+        "error": "string"
+      },
       "bodyMatcher": "partial"
     },
     {
       "name": "Паспорт может вносить только админ",
       "method": "POST",
       "path": "/",
-      "body": {"action": "save_passport", "userId": 1, "actorId": 999999},
+      "body": {
+        "action": "save_passport",
+        "userId": 1,
+        "actorId": 999999
+      },
       "expectedStatus": 403,
-      "expectedBody": {"error": "string"},
+      "expectedBody": {
+        "error": "string"
+      },
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "Отклонение документов не админом закрыто",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "reject_docs",
+        "userId": 1,
+        "actorId": 999999,
+        "reason": "x"
+      },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Снятие блокировки не админом закрыто",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "unblock_docs",
+        "userId": 1,
+        "actorId": 999999
+      },
+      "expectedStatus": 403
     }
   ]
 }

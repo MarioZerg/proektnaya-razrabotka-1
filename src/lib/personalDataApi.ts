@@ -12,6 +12,17 @@ export interface UserDocument {
   uploadedAt: string;
 }
 
+/** Состояние срока на загрузку документов.
+ * countdown — идёт отсчёт, review — сдано и ждёт админа, blocked — срок вышел,
+ * done — данные проверены, none — срок не назначен (действующий сотрудник). */
+export interface DocsStatus {
+  state: 'countdown' | 'review' | 'blocked' | 'done' | 'none';
+  daysLeft: number | null;
+  deadline: string | null;
+  blocked: boolean;
+  expired?: boolean;
+}
+
 export interface PersonalData {
   userId: number;
   fullName: string;
@@ -26,6 +37,9 @@ export interface PersonalData {
   personalDataVerifiedAt: string | null;
   documents: UserDocument[];
   requiredDocs: { docType: DocType; label: string }[];
+  docsStatus: DocsStatus;
+  /** Причина, по которой админ отклонил документы. */
+  docsRejectedReason: string | null;
   /** Паспортные поля приходят только администратору. */
   passportSeries?: string | null;
   passportNumber?: string | null;
@@ -94,3 +108,19 @@ export const savePassport = (payload: {
   snils?: string;
   inn?: string;
 }) => post({ action: 'save_passport', ...payload });
+
+/** Админ отклоняет некачественные сканы: сотрудник видит причину и получает новый срок. */
+export const rejectDocs = (payload: {
+  userId: number;
+  actorId: number;
+  reason: string;
+  days?: number;
+}) => post({ action: 'reject_docs', ...payload });
+
+/** Админ возвращает заблокированного сотрудника в работу. */
+export const unblockDocs = (userId: number, actorId: number, days = 7) =>
+  post({ action: 'unblock_docs', userId, actorId, days });
+
+/** Проверка при входе: срок вышел, а документов нет — ставим блокировку. */
+export const checkDocsExpired = (userId: number) =>
+  post({ action: 'check_expired', userId }) as Promise<{ blocked: boolean }>;

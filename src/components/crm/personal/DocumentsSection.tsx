@@ -3,7 +3,15 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateTime } from '@/lib/dateUtils';
-import { uploadUserDoc, type DocType, type PersonalData } from '@/lib/personalDataApi';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  rejectDocs,
+  unblockDocs,
+  uploadUserDoc,
+  type DocType,
+  type PersonalData,
+} from '@/lib/personalDataApi';
 
 interface DocumentsSectionProps {
   data: PersonalData;
@@ -33,6 +41,51 @@ const DocumentsSection = ({
   const { toast } = useToast();
   const refs = useRef<Record<string, HTMLInputElement | null>>({});
   const [uploading, setUploading] = useState<DocType | null>(null);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const handleReject = async () => {
+    setBusy(true);
+    try {
+      await rejectDocs({ userId, actorId, reason: reason.trim() });
+      toast({
+        title: 'Документы отклонены',
+        description: 'Сотрудник увидит причину и получит новый срок',
+      });
+      setRejectOpen(false);
+      setReason('');
+      onChanged();
+    } catch (e) {
+      toast({
+        title: 'Не удалось отклонить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleUnblock = async () => {
+    setBusy(true);
+    try {
+      await unblockDocs(userId, actorId);
+      toast({
+        title: 'Сотрудник возвращён в работу',
+        description: 'Дан новый срок на загрузку документов — 7 дней',
+      });
+      onChanged();
+    } catch (e) {
+      toast({
+        title: 'Не удалось вернуть в работу',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handleFile = async (docType: DocType, file: File) => {
     if (file.size > 12 * 1024 * 1024) {
@@ -149,6 +202,75 @@ const DocumentsSection = ({
           );
         })}
       </div>
+
+      {/* Админу — управление сроком: отклонить некачественные сканы или вернуть
+          заблокированного сотрудника в работу. */}
+      {isAdmin && (
+        <div className="space-y-2 border-t border-border pt-3">
+          {data.docsStatus.state === 'blocked' && (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+              <Icon name="ShieldAlert" size={18} className="mt-0.5 shrink-0" />
+              <p>
+                Доступ приостановлен: документы не сданы в срок. Сотрудник не может
+                работать, пока вы не вернёте его в систему
+              </p>
+            </div>
+          )}
+          {data.docsStatus.state === 'review' && (
+            <p className="text-sm text-muted-foreground">
+              Документы сданы и ждут вашей проверки — срок остановлен
+            </p>
+          )}
+          {data.docsStatus.state === 'countdown' && (
+            <p className="text-sm text-muted-foreground">
+              Осталось дней на загрузку: {data.docsStatus.daysLeft}
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            {data.docsStatus.state === 'blocked' && (
+              <Button size="sm" disabled={busy} onClick={handleUnblock}>
+                <Icon name="LockOpen" size={14} className="mr-1.5" />
+                Вернуть в работу
+              </Button>
+            )}
+            {uploaded.size > 0 && data.docsStatus.state !== 'done' && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => setRejectOpen(true)}
+              >
+                <Icon name="X" size={14} className="mr-1.5" />
+                Отклонить документы
+              </Button>
+            )}
+          </div>
+
+          {rejectOpen && (
+            <div className="space-y-2 rounded-md border border-border p-3">
+              <Label className="text-sm">Что не так с документами</Label>
+              <Textarea
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Например: на фото паспорта не читается номер — переснимите при дневном свете"
+                rows={2}
+              />
+              <p className="text-xs text-muted-foreground">
+                Сотрудник увидит это сообщение и получит новые 7 дней на загрузку
+              </p>
+              <div className="flex gap-2">
+                <Button size="sm" disabled={busy || !reason.trim()} onClick={handleReject}>
+                  Отклонить и дать новый срок
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setRejectOpen(false)}>
+                  Отмена
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <p className="text-xs text-muted-foreground">
         Сканы видит только администратор. Они используются исключительно для оформления

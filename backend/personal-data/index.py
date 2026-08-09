@@ -65,6 +65,55 @@ def iso(value):
     return value.isoformat() if value else None
 
 
+def docs_status(row_map: dict, doc_types: set) -> dict:
+    """Считает состояние срока на загрузку документов.
+
+    Правило простое: пока очередь за сотрудником — срок течёт, как только он загрузил
+    полный комплект и ждёт проверки — срок замирает. Блокировать человека за то, что
+    администратор не успел посмотреть документы, нельзя.
+    """
+    deadline = row_map.get('docs_deadline')
+    verified = bool(row_map.get('personal_data_verified'))
+    submitted = row_map.get('docs_submitted_at')
+    blocked = bool(row_map.get('docs_blocked'))
+    complete = doc_types >= set(DOC_TYPES.keys())
+
+    # Данные проверены — требование закрыто, счётчик больше не показываем.
+    if verified:
+        return {'state': 'done', 'daysLeft': None, 'deadline': None, 'blocked': False}
+
+    if blocked:
+        return {
+            'state': 'blocked',
+            'daysLeft': 0,
+            'deadline': iso(deadline),
+            'blocked': True,
+        }
+
+    # Комплект загружен — ждём администратора, срок не течёт.
+    if complete and submitted:
+        return {
+            'state': 'review',
+            'daysLeft': None,
+            'deadline': iso(deadline),
+            'blocked': False,
+        }
+
+    # Срок не назначен — это действующий сотрудник, с него документы не требуем.
+    if not deadline:
+        return {'state': 'none', 'daysLeft': None, 'deadline': None, 'blocked': False}
+
+    left = deadline - datetime.utcnow()
+    days = left.days + (1 if left.seconds > 0 and left.days >= 0 else 0)
+    return {
+        'state': 'countdown',
+        'daysLeft': max(0, days) if left.total_seconds() > 0 else 0,
+        'deadline': iso(deadline),
+        'blocked': False,
+        'expired': left.total_seconds() <= 0,
+    }
+
+
 def handler(event: dict, context) -> dict:
     """Персональные данные сотрудника: сканы документов, паспорт и реквизиты СБП.
 
@@ -135,7 +184,8 @@ def handler(event: dict, context) -> dict:
                 "SELECT full_name, passport_series, passport_number, passport_issued_by, "
                 "passport_issued_date, passport_department_code, birth_date, "
                 "registration_address, snils, inn, sbp_phone, sbp_bank, sbp_confirmed, "
-                "personal_data_verified, personal_data_verified_at, phone "
+                "personal_data_verified, personal_data_verified_at, phone, "
+                "docs_deadline, docs_submitted_at, docs_rejected_reason, docs_blocked "
                 "FROM users WHERE id = %s",
                 (int(user_id),),
             )
@@ -178,6 +228,16 @@ def handler(event: dict, context) -> dict:
                 'requiredDocs': [
                     {'docType': k, 'label': v} for k, v in DOC_TYPES.items()
                 ],
+                'docsStatus': docs_status(
+                    {
+                        'docs_deadline': r[16],
+                        'docs_submitted_at': r[17],
+                        'personal_data_verified': r[13],
+                        'docs_blocked': r[19],
+                    },
+                    {d['docType'] for d in docs},
+                ),
+                'docsRejectedReason': r[18],
             }
             if admin:
                 data.update({
@@ -266,6 +326,20 @@ def handler(event: dict, context) -> dict:
                 "personal_data_verified_at = NULL WHERE id = %s",
                 (int(user_id),),
             )
+
+            # Комплект собран — фиксируем момент сдачи и снимаем прежний отказ.
+            # С этой отметкой срок замирает: дальше очередь за администратором.
+            cur.execute(
+                "SELECT count(DISTINCT doc_type) FROM user_documents WHERE user_id = %s",
+                (int(user_id),),
+            )
+            if cur.fetchone()[0] >= len(DOC_TYPES):
+                cur.execute(
+                    "UPDATE users SET docs_submitted_at = COALESCE(docs_submitted_at, now()), "
+                    "docs_rejected_reason = NULL, docs_rejected_at = NULL "
+                    "WHERE id = %s",
+                    (int(user_id),),
+                )
             conn.commit()
             return {
                 'statusCode': 200,
@@ -346,6 +420,86 @@ def handler(event: dict, context) -> dict:
                 'body': json.dumps({'success': True}),
             }
 
+        if action == 'reject_docs':
+            # Админ отклоняет некачественные сканы: срок назначается заново, сотрудник
+            # видит причину. Без причины отклонять нельзя — человек не поймёт, что не так.
+            actor_id = body_data.get('actorId')
+            if not is_admin(cur, actor_id):
+                return {
+                    'statusCode': 403,
+                    'headers': headers,
+                    'body': json.dumps({'error': 'Отклонять документы может только администратор'}),
+                }
+            user_id = body_data.get('userId')
+            reason = (body_data.get('reason') or '').strip()[:500]
+            if not reason:
+                return {
+                    'statusCode': 400,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': 'Напишите, что не так с документами — сотрудник должен '
+                                 'понимать, что переснять'
+                    }),
+                }
+            days = int(body_data.get('days') or 7)
+            cur.execute(
+                "UPDATE users SET docs_rejected_reason = %s, docs_rejected_at = now(), "
+                "docs_submitted_at = NULL, docs_blocked = false, "
+                "personal_data_verified = false, personal_data_verified_at = NULL, "
+                "docs_deadline = now() + (%s || ' days')::interval WHERE id = %s",
+                (reason, str(days), int(user_id)),
+            )
+            conn.commit()
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'success': True}),
+            }
+
+        if action == 'unblock_docs':
+            # Возврат заблокированного сотрудника в работу: только администратор и
+            # только вручную — это и есть «перевести в рабочий профиль».
+            actor_id = body_data.get('actorId')
+            if not is_admin(cur, actor_id):
+                return {
+                    'statusCode': 403,
+                    'headers': headers,
+                    'body': json.dumps({'error': 'Снять блокировку может только администратор'}),
+                }
+            user_id = body_data.get('userId')
+            days = int(body_data.get('days') or 7)
+            cur.execute(
+                "UPDATE users SET docs_blocked = false, "
+                "docs_deadline = now() + (%s || ' days')::interval WHERE id = %s",
+                (str(days), int(user_id)),
+            )
+            conn.commit()
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'success': True}),
+            }
+
+        if action == 'check_expired':
+            # Срок вышел, а комплекта нет — ставим блокировку. Проверку делает сам
+            # сотрудник при входе: отдельный планировщик ради этого держать незачем.
+            user_id = body_data.get('userId')
+            cur.execute(
+                "UPDATE users u SET docs_blocked = true "
+                "WHERE u.id = %s AND u.docs_blocked = false "
+                "AND u.personal_data_verified = false "
+                "AND u.docs_deadline IS NOT NULL AND u.docs_deadline < now() "
+                "AND u.docs_submitted_at IS NULL RETURNING u.id",
+                (int(user_id),),
+            )
+            blocked = cur.fetchone() is not None
+            conn.commit()
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'blocked': blocked}),
+            }
+
         if action == 'save_passport':
             actor_id = body_data.get('actorId')
             if not is_admin(cur, actor_id):
@@ -389,13 +543,19 @@ def handler(event: dict, context) -> dict:
                 "passport_issued_by = %s, passport_issued_date = %s, "
                 "passport_department_code = %s, birth_date = %s, registration_address = %s, "
                 "snils = %s, inn = %s, personal_data_verified = %s, "
-                "personal_data_verified_at = %s, personal_data_verified_by = %s "
+                "personal_data_verified_at = %s, personal_data_verified_by = %s, "
+                # Данные проверены — требование закрыто: снимаем срок, блокировку
+                # и прежний отказ, чтобы счётчик у сотрудника пропал.
+                "docs_deadline = CASE WHEN %s THEN NULL ELSE docs_deadline END, "
+                "docs_blocked = CASE WHEN %s THEN false ELSE docs_blocked END, "
+                "docs_rejected_reason = CASE WHEN %s THEN NULL ELSE docs_rejected_reason END "
                 "WHERE id = %s",
                 (
                     series, number, issued_by, issued_date, dep_code, birth_date, address,
                     snils, inn, verified,
                     datetime.utcnow() if verified else None,
                     int(actor_id) if verified else None,
+                    verified, verified, verified,
                     int(user_id),
                 ),
             )

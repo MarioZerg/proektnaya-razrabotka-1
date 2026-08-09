@@ -34,6 +34,9 @@ import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
 import { usePickingPending } from '@/hooks/usePickingPending';
 import KioskPreviewDialog from '@/components/crm/kiosk/KioskPreviewDialog';
 import ContractGate from '@/components/crm/contracts/ContractGate';
+import DocsGate from '@/components/crm/personal/DocsGate';
+import DocsCountdownBanner from '@/components/crm/personal/DocsCountdownBanner';
+import { checkDocsExpired } from '@/lib/personalDataApi';
 import CloseSidebarOnNavigate from '@/components/crm/CloseSidebarOnNavigate';
 import { fetchPendingContracts } from '@/lib/contractsApi';
 
@@ -61,6 +64,10 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   // показываем экран подписания. null — ещё проверяем, не мигаем интерфейсом зря.
   const [pendingContracts, setPendingContracts] = useState<number | null>(null);
 
+  // Срок на загрузку документов вышел, а комплекта нет — доступ приостанавливается.
+  // Проверяем при входе: отдельный планировщик ради этого держать незачем.
+  const [docsBlocked, setDocsBlocked] = useState(false);
+
   useEffect(() => {
     if (!user?.id) return;
     fetchPendingContracts(user.id)
@@ -68,6 +75,14 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
       // Если проверка не удалась (сеть, функция) — не запираем человека снаружи.
       .catch(() => setPendingContracts(0));
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || user.role === 'admin') return;
+    checkDocsExpired(user.id)
+      .then((r) => setDocsBlocked(r.blocked))
+      // Сбой проверки не должен запирать человека снаружи.
+      .catch(() => setDocsBlocked(false));
+  }, [user?.id, user?.role]);
 
   useEffect(() => {
     if (!user) {
@@ -95,6 +110,12 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   // Страницу «Договоры» не запираем: с неё человек и подписывает.
   if (pendingContracts !== null && pendingContracts > 0 && location.pathname !== '/crm/contracts') {
     return <ContractGate onAllSigned={() => setPendingContracts(0)} />;
+  }
+
+  // Документы не сданы в срок — вместо системы экран с загрузкой документов.
+  // Вернуть в работу может только администратор.
+  if (docsBlocked) {
+    return <DocsGate onSubmitted={() => setDocsBlocked(false)} />;
   }
 
   const nav = navByRole[user.role] || [{ label: 'Главная', icon: 'LayoutDashboard', path: '/crm' }];
@@ -317,6 +338,9 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           и на телефоне появляется горизонтальная прокрутка всего экрана вместо
           аккуратной прокрутки самой таблицы. */}
       <main className="w-full min-w-0 flex-1 overflow-x-hidden">
+        {/* Счётчик срока на документы — над всем содержимым, чтобы новичок видел его
+            на любой странице, а не только там, где документы загружаются. */}
+        <DocsCountdownBanner />
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
           <SidebarTrigger />
           {/* Персональный QR сотрудника — рядом с меню, чтобы быстро показать его сканеру. */}
