@@ -168,7 +168,7 @@ const ReceiveReturns = () => {
       <div className="space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold">Получение возвратов</h1>
+            <h1 className="text-xl font-bold">Приём возвратов</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {isAdmin
                 ? 'Заявки с OZON и Wildberries. Одобренные вещи поедут к нам — кладовщик примет их по стикеру возврата'

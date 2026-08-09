@@ -182,7 +182,7 @@ const storekeeperNav: NavItem[] = [
       { label: 'Списание брака', path: '/crm/shipments/defect-writeoff' },
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
       { label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' },
-      { label: 'Получение возвратов', path: '/crm/shipments/receive-returns' },
+      { label: 'Приём возвратов', path: '/crm/shipments/receive-returns' },
       // Штрихкоды продавца: без них возвраты на ПВЗ не выдают.
       { label: 'Коды для ПВЗ', path: '/crm/shipments/return-codes' },
     ],
@@ -264,7 +264,7 @@ const adminNav: NavItem[] = [
       { label: 'Списание брака', path: '/crm/shipments/defect-writeoff' },
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
       { label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' },
-      { label: 'Получение возвратов', path: '/crm/shipments/receive-returns' },
+      { label: 'Приём возвратов', path: '/crm/shipments/receive-returns' },
       // Штрихкоды продавца: без них возвраты на ПВЗ не выдают.
       { label: 'Коды для ПВЗ', path: '/crm/shipments/return-codes' },
     ],
