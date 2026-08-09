@@ -164,7 +164,27 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         setTimeout(() => inputRef.current?.focus(), 0);
         return;
       }
-      toast({ title: `Заказ ${order.orderNumber} закрыт`, description: 'Отправлен в «Готовые»' });
+      // Связка Яндекса: каждая вещь стикеруется своим ярлыком по очереди. Говорим
+      // упаковщице, сколько вещей заказа ещё не готово, — чтобы она не унесла пакет
+      // и не отправила связку по частям. Когда осталось ноль, связка собрана целиком.
+      if (res.groupSize && res.groupSize > 1) {
+        const left = res.groupLeft ?? 0;
+        toast({
+          title:
+            left > 0
+              ? `Вещь ${res.groupPosition} из ${res.groupSize} застикерована`
+              : `Связка собрана полностью: ${res.groupSize} вещи`,
+          description:
+            left > 0
+              ? `Осталось застикеровать ещё ${left} — не уносите пакет, заказ уезжает целиком`
+              : 'Все вещи заказа готовы — можно отправлять',
+        });
+      } else {
+        toast({
+          title: `Заказ ${order.orderNumber} закрыт`,
+          description: 'Отправлен в «Готовые»',
+        });
+      }
       setOrder(null);
       setPrinted(false);
       setTracePrinted(false);

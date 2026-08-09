@@ -208,6 +208,10 @@ export const closeKioskOrder = async (
   width?: number | null;
   height?: number | null;
   product?: string | null;
+  /** Связка Яндекса: размер заказа и сколько вещей ещё не застикеровано. */
+  groupSize?: number | null;
+  groupPosition?: number | null;
+  groupLeft?: number;
 }> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',

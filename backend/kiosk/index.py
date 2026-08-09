@@ -547,7 +547,8 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(
                     "SELECT sewing_status, width, assigned_user_id, order_number, workshop_id, "
-                    "status, ozon_status, order_type, material, height, product FROM orders WHERE id = %s",
+                    "status, ozon_status, order_type, material, height, product, "
+                    "group_key, group_size, group_position FROM orders WHERE id = %s",
                     (int(order_id),),
                 )
                 row = cur.fetchone()
@@ -555,7 +556,7 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
                 (sewing_status, width, assigned_user_id, order_number, order_workshop_id,
                  order_status, order_ozon_status, order_type, order_material,
-                 order_height, order_product) = row
+                 order_height, order_product, group_key, group_size, group_position) = row
                 is_cancelled = order_status == 'Отменён' or 'cancel' in (order_ozon_status or '').lower()
                 # Индивидуальный пошив не едет на маркетплейс: у него нет стикера
                 # маркетплейса, и вещь до выдачи клиенту лежит на полке. Поэтому ему
@@ -723,6 +724,21 @@ def handler(event: dict, context) -> dict:
                     f'Закрыл заказ #{order_number} после стикеровки'
                     + (' (отменён клиентом — на склад хранения)' if is_cancelled else ''),
                 )
+                # Связка Яндекса: считаем, сколько вещей заказа ещё не застикеровано.
+                # Каждая вещь стикеруется по очереди и своим ярлыком — запрещать закрытие
+                # нельзя, иначе первую вещь вообще не получится обработать. Вместо этого
+                # показываем упаковщице, сколько осталось, чтобы она не унесла пакет
+                # раньше времени и не отправила связку по частям.
+                group_left = 0
+                if group_key and (group_size or 0) > 1:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM orders WHERE group_key = %s "
+                        "AND sewing_status <> 'Готовые'",
+                        (group_key,),
+                    )
+                    left_row = cur.fetchone()
+                    group_left = int(left_row[0]) if left_row else 0
+
                 conn.commit()
                 return {
                     'statusCode': 200,
@@ -732,6 +748,10 @@ def handler(event: dict, context) -> dict:
                         'isCancelled': is_cancelled,
                         'isIndividual': is_individual,
                         'storageBarcode': storage_barcode,
+                        # Данные связки: сколько вещей заказа ещё ждут стикеровки.
+                        'groupSize': group_size,
+                        'groupPosition': group_position,
+                        'groupLeft': group_left,
                         # Данные для стикера индивидуального заказа
                         'orderNumber': order_number,
                         'material': order_material,
