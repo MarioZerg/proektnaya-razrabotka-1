@@ -4,7 +4,14 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { fetchRolls, closeRoll, type Roll } from '@/lib/rollsApi';
+import { fetchRolls, closeRoll, flagRollDefect, type Roll } from '@/lib/rollsApi';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { fetchMaterialsData, type Material, type MaterialType } from '@/lib/materialsApi';
 import { formatQuantity } from '@/lib/formatQuantity';
 
@@ -40,6 +47,9 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   const [selected, setSelected] = useState<Roll | null>(null);
   const [shortage, setShortage] = useState('');
   const [saving, setSaving] = useState(false);
+  // Окно «отставить рулон»: брак в начале полотна, резать дальше нельзя.
+  const [defectOpen, setDefectOpen] = useState(false);
+  const [defectReason, setDefectReason] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -109,6 +119,32 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
     }
   };
 
+  // Брак в начале рулона (больше 10 пог.м): резать дальше нельзя. Рулон отставляем —
+  // он остаётся в цехе, но в раскрой не идёт, а кладовщик заберёт его на склад.
+  const handleFlagDefect = async () => {
+    if (!selected || !defectReason.trim()) return;
+    setSaving(true);
+    try {
+      await flagRollDefect(selected.id, defectReason.trim(), userId, userName);
+      toast({
+        title: `Рулон #${selected.barcode} отставлен`,
+        description: 'Резать его нельзя. Кладовщик заберёт рулон на склад — сообщите руководителю',
+      });
+      setDefectOpen(false);
+      setDefectReason('');
+      setSelected(null);
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось отметить рулон',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const pressDigit = (d: string) => setShortage((s) => (s + d).slice(0, 6));
   const pressDot = () => setShortage((s) => (s.includes('.') ? s : `${s || '0'}.`));
   const pressBack = () => setShortage((s) => s.slice(0, -1));
@@ -161,6 +197,17 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
             />
             Закрыть рулон
           </Button>
+          {/* Брак в начале полотна: рулон отставляем целиком, а не режем дальше. */}
+          <Button
+            variant="outline"
+            size="lg"
+            className="h-14 w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => setDefectOpen(true)}
+            disabled={saving}
+          >
+            <Icon name="PackageX" size={22} className="mr-2" />
+            Бракованный рулон
+          </Button>
           <Button
             variant="outline"
             size="lg"
@@ -172,6 +219,40 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
           >
             Отмена
           </Button>
+
+          <Dialog open={defectOpen} onOpenChange={setDefectOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Отставить рулон #{selected.barcode}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <p className="text-base text-muted-foreground">
+                  Рулон перестанет идти в раскрой и будет ждать, пока кладовщик заберёт его
+                  на склад. Обязательно сообщите руководителю
+                </p>
+                <Textarea
+                  autoFocus
+                  value={defectReason}
+                  onChange={(e) => setDefectReason(e.target.value)}
+                  placeholder="Что не так: дырки, полосы, затяжки. Сколько метров испорчено"
+                  rows={3}
+                  className="text-base"
+                />
+                <Button
+                  size="lg"
+                  className="h-14 w-full"
+                  onClick={handleFlagDefect}
+                  disabled={saving || !defectReason.trim()}
+                >
+                  {saving ? (
+                    <Icon name="Loader2" size={22} className="animate-spin" />
+                  ) : (
+                    'Отставить рулон'
+                  )}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </CardContent>
       </Card>
     );
@@ -213,7 +294,8 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
         visibleRolls.map((r) => {
           // Рулон доступен, только если по нему уже было движение материала в этой смене
           // и поставка принята: непринятый материал мог не доехать, работать с ним нельзя.
-          const active = !!r.usedInShift && !r.pendingAcceptance;
+          // Отставленный из-за брака рулон в работу не берём: он ждёт кладовщика.
+          const active = !!r.usedInShift && !r.pendingAcceptance && !r.defectFlaggedAt;
           return (
             <button
               key={r.id}
@@ -226,7 +308,11 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
               <div className="min-w-0">
                 <div className="font-mono-tech text-lg font-bold">#{r.barcode}</div>
                 <div className="text-muted-foreground">{r.materialName}</div>
-                {r.pendingAcceptance ? (
+                {r.defectFlaggedAt ? (
+                  <div className="text-xs font-medium text-destructive">
+                    Отставлен как бракованный — ждёт кладовщика
+                  </div>
+                ) : r.pendingAcceptance ? (
                   <div className="text-xs font-medium text-amber-600">
                     Не принят — подтвердите поставку
                   </div>

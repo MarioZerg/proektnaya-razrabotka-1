@@ -20,6 +20,7 @@ import { printBarcodes } from '@/lib/printBarcodes';
 import { emptyRow, type ItemRow } from '@/components/crm/shipments/fromSupplierShared';
 import { formatQuantity } from '@/lib/formatQuantity';
 import CreateSupplyDialog from '@/components/crm/shipments/CreateSupplyDialog';
+import DefectRollsPanel from '@/components/crm/shipments/DefectRollsPanel';
 import SuppliesFilters from '@/components/crm/shipments/SuppliesFilters';
 import SuppliesTable from '@/components/crm/shipments/SuppliesTable';
 import ReviewSupplyDialog from '@/components/crm/shipments/ReviewSupplyDialog';
@@ -295,6 +296,10 @@ const FromSupplier = () => {
   return (
     <CrmLayout>
       <div className="space-y-6">
+        {/* Бракованные рулоны из цеха: забираем сканером и решаем с поставщиком —
+            возврат или скидка. Панель прячется сама, когда забирать нечего. */}
+        <DefectRollsPanel />
+
         <CreateSupplyDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}

@@ -19,6 +19,13 @@ export interface Roll {
   /** По рулону было движение материала в текущей смене (заполняется при запросе с usedSinceUserId). */
   usedInShift?: boolean;
   /**
+   * Закройщик отставил рулон из-за брака в начале полотна. Рулон физически ещё в цехе,
+   * но в раскрой не идёт и ждёт, когда кладовщик заберёт его на склад или откажет.
+   */
+  defectFlaggedAt?: string | null;
+  defectFlaggedByName?: string | null;
+  defectReason?: string | null;
+  /**
    * Рулон отгружен в цех, но смена его ещё не приняла. Работать с ним нельзя:
    * материал мог не доехать или приехать не в том количестве. Сначала цех
    * подтверждает приёмку поставки, потом рулон становится рабочим.
@@ -281,5 +288,52 @@ export const dismissPenalty = async (rollId: number) => {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось выполнить');
+  return data;
+};
+
+/** Закройщик отставил рулон: брак в начале полотна, резать дальше нельзя. */
+export const flagRollDefect = async (id: number, reason: string, actorId?: number, actorName?: string) => {
+  const res = await fetch(ROLLS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'flag_defect', id, reason, actorId, actorName }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось отметить рулон');
+  return data;
+};
+
+/** Кладовщик забирает бракованный рулон из цеха — сканированием штрихкода рулона. */
+export const receiveDefectRoll = async (
+  barcode: string,
+  actorId?: number,
+  actorName?: string,
+): Promise<{
+  barcode: string;
+  materialName: string;
+  remaining: number;
+  unit: string | null;
+  reason: string | null;
+  flaggedBy: string | null;
+}> => {
+  const res = await fetch(ROLLS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'receive_defect_roll', barcode, actorId, actorName }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось забрать рулон');
+  return data;
+};
+
+/** Брак не подтвердился — рулон возвращается в работу. */
+export const declineDefectRoll = async (id: number, reason: string, actorId?: number) => {
+  const res = await fetch(ROLLS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'decline_defect_roll', id, reason, actorId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось отклонить');
   return data;
 };
