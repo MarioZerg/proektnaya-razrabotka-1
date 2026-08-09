@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import {
   fetchEmployees,
@@ -25,6 +26,7 @@ import DeleteEmployeeDialog from '@/components/crm/users/DeleteEmployeeDialog';
 
 const UsersSettings = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -293,6 +295,7 @@ const UsersSettings = () => {
         onRemoveRole={handleRemoveRole}
         onUnlockSalary={handleUnlockSalary}
         roleActionLoading={roleActionLoading}
+        actorId={user?.id}
       />
 
       <DeleteEmployeeDialog

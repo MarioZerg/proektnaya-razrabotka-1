@@ -15,6 +15,7 @@ import {
 } from '@/lib/contractsApi';
 import SignContractDialog from '@/components/crm/contracts/SignContractDialog';
 import UploadContractDialog from '@/components/crm/contracts/UploadContractDialog';
+import PersonalDataPanel from '@/components/crm/personal/PersonalDataPanel';
 
 const statusInfo: Record<Contract['status'], { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
   pending: { label: 'Ждёт подписи', variant: 'destructive' },
@@ -82,32 +83,36 @@ const Contracts = () => {
           )}
         </div>
 
-        {/* Готовый шаблон договора со швеёй: условия учитывают правила системы —
-            фиксацию работы в программе, ответственность за брак после отгрузки,
-            сроки выплат и порядок прекращения. Админ скачивает, заполняет
-            реквизиты и направляет на подпись. */}
         {isAdmin && (
           <Card className="border-border shadow-none">
             <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
               <div className="flex items-start gap-3">
-                <Icon name="FileText" size={22} className="mt-0.5 shrink-0 text-primary" />
+                <Icon name="FileSignature" size={22} className="mt-0.5 shrink-0 text-primary" />
                 <div>
-                  <p className="font-bold">Шаблон договора со швеёй</p>
+                  <p className="font-bold">Договор соберётся сам</p>
                   <p className="text-sm text-muted-foreground">
-                    Учитывает правила системы: подпись кодом, ответственность за брак
-                    после отгрузки, сроки выплат, уведомление за 14 дней. При подписании
-                    швея подтверждает, что ознакомилась с инструкциями в профиле
+                    Для швеи, закройщика, кладовщика и упаковщицы система формирует
+                    договор по должности и сама подставляет паспортные данные и
+                    реквизиты. Откройте карточку сотрудника, проверьте данные и
+                    отправьте на подпись
                   </p>
                 </div>
               </div>
               <Button variant="outline" asChild>
-                <a href="/dogovor-shveya.pdf" download>
-                  <Icon name="Download" size={16} className="mr-1.5" />
-                  Скачать шаблон
+                <a href="/crm/settings/users">
+                  <Icon name="Users" size={16} className="mr-1.5" />
+                  К сотрудникам
                 </a>
               </Button>
             </CardContent>
           </Card>
+        )}
+
+        {/* Свои документы и реквизиты сотрудник заполняет здесь же: отдельного личного
+            кабинета в системе нет, а договор без сканов и номера для выплат оформить
+            нельзя. Админ те же данные видит в карточке сотрудника. */}
+        {!isAdmin && user && (
+          <PersonalDataPanel userId={user.id} actorId={user.id} isAdmin={false} />
         )}
 
         {loading ? (

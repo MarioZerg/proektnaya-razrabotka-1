@@ -11,6 +11,9 @@ import certifi
 import psycopg2
 import requests
 
+import templates
+from pdf_builder import build_contract_pdf
+
 
 MAX_API_URL = 'https://platform-api2.max.ru'
 # Доступ к чужим договорам закрыт: все документы видит только администратор.
@@ -356,6 +359,165 @@ def handler(event: dict, context) -> dict:
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'fileUrl': file_url})}
+
+            if action in ('preview_generated', 'send_generated'):
+                # Договор собирается системой из шаблона роли и персональных данных,
+                # которые администратор сверил со сканами. Предпросмотр и отправка —
+                # это один и тот же документ: админ сначала смотрит, потом отправляет,
+                # и в подпись уходит ровно то, что он видел.
+                actor_id = body_data.get('actorId')
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),) if actor_id else (0,))
+                actor = cur.fetchone()
+                if not actor or actor[0] != 'admin':
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Формировать договоры может только администратор'}, ensure_ascii=False),
+                    }
+
+                user_id = body_data.get('userId')
+                if not user_id:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите сотрудника'}, ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "SELECT full_name, role, passport_series, passport_number, "
+                    "passport_issued_by, passport_issued_date, passport_department_code, "
+                    "birth_date, registration_address, snils, inn, sbp_phone, sbp_bank, "
+                    "sbp_confirmed, personal_data_verified, max_user_id "
+                    "FROM users WHERE id = %s",
+                    (int(user_id),),
+                )
+                u = cur.fetchone()
+                if not u:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Сотрудник не найден'}, ensure_ascii=False),
+                    }
+
+                role = body_data.get('role') or u[1]
+                if not templates.has_template(role):
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Для этой должности готового шаблона пока нет — '
+                                     'загрузите документ файлом'
+                        }, ensure_ascii=False),
+                    }
+
+                # Договор с пустой графой паспорта или с неподтверждённым номером для
+                # выплат отправлять нельзя: первый недействителен, по второму деньги
+                # уйдут на чужой счёт. Поэтому проверки жёсткие, а не предупреждения.
+                blockers = []
+                if not u[14]:
+                    blockers.append('паспортные данные не проверены администратором')
+                if not u[11]:
+                    blockers.append('сотрудник не указал номер телефона для выплат по СБП')
+                elif not u[13]:
+                    blockers.append('реквизиты СБП не подтверждены администратором')
+                if blockers:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Договор не сформировать: ' + ', '.join(blockers),
+                            'blockers': blockers,
+                        }, ensure_ascii=False),
+                    }
+
+                emp = {
+                    'fullName': u[0],
+                    'passportSeries': u[2],
+                    'passportNumber': u[3],
+                    'passportIssuedBy': u[4],
+                    'passportIssuedDate': u[5],
+                    'passportDepartmentCode': u[6],
+                    'birthDate': u[7],
+                    'registrationAddress': u[8],
+                    'snils': u[9],
+                    'inn': u[10],
+                    'sbpPhone': u[11],
+                    'sbpBank': u[12],
+                }
+
+                cur.execute(
+                    "SELECT key, value FROM system_settings WHERE key IN "
+                    "('company_name','company_ogrnip','company_inn','company_address',"
+                    "'company_phone','company_city')"
+                )
+                s = {k: v for k, v in cur.fetchall()}
+                company = {
+                    'name': s.get('company_name'),
+                    'ogrnip': s.get('company_ogrnip'),
+                    'inn': s.get('company_inn'),
+                    'address': s.get('company_address'),
+                    'phone': s.get('company_phone'),
+                    'city': s.get('company_city'),
+                }
+
+                # Номер договора — сквозной по сотруднику, чтобы перевыпуск был виден.
+                cur.execute(
+                    "SELECT count(*) + 1 FROM contracts WHERE user_id = %s", (int(user_id),)
+                )
+                emp['contractNumber'] = str(cur.fetchone()[0])
+
+                title = f'Договор возмездного оказания услуг {templates.ROLE_TITLES[role]}'
+                tmp_path = os.path.join(tempfile.gettempdir(), f'{uuid.uuid4().hex}.pdf')
+                build_contract_pdf(tmp_path, emp, company, role)
+                with open(tmp_path, 'rb') as fh:
+                    pdf_bytes = fh.read()
+                os.unlink(tmp_path)
+
+                file_name = f'dogovor-{role}-{int(user_id)}.pdf'
+                file_url = upload_contract_file(
+                    'data:application/pdf;base64,'
+                    + base64.b64encode(pdf_bytes).decode(),
+                    file_name,
+                )
+
+                if action == 'preview_generated':
+                    # Предпросмотр ничего не создаёт в системе: админ просто смотрит,
+                    # что попало в документ, и может вернуться и поправить данные.
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'fileUrl': file_url,
+                            'title': title,
+                            'preview': True,
+                        }, ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "INSERT INTO contracts (user_id, title, file_url, file_name, created_by) "
+                    "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                    (int(user_id), title[:300], file_url, file_name[:300], int(actor_id)),
+                )
+                new_id = cur.fetchone()[0]
+
+                if u[15]:
+                    try:
+                        send_max_message(
+                            u[15],
+                            f'Вам направлен документ на подпись: {title}\n'
+                            f'Зайдите в систему МЕГАТЮЛЬ, раздел «Договоры», чтобы '
+                            f'ознакомиться и подписать.',
+                        )
+                    except Exception:
+                        pass
+
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'id': new_id, 'fileUrl': file_url, 'title': title},
+                                       ensure_ascii=False),
+                }
 
             if action == 'send_code':
                 contract_id = body_data.get('contractId')

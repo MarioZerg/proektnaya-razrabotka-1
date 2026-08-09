@@ -83,6 +83,27 @@
       "method": "GET",
       "path": "/?all=1&actorId=1",
       "expectedStatus": 200
+    },
+    {
+      "name": "Формирование договора не админом отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "send_generated",
+        "actorId": 999999,
+        "userId": 1
+      },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Предпросмотр без сотрудника отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "preview_generated",
+        "actorId": 1
+      },
+      "expectedStatus": 400
     }
   ]
 }

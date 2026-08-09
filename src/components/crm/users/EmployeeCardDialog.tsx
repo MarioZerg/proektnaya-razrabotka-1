@@ -25,6 +25,7 @@ import {
   type CardFormState,
 } from '@/components/crm/users/usersShared';
 import EmployeeKioskQr from '@/components/crm/users/EmployeeKioskQr';
+import PersonalDataPanel from '@/components/crm/personal/PersonalDataPanel';
 
 /** «1 день», «3 дня», «7 дней» — чтобы подпись читалась по-русски. */
 const dayWord = (n: number) => {
@@ -50,6 +51,8 @@ interface EmployeeCardDialogProps {
   /** Открыть зарплату досрочно, не дожидаясь двух недель. */
   onUnlockSalary: () => void;
   roleActionLoading: boolean;
+  /** Кто открыл карточку — от него зависят права на сканы и проверку данных. */
+  actorId?: number;
 }
 
 const EmployeeCardDialog = ({
@@ -65,6 +68,7 @@ const EmployeeCardDialog = ({
   onRemoveRole,
   onUnlockSalary,
   roleActionLoading,
+  actorId,
 }: EmployeeCardDialogProps) => {
   const { toast } = useToast();
 
@@ -388,6 +392,16 @@ const EmployeeCardDialog = ({
                 </Select>
               )}
             </div>
+
+            {/* Документы, реквизиты для выплат и формирование договора по должности. */}
+            {actorId && (
+              <PersonalDataPanel
+                userId={cardEmployee.id}
+                actorId={actorId}
+                isAdmin
+                role={cardForm.role}
+              />
+            )}
 
             {/* Отпуска: две недели, дважды за рабочий год, и только один человек
                 от смены одновременно. Показывается лишь тем должностям, кому положен. */}

@@ -74,3 +74,29 @@ export const signContract = (contractId: number, userId: number, code: string) =
 /** Админ отзывает ошибочно загруженный документ — блокировка снимается. */
 export const cancelContract = (id: number) =>
   postAction({ action: 'cancel', id, actorRole: 'admin' });
+
+/** Роли, для которых система умеет собирать договор сама. */
+export const ROLES_WITH_TEMPLATE = [
+  'sewer',
+  'cutter',
+  'storekeeper',
+  'senior_storekeeper',
+  'packer',
+] as const;
+
+/** Собирает договор из шаблона роли и данных сотрудника, но НЕ отправляет:
+ * админ сначала смотрит, что попало в документ. */
+export const previewGeneratedContract = (userId: number, actorId: number, role?: string) =>
+  postAction({ action: 'preview_generated', userId, actorId, role }) as Promise<{
+    fileUrl: string;
+    title: string;
+    preview: true;
+  }>;
+
+/** Отправляет собранный договор сотруднику на подпись. */
+export const sendGeneratedContract = (userId: number, actorId: number, role?: string) =>
+  postAction({ action: 'send_generated', userId, actorId, role }) as Promise<{
+    id: number;
+    fileUrl: string;
+    title: string;
+  }>;
