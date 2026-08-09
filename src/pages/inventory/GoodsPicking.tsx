@@ -143,9 +143,10 @@ const GoodsPicking = () => {
           </Button>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-xl font-bold">Товар к подбору</h1>
+              <h1 className="text-xl font-bold">Сборка товара с полок</h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                Отсканируйте штрихкод хранения, чтобы отметить товар как отобранный для будущей поставки FBS
+                Система сама подбирает готовые вещи под новые заказы. Заберите их с полок,
+                напечатайте стикер отправления и наклейте — шить заново не нужно
               </p>
             </div>
             <Button variant="outline" size="sm" onClick={handleRematch} disabled={rematching}>
@@ -170,13 +171,13 @@ const GoodsPicking = () => {
                       Новая работа: {awaitingLabel.length} шт. подобрано под заказы
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Заберите вещи с полок и наклейте стикеры отправления — шить их не нужно
+                      Нажмите «Собрать с полок»: отсканируете вещь — сразу напечатаете стикер
                     </p>
                   </div>
                 </div>
-                <Button onClick={() => setShipLabelOpen(true)}>
-                  <Icon name="Tag" size={16} className="mr-2" />
-                  Наклеить стикеры
+                <Button size="lg" onClick={() => setShipLabelOpen(true)}>
+                  <Icon name="ScanLine" size={18} className="mr-2" />
+                  Собрать с полок
                 </Button>
               </div>
 

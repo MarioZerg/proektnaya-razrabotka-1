@@ -5,7 +5,8 @@ export { formatDateTime as formatDate } from '@/lib/dateUtils';
 export const statusLabels: Record<GoodsStatus, string> = {
   awaiting_shelf: 'Ждёт полку',
   in_stock: 'На хранении',
-  picking: 'На сборке',
+  // Вещь снята с полки и отстикерована — дальше её сканируют в поставку.
+  picking: 'Ждёт отгрузки',
   reserved: 'Зарезервирован',
   shipped: 'Отгружен',
   lost: 'Утерян',

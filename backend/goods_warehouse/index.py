@@ -471,8 +471,11 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте стикер хранения'})}
 
                 bc_esc = scan_barcode.replace("'", "''")
+                # Маркетплейс и тип заказа нужны, чтобы сразу напечатать стикер:
+                # у WB он приходит картинкой, у OZON и Яндекса — файлом PDF.
                 cur.execute(
-                    "SELECT gw.id, gw.status, gw.reserved_order_id, ro.order_number, o.product, s.name "
+                    "SELECT gw.id, gw.status, gw.reserved_order_id, ro.order_number, o.product, "
+                    "s.name, ro.marketplace, ro.order_type "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -482,7 +485,8 @@ def handler(event: dict, context) -> dict:
                 gw_row = cur.fetchone()
                 if not gw_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Стикер {scan_barcode} не найден'})}
-                gw_id, gw_status, reserved_order_id, target_number, gw_product, shelf_name = gw_row
+                (gw_id, gw_status, reserved_order_id, target_number, gw_product,
+                 shelf_name, mp, order_type) = gw_row
                 if not reserved_order_id:
                     return {
                         'statusCode': 409,
@@ -515,7 +519,9 @@ def handler(event: dict, context) -> dict:
                         'product': gw_product,
                         'shelfName': shelf_name,
                         'storageBarcode': scan_barcode,
-                    }),
+                        'marketplace': mp,
+                        'orderType': order_type,
+                    }, ensure_ascii=False),
                 }
 
             if action == 'place_on_shelf':

@@ -115,6 +115,9 @@ export const shipLabelGoods = (barcode: string) =>
     product: string | null;
     shelfName: string | null;
     storageBarcode: string;
+    /** Маркетплейс и тип заказа — по ним печатается нужный стикер. */
+    marketplace: string | null;
+    orderType: string | null;
   }>;
 
 export const moveGoodsShelfByBarcode = (barcode: string, shelfId: number | null) =>
