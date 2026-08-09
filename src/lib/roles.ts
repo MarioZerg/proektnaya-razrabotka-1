@@ -139,6 +139,12 @@ export const guideItems: GuideItem[] = [
     path: '/crm/inventory/penalties-guide',
     roles: ['sewer', 'cutter', ...ALL_STOREKEEPERS],
   },
+  {
+    label: 'Завершение сотрудничества',
+    path: '/crm/inventory/termination-guide',
+    // Касается всех исполнителей: условия договора одинаковые для любой роли.
+    roles: ['sewer', 'cutter', 'packer', 'cleaner', 'manager', ...ALL_STOREKEEPERS],
+  },
 ];
 
 /** Раздел «Инструкции» для конкретной роли. Админу — весь список. */

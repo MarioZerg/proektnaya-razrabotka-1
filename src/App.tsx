@@ -36,6 +36,7 @@ const ContractsGuide = lazy(() => import("./pages/inventory/ContractsGuide"));
 const FboFbsGuide = lazy(() => import("./pages/inventory/FboFbsGuide"));
 const PickingGuide = lazy(() => import("./pages/inventory/PickingGuide"));
 const PenaltiesGuide = lazy(() => import("./pages/inventory/PenaltiesGuide"));
+const TerminationGuide = lazy(() => import("./pages/inventory/TerminationGuide"));
 const ShelvesSettings = lazy(() => import("./pages/settings/ShelvesSettings"));
 const MaterialsSettings = lazy(() => import("./pages/settings/MaterialsSettings"));
 const HangersSettings = lazy(() => import("./pages/settings/HangersSettings"));
@@ -120,6 +121,7 @@ const App = () => (
             <Route path="/crm/inventory/fbo-fbs-guide" element={<FboFbsGuide />} />
             <Route path="/crm/inventory/picking-guide" element={<PickingGuide />} />
             <Route path="/crm/inventory/penalties-guide" element={<PenaltiesGuide />} />
+            <Route path="/crm/inventory/termination-guide" element={<TerminationGuide />} />
             <Route path="/crm/settings/shelves" element={<ShelvesSettings />} />
             <Route path="/crm/settings/materials" element={<MaterialsSettings />} />
             <Route path="/crm/settings/hangers" element={<HangersSettings />} />
