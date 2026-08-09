@@ -52,6 +52,12 @@ const SupplyHeader = ({
   onForceComplete,
   onMoveStatus,
 }: SupplyHeaderProps) => {
+  // Что именно потеряется при удалении: несшитые заказы уходят вместе с поставкой,
+  // а вещи с полок просто освобождаются и остаются на складе.
+  const sewingOrders = supply.sewingOrders || [];
+  const unsewnCount = sewingOrders.filter((o) => o.sewingStatus === 'Новый').length;
+  const fromStockCount = sewingOrders.filter((o) => o.sewingStatus === 'Со склада').length;
+
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -93,11 +99,52 @@ const SupplyHeader = ({
               Наблюдение — поставку собирает кладовщик
             </span>
           )}
+          {/* Удаление поставки уносит с собой весь несшитый товарный состав — заказы
+              пропадут из конвейера, из вкладки «Новые». Раньше это происходило по одному
+              нажатию, без предупреждения. Теперь показываем, что именно исчезнет. */}
           {!readOnly && supply.status === 'Открытая' && (
-            <Button variant="destructive" onClick={onDelete}>
-              <Icon name="Trash2" size={16} className="mr-2" />
-              Удалить
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive">
+                  <Icon name="Trash2" size={16} className="mr-2" />
+                  Удалить
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Удалить поставку?</AlertDialogTitle>
+                  <AlertDialogDescription asChild>
+                    <div className="space-y-2">
+                      {unsewnCount > 0 ? (
+                        <p>
+                          Вместе с поставкой из конвейера удалятся{' '}
+                          <b>{unsewnCount} заказов на пошив</b> — они исчезнут из вкладки
+                          «Новые». Восстановить их будет нельзя, поставку придётся набирать
+                          заново.
+                        </p>
+                      ) : (
+                        <p>
+                          Поставка пустая — заказы на пошив по ней не заведены.
+                        </p>
+                      )}
+                      {fromStockCount > 0 && (
+                        <p>
+                          Вещи, подобранные с полок ({fromStockCount} шт.), вернутся
+                          на склад свободными.
+                        </p>
+                      )}
+                      <p>Действие нельзя отменить.</p>
+                    </div>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Отмена</AlertDialogCancel>
+                  <AlertDialogAction onClick={onDelete}>
+                    Удалить поставку
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
           {!readOnly && supply.type === 'FBS' && supply.status !== 'Выполнена' && (
             <AlertDialog>
