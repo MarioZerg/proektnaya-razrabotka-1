@@ -76,20 +76,80 @@ export const roleLabels: Record<Role, string> = {
  * и в середине списка раздел просто теряется. Набор памяток у всех одинаковый —
  * упаковщице полезно знать про рулоны, кладовщику про упаковку.
  */
-const guidesNav: NavItem = {
+/**
+ * Инструкции и кому они нужны.
+ *
+ * Показываем сотруднику только то, что относится к его работе: швее незачем читать
+ * про приём возвратов, а кладовщику — про перепаковку. Администратор видит всё,
+ * потому что отвечает за процессы целиком.
+ */
+export interface GuideItem {
+  label: string;
+  path: string;
+  /** Роли, которым инструкция полезна. Админ видит все независимо от списка. */
+  roles: Role[];
+}
+
+const ALL_STOREKEEPERS: Role[] = ['storekeeper', 'senior_storekeeper'];
+
+export const guideItems: GuideItem[] = [
+  {
+    label: 'Что такое договоры',
+    path: '/crm/inventory/contracts-guide',
+    // Договор подписывают все без исключения — без подписи система не работает.
+    roles: ['sewer', 'cutter', 'packer', 'cleaner', 'manager', ...ALL_STOREKEEPERS],
+  },
+  {
+    label: 'Подбор пакетов',
+    path: '/crm/inventory/packaging-guide',
+    roles: ['sewer', 'cutter', 'packer', ...ALL_STOREKEEPERS],
+  },
+  {
+    label: 'Инструкция упаковщицы',
+    path: '/crm/inventory/packer-guide',
+    roles: ['packer', 'sewer'],
+  },
+  {
+    label: 'Как принимать возвраты',
+    path: '/crm/inventory/warehouse-guide',
+    roles: ALL_STOREKEEPERS,
+  },
+  {
+    label: 'Как работать с рулонами',
+    path: '/crm/inventory/rolls-guide',
+    roles: ALL_STOREKEEPERS,
+  },
+  {
+    label: 'Работа с браком из цеха',
+    path: '/crm/inventory/defect-guide',
+    roles: ALL_STOREKEEPERS,
+  },
+  {
+    label: 'Работа с FBO и FBS',
+    path: '/crm/inventory/fbo-fbs-guide',
+    roles: [...ALL_STOREKEEPERS, 'manager'],
+  },
+  {
+    label: 'Подбор товара со склада',
+    path: '/crm/inventory/picking-guide',
+    roles: ALL_STOREKEEPERS,
+  },
+  {
+    label: 'Штрафы и удержания',
+    path: '/crm/inventory/penalties-guide',
+    roles: ['sewer', 'cutter', ...ALL_STOREKEEPERS],
+  },
+];
+
+/** Раздел «Инструкции» для конкретной роли. Админу — весь список. */
+const buildGuidesNav = (role: Role): NavItem => ({
   label: 'Инструкции',
   icon: 'CircleAlert',
   highlight: true,
-  children: [
-    // Договоры касаются вообще всех — ставим первым пунктом.
-    { label: 'Что такое договоры', path: '/crm/inventory/contracts-guide' },
-    { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
-    { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
-    { label: 'Работа с браком из цеха', path: '/crm/inventory/defect-guide' },
-    { label: 'Инструкция упаковщицы', path: '/crm/inventory/packer-guide' },
-    { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
-  ],
-};
+  children: guideItems
+    .filter((g) => role === 'admin' || g.roles.includes(role))
+    .map((g) => ({ label: g.label, path: g.path })),
+});
 
 const productionNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
@@ -117,8 +177,6 @@ const productionNav: NavItem[] = [
   },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
-  // Инструкции — всегда последним пунктом и с подсветкой.
-  guidesNav,
 ];
 
 const packerNav: NavItem[] = [
@@ -152,8 +210,6 @@ const packerNav: NavItem[] = [
   // только на киоске в цехе (планшет), а не через свой личный кабинет.
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
-  // Инструкции — всегда последним пунктом и с подсветкой.
-  guidesNav,
 ];
 
 const storekeeperNav: NavItem[] = [
@@ -205,15 +261,11 @@ const storekeeperNav: NavItem[] = [
     icon: 'Settings',
     children: [{ label: 'Полки на складе', path: '/crm/settings/shelves' }],
   },
-  // Инструкции — всегда последним пунктом и с подсветкой.
-  guidesNav,
 ];
 
 const cleanerNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
-  // Инструкции — всегда последним пунктом и с подсветкой.
-  guidesNav,
 ];
 
 // Менеджер: работа с заказами и поставками маркетплейса (в т.ч. заявки OZON FBO).
@@ -234,8 +286,6 @@ const managerNav: NavItem[] = [
     ],
   },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
-  // Инструкции — всегда последним пунктом и с подсветкой.
-  guidesNav,
 ];
 
 const adminNav: NavItem[] = [
@@ -306,11 +356,9 @@ const adminNav: NavItem[] = [
       { label: 'Вешалки', path: '/crm/settings/hangers' },
     ],
   },
-  // Инструкции — всегда последним пунктом и с подсветкой.
-  guidesNav,
 ];
 
-export const navByRole: Record<Role, NavItem[]> = {
+const baseNavByRole: Record<Role, NavItem[]> = {
   sewer: productionNav,
   cutter: productionNav,
   packer: packerNav,
@@ -322,3 +370,14 @@ export const navByRole: Record<Role, NavItem[]> = {
   admin: adminNav,
   manager: managerNav,
 };
+
+/**
+ * Меню роли. «Инструкции» добавляются последним пунктом и собираются под роль:
+ * человек видит только те памятки, что относятся к его работе.
+ */
+export const navByRole: Record<Role, NavItem[]> = Object.fromEntries(
+  (Object.keys(baseNavByRole) as Role[]).map((role) => {
+    const guides = buildGuidesNav(role);
+    return [role, guides.children?.length ? [...baseNavByRole[role], guides] : baseNavByRole[role]];
+  }),
+) as Record<Role, NavItem[]>;
