@@ -81,6 +81,8 @@ const guidesNav: NavItem = {
   icon: 'CircleAlert',
   highlight: true,
   children: [
+    // Договоры касаются вообще всех — ставим первым пунктом.
+    { label: 'Что такое договоры', path: '/crm/inventory/contracts-guide' },
     { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
     { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
     { label: 'Работа с браком из цеха', path: '/crm/inventory/defect-guide' },
