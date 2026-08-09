@@ -149,6 +149,7 @@ const storekeeperNav: NavItem[] = [
     icon: 'BookOpen',
     children: [
       { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
+      { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
       { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
     ],
   },
@@ -233,6 +234,7 @@ const adminNav: NavItem[] = [
     icon: 'BookOpen',
     children: [
       { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
+      { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
       { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
     ],
   },
