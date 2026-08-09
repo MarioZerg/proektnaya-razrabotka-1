@@ -168,11 +168,22 @@ def fetch_ozon_giveout_info(cur, giveout_id):
 
     articles = data.get('articles') or []
     scanned = sum(1 for a in articles if a.get('approved'))
+    total = len(articles) or data.get('giveout_count') or 0
+
+    # Сотрудник ПВЗ отсканировал всё — значит коробки физически переданы кладовщику.
+    # Помечаем возвраты забранными, чтобы никто не отмечал это руками. Решение по
+    # каждой вещи (полка / перепаковка / утиль) кладовщик примет уже на складе.
+    if total and scanned >= total:
+        cur.execute(
+            "UPDATE marketplace_returns SET status = 'picked_up', picked_up_at = now(), "
+            "giveout_id = %s WHERE marketplace = 'OZON' AND status = 'approved'",
+            (giveout_id,),
+        )
 
     return {
         'giveoutId': giveout_id,
         'status': data.get('giveout_status') or data.get('status') or '',
-        'total': len(articles) or data.get('giveout_count') or 0,
+        'total': total,
         # Сколько уже отсканировал сотрудник пункта выдачи.
         'scanned': scanned,
         'items': [
@@ -305,6 +316,8 @@ def handler(event: dict, context) -> dict:
             info, err = fetch_ozon_giveout_info(cur, int(giveout_id))
             if err:
                 return _resp(502, {'error': err})
+            # Отметки о заборе, сделанные внутри, нужно сохранить.
+            conn.commit()
             return _resp(200, info)
 
         if body_data.get('action') == 'save':

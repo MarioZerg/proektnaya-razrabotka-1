@@ -33,6 +33,10 @@ import {
 const statusLabels: Record<string, { label: string; className: string }> = {
   new: { label: 'Ждёт решения', className: 'bg-amber-500 text-white hover:bg-amber-500' },
   approved: { label: 'Одобрен, едет к нам', className: 'bg-blue-600 text-white hover:bg-blue-600' },
+  picked_up: {
+    label: 'Забран, ждёт разбора',
+    className: 'bg-violet-600 text-white hover:bg-violet-600',
+  },
   processed: { label: 'Обработан', className: 'bg-emerald-600 text-white hover:bg-emerald-600' },
   rejected: { label: 'Отклонён', className: '' },
 };
@@ -190,6 +194,15 @@ const ReceiveReturns = () => {
               <span className="text-lg font-bold">{counts.approved || 0}</span>
             </CardContent>
           </Card>
+          {/* Забрали с пункта выдачи, но ещё не осмотрели: эти вещи лежат
+              на складе неразобранными и ждут решения кладовщика. */}
+          <Card className="border-border shadow-none">
+            <CardContent className="flex items-center gap-2 px-4 py-3">
+              <Icon name="PackageOpen" size={18} className="text-violet-600" />
+              <span className="text-sm text-muted-foreground">Ждут разбора</span>
+              <span className="text-lg font-bold">{counts.picked_up || 0}</span>
+            </CardContent>
+          </Card>
           <Card className="border-border shadow-none">
             <CardContent className="flex items-center gap-2 px-4 py-3">
               <Icon name="PackageCheck" size={18} className="text-emerald-600" />
@@ -223,6 +236,7 @@ const ReceiveReturns = () => {
             <SelectContent>
               {isAdmin && <SelectItem value="new">Ждут решения</SelectItem>}
               <SelectItem value="approved">Едут к нам</SelectItem>
+              <SelectItem value="picked_up">Забраны, ждут разбора</SelectItem>
               <SelectItem value="processed">Обработанные</SelectItem>
               {isAdmin && <SelectItem value="rejected">Отклонённые</SelectItem>}
               <SelectItem value="all">Все</SelectItem>

@@ -591,8 +591,11 @@ def handler(event: dict, context) -> dict:
                     existing = cur.fetchone()
                     if existing:
                         ret_id = existing[0]
+                        # Не откатываем статус назад: если возврат уже отмечен
+                        # забранным с ПВЗ, он таким и остаётся.
                         cur.execute(
-                            "UPDATE marketplace_returns SET status = 'approved', "
+                            "UPDATE marketplace_returns SET "
+                            "status = CASE WHEN status = 'new' THEN 'approved' ELSE status END, "
                             "return_barcode = COALESCE(return_barcode, %s) WHERE id = %s",
                             (code, ret_id),
                         )
@@ -650,6 +653,8 @@ def handler(event: dict, context) -> dict:
                     return _resp(409, {'error': 'Эта заявка отклонена'})
                 if row[6] == 'processed':
                     return _resp(409, {'error': 'Этот возврат уже обработан'})
+                # Статус picked_up (забран с ПВЗ, но не разобран) — рабочий:
+                # именно такие вещи кладовщик и осматривает на складе.
                 # Запоминаем штрихкод, которым реально сканируют — в следующий раз найдётся сразу.
                 cur.execute(
                     "UPDATE marketplace_returns SET return_barcode = COALESCE(return_barcode, %s) "
@@ -690,7 +695,8 @@ def handler(event: dict, context) -> dict:
                     return _resp(404, {'error': 'Возврат не найден'})
                 if row[0] == 'processed':
                     return _resp(409, {'error': 'Этот возврат уже обработан'})
-                if row[0] != 'approved':
+                # Разбирать можно и одобренный, и уже забранный с пункта выдачи.
+                if row[0] not in ('approved', 'picked_up'):
                     return _resp(409, {'error': 'Возврат не одобрен администратором'})
 
                 order_id = row[1]
