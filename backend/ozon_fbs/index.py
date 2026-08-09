@@ -24,7 +24,13 @@ OZON_SYNC_PAGE = 50
 OZON_SYNC_MAX_PAGES = 1
 
 # Только заказы, требующие сборки, попадают на конвейер производства.
+# Заказы, которые ждут сборки с нашей стороны.
+#
+# Берём ТОЛЬКО awaiting_packaging — это и есть «ожидают сборки» в кабинете OZON.
+# Статус awaiting_deliver означает, что отправление уже собрано и ждёт передачи
+# в доставку: шить там нечего, в цех такие заказы попадать не должны.
 OZON_NEW_STATUS = 'awaiting_packaging'
+OZON_WORK_STATUSES = ('awaiting_packaging',)
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -162,10 +168,12 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
     """Тянет новые FBS-заказы OZON (status=awaiting_packaging) и создаёт их в системе."""
     payload = {
         'dir': 'DESC',
+        # Статус в фильтре НЕ указываем: OZON позволяет задать только один, а нам
+        # нужны оба рабочих. Забираем список целиком и отбираем нужные на своей
+        # стороне — так ни один заказ не теряется.
         'filter': {
             'cutoff_from': '2020-01-01T00:00:00Z',
             'cutoff_to': '2030-01-01T00:00:00Z',
-            'status': OZON_NEW_STATUS,
         },
         # Раньше брали 50 штук по возрастанию — и это была ошибка: список всегда
         # начинался с одних и тех же самых старых отправлений, уже загруженных.
@@ -208,10 +216,14 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
 
         result = (data.get('result', {}) or {}) if isinstance(data, dict) else {}
         page = result.get('postings', []) or []
-        postings.extend(page)
+        # В работу берём только отправления, которые ещё не уехали в доставку.
+        postings.extend(
+            [p for p in page if (p.get('status') or '') in OZON_WORK_STATUSES]
+        )
         offset += OZON_SYNC_PAGE
-        # Страница пришла неполной — значит она последняя, начинаем следующий
-        # запуск с начала списка.
+        # Конец списка определяем по СЫРОЙ странице от OZON, а не по отобранным:
+        # после отбора страница почти всегда неполная, и загрузка обрывалась бы
+        # на первой же, так и не дойдя до остальных заказов.
         if len(page) < OZON_SYNC_PAGE:
             reached_end = True
             break
