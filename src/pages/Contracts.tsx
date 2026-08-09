@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
@@ -80,6 +81,34 @@ const Contracts = () => {
             </Button>
           )}
         </div>
+
+        {/* Готовый шаблон договора со швеёй: условия учитывают правила системы —
+            фиксацию работы в программе, ответственность за брак после отгрузки,
+            сроки выплат и порядок прекращения. Админ скачивает, заполняет
+            реквизиты и направляет на подпись. */}
+        {isAdmin && (
+          <Card className="border-border shadow-none">
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+              <div className="flex items-start gap-3">
+                <Icon name="FileText" size={22} className="mt-0.5 shrink-0 text-primary" />
+                <div>
+                  <p className="font-bold">Шаблон договора со швеёй</p>
+                  <p className="text-sm text-muted-foreground">
+                    Учитывает правила системы: подпись кодом, ответственность за брак
+                    после отгрузки, сроки выплат, уведомление за 14 дней. При подписании
+                    швея подтверждает, что ознакомилась с инструкциями в профиле
+                  </p>
+                </div>
+              </div>
+              <Button variant="outline" asChild>
+                <a href="/dogovor-shveya.pdf" download>
+                  <Icon name="Download" size={16} className="mr-1.5" />
+                  Скачать шаблон
+                </a>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
