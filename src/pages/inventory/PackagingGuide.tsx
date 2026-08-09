@@ -106,7 +106,39 @@ const PackagingGuidePage = () => {
               </div>
             </div>
 
-            <div className="rounded-md border border-border">
+            {/* Телефон: таблица «8 тканей × 7 ширин» в экран не влезает физически,
+                поэтому на узких экранах показываем карточку на каждую ткань, а ширины
+                внутри — крупными кнопками. Упаковщица работает стоя и одной рукой:
+                попадать пальцем в ячейку таблицы шириной 40 px невозможно. */}
+            <div className="space-y-3 md:hidden">
+              {visibleFabrics.map((fabric) => (
+                <div key={fabric} className="rounded-md border border-border">
+                  <p className="border-b border-border bg-muted/60 px-3 py-2.5 font-semibold">
+                    {fabric}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 p-3 min-[420px]:grid-cols-3">
+                    {guide.widths.map((w) => {
+                      const bag = bagByKey.get(`${fabric}|${w}`);
+                      if (!bag) return null;
+                      return (
+                        <div
+                          key={w}
+                          className={`rounded-md px-2 py-2.5 text-center ring-1 ${bagStyle(bag)}`}
+                        >
+                          <p className="text-xs font-medium opacity-75">{w} см</p>
+                          <p className="text-base font-bold leading-tight">
+                            {shortBag(bag)}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Компьютер: сетка целиком видна, сравнивать удобнее таблицей. */}
+            <div className="hidden overflow-x-auto rounded-md border border-border md:block">
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr className="bg-muted/60">
@@ -159,7 +191,13 @@ const PackagingGuidePage = () => {
             )}
 
             <p className="text-xs text-muted-foreground">
-              Прочерк — для такой ширины эта ткань не выпускается.
+              <span className="hidden md:inline">
+                Прочерк — для такой ширины эта ткань не выпускается.
+              </span>
+              <span className="md:hidden">
+                Показаны только те ширины, в которых ткань выпускается. Нет нужной
+                ширины — такой товар не производится.
+              </span>
             </p>
           </>
         )}
