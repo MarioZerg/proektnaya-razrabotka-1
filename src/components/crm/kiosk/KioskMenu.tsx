@@ -9,7 +9,6 @@ export type KioskScreen =
   | 'rolls'
   | 'unlabeled'
   | 'defect'
-  | 'defect-receive'
   | 'repack';
 
 interface KioskMenuProps {
@@ -56,12 +55,6 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
     className: 'bg-red-600 hover:bg-red-700 text-white',
   },
   {
-    screen: 'defect-receive',
-    label: 'Приём брака из цеха',
-    icon: 'PackageX',
-    className: 'bg-red-600 hover:bg-red-700 text-white',
-  },
-  {
     screen: 'repack',
     label: 'Перепаковка',
     icon: 'PackageOpen',
@@ -73,8 +66,9 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
 const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
   // Кто что видит на терминале:
   //
-  // «Товар без стикера» и «Приём брака» — зона кладовщика: он ищет вещи, оставшиеся без
-  //   стикера хранения, и забирает брак из контейнеров цеха на склад.
+  // «Товар без стикера» — зона кладовщика: он ищет вещи, оставшиеся без стикера хранения.
+  //   Приём брака с киоска убран: брак из цеха кладовщик сканирует у себя на складе,
+  //   на компьютере (Инвентаризация → Приём брака из цеха), а не на планшете в цехе.
   // «Перепаковка» — вещи вернулись от покупателя годными, но с мятой упаковкой. Их
   //   переупаковывает ТОЛЬКО упаковщица: швея и закройщик упаковкой не занимаются, и
   //   лишняя плитка на их экране мешает.
@@ -83,13 +77,13 @@ const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
   // «Отзывы» — доступны всем ролям на терминале.
   const hiddenByRole: Record<string, KioskScreen[]> = {
     storekeeper: ['orders', 'rolls', 'defect', 'repack'],
-    sewer: ['unlabeled', 'defect-receive', 'repack'],
-    cutter: ['unlabeled', 'defect-receive', 'repack'],
+    sewer: ['unlabeled', 'repack'],
+    cutter: ['unlabeled', 'repack'],
   };
 
   const hidden = isStorekeeperRole(role)
     ? hiddenByRole.storekeeper
-    : hiddenByRole[role] || ['unlabeled', 'defect-receive'];
+    : hiddenByRole[role] || ['unlabeled'];
 
   const visibleTiles = tiles.filter((t) => !hidden.includes(t.screen));
 

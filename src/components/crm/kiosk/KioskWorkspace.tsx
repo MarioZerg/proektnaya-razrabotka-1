@@ -9,7 +9,6 @@ import KioskRepackScreen from '@/components/crm/kiosk/KioskRepackScreen';
 import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
 import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
-import KioskDefectReceiveScreen from '@/components/crm/kiosk/KioskDefectReceiveScreen';
 import KioskIdleTimer from '@/components/crm/kiosk/KioskIdleTimer';
 import KioskDefectCheckDialog from '@/components/crm/kiosk/KioskDefectCheckDialog';
 import { roleLabels, type Role } from '@/lib/roles';
@@ -328,12 +327,6 @@ const KioskWorkspace = ({
                 </p>
               </div>
             )}
-          </div>
-        )}
-
-        {screen === 'defect-receive' && (
-          <div className="mx-auto max-w-3xl">
-            <KioskDefectReceiveScreen actorId={user.id} actorName={user.name} />
           </div>
         )}
 
