@@ -14,6 +14,7 @@ import {
   type GoodsWarehouseItem,
 } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
+import { fetchMarketplaceReturns } from '@/lib/marketplaceReturnsApi';
 import ReceiveReturnDialog from '@/components/crm/goodsWarehouse/ReceiveReturnDialog';
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
@@ -74,6 +75,17 @@ const GoodsWarehouse = () => {
 
   useEffect(() => {
     load();
+  }, []);
+
+  // Возвраты, забранные с пункта выдачи, но ещё не осмотренные: товар привезли,
+  // а решение (полка / перепаковка / утиль) кладовщик ещё не принял. Пока вещь не
+  // лежит на полке, она считается непроверенной и в подбор не попадает.
+  const [uncheckedReturns, setUncheckedReturns] = useState(0);
+
+  useEffect(() => {
+    fetchMarketplaceReturns({ status: 'picked_up' })
+      .then((d) => setUncheckedReturns(d.counts.picked_up || 0))
+      .catch(() => setUncheckedReturns(0));
   }, []);
 
   // Вещи, отменённые клиентом: упаковщик наклеил стикер хранения, кладовщик ещё не положил
@@ -319,6 +331,28 @@ const GoodsWarehouse = () => {
             />
           </div>
         </div>
+
+        {/* Привезли с ПВЗ, но ещё не осмотрели. Такой товар нельзя продавать:
+            он не проверен и в подбор не идёт, пока не ляжет на полку. */}
+        {uncheckedReturns > 0 && (
+          <button
+            type="button"
+            onClick={() => navigate('/crm/shipments/receive-returns')}
+            className="flex w-full items-center gap-3 rounded-lg border border-violet-300 bg-violet-50 px-4 py-3 text-left"
+          >
+            <Icon name="PackageOpen" size={24} className="shrink-0 text-violet-600" />
+            <div className="min-w-0 flex-1">
+              <p className="font-bold text-violet-900">
+                Непроверенные возвраты: {uncheckedReturns} шт.
+              </p>
+              <p className="text-sm text-violet-900">
+                Забрали с пункта выдачи, но ещё не осмотрели. В подбор не попадут,
+                пока не разберёте и не положите на полку
+              </p>
+            </div>
+            <Icon name="ChevronRight" size={18} className="shrink-0 text-violet-600" />
+          </button>
+        )}
 
         <GoodsWarehouseFilters
           statusFilter={statusFilter}

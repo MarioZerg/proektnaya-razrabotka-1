@@ -52,6 +52,8 @@ const CrmDashboard = () => {
   const [goodsItems, setGoodsItems] = useState<GoodsWarehouseItem[]>([]);
   const [shipmentsToWorkshop, setShipmentsToWorkshop] = useState<Shipment[]>([]);
   const [returnsWaiting, setReturnsWaiting] = useState(0);
+  // Возвраты, забранные с пункта выдачи, но ещё не осмотренные кладовщиком.
+  const [returnsPickedUp, setReturnsPickedUp] = useState(0);
 
   const [shiftsLoading, setShiftsLoading] = useState(true);
   const [employeeShifts, setEmployeeShifts] = useState<EmployeeShiftStatus[]>([]);
@@ -84,6 +86,7 @@ const CrmDashboard = () => {
         setGoodsItems(goodsData);
         setShipmentsToWorkshop(shipmentsData);
         setReturnsWaiting(returnsData.counts.new || 0);
+        setReturnsPickedUp(returnsData.counts.picked_up || 0);
       })
       .finally(() => setDataLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -238,6 +241,15 @@ const CrmDashboard = () => {
         tone: awaitingShipLabel > 0 ? 'warning' : 'default',
         path: '/crm/inventory/goods-warehouse',
       });
+      // Вещи привезли с ПВЗ, но кладовщик их ещё не осмотрел. Пока они не лежат
+      // на полке, товар считается непроверенным и в подбор не идёт.
+      list.push({
+        label: 'Возвраты — непроверенные, разобрать',
+        value: returnsPickedUp,
+        icon: 'PackageOpen',
+        tone: returnsPickedUp > 0 ? 'urgent' : 'default',
+        path: '/crm/shipments/receive-returns',
+      });
       list.push({
         label: 'Возвраты — принять на склад',
         value: returnsWaiting,
@@ -284,7 +296,7 @@ const CrmDashboard = () => {
     }
 
     return list;
-  }, [isCleaner, isCutter, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop, returnsWaiting]);
+  }, [isCleaner, isCutter, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop, returnsWaiting, returnsPickedUp]);
 
   const content = (
     <div className="space-y-8">
