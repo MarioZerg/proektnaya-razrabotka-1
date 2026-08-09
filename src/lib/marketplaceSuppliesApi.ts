@@ -22,6 +22,8 @@ export interface Supply {
   shipToMarketplaceAt: string | null;
   completedAt: string | null;
   itemsCount: number;
+  /** Сколько единиц обещали привезти по заявке. У FBO без этого поставку не выпустят. */
+  plannedQuantity: number | null;
   createdByName: string | null;
   ozonDeliveryMethod: OzonDeliveryMethod | null;
   ozonApplicationNumber: string | null;

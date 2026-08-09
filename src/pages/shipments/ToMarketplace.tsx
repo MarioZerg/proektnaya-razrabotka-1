@@ -345,6 +345,18 @@ const ToMarketplace = () => {
                         <Badge variant={s.itemsCount > 0 ? 'default' : 'outline'}>
                           {s.itemsCount} шт.
                         </Badge>
+                      ) : s.type === 'FBO' && s.plannedQuantity ? (
+                        // Поставку FBO не выпустят, пока не собрано всё по заявке —
+                        // показываем недобор сразу в списке, а не при попытке отгрузить.
+                        <span
+                          className={
+                            s.itemsCount >= s.plannedQuantity
+                              ? 'font-medium text-emerald-600'
+                              : 'font-medium text-amber-600'
+                          }
+                        >
+                          {s.itemsCount} из {s.plannedQuantity} шт.
+                        </span>
                       ) : (
                         `${s.itemsCount} шт.`
                       )}

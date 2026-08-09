@@ -745,7 +745,10 @@ def handler(event: dict, context) -> dict:
                 f" AND o.sewing_status IN ('Готовые', 'Со склада')), "
                 # Кто сейчас собирает поставку — чтобы кладовщик видел занятость
                 # прямо в списке и не заходил внутрь впустую.
-                f"s.locked_by, lu.full_name "
+                f"s.locked_by, lu.full_name, "
+                # Сколько единиц обещали привезти по заявке: по нему видно недобор
+                # прямо в списке, ещё до попытки отгрузить поставку.
+                f"s.total_quantity_marketplace "
                 f"FROM marketplace_supplies s "
                 f"LEFT JOIN users u ON u.id = s.created_by "
                 f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -780,6 +783,9 @@ def handler(event: dict, context) -> dict:
                     'sewingDone': int(r[20] or 0),
                     'lockedBy': r[21],
                     'lockedByName': r[22],
+                    # План по заявке маркетплейса — для FBO это то количество,
+                    # без которого поставку не выпустят в отгрузку.
+                    'plannedQuantity': r[23],
                 }
                 for r in cur.fetchall()
             ]
