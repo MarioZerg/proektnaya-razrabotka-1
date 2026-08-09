@@ -59,6 +59,9 @@ const ReturnPickupCodes = () => {
   const [codeValue, setCodeValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  // Автообновление делаем один раз за визит: если маркетплейс ответил ошибкой,
+  // повторные попытки не должны зациклиться.
+  const autoTried = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const load = () => {
@@ -74,8 +77,24 @@ const ReturnPickupCodes = () => {
 
   useEffect(load, []);
 
+  // Код OZON приходит из личного кабинета и меняется — если сегодня его ещё не
+  // забирали, подтягиваем свежий сами. Кладовщик открывает раздел и сразу видит
+  // актуальный штрихкод, ничего не нажимая.
+  useEffect(() => {
+    if (loading) return;
+    if (autoTried.current) return;
+    const stale = items.find((i) => i.dailyRefresh && !i.updatedToday);
+    if (stale) {
+      autoTried.current = true;
+      handleRefresh(stale, true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, items]);
+
   // Рисуем код при открытии: QR для площадок, где он нужен, иначе обычный штрихкод.
   useEffect(() => {
+    // Если маркетплейс прислал готовую картинку — рисовать самим не нужно.
+    if (shown?.codeImage) return;
     if (!shown?.code || !canvasRef.current) return;
     const canvas = canvasRef.current;
     if (shown.codeType === 'QR') {
@@ -94,11 +113,11 @@ const ReturnPickupCodes = () => {
 
   // Свежий код из личного кабинета. Кнопка доступна и кладовщику: код OZON живёт сутки,
   // и перед выездом на пункт выдачи человек должен получить актуальный сам.
-  const handleRefresh = async (item: ReturnPickupCode) => {
+  const handleRefresh = async (item: ReturnPickupCode, silent = false) => {
     setRefreshingId(item.marketplaceCode);
     try {
       await refreshReturnCode(item.marketplaceCode, user?.id);
-      toast({ title: 'Код обновлён' });
+      if (!silent) toast({ title: 'Код обновлён' });
       load();
     } catch (e) {
       toast({
@@ -272,7 +291,15 @@ const ReturnPickupCodes = () => {
               <DialogTitle>{shown?.title}</DialogTitle>
             </DialogHeader>
             <div className="flex flex-col items-center gap-3 py-4">
-              <canvas ref={canvasRef} />
+              {shown?.codeImage ? (
+                <img
+                  src={`data:image/png;base64,${shown.codeImage}`}
+                  alt="Штрихкод выдачи возвратов"
+                  className="w-full max-w-[300px]"
+                />
+              ) : (
+                <canvas ref={canvasRef} />
+              )}
               <p className="font-mono-tech text-lg font-bold">{shown?.code}</p>
               <p className="text-center text-sm text-muted-foreground">
                 Покажите этот код приёмщику на пункте выдачи

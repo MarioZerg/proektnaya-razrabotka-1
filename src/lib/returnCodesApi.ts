@@ -12,6 +12,8 @@ export interface ReturnPickupCode {
   updatedAt: string | null;
   /** Сколько возвратов уже одобрено и ждёт забора на ПВЗ этой площадки. */
   waitingCount: number;
+  /** Готовая картинка штрихкода от маркетплейса (base64 PNG). */
+  codeImage: string | null;
   /** Код обновляется раз в сутки (OZON) — вчерашний на ПВЗ не примут. */
   dailyRefresh: boolean;
   /** Код обновляли сегодня. */

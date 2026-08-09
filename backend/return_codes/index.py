@@ -44,10 +44,14 @@ def ozon_post(path, client_id, api_key, payload=None):
 
 # Возможные методы OZON для штрихкода возвратов. Проверяем по одному: документация
 # по этому разделу менялась, и надёжнее определить рабочий путь опытным путём.
+# Рабочие методы OZON для штрихкода выдачи возвратов:
+# barcode      — текущее значение кода,
+# get-png      — картинка штрихкода,
+# barcode-reset — выпустить новый код (старый перестаёт действовать).
 OZON_BARCODE_PATHS = {
-    'return_barcode': '/v1/return/company/barcode',
-    'return_reset': '/v1/return/company/barcode/reset',
-    'barcode_add': '/v1/barcode/add',
+    'value': '/v1/return/giveout/barcode',
+    'png': '/v1/return/giveout/get-png',
+    'reset': '/v1/return/giveout/barcode-reset',
 }
 
 
@@ -66,39 +70,39 @@ def extract_barcode(data):
     return None
 
 
-def refresh_ozon_code(cur):
-    """Забирает свежий штрихкод возвратов OZON по API.
+def refresh_ozon_code(cur, reset=False):
+    """Забирает действующий штрихкод выдачи возвратов OZON.
 
-    Код привязан к продавцу, но обновляется раз в сутки — вчерашний на пункте выдачи
-    не примут. Метод /v1/barcode/add возвращает действующий на сегодня код; если он
-    почему-то ещё не создан, просим OZON сгенерировать новый.
+    Код привязан к продавцу и меняется — со старым на пункте выдачи возвраты не отдадут.
+    Обычное обновление берёт текущий код кабинета; reset=True выпускает новый (старый
+    сразу перестаёт действовать), это нужно, если код скомпрометирован.
 
-    Возвращает (код, ошибка).
+    Возвращает (код, ошибка, картинка_штрихкода_base64).
     """
     client_id, api_key, enabled = get_ozon_credentials(cur)
     if not client_id or not api_key:
-        return None, 'Не заполнены ключи OZON в интеграциях'
+        return None, 'Не заполнены ключи OZON в интеграциях', None
     if not enabled:
-        return None, 'Интеграция OZON выключена'
+        return None, 'Интеграция OZON выключена', None
 
-    st, data = ozon_post(OZON_BARCODE_PATHS['return_barcode'], client_id, api_key)
+    path = OZON_BARCODE_PATHS['reset'] if reset else OZON_BARCODE_PATHS['value']
+    st, data = ozon_post(path, client_id, api_key)
     code = extract_barcode(data)
 
-    # Кода на сегодня ещё нет — просим OZON выпустить новый.
+    # Сброс возвращает сразу картинку — значение кода дозапрашиваем отдельно.
     if not code:
-        st, data = ozon_post(OZON_BARCODE_PATHS['return_reset'], client_id, api_key)
-        code = extract_barcode(data)
-
+        st, data_val = ozon_post(OZON_BARCODE_PATHS['value'], client_id, api_key)
+        code = extract_barcode(data_val)
     if not code:
-        # Метод получения штрихкода возвратов в Seller API сейчас недоступен: все
-        # известные пути отвечают 404. Значит, автообновление невозможно — говорим
-        # об этом прямо, чтобы человек не гадал, почему кнопка не сработала.
-        return None, (
-            'OZON не отдаёт штрихкод возвратов через API — метод недоступен в Seller API. '
-            'Скопируйте код из личного кабинета вручную'
-        )
+        msg = data.get('message') or data.get('raw') or '' if isinstance(data, dict) else ''
+        return None, f'OZON не вернул штрихкод{": " + str(msg)[:180] if msg else ""}', None
 
-    return str(code).strip(), None
+    # Картинку штрихкода рисует сам OZON — берём её, чтобы на ПВЗ сканировали
+    # ровно тот код, который выдал маркетплейс.
+    st_png, data_png = ozon_post(OZON_BARCODE_PATHS['png'], client_id, api_key)
+    png = (data_png or {}).get('png') if isinstance(data_png, dict) else None
+
+    return str(code).strip(), None, (png or None)
 
 
 CORS_HEADERS = {
@@ -158,7 +162,7 @@ def handler(event: dict, context) -> dict:
 
             cur.execute(
                 "SELECT marketplace_code, title, code, code_type, COALESCE(comment, ''), updated_at, "
-                "COALESCE(hint, ''), daily_refresh, "
+                "COALESCE(code_image, ''), daily_refresh, "
                 # Свежесть кода: у площадок с ежедневным обновлением вчерашний уже не примут.
                 "(updated_at::date = CURRENT_DATE) "
                 "FROM return_pickup_codes ORDER BY title"
@@ -173,8 +177,8 @@ def handler(event: dict, context) -> dict:
                     'updatedAt': r[5].isoformat() + 'Z' if r[5] else None,
                     # Сколько посылок ждёт на ПВЗ по этой площадке.
                     'waitingCount': waiting.get(r[0], 0),
-                    # Где взять код в личном кабинете площадки.
-                    'hint': r[6],
+                    # Готовая картинка штрихкода от маркетплейса.
+                    'codeImage': r[6] or None,
                     # Код обновляется раз в сутки (OZON) — вчерашний не сработает.
                     'dailyRefresh': bool(r[7]),
                     'updatedToday': bool(r[8]),
@@ -196,15 +200,17 @@ def handler(event: dict, context) -> dict:
                              'и Яндекса код постоянный, он задаётся вручную'
                 })
 
-            code, err = refresh_ozon_code(cur)
+            # reset=true выпускает новый код: старый сразу перестаёт работать,
+            # поэтому по умолчанию просто забираем действующий.
+            code, err, png = refresh_ozon_code(cur, reset=bool(body_data.get('reset')))
             if err:
                 return _resp(502, {'error': err})
 
             actor_id = body_data.get('actorId')
             cur.execute(
-                "UPDATE return_pickup_codes SET code = %s, updated_at = now(), updated_by = %s "
-                "WHERE marketplace_code = 'ozon'",
-                (code, int(actor_id) if actor_id else None),
+                "UPDATE return_pickup_codes SET code = %s, code_image = %s, updated_at = now(), "
+                "updated_by = %s WHERE marketplace_code = 'ozon'",
+                (code, png, int(actor_id) if actor_id else None),
             )
             conn.commit()
             return _resp(200, {'success': True, 'code': code})
