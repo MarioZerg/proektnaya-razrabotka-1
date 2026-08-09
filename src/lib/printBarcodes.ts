@@ -22,14 +22,16 @@ const formatDate = (iso?: string | null) => {
 };
 
 /**
- * Печать штрихкодов рулонов на наклейке 75×120 мм.
+ * Печать штрихкодов рулонов на наклейке 58×40 мм — единый формат со стикерами товара,
+ * под один рулон этикеток в принтере.
  *
- * Рулон — крупная единица хранения, его штрихкод ищут глазами через весь склад, поэтому
- * наклейка большая: маленькую 58×40 на рулоне попросту не разглядеть. Это осознанное
- * отличие от стикеров товара (58×40) — там наклейка клеится на пакет и должна быть мелкой.
+ * Места мало, поэтому расстановка плотная: сверху материал и метраж, в середине
+ * штрихкод во всю ширину, снизу поставщик и дата одной строкой. Штрихкод намеренно
+ * занимает большую часть наклейки: его считывают сканером, а всё остальное —
+ * подсказки для кладовщика.
  *
- * Каждый штрихкод — отдельная наклейка; несколько кодов печатаются подряд через разрыв
- * страницы.
+ * Каждый штрихкод — отдельная наклейка; несколько кодов печатаются подряд через
+ * разрыв страницы.
  */
 export const printBarcodes = (items: BarcodePrintItem[], title = 'Штрихкоды') => {
   if (items.length === 0) return;
@@ -38,22 +40,23 @@ export const printBarcodes = (items: BarcodePrintItem[], title = 'Штрихко
     const canvas = document.createElement('canvas');
     JsBarcode(canvas, item.code, {
       format: 'CODE128',
-      width: 3,
-      height: 110,
+      // Узкие штрихи и невысокая полоса: на 58 мм длинный код иначе не помещается
+      // и обрезается по краям — сканер такой не прочитает.
+      width: 2,
+      height: 45,
       displayValue: true,
-      fontSize: 20,
-      margin: 4,
+      fontSize: 16,
+      textMargin: 1,
+      margin: 2,
     });
     const label = (item.label || '').trim();
     const supplier = (item.supplier || '').trim();
     const received = formatDate(item.receivedAt);
-    const footer =
-      supplier || received
-        ? `<div class="meta">
-             ${supplier ? `<div>Поставщик: ${esc(supplier)}</div>` : ''}
-             ${received ? `<div>Принят: ${esc(received)}</div>` : ''}
-           </div>`
-        : '';
+    // Поставщик и дата в одну строку: на 40 мм высоты двух строк уже не остаётся.
+    const metaParts = [supplier, received].filter(Boolean);
+    const footer = metaParts.length
+      ? `<div class="meta">${esc(metaParts.join(' · '))}</div>`
+      : '';
     return `
     <div class="sticker">
       ${label ? `<div class="label">${esc(label)}</div>` : ''}
@@ -68,41 +71,48 @@ export const printBarcodes = (items: BarcodePrintItem[], title = 'Штрихко
   <meta charset="utf-8" />
   <title>${esc(title)}</title>
   <style>
-    @page { size: 75mm 120mm; margin: 0; }
+    @page { size: 58mm 40mm; margin: 0; }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: Arial, Helvetica, sans-serif; }
     .sticker {
-      width: 75mm;
-      height: 120mm;
-      padding: 4mm;
+      width: 58mm;
+      height: 40mm;
+      padding: 1.5mm 2mm;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 4mm;
+      gap: 0.5mm;
       overflow: hidden;
       page-break-after: always;
     }
     .sticker:last-child { page-break-after: auto; }
     .label {
-      font-size: 13pt;
+      font-size: 8pt;
       font-weight: bold;
       text-align: center;
-      line-height: 1.2;
+      line-height: 1.1;
       width: 100%;
-      max-height: 30mm;
+      /* Длинное название материала обрезаем одной строкой: перенос съел бы
+         место под штрихкод, а без него наклейка бесполезна. */
+      white-space: nowrap;
       overflow: hidden;
-      word-break: break-word;
+      text-overflow: ellipsis;
     }
-    .sticker img { width: 67mm; height: auto; display: block; }
+    .sticker img {
+      width: 54mm;
+      height: auto;
+      max-height: 26mm;
+      display: block;
+    }
     .meta {
-      font-size: 11pt;
+      font-size: 6.5pt;
       text-align: center;
-      line-height: 1.3;
+      line-height: 1.1;
       width: 100%;
-      max-height: 22mm;
+      white-space: nowrap;
       overflow: hidden;
-      word-break: break-word;
+      text-overflow: ellipsis;
     }
   </style>
 </head>

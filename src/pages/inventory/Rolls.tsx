@@ -65,9 +65,11 @@ const Rolls = () => {
 
   const [statusFilter, setStatusFilter] = useState('all');
   const [materialFilter, setMaterialFilter] = useState('all');
+  const [workshopFilter, setWorkshopFilter] = useState('all');
+  const [shiftFilter, setShiftFilter] = useState('all');
   const [search, setSearch] = useState('');
   // Сколько рулонов показываем сейчас. Сбрасывается при смене фильтра.
-  const [visibleCount, setVisibleCount] = useState(100);
+  const [visibleCount, setVisibleCount] = useState(20);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -130,12 +132,26 @@ const Rolls = () => {
   // браузер не успевает — планшет в цехе просто зависал. Показываем частями,
   // кнопка внизу догружает следующие. Поиск и фильтры работают по всему списку.
   useEffect(() => {
-    setVisibleCount(100);
-  }, [statusFilter, materialFilter, search]);
+    setVisibleCount(20);
+  }, [statusFilter, materialFilter, workshopFilter, shiftFilter, search]);
+
+  useEffect(() => {
+    setShiftFilter('all');
+  }, [workshopFilter]);
+
+  // Цех, выбранный в фильтре: из него берём названия смен.
+  const filterWorkshop =
+    workshopFilter === 'all' || workshopFilter === 'none'
+      ? undefined
+      : workshops.find((w) => String(w.id) === workshopFilter);
 
   const allFiltered = rolls.filter((r) => {
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     if (materialFilter !== 'all' && String(r.materialId) !== materialFilter) return false;
+    if (workshopFilter === 'none' && r.workshopId != null) return false;
+    if (workshopFilter !== 'all' && workshopFilter !== 'none'
+        && String(r.workshopId ?? '') !== workshopFilter) return false;
+    if (shiftFilter !== 'all' && String(r.shiftNumber ?? '') !== shiftFilter) return false;
     if (search && !r.barcode.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
@@ -295,7 +311,7 @@ const Rolls = () => {
         {/* Сколько денег лежит в остатках — коммерческая информация, только админу. */}
         {isAdmin && <StockValueCard />}
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger>
               <SelectValue placeholder="Все статусы" />
@@ -317,6 +333,44 @@ const Rolls = () => {
               {filterMaterials.map((m) => (
                 <SelectItem key={m.id} value={String(m.id)}>
                   {m.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={workshopFilter} onValueChange={setWorkshopFilter}>
+            <SelectTrigger>
+              <SelectValue placeholder="Все цеха" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все цеха</SelectItem>
+              {/* Рулоны на складе цеху не принадлежат — их отбирают отдельным пунктом,
+                  иначе кладовщик не сможет посмотреть только складские. */}
+              <SelectItem value="none">Без цеха (на складе)</SelectItem>
+              {workshops.map((w) => (
+                <SelectItem key={w.id} value={String(w.id)}>
+                  {w.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Смена выбирается внутри цеха: у каждого цеха свои смены и своё их число. */}
+          <Select
+            value={shiftFilter}
+            onValueChange={setShiftFilter}
+            disabled={filterWorkshop === undefined}
+          >
+            <SelectTrigger>
+              <SelectValue
+                placeholder={filterWorkshop ? 'Все смены' : 'Сначала выберите цех'}
+              />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все смены</SelectItem>
+              {(filterWorkshop?.shiftNames || []).map((name, idx) => (
+                <SelectItem key={idx} value={String(idx + 1)}>
+                  {name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -411,7 +465,7 @@ const Rolls = () => {
               </p>
               <Button
                 variant="outline"
-                onClick={() => setVisibleCount((n) => n + 200)}
+                onClick={() => setVisibleCount((n) => n + 20)}
               >
                 Показать ещё
               </Button>
