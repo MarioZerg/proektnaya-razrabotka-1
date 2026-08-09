@@ -37,9 +37,19 @@ export const useSewingItemsData = () => {
   //  - упаковщица: НЕТ вкладки "На раскрое" — видит Раскроено (весь материал всех
   //    закройщиков), В работе (ВСЕ заказы всех швей), Стикеровка (свой этап), Готовые
   //  - админ/кладовщик: видят всё, включая "Новый"
+  //
+  // Вкладку «Со склада» производственникам не показываем совсем: это заказы,
+  // закрытые готовой вещью с полки — шить и кроить там нечего. Их собирает
+  // кладовщик, а швее они только засоряют конвейер.
   const visibleTabs = useMemo(() => {
-    if (isSewer || isPacker) return statusTabs.filter((t) => t.value !== 'Новый' && t.value !== 'На раскрое');
-    if (isCutter) return statusTabs.filter((t) => t.value !== 'Новый');
+    if (isSewer || isPacker) {
+      return statusTabs.filter(
+        (t) => t.value !== 'Новый' && t.value !== 'На раскрое' && t.value !== 'Со склада'
+      );
+    }
+    if (isCutter) {
+      return statusTabs.filter((t) => t.value !== 'Новый' && t.value !== 'Со склада');
+    }
     return statusTabs;
   }, [isSewer, isPacker, isCutter]);
 
