@@ -76,7 +76,10 @@ def write_off_materials_once(cur, order_id, material, width, height):
             "SELECT id, remaining_quantity FROM rolls "
             # Рулон «в пути» (отгружен в цех, но не принят сменой) в раскрой не идёт:
             # материал мог не доехать. Такой рулон ждёт подтверждения приёмки.
+            # Бракованный рулон в раскрой не идёт: закройщик его отставил, и материал
+            # с него списывать нельзя, пока кладовщик не решит судьбу рулона.
             "WHERE material_id = %s AND remaining_quantity > 0 "
+            "AND defect_flagged_at IS NULL "
             "AND (status = 'in_storage' OR (status = 'in_workshop' AND accepted_at IS NOT NULL)) "
             "ORDER BY created_at ASC",
             (material_id,),
@@ -1405,7 +1408,10 @@ def handler(event: dict, context) -> dict:
                                     "SELECT id, remaining_quantity FROM rolls "
                                     # Рулон «в пути» (отгружен в цех, но не принят сменой) в раскрой не идёт:
             # материал мог не доехать. Такой рулон ждёт подтверждения приёмки.
+            # Бракованный рулон в раскрой не идёт: закройщик его отставил, и материал
+            # с него списывать нельзя, пока кладовщик не решит судьбу рулона.
             "WHERE material_id = %s AND remaining_quantity > 0 "
+            "AND defect_flagged_at IS NULL "
             "AND (status = 'in_storage' OR (status = 'in_workshop' AND accepted_at IS NOT NULL)) "
                                     "ORDER BY created_at ASC",
                                     (material_id,),
@@ -1745,8 +1751,11 @@ def handler(event: dict, context) -> dict:
                         lacks = []
                         for mat_id, qty_needed, mat_name, mat_unit in cur.fetchall():
                             cur.execute(
+                                # Бракованные рулоны в доступный остаток не считаем —
+                                # заказ на них планировать нельзя.
                                 "SELECT COALESCE(SUM(remaining_quantity), 0) FROM rolls "
                                 "WHERE material_id = %s AND status = 'in_workshop' AND remaining_quantity > 0 "
+                                "AND defect_flagged_at IS NULL "
                                 "AND (%s IS NULL OR workshop_id = %s)",
                                 (mat_id, session_workshop_id, session_workshop_id),
                             )

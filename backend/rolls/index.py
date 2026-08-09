@@ -663,7 +663,8 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 f"SELECT r.id, r.barcode, r.material_id, m.name, m.unit, r.workshop_id, w.name, "
                 f"r.shift_number, r.initial_quantity, r.remaining_quantity, r.status, "
-                f"r.created_at, r.completed_at, COALESCE(r.shortage_quantity, 0), r.accepted_at "
+                f"r.created_at, r.completed_at, COALESCE(r.shortage_quantity, 0), r.accepted_at, "
+                f"r.defect_flagged_at, r.defect_flagged_by_name, r.defect_reason "
                 f"FROM rolls r "
                 f"LEFT JOIN materials m ON m.id = r.material_id "
                 f"LEFT JOIN workshops w ON w.id = r.workshop_id "
@@ -690,6 +691,11 @@ def handler(event: dict, context) -> dict:
                     # нельзя, пока заявку не подтвердят. Терминал помечает такие рулоны.
                     'pendingAcceptance': r[10] == 'in_workshop' and r[14] is None,
                     'usedInShift': r[0] in used_roll_ids,
+                    # Закройщик отставил рулон из-за брака: в работу он не идёт и ждёт,
+                    # когда кладовщик заберёт его на склад или откажет в заборе.
+                    'defectFlaggedAt': (r[15].isoformat() + 'Z') if r[15] else None,
+                    'defectFlaggedByName': r[16],
+                    'defectReason': r[17],
                 }
                 for r in cur.fetchall()
             ]
@@ -952,6 +958,126 @@ def handler(event: dict, context) -> dict:
                     'headers': headers,
                     'body': json.dumps({'success': True, 'shortage': shortage}),
                 }
+
+            # Закройщик встретил брак в начале рулона (больше 10 пог.м): резать дальше
+            # нельзя. Рулон физически остаётся в цехе, но в работу больше не идёт, а у
+            # кладовщика появляется задача забрать его на склад.
+            if action == 'flag_defect':
+                item_id = body_data.get('id')
+                reason = (body_data.get('reason') or '').strip()
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите рулон'})}
+                if not reason:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Опишите, что не так с рулоном'}, ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT status, defect_flagged_at, remaining_quantity FROM rolls WHERE id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+                if row[0] == 'completed':
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Рулон уже закрыт'}, ensure_ascii=False)}
+                if row[1]:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Рулон уже помечен бракованным — ждёт забора кладовщиком'},
+                                               ensure_ascii=False)}
+
+                flagged_by = body_data.get('actorId')
+                cur.execute(
+                    "UPDATE rolls SET defect_flagged_at = now(), defect_flagged_by = %s, "
+                    "defect_flagged_by_name = %s, defect_reason = %s, "
+                    "defect_declined_at = NULL, defect_declined_reason = NULL WHERE id = %s",
+                    (
+                        int(flagged_by) if flagged_by else None,
+                        (body_data.get('actorName') or '').strip() or None,
+                        reason,
+                        int(item_id),
+                    ),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True}, ensure_ascii=False)}
+
+            # Кладовщик забирает бракованный рулон из цеха — СКАНЕРОМ, по штрихкоду
+            # рулона. Так видно, что рулон реально доехал до склада, а не остался лежать
+            # в цехе после формального подтверждения.
+            if action == 'receive_defect_roll':
+                scan = (body_data.get('barcode') or '').strip()
+                if not scan:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Отсканируйте штрихкод рулона'}, ensure_ascii=False)}
+
+                bc_esc = scan.replace("'", "''")
+                cur.execute(
+                    "SELECT r.id, r.status, r.defect_flagged_at, m.name, r.remaining_quantity, "
+                    "m.unit, r.defect_reason, r.defect_flagged_by_name "
+                    "FROM rolls r JOIN materials m ON m.id = r.material_id "
+                    f"WHERE r.barcode = '{bc_esc}'"
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': f'Рулон {scan} не найден'}, ensure_ascii=False)}
+                if not row[2]:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': f'Рулон {scan} не помечен бракованным'},
+                                               ensure_ascii=False)}
+                if row[1] == 'in_storage':
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': f'Рулон {scan} уже на складе'}, ensure_ascii=False)}
+
+                # Рулон уехал из цеха на склад: снимаем цех и смену, иначе он остался бы
+                # числиться за сменой, которая с ним уже не работает.
+                cur.execute(
+                    "UPDATE rolls SET status = 'in_storage', workshop_id = NULL, "
+                    "shift_number = NULL, accepted_at = NULL WHERE id = %s",
+                    (int(row[0]),),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({
+                            'success': True,
+                            'barcode': scan,
+                            'materialName': row[3],
+                            'remaining': float(row[4] or 0),
+                            'unit': row[5],
+                            'reason': row[6],
+                            'flaggedBy': row[7],
+                        }, ensure_ascii=False)}
+
+            # Кладовщик осмотрел рулон и брак не подтвердился — отказывает в заборе.
+            # Пометка снимается, рулон снова доступен для заказов.
+            if action == 'decline_defect_roll':
+                item_id = body_data.get('id')
+                reason = (body_data.get('reason') or '').strip()
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите рулон'})}
+                if not reason:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Напишите, почему отказываете в заборе'},
+                                               ensure_ascii=False)}
+
+                cur.execute("SELECT defect_flagged_at FROM rolls WHERE id = %s", (int(item_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+                if not row[0]:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Рулон не помечен бракованным'}, ensure_ascii=False)}
+
+                cur.execute(
+                    "UPDATE rolls SET defect_flagged_at = NULL, defect_flagged_by = NULL, "
+                    "defect_flagged_by_name = NULL, defect_reason = NULL, "
+                    "defect_declined_at = now(), defect_declined_reason = %s WHERE id = %s",
+                    (reason, int(item_id)),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True}, ensure_ascii=False)}
 
             # Администратор рассмотрел недостачу и решил удержать деньги с сотрудников.
             if action == 'charge_penalty':

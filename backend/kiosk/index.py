@@ -1407,7 +1407,10 @@ def handler(event: dict, context) -> dict:
                     "FROM rolls r "
                     "JOIN materials m ON m.id = r.material_id "
                     "JOIN material_types mt ON mt.id = m.type_id "
+                    # Рулон, помеченный бракованным, из работы исключаем: пока кладовщик
+                    # его не заберёт (или не откажет), резать из него нельзя.
                     "WHERE r.status = 'in_workshop' AND r.remaining_quantity > 0 "
+                    "AND r.defect_flagged_at IS NULL "
                     f"AND mt.name IN ({type_placeholders}) "
                     "AND (%s IS NULL OR r.workshop_id = %s) "
                     "ORDER BY mt.name, m.name, r.barcode",
