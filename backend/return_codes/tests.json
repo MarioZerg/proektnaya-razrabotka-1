@@ -49,6 +49,15 @@
         "action": "pickup_list"
       },
       "expectedStatus": 200
+    },
+    {
+      "name": "Progress without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "giveout_progress"
+      },
+      "expectedStatus": 400
     }
   ]
 }

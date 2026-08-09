@@ -66,19 +66,9 @@ export interface ReturnGiveout {
   status: string;
 }
 
-/** Пункт, где скопились возвраты, ожидающие вывоза. */
-export interface ReturnPlace {
-  placeName: string;
-  address: string;
-  count: number;
-  statusName: string;
-  items: { name: string; offerId: string; postingNumber: string; reason: string }[];
-}
-
 /** Что и где ждёт получения на пунктах выдачи OZON. */
 export const fetchPickupList = async (): Promise<{
   giveouts: ReturnGiveout[];
-  places: ReturnPlace[];
   total: number;
 }> => {
   const res = await fetch(RETURN_CODES_URL, {
@@ -88,5 +78,25 @@ export const fetchPickupList = async (): Promise<{
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось загрузить список');
-  return { giveouts: data.giveouts || [], places: data.places || [], total: data.total || 0 };
+  return { giveouts: data.giveouts || [], total: data.total || 0 };
+};
+
+/** Ход приёмки: сколько коробок уже отсканировал сотрудник пункта выдачи. */
+export interface GiveoutProgress {
+  giveoutId: number;
+  status: string;
+  total: number;
+  scanned: number;
+  items: { name: string; approved: boolean }[];
+}
+
+export const fetchGiveoutProgress = async (giveoutId: number): Promise<GiveoutProgress> => {
+  const res = await fetch(RETURN_CODES_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'giveout_progress', giveoutId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось получить ход приёмки');
+  return data;
 };

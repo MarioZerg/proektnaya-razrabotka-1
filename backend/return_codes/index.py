@@ -149,62 +149,37 @@ def fetch_ozon_giveouts(cur):
     return out, None
 
 
-def fetch_ozon_pickup_list(cur, limit=500):
-    """Возвраты OZON, лежащие на складах и ожидающие вывоза, по пунктам.
+def fetch_ozon_giveout_info(cur, giveout_id):
+    """Ход приёмки отправления: сколько коробок сотрудник ПВЗ уже отсканировал.
 
-    Показывает общую картину: где скопились возвраты. Кладовщику нужно, чтобы
-    понимать объём, но забор идёт отправлениями (см. fetch_ozon_giveouts).
+    Пока идёт выдача, OZON помечает подтверждённые позиции — по ним и считаем
+    прогресс. Кладовщик видит на телефоне, сколько принято и сколько осталось,
+    и может сверить итог, не пересчитывая вручную.
     """
     client_id, api_key, enabled = get_ozon_credentials(cur)
     if not client_id or not api_key or not enabled:
-        return [], 'Интеграция OZON не настроена'
+        return None, 'Интеграция OZON не настроена'
 
-    # OZON отдаёт возвраты страницами по 500 — забираем все, иначе дальние пункты
-    # выдачи потеряются и кладовщик о них не узнает.
-    all_returns = []
-    last_id = 0
-    for _ in range(12):
-        st, data = ozon_post('/v1/returns/list', client_id, api_key,
-                             {'limit': 500, 'last_id': last_id})
-        if st != 200 or not isinstance(data, dict):
-            msg = (data or {}).get('message') if isinstance(data, dict) else ''
-            if not all_returns:
-                return [], f'OZON не отдал список возвратов{": " + str(msg)[:150] if msg else ""}'
-            break
-        rows = data.get('returns') or []
-        if not rows:
-            break
-        all_returns.extend(rows)
-        last_id = rows[-1].get('id') or last_id
+    st, data = ozon_post('/v1/return/giveout/info', client_id, api_key,
+                         {'giveout_id': giveout_id})
+    if st != 200 or not isinstance(data, dict):
+        msg = (data or {}).get('message') if isinstance(data, dict) else ''
+        return None, f'OZON не отдал данные приёмки{": " + str(msg)[:150] if msg else ""}'
 
-    places = {}
-    for ret in all_returns:
-        visual = (ret.get('visual') or {}).get('status') or {}
-        sys_name = visual.get('sys_name') or ''
-        if sys_name not in OZON_WAITING_STATUSES:
-            continue
+    articles = data.get('articles') or []
+    scanned = sum(1 for a in articles if a.get('approved'))
 
-        place = ret.get('target_place') or ret.get('place') or {}
-        key = place.get('id') or place.get('name') or 'unknown'
-        item = places.setdefault(key, {
-            'placeName': place.get('name') or 'Пункт выдачи',
-            'address': place.get('address') or '',
-            'count': 0,
-            'statusName': visual.get('display_name') or '',
-            'items': [],
-        })
-        item['count'] += 1
-        if len(item['items']) < 30:
-            product = ret.get('product') or {}
-            item['items'].append({
-                'name': product.get('name') or '',
-                'offerId': product.get('offer_id') or '',
-                'postingNumber': ret.get('posting_number') or ret.get('order_number') or '',
-                'reason': ret.get('return_reason_name') or '',
-            })
-
-    result = sorted(places.values(), key=lambda p: -p['count'])
-    return result, None
+    return {
+        'giveoutId': giveout_id,
+        'status': data.get('giveout_status') or data.get('status') or '',
+        'total': len(articles) or data.get('giveout_count') or 0,
+        # Сколько уже отсканировал сотрудник пункта выдачи.
+        'scanned': scanned,
+        'items': [
+            {'name': a.get('name') or '', 'approved': bool(a.get('approved'))}
+            for a in articles[:200]
+        ],
+    }, None
 
 
 def _resp(status, body):
@@ -312,18 +287,25 @@ def handler(event: dict, context) -> dict:
             return _resp(200, {'success': True, 'code': code})
 
         # Что и где ждёт получения на пунктах выдачи OZON.
+        # Отправления, ожидающие получения в пункте выдачи.
         if body_data.get('action') == 'pickup_list':
             giveouts, gerr = fetch_ozon_giveouts(cur)
-            rows, err = fetch_ozon_pickup_list(cur)
-            if err and gerr:
-                return _resp(502, {'error': err})
+            if gerr:
+                return _resp(502, {'error': gerr})
             return _resp(200, {
-                # Готовые к выдаче отправления — за ними едут со штрихкодом.
                 'giveouts': giveouts,
-                # Общая картина по складам: где сколько возвратов накопилось.
-                'places': rows,
-                'total': sum(r['count'] for r in rows),
+                'total': sum(g['count'] for g in giveouts),
             })
+
+        # Ход приёмки: сотрудник ПВЗ сканирует коробки, а мы показываем прогресс.
+        if body_data.get('action') == 'giveout_progress':
+            giveout_id = body_data.get('giveoutId')
+            if not giveout_id:
+                return _resp(400, {'error': 'Не указано отправление'})
+            info, err = fetch_ozon_giveout_info(cur, int(giveout_id))
+            if err:
+                return _resp(502, {'error': err})
+            return _resp(200, info)
 
         if body_data.get('action') == 'save':
             mp = (body_data.get('marketplaceCode') or '').strip()

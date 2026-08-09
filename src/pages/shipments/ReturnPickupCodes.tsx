@@ -19,9 +19,10 @@ import {
   saveReturnCode,
   refreshReturnCode,
   fetchPickupList,
+  fetchGiveoutProgress,
   type ReturnPickupCode,
   type ReturnGiveout,
-  type ReturnPlace,
+  type GiveoutProgress,
 } from '@/lib/returnCodesApi';
 import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
@@ -66,9 +67,10 @@ const ReturnPickupCodes = () => {
   // повторные попытки не должны зациклиться.
   const autoTried = useRef(false);
   const [giveouts, setGiveouts] = useState<ReturnGiveout[]>([]);
-  const [places, setPlaces] = useState<ReturnPlace[]>([]);
-  const [placesTotal, setPlacesTotal] = useState(0);
   const [listLoading, setListLoading] = useState(true);
+  // Отправление, приёмку которого сейчас смотрим вживую.
+  const [progress, setProgress] = useState<GiveoutProgress | null>(null);
+  const [watchingId, setWatchingId] = useState<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const load = () => {
@@ -85,16 +87,34 @@ const ReturnPickupCodes = () => {
   useEffect(load, []);
 
   // Что лежит на складах OZON и что уже собрано к выдаче.
-  useEffect(() => {
+  const loadGiveouts = () => {
     fetchPickupList()
-      .then((d) => {
-        setGiveouts(d.giveouts);
-        setPlaces(d.places);
-        setPlacesTotal(d.total);
-      })
-      .catch(() => setPlaces([]))
+      .then((d) => setGiveouts(d.giveouts))
+      .catch(() => setGiveouts([]))
       .finally(() => setListLoading(false));
-  }, []);
+  };
+
+  useEffect(loadGiveouts, []);
+
+  // Пока идёт приёмка, сотрудник ПВЗ сканирует коробки — опрашиваем OZON каждые
+  // 5 секунд, чтобы счётчик на телефоне кладовщика рос в реальном времени.
+  useEffect(() => {
+    if (!watchingId) return;
+    let stop = false;
+    const tick = () => {
+      fetchGiveoutProgress(watchingId)
+        .then((d) => {
+          if (!stop) setProgress(d);
+        })
+        .catch(() => undefined);
+    };
+    tick();
+    const timer = setInterval(tick, 5000);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+  }, [watchingId]);
 
   // Код OZON приходит из личного кабинета и меняется — если сегодня его ещё не
   // забирали, подтягиваем свежий сами. Кладовщик открывает раздел и сразу видит
@@ -303,59 +323,113 @@ const ReturnPickupCodes = () => {
           </div>
         )}
 
-        {/* Отправления, которые OZON уже собрал — за ними едут со штрихкодом. */}
-        {giveouts.length > 0 && (
-          <div className="space-y-2">
-            <h2 className="text-base font-bold">Готово к выдаче на OZON</h2>
-            {giveouts.map((g) => (
+        {/* Что ждёт получения в пункте выдачи. */}
+        <div className="space-y-2">
+          <h2 className="text-base font-bold">Ожидают получения в пункте выдачи</h2>
+          {listLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Icon name="Loader2" size={16} className="animate-spin" />
+              Загрузка…
+            </div>
+          ) : giveouts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Сейчас в пунктах выдачи ничего не ждёт — забирать нечего
+            </p>
+          ) : (
+            giveouts.map((g) => (
               <Card key={g.giveoutId} className="border-emerald-300 bg-emerald-50 shadow-none">
-                <CardContent className="flex items-center justify-between gap-3 py-3">
-                  <div>
-                    <p className="font-bold text-emerald-900">{g.placeName}</p>
-                    {g.status && <p className="text-sm text-emerald-800">{g.status}</p>}
+                <CardContent className="space-y-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-bold text-emerald-900">{g.placeName}</p>
+                      {g.status && <p className="text-sm text-emerald-800">{g.status}</p>}
+                    </div>
+                    <p className="shrink-0 text-lg font-bold text-emerald-900">{g.count} шт.</p>
                   </div>
-                  <p className="shrink-0 text-lg font-bold text-emerald-900">{g.count} шт.</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setWatchingId(g.giveoutId)}
+                  >
+                    <Icon name="ScanLine" size={14} className="mr-1" />
+                    Следить за приёмкой
+                  </Button>
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        )}
+            ))
+          )}
+        </div>
 
-        {/* Общая картина: где на складах OZON скопились возвраты. */}
-        {!listLoading && places.length > 0 && (
-          <div className="space-y-2">
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-base font-bold">Возвраты на складах OZON</h2>
-              <p className="text-sm text-muted-foreground">всего {placesTotal} шт.</p>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Ждут вывоза. Забрать можно, когда OZON соберёт их в отправление
-            </p>
-            <Card className="shadow-none">
-              <CardContent className="divide-y p-0">
-                {places.slice(0, 15).map((p) => (
+        {/* Живой счётчик: сколько коробок сотрудник ПВЗ уже отсканировал. */}
+        <Dialog
+          open={!!watchingId}
+          onOpenChange={(open) => {
+            if (!open) {
+              setWatchingId(null);
+              setProgress(null);
+              loadGiveouts();
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Приёмка возвратов</DialogTitle>
+            </DialogHeader>
+            {!progress ? (
+              <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                <Icon name="Loader2" size={16} className="animate-spin" />
+                Ждём данные от OZON…
+              </div>
+            ) : (
+              <div className="space-y-4 py-2">
+                <div className="text-center">
+                  <p className="text-4xl font-bold">
+                    {progress.scanned}
+                    <span className="text-2xl text-muted-foreground"> / {progress.total}</span>
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    отсканировано сотрудником пункта выдачи
+                  </p>
+                </div>
+
+                <div className="h-3 w-full overflow-hidden rounded-full bg-muted">
                   <div
-                    key={p.placeName}
-                    className="flex items-center justify-between gap-3 px-4 py-2.5"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{p.placeName}</p>
-                      {p.address && (
-                        <p className="truncate text-xs text-muted-foreground">{p.address}</p>
-                      )}
-                    </div>
-                    <p className="shrink-0 font-bold">{p.count} шт.</p>
+                    className="h-full bg-emerald-500 transition-all"
+                    style={{
+                      width: `${progress.total ? (progress.scanned / progress.total) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+
+                {progress.scanned >= progress.total && progress.total > 0 ? (
+                  <p className="rounded-md bg-emerald-50 px-3 py-2 text-center text-sm font-medium text-emerald-900">
+                    Все возвраты приняты — можно забирать
+                  </p>
+                ) : (
+                  <p className="text-center text-sm text-muted-foreground">
+                    Осталось принять: {Math.max(progress.total - progress.scanned, 0)} шт.
+                  </p>
+                )}
+
+                {progress.items.length > 0 && (
+                  <div className="max-h-52 space-y-1 overflow-y-auto rounded-md border p-2">
+                    {progress.items.map((it, idx) => (
+                      <div key={idx} className="flex items-center gap-2 text-sm">
+                        <Icon
+                          name={it.approved ? 'CircleCheck' : 'Circle'}
+                          size={14}
+                          className={it.approved ? 'text-emerald-600' : 'text-muted-foreground'}
+                        />
+                        <span className="truncate">{it.name || 'Товар'}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </CardContent>
-            </Card>
-            {places.length > 15 && (
-              <p className="text-xs text-muted-foreground">
-                Показаны 15 крупнейших из {places.length} пунктов
-              </p>
+                )}
+              </div>
             )}
-          </div>
-        )}
+          </DialogContent>
+        </Dialog>
 
         {/* Код во весь экран: приёмщик на ПВЗ сканирует его прямо с телефона. */}
         <Dialog open={!!shown} onOpenChange={(open) => !open && setShown(null)}>
