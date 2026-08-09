@@ -84,7 +84,13 @@ const defectActions = [
     tone: 'border-amber-300 bg-amber-50',
     iconTone: 'text-amber-600',
     titleTone: 'text-amber-900',
-    text: 'Кривые или разной ширины боковые швы, тесьма пришита на изнанку или перевёрнута, петли не у верхнего края, неаккуратная строчка — это переделка, вещь возвращается швее.',
+    text: 'Это переделка — швея исправит на своей машинке, полотно менять не нужно.',
+    list: [
+      'Кривые боковые швы или разной ширины',
+      'Тесьма пришита на изнанку или перевёрнута',
+      'Петли не у верхнего края',
+      'Неаккуратная строчка, пропуски',
+    ],
   },
   {
     icon: 'Scissors',
@@ -92,7 +98,16 @@ const defectActions = [
     tone: 'border-destructive/40 bg-destructive/5',
     iconTone: 'text-destructive',
     titleTone: 'text-destructive',
-    text: 'Не сходится высота изделия, полотно перекошено или не хватает ткани — перешить нельзя, вещь идёт на перекрой к закройщику.',
+    text: 'Испорчено само полотно или размер — перешить нельзя, нужен перекрой.',
+    list: [
+      'Брак ткани',
+      'Пятна на полотне',
+      'Зацепки',
+      'Стрелки (затяжки) на полотне',
+      'Дырки',
+      'Не сходится высота изделия',
+      'Полотно перекошено или не хватает ткани',
+    ],
   },
 ];
 
@@ -261,6 +276,18 @@ const PackerGuide = () => {
                   <Icon name={d.icon} size={26} className={d.iconTone} />
                   <p className={`font-bold ${d.titleTone}`}>{d.title}</p>
                   <p className="text-sm text-muted-foreground">{d.text}</p>
+                  <ul className="space-y-1 pt-1">
+                    {d.list.map((item) => (
+                      <li key={item} className="flex items-start gap-2 text-sm">
+                        <Icon
+                          name="Check"
+                          size={14}
+                          className={`mt-1 shrink-0 ${d.iconTone}`}
+                        />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </CardContent>
               </Card>
             ))}
