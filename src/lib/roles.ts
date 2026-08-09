@@ -158,6 +158,7 @@ const storekeeperNav: NavItem[] = [
     children: [
       { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
       { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
+      { label: 'Работа с браком из цеха', path: '/crm/inventory/defect-guide' },
       { label: 'Инструкция упаковщицы', path: '/crm/inventory/packer-guide' },
       { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
     ],
@@ -244,6 +245,7 @@ const adminNav: NavItem[] = [
     children: [
       { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
       { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
+      { label: 'Работа с браком из цеха', path: '/crm/inventory/defect-guide' },
       { label: 'Инструкция упаковщицы', path: '/crm/inventory/packer-guide' },
       { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
     ],
