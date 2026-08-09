@@ -232,6 +232,37 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
+            if params.get('company'):
+                # Реквизиты ИП для подстановки в договоры. Отдаём только администратору:
+                # это данные заказчика, сотрудникам они в настройках не нужны.
+                actor_id = params.get('actorId')
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),) if actor_id else (0,))
+                actor = cur.fetchone()
+                if not actor or actor[0] != 'admin':
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Реквизиты доступны только администратору'}, ensure_ascii=False),
+                    }
+                cur.execute(
+                    "SELECT key, value FROM system_settings WHERE key IN "
+                    "('company_name','company_ogrnip','company_inn','company_address',"
+                    "'company_phone','company_city')"
+                )
+                s = {k: v for k, v in cur.fetchall()}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'name': s.get('company_name') or '',
+                        'ogrnip': s.get('company_ogrnip') or '',
+                        'inn': s.get('company_inn') or '',
+                        'address': s.get('company_address') or '',
+                        'phone': s.get('company_phone') or '',
+                        'city': s.get('company_city') or '',
+                    }, ensure_ascii=False),
+                }
+
             if params.get('pending'):
                 # Быстрая проверка для блокировки входа: есть ли что подписывать.
                 user_id = params.get('userId')
@@ -359,6 +390,42 @@ def handler(event: dict, context) -> dict:
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'fileUrl': file_url})}
+
+            if action == 'save_company':
+                # Реквизиты ИП подставляются в каждый договор. Пустой адрес или город
+                # оставляют в документе прочерк, поэтому их правит администратор здесь,
+                # а не в тексте готового договора.
+                actor_id = body_data.get('actorId')
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),) if actor_id else (0,))
+                actor = cur.fetchone()
+                if not actor or actor[0] != 'admin':
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Менять реквизиты может только администратор'}, ensure_ascii=False),
+                    }
+
+                fields = {
+                    'company_name': body_data.get('name'),
+                    'company_ogrnip': body_data.get('ogrnip'),
+                    'company_inn': body_data.get('inn'),
+                    'company_address': body_data.get('address'),
+                    'company_phone': body_data.get('phone'),
+                    'company_city': body_data.get('city'),
+                }
+                for key, value in fields.items():
+                    cur.execute(
+                        "INSERT INTO system_settings (key, value) VALUES (%s, %s) "
+                        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "
+                        "updated_at = now()",
+                        (key, (value or '').strip()[:500]),
+                    )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True}),
+                }
 
             if action in ('preview_generated', 'send_generated'):
                 # Договор собирается системой из шаблона роли и персональных данных,

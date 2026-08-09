@@ -104,6 +104,29 @@
         "actorId": 1
       },
       "expectedStatus": 400
+    },
+    {
+      "name": "Реквизиты компании не админу закрыты",
+      "method": "GET",
+      "path": "/?company=1&actorId=3",
+      "expectedStatus": 403
+    },
+    {
+      "name": "Сохранение реквизитов не админом отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "save_company",
+        "actorId": 3,
+        "name": "x"
+      },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Админ читает реквизиты компании",
+      "method": "GET",
+      "path": "/?company=1&actorId=1",
+      "expectedStatus": 200
     }
   ]
 }

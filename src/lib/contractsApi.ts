@@ -100,3 +100,27 @@ export const sendGeneratedContract = (userId: number, actorId: number, role?: st
     fileUrl: string;
     title: string;
   }>;
+
+/** Реквизиты ИП — подставляются в каждый договор. */
+export interface CompanyRequisites {
+  name: string;
+  ogrnip: string;
+  inn: string;
+  address: string;
+  phone: string;
+  city: string;
+}
+
+export const fetchCompanyRequisites = async (
+  actorId: number
+): Promise<CompanyRequisites> => {
+  const res = await fetch(`${CONTRACTS_URL}?company=1&actorId=${actorId}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить реквизиты');
+  return data;
+};
+
+export const saveCompanyRequisites = (
+  actorId: number,
+  values: CompanyRequisites
+) => postAction({ action: 'save_company', actorId, ...values });
