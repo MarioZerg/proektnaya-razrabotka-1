@@ -134,6 +134,8 @@ const storekeeperNav: NavItem[] = [
       { label: 'Материалы на складе', path: '/crm/inventory/warehouse-materials' },
       { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
       { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
+      // Пошаговая инструкция по возвратам — кладовщику и админу.
+      { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
       { label: 'Товар к подбору', path: '/crm/inventory/goods-picking' },
       { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
@@ -209,6 +211,8 @@ const adminNav: NavItem[] = [
       { label: 'Материалы на складе', path: '/crm/inventory/warehouse-materials' },
       { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
       { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
+      // Пошаговая инструкция по возвратам — кладовщику и админу.
+      { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
       { label: 'Товар к подбору', path: '/crm/inventory/goods-picking' },
       { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
