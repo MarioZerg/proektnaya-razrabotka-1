@@ -8,7 +8,16 @@ export type StockLevel = 'low' | 'medium' | 'high';
 export const isMetersUnit = (unit?: string | null): boolean => {
   if (!unit) return true;
   const u = unit.toLowerCase().replace(/\s/g, '');
-  return u.startsWith('п.м') || u.startsWith('пог.м') || u.startsWith('пм') || u.startsWith('погм');
+  // Метры в системе записаны по-разному: «м», «п.м», «пог.м». Раньше короткое «м»
+  // не распознавалось, и подсветка остатков не работала совсем — таблица была серой.
+  // Проще перечислить то, что метрами НЕ является: штуки и вес.
+  return !(
+    u.startsWith('шт') ||
+    u.startsWith('кг') ||
+    u.startsWith('г') ||
+    u.startsWith('уп') ||
+    u.startsWith('компл')
+  );
 };
 
 /**
