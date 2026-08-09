@@ -1,9 +1,54 @@
 {
   "tests": [
-    {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
-    {"name": "Get codes list", "method": "GET", "path": "/", "expectedStatus": 200},
-    {"name": "Save without marketplace fails", "method": "POST", "path": "/", "body": {"action": "save"}, "expectedStatus": 400},
-    {"name": "Save unknown marketplace fails", "method": "POST", "path": "/", "body": {"action": "save", "marketplaceCode": "nope", "code": "123"}, "expectedStatus": 404},
-    {"name": "Unknown action fails", "method": "POST", "path": "/", "body": {"action": "x"}, "expectedStatus": 400}
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get codes list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Save without marketplace fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "save"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Save unknown marketplace fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "save",
+        "marketplaceCode": "nope",
+        "code": "123"
+      },
+      "expectedStatus": 404
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "x"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Pickup list responds",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "pickup_list"
+      },
+      "expectedStatus": 200
+    }
   ]
 }

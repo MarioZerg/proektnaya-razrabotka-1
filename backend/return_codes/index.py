@@ -113,6 +113,100 @@ CORS_HEADERS = {
 }
 
 
+# Возвраты, которые лежат на пункте выдачи и ждут, когда их заберут. Статусы OZON:
+# ждём именно те, что доехали до ПВЗ и готовы к выдаче продавцу.
+# ReturnedToOzon — возврат доехал до склада OZON и ждёт, когда продавец его заберёт.
+# ReceivedBySeller означает, что забрали, — такие в список не попадают.
+OZON_WAITING_STATUSES = {'ReturnedToOzon'}
+
+
+def fetch_ozon_giveouts(cur):
+    """Отправления возвратов OZON, готовые к выдаче продавцу.
+
+    Это то, за чем реально едет кладовщик: OZON собирает возвраты в отправление и
+    выдаёт его по штрихкоду. Пока отправление не сформировано, забирать нечего.
+
+    Возвращает (список, ошибка).
+    """
+    client_id, api_key, enabled = get_ozon_credentials(cur)
+    if not client_id or not api_key or not enabled:
+        return [], 'Интеграция OZON не настроена'
+
+    st, data = ozon_post('/v1/return/giveout/list', client_id, api_key, {'limit': 100})
+    if st != 200 or not isinstance(data, dict):
+        msg = (data or {}).get('message') if isinstance(data, dict) else ''
+        return [], f'OZON не отдал список выдачи{": " + str(msg)[:150] if msg else ""}'
+
+    out = []
+    for g in data.get('giveouts') or []:
+        out.append({
+            'giveoutId': g.get('giveout_id') or g.get('id'),
+            'placeName': (g.get('warehouse_address') or g.get('address')
+                          or g.get('warehouse_name') or 'Пункт выдачи'),
+            'count': g.get('giveout_count') or g.get('count') or 0,
+            'status': g.get('giveout_status') or g.get('status') or '',
+        })
+    return out, None
+
+
+def fetch_ozon_pickup_list(cur, limit=500):
+    """Возвраты OZON, лежащие на складах и ожидающие вывоза, по пунктам.
+
+    Показывает общую картину: где скопились возвраты. Кладовщику нужно, чтобы
+    понимать объём, но забор идёт отправлениями (см. fetch_ozon_giveouts).
+    """
+    client_id, api_key, enabled = get_ozon_credentials(cur)
+    if not client_id or not api_key or not enabled:
+        return [], 'Интеграция OZON не настроена'
+
+    # OZON отдаёт возвраты страницами по 500 — забираем все, иначе дальние пункты
+    # выдачи потеряются и кладовщик о них не узнает.
+    all_returns = []
+    last_id = 0
+    for _ in range(12):
+        st, data = ozon_post('/v1/returns/list', client_id, api_key,
+                             {'limit': 500, 'last_id': last_id})
+        if st != 200 or not isinstance(data, dict):
+            msg = (data or {}).get('message') if isinstance(data, dict) else ''
+            if not all_returns:
+                return [], f'OZON не отдал список возвратов{": " + str(msg)[:150] if msg else ""}'
+            break
+        rows = data.get('returns') or []
+        if not rows:
+            break
+        all_returns.extend(rows)
+        last_id = rows[-1].get('id') or last_id
+
+    places = {}
+    for ret in all_returns:
+        visual = (ret.get('visual') or {}).get('status') or {}
+        sys_name = visual.get('sys_name') or ''
+        if sys_name not in OZON_WAITING_STATUSES:
+            continue
+
+        place = ret.get('target_place') or ret.get('place') or {}
+        key = place.get('id') or place.get('name') or 'unknown'
+        item = places.setdefault(key, {
+            'placeName': place.get('name') or 'Пункт выдачи',
+            'address': place.get('address') or '',
+            'count': 0,
+            'statusName': visual.get('display_name') or '',
+            'items': [],
+        })
+        item['count'] += 1
+        if len(item['items']) < 30:
+            product = ret.get('product') or {}
+            item['items'].append({
+                'name': product.get('name') or '',
+                'offerId': product.get('offer_id') or '',
+                'postingNumber': ret.get('posting_number') or ret.get('order_number') or '',
+                'reason': ret.get('return_reason_name') or '',
+            })
+
+    result = sorted(places.values(), key=lambda p: -p['count'])
+    return result, None
+
+
 def _resp(status, body):
     return {
         'statusCode': status,
@@ -130,6 +224,8 @@ def handler(event: dict, context) -> dict:
 
     GET  /                                  - список кодов по маркетплейсам
     POST /  { action: 'save', marketplaceCode, code, codeType?, comment?, actorId? }
+    POST /  { action: 'refresh', marketplaceCode, actorId? }  - свежий код из кабинета
+    POST /  { action: 'pickup_list' }        - что и где ждёт получения на ПВЗ
     """
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
@@ -214,6 +310,20 @@ def handler(event: dict, context) -> dict:
             )
             conn.commit()
             return _resp(200, {'success': True, 'code': code})
+
+        # Что и где ждёт получения на пунктах выдачи OZON.
+        if body_data.get('action') == 'pickup_list':
+            giveouts, gerr = fetch_ozon_giveouts(cur)
+            rows, err = fetch_ozon_pickup_list(cur)
+            if err and gerr:
+                return _resp(502, {'error': err})
+            return _resp(200, {
+                # Готовые к выдаче отправления — за ними едут со штрихкодом.
+                'giveouts': giveouts,
+                # Общая картина по складам: где сколько возвратов накопилось.
+                'places': rows,
+                'total': sum(r['count'] for r in rows),
+            })
 
         if body_data.get('action') == 'save':
             mp = (body_data.get('marketplaceCode') or '').strip()

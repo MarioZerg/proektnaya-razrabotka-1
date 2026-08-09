@@ -18,7 +18,10 @@ import {
   fetchReturnCodes,
   saveReturnCode,
   refreshReturnCode,
+  fetchPickupList,
   type ReturnPickupCode,
+  type ReturnGiveout,
+  type ReturnPlace,
 } from '@/lib/returnCodesApi';
 import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
@@ -62,6 +65,10 @@ const ReturnPickupCodes = () => {
   // Автообновление делаем один раз за визит: если маркетплейс ответил ошибкой,
   // повторные попытки не должны зациклиться.
   const autoTried = useRef(false);
+  const [giveouts, setGiveouts] = useState<ReturnGiveout[]>([]);
+  const [places, setPlaces] = useState<ReturnPlace[]>([]);
+  const [placesTotal, setPlacesTotal] = useState(0);
+  const [listLoading, setListLoading] = useState(true);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const load = () => {
@@ -76,6 +83,18 @@ const ReturnPickupCodes = () => {
   };
 
   useEffect(load, []);
+
+  // Что лежит на складах OZON и что уже собрано к выдаче.
+  useEffect(() => {
+    fetchPickupList()
+      .then((d) => {
+        setGiveouts(d.giveouts);
+        setPlaces(d.places);
+        setPlacesTotal(d.total);
+      })
+      .catch(() => setPlaces([]))
+      .finally(() => setListLoading(false));
+  }, []);
 
   // Код OZON приходит из личного кабинета и меняется — если сегодня его ещё не
   // забирали, подтягиваем свежий сами. Кладовщик открывает раздел и сразу видит
@@ -281,6 +300,60 @@ const ReturnPickupCodes = () => {
                 </CardContent>
               </Card>
             ))}
+          </div>
+        )}
+
+        {/* Отправления, которые OZON уже собрал — за ними едут со штрихкодом. */}
+        {giveouts.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-base font-bold">Готово к выдаче на OZON</h2>
+            {giveouts.map((g) => (
+              <Card key={g.giveoutId} className="border-emerald-300 bg-emerald-50 shadow-none">
+                <CardContent className="flex items-center justify-between gap-3 py-3">
+                  <div>
+                    <p className="font-bold text-emerald-900">{g.placeName}</p>
+                    {g.status && <p className="text-sm text-emerald-800">{g.status}</p>}
+                  </div>
+                  <p className="shrink-0 text-lg font-bold text-emerald-900">{g.count} шт.</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {/* Общая картина: где на складах OZON скопились возвраты. */}
+        {!listLoading && places.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="text-base font-bold">Возвраты на складах OZON</h2>
+              <p className="text-sm text-muted-foreground">всего {placesTotal} шт.</p>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Ждут вывоза. Забрать можно, когда OZON соберёт их в отправление
+            </p>
+            <Card className="shadow-none">
+              <CardContent className="divide-y p-0">
+                {places.slice(0, 15).map((p) => (
+                  <div
+                    key={p.placeName}
+                    className="flex items-center justify-between gap-3 px-4 py-2.5"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{p.placeName}</p>
+                      {p.address && (
+                        <p className="truncate text-xs text-muted-foreground">{p.address}</p>
+                      )}
+                    </div>
+                    <p className="shrink-0 font-bold">{p.count} шт.</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+            {places.length > 15 && (
+              <p className="text-xs text-muted-foreground">
+                Показаны 15 крупнейших из {places.length} пунктов
+              </p>
+            )}
           </div>
         )}
 

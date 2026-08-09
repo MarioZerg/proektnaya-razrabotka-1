@@ -57,3 +57,36 @@ export const refreshReturnCode = async (marketplaceCode: string, actorId?: numbe
   if (!res.ok) throw new Error(data.error || 'Не удалось обновить код');
   return data as { code: string };
 };
+
+/** Отправление возвратов, готовое к выдаче по штрихкоду. */
+export interface ReturnGiveout {
+  giveoutId: number | null;
+  placeName: string;
+  count: number;
+  status: string;
+}
+
+/** Пункт, где скопились возвраты, ожидающие вывоза. */
+export interface ReturnPlace {
+  placeName: string;
+  address: string;
+  count: number;
+  statusName: string;
+  items: { name: string; offerId: string; postingNumber: string; reason: string }[];
+}
+
+/** Что и где ждёт получения на пунктах выдачи OZON. */
+export const fetchPickupList = async (): Promise<{
+  giveouts: ReturnGiveout[];
+  places: ReturnPlace[];
+  total: number;
+}> => {
+  const res = await fetch(RETURN_CODES_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'pickup_list' }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить список');
+  return { giveouts: data.giveouts || [], places: data.places || [], total: data.total || 0 };
+};
