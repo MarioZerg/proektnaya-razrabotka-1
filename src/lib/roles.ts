@@ -94,9 +94,17 @@ const productionNav: NavItem[] = [
 
 const packerNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
-  // Подбор пакетов — ежедневный инструмент упаковщицы, поэтому отдельным пунктом
-  // верхнего уровня, а не спрятан внутри раздела.
+  // Подбор пакетов — ежедневный инструмент упаковщицы, поэтому остаётся отдельным
+  // пунктом верхнего уровня, а не прячется внутри «Инструкций».
   { label: 'Подбор пакетов', icon: 'Package', path: '/crm/inventory/packaging-guide' },
+  {
+    label: 'Инструкции',
+    icon: 'BookOpen',
+    children: [
+      { label: 'Инструкция упаковщицы', path: '/crm/inventory/packer-guide' },
+      { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
+    ],
+  },
   {
     label: 'Инвентаризация',
     icon: 'Boxes',
@@ -150,6 +158,7 @@ const storekeeperNav: NavItem[] = [
     children: [
       { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
       { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
+      { label: 'Инструкция упаковщицы', path: '/crm/inventory/packer-guide' },
       { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
     ],
   },
@@ -235,6 +244,7 @@ const adminNav: NavItem[] = [
     children: [
       { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
       { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
+      { label: 'Инструкция упаковщицы', path: '/crm/inventory/packer-guide' },
       { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
     ],
   },
