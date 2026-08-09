@@ -130,8 +130,12 @@ export const processMarketplaceReturn = (payload: {
   damageNote?: string;
   actorId?: number;
   actorName?: string;
+  /** Полка, если кладовщик кладёт вещь сразу — тогда отдельная укладка не нужна. */
+  shelfId?: number | null;
 }): Promise<{
   outcome: string;
   storageBarcode: string | null;
   needsManualOrder: boolean;
+  shelfName: string | null;
+  placedOnShelf: boolean;
 }> => postAction({ action: 'process', ...payload });

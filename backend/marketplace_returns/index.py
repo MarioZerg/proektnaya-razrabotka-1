@@ -750,10 +750,26 @@ def handler(event: dict, context) -> dict:
                         (order_id, int(return_id)),
                     )
 
+                # Полку можно указать сразу при осмотре: если вещь целая (клиент отказался
+                # при вручении, коробку даже не вскрывали), гонять её через отдельный шаг
+                # «разложить по полкам» незачем — кладовщик уже держит её в руках.
+                shelf_id = body_data.get('shelfId')
+                place_now = outcome == 'stored' and shelf_id not in (None, '')
+                if place_now:
+                    cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+                    shelf_row = cur.fetchone()
+                    if not shelf_row:
+                        return _resp(404, {'error': 'Полка не найдена'})
+
                 if outcome != 'utilized':
                     # Вещь остаётся в обороте — заводим её на складе. Повреждённая
                     # (utilized) на склад не попадает вовсе: она физически уничтожена.
-                    gw_status = 'repacking' if outcome == 'repack' else 'awaiting_shelf'
+                    # Полку указали сразу — вещь сразу считается проверенной и лежащей
+                    # на месте, отдельная укладка не нужна.
+                    if place_now:
+                        gw_status = 'in_stock'
+                    else:
+                        gw_status = 'repacking' if outcome == 'repack' else 'awaiting_shelf'
                     if order_id:
                         cur.execute(
                             "SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s",
@@ -763,24 +779,31 @@ def handler(event: dict, context) -> dict:
                         if gw_row:
                             gw_id, storage_barcode = gw_row
                             cur.execute(
-                                "UPDATE goods_warehouse SET status = %s, shelf_id = NULL, "
+                                "UPDATE goods_warehouse SET status = %s, shelf_id = %s, "
                                 "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
                                 "reserved_order_id = NULL, shipping_labeled_at = NULL, "
                                 "receive_reason = 'return', received_at = now(), "
                                 "repack_return_id = %s WHERE id = %s",
-                                (gw_status, int(return_id) if outcome == 'repack' else None, gw_id),
+                                (
+                                    gw_status,
+                                    int(shelf_id) if place_now else None,
+                                    int(return_id) if outcome == 'repack' else None,
+                                    gw_id,
+                                ),
                             )
                         else:
                             storage_barcode = next_storage_barcode(cur)
                             cur.execute(
                                 "INSERT INTO goods_warehouse (order_id, status, storage_barcode, "
-                                "receive_reason, repack_return_id) VALUES (%s, %s, %s, 'return', %s) "
+                                "receive_reason, repack_return_id, shelf_id) "
+                                "VALUES (%s, %s, %s, 'return', %s, %s) "
                                 "RETURNING id",
                                 (
                                     int(order_id),
                                     gw_status,
                                     storage_barcode,
                                     int(return_id) if outcome == 'repack' else None,
+                                    int(shelf_id) if place_now else None,
                                 ),
                             )
                             gw_id = cur.fetchone()[0]
@@ -798,21 +821,32 @@ def handler(event: dict, context) -> dict:
                         int(return_id),
                     ),
                 )
+                shelf_name = shelf_row[0] if place_now else None
                 outcome_labels = {
                     'utilized': 'утилизирован',
                     'repack': 'отправлен на перепаковку',
-                    'stored': 'принят на склад',
+                    'stored': f'положен на полку {shelf_name}' if place_now else 'принят на склад',
                 }
                 log_action(
                     cur, actor_id, actor_name, 'process',
                     f'Возврат {row[3]} {row[4]} ({row[2] or "товар"}) — {outcome_labels[outcome]}',
-                    {'outcome': outcome, 'damageNote': body_data.get('damageNote')},
+                    {
+                        'outcome': outcome,
+                        'damageNote': body_data.get('damageNote'),
+                        'shelf': shelf_name,
+                    },
                 )
+
+                # Подбор заказов под эту вещь запустится сам при следующем обращении
+                # к складу — своей копии этой логики здесь держать не будем.
+
                 conn.commit()
                 return _resp(200, {
                     'success': True,
                     'outcome': outcome,
                     'storageBarcode': storage_barcode,
+                    'shelfName': shelf_name,
+                    'placedOnShelf': place_now,
                     'needsManualOrder': order_id is None and outcome != 'utilized',
                 })
 

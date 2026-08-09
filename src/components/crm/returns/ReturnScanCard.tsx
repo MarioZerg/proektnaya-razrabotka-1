@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,6 +12,14 @@ import {
   processMarketplaceReturn,
   type MarketplaceReturn,
 } from '@/lib/marketplaceReturnsApi';
+import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface ReturnScanCardProps {
   onProcessed: () => void;
@@ -28,7 +36,18 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
   const [found, setFound] = useState<MarketplaceReturn | null>(null);
   const [damageNote, setDamageNote] = useState('');
   const [processing, setProcessing] = useState<string | null>(null);
+  // Полка выбирается прямо здесь: если вещь целая (клиент отказался при вручении,
+  // упаковку даже не вскрывали), кладовщик кладёт её сразу и не гоняет через
+  // отдельный шаг «разложить по полкам».
+  const [shelves, setShelves] = useState<Shelf[]>([]);
+  const [shelfId, setShelfId] = useState<string>('');
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    fetchShelves()
+      .then(setShelves)
+      .catch(() => setShelves([]));
+  }, []);
 
   const handleScan = async () => {
     const value = code.trim();
@@ -70,10 +89,11 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
         damageNote: damageNote.trim() || undefined,
         actorId: user?.id,
         actorName: user?.name,
+        shelfId: outcome === 'stored' && shelfId ? Number(shelfId) : undefined,
       });
 
       if (outcome === 'stored' && res.storageBarcode) {
-        // Вещь едет на полку — сразу печатаем стикер хранения, по нему её и разместят.
+        // Стикер хранения нужен в любом случае: по нему вещь потом находят на полке.
         printStorageSticker({
           storageBarcode: res.storageBarcode,
           title: found.material && found.width
@@ -86,11 +106,14 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
       const messages = {
         utilized: 'Товар утилизирован — попадёт в отчёт администратору',
         repack: 'Отправлено в цех на перепаковку — упаковщик увидит на терминале',
-        stored: 'Наклейте стикер хранения и отсканируйте вещь на полку',
+        stored: res.placedOnShelf
+          ? `Лежит на полке ${res.shelfName} — наклейте стикер хранения`
+          : 'Наклейте стикер хранения и отсканируйте вещь на полку',
       };
       toast({ title: 'Возврат обработан', description: messages[outcome] });
       setFound(null);
       setDamageNote('');
+      setShelfId('');
       onProcessed();
       setTimeout(() => inputRef.current?.focus(), 0);
     } catch (e) {
@@ -167,6 +190,27 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
               />
             </div>
 
+            {/* Целую вещь можно положить на полку сразу — выберите какую.
+                Если полку не выбрать, вещь встанет в очередь «ждёт полку». */}
+            <div className="space-y-1.5">
+              <Select value={shelfId} onValueChange={setShelfId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Полка — если кладёте вещь сразу" />
+                </SelectTrigger>
+                <SelectContent>
+                  {shelves.map((sh) => (
+                    <SelectItem key={sh.id} value={String(sh.id)}>
+                      {sh.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Вещь целая и осмотр не нужен — выберите полку, и товар сразу станет
+                доступен для заказов. Без полки он встанет в очередь на укладку
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <Button
                 onClick={() => handleProcess('stored')}
@@ -174,7 +218,7 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
                 className="h-14"
               >
                 <Icon name="PackageCheck" size={18} className="mr-2" />
-                На полку
+                {shelfId ? 'Сразу на полку' : 'На полку'}
               </Button>
               <Button
                 variant="outline"
