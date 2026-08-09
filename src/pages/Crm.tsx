@@ -184,7 +184,18 @@ const CrmDashboard = () => {
     const newOrders = orders.filter((o) => o.sewingStatus === 'Новый').length;
     const inSewing = orders.filter((o) => o.sewingStatus === 'В работе').length;
     const inCutting = orders.filter((o) => o.sewingStatus === 'На раскрое').length;
-    const urgentFbs = orders.filter((o) => o.orderType === 'FBS' && o.status !== 'Выполнен' && o.status !== 'Отменён').length;
+    // Считаем ТОЛЬКО то, что реально ждёт работы в цехе.
+    //
+    // Раньше сюда попадали все незакрытые FBS, включая уже отшитые и лежащие на
+    // складе: виджет показывал 271, а на конвейере в работе было 137. Кладовщик
+    // видел гору срочных заказов, которой на самом деле нет.
+    const urgentFbs = orders.filter(
+      (o) =>
+        o.orderType === 'FBS' &&
+        ['Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка'].includes(
+          o.sewingStatus
+        )
+    ).length;
     const inStickering = orders.filter((o) => o.sewingStatus === 'Стикеровка').length;
     const cut = orders.filter((o) => o.sewingStatus === 'Раскроено').length;
     const notShippedToWorkshop = shipmentsToWorkshop.filter((s) => s.status === 'Новый').length;
