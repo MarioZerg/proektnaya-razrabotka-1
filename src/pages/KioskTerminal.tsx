@@ -215,7 +215,9 @@ const KioskTerminal = () => {
     try {
       const res = await openShift(
         user.id,
-        chosenWorkshopId ?? Number(workshopId) ?? null,
+        // Number('') даёт NaN, а не null: без явной проверки в смену уходил бы
+        // битый номер цеха, и смена открывалась бы «в никуда».
+        chosenWorkshopId ?? (Number.isFinite(Number(workshopId)) ? Number(workshopId) : null),
         chosenShiftNumber ?? user.shiftFromCode ?? null
       );
       playShiftOpenSound();
