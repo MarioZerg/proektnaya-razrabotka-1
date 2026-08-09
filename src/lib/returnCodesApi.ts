@@ -46,12 +46,20 @@ export const saveReturnCode = async (payload: {
   return data;
 };
 
-/** Подтянуть свежий код из личного кабинета маркетплейса. */
-export const refreshReturnCode = async (marketplaceCode: string, actorId?: number | null) => {
+/**
+ * Обновить код возвратов.
+ * readOnly=true — просто прочитать действующий код (автоподтягивание),
+ * иначе маркетплейс выпустит НОВЫЙ код, а старый перестанет работать.
+ */
+export const refreshReturnCode = async (
+  marketplaceCode: string,
+  actorId?: number | null,
+  readOnly = false,
+) => {
   const res = await fetch(RETURN_CODES_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'refresh', marketplaceCode, actorId }),
+    body: JSON.stringify({ action: 'refresh', marketplaceCode, actorId, readOnly }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось обновить код');

@@ -155,7 +155,8 @@ const ReturnPickupCodes = () => {
   const handleRefresh = async (item: ReturnPickupCode, silent = false) => {
     setRefreshingId(item.marketplaceCode);
     try {
-      await refreshReturnCode(item.marketplaceCode, user?.id);
+      // Тихое автообновление только читает код, ручное — выпускает новый.
+      await refreshReturnCode(item.marketplaceCode, user?.id, silent);
       if (!silent) toast({ title: 'Код обновлён' });
       load();
     } catch (e) {
