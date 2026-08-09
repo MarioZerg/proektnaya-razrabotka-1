@@ -89,14 +89,19 @@ def find_item(cur, sku, offer_id):
     """Находит товар в справочнике по SKU маркетплейса или артикулу продавца."""
     if sku:
         cur.execute(
-            "SELECT id, name FROM marketplace_items WHERE ozon_sku = %s OR wb_sku = %s LIMIT 1",
-            (str(sku), str(sku)),
+            "SELECT id, name FROM marketplace_items "
+            "WHERE ozon_sku = %s OR wb_sku = %s OR ym_sku = %s LIMIT 1",
+            (str(sku), str(sku), str(sku)),
         )
         row = cur.fetchone()
         if row:
             return row
     if offer_id:
-        cur.execute("SELECT id, name FROM marketplace_items WHERE sku = %s LIMIT 1", (str(offer_id),))
+        # Артикул продавца лежит в разных колонках: свой sku и артикул Яндекса.
+        cur.execute(
+            "SELECT id, name FROM marketplace_items WHERE sku = %s OR ym_sku = %s LIMIT 1",
+            (str(offer_id), str(offer_id)),
+        )
         row = cur.fetchone()
         if row:
             return row
@@ -299,6 +304,24 @@ def sync_wb(cur, days):
     return {'created': created, 'updated': updated, 'error': None}
 
 
+def ym_status_label(status):
+    """Состояние возврата Яндекса по-русски — кладовщику нужен понятный текст."""
+    labels = {
+        'STARTED': 'Оформлен покупателем',
+        'CREATED': 'Оформлен покупателем',
+        'RECEIVED': 'Принят пунктом выдачи',
+        'IN_TRANSIT': 'Едет к продавцу',
+        'READY_FOR_PICKUP': 'Готов к выдаче',
+        'PICKED': 'Забран продавцом',
+        'RECEIVED_BY_SHOP': 'Получен продавцом',
+        'CANCELLED': 'Отменён',
+        'LOST': 'Утерян',
+        'UTILIZED': 'Утилизирован',
+        'PREPARED_FOR_UTILIZATION': 'Готовится к утилизации',
+    }
+    return labels.get(status, status)
+
+
 def sync_yandex(cur, days):
     """Возвраты Яндекс Маркета.
 
@@ -350,15 +373,17 @@ def sync_yandex(cur, days):
                     # иначе вторая вещь затрёт первую.
                     'externalId': ret_id if len(items) == 1 else f'{ret_id}-{idx + 1}',
                     'postingNumber': str(it.get('orderId') or ''),
-                    'offerId': str(item.get('offerId') or '') or None,
+                    # У Яндекса артикул продавца называется shopSku, а не offerId.
+                    'offerId': str(item.get('shopSku') or item.get('offerId') or '') or None,
                     'sku': item.get('marketSku'),
-                    'productName': item.get('offerName') or item.get('offerId'),
+                    # Названия товара в возврате нет — подставится из справочника
+                    # по артикулу в save_return.
+                    'productName': item.get('offerName'),
                     'quantity': item.get('count') or 1,
-                    'mpStatus': it.get('logisticPickupPoint', {}).get('name')
-                    or it.get('refundStatus') or it.get('status'),
+                    'mpStatus': ym_status_label(it.get('shipmentStatus')),
                     'reason': decision.get('reasonType')
                     or item.get('reasonType')
-                    or it.get('returnReason'),
+                    or it.get('returnType'),
                     'createdAt': it.get('creationDate') or it.get('createdAt'),
                 }
                 if save_return(cur, 'Yandex', rec) == 'created':
