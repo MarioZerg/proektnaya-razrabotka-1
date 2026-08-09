@@ -603,7 +603,16 @@ def handler(event: dict, context) -> dict:
             if not wb_order_id:
                 continue
 
-            cur.execute("SELECT id FROM orders WHERE wb_order_id = %s", (int(wb_order_id),))
+            # Проверяем и по сборочному заданию, и по номеру заказа.
+            #
+            # У заказов, перенесённых из старой системы, поле wb_order_id пустое, а номер
+            # заказа тот же. Проверка только по wb_order_id их не находила, загрузка
+            # пыталась создать дубль и падала на уникальности номера — обрывая при этом
+            # ВСЮ загрузку, а не один заказ.
+            cur.execute(
+                "SELECT id FROM orders WHERE wb_order_id = %s OR order_number = %s",
+                (int(wb_order_id), str(wb_order_id)),
+            )
             if cur.fetchone():
                 skipped_existing += 1
                 continue
@@ -632,11 +641,15 @@ def handler(event: dict, context) -> dict:
             # сколько заказ уже ждёт, а не с момента импорта в нашу систему.
             mp_created_at = wb.get('createdAt') or None
 
+            # ON CONFLICT вместо обработки ошибки: если заказ с таким номером уже есть,
+            # запись просто не создаётся. Без этого одна занятая строка обрывала всю
+            # загрузку, и в систему не попадал ни один заказ.
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                 "quantity, source, material, width, height, wb_order_id, marketplace_created_at, "
                 "marketplace_item_id) "
-                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s) RETURNING id",
+                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (
                     order_number,
                     product,
@@ -648,7 +661,11 @@ def handler(event: dict, context) -> dict:
                     int(item_id) if item_id else None,
                 ),
             )
-            new_id = cur.fetchone()[0]
+            row_new = cur.fetchone()
+            if not row_new:
+                skipped_existing += 1
+                continue
+            new_id = row_new[0]
             # Такая вещь может уже лежать на полке склада (осталась от отменённого заказа) —
             # тогда шить заново не нужно, резервируем её под этот заказ.
             if match_from_stock(cur, new_id, item_id):
