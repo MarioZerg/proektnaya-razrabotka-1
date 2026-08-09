@@ -218,15 +218,10 @@ const CrmDashboard = () => {
       const awaitingShipLabel = goodsItems.filter(
         (g) => g.reservedOrderId && !g.shippingLabeledAt && g.status === 'in_stock',
       ).length;
-      const inStock = goodsItems.filter((g) => g.status === 'in_stock').length;
-
-      list.splice(4, 0, {
-        label: 'Товары к подбору со склада',
-        value: inStock,
-        icon: 'PackageSearch',
-        tone: 'default',
-        path: '/crm/inventory/goods-warehouse',
-      });
+      // Виджета «Товары к подбору со склада» больше нет: он показывал ВЕСЬ товар на
+      // полках (сотни штук) и выглядел как гора работы, хотя это просто остаток.
+      // Реальная задача кладовщика — вещи, подобранные под заказы: их и показываем
+      // строкой «Заказы с полок».
       list.splice(4, 0, {
         label: 'Отменено — забрать из цеха на полку',
         value: awaitingShelf,
@@ -235,11 +230,13 @@ const CrmDashboard = () => {
         path: '/crm/inventory/goods-warehouse',
       });
       list.splice(5, 0, {
-        label: 'Заказы с полок — наклеить стикер',
+        label: 'Собрать с полок под заказы',
         value: awaitingShipLabel,
-        icon: 'Tags',
-        tone: awaitingShipLabel > 0 ? 'warning' : 'default',
-        path: '/crm/inventory/goods-warehouse',
+        icon: 'PackageSearch',
+        tone: awaitingShipLabel > 0 ? 'urgent' : 'default',
+        // Ведём сразу на сборку, а не на общий склад: кладовщику нужно
+        // отсканировать вещь и напечатать стикер, а не смотреть остатки.
+        path: '/crm/inventory/goods-picking',
       });
       // Вещи привезли с ПВЗ, но кладовщик их ещё не осмотрел. Пока они не лежат
       // на полке, товар считается непроверенным и в подбор не идёт.
