@@ -95,7 +95,10 @@ const Rolls = () => {
   const load = () => {
     setLoading(true);
     Promise.all([
-      fetchRolls(isProductionRole && user ? { forUserId: user.id } : undefined),
+      fetchRolls({
+        ...(isProductionRole && user ? { forUserId: user.id } : {}),
+        ...(search.trim() ? { search: search.trim() } : {}),
+      }),
       fetchMaterialsData(),
       fetchWorkshops(),
     ])
@@ -111,6 +114,16 @@ const Rolls = () => {
   useEffect(() => {
     load();
   }, []);
+
+  // Поиск по штрихкоду ищет в базе, поэтому список надо перезапросить. Ждём паузу
+  // после набора: иначе запрос уходил бы на каждую букву.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      load();
+    }, 400);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   // Каждая производственная роль работает со своим материалом: закройщик режет тюль,
   // швея пришивает тесьму, упаковщица берёт пакеты и этикетки. Показываем в фильтре
@@ -152,7 +165,6 @@ const Rolls = () => {
     if (workshopFilter !== 'all' && workshopFilter !== 'none'
         && String(r.workshopId ?? '') !== workshopFilter) return false;
     if (shiftFilter !== 'all' && String(r.shiftNumber ?? '') !== shiftFilter) return false;
-    if (search && !r.barcode.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 

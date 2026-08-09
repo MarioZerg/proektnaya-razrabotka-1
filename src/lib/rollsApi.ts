@@ -137,12 +137,16 @@ export const fetchRolls = async (filters?: {
   usedSinceUserId?: number;
   /** Производственная роль: вернуть рулоны ТОЛЬКО цеха её открытой смены. */
   forUserId?: number;
+  /** Поиск по штрихкоду. Ищется в базе: список ограничен свежими рулонами,
+   * и закрытый рулон полугодовой давности иначе не нашёлся бы. */
+  search?: string;
 }): Promise<Roll[]> => {
   const params = new URLSearchParams();
   if (filters?.materialId) params.set('material_id', String(filters.materialId));
   if (filters?.status) params.set('status', filters.status);
   if (filters?.usedSinceUserId) params.set('usedSinceUserId', String(filters.usedSinceUserId));
   if (filters?.forUserId) params.set('forUserId', String(filters.forUserId));
+  if (filters?.search) params.set('search', filters.search);
   const qs = params.toString();
   const res = await fetch(qs ? `${ROLLS_URL}?${qs}` : ROLLS_URL);
   const data = await res.json();

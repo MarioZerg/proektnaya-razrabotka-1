@@ -3,6 +3,11 @@ import os
 
 import psycopg2
 
+# Сколько рулонов отдаём в общий список. Больше на экране всё равно не смотрят:
+# страница показывает по 20 с кнопкой «показать ещё», а конкретный рулон ищут
+# по штрихкоду.
+ROLLS_LIST_LIMIT = 800
+
 
 def calc_shortage_penalty(cur, roll_id):
     """Считает штраф по рулону, НИЧЕГО не начисляя — для предпросмотра на дашборде.
@@ -600,6 +605,13 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             conditions = []
+            # Поиск по штрихкоду ищем в БАЗЕ, а не в загруженном списке: список
+            # ограничен свежими рулонами, и закрытый рулон полугодовой давности
+            # иначе бы не нашёлся вообще.
+            search = (params.get('search') or '').strip()
+            if search:
+                search_esc = search.replace("'", "''").replace('%', '')
+                conditions.append(f"r.barcode ILIKE '%{search_esc}%'")
             if material_id:
                 conditions.append(f"r.material_id = {int(material_id)}")
             if status:
@@ -675,7 +687,11 @@ def handler(event: dict, context) -> dict:
                 f"LEFT JOIN materials m ON m.id = r.material_id "
                 f"LEFT JOIN workshops w ON w.id = r.workshop_id "
                 f"{where_clause} "
-                f"ORDER BY r.created_at DESC, r.id DESC"
+                # Ограничиваем выборку: рулонов накопились тысячи, и 90% из них
+                # закрыты — они грузились в браузер каждый раз впустую, по 2 МБ.
+                # Список на странице всё равно показывает по 20 штук, а закрытые
+                # ищут поиском по штрихкоду или фильтром по статусу.
+                f"ORDER BY r.created_at DESC, r.id DESC LIMIT {ROLLS_LIST_LIMIT}"
             )
             rolls = [
                 {
