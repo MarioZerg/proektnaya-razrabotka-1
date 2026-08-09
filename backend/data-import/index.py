@@ -58,6 +58,80 @@ def handler(event: dict, context) -> dict:
         )
         conn.commit()
 
+        if action == 'goods':
+            # Товар на полках. Порядок обязателен: номенклатура -> заказы -> товар,
+            # потому что у каждой единицы товара жёсткая ссылка на заказ, а у заказа —
+            # на позицию номенклатуры. Иначе база не даст записать.
+            payload = json.loads(
+                gzip.decompress(base64.b64decode(body.get('data') or '')).decode()
+            )
+            kind2 = body.get('kind2')
+
+            if kind2 == 'items':
+                for i in range(0, len(payload), 200):
+                    batch = payload[i:i + 200]
+                    values = ','.join(
+                        cur.mogrify("(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", r).decode()
+                        for r in batch
+                    )
+                    cur.execute(
+                        "INSERT INTO marketplace_items (id, name, sku, material, width, "
+                        "height, created_at, updated_at, ozon_sku, wb_sku, barcode, ym_sku) "
+                        f"VALUES {values} ON CONFLICT (id) DO NOTHING"
+                    )
+                cur.execute("SELECT setval(pg_get_serial_sequence('marketplace_items','id'), "
+                            "COALESCE((SELECT max(id) FROM marketplace_items), 1))")
+                table = 'marketplace_items'
+
+            elif kind2 == 'hangers':
+                for r in payload:
+                    cur.execute(
+                        "INSERT INTO hangers (id, number, created_at) VALUES (%s,%s,%s) "
+                        "ON CONFLICT (id) DO NOTHING", r
+                    )
+                cur.execute("SELECT setval(pg_get_serial_sequence('hangers','id'), "
+                            "COALESCE((SELECT max(id) FROM hangers), 1))")
+                table = 'hangers'
+
+            elif kind2 == 'orders':
+                for i in range(0, len(payload), 200):
+                    batch = payload[i:i + 200]
+                    values = ','.join(
+                        cur.mogrify(
+                            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", r
+                        ).decode()
+                        for r in batch
+                    )
+                    cur.execute(
+                        "INSERT INTO orders (id, order_number, marketplace, order_type, "
+                        "status, product, quantity, source, created_at, completed_at, "
+                        "material, width, height, sewing_status, marketplace_item_id, "
+                        "product_barcode) "
+                        f"VALUES {values} ON CONFLICT (id) DO NOTHING"
+                    )
+                cur.execute("SELECT setval(pg_get_serial_sequence('orders','id'), "
+                            "COALESCE((SELECT max(id) FROM orders), 1))")
+                table = 'orders'
+
+            else:
+                for i in range(0, len(payload), 200):
+                    batch = payload[i:i + 200]
+                    values = ','.join(
+                        cur.mogrify("(%s,%s,%s,%s,%s,%s)", r).decode() for r in batch
+                    )
+                    cur.execute(
+                        "INSERT INTO goods_warehouse (order_id, shelf_id, status, "
+                        "received_at, storage_barcode, receive_reason) "
+                        f"VALUES {values}"
+                    )
+                table = 'goods_warehouse'
+
+            conn.commit()
+            cur.execute(f"SELECT count(*) FROM {table}")
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({'imported': len(payload),
+                                        'total': cur.fetchone()[0], 'table': table})}
+
         if action == 'batch':
             # Самостоятельный пакет: приходит, распаковывается и сразу пишется.
             # Промежуточное хранение не нужно — так вызов укладывается в лимит
