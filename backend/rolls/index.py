@@ -306,7 +306,11 @@ def handler(event: dict, context) -> dict:
                     "COUNT(*), "
                     "COUNT(*) FILTER (WHERE r.cost_per_unit IS NULL), "
                     "COALESCE(SUM(r.remaining_quantity) FILTER (WHERE r.status = 'in_storage'), 0), "
-                    "COALESCE(SUM(r.remaining_quantity) FILTER (WHERE r.status = 'in_workshop'), 0) "
+                    "COALESCE(SUM(r.remaining_quantity) FILTER (WHERE r.status = 'in_workshop'), 0), "
+                    # Раньше было одно число на склад и цех вместе: кладовщик видел
+                    # 55 рулонов бамбука, а на полке лежало 36 — остальные были в цехе.
+                    "COUNT(*) FILTER (WHERE r.status = 'in_storage'), "
+                    "COUNT(*) FILTER (WHERE r.status = 'in_workshop') "
                     "FROM rolls r "
                     "JOIN materials m ON m.id = r.material_id "
                     "LEFT JOIN material_types mt ON mt.id = m.type_id "
@@ -327,6 +331,8 @@ def handler(event: dict, context) -> dict:
                         'rollsWithoutCost': row[7],
                         'inStorage': float(row[8]),
                         'inWorkshop': float(row[9]),
+                        'rollsInStorage': row[10],
+                        'rollsInWorkshop': row[11],
                     }
                     for row in cur.fetchall()
                 ]

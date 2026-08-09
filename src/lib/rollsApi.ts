@@ -95,11 +95,16 @@ export interface StockValueMaterial {
   remaining: number;
   /** Во сколько этот остаток обошёлся, ₽. */
   value: number;
+  /** Всего рулонов с остатком: склад и цех вместе. */
   rolls: number;
   /** Рулоны без себестоимости — их стоимость в сумму не вошла. */
   rollsWithoutCost: number;
   inStorage: number;
   inWorkshop: number;
+  /** Сколько рулонов физически лежит на складе. */
+  rollsInStorage: number;
+  /** Сколько рулонов сейчас в цехах. */
+  rollsInWorkshop: number;
 }
 
 export interface StockValue {

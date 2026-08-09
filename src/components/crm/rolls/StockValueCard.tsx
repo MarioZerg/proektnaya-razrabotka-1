@@ -83,6 +83,11 @@ const StockValueCard = () => {
                   <p className="text-xs text-muted-foreground">
                     {formatQuantity(m.remaining)} {m.unit} · {m.rolls}{' '}
                     {m.rolls === 1 ? 'рулон' : 'рулонов'}
+                    {/* Разделяем склад и цех: кладовщик ищет рулон на полке, и ему
+                        важно знать, сколько там лежит на самом деле. */}
+                    {m.rollsInWorkshop > 0
+                      ? ` (${m.rollsInStorage} на складе, ${m.rollsInWorkshop} в цехе)`
+                      : ''}
                     {m.rollsWithoutCost > 0 ? ` · ${m.rollsWithoutCost} без цены` : ''}
                   </p>
                 </div>
