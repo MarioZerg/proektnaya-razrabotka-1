@@ -157,8 +157,21 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                   const isOpen = openGroups[item.label] ?? false;
                   return (
                     <SidebarMenuItem key={item.label}>
-                      <SidebarMenuButton onClick={() => toggleGroup(item.label)}>
-                        <Icon name={item.icon} size={16} />
+                      {/* Выделенный раздел («Инструкции») стоит последним, и без подсветки
+                          его не замечают. Красим текст и значок, чтобы бросался в глаза. */}
+                      <SidebarMenuButton
+                        onClick={() => toggleGroup(item.label)}
+                        className={
+                          item.highlight
+                            ? 'font-semibold text-amber-700 hover:text-amber-800'
+                            : undefined
+                        }
+                      >
+                        <Icon
+                          name={item.icon}
+                          size={16}
+                          className={item.highlight ? 'text-amber-600' : undefined}
+                        />
                         <span>{item.label}</span>
                         <Icon
                           name="ChevronRight"

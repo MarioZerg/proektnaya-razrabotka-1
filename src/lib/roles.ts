@@ -51,6 +51,11 @@ export interface NavItem {
   icon: string;
   path?: string;
   children?: NavChild[];
+  /**
+   * Выделить пункт в меню. Нужен для «Инструкций»: раздел стоит последним, туда
+   * заходят редко, и без подсветки его просто не замечают.
+   */
+  highlight?: boolean;
 }
 
 export const roleLabels: Record<Role, string> = {
@@ -62,6 +67,26 @@ export const roleLabels: Record<Role, string> = {
   cleaner: 'Уборщица',
   admin: 'Администратор',
   manager: 'Менеджер',
+};
+
+/**
+ * Раздел «Инструкции» — как что делать на производстве.
+ *
+ * Ставится ПОСЛЕДНИМ пунктом в меню любой роли и подсвечивается: заходят сюда редко,
+ * и в середине списка раздел просто теряется. Набор памяток у всех одинаковый —
+ * упаковщице полезно знать про рулоны, кладовщику про упаковку.
+ */
+const guidesNav: NavItem = {
+  label: 'Инструкции',
+  icon: 'CircleAlert',
+  highlight: true,
+  children: [
+    { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
+    { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
+    { label: 'Работа с браком из цеха', path: '/crm/inventory/defect-guide' },
+    { label: 'Инструкция упаковщицы', path: '/crm/inventory/packer-guide' },
+    { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
+  ],
 };
 
 const productionNav: NavItem[] = [
@@ -90,6 +115,8 @@ const productionNav: NavItem[] = [
   },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
+  // Инструкции — всегда последним пунктом и с подсветкой.
+  guidesNav,
 ];
 
 const packerNav: NavItem[] = [
@@ -97,14 +124,6 @@ const packerNav: NavItem[] = [
   // Подбор пакетов — ежедневный инструмент упаковщицы, поэтому остаётся отдельным
   // пунктом верхнего уровня, а не прячется внутри «Инструкций».
   { label: 'Подбор пакетов', icon: 'Package', path: '/crm/inventory/packaging-guide' },
-  {
-    label: 'Инструкции',
-    icon: 'BookOpen',
-    children: [
-      { label: 'Инструкция упаковщицы', path: '/crm/inventory/packer-guide' },
-      { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
-    ],
-  },
   {
     label: 'Инвентаризация',
     icon: 'Boxes',
@@ -131,6 +150,8 @@ const packerNav: NavItem[] = [
   // только на киоске в цехе (планшет), а не через свой личный кабинет.
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
   { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
+  // Инструкции — всегда последним пунктом и с подсветкой.
+  guidesNav,
 ];
 
 const storekeeperNav: NavItem[] = [
@@ -150,18 +171,6 @@ const storekeeperNav: NavItem[] = [
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
       { label: 'Анализ возвратов', path: '/crm/analytics/returns' },
       { label: 'Анализ брака', path: '/crm/analytics/defects' },
-    ],
-  },
-  {
-    // Всё «как делать» в одном месте — чтобы не искать инструкции по разделам.
-    label: 'Инструкции',
-    icon: 'BookOpen',
-    children: [
-      { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
-      { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
-      { label: 'Работа с браком из цеха', path: '/crm/inventory/defect-guide' },
-      { label: 'Инструкция упаковщицы', path: '/crm/inventory/packer-guide' },
-      { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
     ],
   },
   {
@@ -194,11 +203,15 @@ const storekeeperNav: NavItem[] = [
     icon: 'Settings',
     children: [{ label: 'Полки на складе', path: '/crm/settings/shelves' }],
   },
+  // Инструкции — всегда последним пунктом и с подсветкой.
+  guidesNav,
 ];
 
 const cleanerNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
+  // Инструкции — всегда последним пунктом и с подсветкой.
+  guidesNav,
 ];
 
 // Менеджер: работа с заказами и поставками маркетплейса (в т.ч. заявки OZON FBO).
@@ -219,6 +232,8 @@ const managerNav: NavItem[] = [
     ],
   },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
+  // Инструкции — всегда последним пунктом и с подсветкой.
+  guidesNav,
 ];
 
 const adminNav: NavItem[] = [
@@ -238,18 +253,6 @@ const adminNav: NavItem[] = [
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
       { label: 'Анализ возвратов', path: '/crm/analytics/returns' },
       { label: 'Анализ брака', path: '/crm/analytics/defects' },
-    ],
-  },
-  {
-    // Всё «как делать» в одном месте — чтобы не искать инструкции по разделам.
-    label: 'Инструкции',
-    icon: 'BookOpen',
-    children: [
-      { label: 'Как принимать возвраты', path: '/crm/inventory/warehouse-guide' },
-      { label: 'Как работать с рулонами', path: '/crm/inventory/rolls-guide' },
-      { label: 'Работа с браком из цеха', path: '/crm/inventory/defect-guide' },
-      { label: 'Инструкция упаковщицы', path: '/crm/inventory/packer-guide' },
-      { label: 'Подбор пакетов', path: '/crm/inventory/packaging-guide' },
     ],
   },
   {
@@ -301,6 +304,8 @@ const adminNav: NavItem[] = [
       { label: 'Вешалки', path: '/crm/settings/hangers' },
     ],
   },
+  // Инструкции — всегда последним пунктом и с подсветкой.
+  guidesNav,
 ];
 
 export const navByRole: Record<Role, NavItem[]> = {
