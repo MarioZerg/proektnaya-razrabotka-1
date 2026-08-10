@@ -31,7 +31,7 @@ const SewingItemCancelConfirm = ({
         <AlertDialogHeader>
           <AlertDialogTitle>Отменить заказ?</AlertDialogTitle>
           <AlertDialogDescription>
-            Заказ будет отменён и вернётся во вкладку {cancelTargetLabel}, откуда его снова
+            Заказ будет отменён и вернётся {cancelTargetLabel}, откуда его снова
             сможет взять в работу любой сотрудник в порядке очереди. Из системы заказ не пропадёт.
           </AlertDialogDescription>
           {penalty > 0 && (

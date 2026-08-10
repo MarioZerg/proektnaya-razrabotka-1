@@ -187,8 +187,14 @@ export const useSewingItemOrderDetail = ({
     setCancelling(true);
     try {
       await cancelOrder(selectedOrder.id);
-      const targetTab = isCutter ? 'Новый' : 'Раскроено';
-      toast({ title: 'Заказ отменён', description: `Заказ возвращён во вкладку «${targetTab}»` });
+      // Швея вкладку «Раскроено» не видит: заказ уходит обратно в общую очередь,
+      // откуда его выдаст кнопка «Получить новый заказ» — ей и говорим про очередь.
+      toast({
+        title: 'Заказ отменён',
+        description: isCutter
+          ? 'Заказ возвращён во вкладку «Новый»'
+          : 'Заказ возвращён в общую очередь на пошив',
+      });
       setDialogOpen(false);
       load();
     } catch (e) {

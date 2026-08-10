@@ -90,7 +90,8 @@ const SewingItemDetailDialog = ({
     ((isCutterView && selectedOrder?.sewingStatus === 'На раскрое') ||
       (isSewerView && selectedOrder?.sewingStatus === 'В работе'));
 
-  const cancelTargetLabel = isCutterView ? '«Новый»' : '«Раскроено»';
+  // Швея вкладки «Раскроено» больше не видит — ей говорим про общую очередь.
+  const cancelTargetLabel = isCutterView ? 'во вкладку «Новый»' : 'в общую очередь';
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
