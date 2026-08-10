@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Dialog,
@@ -18,33 +19,37 @@ interface PickingScanDialogProps {
   onOpenCard: (id: number) => void;
 }
 
-/** Результат одного скана: что нашлось (или почему нет). */
-interface ScanResult {
-  key: number;
-  ok: boolean;
+/** Найденная вещь, которую нужно забрать с полки. */
+interface Hit {
+  goodsId: number;
   barcode: string;
-  product?: string | null;
-  shelfName?: string | null;
-  orderNumber?: string | null;
-  goodsId?: number;
-  error?: string;
+  product: string | null;
+  shelfName: string | null;
+  orderNumber: string | null;
 }
 
 /**
- * Сканер подбора — поиск вещи по складу.
+ * Сканер подбора — поиск нужных вещей на складе.
  *
- * Кладовщик собирает контейнер: пикает вещь за вещью и слышит сигнал. Верный товар —
- * короткий сигнал и строка с полкой, чужой — сигнал ошибки. Ничего не меняется в базе:
- * это именно поиск, стикеровка идёт отдельным шагом.
+ * Кладовщик идёт вдоль стеллажа и пикает всё подряд. Подавляющее большинство вещей —
+ * не его: они просто лежат на складе и в текущий контейнер не идут. Показывать их
+ * списком бессмысленно — за минуту работы экран превращался в портянку, в которой
+ * терялась единственная важная строка.
  *
- * Фокус НИКОГДА не уходит из поля — даже после ошибки. Кладовщик пикает пачку подряд,
- * не притрагиваясь к мышке: раньше после ошибки фокус слетал и следующий скан уходил
- * «в никуда».
+ * Поэтому: неликвид только считаем и озвучиваем сигналом ошибки, а на экране крупно
+ * держим ТОЛЬКО нужную вещь — что это, с какой полки её взять и под какой заказ.
+ *
+ * Фокус из поля не уходит никогда, чтобы кладовщик пикал не притрагиваясь к мышке.
  */
 const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialogProps) => {
   const [barcode, setBarcode] = useState('');
   const [busy, setBusy] = useState(false);
-  const [results, setResults] = useState<ScanResult[]>([]);
+  /** Последняя нужная вещь — единственное, что занимает экран. */
+  const [hit, setHit] = useState<Hit | null>(null);
+  /** Сколько вещей отсканировано мимо: чужие, не подобранные, не найденные. */
+  const [skipped, setSkipped] = useState(0);
+  /** Сколько нужных найдено за сессию — прогресс сборки контейнера. */
+  const [foundCount, setFoundCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
@@ -54,7 +59,10 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
       // Открытие окна — разрешённое браузером взаимодействие: греем звук заранее,
       // чтобы первый же скан прозвучал.
       primeScanSounds();
-      setResults([]);
+      setHit(null);
+      setSkipped(0);
+      setFoundCount(0);
+      setBarcode('');
       setTimeout(() => inputRef.current?.focus(), 80);
     }
   }, [open]);
@@ -66,44 +74,33 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
     setBusy(true);
     try {
       const item: GoodsWarehouseItem = await fetchGoodsByBarcode(code);
-      playScanSound();
-      setResults((prev) =>
-        [
-          {
-            key: Date.now(),
-            ok: true,
-            barcode: code,
-            product: item.product,
-            shelfName: item.shelfName,
-            orderNumber: item.reservedOrderNumber || item.orderNumber,
-            goodsId: item.id,
-          },
-          ...prev,
-        ].slice(0, 30)
-      );
-    } catch (e) {
+      // Нужная вещь — та, что подобрана под заказ. Всё остальное лежит на складе
+      // «просто так» и в текущий контейнер не идёт.
+      if (item.reservedOrderId) {
+        playScanSound();
+        setHit({
+          goodsId: item.id,
+          barcode: code,
+          product: item.product,
+          shelfName: item.shelfName,
+          orderNumber: item.reservedOrderNumber || item.orderNumber,
+        });
+        setFoundCount((n) => n + 1);
+      } else {
+        playScanErrorSound();
+        setSkipped((n) => n + 1);
+      }
+    } catch {
+      // Вещь не найдена или недоступна — для кладовщика это тот же неликвид.
       playScanErrorSound();
-      setResults((prev) =>
-        [
-          {
-            key: Date.now(),
-            ok: false,
-            barcode: code,
-            error: e instanceof Error ? e.message : 'Товар не найден',
-          },
-          ...prev,
-        ].slice(0, 30)
-      );
+      setSkipped((n) => n + 1);
     } finally {
       setBusy(false);
-      // Возвращаем фокус в любом случае: и после успеха, и после ошибки.
       focusInput();
     }
   };
 
   useScannerAutoSubmit(barcode, handleScan, !busy);
-
-  const foundCount = results.filter((r) => r.ok).length;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -118,13 +115,6 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
             if (!(e.target as HTMLElement).closest('input, button, a')) focusInput();
           }}
         >
-          <div className="rounded-md border border-border bg-muted/40 p-3">
-            <p className="text-sm text-muted-foreground">
-              Пикайте вещи подряд — сигнал подскажет, ваш это товар или нет. Ничего
-              не меняется: это поиск по складу, чтобы собрать контейнер
-            </p>
-          </div>
-
           <div className="space-y-1.5">
             <p className="text-sm font-medium">Отсканируйте стикер на вещи</p>
             <Input
@@ -140,57 +130,55 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
             />
           </div>
 
-          {results.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                Отсканировано: {results.length} · найдено {foundCount}
-              </p>
-              <div className="max-h-72 space-y-1.5 overflow-y-auto">
-                {results.map((r) =>
-                  r.ok ? (
-                    <button
-                      key={r.key}
-                      type="button"
-                      onClick={() => r.goodsId && onOpenCard(r.goodsId)}
-                      className="flex w-full items-start gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-2.5 text-left hover:bg-emerald-100"
-                    >
-                      <Icon
-                        name="CircleCheck"
-                        size={16}
-                        className="mt-0.5 shrink-0 text-emerald-600"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-emerald-900">
-                          {r.product || 'Товар'}
-                        </p>
-                        <p className="text-xs text-emerald-900">
-                          Полка {r.shelfName || '—'} · {r.barcode}
-                        </p>
-                        {r.orderNumber && (
-                          <p className="text-xs text-emerald-900">Заказ {r.orderNumber}</p>
-                        )}
-                      </div>
-                      <Icon name="ChevronRight" size={16} className="mt-0.5 text-emerald-600" />
-                    </button>
-                  ) : (
-                    <div
-                      key={r.key}
-                      className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-2.5"
-                    >
-                      <Icon
-                        name="CircleAlert"
-                        size={16}
-                        className="mt-0.5 shrink-0 text-destructive"
-                      />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">{r.barcode}</p>
-                        <p className="text-xs text-muted-foreground">{r.error}</p>
-                      </div>
-                    </div>
-                  )
-                )}
-              </div>
+          {/* Два счётчика вместо списка: нужное и мимо. Видно с расстояния. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3">
+              <p className="text-3xl font-bold text-emerald-700">{foundCount}</p>
+              <p className="text-sm text-emerald-900">Нужных найдено</p>
             </div>
+            <div className="rounded-lg border border-border bg-muted/40 p-3">
+              <p className="text-3xl font-bold text-muted-foreground">{skipped}</p>
+              <p className="text-sm text-muted-foreground">Мимо (не в подбор)</p>
+            </div>
+          </div>
+
+          {/* Единственная строка, ради которой кладовщик смотрит на экран. */}
+          {hit ? (
+            <button
+              type="button"
+              onClick={() => onOpenCard(hit.goodsId)}
+              className="flex w-full items-start gap-3 rounded-lg border-2 border-emerald-400 bg-emerald-50 p-4 text-left hover:bg-emerald-100"
+            >
+              <Icon
+                name="PackageCheck"
+                size={24}
+                className="mt-0.5 shrink-0 text-emerald-600"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-lg font-bold text-emerald-900">
+                  {hit.product || 'Товар'}
+                </p>
+                <p className="text-base font-semibold text-emerald-900">
+                  Полка {hit.shelfName || '—'}
+                </p>
+                <p className="text-sm text-emerald-900">
+                  Заказ {hit.orderNumber || '—'} · {hit.barcode}
+                </p>
+              </div>
+              <Icon name="ChevronRight" size={20} className="mt-1 text-emerald-600" />
+            </button>
+          ) : (
+            <div className="rounded-lg border border-dashed border-border p-4 text-center">
+              <p className="text-sm text-muted-foreground">
+                Пикайте вещи подряд. Здесь появится та, которую нужно забрать
+              </p>
+            </div>
+          )}
+
+          {hit && (
+            <Button variant="ghost" size="sm" onClick={() => { setHit(null); focusInput(); }}>
+              Убрать с экрана
+            </Button>
           )}
         </div>
       </DialogContent>

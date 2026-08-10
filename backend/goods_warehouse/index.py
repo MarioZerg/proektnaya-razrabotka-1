@@ -636,9 +636,13 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT gw.id, gw.order_id, o.order_number, o.product, o.material, o.width, o.height, "
                     "gw.shelf_id, s.name, gw.status, gw.received_at, gw.shipped_at, gw.storage_barcode, "
-                    "gw.lost_reason, gw.lost_at, gw.receive_reason "
+                    "gw.lost_reason, gw.lost_at, gw.receive_reason, "
+                    # Резерв нужен сканеру подбора: по нему он отличает вещь, которую
+                    # надо забрать в контейнер, от неликвида, просто лежащего на складе.
+                    "gw.reserved_order_id, ro.order_number "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
                     "LEFT JOIN shelves s ON s.id = gw.shelf_id "
                     f"WHERE gw.storage_barcode = '{barcode_esc}'"
                 )
@@ -652,6 +656,8 @@ def handler(event: dict, context) -> dict:
                     'shippedAt': (row[11].isoformat() + 'Z') if row[11] else None, 'storageBarcode': row[12],
                     'lostReason': row[13], 'lostAt': (row[14].isoformat() + 'Z') if row[14] else None,
                     'receiveReason': row[15] or 'manual',
+                    'reservedOrderId': row[16],
+                    'reservedOrderNumber': row[17],
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'item': item})}
 
