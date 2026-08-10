@@ -1526,6 +1526,20 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': f'Товар не на хранении (статус: {status}), подобрать нельзя'}),
                     }
+                # «На сборке» — статус ТОЛЬКО для вещи, закреплённой за заказом. Вручную
+                # перевести туда свободный остаток нельзя: кладовщик увидел бы вещь в
+                # списке подбора, пошёл за ней, а отправления за ней нет.
+                # Подбор делает система сама, когда находит заказ под эту вещь.
+                cur.execute("SELECT reserved_order_id FROM goods_warehouse WHERE id = %s", (int(gw_id),))
+                res_row = cur.fetchone()
+                if not res_row or not res_row[0]:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Вещь не подобрана ни под один заказ — в сборку она не идёт'
+                        }, ensure_ascii=False),
+                    }
                 cur.execute(f"UPDATE goods_warehouse SET status = 'picking' WHERE id = {gw_id}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'id': gw_id})}
