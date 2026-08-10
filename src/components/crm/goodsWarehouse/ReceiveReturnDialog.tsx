@@ -13,7 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { scanReturn, sendReturnToCheck, type ScannedReturn } from '@/lib/goodsWarehouseApi';
-import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 
 interface ReceiveReturnDialogProps {
   open: boolean;
@@ -73,6 +73,9 @@ const ReceiveReturnDialog = ({
 
   useEffect(() => {
     if (open) {
+      // Открытие окна — разрешённое браузером взаимодействие: греем звук заранее,
+      // чтобы первый же скан прозвучал.
+      primeScanSounds();
       setFound(null);
       setError(null);
       setBarcode('');

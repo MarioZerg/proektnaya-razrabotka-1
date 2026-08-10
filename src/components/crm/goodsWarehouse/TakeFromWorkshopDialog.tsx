@@ -10,7 +10,7 @@ import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { takeFromWorkshop } from '@/lib/goodsWarehouseApi';
-import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 
 interface TakeFromWorkshopDialogProps {
   open: boolean;
@@ -54,6 +54,9 @@ const TakeFromWorkshopDialog = ({
 
   useEffect(() => {
     if (open) {
+      // Открытие окна — разрешённое браузером взаимодействие: греем звук заранее,
+      // чтобы первый же скан прозвучал.
+      primeScanSounds();
       setRows([]);
       setBarcode('');
       setTimeout(() => inputRef.current?.focus(), 80);

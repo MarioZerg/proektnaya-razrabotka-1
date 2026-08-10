@@ -9,7 +9,7 @@ import {
 import Icon from '@/components/ui/icon';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { fetchGoodsByBarcode, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
-import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 
 interface PickingScanDialogProps {
   open: boolean;
@@ -51,6 +51,9 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
 
   useEffect(() => {
     if (open) {
+      // Открытие окна — разрешённое браузером взаимодействие: греем звук заранее,
+      // чтобы первый же скан прозвучал.
+      primeScanSounds();
       setResults([]);
       setTimeout(() => inputRef.current?.focus(), 80);
     }
