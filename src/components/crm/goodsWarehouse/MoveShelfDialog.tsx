@@ -17,10 +17,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
+import { useToast } from '@/hooks/use-toast';
 import type { Shelf } from '@/lib/shelvesApi';
 import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import { moveGoodsShelfByBarcode } from '@/lib/goodsWarehouseApi';
+import { fetchGoodsByBarcode, moveGoodsShelfBatch } from '@/lib/goodsWarehouseApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 
 interface MoveShelfDialogProps {
@@ -31,25 +32,22 @@ interface MoveShelfDialogProps {
   onDone: () => void;
 }
 
-/** Одна переложенная вещь — короткая строка для проверки глазами. */
-interface MovedRow {
-  key: number;
-  ok: boolean;
+/** Вещь, набранная в буфер до нажатия «Перенести». */
+interface BufferItem {
   barcode: string;
-  product?: string | null;
-  fromShelf?: string | null;
-  error?: string;
+  product: string | null;
 }
 
 /**
- * Смена полки — раскладка вещей пачкой.
+ * Смена полки — набрал пачку и перенёс.
  *
- * Кладовщик стоит у стеллажа: выбирает полку один раз и накидывает на неё вещь за вещью,
- * пока не закончит ряд. Потом переключает полку сверху — и продолжает на следующую.
- * Диалог при этом не закрывается: раньше на каждую вещь приходилось заново открывать
- * окно и заново выбирать полку, и перекладка десятка вещей превращалась в морока.
+ * Кладовщик стоит у стеллажа: слева выбирает полку-источник (можно не выбирать),
+ * справа — куда кладём, между ними стрелка. Дальше просто пикает вещи: они копятся
+ * в буфере, на экране только счётчик и последняя вещь. Нажал «Перенести» — вся пачка
+ * уехала на новую полку одним действием.
  *
- * Каждый успешный перенос звучит сигналом — кладовщик смотрит на стеллаж, а не в экран.
+ * Списка-портянки здесь нет намеренно: за минуту работы он перекрывал экран, и в нём
+ * терялось главное — сколько вещей набрано и куда они поедут.
  */
 const MoveShelfDialog = ({
   open,
@@ -58,85 +56,126 @@ const MoveShelfDialog = ({
   shelves,
   onDone,
 }: MoveShelfDialogProps) => {
+  const { toast } = useToast();
   const { user } = useAuth();
 
-  const [shelfId, setShelfId] = useState('');
+  /** Откуда переносим — только подсказка кладовщику, вещи ищутся по стикеру. */
+  const [fromShelfId, setFromShelfId] = useState('');
+  const [toShelfId, setToShelfId] = useState('');
   const [barcode, setBarcode] = useState('');
   const [busy, setBusy] = useState(false);
-  const [rows, setRows] = useState<MovedRow[]>([]);
-  /** Сколько вещей уложено на КАЖДУЮ полку за сессию — прогресс раскладки. */
-  const [perShelf, setPerShelf] = useState<Record<string, number>>({});
+  const [saving, setSaving] = useState(false);
+  const [buffer, setBuffer] = useState<BufferItem[]>([]);
+  /** Последняя вещь и последняя ошибка — единственное, что занимает экран. */
+  const [lastOk, setLastOk] = useState<BufferItem | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
+  /** Сколько сканов ушло мимо: бронь, чужие, не найдены. */
+  const [skipped, setSkipped] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
 
+  const resetAll = () => {
+    setBuffer([]);
+    setLastOk(null);
+    setLastError(null);
+    setSkipped(0);
+    setBarcode('');
+  };
+
   useEffect(() => {
     if (open) {
       primeScanSounds();
-      setBarcode('');
-      setRows([]);
-      setPerShelf({});
-      setShelfId('');
+      resetAll();
+      setFromShelfId('');
+      setToShelfId('');
     }
   }, [open]);
 
-  // Полку выбрали — сразу ставим курсор в поле скана, чтобы кладовщик не искал мышкой.
   useEffect(() => {
-    if (shelfId) focusInput();
-  }, [shelfId]);
+    if (toShelfId) focusInput();
+  }, [toShelfId]);
 
-  const shelfName = shelves.find((s) => String(s.id) === shelfId)?.name || '';
+  const toShelfName = shelves.find((s) => String(s.id) === toShelfId)?.name || '';
 
   const handleScan = async () => {
     const code = barcode.trim();
-    if (!code || !shelfId) return;
+    if (!code || !toShelfId) return;
     setBarcode('');
     setBusy(true);
+    setLastError(null);
     try {
-      const res = await moveGoodsShelfByBarcode(
-        code,
-        Number(shelfId),
-        user?.id,
-        user?.name
-      );
+      const item = await fetchGoodsByBarcode(code);
+
+      // Бронь под заказ FBS не двигаем: за вещью уже идёт сборщик по конкретной полке.
+      if (item.reservedOrderId) {
+        playScanErrorSound();
+        setSkipped((n) => n + 1);
+        setLastError(
+          `${item.product || 'Товар'} забронирован под заказ ${
+            item.reservedOrderNumber || ''
+          } — его нужно собрать и отправить`.trim()
+        );
+        return;
+      }
+      if (['picking', 'awaiting_supply', 'reserved', 'shipped'].includes(item.status)) {
+        playScanErrorSound();
+        setSkipped((n) => n + 1);
+        setLastError(`${item.product || 'Товар'} уже собран для отправки`);
+        return;
+      }
+      // Повторный скан той же вещи не должен раздувать счётчик.
+      if (buffer.some((b) => b.barcode === code)) {
+        playScanErrorSound();
+        setLastError('Эта вещь уже в пачке');
+        return;
+      }
+
       playScanSound();
-      setRows((prev) =>
-        [
-          {
-            key: Date.now(),
-            ok: true,
-            barcode: code,
-            product: res.product,
-            fromShelf: res.fromShelf,
-          },
-          ...prev,
-        ].slice(0, 12)
-      );
-      setPerShelf((prev) => ({ ...prev, [shelfName]: (prev[shelfName] || 0) + 1 }));
-      onDone();
+      const row = { barcode: code, product: item.product };
+      setBuffer((prev) => [...prev, row]);
+      setLastOk(row);
     } catch (e) {
       playScanErrorSound();
-      setRows((prev) =>
-        [
-          {
-            key: Date.now(),
-            ok: false,
-            barcode: code,
-            error: e instanceof Error ? e.message : 'Не удалось переложить',
-          },
-          ...prev,
-        ].slice(0, 12)
-      );
+      setSkipped((n) => n + 1);
+      setLastError(e instanceof Error ? e.message : 'Вещь не найдена');
     } finally {
       setBusy(false);
-      // Фокус возвращаем всегда — в том числе после ошибки, чтобы не сбивать ритм.
       focusInput();
     }
   };
 
-  useScannerAutoSubmit(barcode, handleScan, !!shelfId && !busy);
+  useScannerAutoSubmit(barcode, handleScan, !!toShelfId && !busy);
 
-  const totalMoved = Object.values(perShelf).reduce((a, b) => a + b, 0);
+  const handleMove = async () => {
+    if (!buffer.length || !toShelfId) return;
+    setSaving(true);
+    try {
+      const res = await moveGoodsShelfBatch(
+        buffer.map((b) => b.barcode),
+        Number(toShelfId),
+        user?.id,
+        user?.name
+      );
+      playScanSound();
+      toast({
+        title: 'Перенесено',
+        description: `На полку ${res.shelfName || toShelfName} уехало вещей: ${res.moved}`,
+      });
+      resetAll();
+      onDone();
+      focusInput();
+    } catch (e) {
+      playScanErrorSound();
+      toast({
+        title: 'Не удалось перенести',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -146,9 +185,9 @@ const MoveShelfDialog = ({
           Смена полки
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Раскладка по полкам</DialogTitle>
+          <DialogTitle>Смена полки</DialogTitle>
         </DialogHeader>
 
         <div
@@ -159,27 +198,50 @@ const MoveShelfDialog = ({
             }
           }}
         >
-          {/* Полка сверху: выбрал один раз — накидываешь пачкой, потом переключаешь. */}
-          <div className="space-y-1.5">
-            <Label>Куда кладём</Label>
-            <Select value={shelfId} onValueChange={setShelfId}>
-              <SelectTrigger className="h-12 text-base">
-                <SelectValue placeholder="Выберите полку" />
-              </SelectTrigger>
-              <SelectContent>
-                {shelves.map((s) => (
-                  <SelectItem key={s.id} value={String(s.id)}>
-                    {s.name}
-                    {perShelf[s.name] ? ` · уложено ${perShelf[s.name]}` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {/* Откуда → куда: стрелка посередине, как на схеме стеллажа. */}
+          <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+            <div className="space-y-1.5">
+              <Label>Откуда (необязательно)</Label>
+              <Select value={fromShelfId} onValueChange={setFromShelfId}>
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder="Любая полка" />
+                </SelectTrigger>
+                <SelectContent>
+                  {shelves.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="pb-2.5">
+              <Icon name="ArrowRight" size={28} className="text-muted-foreground" />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Куда кладём</Label>
+              <Select value={toShelfId} onValueChange={setToShelfId}>
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder="Выберите полку" />
+                </SelectTrigger>
+                <SelectContent>
+                  {shelves
+                    .filter((s) => String(s.id) !== fromShelfId)
+                    .map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
-          {shelfId ? (
+          {toShelfId ? (
             <div className="space-y-1.5">
-              <Label>Сканируйте вещи для полки «{shelfName}»</Label>
+              <Label>Сканируйте вещи для полки «{toShelfName}»</Label>
               <Input
                 ref={inputRef}
                 autoFocus
@@ -195,65 +257,67 @@ const MoveShelfDialog = ({
           ) : (
             <div className="rounded-md border border-dashed border-border p-4 text-center">
               <p className="text-sm text-muted-foreground">
-                Сначала выберите полку — потом сканируйте вещи одну за другой
+                Выберите полку справа — и сканируйте вещи одну за другой
               </p>
             </div>
           )}
 
-          {totalMoved > 0 && (
+          {/* Кубики вместо списка: набрано и мимо. Видно с расстояния. */}
+          <div className="grid grid-cols-2 gap-3">
             <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3">
-              <p className="text-2xl font-bold text-emerald-700">{totalMoved}</p>
-              <p className="text-sm text-emerald-900">
-                переложено за сессию
-                {Object.keys(perShelf).length > 1
-                  ? ` · полок: ${Object.keys(perShelf).length}`
-                  : ''}
-              </p>
+              <p className="text-3xl font-bold text-emerald-700">{buffer.length}</p>
+              <p className="text-sm text-emerald-900">В пачке на перенос</p>
             </div>
-          )}
+            <div className="rounded-lg border border-border bg-muted/40 p-3">
+              <p className="text-3xl font-bold text-muted-foreground">{skipped}</p>
+              <p className="text-sm text-muted-foreground">Мимо (нельзя двигать)</p>
+            </div>
+          </div>
 
-          {rows.length > 0 && (
-            <div className="max-h-56 space-y-1.5 overflow-y-auto">
-              {rows.map((r) =>
-                r.ok ? (
-                  <div
-                    key={r.key}
-                    className="flex items-start gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-2.5"
-                  >
-                    <Icon
-                      name="CircleCheck"
-                      size={16}
-                      className="mt-0.5 shrink-0 text-emerald-600"
-                    />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-emerald-900">
-                        {r.product || 'Товар'}
-                      </p>
-                      <p className="text-xs text-emerald-900">
-                        {r.fromShelf ? `${r.fromShelf} → ` : ''}
-                        {shelfName} · {r.barcode}
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div
-                    key={r.key}
-                    className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-2.5"
-                  >
-                    <Icon
-                      name="CircleAlert"
-                      size={16}
-                      className="mt-0.5 shrink-0 text-destructive"
-                    />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{r.barcode}</p>
-                      <p className="text-xs text-muted-foreground">{r.error}</p>
-                    </div>
-                  </div>
-                )
-              )}
+          {/* Только последняя вещь и последняя ошибка — без портянки. */}
+          {lastError ? (
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+              <Icon name="CircleAlert" size={18} className="mt-0.5 shrink-0 text-destructive" />
+              <p className="text-sm">{lastError}</p>
             </div>
-          )}
+          ) : lastOk ? (
+            <div className="flex items-start gap-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3">
+              <Icon name="CircleCheck" size={18} className="mt-0.5 shrink-0 text-emerald-600" />
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-emerald-900">
+                  {lastOk.product || 'Товар'}
+                </p>
+                <p className="text-xs text-emerald-900">{lastOk.barcode}</p>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="lg"
+              onClick={handleMove}
+              disabled={saving || !buffer.length || !toShelfId}
+            >
+              <Icon
+                name={saving ? 'Loader2' : 'ArrowRight'}
+                size={18}
+                className={`mr-2 ${saving ? 'animate-spin' : ''}`}
+              />
+              Перенести {buffer.length > 0 ? `(${buffer.length})` : ''}
+            </Button>
+            {buffer.length > 0 && (
+              <Button
+                size="lg"
+                variant="ghost"
+                onClick={() => {
+                  resetAll();
+                  focusInput();
+                }}
+              >
+                Сбросить пачку
+              </Button>
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>

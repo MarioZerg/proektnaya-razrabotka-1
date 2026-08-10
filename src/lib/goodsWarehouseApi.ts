@@ -133,6 +133,20 @@ export const shipLabelGoods = (barcode: string, actorId?: number, actorName?: st
     orderType: string | null;
   }>;
 
+/** Перенести пачку отсканированных вещей на выбранную полку одним действием. */
+export const moveGoodsShelfBatch = (
+  barcodes: string[],
+  shelfId: number,
+  actorId?: number,
+  actorName?: string,
+) =>
+  postAction({ action: 'move_shelf_batch', barcodes, shelfId, actorId, actorName }) as Promise<{
+    success: true;
+    moved: number;
+    skipped: number;
+    shelfName: string | null;
+  }>;
+
 export const moveGoodsShelfByBarcode = (
   barcode: string,
   shelfId: number | null,

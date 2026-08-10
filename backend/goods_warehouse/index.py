@@ -1335,6 +1335,48 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'storageBarcode': storage_barcode})}
 
+            if action == 'move_shelf_batch':
+                # Перенос пачкой: кладовщик набрал вещи в буфер у стеллажа и переносит их
+                # одним действием. По одной вещи за запрос было бы N обращений к серверу —
+                # на полусотне вещей это заметная задержка прямо посреди работы.
+                barcodes = body_data.get('barcodes') or []
+                shelf_id = body_data.get('shelfId')
+                if not barcodes:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте вещи'})}
+                if shelf_id in (None, ''):
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите полку назначения'})}
+
+                codes_csv = ','.join(
+                    "'" + str(b).replace("'", "''") + "'" for b in barcodes
+                )
+                # Бронь под FBS не двигаем даже пачкой: вещь ждёт сборщик по конкретной
+                # полке, и переезд сорвал бы отправление.
+                cur.execute(
+                    f"UPDATE goods_warehouse SET shelf_id = {int(shelf_id)} "
+                    f"WHERE storage_barcode IN ({codes_csv}) "
+                    f"  AND reserved_order_id IS NULL "
+                    f"  AND status NOT IN ('picking', 'awaiting_supply', 'reserved', 'shipped') "
+                    f"RETURNING id"
+                )
+                moved = len(cur.fetchall())
+                cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+                nm = cur.fetchone()
+                log_action(
+                    cur, actor_id, actor_name, 'move_shelf_batch', 'goods_warehouse', None,
+                    f'Переложил на полку {nm[0] if nm else shelf_id} вещей: {moved}',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'moved': moved,
+                        'skipped': len(barcodes) - moved,
+                        'shelfName': nm[0] if nm else None,
+                    }, ensure_ascii=False),
+                }
+
             if action == 'move_shelf_by_barcode':
                 barcode = (body_data.get('barcode') or '').strip()
                 shelf_id = body_data.get('shelfId')
