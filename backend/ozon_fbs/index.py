@@ -502,7 +502,7 @@ def handle_refresh_status(cur, conn, client_id, api_key, body_data):
     return _resp(200, {'postingNumber': posting_number, 'ozonStatus': ozon_status})
 
 
-def handle_refresh_all(cur, conn, client_id, api_key):
+def handle_refresh_all(cur, conn, client_id, api_key, body_data=None):
     """Разом обновляет статусы всех OZON FBS-заказов в системе. Проходит по списку
     отправлений OZON (/v3/posting/fbs/list, ТОЛЬКО чтение) постранично и для каждого
     отправления, которое есть у нас, сохраняет актуальный ozon_status. Заказы на стороне
@@ -525,9 +525,18 @@ def handle_refresh_all(cur, conn, client_id, api_key):
     # как только нашли все известные, выходим (ранний выход экономит таймаут).
     now = datetime.now(timezone.utc)
     window_days = 45
-    windows = 3
-    max_pages_per_window = 5
-    for w in range(windows):
+    # За один вызов проходим ОДНО окно: полный обход трёх окон не укладывается в
+    # отведённое функции время и обрывался целиком, не сохранив ничего. Приложение
+    # вызывает обновление несколько раз подряд, передавая номер окна.
+    try:
+        window_index = int((body_data or {}).get('window') or 0)
+    except (TypeError, ValueError):
+        window_index = 0
+    window_index = max(0, min(window_index, 2))
+    windows = 1
+    max_pages_per_window = 3
+    for _w in range(windows):
+        w = window_index
         to_dt = now - timedelta(days=window_days * w)
         since_dt = now - timedelta(days=window_days * (w + 1))
         offset = 0
@@ -584,7 +593,14 @@ def handle_refresh_all(cur, conn, client_id, api_key):
         updated = len(cur.fetchall())
 
     conn.commit()
-    return _resp(200, {'updated': updated, 'checked': len(found), 'known': len(known)})
+    return _resp(200, {
+        'updated': updated, 'checked': len(found), 'known': len(known),
+        'window': window_index,
+        # Есть ли ещё окна для обхода: приложение вызывает обновление повторно,
+        # пока не пройдёт весь период.
+        'hasMore': window_index < 2,
+        'nextWindow': window_index + 1 if window_index < 2 else None,
+    })
 
 
 
@@ -837,7 +853,7 @@ def handler(event: dict, context) -> dict:
         if action == 'refresh_status':
             return handle_refresh_status(cur, conn, client_id, api_key, body_data)
         if action == 'refresh_all_statuses':
-            return handle_refresh_all(cur, conn, client_id, api_key)
+            return handle_refresh_all(cur, conn, client_id, api_key, body_data)
         if action == 'find_by_barcode':
             # Кладовщик отсканировал штрихкод с ярлыка OZON — возвращаем номер
             # отправления, по которому вещь ищется в нашей системе.

@@ -10,6 +10,143 @@ import boto3
 import psycopg2
 
 
+def _ozon_creds(cur):
+    """Ключи OZON из настроек интеграции. Возвращает (client_id, api_key) или (None, None)."""
+    cur.execute(
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = 'ozon'"
+    )
+    row = cur.fetchone()
+    if not row or not row[0] or not row[1]:
+        return None, None
+    creds = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+    client_id = (creds.get('clientId') or creds.get('client_id') or '').strip()
+    api_key = (creds.get('apiKey') or creds.get('api_key') or '').strip()
+    return (client_id or None), (api_key or None)
+
+
+def ensure_ozon_assembled(cur, goods_id):
+    """Досбирает отправление OZON, если оно ещё «ожидает сборки».
+
+    Кладовщик отсканировал вещь в короб — на площадке отправление обязано быть собрано
+    и ждать отгрузки. Иначе OZON не даст передать поставку в доставку, а в списке у
+    кладовщика останется непонятное «ожидает сборки» по вещи, которая у него в руках.
+
+    Возвращает True, если отправление собрали сейчас.
+    """
+    cur.execute(
+        "SELECT COALESCE(ro.ozon_posting_number, o.ozon_posting_number), "
+        "COALESCE(ro.ozon_status, o.ozon_status) "
+        "FROM goods_warehouse gw "
+        "LEFT JOIN orders o ON o.id = gw.order_id "
+        "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+        "WHERE gw.id = %s",
+        (int(goods_id),),
+    )
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return False
+    posting_number, status = row
+    if status and status != 'awaiting_packaging':
+        return False
+
+    client_id, api_key = _ozon_creds(cur)
+    if not client_id or not api_key:
+        return False
+
+    def _post(path, payload):
+        req = urllib.request.Request(
+            f'https://api-seller.ozon.ru{path}', method='POST',
+            data=json.dumps(payload).encode('utf-8'),
+        )
+        req.add_header('Client-Id', client_id)
+        req.add_header('Api-Key', api_key)
+        req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode('utf-8') or '{}')
+
+    try:
+        info = _post('/v3/posting/fbs/get', {'posting_number': posting_number, 'with': {}})
+        result = (info or {}).get('result') or {}
+        if result.get('status') and result['status'] != 'awaiting_packaging':
+            cur.execute(
+                "UPDATE orders SET ozon_status = %s WHERE ozon_posting_number = %s",
+                (result['status'], posting_number),
+            )
+            return False
+        items = [
+            {'product_id': int(p.get('sku')), 'quantity': int(p.get('quantity') or 1)}
+            for p in (result.get('products') or []) if p.get('sku')
+        ]
+        if not items:
+            return False
+        _post('/v4/posting/fbs/ship',
+              {'posting_number': posting_number, 'packages': [{'products': items}]})
+        cur.execute(
+            "UPDATE orders SET ozon_status = 'awaiting_deliver' WHERE ozon_posting_number = %s",
+            (posting_number,),
+        )
+        return True
+    except Exception:
+        # Не смогли собрать — не срываем сканирование: вещь в коробе, а статус
+        # подтянется ближайшей синхронизацией.
+        return False
+
+
+def ozon_ship_postings(cur, supply_id):
+    """Передаёт отправления поставки в доставку на стороне OZON.
+
+    Кладовщик закрывает поставку — значит, короб уехал. На OZON отправления должны
+    уйти из «ожидает отгрузки» в «доставляется», иначе площадка считает, что товар
+    всё ещё у продавца, и начисляет просрочку.
+
+    Возвращает (сколько передано, список проблем).
+    """
+    client_id, api_key = _ozon_creds(cur)
+    if not client_id or not api_key:
+        return 0, []
+
+    cur.execute(
+        "SELECT DISTINCT COALESCE(ro.ozon_posting_number, o.ozon_posting_number) "
+        "FROM marketplace_supply_items msi "
+        "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+        "LEFT JOIN orders o ON o.id = gw.order_id "
+        "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+        "WHERE msi.supply_id = %s "
+        "AND COALESCE(ro.marketplace, o.marketplace) = 'OZON' "
+        "AND COALESCE(ro.ozon_posting_number, o.ozon_posting_number) IS NOT NULL",
+        (int(supply_id),),
+    )
+    numbers = [r[0] for r in cur.fetchall() if r[0]]
+    if not numbers:
+        return 0, []
+
+    shipped, problems = 0, []
+    for number in numbers:
+        body = json.dumps({'posting_number': number}).encode('utf-8')
+        req = urllib.request.Request(
+            'https://api-seller.ozon.ru/v2/fbs/posting/last-mile',
+            method='POST', data=body,
+        )
+        req.add_header('Client-Id', client_id)
+        req.add_header('Api-Key', api_key)
+        req.add_header('Content-Type', 'application/json')
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                r.read()
+            shipped += 1
+            cur.execute(
+                "UPDATE orders SET ozon_status = 'delivering' WHERE ozon_posting_number = %s",
+                (number,),
+            )
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode('utf-8', 'replace')[:120]
+            problems.append(f'{number}: {detail}')
+        except Exception as e:
+            problems.append(f'{number}: {str(e)[:80]}')
+    return shipped, problems
+
+
 def resolve_ozon_barcode(cur, barcode):
     """Превращает штрихкод с ярлыка OZON в номер отправления.
 
@@ -1594,8 +1731,18 @@ def handler(event: dict, context) -> dict:
                 )
                 item_id = cur.fetchone()[0]
                 cur.execute(f"UPDATE goods_warehouse SET status = 'reserved' WHERE id = {goods_id}")
+
+                # Вещь физически в коробе — значит, на OZON отправление должно быть
+                # собрано и ждать отгрузки. Часть заказов остаётся в «ожидает сборки»
+                # (например, ярлык печатали не через нас) — дособираем их здесь, иначе
+                # площадка не даст передать поставку в доставку.
+                ozon_assembled = ensure_ozon_assembled(cur, goods_id)
+
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'itemId': item_id, 'goodsWarehouseId': goods_id})}
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'itemId': item_id,
+                                            'goodsWarehouseId': goods_id,
+                                            'ozonAssembled': ozon_assembled}, ensure_ascii=False)}
 
             if action == 'remove_box_item':
                 item_id = body_data.get('itemId')
@@ -1786,6 +1933,7 @@ def handler(event: dict, context) -> dict:
                     }
 
                 extra_sql = ""
+                ozon_shipped, ozon_problems = 0, []
                 if new_status == 'Отгрузка':
                     # Отменённые заказы отгружать нельзя: на маркетплейсе их больше нет.
                     # Кладовщик должен сначала отправить такие вещи на полку хранения —
@@ -1847,6 +1995,11 @@ def handler(event: dict, context) -> dict:
                     goods_ids = [r[0] for r in cur.fetchall()]
                     for gid in goods_ids:
                         cur.execute(f"UPDATE goods_warehouse SET status = 'shipped', shipped_at = now() WHERE id = {gid}")
+
+                    # Сообщаем OZON, что короб уехал: отправления уходят из «ожидает
+                    # отгрузки» в «доставляется». Без этого площадка считает товар у
+                    # продавца и начисляет просрочку, хотя вещь уже в пути.
+                    ozon_shipped, ozon_problems = ozon_ship_postings(cur, supply_id)
                 elif new_status == 'Выполнена':
                     extra_sql = ", completed_at = now(), ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now())"
 
@@ -1912,7 +2065,17 @@ def handler(event: dict, context) -> dict:
                                             )
 
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        # Сколько отправлений ушло в доставку на OZON и что не получилось —
+                        # кладовщик должен видеть, если площадка часть не приняла.
+                        'ozonShipped': ozon_shipped,
+                        'ozonProblems': ozon_problems,
+                    }, ensure_ascii=False),
+                }
 
             if action == 'force_complete':
                 supply_id = body_data.get('supplyId')
