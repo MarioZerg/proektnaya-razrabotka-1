@@ -246,6 +246,9 @@ const SewingItemActionsSection = ({
                     availableRolls.map((r) => (
                       <SelectItem key={r.id} value={String(r.id)}>
                         {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)} {r.unit}
+                        {/* Материал завела другая смена: расход запишется как работа
+                            за чужую смену, чтобы он не приписался её сотрудникам. */}
+                        {r.foreignShift ? ' · материал чужой смены' : ''}
                       </SelectItem>
                     ))
                   )}

@@ -331,6 +331,11 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
               <div className="min-w-0">
                 <div className="font-mono-tech text-lg font-bold">#{r.barcode}</div>
                 <div className="text-muted-foreground">{r.materialName}</div>
+                {r.foreignShift && (
+                  <div className="text-xs font-medium text-amber-600">
+                    Материал чужой смены
+                  </div>
+                )}
                 {r.defectFlaggedAt ? (
                   <div className="text-xs font-medium text-destructive">
                     Отставлен как бракованный — ждёт кладовщика

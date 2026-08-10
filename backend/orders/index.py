@@ -1413,13 +1413,9 @@ def handler(event: dict, context) -> dict:
                                                     'headers': headers,
                                                     'body': json.dumps({'error': 'Рулон не принадлежит вашему цеху/смене'}),
                                             }
-                                    if order_shift_number and roll_row[3] != order_shift_number:
-                                            conn.rollback()
-                                            return {
-                                                    'statusCode': 409,
-                                                    'headers': headers,
-                                                    'body': json.dumps({'error': 'Рулон не принадлежит вашей смене'}),
-                                            }
+                                    # Смену не блокируем: закройщик-гость режет ткань,
+                                    # которая стоит рядом с ним в этом цехе, даже если
+                                    # коробку заводила другая смена. Цех проверен выше.
                                     roll_remaining = float(roll_row[1])
                                     if roll_remaining < qty_needed:
                                             cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
@@ -2029,12 +2025,15 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': 'Рулон не принадлежит вашему цеху/смене'}),
                     }
-                if order_shift_number and roll_row[3] != order_shift_number:
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps({'error': 'Рулон не принадлежит вашей смене'}),
-                    }
+                # Смену НЕ блокируем: гость пришёл в чужой цех и работает тем материалом,
+                # который физически стоит рядом с ним, даже если коробку заводила другая
+                # смена. Цех проверили выше — этого достаточно, чтобы человек не списал
+                # материал из другого помещения. Факт работы за чужую смену просто
+                # записываем в расход, чтобы он не приписался смене-владельцу материала.
+                is_foreign_shift = bool(
+                    order_shift_number and roll_row[3] is not None
+                    and roll_row[3] != order_shift_number
+                )
                 roll_remaining = float(roll_row[1])
                 if roll_remaining < trim_qty_needed:
                     cur.execute("SELECT name, unit FROM materials WHERE id = %s", (trim_material_id,))
@@ -2053,9 +2052,16 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {roll_row[0]}"
                 )
+                # Пишем, КТО и в какой смене реально израсходовал материал: у гостя это
+                # смена цеха присутствия, а не смена-владелец коробки.
+                actor_ws_sql = int(check_workshop_id) if check_workshop_id else 'NULL'
+                actor_shift_sql = int(order_shift_number) if order_shift_number else 'NULL'
+                actor_user_sql = int(order_assigned_user_id) if order_assigned_user_id else 'NULL'
                 cur.execute(
-                    f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
-                    f"VALUES ({int(item_id)}, {trim_material_id}, {roll_row[0]}, {trim_qty_needed})"
+                    f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity, "
+                    f"actor_user_id, actor_workshop_id, actor_shift_number, is_foreign_shift) "
+                    f"VALUES ({int(item_id)}, {trim_material_id}, {roll_row[0]}, {trim_qty_needed}, "
+                    f"{actor_user_sql}, {actor_ws_sql}, {actor_shift_sql}, {str(is_foreign_shift).lower()})"
                 )
                 sewer_sql = f", sewer_user_id = {order_assigned_user_id}" if order_assigned_user_id else ""
                 cur.execute(

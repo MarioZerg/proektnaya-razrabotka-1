@@ -660,6 +660,7 @@ def handler(event: dict, context) -> dict:
             # цехов ей не видны. Кладовщику и админу этот параметр не передаётся — они
             # видят всё. Без открытой смены список пустой.
             for_user_id = params.get('forUserId')
+            session_shift = None
             if for_user_id:
                 cur.execute(
                     "SELECT ss.workshop_id, ss.shift_number, ss.role FROM shift_sessions ss "
@@ -669,13 +670,19 @@ def handler(event: dict, context) -> dict:
                 )
                 sess = cur.fetchone()
                 if sess and sess[0]:
+                    # Материал показываем по ЦЕХУ, где человек физически находится.
+                    # Гость пришёл в чужой цех — работает с материалом ЭТОГО цеха, а
+                    # свой домашний не видит совсем: иначе он выберет рулон, до которого
+                    # не дотянется рукой, и списание уйдёт с коробки в другом помещении.
                     conditions.append(f"r.workshop_id = {int(sess[0])}")
-                    # И только рулоны СВОЕЙ смены: в одном цехе работают разные смены,
-                    # и чужие рулоны в списке путают закройщика — он может закрыть
-                    # рулон, который режет другая смена.
-                    if sess[1] is not None:
-                        conditions.append(f"r.shift_number = {int(sess[1])}")
+
+                    # Сначала пробуем показать рулоны СВОЕЙ смены. Если в цехе нет
+                    # ни одного подходящего рулона своей смены (частый случай у гостя:
+                    # тесьма лежит на другой смене этого же цеха) — показываем весь цех,
+                    # а рулоны чужой смены помечаем, чтобы швея видела, что берёт чужое.
+                    session_shift = sess[1]
                 else:
+                    session_shift = None
                     conditions.append("1 = 0")
 
                 # Каждая производственная роль работает со своим материалом, и лишние
@@ -706,6 +713,19 @@ def handler(event: dict, context) -> dict:
                         "m.type_id = (SELECT id FROM material_types WHERE name = "
                         f"'{type_esc}')"
                     )
+
+            # Своя смена в приоритете: если в цехе есть подходящие рулоны своей смены,
+            # чужие не показываем — иначе в списке мешанина. Если своих нет (гость пришёл
+            # в цех, где нужный материал лежит на другой смене) — открываем весь цех.
+            if for_user_id and session_shift is not None:
+                own_conditions = conditions + [f"r.shift_number = {int(session_shift)}"]
+                cur.execute(
+                    "SELECT COUNT(*) FROM rolls r "
+                    "LEFT JOIN materials m ON m.id = r.material_id "
+                    f"WHERE {' AND '.join(own_conditions)}"
+                )
+                if cur.fetchone()[0] > 0:
+                    conditions = own_conditions
 
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -764,6 +784,13 @@ def handler(event: dict, context) -> dict:
                     # нельзя, пока заявку не подтвердят. Терминал помечает такие рулоны.
                     'pendingAcceptance': r[10] == 'in_workshop' and r[14] is None,
                     'usedInShift': r[0] in used_roll_ids,
+                    # Рулон другой смены этого же цеха: гость работает с ним, потому что
+                    # своего материала в цехе нет. Показываем пометку, чтобы человек
+                    # понимал — берёт чужое, и расход запишется как работа за другую смену.
+                    'foreignShift': (
+                        session_shift is not None and r[7] is not None
+                        and int(r[7]) != int(session_shift)
+                    ),
                     # Закройщик отставил рулон из-за брака: в работу он не идёт и ждёт,
                     # когда кладовщик заберёт его на склад или откажет в заборе.
                     'defectFlaggedAt': (r[15].isoformat() + 'Z') if r[15] else None,
