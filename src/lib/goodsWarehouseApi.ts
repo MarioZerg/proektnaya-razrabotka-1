@@ -154,6 +154,25 @@ export const cancelPicking = (id: number) => postAction({ action: 'cancel_pickin
 export const markGoodsLost = (id: number, reason: string) =>
   postAction({ action: 'mark_lost', id, reason });
 
+/** Заказ, пришедший на подбор: под него ищут готовую вещь на складе. */
+export interface PickingOrder {
+  id: number;
+  orderNumber: string | null;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  createdAt: string | null;
+  marketplace: string | null;
+}
+
+/** Заказы, ожидающие подбора со склада: ещё не шьются и вещь под них не найдена. */
+export const fetchPickingOrders = async (): Promise<PickingOrder[]> => {
+  const res = await fetch(`${GOODS_WAREHOUSE_URL}?picking_orders=1`);
+  if (!res.ok) throw new Error('Не удалось загрузить заказы к подбору');
+  return res.json();
+};
+
 /** Удалить запись со склада. Только администратор и только для вещей на хранении. */
 export const deleteGoods = (id: number, actorId?: number, actorName?: string) =>
   postAction({ action: 'delete_goods', id, actorId, actorName });

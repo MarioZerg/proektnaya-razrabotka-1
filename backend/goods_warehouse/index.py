@@ -297,6 +297,37 @@ def handler(event: dict, context) -> dict:
                     'body': json.dumps({'pendingLabel': pending, 'awaitingShelf': awaiting}),
                 }
 
+            # Заказы, пришедшие на подбор: их ещё не начали шить и под них не нашли
+            # готовую вещь на складе. Кладовщик смотрит список и решает, что можно
+            # закрыть остатками, а что уйдёт в цех.
+            if params.get('picking_orders'):
+                cur.execute(
+                    "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
+                    "       o.created_at, o.marketplace "
+                    "FROM orders o "
+                    "WHERE o.sewing_status = 'Новый' "
+                    "  AND o.fulfilled_from_stock_id IS NULL "
+                    "ORDER BY o.created_at DESC"
+                )
+                orders_rows = cur.fetchall()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps([
+                        {
+                            'id': r[0],
+                            'orderNumber': r[1],
+                            'product': r[2],
+                            'material': r[3],
+                            'width': r[4],
+                            'height': r[5],
+                            'createdAt': r[6].isoformat() if r[6] else None,
+                            'marketplace': r[7],
+                        }
+                        for r in orders_rows
+                    ], ensure_ascii=False),
+                }
+
             if barcode:
                 barcode_esc = barcode.strip().replace("'", "''")
                 cur.execute(
