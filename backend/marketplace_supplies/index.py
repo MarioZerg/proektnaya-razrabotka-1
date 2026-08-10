@@ -627,10 +627,16 @@ def handler(event: dict, context) -> dict:
                         }
                         for r in cur.fetchall()
                     ]
-                    # Готовые к отгрузке: готовые FBS-заказы WB, не привязанные ни к одной поставке.
+                    # Готовые к отгрузке: сшитые FBS-заказы WB плюс вещи, снятые с полок и
+                    # уже отстикерованные. Нестикерованные вещи с полок сюда НЕ попадают —
+                    # они физически лежат на складе, и в короб их ещё неклали.
                     cur.execute(
                         "SELECT COUNT(*) FROM orders o "
-                        "WHERE o.marketplace = 'WB' AND o.order_type = 'FBS' AND o.sewing_status = 'Готовые' "
+                        "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+                        "WHERE o.marketplace = 'WB' AND o.order_type = 'FBS' "
+                        "AND (o.sewing_status = 'Готовые' "
+                        "     OR (o.fulfilled_from_stock_id IS NOT NULL "
+                        "         AND gw.shipping_labeled_at IS NOT NULL)) "
                         "AND NOT EXISTS (SELECT 1 FROM wb_supply_orders w WHERE w.order_id = o.id)"
                     )
                     wb_ready_count = cur.fetchone()[0]

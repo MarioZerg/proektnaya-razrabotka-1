@@ -293,15 +293,28 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
 
     # Ищем готовый (после стикеровки) FBS-заказ WB по номеру заказа.
     cur.execute(
-        "SELECT id, wb_order_id, sewing_status, product FROM orders "
-        "WHERE order_number = %s AND marketplace = 'WB' AND order_type = 'FBS'",
+        "SELECT o.id, o.wb_order_id, o.sewing_status, o.product, o.fulfilled_from_stock_id, "
+        "gw.shipping_labeled_at "
+        "FROM orders o "
+        "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+        "WHERE o.order_number = %s AND o.marketplace = 'WB' AND o.order_type = 'FBS'",
         (order_number,),
     )
     o_row = cur.fetchone()
     if not o_row:
         return _resp(404, {'error': f'Заказ {order_number} не найден среди WB FBS заказов'})
-    order_id, wb_order_id, sewing_status, product = o_row
-    if sewing_status != 'Готовые':
+    order_id, wb_order_id, sewing_status, product, from_stock_id, labeled_at = o_row
+
+    # Заказ закрыт вещью с полки: шить нечего, но вещь должна быть снята с полки и
+    # отстикерована — иначе в коробе её физически нет. Отстикерованную принимаем,
+    # хотя её статус так и остаётся «Со склада».
+    if from_stock_id:
+        if not labeled_at:
+            return _resp(409, {
+                'error': f'Заказ {order_number}: вещь ещё на полке. Соберите и отстикеруйте '
+                         f'её в разделе «Сборка товара с полок»'
+            })
+    elif sewing_status != 'Готовые':
         return _resp(409, {'error': f'Заказ {order_number} ещё не готов (статус: {sewing_status})'})
     if not wb_order_id:
         return _resp(409, {'error': f'У заказа {order_number} нет идентификатора сборочного задания WB'})
@@ -630,14 +643,24 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
     (или None), а печать идёт в любом случае.
     """
     cur.execute(
-        "SELECT id, wb_order_id FROM orders "
-        "WHERE order_number = %s AND marketplace = 'WB' AND order_type = 'FBS'",
+        "SELECT o.id, o.wb_order_id, o.sewing_status, o.fulfilled_from_stock_id, "
+        "gw.shipping_labeled_at "
+        "FROM orders o "
+        "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+        "WHERE o.order_number = %s AND o.marketplace = 'WB' AND o.order_type = 'FBS'",
         (order_number,),
     )
     o_row = cur.fetchone()
     if not o_row or not o_row[1]:
         return 'У заказа нет сборочного задания WB'
-    order_id, wb_order_id = o_row
+    order_id, wb_order_id, sewing_status, from_stock_id, labeled_at = o_row
+
+    # Заказ закрыт вещью с полки, но её ещё не сняли и не отстикеровали. В поставку
+    # такую вещь не пускаем: физически она лежит на полке, и в коробе её нет.
+    # Кладовщик сначала собирает и стикерует её на странице «Сборка товара с полок» —
+    # оттуда она и попадёт в поставку.
+    if from_stock_id and not labeled_at:
+        return 'Вещь ещё лежит на полке — соберите и отстикеруйте её в разделе «Сборка товара с полок»'
 
     # Заказ уже лежит в какой-то поставке — второй раз не добавляем.
     cur.execute("SELECT supply_id FROM wb_supply_orders WHERE order_id = %s", (order_id,))
