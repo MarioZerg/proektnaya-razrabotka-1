@@ -177,6 +177,38 @@ export const fetchPickingOrders = async (): Promise<PickingOrder[]> => {
   return res.json();
 };
 
+/** Карточка возврата: что за вещь, кто её делал и почему её вернули. */
+export interface ScannedReturn {
+  orderId: number;
+  orderNumber: string;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  marketplace: string | null;
+  ozonStatus: string | null;
+  orderStatus: string | null;
+  createdAt: string | null;
+  cancelledAt: string | null;
+  cutterName: string | null;
+  sewerName: string | null;
+  packerName: string | null;
+  returnReason: string | null;
+  mpStatus: string | null;
+}
+
+/** Сканирование ярлыка FBS на приехавшей вещи: проверяем, можно ли принять возврат. */
+export const scanReturn = (barcode: string) =>
+  postAction({ action: 'scan_return', barcode }) as Promise<ScannedReturn>;
+
+/** Возврат уходит на осмотр в цех: вещь получает статус «На проверке». */
+export const sendReturnToCheck = (orderId: number, actorId?: number, actorName?: string) =>
+  postAction({ action: 'send_to_check', orderId, actorId, actorName }) as Promise<{
+    success: true;
+    id: number;
+    storageBarcode: string;
+  }>;
+
 /** Одно событие в истории вещи: кто и что с ней сделал. */
 export interface GoodsHistoryEntry {
   userName: string | null;

@@ -495,8 +495,11 @@ def handle_refresh_status(cur, conn, client_id, api_key, body_data):
     ozon_status = (data.get('result', {}) or {}).get('status') if isinstance(data, dict) else None
     if ozon_status:
         cur.execute(
-            "UPDATE orders SET ozon_status = %s WHERE ozon_posting_number = %s",
-            (ozon_status, posting_number),
+            "UPDATE orders SET ozon_status = %s, "
+            "  cancelled_at = CASE WHEN %s LIKE 'cancel%%' AND cancelled_at IS NULL "
+            "                      THEN now() ELSE cancelled_at END "
+            "WHERE ozon_posting_number = %s",
+            (ozon_status, ozon_status, posting_number),
         )
         conn.commit()
     return _resp(200, {'postingNumber': posting_number, 'ozonStatus': ozon_status})
@@ -584,8 +587,14 @@ def handle_refresh_all(cur, conn, client_id, api_key, body_data=None):
             "('" + pn.replace("'", "''") + "', '" + st.replace("'", "''") + "')"
             for pn, st in found.items()
         )
+        # Момент перехода в отмену запоминаем: кладовщику при приёмке возврата важно
+        # видеть, когда покупатель отказался. Ставим дату только при ПЕРВОМ переходе,
+        # иначе повторные синхронизации сдвигали бы её на сегодня.
         cur.execute(
-            f"UPDATE orders o SET ozon_status = v.status "
+            f"UPDATE orders o SET ozon_status = v.status, "
+            f"  cancelled_at = CASE "
+            f"    WHEN v.status LIKE 'cancel%' AND o.cancelled_at IS NULL THEN now() "
+            f"    ELSE o.cancelled_at END "
             f"FROM (VALUES {values_sql}) AS v(posting, status) "
             f"WHERE o.ozon_posting_number = v.posting AND o.ozon_status IS DISTINCT FROM v.status "
             f"RETURNING o.id"
@@ -724,8 +733,11 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
         return ship_err, None
     if new_status:
         cur.execute(
-            "UPDATE orders SET ozon_status = %s WHERE ozon_posting_number = %s",
-            (new_status, posting_number),
+            "UPDATE orders SET ozon_status = %s, "
+            "  cancelled_at = CASE WHEN %s LIKE 'cancel%%' AND cancelled_at IS NULL "
+            "                      THEN now() ELSE cancelled_at END "
+            "WHERE ozon_posting_number = %s",
+            (new_status, new_status, posting_number),
         )
 
     # OZON принимает сборку сразу, но САМУ ЭТИКЕТКУ готовит с задержкой в пару секунд.

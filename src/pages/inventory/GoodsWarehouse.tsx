@@ -7,7 +7,6 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import {
   fetchGoodsWarehouse,
-  receiveReturn,
   returnGoodsToWorkshop,
   markGoodsLost,
   deleteGoods,
@@ -46,8 +45,6 @@ const GoodsWarehouse = () => {
 
   // Принять новые возвраты
   const [returnOpen, setReturnOpen] = useState(false);
-  const [returnSaving, setReturnSaving] = useState(false);
-  const [returnOrderNumber, setReturnOrderNumber] = useState('');
 
 
   // Разложить отменённые товары по полкам (сканером) и стикеровка заказов с полок
@@ -182,31 +179,9 @@ const GoodsWarehouse = () => {
   };
 
   const openReturn = () => {
-    setReturnOrderNumber('');
     setReturnOpen(true);
   };
 
-  const handleReceiveReturn = async () => {
-    const orderNumber = returnOrderNumber.trim();
-    if (!orderNumber) return;
-    // Поле очищаем сразу, до ответа сервера — чтобы не было повторных отправок того же
-    // номера при случайных повторных нажатиях, пока идёт запрос.
-    setReturnOrderNumber('');
-    setReturnSaving(true);
-    try {
-      await receiveReturn(orderNumber);
-      toast({
-        title: 'Возврат принят',
-        description: 'Отсканируйте стикер хранения в «Разложить по полкам», чтобы положить на полку',
-      });
-      setReturnOpen(false);
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setReturnSaving(false);
-    }
-  };
 
 
   const openMove = () => {
@@ -285,10 +260,7 @@ const GoodsWarehouse = () => {
               open={returnOpen}
               onOpenChange={setReturnOpen}
               onOpenCreate={openReturn}
-              orderNumber={returnOrderNumber}
-              setOrderNumber={setReturnOrderNumber}
-              saving={returnSaving}
-              onSave={handleReceiveReturn}
+              onDone={load}
             />
             {/* Добавить товары группой — приёмка партии вручную (админ). */}
             {isAdmin && (

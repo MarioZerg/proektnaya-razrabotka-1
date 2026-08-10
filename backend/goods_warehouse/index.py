@@ -1,7 +1,82 @@
 import json
 import os
+import urllib.request
 
 import psycopg2
+
+
+# Статусы OZON, при которых вещь ФИЗИЧЕСКИ ещё не у покупателя и не может быть возвратом.
+# Отсканировать такую вещь на приёмке возврата нельзя: она либо на нашем складе, либо
+# едет к покупателю. Кладовщик по ошибке принял бы её как возврат и потерял отправление.
+OZON_NOT_RETURNABLE = {
+    'awaiting_packaging': 'ожидает сборки',
+    'awaiting_deliver': 'ожидает отгрузки',
+    'delivering': 'доставляется',
+    'driver_pickup': 'у водителя',
+    'acceptance_in_progress': 'идёт приёмка',
+    'awaiting_approve': 'ожидает подтверждения',
+    'awaiting_registration': 'ожидает регистрации',
+    'not_accepted': 'не принят на сортировке',
+}
+
+# Причины возврата/отмены на OZON — как их присылает маркетплейс. Показываем кладовщику
+# по-русски: в сыром виде это техническая строка, по которой ничего не понять.
+OZON_CANCEL_REASONS = {
+    'client_rejected_at_delivery': 'Отказался при вручении',
+    'buyer_rejected': 'Отказался при вручении',
+    'rejected_at_pickup': 'Отказался в пункте выдачи',
+    'product_not_suitable': 'Товар не подошёл',
+    'size_not_suitable': 'Не подошёл размер',
+    'color_not_suitable': 'Не подошёл цвет',
+    'found_cheaper': 'Нашёл дешевле',
+    'quality_issue': 'Претензия к качеству',
+    'defective': 'Брак',
+    'damaged': 'Повреждён при доставке',
+    'wrong_product': 'Прислали не тот товар',
+    'no_longer_needed': 'Больше не нужен',
+    'delivery_too_long': 'Долгая доставка',
+    'not_delivered': 'Не доставлен покупателю',
+    'buyer_not_come': 'Покупатель не забрал',
+    'expired_storage': 'Истёк срок хранения в пункте выдачи',
+    'cancelled_by_client': 'Отменён покупателем',
+    'cancelled_by_seller': 'Отменён продавцом',
+}
+
+
+def resolve_ozon_barcode(cur, barcode):
+    """Превращает штрихкод с ярлыка FBS в номер отправления.
+
+    На ярлыке OZON крупно печатает свой штрихкод, а не номер отправления — сканер
+    считывает именно его, и в нашей базе такого кода нет. Спрашиваем номер у OZON.
+    """
+    if not barcode.isdigit() or len(barcode) < 12:
+        return None
+    cur.execute(
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = 'ozon'"
+    )
+    row = cur.fetchone()
+    if not row or not row[0] or not row[1]:
+        return None
+    creds = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+    client_id = (creds.get('clientId') or creds.get('client_id') or '').strip()
+    api_key = (creds.get('apiKey') or creds.get('api_key') or '').strip()
+    if not client_id or not api_key:
+        return None
+    req = urllib.request.Request(
+        'https://api-seller.ozon.ru/v2/posting/fbs/get-by-barcode',
+        method='POST',
+        data=json.dumps({'barcode': str(barcode)}).encode('utf-8'),
+    )
+    req.add_header('Client-Id', client_id)
+    req.add_header('Api-Key', api_key)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read().decode('utf-8') or '{}')
+        return ((data.get('result') or {}).get('posting_number')) or None
+    except Exception:
+        return None
 
 
 def is_admin(cur, actor_id) -> bool:
@@ -774,6 +849,160 @@ def handler(event: dict, context) -> dict:
                         'product': gw_product, 'shelfName': shelf_name,
                         'autoMatched': len(auto_matched),
                     }),
+                }
+
+            if action == 'scan_return':
+                # Сканер возвратов: кладовщик пикает ярлык FBS на приехавшей вещи.
+                # Возвращаем карточку товара с цепочкой исполнителей и причиной отказа,
+                # либо объясняем, почему эту вещь принимать как возврат нельзя.
+                scan = (body_data.get('barcode') or '').strip()
+                if not scan:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте ярлык отправления'})}
+
+                scan_esc = scan.replace("'", "''")
+                cur.execute(
+                    "SELECT id FROM orders WHERE order_number = %s OR ozon_posting_number = %s",
+                    (scan, scan),
+                )
+                found = cur.fetchone()
+                # Не нашли по номеру — возможно, отсканирован штрихкод с ярлыка OZON.
+                if not found:
+                    resolved = resolve_ozon_barcode(cur, scan)
+                    if resolved:
+                        cur.execute(
+                            "SELECT id FROM orders WHERE order_number = %s OR ozon_posting_number = %s",
+                            (resolved, resolved),
+                        )
+                        found = cur.fetchone()
+                if not found:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Отправление {scan} не найдено. Это ярлык FBS?'}, ensure_ascii=False),
+                    }
+                order_id = int(found[0])
+
+                cur.execute(
+                    "SELECT o.order_number, o.product, o.material, o.width, o.height, "
+                    "       o.marketplace, o.ozon_status, o.status, o.created_at, o.cancelled_at, "
+                    "       cu.full_name, su.full_name, pu.full_name, "
+                    "       gw.id, gw.status "
+                    "FROM orders o "
+                    "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+                    "LEFT JOIN users su ON su.id = o.sewer_user_id "
+                    "LEFT JOIN users pu ON pu.id = o.packer_user_id "
+                    "LEFT JOIN goods_warehouse gw ON gw.order_id = o.id "
+                    "WHERE o.id = %s",
+                    (order_id,),
+                )
+                r = cur.fetchone()
+                (order_number, product, material, width, height, marketplace,
+                 ozon_status, order_status, created_at, cancelled_at,
+                 cutter, sewer, packer, gw_id, gw_status) = r
+
+                # Вещь ещё не у покупателя — принимать её как возврат нельзя.
+                blocked = OZON_NOT_RETURNABLE.get((ozon_status or '').lower())
+                if blocked:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Заказ {order_number} нельзя принять возвратом: он ещё '
+                                     f'не был у покупателя (статус «{blocked}»)'
+                        }, ensure_ascii=False),
+                    }
+
+                # Уже лежит на складе — второй раз тот же возврат не принимаем.
+                if gw_id and gw_status in ('awaiting_shelf', 'checking', 'in_stock'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Заказ {order_number} уже принят на склад'
+                        }, ensure_ascii=False),
+                    }
+
+                # Причина возврата с маркетплейса: сначала смотрим таблицу возвратов.
+                cur.execute(
+                    "SELECT return_reason, mp_status FROM marketplace_returns "
+                    "WHERE order_id = %s ORDER BY id DESC LIMIT 1",
+                    (order_id,),
+                )
+                ret = cur.fetchone()
+                raw_reason = (ret[0] if ret else None) or ''
+                reason_text = OZON_CANCEL_REASONS.get(raw_reason.strip().lower(), raw_reason) or None
+
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'orderId': order_id,
+                        'orderNumber': order_number,
+                        'product': product,
+                        'material': material,
+                        'width': width,
+                        'height': height,
+                        'marketplace': marketplace,
+                        'ozonStatus': ozon_status,
+                        'orderStatus': order_status,
+                        'createdAt': created_at.isoformat() if created_at else None,
+                        'cancelledAt': cancelled_at.isoformat() if cancelled_at else None,
+                        'cutterName': cutter,
+                        'sewerName': sewer,
+                        'packerName': packer,
+                        'returnReason': reason_text,
+                        'mpStatus': ret[1] if ret else None,
+                    }, ensure_ascii=False),
+                }
+
+            if action == 'send_to_check':
+                # Отправка возврата на осмотр в цех: вещь получает статус «На проверке».
+                # После осмотра её либо перепакуют и вернут в продажу, либо спишут.
+                order_id = body_data.get('orderId')
+                if not order_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите orderId'})}
+
+                cur.execute("SELECT order_number FROM orders WHERE id = %s", (int(order_id),))
+                o = cur.fetchone()
+                if not o:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
+                num = o[0]
+
+                cur.execute("SELECT id FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
+                exists = cur.fetchone()
+                if exists:
+                    gw_id = exists[0]
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'checking', shelf_id = NULL, "
+                        "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
+                        "reserved_order_id = NULL, shipping_labeled_at = NULL, "
+                        "receive_reason = 'return', received_at = now() "
+                        f"WHERE id = {int(gw_id)}"
+                    )
+                else:
+                    barcode_new = next_storage_barcode(cur)
+                    cur.execute(
+                        "INSERT INTO goods_warehouse (order_id, status, storage_barcode, "
+                        "receive_reason, received_at) "
+                        "VALUES (%s, 'checking', %s, 'return', now()) RETURNING id",
+                        (int(order_id), barcode_new),
+                    )
+                    gw_id = cur.fetchone()[0]
+
+                log_action(
+                    cur, actor_id, actor_name, 'send_to_check', 'goods_warehouse', gw_id,
+                    f'Принял возврат #{num} и отправил на осмотр в цех',
+                )
+                conn.commit()
+                cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE id = %s", (int(gw_id),))
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'id': gw_id,
+                        'storageBarcode': cur.fetchone()[0],
+                    }, ensure_ascii=False),
                 }
 
             if action == 'receive_return':
