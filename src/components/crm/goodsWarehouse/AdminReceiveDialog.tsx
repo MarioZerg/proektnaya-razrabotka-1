@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -21,6 +20,7 @@ import { useToast } from '@/hooks/use-toast';
 import type { Shelf } from '@/lib/shelvesApi';
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { adminReceiveGoods } from '@/lib/goodsWarehouseApi';
+import { printStorageStickers } from '@/lib/printStorageSticker';
 
 interface AdminReceiveDialogProps {
   open: boolean;
@@ -32,15 +32,31 @@ interface AdminReceiveDialogProps {
 /** Строка поиска товара: «вуаль 300 250» найдёт «Вуаль 300x250» — разделители не важны. */
 const normalize = (s: string) => s.toLowerCase().replace(/[^a-zа-я0-9]+/gi, ' ').trim();
 
-/** Ручной приём товара администратором: он ищет товар по названию и размеру и кладёт вещь на
- * склад хранения без заказа с маркетплейса (излишек производства, найденная вещь). */
+/** Позиция корзины: что принимаем и сколько штук. */
+interface CartRow {
+  item: MarketplaceItem;
+  qty: number;
+}
+
+/**
+ * Ручной приём товара на склад — сразу пачкой.
+ *
+ * Админ принимает излишек с производства или найденные вещи: набирает в корзину несколько
+ * позиций с количеством, жмёт одну кнопку — все вещи заводятся на склад, и тут же печатается
+ * ЛЕНТА стикеров хранения на всю партию.
+ *
+ * Раньше можно было принять только одну вещь за раз и печатать наклейки по одной: на партии
+ * из десятка позиций это превращалось в десятки кликов по диалогу принтера.
+ */
 const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiveDialogProps) => {
   const { toast } = useToast();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
   const [query, setQuery] = useState('');
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [cart, setCart] = useState<CartRow[]>([]);
   const [shelfId, setShelfId] = useState('');
   const [saving, setSaving] = useState(false);
+  /** Печатать ленту стикеров сразу после приёмки — обычно это и нужно. */
+  const [autoPrint, setAutoPrint] = useState(true);
 
   useEffect(() => {
     if (!open) return;
@@ -63,24 +79,76 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
       .slice(0, 20);
   }, [items, query]);
 
-  const selected = items.find((i) => i.id === selectedId) || null;
+  const totalPieces = cart.reduce((sum, r) => sum + r.qty, 0);
+
+  const addToCart = (item: MarketplaceItem) => {
+    setCart((prev) => {
+      const exists = prev.find((r) => r.item.id === item.id);
+      // Повторный клик по товару — не дубликат строки, а +1 к количеству.
+      if (exists) {
+        return prev.map((r) => (r.item.id === item.id ? { ...r, qty: r.qty + 1 } : r));
+      }
+      return [...prev, { item, qty: 1 }];
+    });
+  };
+
+  const setQty = (id: number, qty: number) =>
+    setCart((prev) =>
+      prev.map((r) => (r.item.id === id ? { ...r, qty: Math.max(1, Math.min(99, qty)) } : r))
+    );
+
+  const removeRow = (id: number) => setCart((prev) => prev.filter((r) => r.item.id !== id));
+
+  const reset = () => {
+    setQuery('');
+    setCart([]);
+    setShelfId('');
+  };
 
   const handleSave = async () => {
-    if (!selectedId) return;
+    if (!cart.length) return;
     setSaving(true);
     try {
-      const res = await adminReceiveGoods(selectedId, shelfId ? Number(shelfId) : undefined);
+      // Заводим вещи по одной: у каждой свой стикер хранения, склад не терпит «пачек»
+      // без индивидуального штрихкода — иначе вещь на полке не опознать.
+      const printed: { storageBarcode: string; title: string; orderNumber: string }[] = [];
+      let failed = 0;
+
+      for (const row of cart) {
+        for (let n = 0; n < row.qty; n += 1) {
+          try {
+            const res = await adminReceiveGoods(
+              row.item.id,
+              shelfId ? Number(shelfId) : undefined
+            );
+            printed.push({
+              storageBarcode: res.storageBarcode,
+              title: res.product,
+              orderNumber: res.orderNumber,
+            });
+          } catch {
+            failed += 1;
+          }
+        }
+      }
+
+      if (printed.length && autoPrint) {
+        printStorageStickers(printed);
+      }
+
       toast({
-        title: `Принято: ${res.product}`,
-        description:
-          res.status === 'in_stock'
-            ? `Стикер ${res.storageBarcode} — товар на полке`
-            : `Стикер ${res.storageBarcode} — положите на полку сканированием`,
+        title: `Принято вещей: ${printed.length}`,
+        description: failed
+          ? `Не удалось принять: ${failed}`
+          : autoPrint
+            ? 'Лента стикеров хранения отправлена на печать'
+            : 'Стикеры можно напечатать из списка склада',
+        variant: failed ? 'destructive' : undefined,
       });
-      setQuery('');
-      setSelectedId(null);
+
+      reset();
       onDone();
-      onOpenChange(false);
+      if (printed.length) onOpenChange(false);
     } catch (e) {
       toast({
         title: 'Не удалось принять товар',
@@ -97,21 +165,18 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
       open={open}
       onOpenChange={(v) => {
         onOpenChange(v);
-        if (!v) {
-          setQuery('');
-          setSelectedId(null);
-          setShelfId('');
-        }
+        if (!v) reset();
       }}
     >
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Принять товар на склад вручную</DialogTitle>
+          <DialogTitle>Принять товары на склад вручную</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
             Для вещей без заказа с маркетплейса — излишек с производства или найденный товар.
-            Такие приёмы помечаются как добавленные администратором.
+            Наберите позиции с количеством: система заведёт каждую вещь отдельно и напечатает
+            ленту стикеров хранения
           </p>
 
           <div className="space-y-1.5">
@@ -120,15 +185,12 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
               autoFocus
               placeholder="Например: вуаль 300x250"
               value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setSelectedId(null);
-              }}
+              onChange={(e) => setQuery(e.target.value)}
             />
           </div>
 
           {query.trim() && (
-            <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border p-2">
+            <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-border p-2">
               {found.length === 0 ? (
                 <p className="p-2 text-sm text-muted-foreground">
                   Ничего не найдено. Проверьте название или добавьте товар в справочник
@@ -137,14 +199,13 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
                 found.map((i) => (
                   <button
                     key={i.id}
-                    onClick={() => setSelectedId(i.id)}
-                    className={`flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition ${
-                      selectedId === i.id ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-                    }`}
+                    onClick={() => addToCart(i)}
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition hover:bg-muted"
                   >
                     <span className="font-medium">{i.name}</span>
-                    <span className="shrink-0 text-xs opacity-80">
+                    <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                       {i.material} {i.width}×{i.height}
+                      <Icon name="Plus" size={14} />
                     </span>
                   </button>
                 ))
@@ -152,13 +213,58 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
             </div>
           )}
 
-          {selected && (
-            <div className="rounded-md border border-border p-3">
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="bg-violet-100 text-violet-700">
-                  Выбрано
-                </Badge>
-                <span className="font-medium">{selected.name}</span>
+          {/* Корзина приёмки: что и по сколько штук заводим на склад. */}
+          {cart.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>К приёмке</Label>
+                <span className="text-sm text-muted-foreground">
+                  позиций {cart.length} · вещей {totalPieces}
+                </span>
+              </div>
+              <div className="max-h-56 space-y-1.5 overflow-y-auto">
+                {cart.map((r) => (
+                  <div
+                    key={r.item.id}
+                    className="flex items-center gap-2 rounded-md border border-border p-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{r.item.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {r.item.material} {r.item.width}×{r.item.height}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setQty(r.item.id, r.qty - 1)}
+                      aria-label="Меньше"
+                    >
+                      <Icon name="Minus" size={14} />
+                    </Button>
+                    <Input
+                      value={r.qty}
+                      onChange={(e) => setQty(r.item.id, Number(e.target.value) || 1)}
+                      className="h-9 w-14 text-center"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setQty(r.item.id, r.qty + 1)}
+                      aria-label="Больше"
+                    >
+                      <Icon name="Plus" size={14} />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => removeRow(r.item.id)}
+                      aria-label="Убрать"
+                    >
+                      <Icon name="X" size={16} />
+                    </Button>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -180,13 +286,23 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
             </Select>
           </div>
 
-          <Button className="w-full" onClick={handleSave} disabled={saving || !selectedId}>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={autoPrint}
+              onChange={(e) => setAutoPrint(e.target.checked)}
+              className="h-4 w-4"
+            />
+            Сразу напечатать ленту стикеров хранения
+          </label>
+
+          <Button className="w-full" size="lg" onClick={handleSave} disabled={saving || !cart.length}>
             {saving ? (
               <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
             ) : (
               <Icon name="PackagePlus" size={16} className="mr-2" />
             )}
-            Принять на склад хранения
+            Принять на склад{totalPieces > 0 ? ` (${totalPieces})` : ''}
           </Button>
         </div>
       </DialogContent>
