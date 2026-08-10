@@ -24,6 +24,7 @@ const movementMeta: Record<RollMovement['kind'], { label: string; icon: string; 
   defect: { label: 'Списание брака', icon: 'TriangleAlert', className: 'text-red-600' },
   return_to_supplier: { label: 'Возврат поставщику', icon: 'Undo2', className: 'text-amber-600' },
   workshop_writeoff: { label: 'Списание в цехе', icon: 'PackageMinus', className: 'text-amber-600' },
+  close: { label: 'Рулон закрыт', icon: 'CircleCheck', className: 'text-emerald-600' },
 };
 
 const stageIcon: Record<string, string> = {
@@ -77,6 +78,10 @@ const RollShow = () => {
   }
 
   const { roll, history } = data;
+  // Расход, по которому нет ни одной записи: рулон перенесён из старой системы вместе
+  // с остатком, а движения по заказам туда не переносились. Пишем об этом прямо,
+  // иначе пустая история выглядит как пропавшие данные.
+  const untracked = data.untrackedQuantity || 0;
   const usedQty = Math.max(0, roll.initialQuantity - roll.remainingQuantity);
   const usedPct = roll.initialQuantity > 0 ? Math.min(100, (usedQty / roll.initialQuantity) * 100) : 0;
   const remainPct = 100 - usedPct;
@@ -239,8 +244,23 @@ const RollShow = () => {
 
         <div className="space-y-2">
           <h2 className="font-semibold">История использования ({history.length})</h2>
+          {untracked > 0 && (
+            <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+              <Icon name="Info" size={16} className="mt-0.5 shrink-0 text-amber-600" />
+              <p>
+                По {formatQuantity(untracked)} {unit} нет записей о расходе — рулон перенесён
+                из старой системы вместе с остатком. Движения по заказам записываются с
+                момента перехода на терминалы.
+              </p>
+            </div>
+          )}
+
           {history.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Из этого рулона ещё не списывали материал</p>
+            <p className="text-sm text-muted-foreground">
+              {untracked > 0
+                ? 'Записей о списании по этому рулону не сохранилось'
+                : 'Из этого рулона ещё не списывали материал'}
+            </p>
           ) : (
             <div className="space-y-3">
               {history.map((m, i) => {

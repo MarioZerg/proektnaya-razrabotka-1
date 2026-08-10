@@ -35,7 +35,13 @@ export interface Roll {
   shortageQuantity?: number;
 }
 
-export type RollMovementKind = 'order' | 'defect' | 'return_to_supplier' | 'workshop_writeoff';
+export type RollMovementKind =
+  | 'order'
+  | 'defect'
+  | 'return_to_supplier'
+  | 'workshop_writeoff'
+  /** Закройщик закрыл рулон на терминале: остаток списан, зафиксирована недостача. */
+  | 'close';
 
 /** Этап выполнения заказа: кто раскроил / сшил / упаковал. */
 export interface RollOrderStage {
@@ -83,6 +89,10 @@ export interface RollDetailInfo extends Roll {
 export interface RollDetail {
   roll: RollDetailInfo;
   history: RollMovement[];
+  /** Сколько расхода подтверждено историей движений. */
+  trackedQuantity?: number;
+  /** Расход без записей — данные перенесены из старой системы. */
+  untrackedQuantity?: number;
 }
 
 /** Стоимость остатков одного материала на складе и в цехах. */

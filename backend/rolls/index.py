@@ -595,9 +595,46 @@ def handler(event: dict, context) -> dict:
                         'stages': None,
                     })
 
+                # Закрытие рулона закройщиком. Остаток обнуляется целиком, но записи
+                # об этом в истории не было — рулон выглядел израсходованным «сам собой».
+                cur.execute(
+                    "SELECT r.completed_at, r.shortage_quantity, r.closed_by_name, u.full_name "
+                    "FROM rolls r LEFT JOIN users u ON u.id = r.closed_by_user_id "
+                    "WHERE r.id = %s AND r.status = 'completed' AND r.completed_at IS NOT NULL",
+                    (int(roll_id),),
+                )
+                c_row = cur.fetchone()
+                if c_row and (c_row[2] or c_row[3]):
+                    shortage_val = float(c_row[1] or 0)
+                    history.append({
+                        'kind': 'close',
+                        'quantity': shortage_val,
+                        'createdAt': c_row[0].isoformat() + 'Z',
+                        'orderNumber': None,
+                        'userName': c_row[3] or c_row[2],
+                        'comment': (
+                            f'Недостача {round(shortage_val, 2)}' if shortage_val > 0
+                            else 'Рулон израсходован полностью'
+                        ),
+                        'stages': None,
+                    })
+
                 history.sort(key=lambda h: h['createdAt'], reverse=True)
+
+                # Сколько материала подтверждено историей, а сколько ушло без следа.
+                # Расхождение возникает у рулонов, перенесённых из старой системы: там
+                # остались только итоговые остатки, без движений по заказам.
+                tracked = sum(
+                    h['quantity'] for h in history if h['kind'] != 'close'
+                )
+                used_total = float(roll['initialQuantity']) - float(roll['remainingQuantity'])
                 return {'statusCode': 200, 'headers': headers,
-                        'body': json.dumps({'roll': roll, 'history': history})}
+                        'body': json.dumps({
+                            'roll': roll,
+                            'history': history,
+                            'trackedQuantity': round(tracked, 3),
+                            'untrackedQuantity': round(max(0.0, used_total - tracked), 3),
+                        })}
             finally:
                 conn.close()
 
