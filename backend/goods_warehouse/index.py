@@ -237,7 +237,12 @@ def try_match_orders_from_stock(cur, gw_id=None):
         for unit_id, unit_item in units:
             pick_id = by_item[int(unit_item)].pop(0)
             cur.execute(
-                "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
+                # Подобранная вещь сразу переходит в «На сборке»: она больше не свободный
+                # остаток на полке, а конкретное отправление, за которым идёт кладовщик.
+                # Пока она числилась «На хранении», её было видно как доступный товар —
+                # и её же могли переложить или посчитать свободной.
+                "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now(), "
+                "status = 'picking' WHERE id = %s",
                 (int(unit_id), pick_id),
             )
             cur.execute(
@@ -266,7 +271,12 @@ def try_match_orders_from_stock(cur, gw_id=None):
                 continue
             pick_id = pool.pop(0)
             cur.execute(
-                "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
+                # Подобранная вещь сразу переходит в «На сборке»: она больше не свободный
+                # остаток на полке, а конкретное отправление, за которым идёт кладовщик.
+                # Пока она числилась «На хранении», её было видно как доступный товар —
+                # и её же могли переложить или посчитать свободной.
+                "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now(), "
+                "status = 'picking' WHERE id = %s",
                 (int(order_id), pick_id),
             )
             cur.execute(
@@ -378,7 +388,7 @@ def handler(event: dict, context) -> dict:
             if params.get('pending_count'):
                 cur.execute(
                     "SELECT count(*) FROM goods_warehouse "
-                    "WHERE reserved_order_id IS NOT NULL AND status = 'in_stock' "
+                    "WHERE reserved_order_id IS NOT NULL AND status = 'picking' "
                     "AND shipping_labeled_at IS NULL"
                 )
                 pending = int(cur.fetchone()[0])
@@ -519,7 +529,7 @@ def handler(event: dict, context) -> dict:
                     "FROM goods_warehouse gw "
                     "JOIN orders o ON o.id = gw.reserved_order_id "
                     "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
-                    "WHERE gw.status = 'in_stock' "
+                    "WHERE gw.status = 'picking' "
                     "  AND gw.reserved_order_id IS NOT NULL "
                     "  AND gw.shipping_labeled_at IS NULL "
                     "ORDER BY gw.matched_at ASC NULLS LAST, gw.id ASC"
@@ -1604,7 +1614,7 @@ def handler(event: dict, context) -> dict:
                         cur.execute(
                             "SELECT gw.id FROM goods_warehouse gw "
                             "JOIN orders o ON o.id = gw.reserved_order_id "
-                            "WHERE o.group_key = %s AND gw.status = 'in_stock'",
+                            "WHERE o.group_key = %s AND gw.status = 'picking'",
                             (group_key,),
                         )
                         sibling_ids = [r[0] for r in cur.fetchall()]
@@ -1612,8 +1622,10 @@ def handler(event: dict, context) -> dict:
                             # Соседние вещи не испорчены — просто возвращаем их на полку
                             # свободными, они пригодятся другим заказам.
                             cur.execute(
+                                # Освободилась — снова свободный остаток на полке.
                                 "UPDATE goods_warehouse SET reserved_order_id = NULL, "
-                                "matched_at = NULL, shipping_labeled_at = NULL WHERE id = %s",
+                                "status = 'in_stock', matched_at = NULL, "
+                                "shipping_labeled_at = NULL WHERE id = %s",
                                 (sib,),
                             )
                         cur.execute(

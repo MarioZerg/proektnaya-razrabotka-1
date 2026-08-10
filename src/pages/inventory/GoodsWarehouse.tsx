@@ -96,7 +96,7 @@ const GoodsWarehouse = () => {
 
   // Вещи с полок, подобранные под новые заказы FBS и ждущие стикера отправления.
   const matchedFromStock = useMemo(
-    () => items.filter((i) => i.reservedOrderId && !i.shippingLabeledAt && i.status === 'in_stock'),
+    () => items.filter((i) => i.reservedOrderId && !i.shippingLabeledAt && i.status === 'picking'),
     [items],
   );
 
