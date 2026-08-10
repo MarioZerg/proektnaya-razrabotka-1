@@ -85,7 +85,7 @@ def write_off_packaging(cur, order_id: int) -> str | None:
     cur.execute(
         "SELECT mim.material_id, mim.quantity FROM marketplace_item_materials mim "
         "JOIN materials m ON m.id = mim.material_id "
-        "WHERE mim.item_id = %s AND m.type_id = %s",
+        "WHERE mim.marketplace_item_id = %s AND m.type_id = %s",
         (item_row[0], pack_type_id),
     )
     needed = cur.fetchall()
@@ -558,6 +558,37 @@ def handler(event: dict, context) -> dict:
                  order_status, order_ozon_status, order_type, order_material,
                  order_height, order_product, group_key, group_size, group_position) = row
                 is_cancelled = order_status == 'Отменён' or 'cancel' in (order_ozon_status or '').lower()
+
+                # Заказы, перенесённые из старой системы, приехали без цеха: их не раскраивал
+                # закройщик, и проставить цех было неоткуда. Все ставки зарплаты привязаны к
+                # цеху, поэтому без этой подстановки швея и упаковщица за такой заказ не
+                # получили бы НИЧЕГО — начисление молча считалось бы нулевым.
+                # Берём цех из открытой смены того, кто сейчас работает с заказом.
+                if not order_workshop_id:
+                    cur.execute(
+                        "SELECT workshop_id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                        "ORDER BY opened_at DESC LIMIT 1",
+                        (int(packer_id),),
+                    )
+                    ws_row = cur.fetchone()
+                    if ws_row and ws_row[0]:
+                        order_workshop_id = ws_row[0]
+                    elif assigned_user_id:
+                        cur.execute(
+                            "SELECT workshop_id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                            "ORDER BY opened_at DESC LIMIT 1",
+                            (int(assigned_user_id),),
+                        )
+                        ws_row = cur.fetchone()
+                        if ws_row and ws_row[0]:
+                            order_workshop_id = ws_row[0]
+                    # Проставляем цех и самому заказу — чтобы он попал в отчёты по цеху
+                    # и дальше вёл себя как обычный заказ.
+                    if order_workshop_id:
+                        cur.execute(
+                            "UPDATE orders SET workshop_id = %s WHERE id = %s AND workshop_id IS NULL",
+                            (order_workshop_id, int(order_id)),
+                        )
                 # Индивидуальный пошив не едет на маркетплейс: у него нет стикера
                 # маркетплейса, и вещь до выдачи клиенту лежит на полке. Поэтому ему
                 # тоже заводим складской штрихкод и печатаем свой стикер.

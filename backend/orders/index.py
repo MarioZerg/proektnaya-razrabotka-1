@@ -1203,14 +1203,16 @@ def handler(event: dict, context) -> dict:
                 for item_id in cut_queue:
 
                     cur.execute(
-                        "SELECT material, width, height, workshop_id, assigned_user_id, sewing_status FROM orders WHERE id = %s",
+                        "SELECT material, width, height, workshop_id, assigned_user_id, sewing_status, "
+                        "COALESCE(source, '') FROM orders WHERE id = %s",
                         (int(item_id),),
                     )
                     order_row = cur.fetchone()
                     if not order_row:
                             conn.rollback()
                             return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-                    material, width, height, order_workshop_id, order_assigned_user_id, current_sewing_status = order_row
+                    (material, width, height, order_workshop_id, order_assigned_user_id,
+                     current_sewing_status, order_source) = order_row
 
                     # Раскроить можно ТОЛЬКО заказ, который сейчас на раскрое. Без этой
                     # проверки закройщик мог выбрать рулон и вешалку у заказа, уже ушедшего
@@ -1503,7 +1505,13 @@ def handler(event: dict, context) -> dict:
                     # склада) — иначе оплата некорректно завышалась/дробилась на копейки запаса.
                     # Если заказ позже удалят из раскроя (cancel_order/delete_order), начисление
                     # снимается там же.
-                    if fabric_material_id and order_assigned_user_id and order_workshop_id and width:
+                    # За заказы, перенесённые из старой системы (source = 'import'), раскрой
+                    # закройщику НЕ оплачивается: эти вещи были раскроены ещё до переезда и
+                    # деньги за крой люди уже получили. Начислить второй раз — заплатить дважды
+                    # за одну работу. Швее и упаковщице их этапы оплачиваются как обычно.
+                    if order_source == 'import':
+                            pass
+                    elif fabric_material_id and order_assigned_user_id and order_workshop_id and width:
                             # Ставка задаётся ОДНА на ткань (width IS NULL) — раньше её
                             # требовалось заводить на каждую пару «ткань + ширина», то есть
                             # 56 полей на цех при одинаковом значении внутри ткани. Ширина
