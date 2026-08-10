@@ -1232,21 +1232,59 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите itemId'})}
 
                 cur.execute(
-                    "SELECT msi.goods_warehouse_id, s.status FROM marketplace_supply_items msi "
-                    "JOIN marketplace_supplies s ON s.id = msi.supply_id WHERE msi.id = %s",
+                    "SELECT msi.goods_warehouse_id, s.status, gw.storage_barcode, "
+                    "o.order_number, gw.shelf_id, sh.name, src.product "
+                    "FROM marketplace_supply_items msi "
+                    "JOIN marketplace_supplies s ON s.id = msi.supply_id "
+                    "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+                    "LEFT JOIN orders o ON o.id = gw.reserved_order_id "
+                    "LEFT JOIN orders src ON src.id = gw.order_id "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "WHERE msi.id = %s",
                     (int(item_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Позиция не найдена'})}
-                goods_id, supply_status = row
+                (goods_id, supply_status, storage_barcode, reserved_order_number,
+                 shelf_id, shelf_name, product) = row
                 if supply_status not in ('Открытая', 'На сборке'):
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Из этой поставки уже нельзя убрать товар'})}
 
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(item_id)}")
-                cur.execute(f"UPDATE goods_warehouse SET status = 'picking' WHERE id = {int(goods_id)}")
+
+                # Вещь вынули из короба — она едет обратно на полку. Снимаем отметку о
+                # наклеенном ярлыке маркетплейса: этот ярлык больше не действует, вещь
+                # снова обычный складской остаток. Раньше отметка оставалась, и вещь
+                # висела «собранной», но в поставку уже не сканировалась — кладовщик
+                # видел «отправление не найдено среди собранных с полок».
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "shipping_labeled_at = NULL, reserved_order_id = NULL, matched_at = NULL "
+                    f"WHERE id = {int(goods_id)}"
+                )
+                # Заказ, под который вещь резервировали, снова ждёт подбора: система
+                # подберёт под него другую вещь или отправит его в пошив. Правим строго
+                # тот заказ, что был привязан к этой вещи.
+                cur.execute(
+                    "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
+                    "WHERE fulfilled_from_stock_id = %s",
+                    (int(goods_id),),
+                )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        # По этим данным интерфейс печатает стикер хранения: без него
+                        # вещь уедет на полку без опознавательного знака.
+                        'storageBarcode': storage_barcode,
+                        'orderNumber': reserved_order_number,
+                        'product': product,
+                        'shelfName': shelf_name,
+                    }, ensure_ascii=False),
+                }
 
             if action == 'create_box':
                 supply_id = body_data.get('supplyId')
@@ -1418,21 +1456,49 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите itemId'})}
 
                 cur.execute(
-                    "SELECT msi.goods_warehouse_id, s.status FROM marketplace_supply_items msi "
-                    "JOIN marketplace_supplies s ON s.id = msi.supply_id WHERE msi.id = %s",
+                    "SELECT msi.goods_warehouse_id, s.status, gw.storage_barcode, "
+                    "o.order_number, sh.name, src.product "
+                    "FROM marketplace_supply_items msi "
+                    "JOIN marketplace_supplies s ON s.id = msi.supply_id "
+                    "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+                    "LEFT JOIN orders o ON o.id = gw.reserved_order_id "
+                    "LEFT JOIN orders src ON src.id = gw.order_id "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "WHERE msi.id = %s",
                     (int(item_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Позиция не найдена'})}
-                goods_id, supply_status = row
+                (goods_id, supply_status, storage_barcode, reserved_order_number,
+                 shelf_name, product) = row
                 if supply_status not in ('Открытая', 'На сборке'):
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Из этой поставки уже нельзя убрать товар'})}
 
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(item_id)}")
-                cur.execute(f"UPDATE goods_warehouse SET status = 'in_stock' WHERE id = {int(goods_id)}")
+                # Вещь вынули из короба — ярлык маркетплейса на ней больше не действует.
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "shipping_labeled_at = NULL, reserved_order_id = NULL, matched_at = NULL "
+                    f"WHERE id = {int(goods_id)}"
+                )
+                cur.execute(
+                    "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
+                    "WHERE fulfilled_from_stock_id = %s",
+                    (int(goods_id),),
+                )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'storageBarcode': storage_barcode,
+                        'orderNumber': reserved_order_number,
+                        'product': product,
+                        'shelfName': shelf_name,
+                    }, ensure_ascii=False),
+                }
 
             if action == 'update':
                 supply_id = body_data.get('supplyId')

@@ -261,7 +261,24 @@ export interface ScanOrderResult {
 export const scanOrderToSupply = (supplyId: number, orderNumber: string): Promise<ScanOrderResult> =>
   postAction({ action: 'scan_order', supplyId, orderNumber });
 
-export const removeSupplyItem = (itemId: number) => postAction({ action: 'remove_item', itemId });
+/** Убрать товар из поставки. Вещь возвращается на полку — ответ содержит данные
+ * для печати стикера хранения: без него вещь уедет на полку неопознанной. */
+export const removeSupplyItem = (
+  itemId: number
+): Promise<{
+  success: true;
+  storageBarcode: string | null;
+  orderNumber: string | null;
+  product: string | null;
+  shelfName: string | null;
+}> =>
+  postAction({ action: 'remove_item', itemId }) as Promise<{
+    success: true;
+    storageBarcode: string | null;
+    orderNumber: string | null;
+    product: string | null;
+    shelfName: string | null;
+  }>;
 
 /** Убрать отменённый заказ из поставки на полку хранения. Для связки Яндекса на полку
  * уходит вся связка целиком — ярлык на неё общий. */

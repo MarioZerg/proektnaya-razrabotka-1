@@ -19,6 +19,7 @@ import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehou
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { importOzonFboComposition } from '@/lib/ozonFboApi';
 import { useAuth } from '@/context/AuthContext';
+import { printStorageSticker } from '@/lib/printStorageSticker';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFboApplicationCard';
 import GazelkaShippingCard from '@/components/crm/marketplaceSupplies/GazelkaShippingCard';
@@ -152,8 +153,23 @@ const MarketplaceSupplyShow = () => {
 
   const handleRemoveItem = async (itemId: number) => {
     try {
-      await removeSupplyItem(itemId);
-      toast({ title: 'Товар убран из поставки' });
+      const res = await removeSupplyItem(itemId);
+      // Вещь едет обратно на полку, а ярлык маркетплейса на ней больше не действует.
+      // Сразу печатаем стикер хранения: без него вещь попадёт на полку неопознанной,
+      // и найти её потом можно будет только перебором.
+      if (res.storageBarcode) {
+        printStorageSticker({
+          storageBarcode: res.storageBarcode,
+          title: res.product,
+          orderNumber: res.orderNumber,
+        });
+        toast({
+          title: 'Товар убран из поставки',
+          description: `Наклейте стикер хранения ${res.storageBarcode} и положите вещь на полку`,
+        });
+      } else {
+        toast({ title: 'Товар убран из поставки' });
+      }
       load();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
