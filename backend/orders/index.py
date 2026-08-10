@@ -412,8 +412,15 @@ def handler(event: dict, context) -> dict:
                     "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
                     "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                     "o.cutter_user_id, cu.full_name, o.hanger_number, "
-                    "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, o.product_barcode, "
-                    "o.marketplace_item_id, o.product_ozon_sku, u.last_hanger_number, "
+                    "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
+                    # Код товара для стикера FBO. У заказов, перенесённых из старой
+                    # системы, поля в самом заказе пустые — код лежит в привязанной
+                    # карточке товара (marketplace_items). Без этой подстановки на
+                    # терминале печаталось «Код товара не загружен — привяжите товар»,
+                    # хотя товар привязан и код в системе есть.
+                    "COALESCE(o.product_barcode, mi.barcode), "
+                    "o.marketplace_item_id, COALESCE(o.product_ozon_sku, mi.ozon_sku), "
+                    "u.last_hanger_number, "
                     "o.group_key, o.group_size, o.group_position "
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
@@ -421,6 +428,7 @@ def handler(event: dict, context) -> dict:
                     "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                     "LEFT JOIN users su ON su.id = o.sewer_user_id "
                     "LEFT JOIN users pu ON pu.id = o.packer_user_id "
+                    "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
                     "WHERE o.id = %s",
                     (int(order_id),),
                 )
@@ -527,7 +535,11 @@ def handler(event: dict, context) -> dict:
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                 "o.cutter_user_id, cu.full_name, o.hanger_number, "
                 "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
-                "o.ozon_status, o.ozon_posting_number, o.product_barcode, o.product_ozon_sku, "
+                "o.ozon_status, o.ozon_posting_number, "
+                # Код товара берём из заказа, а если там пусто (заказы из старой
+                # системы) — из привязанной карточки товара.
+                "COALESCE(o.product_barcode, mi.barcode), "
+                "COALESCE(o.product_ozon_sku, mi.ozon_sku), "
                 "o.marketplace_created_at, o.group_key, o.group_size, o.group_position, "
                 # Заказ юридического лица (B2B с OZON): цех должен видеть пометку прямо
                 # в списке, а реквизиты компании — в карточке заказа.
@@ -535,18 +547,19 @@ def handler(event: dict, context) -> dict:
                 # Реальный расход ткани на одно изделие из карточки товара: он включает
                 # запас на подгибку и потому больше «чистой» ширины. Именно эту цифру
                 # кладовщик должен видеть в сводке — столько ткани уйдёт со склада.
-                "(SELECT mim.quantity FROM marketplace_items mi "
-                " JOIN marketplace_item_materials mim ON mim.marketplace_item_id = mi.id "
+                "(SELECT mim.quantity FROM marketplace_items fmi "
+                " JOIN marketplace_item_materials mim ON mim.marketplace_item_id = fmi.id "
                 " JOIN materials mm ON mm.id = mim.material_id "
                 " JOIN material_types mmt ON mmt.id = mm.type_id "
-                " WHERE mmt.name = 'Тюль' AND mi.material = o.material "
-                "   AND mi.width = o.width AND mi.height = o.height LIMIT 1) AS fabric_per_item "
+                " WHERE mmt.name = 'Тюль' AND fmi.material = o.material "
+                "   AND fmi.width = o.width AND fmi.height = o.height LIMIT 1) AS fabric_per_item "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
                 "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                 "LEFT JOIN users su ON su.id = o.sewer_user_id "
                 "LEFT JOIN users pu ON pu.id = o.packer_user_id "
+                "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
                 # Сверху — самые давние заказы покупателей: они горят и разбираются
                 # первыми. Раньше сортировали по дате загрузки к нам и по убыванию,
                 # из-за чего список заказов шёл в обратном порядке относительно
