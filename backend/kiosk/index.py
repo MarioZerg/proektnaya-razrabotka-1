@@ -597,6 +597,35 @@ def handler(event: dict, context) -> dict:
                 # маркетплейса, и вещь до выдачи клиенту лежит на полке. Поэтому ему
                 # тоже заводим складской штрихкод и печатаем свой стикер.
                 is_individual = (order_type or '') == 'Индивидуальный'
+                # Заказ УЖЕ закрыт этой же стикеровкой. Такое бывает, когда связь моргнула
+                # или упаковщица нажала «Завершить» второй раз: работа выполнена, а окно
+                # на терминале осталось висеть и повторное нажатие упиралось в ошибку
+                # «заказ не на стикеровке». Отвечаем успехом — окно закроется, вещь уже
+                # в «Готовых». Повторных начислений не будет: ниже они не выполняются.
+                if sewing_status == 'Готовые':
+                    cur.execute(
+                        "SELECT storage_barcode FROM goods_warehouse WHERE order_id = %s",
+                        (int(order_id),),
+                    )
+                    gw_done = cur.fetchone()
+                    conn.commit()
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'success': True,
+                            'alreadyClosed': True,
+                            'isCancelled': is_cancelled,
+                            'isIndividual': (order_type or '') == 'Индивидуальный',
+                            'storageBarcode': gw_done[0] if gw_done else None,
+                            'orderNumber': order_number,
+                            'material': order_material,
+                            'width': width,
+                            'height': order_height,
+                            'product': order_product,
+                        }, ensure_ascii=False),
+                    }
+
                 if sewing_status != 'Стикеровка':
                     return {
                         'statusCode': 409,

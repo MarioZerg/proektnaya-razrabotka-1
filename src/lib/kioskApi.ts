@@ -214,6 +214,8 @@ export const closeKioskOrder = async (
   groupSize?: number | null;
   groupPosition?: number | null;
   groupLeft?: number;
+  /** Заказ уже был закрыт раньше — повторное нажатие просто закрывает окно. */
+  alreadyClosed?: boolean;
 }> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',

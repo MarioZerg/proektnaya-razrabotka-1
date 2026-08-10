@@ -181,8 +181,12 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         });
       } else {
         toast({
-          title: `Заказ ${order.orderNumber} закрыт`,
-          description: 'Отправлен в «Готовые»',
+          title: res.alreadyClosed
+            ? `Заказ ${order.orderNumber} уже был закрыт`
+            : `Заказ ${order.orderNumber} закрыт`,
+          description: res.alreadyClosed
+            ? 'Работа по нему уже принята — стикеровать заново не нужно'
+            : 'Отправлен в «Готовые»',
         });
       }
       setOrder(null);
