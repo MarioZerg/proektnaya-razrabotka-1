@@ -657,6 +657,30 @@ def assemble_posting(client_id, api_key, posting_number, debug=None):
     ), None
 
 
+def find_posting_by_barcode(client_id, api_key, barcode):
+    """Ищет отправление OZON по ШТРИХКОДУ, напечатанному на ярлыке.
+
+    На ярлыке OZON крупно печатает не номер отправления, а собственный штрихкод
+    (длинное число). Сканер считывает именно его, поэтому по нашей базе вещь не
+    находилась — там хранится номер отправления вида 12345678-0123-1.
+
+    Возвращает (номер отправления или None, текст ошибки или None).
+    """
+    status, data = ozon_post(
+        '/v2/posting/fbs/get-by-barcode', client_id, api_key, {'barcode': str(barcode)}
+    )
+    if status == 200 and isinstance(data, dict):
+        result = data.get('result') or {}
+        number = result.get('posting_number')
+        if number:
+            return number, None
+        return None, None
+    # 404/400 — OZON просто не знает такой штрихкод: это не сбой, ищем дальше сами.
+    if status in (400, 404):
+        return None, None
+    return None, f'OZON не ответил на поиск по штрихкоду (код {status})'
+
+
 def get_posting_label(cur, client_id, api_key, order_number, debug=None):
     """Маркетплейсный ярлык OZON на отправление FBS.
 
@@ -793,7 +817,8 @@ def handler(event: dict, context) -> dict:
         # В журнале должно быть видно, что заказы подтянул планировщик, а не сотрудник.
         actor_id, actor_name = None, 'Планировщик'
 
-    if action not in ('sync_orders', 'refresh_status', 'refresh_all_statuses', 'label'):
+    if action not in ('sync_orders', 'refresh_status', 'refresh_all_statuses', 'label',
+                      'find_by_barcode'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -813,6 +838,19 @@ def handler(event: dict, context) -> dict:
             return handle_refresh_status(cur, conn, client_id, api_key, body_data)
         if action == 'refresh_all_statuses':
             return handle_refresh_all(cur, conn, client_id, api_key)
+        if action == 'find_by_barcode':
+            # Кладовщик отсканировал штрихкод с ярлыка OZON — возвращаем номер
+            # отправления, по которому вещь ищется в нашей системе.
+            barcode = (body_data.get('barcode') or '').strip()
+            if not barcode:
+                return _resp(400, {'error': 'Укажите штрихкод'})
+            number, err = find_posting_by_barcode(client_id, api_key, barcode)
+            if err:
+                return _resp(502, {'error': err})
+            if not number:
+                return _resp(404, {'error': f'OZON не знает штрихкод {barcode}'})
+            return _resp(200, {'postingNumber': number})
+
         if action == 'label':
             # Маркетплейсный ярлык на отправление — печатается на терминале упаковщика.
             order_number = (body_data.get('orderNumber') or '').strip()

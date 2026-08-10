@@ -1,11 +1,54 @@
 import base64
 import json
 import os
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
 
 import boto3
 import psycopg2
+
+
+def resolve_ozon_barcode(cur, barcode):
+    """Превращает штрихкод с ярлыка OZON в номер отправления.
+
+    На ярлыке OZON крупно печатает свой штрихкод (длинное число), а не номер
+    отправления — сканер считывает именно его. В нашей базе такого кода нет, поэтому
+    вещь «не находилась», хотя лежала у кладовщика в руках. Спрашиваем номер у OZON.
+
+    Возвращает номер отправления или None, если это не штрихкод OZON.
+    """
+    if not barcode.isdigit() or len(barcode) < 12:
+        return None
+    cur.execute(
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = 'ozon'"
+    )
+    row = cur.fetchone()
+    if not row or not row[0] or not row[1]:
+        return None
+    creds = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+    client_id = (creds.get('clientId') or creds.get('client_id') or '').strip()
+    api_key = (creds.get('apiKey') or creds.get('api_key') or '').strip()
+    if not client_id or not api_key:
+        return None
+
+    req = urllib.request.Request(
+        'https://api-seller.ozon.ru/v2/posting/fbs/get-by-barcode',
+        method='POST',
+        data=json.dumps({'barcode': str(barcode)}).encode('utf-8'),
+    )
+    req.add_header('Client-Id', client_id)
+    req.add_header('Api-Key', api_key)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read().decode('utf-8') or '{}')
+        return ((data.get('result') or {}).get('posting_number')) or None
+    except Exception:
+        # OZON не знает штрихкод или не ответил — просто ищем дальше по своей базе.
+        return None
 
 
 VALID_STATUSES = ['Открытая', 'На сборке', 'Отгрузка', 'Выполнена']
@@ -1048,6 +1091,21 @@ def handler(event: dict, context) -> dict:
                     f"WHERE o.order_number = '{barcode_esc}'"
                 )
                 gw_row = cur.fetchone()
+
+                # Не нашли по номеру — возможно, отсканирован ШТРИХКОД с ярлыка OZON
+                # (на ярлыке печатается он, а не номер отправления). Спрашиваем номер
+                # у OZON и ищем повторно.
+                if not gw_row:
+                    resolved = resolve_ozon_barcode(cur, storage_barcode)
+                    if resolved:
+                        resolved_esc = resolved.replace("'", "''")
+                        cur.execute(
+                            "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
+                            "FROM orders o "
+                            "JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+                            f"WHERE o.order_number = '{resolved_esc}'"
+                        )
+                        gw_row = cur.fetchone()
                 if not gw_row:
                     return {
                         'statusCode': 404,
@@ -1102,14 +1160,26 @@ def handler(event: dict, context) -> dict:
                         }, ensure_ascii=False),
                     }
 
-                if goods_status != 'picking':
+                # Статус вещи на складе роли не играет: главное, что ярлык маркетплейса
+                # на неё наклеен (проверено выше) и она не в другой поставке. Вещь могла
+                # остаться 'in_stock' — например, её вернули из поставки и отстикеровали
+                # заново. Раньше на этом кладовщика разворачивали на склад, хотя вещь
+                # была у него в руках.
+                if goods_status == 'shipped':
                     return {
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({
-                            'error': f'Товар {order_number or ""} не отобран к подбору (статус: {goods_status}) — '
-                            'сначала отсканируйте его на складе в разделе "Сборка товара с полок"'
-                        }),
+                            'error': f'Товар {order_number or ""} уже отгружен'
+                        }, ensure_ascii=False),
+                    }
+                if goods_status == 'awaiting_shelf':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Товар {order_number or ""} ещё не положен на полку'
+                        }, ensure_ascii=False),
                     }
 
                 cur.execute(
@@ -1410,6 +1480,19 @@ def handler(event: dict, context) -> dict:
                     f"WHERE o.order_number = '{scan_esc}'"
                 )
                 gw_row = cur.fetchone()
+
+                # Отсканирован штрихкод с ярлыка OZON — узнаём номер отправления у OZON.
+                if not gw_row:
+                    resolved = resolve_ozon_barcode(cur, order_number)
+                    if resolved:
+                        resolved_esc = resolved.replace("'", "''")
+                        cur.execute(
+                            "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
+                            "FROM orders o "
+                            "JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+                            f"WHERE o.order_number = '{resolved_esc}'"
+                        )
+                        gw_row = cur.fetchone()
                 if not gw_row:
                     return {
                         'statusCode': 404,
