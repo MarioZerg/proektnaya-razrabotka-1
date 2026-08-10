@@ -301,13 +301,22 @@ def handler(event: dict, context) -> dict:
             # готовую вещь на складе. Кладовщик смотрит список и решает, что можно
             # закрыть остатками, а что уйдёт в цех.
             if params.get('picking_orders'):
+                # Реальная работа на сегодня: вещи, которые система уже подобрала под
+                # заказы и которые лежат на полке в ожидании стикера отправления.
+                # Кладовщик идёт с этим списком к стеллажу и собирает их.
+                #
+                # Просто «новые заказы» тут показывать нельзя: их сотни, но закрыть
+                # складом можно лишь те, под которые реально лежит нужная вещь.
                 cur.execute(
-                    "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
-                    "       o.created_at, o.marketplace "
-                    "FROM orders o "
-                    "WHERE o.sewing_status = 'Новый' "
-                    "  AND o.fulfilled_from_stock_id IS NULL "
-                    "ORDER BY o.created_at DESC"
+                    "SELECT gw.id, o.order_number, o.product, o.material, o.width, o.height, "
+                    "       gw.matched_at, o.marketplace, gw.storage_barcode, sh.name "
+                    "FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.reserved_order_id "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "WHERE gw.status = 'in_stock' "
+                    "  AND gw.reserved_order_id IS NOT NULL "
+                    "  AND gw.shipping_labeled_at IS NULL "
+                    "ORDER BY gw.matched_at ASC NULLS LAST, gw.id ASC"
                 )
                 orders_rows = cur.fetchall()
                 return {
@@ -323,6 +332,8 @@ def handler(event: dict, context) -> dict:
                             'height': r[5],
                             'createdAt': r[6].isoformat() if r[6] else None,
                             'marketplace': r[7],
+                            'storageBarcode': r[8],
+                            'shelfName': r[9],
                         }
                         for r in orders_rows
                     ], ensure_ascii=False),

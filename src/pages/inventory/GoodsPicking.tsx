@@ -82,6 +82,8 @@ const GoodsPicking = () => {
       (o) =>
         o.product?.toLowerCase().includes(q) ||
         o.orderNumber?.toLowerCase().includes(q) ||
+        o.storageBarcode?.toLowerCase().includes(q) ||
+        o.shelfName?.toLowerCase().includes(q) ||
         o.material?.toLowerCase().includes(q)
     );
   }, [orders, search]);
@@ -103,7 +105,7 @@ const GoodsPicking = () => {
             <div>
               <h1 className="text-xl font-bold">Товар к подбору</h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                Заказы, под которые нужно найти готовую вещь на складе
+                Вещи, подобранные под заказы: заберите с полки и наклейте стикер
               </p>
             </div>
             <div className="flex gap-2">
@@ -141,7 +143,7 @@ const GoodsPicking = () => {
             autoFocus
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Поиск: товар, номер заказа или ткань"
+            placeholder="Поиск: товар, заказ, стикер или полка"
             className="pl-9 pr-9"
           />
           {search && (
@@ -186,6 +188,7 @@ const GoodsPicking = () => {
                 <TableHeader>
                   <TableRow className="bg-primary hover:bg-primary">
                     <TableHead className="text-primary-foreground">Товар</TableHead>
+                    <TableHead className="text-primary-foreground">Полка</TableHead>
                     <TableHead className="text-primary-foreground">Дата создания</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -196,8 +199,10 @@ const GoodsPicking = () => {
                         <div className="font-medium">{o.product || '—'}</div>
                         <div className="text-xs text-muted-foreground">
                           {o.orderNumber || '—'}
+                          {o.storageBarcode ? ` · ${o.storageBarcode}` : ''}
                         </div>
                       </TableCell>
+                      <TableCell>{o.shelfName || '—'}</TableCell>
                       <TableCell className="whitespace-nowrap">
                         {formatDate(o.createdAt)}
                       </TableCell>

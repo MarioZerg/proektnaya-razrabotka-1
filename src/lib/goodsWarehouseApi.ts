@@ -162,8 +162,12 @@ export interface PickingOrder {
   material: string | null;
   width: number | null;
   height: number | null;
+  /** Когда система подобрала вещь под этот заказ. */
   createdAt: string | null;
   marketplace: string | null;
+  /** Стикер хранения на вещи и полка, где она лежит. */
+  storageBarcode?: string | null;
+  shelfName?: string | null;
 }
 
 /** Заказы, ожидающие подбора со склада: ещё не шьются и вещь под них не найдена. */
