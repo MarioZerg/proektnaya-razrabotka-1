@@ -181,15 +181,19 @@ def find_cancelled_items(cur, supply_id):
 
     Возвращает список словарей: id позиции, штрихкод хранения, номер заказа, связка.
     """
+    # Смотрим заказ, под который вещь ЕДЕТ (reserved_order_id): именно его могли
+    # отменить. Заказ, в котором вещь когда-то сшили, к отгрузке отношения не имеет.
     cur.execute(
-        "SELECT msi.id, gw.storage_barcode, o.order_number, o.group_key "
+        "SELECT msi.id, gw.storage_barcode, "
+        "COALESCE(ro.order_number, o.order_number), COALESCE(ro.group_key, o.group_key) "
         "FROM marketplace_supply_items msi "
         "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
-        "JOIN orders o ON o.id = gw.order_id "
+        "LEFT JOIN orders o ON o.id = gw.order_id "
+        "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
         "WHERE msi.supply_id = %s AND ("
-        "  o.status = 'Отменён' "
-        "  OR lower(coalesce(o.ozon_status, '')) LIKE '%%cancel%%' "
-        "  OR lower(coalesce(o.ym_status, '')) LIKE '%%cancel%%')",
+        "  COALESCE(ro.status, o.status) = 'Отменён' "
+        "  OR lower(coalesce(COALESCE(ro.ozon_status, o.ozon_status), '')) LIKE '%%cancel%%' "
+        "  OR lower(coalesce(COALESCE(ro.ym_status, o.ym_status), '')) LIKE '%%cancel%%')",
         (int(supply_id),),
     )
     direct = [
@@ -525,13 +529,27 @@ def handler(event: dict, context) -> dict:
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
 
+                # Показываем номер ТОГО заказа, под который вещь реально едет
+                # (reserved_order_id), а не заказа, в котором её когда-то сшили.
+                # Вещь с полки закрывает новый заказ покупателя: кладовщик сканирует
+                # её ярлык, а в списке видел старый номер — казалось, что товара
+                # в поставке нет, хотя он там был.
                 cur.execute(
-                    "SELECT msi.id, msi.goods_warehouse_id, o.order_number, o.product, o.material, o.width, o.height, "
-                    "gw.status, gw.shipped_at, msi.box_id, o.group_key, o.group_size, o.group_position, "
-                    "o.status, o.ozon_status, o.ym_status, gw.storage_barcode, gw.shelf_id "
+                    "SELECT msi.id, msi.goods_warehouse_id, "
+                    "COALESCE(ro.order_number, o.order_number), "
+                    "COALESCE(ro.product, o.product), COALESCE(ro.material, o.material), "
+                    "COALESCE(ro.width, o.width), COALESCE(ro.height, o.height), "
+                    "gw.status, gw.shipped_at, msi.box_id, "
+                    "COALESCE(ro.group_key, o.group_key), "
+                    "COALESCE(ro.group_size, o.group_size), "
+                    "COALESCE(ro.group_position, o.group_position), "
+                    "COALESCE(ro.status, o.status), "
+                    "COALESCE(ro.ozon_status, o.ozon_status), "
+                    "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id "
                     "FROM marketplace_supply_items msi "
                     "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
                     "WHERE msi.supply_id = %s ORDER BY msi.id",
                     (int(supply_id),),
                 )
