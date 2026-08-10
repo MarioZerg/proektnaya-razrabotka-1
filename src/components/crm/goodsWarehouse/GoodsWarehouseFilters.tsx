@@ -1,5 +1,4 @@
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -9,7 +8,6 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import type { Shelf } from '@/lib/shelvesApi';
-import { statusLabels, reasonLabels } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
 
 interface GoodsWarehouseFiltersProps {
   statusFilter: string;
@@ -19,12 +17,12 @@ interface GoodsWarehouseFiltersProps {
   materials: string[];
   widthFilter: string;
   setWidthFilter: (value: string) => void;
+  widths: number[];
   heightFilter: string;
   setHeightFilter: (value: string) => void;
+  heights: number[];
   shelfFilter: string;
   setShelfFilter: (value: string) => void;
-  reasonFilter: string;
-  setReasonFilter: (value: string) => void;
   shelves: Shelf[];
   /** Сколько товаров лежит на каждой полке (id полки → количество) — чтобы кладовщик сразу
    * видел, сколько штук идти собирать, не открывая каждую полку. */
@@ -34,6 +32,12 @@ interface GoodsWarehouseFiltersProps {
   onReset: () => void;
 }
 
+/**
+ * Пять фильтров склада товара: состояние вещи, материал, ширина, высота и полка.
+ *
+ * Ширины и высоты берём из того, что реально лежит на складе: выбрать из списка быстрее
+ * и без опечаток, чем набирать число руками.
+ */
 const GoodsWarehouseFilters = ({
   statusFilter,
   setStatusFilter,
@@ -42,12 +46,12 @@ const GoodsWarehouseFilters = ({
   materials,
   widthFilter,
   setWidthFilter,
+  widths,
   heightFilter,
   setHeightFilter,
+  heights,
   shelfFilter,
   setShelfFilter,
-  reasonFilter,
-  setReasonFilter,
   shelves,
   shelfCounts,
   noShelfCount,
@@ -56,42 +60,33 @@ const GoodsWarehouseFilters = ({
 }: GoodsWarehouseFiltersProps) => {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <div className="w-52">
+      {/* 1. Состояние вещи. «Возвраты с маркетплейса» — не статус, а происхождение:
+          вещи, приехавшие обратно от покупателя, в любом состоянии. */}
+      <div className="w-56">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Все статусы</SelectItem>
-            {Object.entries(statusLabels).map(([key, label]) => (
-              <SelectItem key={key} value={key}>
-                {label}
-              </SelectItem>
-            ))}
+            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="returns">Возвраты с маркетплейса</SelectItem>
+            <SelectItem value="awaiting_shelf">На разборе</SelectItem>
+            <SelectItem value="in_stock">На хранении</SelectItem>
+            <SelectItem value="checking">На проверке</SelectItem>
+            <SelectItem value="picking">На сборке</SelectItem>
+            <SelectItem value="lost">Утерян</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
-      <div className="w-52">
-        <Select value={reasonFilter || 'all'} onValueChange={(v) => setReasonFilter(v === 'all' ? '' : v)}>
+      {/* 2. Материал */}
+      <div className="w-48">
+        <Select
+          value={materialFilter || 'all'}
+          onValueChange={(v) => setMaterialFilter(v === 'all' ? '' : v)}
+        >
           <SelectTrigger>
-            <SelectValue placeholder="Откуда" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Любой источник</SelectItem>
-            {Object.entries(reasonLabels).map(([key, label]) => (
-              <SelectItem key={key} value={key}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="w-52">
-        <Select value={materialFilter || 'all'} onValueChange={(v) => setMaterialFilter(v === 'all' ? '' : v)}>
-          <SelectTrigger>
-            <SelectValue placeholder="Материал" />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все материалы</SelectItem>
@@ -104,34 +99,64 @@ const GoodsWarehouseFilters = ({
         </Select>
       </div>
 
-      <Input
-        type="number"
-        placeholder="Ширина"
-        value={widthFilter}
-        onChange={(e) => setWidthFilter(e.target.value)}
-        className="w-28"
-      />
-      <Input
-        type="number"
-        placeholder="Высота"
-        value={heightFilter}
-        onChange={(e) => setHeightFilter(e.target.value)}
-        className="w-28"
-      />
-
-      <div className="w-52">
-        <Select value={shelfFilter || 'all'} onValueChange={(v) => setShelfFilter(v === 'all' ? '' : v)}>
+      {/* 3. Ширина изделия */}
+      <div className="w-40">
+        <Select
+          value={widthFilter || 'all'}
+          onValueChange={(v) => setWidthFilter(v === 'all' ? '' : v)}
+        >
           <SelectTrigger>
-            <SelectValue placeholder="Полка" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все ширины</SelectItem>
+            {widths.map((w) => (
+              <SelectItem key={w} value={String(w)}>
+                {w} см
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* 4. Высота изделия */}
+      <div className="w-40">
+        <Select
+          value={heightFilter || 'all'}
+          onValueChange={(v) => setHeightFilter(v === 'all' ? '' : v)}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все высоты</SelectItem>
+            {heights.map((h) => (
+              <SelectItem key={h} value={String(h)}>
+                {h} см
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* 5. Полка. Рядом с названием — сколько вещей на ней лежит. */}
+      <div className="w-52">
+        <Select
+          value={shelfFilter || 'all'}
+          onValueChange={(v) => setShelfFilter(v === 'all' ? '' : v)}
+        >
+          <SelectTrigger>
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все полки</SelectItem>
             {noShelfCount > 0 && (
-              <SelectItem value="none">Без полки — {noShelfCount} шт</SelectItem>
+              <SelectItem value="none">Без полки ({noShelfCount})</SelectItem>
             )}
-            {shelves.map((s) => (
-              <SelectItem key={s.id} value={String(s.id)}>
-                {s.name} — {shelfCounts[s.id] || 0} шт
+            {shelves.map((sh) => (
+              <SelectItem key={sh.id} value={String(sh.id)}>
+                {sh.name}
+                {shelfCounts[sh.id] ? ` (${shelfCounts[sh.id]})` : ''}
               </SelectItem>
             ))}
           </SelectContent>
@@ -141,60 +166,9 @@ const GoodsWarehouseFilters = ({
       {activeFiltersCount > 0 && (
         <Button variant="ghost" size="sm" onClick={onReset}>
           <Icon name="X" size={14} className="mr-1" />
-          Сбросить
+          Сбросить ({activeFiltersCount})
         </Button>
       )}
-
-      {/* Быстрый выбор полки: кладовщик видит остатки по всем полкам сразу и одним нажатием
-          отбирает нужную, чтобы идти собирать именно её. Пустые полки не показываем. */}
-      <div className="flex w-full flex-wrap gap-2">
-        {shelves
-          .filter((s) => (shelfCounts[s.id] || 0) > 0)
-          .map((s) => {
-            const active = shelfFilter === String(s.id);
-            return (
-              <button
-                key={s.id}
-                onClick={() => setShelfFilter(active ? '' : String(s.id))}
-                className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition ${
-                  active
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border hover:bg-muted'
-                }`}
-              >
-                <Icon name="Layers" size={14} />
-                <span className="font-medium">{s.name}</span>
-                <span
-                  className={`rounded-full px-1.5 text-xs ${
-                    active ? 'bg-primary-foreground/20' : 'bg-muted-foreground/10'
-                  }`}
-                >
-                  {shelfCounts[s.id]}
-                </span>
-              </button>
-            );
-          })}
-        {noShelfCount > 0 && (
-          <button
-            onClick={() => setShelfFilter(shelfFilter === 'none' ? '' : 'none')}
-            className={`flex items-center gap-2 rounded-md border border-dashed px-3 py-1.5 text-sm transition ${
-              shelfFilter === 'none'
-                ? 'border-primary bg-primary text-primary-foreground'
-                : 'border-border hover:bg-muted'
-            }`}
-          >
-            <Icon name="PackageX" size={14} />
-            <span className="font-medium">Без полки</span>
-            <span
-              className={`rounded-full px-1.5 text-xs ${
-                shelfFilter === 'none' ? 'bg-primary-foreground/20' : 'bg-muted-foreground/10'
-              }`}
-            >
-              {noShelfCount}
-            </span>
-          </button>
-        )}
-      </div>
     </div>
   );
 };

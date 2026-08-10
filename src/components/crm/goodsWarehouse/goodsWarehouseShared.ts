@@ -3,10 +3,11 @@ import type { GoodsStatus, ReceiveReason } from '@/lib/goodsWarehouseApi';
 export { formatDateTime as formatDate } from '@/lib/dateUtils';
 
 export const statusLabels: Record<GoodsStatus, string> = {
-  awaiting_shelf: 'Ждёт полку',
+  awaiting_shelf: 'На разборе',
+  checking: 'На проверке',
   in_stock: 'На хранении',
   // Вещь снята с полки и отстикерована — дальше её сканируют в поставку.
-  picking: 'Ждёт отгрузки',
+  picking: 'На сборке',
   // Сшит в цехе и застикерован: лежит в контейнере, кладовщик сканирует его в поставку.
   awaiting_supply: 'На поставку',
   reserved: 'Зарезервирован',
@@ -16,6 +17,7 @@ export const statusLabels: Record<GoodsStatus, string> = {
 
 export const statusVariant: Record<GoodsStatus, 'secondary' | 'default' | 'outline' | 'destructive'> = {
   awaiting_shelf: 'destructive',
+  checking: 'secondary',
   in_stock: 'secondary',
   picking: 'default',
   awaiting_supply: 'default',

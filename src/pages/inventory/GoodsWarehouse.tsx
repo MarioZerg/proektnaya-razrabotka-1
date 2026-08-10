@@ -10,6 +10,7 @@ import {
   receiveReturn,
   returnGoodsToWorkshop,
   markGoodsLost,
+  deleteGoods,
   moveGoodsShelfByBarcode,
   type GoodsWarehouseItem,
 } from '@/lib/goodsWarehouseApi';
@@ -41,7 +42,6 @@ const GoodsWarehouse = () => {
   const [widthFilter, setWidthFilter] = useState('');
   const [heightFilter, setHeightFilter] = useState('');
   const [shelfFilter, setShelfFilter] = useState('');
-  const [reasonFilter, setReasonFilter] = useState('');
 
 
   // Принять новые возвраты
@@ -112,15 +112,28 @@ const GoodsWarehouse = () => {
     [items]
   );
 
+  // Списки ширин и высот собираем из того, что реально лежит на складе.
+  const widthsList = useMemo(
+    () => Array.from(new Set(items.map((i) => i.width).filter((w): w is number => !!w))).sort((a, b) => a - b),
+    [items]
+  );
+  const heightsList = useMemo(
+    () => Array.from(new Set(items.map((i) => i.height).filter((h): h is number => !!h))).sort((a, b) => a - b),
+    [items]
+  );
+
   const filtered = items.filter((i) => {
-    if (statusFilter !== 'all' && i.status !== statusFilter) return false;
+    // «Возвраты с маркетплейса» — не состояние, а происхождение вещи: она приехала
+    // обратно от покупателя. Показываем такие в любом состоянии.
+    if (statusFilter === 'returns') {
+      if (i.receiveReason !== 'return' && i.receiveReason !== 'cancelled') return false;
+    } else if (statusFilter !== 'all' && i.status !== statusFilter) return false;
     if (materialFilter && i.material !== materialFilter) return false;
     if (widthFilter && i.width !== Number(widthFilter)) return false;
     if (heightFilter && i.height !== Number(heightFilter)) return false;
     // 'none' — вещи без полки: приняты, но ещё не разложены.
     if (shelfFilter === 'none' ? i.shelfId != null : shelfFilter && String(i.shelfId) !== shelfFilter)
       return false;
-    if (reasonFilter && i.receiveReason !== reasonFilter) return false;
     return true;
   });
 
@@ -150,7 +163,6 @@ const GoodsWarehouse = () => {
     !!widthFilter,
     !!heightFilter,
     !!shelfFilter,
-    !!reasonFilter,
   ].filter(Boolean).length;
 
   const resetFilters = () => {
@@ -159,7 +171,6 @@ const GoodsWarehouse = () => {
     setWidthFilter('');
     setHeightFilter('');
     setShelfFilter('');
-    setReasonFilter('');
   };
 
   const handlePrintPickList = () => {
@@ -243,6 +254,22 @@ const GoodsWarehouse = () => {
     }
   };
 
+  // Удаление со склада: доступно только администратору и только для вещей на хранении.
+  // Сервер проверяет это повторно — права нельзя обойти через интерфейс.
+  const handleDeleteGoods = async (id: number) => {
+    try {
+      await deleteGoods(id, user?.id, user?.name);
+      toast({ title: 'Товар удалён со склада' });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось удалить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    }
+  };
+
   return (
     <CrmLayout>
       <div className="space-y-6">
@@ -263,6 +290,13 @@ const GoodsWarehouse = () => {
               saving={returnSaving}
               onSave={handleReceiveReturn}
             />
+            {/* Добавить товары группой — приёмка партии вручную (админ). */}
+            {isAdmin && (
+              <Button variant="outline" onClick={() => setAdminReceiveOpen(true)}>
+                <Icon name="PackagePlus" size={16} className="mr-2" />
+                Добавить товары группой
+              </Button>
+            )}
             <Button
               variant={pickingPending > 0 ? 'default' : 'outline'}
               onClick={() => navigate('/crm/inventory/goods-picking')}
@@ -272,30 +306,6 @@ const GoodsWarehouse = () => {
               {pickingPending > 0 && (
                 <span className="ml-2 rounded-full bg-background/25 px-2 text-xs">
                   {pickingPending}
-                </span>
-              )}
-            </Button>
-            <Button
-              variant={pendingShelf.length > 0 ? 'default' : 'outline'}
-              onClick={() => setPlaceOpen(true)}
-            >
-              <Icon name="PackageCheck" size={16} className="mr-2" />
-              Разложить по полкам
-              {pendingShelf.length > 0 && (
-                <span className="ml-2 rounded-full bg-background/25 px-2 text-xs">
-                  {pendingShelf.length}
-                </span>
-              )}
-            </Button>
-            <Button
-              variant={matchedFromStock.length > 0 ? 'default' : 'outline'}
-              onClick={() => setShipLabelOpen(true)}
-            >
-              <Icon name="Tags" size={16} className="mr-2" />
-              Стикеровка с полок
-              {matchedFromStock.length > 0 && (
-                <span className="ml-2 rounded-full bg-background/25 px-2 text-xs">
-                  {matchedFromStock.length}
                 </span>
               )}
             </Button>
@@ -314,10 +324,6 @@ const GoodsWarehouse = () => {
             />
             {isAdmin && (
               <>
-                <Button onClick={() => setAdminReceiveOpen(true)}>
-                  <Icon name="PackagePlus" size={16} className="mr-2" />
-                  Принять вручную
-                </Button>
                 <AdminReceiveDialog
                   open={adminReceiveOpen}
                   onOpenChange={setAdminReceiveOpen}
@@ -376,10 +382,10 @@ const GoodsWarehouse = () => {
           materials={materialsList}
           widthFilter={widthFilter}
           setWidthFilter={setWidthFilter}
+          widths={widthsList}
           heightFilter={heightFilter}
           setHeightFilter={setHeightFilter}
-          reasonFilter={reasonFilter}
-          setReasonFilter={setReasonFilter}
+          heights={heightsList}
           shelfCounts={shelfCounts}
           noShelfCount={noShelfCount}
           shelfFilter={shelfFilter}
@@ -412,6 +418,8 @@ const GoodsWarehouse = () => {
           items={filtered}
           onReturnToWorkshop={handleReturn}
           onMarkLost={handleMarkLost}
+          isAdmin={isAdmin}
+          onDelete={handleDeleteGoods}
         />
       </div>
     </CrmLayout>

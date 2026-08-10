@@ -4,6 +4,15 @@ import os
 import psycopg2
 
 
+def is_admin(cur, actor_id) -> bool:
+    """Роль берём из базы: в запросе её можно подменить, в базе — нет."""
+    if not actor_id:
+        return False
+    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+    row = cur.fetchone()
+    return bool(row and row[0] == 'admin')
+
+
 def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
     """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit()."""
     cur.execute(
@@ -821,6 +830,45 @@ def handler(event: dict, context) -> dict:
                         ensure_ascii=False,
                     ),
                 }
+
+            if action == 'delete_goods':
+                # Удаление записи со склада. Доступно ТОЛЬКО администратору и только для
+                # вещей на хранении: в остальных состояниях вещь в работе (едет в поставку,
+                # ждёт разбора), и удаление порвало бы связь с заказом.
+                item_id = body_data.get('id')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                if not is_admin(cur, actor_id):
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Удалять товар со склада может только администратор'}, ensure_ascii=False),
+                    }
+                cur.execute("SELECT status FROM goods_warehouse WHERE id = %s", (int(item_id),))
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Запись не найдена'})}
+                if row[0] != 'in_stock':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Удалить можно только товар на хранении'}, ensure_ascii=False),
+                    }
+                cur.execute(
+                    "SELECT 1 FROM marketplace_supply_items WHERE goods_warehouse_id = %s LIMIT 1",
+                    (int(item_id),),
+                )
+                if cur.fetchone():
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Товар добавлен в поставку — сначала уберите его оттуда'}, ensure_ascii=False),
+                    }
+                log_action(cur, actor_id, actor_name, 'delete_goods', 'goods_warehouse', item_id,
+                           f'Удалил товар #{item_id} со склада')
+                cur.execute("DELETE FROM goods_warehouse WHERE id = %s", (int(item_id),))
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'mark_lost':
                 item_id = body_data.get('id')

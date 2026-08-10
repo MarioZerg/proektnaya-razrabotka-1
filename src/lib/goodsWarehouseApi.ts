@@ -1,7 +1,10 @@
 const GOODS_WAREHOUSE_URL = 'https://functions.poehali.dev/370fdff8-7cae-4cc7-a853-b664f3da61cf';
 
 export type GoodsStatus =
+  /** Принят, но ещё не разобран и не разложен по полкам. */
   | 'awaiting_shelf'
+  /** Возврат с маркетплейса проверяют: годен ли товар к повторной продаже. */
+  | 'checking'
   | 'in_stock'
   | 'picking'
   /** Сшит в цехе и застикерован ярлыком маркетплейса: лежит в контейнере, ждёт поставки. */
@@ -150,6 +153,10 @@ export const cancelPicking = (id: number) => postAction({ action: 'cancel_pickin
 
 export const markGoodsLost = (id: number, reason: string) =>
   postAction({ action: 'mark_lost', id, reason });
+
+/** Удалить запись со склада. Только администратор и только для вещей на хранении. */
+export const deleteGoods = (id: number, actorId?: number, actorName?: string) =>
+  postAction({ action: 'delete_goods', id, actorId, actorName });
 
 /** Вещь испорчена: списываем её со склада, а заказ возвращаем в производство — сошьют заново. */
 export const sendGoodsToSewing = (id: number, reason: string) =>
