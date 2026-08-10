@@ -39,10 +39,14 @@ const Finance = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [userFilter, setUserFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  // Период начислений: пусто — показываем все, как раньше.
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [operationsPage, setOperationsPage] = useState(1);
 
   const [operations, setOperations] = useState<SalaryOperation[]>([]);
   const [totalPages, setTotalPages] = useState(1);
+  const [filteredTotal, setFilteredTotal] = useState(0);
   const [totalToAccrue, setTotalToAccrue] = useState(0);
   const [totalDebts, setTotalDebts] = useState(0);
   const [period1Total, setPeriod1Total] = useState(0);
@@ -84,16 +88,25 @@ const Finance = () => {
       .finally(() => setMyLoading(false));
   }, [user?.role, user?.id]);
 
+  // Сменили фильтр — возвращаемся на первую страницу: иначе можно оказаться на
+  // десятой странице выборки, где записей уже нет, и увидеть пустую таблицу.
+  useEffect(() => {
+    setOperationsPage(1);
+  }, [userFilter, typeFilter, dateFrom, dateTo]);
+
   const loadOperations = () => {
     setOperationsLoading(true);
     fetchSalarySummary({
       userId: userFilter !== 'all' ? Number(userFilter) : undefined,
       type: typeFilter !== 'all' ? typeFilter : undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
       page: operationsPage,
     })
       .then((data) => {
         setOperations(data.operations);
         setTotalPages(data.totalPages);
+        setFilteredTotal(data.filteredTotal);
         setTotalToAccrue(data.totalToAccrue);
         setTotalDebts(data.totalDebts);
         setPeriod1Total(data.period1Total);
@@ -123,7 +136,7 @@ const Finance = () => {
     if (user?.role !== 'admin') return;
     loadOperations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userFilter, typeFilter, operationsPage, user?.role]);
+  }, [userFilter, typeFilter, dateFrom, dateTo, operationsPage, user?.role]);
 
   useEffect(() => {
     if (user?.role !== 'admin') return;
@@ -291,11 +304,30 @@ const Finance = () => {
               setUserFilter={setUserFilter}
               typeFilter={typeFilter}
               setTypeFilter={setTypeFilter}
+              dateFrom={dateFrom}
+              setDateFrom={setDateFrom}
+              dateTo={dateTo}
+              setDateTo={setDateTo}
               savingAccrual={savingAccrual}
               onManualAccrual={handleManualAccrual}
               onPenalty={handlePenalty}
               onPayout={handlePayout}
             />
+            {/* Итог по выбранному фильтру: главный смысл фильтра по датам — увидеть,
+                сколько сотрудник заработал за период. Считается по всем записям
+                выборки, а не по видимой странице. */}
+            {(userFilter !== 'all' || typeFilter !== 'all' || dateFrom || dateTo) &&
+              !operationsLoading && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">
+                    Начислено по выбранному фильтру
+                    {userFilter !== 'all' &&
+                      `: ${employees.find((e) => String(e.id) === userFilter)?.fullName || ''}`}
+                  </span>
+                  <span className="text-lg font-bold">{formatMoney(filteredTotal)}</span>
+                </div>
+              )}
+
             <OperationsTable
               operations={operations}
               loading={operationsLoading}

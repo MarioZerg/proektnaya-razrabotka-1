@@ -53,17 +53,24 @@ export interface SalarySummary {
   totalDebts: number;
   period1Total: number;
   period2Total: number;
+  /** Сумма по ВСЕМ записям текущего фильтра (не только видимой страницы). */
+  filteredTotal: number;
 }
 
 export const fetchSalarySummary = async (filters?: {
   userId?: number;
   type?: string;
   page?: number;
+  /** Период начислений: по дате, ЗА которую начислено. */
+  dateFrom?: string;
+  dateTo?: string;
 }): Promise<SalarySummary> => {
   const params = new URLSearchParams();
   if (filters?.userId) params.set('userId', String(filters.userId));
   if (filters?.type) params.set('type', filters.type);
   if (filters?.page) params.set('page', String(filters.page));
+  if (filters?.dateFrom) params.set('dateFrom', filters.dateFrom);
+  if (filters?.dateTo) params.set('dateTo', filters.dateTo);
   const qs = params.toString();
   const res = await fetch(qs ? `${SALARY_URL}?${qs}` : SALARY_URL);
   const data = res.ok ? await res.json() : {};
@@ -78,6 +85,7 @@ export const fetchSalarySummary = async (filters?: {
     totalDebts: data.totalDebts ?? 0,
     period1Total: data.period1Total ?? 0,
     period2Total: data.period2Total ?? 0,
+    filteredTotal: data.filteredTotal ?? 0,
   };
 };
 

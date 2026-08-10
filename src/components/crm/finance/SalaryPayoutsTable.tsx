@@ -11,6 +11,8 @@ import Icon from '@/components/ui/icon';
 import type { SalaryPayout } from '@/lib/salaryApi';
 import { formatDateTime, formatMoney } from '@/components/crm/finance/financeShared';
 import ConfirmDeleteButton from '@/components/crm/finance/ConfirmDeleteButton';
+import TablePager from '@/components/crm/finance/TablePager';
+import { useTablePage } from '@/components/crm/finance/useTablePage';
 
 interface SalaryPayoutsTableProps {
   payouts: SalaryPayout[];
@@ -19,6 +21,8 @@ interface SalaryPayoutsTableProps {
 }
 
 const SalaryPayoutsTable = ({ payouts, loading, onDelete }: SalaryPayoutsTableProps) => {
+  const { visible, page, setPage, totalPages, total } = useTablePage(payouts);
+
   return (
     <Card className="border-border shadow-none">
       <CardHeader>
@@ -51,7 +55,7 @@ const SalaryPayoutsTable = ({ payouts, loading, onDelete }: SalaryPayoutsTablePr
                   </TableCell>
                 </TableRow>
               ) : (
-                payouts.map((p) => (
+                visible.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell>{p.id}</TableCell>
                     <TableCell className="whitespace-nowrap">{formatDateTime(p.paidAt)}</TableCell>
@@ -70,6 +74,7 @@ const SalaryPayoutsTable = ({ payouts, loading, onDelete }: SalaryPayoutsTablePr
             </TableBody>
           </Table>
         </div>
+        <TablePager page={page} totalPages={totalPages} total={total} setPage={setPage} />
       </CardContent>
     </Card>
   );

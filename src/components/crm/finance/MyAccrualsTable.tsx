@@ -14,6 +14,8 @@ import {
   formatDate,
   formatMoney,
 } from '@/components/crm/finance/financeShared';
+import TablePager from '@/components/crm/finance/TablePager';
+import { useTablePage } from '@/components/crm/finance/useTablePage';
 
 interface MyAccrualsTableProps {
   accruals: MyAccrual[];
@@ -21,6 +23,9 @@ interface MyAccrualsTableProps {
 }
 
 const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
+  // Один и тот же набор строк для телефона (карточки) и компьютера (таблица).
+  const { visible, page, setPage, totalPages, total } = useTablePage(accruals);
+
   return (
     <>
     {/* Свою зарплату сотрудники смотрят в основном с телефона — там карточки. */}
@@ -33,7 +38,7 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
       ) : accruals.length === 0 ? (
         <p className="text-sm text-muted-foreground">Начислений пока нет</p>
       ) : (
-        accruals.map((a) => (
+        visible.map((a) => (
           <div key={a.id} className="rounded-md border border-border p-3">
             <div className="flex items-start justify-between gap-2">
               <span className="text-sm font-medium">
@@ -63,6 +68,7 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
           </div>
         ))
       )}
+      <TablePager page={page} totalPages={totalPages} total={total} setPage={setPage} />
     </div>
 
     <div className="hidden rounded-md border border-border md:block">
@@ -92,7 +98,7 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
               </TableCell>
             </TableRow>
           ) : (
-            accruals.map((a) => (
+            visible.map((a) => (
               <TableRow key={a.id}>
                 <TableCell className="text-xs">{accrualTypeLabels[a.type] || a.type}</TableCell>
                 <TableCell className="font-mono-tech text-xs">{a.orderNumber || '—'}</TableCell>
@@ -122,6 +128,7 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
           )}
         </TableBody>
       </Table>
+      <TablePager page={page} totalPages={totalPages} total={total} setPage={setPage} />
     </div>
     </>
   );

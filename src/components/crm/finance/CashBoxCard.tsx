@@ -10,6 +10,8 @@ import {
 import Icon from '@/components/ui/icon';
 import type { CashBoxTransaction } from '@/lib/salaryApi';
 import { formatDateTime, formatMoney } from '@/components/crm/finance/financeShared';
+import TablePager from '@/components/crm/finance/TablePager';
+import { useTablePage } from '@/components/crm/finance/useTablePage';
 import CashDepositDialog from '@/components/crm/finance/CashDepositDialog';
 
 interface CashBoxCardProps {
@@ -21,6 +23,8 @@ interface CashBoxCardProps {
 }
 
 const CashBoxCard = ({ balance, transactions, loading, saving, onDeposit }: CashBoxCardProps) => {
+  const { visible, page, setPage, totalPages, total } = useTablePage(transactions);
+
   return (
     <Card className="border-border shadow-none">
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -60,7 +64,7 @@ const CashBoxCard = ({ balance, transactions, loading, saving, onDeposit }: Cash
                       </TableCell>
                     </TableRow>
                   ) : (
-                    transactions.map((t) => (
+                    visible.map((t) => (
                       <TableRow key={t.id}>
                         <TableCell className="whitespace-nowrap">{formatDateTime(t.createdAt)}</TableCell>
                         <TableCell className={`whitespace-nowrap ${t.amount < 0 ? 'text-destructive' : 'text-emerald-600'}`}>
@@ -76,6 +80,7 @@ const CashBoxCard = ({ balance, transactions, loading, saving, onDeposit }: Cash
                 </TableBody>
               </Table>
             </div>
+            <TablePager page={page} totalPages={totalPages} total={total} setPage={setPage} />
           </>
         )}
       </CardContent>

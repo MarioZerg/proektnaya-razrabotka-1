@@ -5,6 +5,15 @@ from datetime import date
 import psycopg2
 
 
+def _esc_date(value: str) -> str:
+    """Проверяет дату из фильтра: ждём строго ГГГГ-ММ-ДД.
+
+    Дата подставляется в запрос текстом, поэтому пропускаем только настоящую дату —
+    ничего постороннего в запрос попасть не должно.
+    """
+    return date.fromisoformat(str(value)[:10]).isoformat()
+
+
 def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
     """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit()."""
     cur.execute(
@@ -54,6 +63,9 @@ def handler(event: dict, context) -> dict:
                                                в СЛЕДУЮЩЕМ месяце 10 и 25 числа), список последних
                                                операций
         ?userId=1                            - фильтр по сотруднику
+        ?dateFrom=2026-08-01&dateTo=2026-08-15 - период начислений (по дате, ЗА которую
+                                               начислено). Отдаёт filteredTotal — сумму
+                                               по всем записям фильтра, не только страницы
         ?type=salary|manual|penalty|all       - фильтр по типу начисления
         ?page=1                              - пагинация (по 50 записей)
     GET  /?my=1&userId=1                     - для сотрудника: его начисления (с указанием
@@ -359,7 +371,7 @@ def handler(event: dict, context) -> dict:
             user_id_filter = params.get('userId')
             type_filter = params.get('type')
             page = int(params.get('page') or 1)
-            per_page = 50
+            per_page = 15
             offset = (page - 1) * per_page
 
             conditions = []
@@ -368,6 +380,24 @@ def handler(event: dict, context) -> dict:
             if type_filter and type_filter != 'all':
                 type_esc = type_filter.replace("'", "''")
                 conditions.append(f"sa.type = '{type_esc}'")
+
+            # Период начислений: смотрят «сколько человек заработал с 1 по 15 число».
+            # Фильтруем по дате, ЗА которую начислено (accrued_for), а не по дате записи:
+            # начисление могли внести позже, и по дате записи оно попало бы в чужой период.
+            date_from = params.get('dateFrom')
+            date_to = params.get('dateTo')
+            try:
+                if date_from:
+                    conditions.append(f"sa.accrued_for >= '{_esc_date(date_from)}'")
+                if date_to:
+                    conditions.append(f"sa.accrued_for <= '{_esc_date(date_to)}'")
+            except ValueError:
+                return {
+                    'statusCode': 400,
+                    'headers': headers,
+                    'body': json.dumps({'error': 'Неверная дата периода'}, ensure_ascii=False),
+                }
+
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
             cur.execute(f"SELECT COUNT(*) FROM salary_accruals sa {where_clause}")
@@ -455,6 +485,14 @@ def handler(event: dict, context) -> dict:
                 (period2_from, period2_to),
             )
             period2_total = float(cur.fetchone()[0])
+
+            # Итог по выбранным фильтрам: сколько начислено за период конкретному
+            # сотруднику. Считается по ВСЕМ подходящим записям, а не только по текущей
+            # странице, иначе цифра менялась бы при листании.
+            cur.execute(
+                f"SELECT COALESCE(SUM(sa.amount), 0) FROM salary_accruals sa {where_clause}"
+            )
+            filtered_total = float(cur.fetchone()[0])
         finally:
             conn.close()
 
@@ -465,6 +503,7 @@ def handler(event: dict, context) -> dict:
                 'operations': operations,
                 'totalCount': total_count,
                 'totalPages': max(1, (total_count + per_page - 1) // per_page),
+                'filteredTotal': filtered_total,
                 'totalToAccrue': total_to_accrue,
                 'totalDebts': total_debts,
                 'period1Total': period1_total,

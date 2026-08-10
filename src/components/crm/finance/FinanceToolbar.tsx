@@ -6,6 +6,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import Icon from '@/components/ui/icon';
 import type { Employee } from '@/lib/usersApi';
 import ManualAccrualDialog from '@/components/crm/finance/ManualAccrualDialog';
@@ -17,6 +19,10 @@ interface FinanceToolbarProps {
   setUserFilter: (value: string) => void;
   typeFilter: string;
   setTypeFilter: (value: string) => void;
+  dateFrom: string;
+  setDateFrom: (value: string) => void;
+  dateTo: string;
+  setDateTo: (value: string) => void;
   savingAccrual: boolean;
   onManualAccrual: (userId: number, amount: number, description: string) => Promise<void>;
   onPenalty: (userId: number, amount: number, description: string) => Promise<void>;
@@ -29,6 +35,10 @@ const FinanceToolbar = ({
   setUserFilter,
   typeFilter,
   setTypeFilter,
+  dateFrom,
+  setDateFrom,
+  dateTo,
+  setDateTo,
   savingAccrual,
   onManualAccrual,
   onPenalty,
@@ -37,6 +47,30 @@ const FinanceToolbar = ({
   const handleReset = () => {
     setUserFilter('all');
     setTypeFilter('all');
+    setDateFrom('');
+    setDateTo('');
+  };
+
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+  /** Быстрые периоды: за ними обращаются чаще всего, вручную даты набирать долго. */
+  const setPeriod = (kind: 'month' | 'prevMonth' | 'first' | 'second') => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    if (kind === 'month') {
+      setDateFrom(iso(new Date(y, m, 1)));
+      setDateTo(iso(new Date(y, m + 1, 0)));
+    } else if (kind === 'prevMonth') {
+      setDateFrom(iso(new Date(y, m - 1, 1)));
+      setDateTo(iso(new Date(y, m, 0)));
+    } else if (kind === 'first') {
+      setDateFrom(iso(new Date(y, m, 1)));
+      setDateTo(iso(new Date(y, m, 15)));
+    } else {
+      setDateFrom(iso(new Date(y, m, 16)));
+      setDateTo(iso(new Date(y, m + 1, 0)));
+    }
   };
 
   return (
@@ -80,9 +114,45 @@ const FinanceToolbar = ({
           </SelectContent>
         </Select>
 
+        <div className="flex items-end gap-2">
+          <div>
+            <Label className="mb-1 block text-xs text-muted-foreground">Начислено с</Label>
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-[160px]"
+            />
+          </div>
+          <div>
+            <Label className="mb-1 block text-xs text-muted-foreground">по</Label>
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-[160px]"
+            />
+          </div>
+        </div>
+
         <Button variant="ghost" onClick={handleReset}>
           <Icon name="X" size={14} className="mr-1" />
           Сбросить
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={() => setPeriod('month')}>
+          Текущий месяц
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setPeriod('prevMonth')}>
+          Прошлый месяц
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setPeriod('first')}>
+          1–15 число
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setPeriod('second')}>
+          16–конец месяца
         </Button>
       </div>
     </div>
