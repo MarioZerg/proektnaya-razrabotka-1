@@ -97,9 +97,9 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         if (mp === 'WB') {
           printLabelPng(await fetchWbLabel(order.orderNumber), 'Стикер WB');
         } else if (mp === 'OZON') {
-          printLabelPdf(await fetchOzonLabel(order.orderNumber), 'Ярлык OZON');
+          await printLabelPdf(await fetchOzonLabel(order.orderNumber), 'Ярлык OZON');
         } else if (mp === 'YANDEX') {
-          printLabelPdf(await fetchYandexLabel(order.orderNumber), 'Ярлык Яндекс Маркета');
+          await printLabelPdf(await fetchYandexLabel(order.orderNumber), 'Ярлык Яндекс Маркета');
         } else {
           printFboSticker(await fetchOrderDetail(order.id));
         }

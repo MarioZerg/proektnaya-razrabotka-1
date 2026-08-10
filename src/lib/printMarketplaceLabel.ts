@@ -42,30 +42,51 @@ export const printLabelPng = (pngBase64: string, title = 'Стикер отпр�
   openPrintWindow(title, `<img src="${src}" alt="${title}" />`);
 };
 
-/** Ярлык-PDF (OZON и Яндекс отдают PDF в base64). */
-export const printLabelPdf = (pdfBase64: string, title = 'Ярлык отправления') => {
+/**
+ * Ярлык-PDF (OZON и Яндекс отдают PDF в base64).
+ *
+ * PDF не отдаём встроенному просмотрщику браузера: он рисует вокруг страницы свою
+ * серо-чёрную рамку, вписывает лист с полями и пересчитывает всё в экранном
+ * разрешении — из-за этого название города на ярлыке OZON расплывалось в пиксели,
+ * а сам ярлык не занимал всю наклейку.
+ *
+ * Вместо этого страницу рисуем сами в картинку с большим запасом по разрешению
+ * (300 dpi) и растягиваем ровно на 58×40 мм. Никакой рамки, текст чёткий,
+ * ярлык на всю площадь наклейки.
+ */
+export const printLabelPdf = async (pdfBase64: string, title = 'Ярлык отправления') => {
   if (!pdfBase64) return;
-  const src = pdfBase64.startsWith('data:')
-    ? pdfBase64
-    : `data:application/pdf;base64,${pdfBase64}`;
-  // Ярлык печатаем прямо с терминала: встроенный просмотрщик PDF отдаёт файл на принтер
-  // как есть, сохраняя исходный размер страницы. Открывается обычный диалог печати —
-  // упаковщица не уходит с экрана заказа.
-  const html = `<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <title>${title}</title>
-  <style>
-    @page { size: 58mm 40mm; margin: 0; }
-    html, body { margin: 0; padding: 0; height: 100%; }
-    iframe { width: 100%; height: 100%; border: 0; }
-  </style>
-</head>
-<body><iframe src="${src}"></iframe></body>
-</html>`;
+  const base64 = pdfBase64.startsWith('data:')
+    ? pdfBase64.slice(pdfBase64.indexOf(',') + 1)
+    : pdfBase64;
 
-  printHtmlInIframe(html);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+
+  const pdfjs = await import('pdfjs-dist');
+  // Воркер берём из той же сборки — иначе pdf.js полезет за файлом в интернет,
+  // а терминал в цехе может работать без внешнего доступа.
+  const workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
+  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+
+  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+  const page = await pdf.getPage(1);
+
+  // 300 dpi: пункты PDF (1/72 дюйма) переводим в пиксели печати.
+  const scale = 300 / 72;
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(viewport.width);
+  canvas.height = Math.round(viewport.height);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  // Белая подложка: в PDF фон прозрачный, и без неё на печати вылезает чёрный фон.
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport }).promise;
+
+  openPrintWindow(title, `<img src="${canvas.toDataURL('image/png')}" alt="${title}" />`);
 };
 
 /**

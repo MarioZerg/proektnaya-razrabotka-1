@@ -33,11 +33,11 @@ export const printOrderMarketplaceLabel = async (order: {
     return;
   }
   if (mp === 'OZON') {
-    printLabelPdf(await fetchOzonLabel(order.orderNumber), 'Ярлык OZON');
+    await printLabelPdf(await fetchOzonLabel(order.orderNumber), 'Ярлык OZON');
     return;
   }
   if (mp === 'YANDEX' || mp === 'YANDEX_MARKET') {
-    printLabelPdf(await fetchYandexLabel(order.orderNumber), 'Ярлык Яндекс Маркета');
+    await printLabelPdf(await fetchYandexLabel(order.orderNumber), 'Ярлык Яндекс Маркета');
     return;
   }
   printFboSticker(await fetchOrderDetail(order.id));
