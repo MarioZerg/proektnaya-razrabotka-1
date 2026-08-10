@@ -69,7 +69,15 @@ const MarketplaceSupplyShow = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchSupplyDetail(supplyId), fetchGoodsWarehouse('picking')])
+    // «Готово к сборке» — это вещи, застикерованные и ждущие отгрузки: сшитые в цехе
+    // (awaiting_supply, лежат в контейнере) и снятые с полок (picking).
+    Promise.all([
+      fetchSupplyDetail(supplyId),
+      Promise.all([
+        fetchGoodsWarehouse('picking'),
+        fetchGoodsWarehouse('awaiting_supply'),
+      ]).then(([picked, ready]) => [...picked, ...ready]),
+    ])
       .then(([data, goods]) => {
         setSupply(data);
         setReadyGoods(goods);

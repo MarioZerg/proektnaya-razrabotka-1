@@ -724,6 +724,22 @@ def handler(event: dict, context) -> dict:
                             "VALUES (%s, 'awaiting_shelf', %s, %s)",
                             (int(order_id), storage_barcode, reason),
                         )
+                elif (order_type or '') == 'FBS':
+                    # Обычный FBS-заказ: вещь сшита, застикерована ярлыком маркетплейса и
+                    # лежит в контейнере — ждёт, когда кладовщик отсканирует её в поставку.
+                    # Заводим складскую запись в статусе 'awaiting_supply': она не на полке,
+                    # а «на поставку». Раньше записи не было совсем, и сканирование ярлыка
+                    # в поставку падало с «не найдено среди собранных с полок».
+                    cur.execute(
+                        "SELECT id FROM goods_warehouse WHERE order_id = %s", (int(order_id),)
+                    )
+                    if not cur.fetchone():
+                        cur.execute(
+                            "INSERT INTO goods_warehouse (order_id, status, storage_barcode, "
+                            "receive_reason, shipping_labeled_at) "
+                            "VALUES (%s, 'awaiting_supply', %s, 'fbs_ready', now())",
+                            (int(order_id), next_storage_barcode(cur)),
+                        )
 
                 # Швея получает фиксированную ставку за штуку по ширине товара — именно сейчас,
                 # когда заказ реально дошит и прошёл стикеровку (не раньше). Ставка берётся из

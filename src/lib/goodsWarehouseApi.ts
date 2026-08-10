@@ -4,6 +4,8 @@ export type GoodsStatus =
   | 'awaiting_shelf'
   | 'in_stock'
   | 'picking'
+  /** Сшит в цехе и застикерован ярлыком маркетплейса: лежит в контейнере, ждёт поставки. */
+  | 'awaiting_supply'
   | 'reserved'
   | 'shipped'
   | 'lost';

@@ -1126,8 +1126,10 @@ def handler(event: dict, context) -> dict:
                         cur.execute(
                             "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
                             "FROM orders o "
-                            "JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
-                            f"WHERE o.order_number = '{resolved_esc}'"
+                            "JOIN goods_warehouse gw "
+                            "  ON gw.id = o.fulfilled_from_stock_id OR gw.order_id = o.id "
+                            f"WHERE o.order_number = '{resolved_esc}' "
+                            "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
                         )
                         gw_row = cur.fetchone()
                 if not gw_row:
@@ -1500,8 +1502,10 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
                     "FROM orders o "
-                    "JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
-                    f"WHERE o.order_number = '{scan_esc}'"
+                    "JOIN goods_warehouse gw "
+                    "  ON gw.id = o.fulfilled_from_stock_id OR gw.order_id = o.id "
+                    f"WHERE o.order_number = '{scan_esc}' "
+                    "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
                 )
                 gw_row = cur.fetchone()
 
@@ -1513,8 +1517,10 @@ def handler(event: dict, context) -> dict:
                         cur.execute(
                             "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
                             "FROM orders o "
-                            "JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
-                            f"WHERE o.order_number = '{resolved_esc}'"
+                            "JOIN goods_warehouse gw "
+                            "  ON gw.id = o.fulfilled_from_stock_id OR gw.order_id = o.id "
+                            f"WHERE o.order_number = '{resolved_esc}' "
+                            "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
                         )
                         gw_row = cur.fetchone()
                 if not gw_row:

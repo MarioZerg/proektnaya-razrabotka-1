@@ -7,6 +7,8 @@ export const statusLabels: Record<GoodsStatus, string> = {
   in_stock: 'На хранении',
   // Вещь снята с полки и отстикерована — дальше её сканируют в поставку.
   picking: 'Ждёт отгрузки',
+  // Сшит в цехе и застикерован: лежит в контейнере, кладовщик сканирует его в поставку.
+  awaiting_supply: 'На поставку',
   reserved: 'Зарезервирован',
   shipped: 'Отгружен',
   lost: 'Утерян',
@@ -16,6 +18,7 @@ export const statusVariant: Record<GoodsStatus, 'secondary' | 'default' | 'outli
   awaiting_shelf: 'destructive',
   in_stock: 'secondary',
   picking: 'default',
+  awaiting_supply: 'default',
   reserved: 'default',
   shipped: 'outline',
   lost: 'destructive',
