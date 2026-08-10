@@ -291,14 +291,17 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
     if not wb_supply_id:
         return _resp(409, {'error': 'Поставка ещё не создана на стороне WB'})
 
-    # Ищем готовый (после стикеровки) FBS-заказ WB по номеру заказа.
+    # Ищем готовый (после стикеровки) FBS-заказ WB. Кладовщик может отсканировать как
+    # номер сборочного задания, так и ШТРИХКОД С ЯРЛЫКА WB — на стикере печатается
+    # именно он. Ищем сразу по обоим, чтобы человек не разбирался, что у него в руках.
     cur.execute(
         "SELECT o.id, o.wb_order_id, o.sewing_status, o.product, o.fulfilled_from_stock_id, "
         "gw.shipping_labeled_at "
         "FROM orders o "
         "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
-        "WHERE o.order_number = %s AND o.marketplace = 'WB' AND o.order_type = 'FBS'",
-        (order_number,),
+        "WHERE (o.order_number = %s OR o.wb_sticker_barcode = %s) "
+        "AND o.marketplace = 'WB' AND o.order_type = 'FBS'",
+        (order_number, order_number),
     )
     o_row = cur.fetchone()
     if not o_row:
@@ -908,8 +911,28 @@ def get_order_sticker(cur, api_key, use_sandbox, order_number):
         return f'WB не отдал стикер (код {status}): {str(data)[:250]}', None
     stickers = data.get('stickers') or []
     if not stickers:
-        return 'WB не вернул стикер для этого заказа', None
-    return None, stickers[0].get('file')
+        # Показываем, что именно ответил WB: обычно это значит, что задание ещё не
+        # в поставке — WB рисует стикер только для собранных отправлений.
+        return (
+            f'WB не вернул стикер для этого заказа. Ответ WB: {str(data)[:200]}'
+        ), None
+
+    # Запоминаем ШТРИХКОД с ярлыка: на стикере печатается он, а не номер сборочного
+    # задания. Кладовщик сканирует ярлык в поставку — по этому коду вещь и находится.
+    st = stickers[0]
+    sticker_code = (st.get('barcode') or '').strip()
+    if not sticker_code:
+        # У части складов WB отдаёт код кусками partA/partB — собираем из них.
+        part_a = str(st.get('partA') or '').strip()
+        part_b = str(st.get('partB') or '').strip()
+        sticker_code = f'{part_a}{part_b}' if (part_a or part_b) else ''
+    if sticker_code:
+        cur.execute(
+            "UPDATE orders SET wb_sticker_barcode = %s WHERE order_number = %s",
+            (sticker_code[:60], order_number),
+        )
+
+    return None, st.get('file')
 
 
 def handler(event: dict, context) -> dict:
@@ -1031,16 +1054,18 @@ def handler(event: dict, context) -> dict:
             order_number = (body_data.get('orderNumber') or '').strip()
             if not order_number:
                 return _resp(400, {'error': 'Укажите номер заказа'})
-            err, png_b64 = get_order_sticker(cur, api_key, use_sandbox, order_number)
-            if err:
-                return _resp(502, {'error': err})
-            # Печать стикера означает, что вещь собрана — сразу кладём её в свободную
-            # поставку. Если с поставкой что-то не так, стикер всё равно печатаем:
-            # упаковщица не должна стоять из-за проблем на стороне WB, а заказ
-            # кладовщик добавит сканированием как раньше.
+            # ПОРЯДОК ВАЖЕН: WB рисует стикер только для задания, которое уже лежит
+            # в поставке. Поэтому сначала кладём вещь в свободную поставку, и лишь
+            # затем просим ярлык — иначе WB отвечает пустым списком стикеров.
             supply_warning = add_order_to_open_supply(
                 cur, conn, api_key, use_sandbox, order_number
             )
+            err, png_b64 = get_order_sticker(cur, api_key, use_sandbox, order_number)
+            # Связь с поставкой сохраняем в любом случае: на стороне WB задание уже
+            # добавлено, и откат оставил бы наши данные расходиться с маркетплейсом.
+            conn.commit()
+            if err:
+                return _resp(502, {'error': err})
             return _resp(200, {
                 'orderNumber': order_number,
                 'pngBase64': png_b64,
