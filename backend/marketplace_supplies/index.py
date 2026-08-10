@@ -269,11 +269,11 @@ def handler(event: dict, context) -> dict:
         - добавляет товары со склада в поставку, резервирует их (status='reserved')
         - используется для FBS (выбор товаров чекбоксами из списка)
     POST /  { action: 'scan_order', supplyId, orderNumber }
-        - добавляет товар в поставку по ШТРИХКОДУ ХРАНЕНИЯ (параметр orderNumber по факту
-          принимает storage_barcode из goods_warehouse — оставлено для совместимости фронтенда);
-          используется для FBS: кладовщик заранее отбирает нужные товары на складе (раздел
-          "Товар к подбору", action 'start_picking', статус picking), а здесь сканирует стикер
-          хранения каждого отобранного товара, чтобы добавить его в конкретную поставку и
+        - добавляет товар в поставку по ЯРЛЫКУ МАРКЕТПЛЕЙСА (параметр orderNumber по факту
+          принимает номер отправления — оставлено для совместимости фронтенда);
+          используется для FBS: кладовщик находит вещь на складе и клеит на неё ярлык
+          маркетплейса (раздел «Сборка товара с полок»), а здесь сканирует этот ярлык,
+          чтобы добавить вещь в конкретную поставку и
           перевести статус picking -> reserved
     POST /  { action: 'cancelled_to_shelf', itemId, shelfId }
         - отменённый заказ убирается из поставки на полку хранения (status='in_stock').
@@ -287,10 +287,11 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'delete_box', boxId }
         - удаляет короб (разрешено только если в нём нет товаров)
     POST /  { action: 'add_order_to_box', boxId, orderNumber }
-        - кладёт товар в конкретный короб поставки. В orderNumber передаётся ШТРИХКОД
-          ХРАНЕНИЯ (GW-XXXXXX) — параметр назван так для обратной совместимости фронтенда.
-          Только сканирование: номер заказа маркетплейса руками не вводится, поэтому в
-          поставку не попадёт вещь, которую кладовщик физически не держал в руках
+        - кладёт товар в конкретный короб поставки. Сканируется ЯРЛЫК МАРКЕТПЛЕЙСА
+          (номер отправления), наклеенный на вещь при сборке с полок — именно он поедет
+          на приёмку. Складской стикер хранения (GW-XXXXXX) отклоняется: по нему вещь
+          только находят на полке и стикеруют. Вещь без наклеенного ярлыка в короб
+          не попадёт — на приёмке маркетплейса её не опознают
     POST /  { action: 'remove_box_item', itemId }
         - убирает товар из короба и из поставки, возвращает его на склад (status='in_stock')
     POST /  { action: 'update', supplyId, supplyNumber?, supplyBarcode?, cluster?,
@@ -998,12 +999,12 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': supply_id})}
 
             if action == 'scan_order':
-                # Сканируется ШТРИХКОД ХРАНЕНИЯ товара (storage_barcode из goods_warehouse),
+                # Сканируется ЯРЛЫК МАРКЕТПЛЕЙСА (номер отправления) на собранной вещи,
                 # а не номер заказа маркетплейса — кладовщик заранее отбирает товары к подбору
                 # на складе (action 'start_picking' в backend/goods_warehouse, статус picking),
                 # а здесь только подтверждает добавление конкретного отобранного товара в
                 # конкретную поставку. Параметр называется orderNumber для обратной
-                # совместимости фронтенда, но по факту принимает штрихкод хранения.
+                # совместимости фронтенда, но по факту принимает номер отправления.
                 supply_id = body_data.get('supplyId')
                 storage_barcode = (body_data.get('orderNumber') or '').strip()
                 if not supply_id or not storage_barcode:
@@ -1384,10 +1385,29 @@ def handler(event: dict, context) -> dict:
                 # Номер заказа маркетплейса руками не вводится: так в поставку не попадёт
                 # вещь, которую кладовщик физически не держал в руках.
                 scan_esc = order_number.replace("'", "''")
+
+                # В короб кладётся вещь с ЯРЛЫКОМ МАРКЕТПЛЕЙСА — именно он поедет на
+                # приёмку. Складской стикер хранения здесь не работает: по нему вещь
+                # только находят на полке и стикеруют.
                 cur.execute(
-                    "SELECT gw.id, gw.status, o.order_number FROM goods_warehouse gw "
-                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "SELECT gw.id FROM goods_warehouse gw "
                     f"WHERE gw.storage_barcode = '{scan_esc}'"
+                )
+                if cur.fetchone():
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Это складской стикер хранения. В короб сканируйте '
+                                     'ярлык маркетплейса, наклеенный на вещь при сборке с полок'
+                        }, ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
+                    "FROM orders o "
+                    "JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+                    f"WHERE o.order_number = '{scan_esc}'"
                 )
                 gw_row = cur.fetchone()
                 if not gw_row:
@@ -1395,12 +1415,26 @@ def handler(event: dict, context) -> dict:
                         'statusCode': 404,
                         'headers': headers,
                         'body': json.dumps({
-                            'error': f'Стикер {order_number} не найден. Сканируйте стикер хранения '
-                                     f'товара (GW-...), а не номер заказа'
-                        }),
+                            'error': f'Отправление {order_number} не найдено среди собранных '
+                                     f'с полок. Соберите и отстикеруйте вещь в разделе '
+                                     f'«Сборка товара с полок»'
+                        }, ensure_ascii=False),
                     }
-                goods_id, goods_status, goods_order_number = gw_row
+                goods_id, goods_status, goods_order_number, labeled_at = gw_row
                 order_number = goods_order_number or order_number
+
+                # Ярлык маркетплейса ещё не наклеен: вещь лежит на полке, в короб её
+                # класть нельзя — на приёмке маркетплейса её не опознают.
+                if not labeled_at:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'На вещь {order_number} ещё не наклеен ярлык маркетплейса. '
+                                     f'Соберите её с полки и отстикеруйте в разделе '
+                                     f'«Сборка товара с полок»'
+                        }, ensure_ascii=False),
+                    }
 
                 # «Уже в поставке» проверяем ПЕРЕД статусом: добавленный товар становится
                 # 'reserved', и иначе кладовщик получал невнятное «уже зарезервирован»

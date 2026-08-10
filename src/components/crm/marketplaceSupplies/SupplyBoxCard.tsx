@@ -86,7 +86,7 @@ const SupplyBoxCard = ({
           <div className="flex gap-2">
             <Input
               ref={inputRef}
-              placeholder="Отсканируйте стикер хранения"
+              placeholder="Отсканируйте ярлык маркетплейса на вещи"
               value={orderNumber}
               onChange={(e) => setOrderNumber(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
