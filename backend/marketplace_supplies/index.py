@@ -545,7 +545,8 @@ def handler(event: dict, context) -> dict:
                     "COALESCE(ro.group_position, o.group_position), "
                     "COALESCE(ro.status, o.status), "
                     "COALESCE(ro.ozon_status, o.ozon_status), "
-                    "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id "
+                    "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id, "
+                    "COALESCE(ro.marketplace, o.marketplace) "
                     "FROM marketplace_supply_items msi "
                     "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
@@ -579,6 +580,11 @@ def handler(event: dict, context) -> dict:
                         ),
                         'storageBarcode': r[16],
                         'shelfId': r[17],
+                        # Статус вещи НА САМОЙ ПЛОЩАДКЕ: по нему видно, куда движется
+                        # отправление — в отгрузку или в отмену. Раньше кладовщик видел
+                        # только наш внутренний статус и узнавал об отмене слишком поздно.
+                        'marketplace': r[18],
+                        'mpStatus': r[14] or r[15],
                     }
                     for r in cur.fetchall()
                 ]

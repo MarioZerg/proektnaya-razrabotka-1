@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
+import { mpStatusInfo } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import CancelledItemShelfCell from './CancelledItemShelfCell';
@@ -21,6 +22,8 @@ interface SupplyItemsSectionProps {
   supply: SupplyDetail;
   supplyId: number;
   canEditItems: boolean;
+  /** Удалять позиции из FBS-поставки может только администратор. */
+  canRemoveItems?: boolean;
   readyGoods: GoodsWarehouseItem[];
   scanOrderNumber: string;
   setScanOrderNumber: (value: string) => void;
@@ -36,6 +39,7 @@ interface SupplyItemsSectionProps {
 const SupplyItemsSection = ({
   supply,
   canEditItems,
+  canRemoveItems = true,
   readyGoods,
   scanOrderNumber,
   setScanOrderNumber,
@@ -174,17 +178,36 @@ const SupplyItemsSection = ({
                   </TableCell>
                   <TableCell>
                     {item.isCancelled ? (
-                      <Badge variant="destructive">Заказ отменён</Badge>
+                      <Badge variant="destructive">ЗАКАЗ ОТМЕНЁН</Badge>
                     ) : (
                       <Badge variant="outline">
                         {item.goodsStatus === 'reserved' ? 'Зарезервирован' : item.goodsStatus === 'shipped' ? 'Отгружен' : item.goodsStatus}
                       </Badge>
                     )}
+                    {/* Статус НА ПЛОЩАДКЕ: показывает, куда движется отправление —
+                        в отгрузку или в отмену. Отмену видно сразу, а не при закрытии. */}
+                    {(() => {
+                      const mp = mpStatusInfo(item.mpStatus);
+                      if (!mp || item.isCancelled) return null;
+                      return (
+                        <div
+                          className={`mt-1 text-xs ${
+                            mp.tone === 'bad'
+                              ? 'font-semibold text-destructive'
+                              : mp.tone === 'ok'
+                                ? 'text-emerald-700'
+                                : 'text-amber-700'
+                          }`}
+                        >
+                          {item.marketplace || 'Площадка'}: {mp.label}
+                        </div>
+                      );
+                    })()}
                   </TableCell>
                   {canEditItems && (
                     <TableCell>
                       {/* Отменённый заказ отгружать нельзя — вместо удаления даём кладовщику
-                          отправить вещь на полку хранения прямо отсюда. */}
+                          выбрать полку и напечатать стикер хранения прямо отсюда. */}
                       {item.isCancelled ? (
                         <CancelledItemShelfCell
                           item={item}
@@ -192,9 +215,11 @@ const SupplyItemsSection = ({
                           onDone={onReload}
                         />
                       ) : (
-                        <Button variant="ghost" size="icon" onClick={() => onRemoveItem(item.id)}>
-                          <Icon name="Trash2" size={14} />
-                        </Button>
+                        canRemoveItems && (
+                          <Button variant="ghost" size="icon" onClick={() => onRemoveItem(item.id)}>
+                            <Icon name="Trash2" size={14} />
+                          </Button>
+                        )
                       )}
                     </TableCell>
                   )}

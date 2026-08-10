@@ -283,9 +283,17 @@ const MarketplaceSupplyShow = () => {
   // поэтому редактирование состава ему недоступно. FBO-поставки менеджера это не касается —
   // там товарный состав ведёт именно он.
   const isManagerRole = user?.role === 'manager';
+  const isManager = user?.role === 'manager' || user?.role === 'admin';
   const canEditItems =
     (supply.status === 'Открытая' || supply.status === 'На сборке') &&
     !(isManagerRole && supply.type === 'FBS');
+  // Удалять товар из FBS-поставки кладовщику нельзя: вещь уже отстикерована ярлыком
+  // маркетплейса и учтена на площадке. Ошибочное удаление рвёт связь с отправлением и
+  // отправляет вещь на полку, хотя покупатель её ждёт. Убрать позицию может только
+  // администратор; отменённые заказы кладовщик кладёт на полку отдельной кнопкой.
+  const canRemoveItems =
+    canEditItems && !(supply.type === 'FBS' && !isManager);
+
   const isOzonFbo = supply.marketplace === 'OZON' && supply.type === 'FBO';
   // WB FBO: данные поставки заполняются вручную (у WB нет API заявок FBO), но грузоперевозку
   // так же везём через Газельку — поэтому показываем тот же блок Газельки, что и у OZON FBO.
@@ -293,7 +301,6 @@ const MarketplaceSupplyShow = () => {
   // Права по ролям для OZON FBO: менеджер (и админ) управляет заявкой Газельки, синхронизацией
   // и загрузкой товарного состава в пошив. Кладовщик — только печать стикеров, и только после
   // того как менеджер выбрал заявку Газельки и синхронизировал данные (появился ID отгрузки).
-  const isManager = user?.role === 'manager' || user?.role === 'admin';
   const gazelkaReady = !!supply.gazelkaPlanId && !!supply.gazelkaId;
 
   const nextStatusLabel: Record<string, string> = {
@@ -376,6 +383,7 @@ const MarketplaceSupplyShow = () => {
             supply={supply}
             supplyId={supplyId}
             canEditItems={canEditItems}
+            canRemoveItems={canRemoveItems}
             readyGoods={readyGoods}
             scanOrderNumber={scanOrderNumber}
             setScanOrderNumber={setScanOrderNumber}

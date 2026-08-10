@@ -56,6 +56,9 @@ export interface SupplyItem {
   /** Заказ отменён маркетплейсом уже после стикеровки: отгружать вещь нельзя, она должна
    * уехать на полку хранения и ждать нового покупателя. */
   isCancelled?: boolean;
+  /** Статус отправления на самой площадке (OZON/Яндекс) — куда движется товар. */
+  mpStatus?: string | null;
+  marketplace?: string | null;
   storageBarcode?: string | null;
   shelfId?: number | null;
 }
