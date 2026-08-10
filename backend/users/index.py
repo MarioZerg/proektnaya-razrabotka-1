@@ -339,10 +339,48 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'delete':
+                # Удаление сотрудника.
+                #
+                # Раньше здесь был голый DELETE FROM users, и он падал ВСЕГДА: на
+                # сотруднике висят его должности (user_roles), и база не даёт удалить
+                # запись, пока на неё кто-то ссылается. В интерфейсе кнопка «удалить»
+                # молча не срабатывала. Поэтому сначала убираем служебные привязки,
+                # которые сами по себе ценности не имеют, и только потом самого человека.
+                #
+                # Рабочую историю (заказы, смены) не трогаем: если она есть, удалять
+                # сотрудника нельзя — иначе из отчётов пропадёт, кто шил и раскраивал.
+                # В этом случае честно сообщаем об этом и предлагаем отключить доступ.
                 user_id = body_data.get('id')
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
-                cur.execute(f"DELETE FROM users WHERE id = {int(user_id)}")
+                uid = int(user_id)
+
+                cur.execute(
+                    "SELECT COUNT(*) FROM orders WHERE assigned_user_id = %s "
+                    "OR sewer_user_id = %s OR cutter_user_id = %s",
+                    (uid, uid, uid),
+                )
+                orders_cnt = int(cur.fetchone()[0])
+                cur.execute('SELECT COUNT(*) FROM shift_sessions WHERE user_id = %s', (uid,))
+                shifts_cnt = int(cur.fetchone()[0])
+                if orders_cnt or shifts_cnt:
+                    conn.rollback()
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Нельзя удалить: за сотрудником числится заказов — {orders_cnt}, '
+                                      f'смен — {shifts_cnt}. Отключите доступ вместо удаления, '
+                                      f'иначе пропадёт история работы.'},
+                            ensure_ascii=False,
+                        ),
+                    }
+
+                cur.execute('DELETE FROM user_roles WHERE user_id = %s', (uid,))
+                cur.execute('DELETE FROM contract_sign_codes WHERE user_id = %s', (uid,))
+                cur.execute('DELETE FROM max_login_codes WHERE user_id = %s', (uid,))
+                cur.execute('DELETE FROM vacations WHERE user_id = %s', (uid,))
+                cur.execute('DELETE FROM users WHERE id = %s', (uid,))
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
