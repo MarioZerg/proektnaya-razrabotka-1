@@ -10,7 +10,6 @@ import {
   fetchMaxBotUrl,
   verifyMaxCode,
   submitRegistration,
-  passwordLogin,
   enterRole,
   type UserRoleEntry,
   type RegistrationForm as RegistrationFormData,
@@ -18,7 +17,6 @@ import {
 import OnlineNowBadge from '@/components/auth/OnlineNowBadge';
 import RoleSelectScreen from '@/components/auth/RoleSelectScreen';
 import RegistrationForm from '@/components/auth/RegistrationForm';
-import PasswordLoginForm from '@/components/auth/PasswordLoginForm';
 import PendingApprovalScreen from '@/components/auth/PendingApprovalScreen';
 import { roleOptions } from '@/components/crm/users/usersShared';
 
@@ -27,7 +25,6 @@ type Step =
   | 'code'
   | 'register'
   | 'registerDone'
-  | 'passwordLogin'
   | 'pendingApproval'
   | 'pickActiveRole';
 
@@ -169,18 +166,6 @@ const Index = () => {
     }
   };
 
-  const handlePasswordLogin = async (userLogin: string, password: string) => {
-    setError('');
-    setVerifying(true);
-    try {
-      await applyAuthResult(await passwordLogin(userLogin, password));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось войти');
-    } finally {
-      setVerifying(false);
-    }
-  };
-
   const handleSubmitRegistration = async (form: RegistrationFormData) => {
     setSelecting(true);
     setError('');
@@ -305,19 +290,6 @@ const Index = () => {
               Подать заявку на доступ
             </Button>
 
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setError('');
-                setStep('passwordLogin');
-              }}
-              className="h-12 w-full rounded-sm"
-            >
-              <Icon name="KeyRound" size={18} className="mr-2" />
-              Вход по паролю
-            </Button>
-
             {/* Установка на главный экран планшета/телефона. Кнопка появляется только
                 когда установка возможна и приложение ещё не установлено. */}
             <InstallAppButton />
@@ -409,23 +381,14 @@ const Index = () => {
             <div>
               <h2 className="text-base font-semibold">Заявка отправлена</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                Администратор проверит её и выдаст вам логин с паролем. После этого
-                возвращайтесь и заходите через «Вход по паролю».
+                Администратор проверит её и откроет вам доступ. После этого
+                возвращайтесь и заходите через MAX.
               </p>
             </div>
             <Button variant="outline" className="h-11 w-full rounded-sm" onClick={handleBackToStart}>
               На главную
             </Button>
           </div>
-        )}
-
-        {step === 'passwordLogin' && (
-          <PasswordLoginForm
-            submitting={verifying}
-            error={error}
-            onSubmit={handlePasswordLogin}
-            onBack={handleBackToStart}
-          />
         )}
 
         {step === 'pendingApproval' && pendingUser && (

@@ -91,11 +91,6 @@ export interface RegistrationForm {
 export const submitRegistration = (form: RegistrationForm): Promise<{ success: true }> =>
   postAuthAction({ action: 'register_request', ...form });
 
-/** Вход по логину и паролю — запасной путь, когда MAX недоступен. Возвращает то же,
- * что и проверка кода: пользователя и список его должностей. */
-export const passwordLogin = (login: string, password: string): Promise<MaxVerifyResult> =>
-  postAuthAction({ action: 'password_login', login, password });
-
 export interface EnterRoleResult {
   id: number;
   name: string;

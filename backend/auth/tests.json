@@ -87,6 +87,17 @@
         "userId": 1
       },
       "expectedStatus": 403
+    },
+    {
+      "name": "Password login disabled",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "password_login",
+        "login": "admin",
+        "password": "x"
+      },
+      "expectedStatus": 410
     }
   ]
 }

@@ -7,12 +7,6 @@ import secrets
 import psycopg2
 
 
-def hash_password(password: str, salt: str) -> str:
-    """Тот же алгоритм, что и в backend/users — иначе пароли, заданные админом
-    в карточке сотрудника, не подойдут при входе."""
-    return hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(salt), 100000).hex()
-
-
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner', 'admin', 'manager'}
 
 
@@ -51,9 +45,9 @@ def handler(event: dict, context) -> dict:
        пользователя без роли и запись в user_roles с is_approved = false. Пароля у него
        пока нет: администратор задаст его, когда утвердит заявку (см. backend/users).
 
-    3. Вход по логину и паролю (когда MAX недоступен):
-       POST { action: 'password_login', login, password } — возвращает то же, что и
-       проверка кода: пользователя и список его должностей.
+    3. Вход по логину и паролю ОТКЛЮЧЁН — в систему заходят только через MAX.
+       POST { action: 'password_login' } отвечает 410: старые открытые вкладки
+       получают понятное сообщение вместо молчаливой ошибки.
 
     После любого из способов фронтенд смотрит на роли:
     нет ни одной утверждённой — показываем экран ожидания; утверждена ровно одна —
@@ -342,41 +336,15 @@ def handler(event: dict, context) -> dict:
         finally:
             conn.close()
 
+    # Вход по логину и паролю отключён: в систему заходят только через MAX.
+    # Действие оставлено заглушкой, чтобы старые вкладки, открытые до обновления,
+    # получали понятный ответ, а не молчаливую ошибку.
     if action == 'password_login':
-        login = (body_data.get('login') or '').strip()
-        password = body_data.get('password') or ''
-        if not login or not password:
-            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Введите логин и пароль'})}
-
-        conn = psycopg2.connect(dsn)
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                'SELECT id, full_name, is_active, phone, password_hash, password_salt '
-                'FROM users WHERE lower(login) = lower(%s)',
-                (login,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Неверный логин или пароль'})}
-
-            user_id, full_name, is_active, phone, pwd_hash, pwd_salt = row
-            # Пароль сверяем всегда, даже если аккаунт отключён — иначе по разнице
-            # в ответах можно перебором узнать, какие логины существуют.
-            if not pwd_salt or hash_password(password, pwd_salt) != pwd_hash:
-                return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Неверный логин или пароль'})}
-            if not is_active:
-                return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Учётная запись отключена'})}
-
-            cur.execute('SELECT role, is_approved FROM user_roles WHERE user_id = %s ORDER BY id', (user_id,))
-            roles = [{'role': r[0], 'isApproved': r[1]} for r in cur.fetchall()]
-        finally:
-            conn.close()
-
         return {
-            'statusCode': 200,
+            'statusCode': 410,
             'headers': headers,
-            'body': json.dumps({'id': user_id, 'name': full_name, 'phone': phone, 'roles': roles}),
+            'body': json.dumps({'error': 'Вход по паролю отключён — используйте вход через MAX'},
+                               ensure_ascii=False),
         }
 
     if action == 'enter_role':
