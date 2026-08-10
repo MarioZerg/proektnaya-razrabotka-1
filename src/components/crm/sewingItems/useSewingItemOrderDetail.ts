@@ -31,7 +31,6 @@ export const useSewingItemOrderDetail = ({
   isCutter,
   rolls,
   effectiveWorkshopId,
-  effectiveShiftNumber,
   actorId,
 }: UseSewingItemOrderDetailArgs) => {
   const { toast } = useToast();
@@ -218,8 +217,13 @@ export const useSewingItemOrderDetail = ({
     load();
   };
 
+  // Список рулонов уже отобран сервером по цеху, смене и роли сотрудника (включая
+  // гостевой режим). Повторно резать его по смене НЕЛЬЗЯ: гость работает в чужом цехе,
+  // где нужный материал часто заведён другой сменой — такие рулоны сервер присылает
+  // с пометкой «материал чужой смены», а этот фильтр их выбрасывал. В итоге швея-гость
+  // не могла указать тесьму и отправить заказ на стикеровку.
   const rollsInMyWorkshop = rolls.filter(
-    (r) => r.workshopId === effectiveWorkshopId && (!effectiveShiftNumber || r.shiftNumber === effectiveShiftNumber)
+    (r) => !effectiveWorkshopId || r.workshopId === effectiveWorkshopId
   );
 
   // Показываем только рулоны материала, который реально нужен для этого товара
