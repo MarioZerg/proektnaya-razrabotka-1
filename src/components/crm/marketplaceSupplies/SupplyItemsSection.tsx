@@ -53,8 +53,10 @@ const SupplyItemsSection = ({
       <div className="flex flex-wrap items-center justify-between gap-3">
         {supply.type === 'FBS' ? (
           <div className="flex flex-wrap gap-4 text-sm">
+            {/* Сколько вещей уже собрано и отстикеровано на складе — по этому числу
+                кладовщик понимает, есть ли что нести в поставку. */}
             <span>
-              Отобрано к подбору: <b>{readyGoods.length}</b>
+              Готово к сборке: <b>{readyGoods.length}</b>
             </span>
             <span>
               Добавлено товаров: <b>{supply.items.length}</b>
@@ -104,33 +106,14 @@ const SupplyItemsSection = ({
         </Card>
       )}
 
-      {supply.type === 'FBS' && (
-        readyGoods.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Нет товаров, отобранных к подбору — сначала отсканируйте нужные товары на складе в разделе «Товар к подбору»
-          </p>
-        ) : (
-          <div className="rounded-md border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-primary hover:bg-primary">
-                  <TableHead className="text-primary-foreground">Штрихкод хранения</TableHead>
-                  <TableHead className="text-primary-foreground">Заказ</TableHead>
-                  <TableHead className="text-primary-foreground">Товар</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {readyGoods.map((g) => (
-                  <TableRow key={g.id}>
-                    <TableCell className="font-mono-tech">{g.storageBarcode}</TableCell>
-                    <TableCell className="font-medium">{g.orderNumber || '—'}</TableCell>
-                    <TableCell>{g.product || '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )
+      {/* Список товаров с полок здесь НЕ показываем: сборка ведётся на складе товара.
+          Кладовщик находит вещь на полке, сканирует и стикерует её там, и только потом
+          приходит сюда и сканирует в поставку. Дублирующий список сбивал порядок работы. */}
+      {supply.type === 'FBS' && readyGoods.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          Нет собранных товаров. Найдите и отстикеруйте их на складе в разделе
+          «Сборка товара с полок», потом отсканируйте сюда
+        </p>
       )}
 
       {supply.type === 'FBS' && (

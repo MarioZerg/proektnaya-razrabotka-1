@@ -943,13 +943,15 @@ def handler(event: dict, context) -> dict:
                 if marketplace == 'OZON' and supply_type == 'FBO' and ozon_delivery_method not in ('direct', 'cross_docking'):
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите способ поставки: прямая или кросс-докинг'})}
 
-                # Сборка WB FBS может быть только одна. Две открытые сборки означают, что
-                # вещи из одного контейнера расходятся по разным коробам — на маркетплейсе
-                # это разные поставки, и часть заказов уедет не туда.
-                if marketplace == 'WB' and supply_type == 'FBS':
+                marketplace_esc = marketplace.replace("'", "''")
+
+                # Сборка FBS может быть только одна на маркетплейс. Две открытые сборки
+                # означают, что вещи из одного контейнера расходятся по разным коробам —
+                # на маркетплейсе это разные поставки, и часть заказов уедет не туда.
+                if supply_type == 'FBS' and marketplace in ('WB', 'OZON'):
                     cur.execute(
                         "SELECT id FROM marketplace_supplies "
-                        "WHERE marketplace = 'WB' AND type = 'FBS' "
+                        f"WHERE marketplace = '{marketplace_esc}' AND type = 'FBS' "
                         "AND COALESCE(is_accumulator, false) = false "
                         "AND status IN ('Открытая', 'На сборке') LIMIT 1"
                     )
@@ -965,7 +967,6 @@ def handler(event: dict, context) -> dict:
                             }, ensure_ascii=False),
                         }
 
-                marketplace_esc = marketplace.replace("'", "''")
                 type_esc = supply_type.replace("'", "''")
                 comment_esc = comment.replace("'", "''")
                 created_by_sql = int(created_by) if created_by not in (None, '') else 'NULL'
