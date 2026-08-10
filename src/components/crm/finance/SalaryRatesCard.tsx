@@ -150,12 +150,18 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
               </div>
             ) : (
               roleOrder.map((role) => {
-                // У закройщика ставка одна на ткань. Старые строки «ткань + ширина»
-                // остались в базе обнулёнными и в расчёте не участвуют — прячем их,
-                // иначе список выглядел бы простынёй из 56 полей с нулями.
-                const roleRates = rates.filter(
-                  (r) => r.role === role && !(role === 'cutter' && r.width !== null)
-                );
+                // Показываем ровно те строки, по которым реально считается оплата:
+                //  - закройщик: одна ставка на ткань (строки по ширинам обнулены);
+                //  - упаковщик и перепаковка: одна ставка на цех (без ткани и ширины).
+                // Остальное осталось в базе с нулями и в расчёте не участвует — в списке
+                // это была бы простыня из десятков полей, которые ни на что не влияют.
+                const roleRates = rates.filter((r) => {
+                  if (r.role !== role) return false;
+                  if (role === 'cutter') return r.width === null;
+                  if (role === 'packer') return r.materialId === null && r.width === null;
+                  if (role === 'packer_repack') return r.width === null;
+                  return true;
+                });
                 if (roleRates.length === 0) return null;
 
                 return (

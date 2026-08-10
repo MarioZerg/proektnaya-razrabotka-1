@@ -9,6 +9,7 @@ export const accrualTypeLabels: Record<string, string> = {
   packer_stickering: 'Стикеровка',
   packer_repack: 'Перепаковка возврата',
   storekeeper_shift: 'Оклад за смену',
+  senior_storekeeper_shift: 'Оклад за смену',
   cleaner_shift: 'Оклад за смену',
   admin_daily: 'Оклад за день',
   manual: 'Ручное начисление',

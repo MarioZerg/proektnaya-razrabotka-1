@@ -854,9 +854,19 @@ def handler(event: dict, context) -> dict:
                 # Уборщица получает оклад за смену при её закрытии (salary_rates, role='cleaner'),
                 # ставка берётся из тарифов цеха, указанного при открытии этой смены (workshop_id).
                 # Если цех у смены не указан — если у уборщицы есть свой цех в профиле, используем его.
+                # Оклад за смену получают уборщица, кладовщик и старший кладовщик — у всех
+                # троих оплата повременная, а не сдельная. Раньше начислялась только уборщице:
+                # кладовщики закрывали смены месяцами и не получали ничего, хотя ставки в
+                # таблице стояли (2050 и 1200 руб.). Роль берём ту, в которой человек реально
+                # работал в этой смене (shift_sessions.role) — в гостевом режиме она может
+                # отличаться от штатной должности в профиле.
                 cur.execute("SELECT role, workshop FROM users WHERE id = %s", (int(user_id),))
                 user_row = cur.fetchone()
-                if user_row and user_row[0] == 'cleaner':
+                cur.execute("SELECT role FROM shift_sessions WHERE id = %s", (session_id,))
+                sess_role_row = cur.fetchone()
+                shift_role = (sess_role_row[0] if sess_role_row and sess_role_row[0]
+                              else (user_row[0] if user_row else None))
+                if shift_role in ('cleaner', 'storekeeper', 'senior_storekeeper'):
                     rate_workshop_id = session_workshop_id
                     if not rate_workshop_id and user_row[1]:
                         cur.execute("SELECT id FROM workshops WHERE name = %s", (user_row[1],))
@@ -864,8 +874,8 @@ def handler(event: dict, context) -> dict:
                         rate_workshop_id = w_row[0] if w_row else None
                     if rate_workshop_id:
                         cur.execute(
-                            "SELECT rate FROM salary_rates WHERE role = 'cleaner' AND workshop_id = %s",
-                            (rate_workshop_id,),
+                            "SELECT rate FROM salary_rates WHERE role = %s AND workshop_id = %s",
+                            (shift_role, rate_workshop_id),
                         )
                         rate_row = cur.fetchone()
                         rate = float(rate_row[0]) if rate_row else 0
@@ -876,16 +886,18 @@ def handler(event: dict, context) -> dict:
                             # спасает дневной уникальный индекс. Но он бьёт ошибкой и рвёт
                             # закрытие смены, поэтому проверяем день заранее и просто не
                             # начисляем второй оклад.
+                            accrual_type = f'{shift_role}_shift'
                             cur.execute(
                                 "SELECT 1 FROM salary_accruals WHERE user_id = %s "
-                                "AND type = 'cleaner_shift' AND accrued_for = CURRENT_DATE",
-                                (int(user_id),),
+                                "AND type = %s AND accrued_for = CURRENT_DATE",
+                                (int(user_id), accrual_type),
                             )
                             if not cur.fetchone():
                                 cur.execute(
-                                    f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
-                                    f"VALUES ({int(user_id)}, 'cleaner_shift', {rate}, {session_id}, 'Оклад за смену') "
-                                    f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                                    "INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
+                                    "VALUES (%s, %s, %s, %s, 'Оклад за смену') "
+                                    "ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING",
+                                    (int(user_id), accrual_type, rate, session_id),
                                 )
 
                 conn.commit()

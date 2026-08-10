@@ -726,7 +726,11 @@ def handler(event: dict, context) -> dict:
                 packer_rate = 0.0
                 if packer_workshop_id:
                     cur.execute(
-                        "SELECT rate FROM salary_rates WHERE role = 'packer' AND workshop_id = %s",
+                        # Ставка упаковщика одна на цех (без ткани и ширины) — берём именно
+                        # её, иначе при случайно заведённых строках по тканям расчёт хватал
+                        # произвольную из них.
+                        "SELECT rate FROM salary_rates WHERE role = 'packer' AND workshop_id = %s "
+                        "AND material_id IS NULL AND width IS NULL",
                         (packer_workshop_id,),
                     )
                     packer_rate_row = cur.fetchone()
@@ -920,8 +924,10 @@ def handler(event: dict, context) -> dict:
 
                     if packer_workshop_id:
                         cur.execute(
+                            # Перепаковка оплачивается фиксированно за штуку: размер не
+                            # важен, поэтому строка ставки одна — без ширины.
                             "SELECT rate FROM salary_rates WHERE role = 'packer_repack' "
-                            "AND workshop_id = %s",
+                            "AND workshop_id = %s AND width IS NULL",
                             (packer_workshop_id,),
                         )
                         rate_row = cur.fetchone()
