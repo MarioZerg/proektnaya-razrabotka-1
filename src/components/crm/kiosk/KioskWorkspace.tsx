@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
+import { clearAppCache } from '@/lib/appUpdate';
 import KioskMenu, { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
 import KioskDefectWriteoffPanel from '@/components/crm/kiosk/KioskDefectWriteoffPanel';
 import KioskOrdersScreen from '@/components/crm/kiosk/KioskOrdersScreen';
@@ -196,6 +197,19 @@ const KioskWorkspace = ({
               В меню
             </Button>
           )}
+          {/* Планшет в цехе не закрывается сутками и может держать старую
+              версию системы. Кнопка стирает сохранённые копии и загружает
+              свежую версию — без похода в настройки браузера. */}
+          <Button
+            variant="outline"
+            title="Загрузить свежую версию системы"
+            onClick={() => {
+              void clearAppCache();
+            }}
+          >
+            <Icon name="RefreshCw" size={16} className="mr-1.5" />
+            Обновить
+          </Button>
           <Button variant="destructive" onClick={isPreview ? () => window.close() : onLogout}>
             {isPreview ? 'Закрыть проверку' : 'Выход'}
           </Button>

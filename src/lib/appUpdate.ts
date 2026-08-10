@@ -86,3 +86,32 @@ export const applyUpdate = () => {
   // Обновление ждёт, но ссылку на него потеряли — просто перезагружаемся.
   window.location.reload();
 };
+
+/**
+ * Полный сброс сохранённых копий приложения на этом устройстве.
+ *
+ * Нужен, когда планшет в цехе упорно показывает старую версию: сотрудник видит
+ * прежнее поведение, хотя система давно обновилась. Обычной перезагрузки в таких
+ * случаях мало — копии лежат и в служебном кэше, и в кэше самого браузера.
+ *
+ * Стираем всё и перезагружаем страницу с сервера.
+ */
+export const clearAppCache = async () => {
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+  } finally {
+    reloading = true;
+    // Метка в адресе заставляет браузер запросить страницу заново, а не достать
+    // её из своей памяти.
+    const url = new URL(window.location.href);
+    url.searchParams.set('v', String(Date.now()));
+    window.location.replace(url.toString());
+  }
+};
