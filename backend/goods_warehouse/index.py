@@ -1345,16 +1345,48 @@ def handler(event: dict, context) -> dict:
                 # на стеллаж, и по строке на экране сразу видит, что именно переложил
                 # и откуда — так заметна случайная вещь из чужого ряда.
                 cur.execute(
-                    "SELECT gw.id, o.product, s.name, gw.shelf_id "
+                    "SELECT gw.id, o.product, s.name, gw.shelf_id, gw.status, "
+                    "       gw.reserved_order_id, ro.order_number "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
                     "LEFT JOIN shelves s ON s.id = gw.shelf_id "
                     f"WHERE gw.storage_barcode = '{barcode_esc}'"
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Товар со штрихкодом {barcode} не найден'})}
-                gw_id, gw_product, old_shelf_name, old_shelf_id = row
+                (gw_id, gw_product, old_shelf_name, old_shelf_id,
+                 gw_status, gw_reserved_id, gw_reserved_number) = row
+
+                # Вещь забронирована под заказ FBS — перекладывать её НЕЛЬЗЯ.
+                #
+                # Кладовщик уже получил её в списке подбора и идёт за ней по конкретной
+                # полке. Если в этот момент вещь переедет на другой стеллаж, сборщик
+                # придёт на пустое место, отправление сорвётся, а маркетплейс оштрафует.
+                # Такую вещь надо собрать и отгрузить, а не двигать по складу.
+                if gw_reserved_id:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'{gw_product or "Товар"} забронирован под заказ '
+                                     f'{gw_reserved_number or ""} — его нужно собрать и '
+                                     f'отправить, а не перекладывать'.replace('  ', ' ')
+                        }, ensure_ascii=False),
+                    }
+
+                # Уже в сборке или едет в поставку — тоже не трогаем: вещь снята с полки
+                # и живёт по своему маршруту.
+                if gw_status in ('picking', 'awaiting_supply', 'reserved', 'shipped'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'{gw_product or "Товар"} уже собран для отправки — '
+                                     f'перекладывать его нельзя'
+                        }, ensure_ascii=False),
+                    }
 
                 # Вещь уже лежит на этой полке — второй раз её не двигаем и честно
                 # говорим об этом: иначе кладовщик думает, что переложил, а он повторился.
