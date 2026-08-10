@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { recoverIfStaleBuild } from '@/lib/appUpdate';
 import {
   fetchKioskOrder,
   closeKioskOrder,
@@ -109,6 +110,13 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
       }
       setPrinted(true);
     } catch (e) {
+      // Терминал открыт со старой версии, а её файлы на сервере уже заменены —
+      // подгрузка кода печати падает. Забираем свежую версию сами: сотруднику
+      // незачем разбираться в английских ошибках браузера.
+      if (recoverIfStaleBuild(e)) {
+        toast({ title: 'Обновляем систему…', description: 'Через миг повторите печать' });
+        return;
+      }
       toast({
         title: 'Не удалось напечатать стикер',
         description: e instanceof Error ? e.message : undefined,

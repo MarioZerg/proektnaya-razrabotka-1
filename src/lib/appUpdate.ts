@@ -115,3 +115,31 @@ export const clearAppCache = async () => {
     window.location.replace(url.toString());
   }
 };
+
+
+/**
+ * Ошибка «Failed to fetch dynamically imported module».
+ *
+ * Планшет в цехе не закрывается сутками и держит открытой СТАРУЮ версию страницы.
+ * Часть кода (печать ярлыков, PDF) подгружается по требованию — в момент нажатия.
+ * После выхода новой версии файлы старой сборки на сервере пропадают, и подгрузка
+ * падает: сотрудник видит непонятную английскую ошибку вместо ярлыка.
+ *
+ * Лечится одним способом — забрать свежую версию страницы. Делаем это сами, без
+ * участия человека: чистим кэш и перезагружаемся.
+ */
+export const isStaleBuildError = (e: unknown): boolean => {
+  const msg = e instanceof Error ? `${e.message}` : String(e ?? '');
+  return (
+    msg.includes('dynamically imported module') ||
+    msg.includes('Importing a module script failed') ||
+    (msg.includes('Failed to fetch') && msg.includes('/assets/'))
+  );
+};
+
+/** Перезагружает систему, если сбой вызван устаревшей версией. Возвращает true, если взялась. */
+export const recoverIfStaleBuild = (e: unknown): boolean => {
+  if (!isStaleBuildError(e)) return false;
+  clearAppCache();
+  return true;
+};

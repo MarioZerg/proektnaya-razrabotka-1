@@ -22,6 +22,10 @@ const isChunkError = (message: string): boolean => {
     text.includes('importing a module script failed') ||
     text.includes('loading chunk') ||
     text.includes('loading css chunk') ||
+    // Браузер может не назвать причину, а просто сообщить, что файл сборки не
+    // скачался. Такие файлы лежат в /assets/ и меняют имена при каждом обновлении —
+    // значит, у сотрудника открыта устаревшая версия страницы.
+    (text.includes('failed to fetch') && text.includes('/assets/')) ||
     (text.includes('unexpected token') && text.includes('<'))
   );
 };
@@ -64,6 +68,14 @@ export const setupChunkReload = () => {
       event.preventDefault();
       reloadOnce();
     }
+  });
+
+  // Vite сообщает о неудачной подгрузке части приложения отдельным событием. Без него
+  // ошибка всплывала в интерфейс английским текстом («Failed to fetch dynamically
+  // imported module») — сотрудник в цехе не понимал, что делать.
+  window.addEventListener('vite:preloadError', (event) => {
+    event.preventDefault();
+    reloadOnce();
   });
 };
 
