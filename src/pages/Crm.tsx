@@ -36,6 +36,7 @@ const CrmDashboard = () => {
   const isAdmin = user?.role === 'admin';
   const isCleaner = user?.role === 'cleaner';
   const isCutter = user?.role === 'cutter';
+  const isSewer = user?.role === 'sewer';
   const canSeeWarehouseWidgets = user?.role === 'admin' || isStorekeeperRole(user?.role);
   // Кладовщик и менеджер видят календарь-график смен (какие смены сегодня работают),
   // но без управления сменами сотрудников — это только для админа.
@@ -181,9 +182,21 @@ const CrmDashboard = () => {
   const widgets: DashboardWidgetData[] = useMemo(() => {
     if (isCleaner) return [];
 
+    // Швея и закройщик видят на панели ТОЛЬКО свою работу.
+    //
+    // Раньше виджеты считали заказы всего цеха: швея открывала панель, видела
+    // «Товары в пошиве: 30» и шла искать их в списке, а там был один её заказ —
+    // остальные 29 держали другие швеи. Чужая работа в личной сводке только путает.
+    const isMine = (o: (typeof orders)[number]) => o.assignedUserId === user?.id;
+    const inSewing = orders.filter(
+      (o) => o.sewingStatus === 'В работе' && (!isSewer || isMine(o))
+    ).length;
+    const inCutting = orders.filter(
+      (o) => o.sewingStatus === 'На раскрое' && (!isCutter || isMine(o))
+    ).length;
+    // «Новые задания» — общая очередь, её разбирают все: это работа, которую ещё
+    // никто не взял, и швее полезно видеть, сколько её ждёт.
     const newOrders = orders.filter((o) => o.sewingStatus === 'Новый').length;
-    const inSewing = orders.filter((o) => o.sewingStatus === 'В работе').length;
-    const inCutting = orders.filter((o) => o.sewingStatus === 'На раскрое').length;
     // Считаем ТОЛЬКО то, что реально ждёт работы в цехе.
     //
     // Раньше сюда попадали все незакрытые FBS, включая уже отшитые и лежащие на
@@ -196,20 +209,30 @@ const CrmDashboard = () => {
           o.sewingStatus
         )
     ).length;
-    const inStickering = orders.filter((o) => o.sewingStatus === 'Стикеровка').length;
+    // На стикеровке швея видит то, что отшила сама: там она уже записана исполнителем
+    // этапа (sewerUserId), а assignedUserId перешёл к упаковщице.
+    const inStickering = orders.filter(
+      (o) =>
+        o.sewingStatus === 'Стикеровка' &&
+        (!isSewer || o.sewerUserId === user?.id) &&
+        (!isCutter || o.cutterUserId === user?.id)
+    ).length;
+    // «Раскроено» — общий пул: закройщики сдали работу, швеи разбирают её в пошив.
     const cut = orders.filter((o) => o.sewingStatus === 'Раскроено').length;
     const notShippedToWorkshop = shipmentsToWorkshop.filter((s) => s.status === 'Новый').length;
     const notReceivedInWorkshop = shipmentsToWorkshop.filter((s) => s.status === 'Отправлено').length;
 
     const list: DashboardWidgetData[] = [
       { label: 'Новые задания на пошив', value: newOrders, icon: 'ListPlus', tone: 'default', path: '/crm/marketplace/sewing-items' },
-      { label: 'Товары в пошиве', value: inSewing, icon: 'Shirt', tone: 'default', path: '/crm/marketplace/sewing-items' },
-      { label: 'Товары в закрое', value: inCutting, icon: 'Scissors', tone: 'default', path: '/crm/marketplace/sewing-items' },
+      // Швее и закройщику подписываем «У меня», чтобы цифра не читалась как объём
+      // всего цеха: у них в этих виджетах теперь только собственные заказы.
+      { label: isSewer ? 'У меня в пошиве' : 'Товары в пошиве', value: inSewing, icon: 'Shirt', tone: 'default', path: '/crm/marketplace/sewing-items' },
+      { label: isCutter ? 'У меня в закрое' : 'Товары в закрое', value: inCutting, icon: 'Scissors', tone: 'default', path: '/crm/marketplace/sewing-items' },
       // ?type=FBS — страница откроется сразу с фильтром по FBS, иначе показывала все заказы
       { label: 'Срочные заказы (FBS)', value: urgentFbs, icon: 'Zap', tone: 'urgent', path: '/crm/marketplace/sewing-items?type=FBS' },
       { label: 'Не отгруженные поставки в цех', value: notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop' },
       { label: 'Не принятые поставки в цехе', value: notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop' },
-      { label: 'Товары на стикеровке', value: inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items' },
+      { label: isSewer || isCutter ? 'Мои на стикеровке' : 'Товары на стикеровке', value: inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items' },
       { label: 'Раскроено', value: cut, icon: 'CheckCircle2', tone: 'default', path: '/crm/marketplace/sewing-items' },
     ];
 
@@ -304,7 +327,7 @@ const CrmDashboard = () => {
     }
 
     return list;
-  }, [isCleaner, isCutter, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop, returnsWaiting, returnsPickedUp]);
+  }, [isCleaner, isCutter, isSewer, user?.id, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop, returnsWaiting, returnsPickedUp]);
 
   const content = (
     <div className="space-y-8">
