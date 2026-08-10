@@ -167,29 +167,31 @@ def handler(event: dict, context) -> dict:
             if params.get('rates'):
                 workshop_id_filter = params.get('workshopId')
 
-                # Автосоздание недостающих тарифов закройщика (role='cutter') для каждой
-                # реально существующей комбинации материал+ширина среди товаров на
-                # маркетплейсе (marketplace_items, только материалы типа "Тюль") — так же,
+                # Автосоздание недостающих тарифов закройщика (role='cutter') — ПО ОДНОМУ
+                # на каждую ткань (материалы типа "Тюль" среди товаров маркетплейса). Раньше
+                # строка заводилась на каждую пару «ткань + ширина» (56 полей на цех при
+                # одинаковой ставке внутри ткани); ширина учитывается в расчёте метража, а
+                # не в самой ставке. Работает так же,
                 # как автоматически создаётся дневной оклад администратора выше. Новая ставка
                 # создаётся со значением 0 — admin сам вписывает нужную сумму на этой странице,
                 # раскрой при этом не блокируется (0 просто не начисляется).
                 if workshop_id_filter:
                     cur.execute(
-                        "SELECT DISTINCT mim.material_id, mi.width FROM marketplace_items mi "
+                        "SELECT DISTINCT mim.material_id FROM marketplace_items mi "
                         "JOIN marketplace_item_materials mim ON mim.marketplace_item_id = mi.id "
                         "JOIN materials m ON m.id = mim.material_id "
                         "JOIN material_types mt ON mt.id = m.type_id "
-                        "WHERE mt.name = 'Тюль' AND mi.width IS NOT NULL"
+                        "WHERE mt.name = 'Тюль'"
                     )
-                    needed_combos = cur.fetchall()
-                    for material_id, width in needed_combos:
+                    needed_materials = cur.fetchall()
+                    for (material_id,) in needed_materials:
                         cur.execute(
                             "INSERT INTO salary_rates (role, material_id, width, rate, workshop_id) "
-                            "VALUES ('cutter', %s, %s, 0, %s) "
+                            "VALUES ('cutter', %s, NULL, 0, %s) "
                             "ON CONFLICT (workshop_id, role, COALESCE(material_id, 0), COALESCE(width, 0)) DO NOTHING",
-                            (material_id, width, int(workshop_id_filter)),
+                            (material_id, int(workshop_id_filter)),
                         )
-                    if needed_combos:
+                    if needed_materials:
                         conn.commit()
 
                     # Страховка: тариф перепаковки возвратов у упаковщицы (за штуку, размер

@@ -150,18 +150,13 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
               </div>
             ) : (
               roleOrder.map((role) => {
-                const roleRates = rates.filter((r) => r.role === role);
+                // У закройщика ставка одна на ткань. Старые строки «ткань + ширина»
+                // остались в базе обнулёнными и в расчёте не участвуют — прячем их,
+                // иначе список выглядел бы простынёй из 56 полей с нулями.
+                const roleRates = rates.filter(
+                  (r) => r.role === role && !(role === 'cutter' && r.width !== null)
+                );
                 if (roleRates.length === 0) return null;
-
-                // У закройщика много строк (материал × ширина) — группируем по материалу
-                // с подзаголовком, иначе список выглядел бы нечитаемой простынёй.
-                const groupedByMaterial = role === 'cutter';
-                const materialGroups = groupedByMaterial
-                  ? Array.from(new Set(roleRates.map((r) => r.materialName || '—'))).map((materialName) => ({
-                      materialName,
-                      items: roleRates.filter((r) => (r.materialName || '—') === materialName),
-                    }))
-                  : null;
 
                 return (
                   <div key={role} className="space-y-2">
@@ -171,26 +166,11 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
                       </p>
                       <p className="text-xs text-muted-foreground">{roleRateLabels[role]}</p>
                     </div>
-                    {materialGroups ? (
-                      <div className="space-y-3">
-                        {materialGroups.map((group) => (
-                          <div key={group.materialName} className="space-y-1.5">
-                            <p className="text-xs font-medium text-muted-foreground">{group.materialName}</p>
-                            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-4">
-                              {group.items.map((rate) => (
-                                <RateRow key={rate.id} rate={rate} onUpdate={handleUpdate} hideMaterialName />
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="grid gap-1.5 sm:grid-cols-2">
-                        {roleRates.map((rate) => (
-                          <RateRow key={rate.id} rate={rate} onUpdate={handleUpdate} />
-                        ))}
-                      </div>
-                    )}
+                    <div className="grid gap-1.5 sm:grid-cols-2">
+                      {roleRates.map((rate) => (
+                        <RateRow key={rate.id} rate={rate} onUpdate={handleUpdate} />
+                      ))}
+                    </div>
                   </div>
                 );
               })

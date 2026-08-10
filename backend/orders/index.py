@@ -245,7 +245,7 @@ def handler(event: dict, context) -> dict:
           поле от assigned_user_id, которое дальше будет перезаписано на швею при take_order,
           так что именно cutter_user_id остаётся источником "кто раскроил" на карточке товара.
           Начисляет закройщику зарплату (salary_accruals, type='cutter_cut'): ставка за 1 пог.м.
-          по материалу И ширине товара (salary_rates, role='cutter', material_id+width, тарифы
+          по материалу (salary_rates, role='cutter', material_id, width IS NULL; тарифы
           цеха заказа workshop_id) × чистая ширина товара (width/100), а не технологический
           расход ткани со склада (тот включает запас на подгибку и не годится для оплаты).
           Отклоняется (409), если за текущую открытую смену закройщика уже исчерпан лимит
@@ -1494,8 +1494,8 @@ def handler(event: dict, context) -> dict:
                                     (int(hanger_number), order_assigned_user_id),
                             )
 
-                    # Начисление закройщику: ставка за 1 пог.м. по материалу И ширине товара
-                    # (salary_rates, role='cutter', material_id+width), берётся из тарифов цеха,
+                    # Начисление закройщику: ставка за 1 пог.м. по материалу (одна на ткань)
+                    # (salary_rates, role='cutter', material_id), берётся из тарифов цеха,
                     # в котором выполняется заказ (order_workshop_id) — тарифы полностью раздельные
                     # по цехам. Метраж для оплаты — ЧИСТАЯ ширина товара (width/100 пог.м.), а НЕ
                     # технологический расход ткани со склада (marketplace_item_materials.quantity,
@@ -1504,10 +1504,14 @@ def handler(event: dict, context) -> dict:
                     # Если заказ позже удалят из раскроя (cancel_order/delete_order), начисление
                     # снимается там же.
                     if fabric_material_id and order_assigned_user_id and order_workshop_id and width:
+                            # Ставка задаётся ОДНА на ткань (width IS NULL) — раньше её
+                            # требовалось заводить на каждую пару «ткань + ширина», то есть
+                            # 56 полей на цех при одинаковом значении внутри ткани. Ширина
+                            # всё равно учитывается ниже: сумма = метраж x ставка.
                             cur.execute(
                                     "SELECT rate FROM salary_rates WHERE role = 'cutter' AND material_id = %s "
-                                    "AND width = %s AND workshop_id = %s",
-                                    (fabric_material_id, int(width), order_workshop_id),
+                                    "AND width IS NULL AND workshop_id = %s",
+                                    (fabric_material_id, order_workshop_id),
                             )
                             rate_row = cur.fetchone()
                             rate = float(rate_row[0]) if rate_row else 0
