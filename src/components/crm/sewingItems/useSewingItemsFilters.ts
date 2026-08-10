@@ -98,6 +98,9 @@ export const useSewingItemsFilters = ({
     // (с именами), поэтому под этот фильтр не попадает.
     if (activeTab === 'На раскрое' && isCutter && o.assignedUserId !== userId) return false;
     if (activeTab === 'В работе' && isSewer && o.assignedUserId !== userId) return false;
+    // Закройщик на «В работе» смотрит судьбу СВОЕГО кроя: какие его вещи сейчас шьют.
+    // Общий список всех швей ему не нужен — там чужой крой, за который он не отвечает.
+    if (activeTab === 'В работе' && isCutter && o.cutterUserId !== userId) return false;
     // На вкладках "Стикеровка" и "Готовые" каждый производственник видит ТОЛЬКО свои заказы
     // по своему этапу: швея — что отшила сама (sewerUserId), закройщик — что раскроил сам
     // (cutterUserId). Упаковщица видит всё (её этап — терминал стикеровки).
@@ -123,6 +126,10 @@ export const useSewingItemsFilters = ({
     }
     if (status === 'В работе' && isSewer) {
       return orders.filter((o) => o.sewingStatus === status && o.assignedUserId === userId).length;
+    }
+    // У закройщика на вкладке только его крой — счётчик считаем так же.
+    if (status === 'В работе' && isCutter) {
+      return orders.filter((o) => o.sewingStatus === status && o.cutterUserId === userId).length;
     }
     // "Стикеровка" и "Готовые" — считаем только свои: швея по sewerUserId, закройщик по cutterUserId.
     if ((status === 'Готовые' || status === 'Стикеровка') && isSewer) {
