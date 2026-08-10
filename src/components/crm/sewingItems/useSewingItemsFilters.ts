@@ -103,6 +103,9 @@ export const useSewingItemsFilters = ({
     // (cutterUserId). Упаковщица видит всё (её этап — терминал стикеровки).
     if ((activeTab === 'Готовые' || activeTab === 'Стикеровка') && isSewer && o.sewerUserId !== userId) return false;
     if ((activeTab === 'Готовые' || activeTab === 'Стикеровка') && isCutter && o.cutterUserId !== userId) return false;
+    // «Раскроено» — то, что закройщик уже сдал. Показываем только его собственный крой:
+    // чужие вещи в этом списке ему не нужны, он по нему проверяет свою выработку.
+    if (activeTab === 'Раскроено' && isCutter && o.cutterUserId !== userId) return false;
     return true;
   });
 
@@ -126,6 +129,10 @@ export const useSewingItemsFilters = ({
       return orders.filter((o) => o.sewingStatus === status && o.sewerUserId === userId).length;
     }
     if ((status === 'Готовые' || status === 'Стикеровка') && isCutter) {
+      return orders.filter((o) => o.sewingStatus === status && o.cutterUserId === userId).length;
+    }
+    // На вкладке у закройщика только его крой — счётчик должен показывать то же число.
+    if (status === 'Раскроено' && isCutter) {
       return orders.filter((o) => o.sewingStatus === status && o.cutterUserId === userId).length;
     }
     return orders.filter((o) => o.sewingStatus === status).length;
