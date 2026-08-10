@@ -46,6 +46,7 @@ const CompanySettings = lazy(() => import("./pages/settings/CompanySettings"));
 const SystemCleanup = lazy(() => import("./pages/settings/SystemCleanup"));
 const PendingEmployees = lazy(() => import("./pages/settings/PendingEmployees"));
 const MarketplaceOrders = lazy(() => import("./pages/marketplace/MarketplaceOrders"));
+const LoginCode = lazy(() => import("./pages/LoginCode"));
 const SewingItems = lazy(() => import("./pages/marketplace/SewingItems"));
 const FboStickers = lazy(() => import("./pages/marketplace/FboStickers"));
 const Reviews = lazy(() => import("./pages/marketplace/Reviews"));
@@ -97,6 +98,9 @@ const App = () => (
           >
           <Routes>
             <Route path="/" element={<Index />} />
+            {/* Ввод кода из MAX — отдельная страница со своим адресом: человек уходит
+                за кодом в мессенджер, и вернуться нужно ровно на форму ввода. */}
+            <Route path="/login/code" element={<LoginCode />} />
             {/* Терминал цеха: вход по личному QR-коду сотрудника, без пароля. */}
             <Route path="/kiosk/:workshopId" element={<KioskTerminal />} />
             <Route path="/crm" element={<Crm />} />

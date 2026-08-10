@@ -2,13 +2,11 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import InstallAppButton from '@/components/InstallAppButton';
-import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import type { Role } from '@/lib/roles';
 import {
   fetchMaxBotUrl,
-  verifyMaxCode,
   submitRegistration,
   enterRole,
   type UserRoleEntry,
@@ -22,7 +20,6 @@ import { roleOptions } from '@/components/crm/users/usersShared';
 
 type Step =
   | 'start'
-  | 'code'
   | 'register'
   | 'registerDone'
   | 'pendingApproval'
@@ -32,31 +29,10 @@ const Index = () => {
   const navigate = useNavigate();
   const { login, user } = useAuth();
 
-  // Шаг входа переживает перезагрузку страницы.
-  //
-  // Зачем: в приложении MAX сайт открыт внутри самого мессенджера. Когда мы открываем
-  // бота, система переключается на чат, а окно с сайтом выгружается. Человек получает
-  // код, возвращается — и видит снова «Войти через MAX», потому что шаг жил только в
-  // памяти вкладки. Ввести код было некуда, вход зацикливался.
-  // Теперь шаг лежит в sessionStorage: вернувшись, человек попадает сразу на ввод кода.
-  const [step, setStep] = useState<Step>(() => {
-    const saved = sessionStorage.getItem('megatul_login_step');
-    return saved === 'code' ? 'code' : 'start';
-  });
+  // Ввод кода живёт на отдельной странице (/login/code) — сюда он не возвращается,
+  // поэтому хранить шаг между перезагрузками больше не нужно.
+  const [step, setStep] = useState<Step>('start');
   const [botUrl, setBotUrl] = useState<string | null>(null);
-  const [botOpened, setBotOpened] = useState(
-    () => sessionStorage.getItem('megatul_login_step') === 'code'
-  );
-
-  // Запоминаем только ожидание кода. Остальные шаги привязаны к данным в памяти
-  // (выбор роли, ожидание утверждения) — восстанавливать их без данных нельзя.
-  useEffect(() => {
-    if (step === 'code') sessionStorage.setItem('megatul_login_step', 'code');
-    else sessionStorage.removeItem('megatul_login_step');
-  }, [step]);
-
-  const [code, setCode] = useState('');
-  const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState('');
 
   const [pendingUser, setPendingUser] = useState<{
@@ -84,17 +60,17 @@ const Index = () => {
   }, []);
 
   const handleOpenBot = () => {
-    // Сначала переводим экран на ввод кода и только потом открываем бота: внутри
-    // приложения MAX переход в чат может выгрузить страницу сразу, и шаг не успел бы
-    // сохраниться — человек вернулся бы на начало.
-    setBotOpened(true);
-    setStep('code');
-    sessionStorage.setItem('megatul_login_step', 'code');
+    // Сначала переводим человека на страницу ввода кода и только потом открываем бота.
+    //
+    // Порядок важен: внутри приложения MAX переход в чат выгружает страницу сразу.
+    // Раз ввод кода теперь живёт по собственному адресу (/login/code), возврат из
+    // мессенджера — системной кнопкой «назад» или через историю — приводит ровно на
+    // форму ввода, а не на начало входа. Код при этом остаётся действующим.
+    navigate('/login/code');
     if (botUrl) {
       // В приложении MAX сайт уже открыт внутри мессенджера, и новая вкладка там не
-      // создаётся — открываем бота в текущем окне, чтобы возврат работал системной
-      // кнопкой «назад». В обычном браузере оставляем отдельную вкладку: так сайт
-      // остаётся открытым рядом.
+      // создаётся — открываем бота в текущем окне. В обычном браузере оставляем
+      // отдельную вкладку: страница ввода кода остаётся открытой рядом.
       const inMaxApp = /MAX/i.test(navigator.userAgent) || window.self !== window.top;
       if (inMaxApp) window.location.href = botUrl;
       else window.open(botUrl, '_blank', 'noopener,noreferrer');
@@ -120,50 +96,7 @@ const Index = () => {
       workshopName: data.workshopName ?? null,
       shiftNumber: data.shiftNumber ?? null,
     });
-    // Вход завершён — снимаем метку ожидания кода, иначе при следующем выходе
-    // человек сразу попал бы на экран ввода кода вместо кнопки входа.
-    sessionStorage.removeItem('megatul_login_step');
     navigate('/crm');
-  };
-
-  // Вход через MAX и вход по паролю возвращают одно и то же — пользователя со списком
-  // должностей, поэтому дальше оба идут по общему пути.
-  const applyAuthResult = async (result: {
-    id: number;
-    name: string;
-    phone: string | null;
-    roles: UserRoleEntry[];
-  }) => {
-    const approvedRoles = result.roles.filter((r) => r.isApproved);
-    const user = { id: result.id, name: result.name, phone: result.phone, roles: result.roles };
-
-    if (approvedRoles.length === 0) {
-      setPendingUser(user);
-      setStep('pendingApproval');
-      return;
-    }
-
-    if (approvedRoles.length === 1) {
-      const data = await enterRole(result.id, approvedRoles[0].role);
-      finishLogin(data);
-      return;
-    }
-
-    setPendingUser(user);
-    setStep('pickActiveRole');
-  };
-
-  const handleVerifyCode = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setVerifying(true);
-    try {
-      await applyAuthResult(await verifyMaxCode(code.trim()));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось подтвердить код');
-    } finally {
-      setVerifying(false);
-    }
   };
 
   const handleSubmitRegistration = async (form: RegistrationFormData) => {
@@ -195,10 +128,8 @@ const Index = () => {
 
   const handleBackToStart = () => {
     setStep('start');
-    setCode('');
     setError('');
     setPendingUser(null);
-    setBotOpened(false);
   };
 
   return (
@@ -316,51 +247,6 @@ const Index = () => {
             </div>
 
           </div>
-        )}
-
-        {step === 'code' && (
-          <form onSubmit={handleVerifyCode} className="space-y-3">
-            {botOpened && (
-              <p className="text-center text-sm text-muted-foreground">
-                Поделитесь номером телефона в чате с ботом — код придёт сообщением. Затем
-                вернитесь сюда и введите его.
-              </p>
-            )}
-            {!botOpened && (
-              <p className="text-center text-sm text-muted-foreground">
-                Введите код, который прислал бот в MAX.
-              </p>
-            )}
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Код из MAX"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              className="h-11 rounded-sm border-border bg-transparent text-center font-mono-tech text-lg tracking-[0.3em]"
-              maxLength={6}
-              required
-              autoFocus
-            />
-
-            {error && <p className="text-center text-sm text-destructive">{error}</p>}
-
-            <Button
-              type="submit"
-              disabled={verifying}
-              className="h-11 w-full rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              {verifying ? <Icon name="Loader2" size={18} className="animate-spin" /> : 'Подтвердить и войти'}
-            </Button>
-
-            <button
-              type="button"
-              onClick={handleBackToStart}
-              className="w-full text-center text-xs text-muted-foreground hover:text-foreground"
-            >
-              Назад
-            </button>
-          </form>
         )}
 
         {step === 'register' && (
