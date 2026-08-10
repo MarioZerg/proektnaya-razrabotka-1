@@ -238,11 +238,11 @@ const GoodsWarehouse = () => {
               onOpenCreate={openReturn}
               onDone={load}
             />
-            {/* Добавить товары группой — приёмка партии вручную (админ). */}
+            {/* Добавить товары вручную — приёмка партии вручную (админ). */}
             {isAdmin && (
               <Button variant="outline" onClick={() => setAdminReceiveOpen(true)}>
                 <Icon name="PackagePlus" size={16} className="mr-2" />
-                Добавить товары группой
+                Добавить товары вручную
               </Button>
             )}
             <Button
