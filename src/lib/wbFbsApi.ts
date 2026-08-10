@@ -79,6 +79,17 @@ export const fetchWbLabel = async (orderNumber: string): Promise<string> => {
   return data.pngBase64;
 };
 
+/** Отменённый заказ из сборки — убрать с WB и положить на полку склада. */
+export const shelfCancelledOrder = (
+  supplyId: number,
+  orderId: number
+): Promise<{ success: true; orderNumber: string; storageBarcode: string }> =>
+  post({ action: 'shelf_cancelled_order', supplyId, orderId }) as Promise<{
+    success: true;
+    orderNumber: string;
+    storageBarcode: string;
+  }>;
+
 /** Заказ, собранный упаковщицей и ждущий в свободной поставке. */
 export interface WbPendingOrder {
   orderId: number;

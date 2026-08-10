@@ -319,12 +319,24 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
     if not wb_order_id:
         return _resp(409, {'error': f'У заказа {order_number} нет идентификатора сборочного задания WB'})
 
-    cur.execute("SELECT supply_id FROM wb_supply_orders WHERE order_id = %s", (order_id,))
+    # Вещь могла уже лежать в накопительном буфере (упаковщица отстикеровала). Тогда
+    # сканирование — это перенос в сборку кладовщика, а не ошибка. Из чужой РУЧНОЙ
+    # сборки заказ забирать нельзя: там его собирает другой человек.
+    cur.execute(
+        "SELECT wso.supply_id, COALESCE(s.is_accumulator, false) "
+        "FROM wb_supply_orders wso "
+        "JOIN marketplace_supplies s ON s.id = wso.supply_id "
+        "WHERE wso.order_id = %s",
+        (order_id,),
+    )
     ex = cur.fetchone()
+    move_from_accumulator = False
     if ex:
         if ex[0] == int(supply_id):
             return _resp(409, {'error': f'Заказ {order_number} уже в этой поставке'})
-        return _resp(409, {'error': f'Заказ {order_number} уже добавлен в другую поставку'})
+        if not ex[1]:
+            return _resp(409, {'error': f'Заказ {order_number} уже добавлен в другую поставку'})
+        move_from_accumulator = True
 
     status_code, data = wb_request(
         'PATCH', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}', api_key, use_sandbox
@@ -332,15 +344,35 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
     if status_code not in (200, 204):
         return _resp(502, {'error': f'WB не принял заказ в поставку ({status_code}): {wb_error_text(status_code, data)}'})
 
-    cur.execute(
-        "INSERT INTO wb_supply_orders (supply_id, order_id) VALUES (%s, %s)",
-        (int(supply_id), order_id),
-    )
+    if move_from_accumulator:
+        # WB сам вынул задание из прежней поставки — у себя просто переставляем связь.
+        cur.execute(
+            "UPDATE wb_supply_orders SET supply_id = %s WHERE order_id = %s",
+            (int(supply_id), order_id),
+        )
+        _cleanup_empty_accumulator(cur, ex[0])
+    else:
+        cur.execute(
+            "INSERT INTO wb_supply_orders (supply_id, order_id) VALUES (%s, %s)",
+            (int(supply_id), order_id),
+        )
     # Первый скан переводит поставку в статус "На сборке".
     if s_status == 'Открытая':
         cur.execute("UPDATE marketplace_supplies SET status = 'На сборке' WHERE id = %s", (int(supply_id),))
     conn.commit()
     return _resp(200, {'success': True, 'orderId': order_id, 'orderNumber': order_number, 'product': product})
+
+
+def _cleanup_empty_accumulator(cur, supply_id):
+    """Удаляет накопительный буфер, из которого забрали всё. Пустой буфер в базе не нужен —
+    при следующей стикеровке создастся новый."""
+    cur.execute("SELECT COUNT(*) FROM wb_supply_orders WHERE supply_id = %s", (supply_id,))
+    if cur.fetchone()[0] == 0:
+        cur.execute(
+            "DELETE FROM marketplace_supplies WHERE id = %s AND is_accumulator = true "
+            "AND status IN ('Открытая', 'На сборке')",
+            (supply_id,),
+        )
 
 
 def handle_remove_order(cur, conn, body_data, api_key, use_sandbox):
@@ -396,6 +428,69 @@ def handle_remove_order(cur, conn, body_data, api_key, use_sandbox):
     return _resp(200, {'success': True, 'orderNumber': order_number})
 
 
+def handle_check_statuses(cur, conn, api_key, use_sandbox):
+    """Сверяет статусы наших готовых FBS-заказов с WB.
+
+    В счётчике копились заказы, которые на стороне WB давно уехали или отменены —
+    у нас они так и висели «Готовые». Спрашиваем WB напрямую и приводим наши данные
+    в порядок: уехавшие закрываем, отменённые помечаем отменой.
+    """
+    cur.execute(
+        "SELECT id, wb_order_id, order_number FROM orders "
+        "WHERE marketplace = 'WB' AND order_type = 'FBS' "
+        "AND sewing_status = 'Готовые' AND wb_order_id IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM wb_supply_orders w WHERE w.order_id = orders.id)"
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return _resp(200, {'checked': 0, 'closed': 0, 'cancelled': 0, 'statuses': {}})
+
+    ids = [int(r[1]) for r in rows]
+    status_code, data = wb_request(
+        'POST', '/api/v3/orders/status', api_key, use_sandbox, {'orders': ids}
+    )
+    if status_code != 200:
+        return _resp(502, {
+            'error': f'WB не отдал статусы ({status_code}): {wb_error_text(status_code, data)}'
+        })
+
+    by_id = {}
+    for o in (data or {}).get('orders') or []:
+        by_id[int(o.get('id') or 0)] = {
+            'supplier': (o.get('supplierStatus') or '').strip(),
+            'wb': (o.get('wbStatus') or '').strip(),
+        }
+
+    stats = {}
+    closed, cancelled = 0, 0
+    for order_id, wb_order_id, number in rows:
+        st = by_id.get(int(wb_order_id))
+        if not st:
+            continue
+        key = f"{st['supplier']}/{st['wb']}"
+        stats[key] = stats.get(key, 0) + 1
+
+        # Отменён покупателем или WB: шить/везти нечего, из очереди убираем.
+        if st['supplier'] == 'cancel' or st['wb'] in ('canceled', 'canceled_by_client', 'declined_by_client'):
+            cur.execute(
+                "UPDATE orders SET status = 'Отменён' WHERE id = %s", (order_id,)
+            )
+            cancelled += 1
+        # Уже уехал: на WB отправление собрано и передано — у нас тоже закрываем.
+        elif st['wb'] in ('sold', 'sorted', 'ready_for_pickup', 'received') or st['supplier'] == 'complete':
+            cur.execute(
+                "UPDATE orders SET status = 'Отгружен', completed_at = COALESCE(completed_at, now()) "
+                "WHERE id = %s",
+                (order_id,),
+            )
+            closed += 1
+
+    conn.commit()
+    return _resp(200, {
+        'checked': len(rows), 'closed': closed, 'cancelled': cancelled, 'statuses': stats,
+    })
+
+
 def handle_list_pending(cur, body_data):
     """Заказы, накопленные в свободных поставках WB FBS.
 
@@ -412,7 +507,7 @@ def handle_list_pending(cur, body_data):
         "FROM wb_supply_orders wso "
         "JOIN orders o ON o.id = wso.order_id "
         "JOIN marketplace_supplies s ON s.id = wso.supply_id "
-        "WHERE s.marketplace = 'WB' AND s.type = 'FBS' "
+        "WHERE s.marketplace = 'WB' AND s.type = 'FBS' AND s.is_accumulator = true "
         f"AND s.status IN ('Открытая', 'На сборке') {exclude} "
         "ORDER BY wso.order_id DESC"
     )
@@ -517,6 +612,103 @@ def handle_move_orders(cur, conn, body_data, api_key, use_sandbox):
     return _resp(200, {'moved': moved, 'errors': errors})
 
 
+def _next_storage_barcode(cur) -> str:
+    """Следующий штрихкод хранения вида GW-000001."""
+    cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE storage_barcode LIKE 'GW-%'")
+    max_seq = 0
+    for (bc,) in cur.fetchall():
+        suffix = bc.split('-', 1)[1] if '-' in bc else ''
+        if suffix.isdigit():
+            max_seq = max(max_seq, int(suffix))
+    return f"GW-{max_seq + 1:06d}"
+
+
+def handle_shelf_cancelled(cur, conn, body_data, api_key, use_sandbox):
+    """Отменённый заказ из сборки — на полку склада.
+
+    Покупатель отказался, пока вещь ехала в короб. Везти её на маркетплейс нельзя:
+    кладовщик убирает вещь из поставки прямо здесь, она уходит на хранение и ждёт
+    нового покупателя. На стороне WB задание из поставки тоже убирается, иначе
+    маркетплейс будет ждать посылку, которой не будет.
+    """
+    supply_id = body_data.get('supplyId')
+    order_id = body_data.get('orderId')
+    if not supply_id or not order_id:
+        return _resp(400, {'error': 'Укажите поставку и заказ'})
+
+    cur.execute(
+        "SELECT wb_supply_id, status FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    s_row = cur.fetchone()
+    if not s_row:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    wb_supply_id, s_status = s_row
+    if s_status not in ('Открытая', 'На сборке'):
+        return _resp(409, {'error': 'Поставка уже передана в доставку — вещь из неё не убрать'})
+
+    cur.execute(
+        "SELECT o.order_number, o.wb_order_id, o.status "
+        "FROM wb_supply_orders wso JOIN orders o ON o.id = wso.order_id "
+        "WHERE wso.supply_id = %s AND wso.order_id = %s",
+        (int(supply_id), int(order_id)),
+    )
+    row = cur.fetchone()
+    if not row:
+        return _resp(404, {'error': 'Заказ не найден в этой поставке'})
+    order_number, wb_order_id, order_status = row
+
+    # Снимаем задание с поставки на стороне WB. 404 считаем успехом: значит его
+    # там уже нет, и наша база просто догоняет маркетплейс.
+    if wb_supply_id and wb_order_id:
+        status_code, data = wb_request(
+            'DELETE', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}',
+            api_key, use_sandbox,
+        )
+        if status_code not in (200, 204, 404):
+            return _resp(502, {
+                'error': f'WB не убрал заказ из поставки ({status_code}): '
+                         f'{wb_error_text(status_code, data)}'
+            })
+
+    cur.execute(
+        "DELETE FROM wb_supply_orders WHERE supply_id = %s AND order_id = %s",
+        (int(supply_id), int(order_id)),
+    )
+
+    # Заводим вещь на складе. Если она там уже есть (например, приходила раньше) —
+    # используем прежний штрихкод, чтобы не плодить наклейки на одну вещь.
+    cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
+    gw = cur.fetchone()
+    if gw:
+        storage_barcode = gw[0]
+        cur.execute(
+            "UPDATE goods_warehouse SET status = 'awaiting_shelf', reserved_order_id = NULL "
+            "WHERE order_id = %s",
+            (int(order_id),),
+        )
+    else:
+        storage_barcode = _next_storage_barcode(cur)
+        cur.execute(
+            "INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason) "
+            "VALUES (%s, 'awaiting_shelf', %s, 'cancelled')",
+            (int(order_id), storage_barcode),
+        )
+
+    cur.execute("UPDATE orders SET status = 'Отменён' WHERE id = %s", (int(order_id),))
+
+    cur.execute("SELECT COUNT(*) FROM wb_supply_orders WHERE supply_id = %s", (int(supply_id),))
+    if cur.fetchone()[0] == 0 and s_status == 'На сборке':
+        cur.execute(
+            "UPDATE marketplace_supplies SET status = 'Открытая' WHERE id = %s",
+            (int(supply_id),),
+        )
+    conn.commit()
+    return _resp(200, {
+        'success': True, 'orderNumber': order_number, 'storageBarcode': storage_barcode,
+    })
+
+
 def handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox):
     """Передача поставки в доставку: закрывает поставку на WB (PATCH .../deliver),
     после чего тянет стикеры коробов trbx (PNG) и сохраняет их в нашей системе."""
@@ -594,9 +786,12 @@ def ensure_open_supply(cur, conn, api_key, use_sandbox):
 
     Возвращает (ошибка, supply_id, wb_supply_id).
     """
+    # Берём ИМЕННО накопительную (служебную) поставку. Сборку кладовщика трогать нельзя:
+    # он собирает её руками, сканируя стикеры, и чужие вещи туда падать не должны.
     cur.execute(
         "SELECT id, wb_supply_id FROM marketplace_supplies "
-        "WHERE marketplace = 'WB' AND type = 'FBS' AND status IN ('Открытая', 'На сборке') "
+        "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
+        "AND status IN ('Открытая', 'На сборке') "
         "ORDER BY id DESC LIMIT 1"
     )
     row = cur.fetchone()
@@ -605,9 +800,9 @@ def ensure_open_supply(cur, conn, api_key, use_sandbox):
 
     if not supply_id:
         cur.execute(
-            "INSERT INTO marketplace_supplies (marketplace, type, status, comment) "
-            "VALUES ('WB', 'FBS', 'Открытая', %s) RETURNING id",
-            ('Накопительная поставка: заказы добавляются при печати стикера',),
+            "INSERT INTO marketplace_supplies (marketplace, type, status, comment, is_accumulator) "
+            "VALUES ('WB', 'FBS', 'Открытая', %s, true) RETURNING id",
+            ('Накопительная поставка: заказы добавляются при стикеровке',),
         )
         supply_id = cur.fetchone()[0]
 
@@ -800,7 +995,8 @@ def handler(event: dict, context) -> dict:
 
     if action not in ('sync_orders', 'create_supply', 'scan_order_to_supply',
                       'remove_order_from_supply', 'deliver_supply', 'list_warehouses',
-                      'label', 'list_pending_orders', 'move_orders_to_supply'):
+                      'label', 'list_pending_orders', 'move_orders_to_supply',
+                      'check_statuses', 'shelf_cancelled_order'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -822,6 +1018,10 @@ def handler(event: dict, context) -> dict:
             return handle_scan_order(cur, conn, body_data, api_key, use_sandbox)
         if action == 'remove_order_from_supply':
             return handle_remove_order(cur, conn, body_data, api_key, use_sandbox)
+        if action == 'shelf_cancelled_order':
+            return handle_shelf_cancelled(cur, conn, body_data, api_key, use_sandbox)
+        if action == 'check_statuses':
+            return handle_check_statuses(cur, conn, api_key, use_sandbox)
         if action == 'list_pending_orders':
             return handle_list_pending(cur, body_data)
         if action == 'move_orders_to_supply':

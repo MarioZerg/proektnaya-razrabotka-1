@@ -20,8 +20,8 @@ import {
   scanWbOrderToSupply,
   deliverWbSupply,
   removeWbOrderFromSupply,
+  shelfCancelledOrder,
 } from '@/lib/wbFbsApi';
-import WbPendingOrdersPanel from '@/components/crm/marketplaceSupplies/WbPendingOrdersPanel';
 
 interface WbFbsSupplyCardProps {
   supply: SupplyDetail;
@@ -41,6 +41,7 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
   const scanRef = useRef<HTMLInputElement>(null);
 
   const [removingId, setRemovingId] = useState<number | null>(null);
+  const [shelvingId, setShelvingId] = useState<number | null>(null);
 
   const wbCreated = !!supply.wbSupplyId;
   const canScan = wbCreated && (supply.status === 'Открытая' || supply.status === 'На сборке');
@@ -57,6 +58,28 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setRemovingId(null);
+    }
+  };
+
+  // Покупатель отказался, пока вещь ехала в короб: убираем её из поставки (и с WB),
+  // вещь уходит на полку склада и ждёт нового покупателя.
+  const handleShelf = async (orderId: number, orderNumber: string) => {
+    setShelvingId(orderId);
+    try {
+      const r = await shelfCancelledOrder(supplyId, orderId);
+      toast({
+        title: `Заказ ${orderNumber} убран из поставки`,
+        description: `Наклейте стикер хранения ${r.storageBarcode} — вещь едет на полку`,
+      });
+      onReload();
+    } catch (e) {
+      toast({
+        title: 'Не удалось убрать заказ',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setShelvingId(null);
     }
   };
 
@@ -156,8 +179,10 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-4 text-sm">
+          {/* Сколько вещей упаковщицы уже отстикеровали и сложили в контейнер:
+              по этому числу кладовщик решает, идти ли на производство. */}
           <span>
-            Готово на производстве: <b>{supply.wbReadyCount}</b>
+            Готово к сборке: <b>{supply.wbReadyCount}</b>
           </span>
           <span>
             Отсканировано в поставку: <b>{supply.wbOrders.length}</b>
@@ -197,10 +222,6 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
           </CardContent>
         </Card>
       )}
-
-      {/* Вещи, уже собранные упаковщицами: кладовщик отмечает нужные и забирает
-          их в свою поставку, не сканируя каждую заново. */}
-      {canScan && <WbPendingOrdersPanel supplyId={supplyId} onMoved={onReload} />}
 
       {canScan && (
         <Card className="border-primary/30 bg-primary/5 shadow-none">
@@ -250,8 +271,15 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
             </TableHeader>
             <TableBody>
               {supply.wbOrders.map((o) => (
-                <TableRow key={o.id}>
-                  <TableCell className="font-medium">{o.orderNumber}</TableCell>
+                <TableRow key={o.id} className={o.isCancelled ? 'bg-destructive/5' : undefined}>
+                  <TableCell className="font-medium">
+                    {o.orderNumber}
+                    {o.isCancelled && (
+                      <span className="ml-2 rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
+                        отменён
+                      </span>
+                    )}
+                  </TableCell>
                   <TableCell>{o.product || '—'}</TableCell>
                   <TableCell className="font-mono-tech">{o.wbTrbxId || '—'}</TableCell>
                   <TableCell>
@@ -270,7 +298,26 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
                     )}
                   </TableCell>
                   {canRemove && (
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {/* Отменённый заказ везти нельзя: кладовщик убирает его прямо
+                          отсюда — вещь уходит на полку, а с WB задание снимается. */}
+                      {o.isCancelled && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mr-1"
+                          onClick={() => handleShelf(o.orderId, o.orderNumber)}
+                          disabled={shelvingId === o.orderId}
+                          title="Убрать из поставки и положить на полку"
+                        >
+                          <Icon
+                            name={shelvingId === o.orderId ? 'Loader2' : 'PackageOpen'}
+                            size={14}
+                            className={`mr-1 ${shelvingId === o.orderId ? 'animate-spin' : ''}`}
+                          />
+                          На полку
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"

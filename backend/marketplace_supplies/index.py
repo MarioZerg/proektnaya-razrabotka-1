@@ -609,7 +609,8 @@ def handler(event: dict, context) -> dict:
                 if row[1] == 'WB' and row[2] == 'FBS':
                     cur.execute(
                         "SELECT wso.id, wso.order_id, o.order_number, o.product, "
-                        "wso.wb_trbx_id, wso.sticker_url, wso.sticker_name, wso.scanned_at "
+                        "wso.wb_trbx_id, wso.sticker_url, wso.sticker_name, wso.scanned_at, "
+                        "COALESCE(o.status, '') "
                         "FROM wb_supply_orders wso JOIN orders o ON o.id = wso.order_id "
                         "WHERE wso.supply_id = %s ORDER BY wso.scanned_at",
                         (int(supply_id),),
@@ -624,20 +625,20 @@ def handler(event: dict, context) -> dict:
                             'stickerUrl': r[5],
                             'stickerName': r[6],
                             'scannedAt': (r[7].isoformat() + 'Z') if r[7] else None,
+                            # Покупатель отказался, пока вещь шла в короб: везти её
+                            # нельзя — кладовщик убирает её из поставки на полку.
+                            'isCancelled': r[8] == 'Отменён',
                         }
                         for r in cur.fetchall()
                     ]
-                    # Готовые к отгрузке: сшитые FBS-заказы WB плюс вещи, снятые с полок и
-                    # уже отстикерованные. Нестикерованные вещи с полок сюда НЕ попадают —
-                    # они физически лежат на складе, и в короб их ещё неклали.
+                    # Готово к сборке: вещи, которые упаковщица уже отстикеровала — они
+                    # лежат в контейнере на производстве и ждут, когда кладовщик их
+                    # отсканирует в свою поставку. Это и есть накопительный буфер.
                     cur.execute(
-                        "SELECT COUNT(*) FROM orders o "
-                        "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
-                        "WHERE o.marketplace = 'WB' AND o.order_type = 'FBS' "
-                        "AND (o.sewing_status = 'Готовые' "
-                        "     OR (o.fulfilled_from_stock_id IS NOT NULL "
-                        "         AND gw.shipping_labeled_at IS NOT NULL)) "
-                        "AND NOT EXISTS (SELECT 1 FROM wb_supply_orders w WHERE w.order_id = o.id)"
+                        "SELECT COUNT(*) FROM wb_supply_orders wso "
+                        "JOIN marketplace_supplies acc ON acc.id = wso.supply_id "
+                        "WHERE acc.is_accumulator = true "
+                        "AND acc.status IN ('Открытая', 'На сборке')"
                     )
                     wb_ready_count = cur.fetchone()[0]
 
@@ -712,7 +713,10 @@ def handler(event: dict, context) -> dict:
             release_stale_supply_locks(cur)
             conn.commit()
 
-            conditions = []
+            # Накопительная поставка — служебный буфер, куда падают вещи при стикеровке.
+            # В списке поставок её быть не должно: кладовщик работает только со своими
+            # сборками, а буфер он видит счётчиком «готово к сборке».
+            conditions = ["COALESCE(s.is_accumulator, false) = false"]
             if status_filter:
                 status_esc = status_filter.replace("'", "''")
                 conditions.append(f"s.status = '{status_esc}'")
@@ -938,6 +942,28 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Тип поставки должен быть FBO или FBS'})}
                 if marketplace == 'OZON' and supply_type == 'FBO' and ozon_delivery_method not in ('direct', 'cross_docking'):
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите способ поставки: прямая или кросс-докинг'})}
+
+                # Сборка WB FBS может быть только одна. Две открытые сборки означают, что
+                # вещи из одного контейнера расходятся по разным коробам — на маркетплейсе
+                # это разные поставки, и часть заказов уедет не туда.
+                if marketplace == 'WB' and supply_type == 'FBS':
+                    cur.execute(
+                        "SELECT id FROM marketplace_supplies "
+                        "WHERE marketplace = 'WB' AND type = 'FBS' "
+                        "AND COALESCE(is_accumulator, false) = false "
+                        "AND status IN ('Открытая', 'На сборке') LIMIT 1"
+                    )
+                    active = cur.fetchone()
+                    if active:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Сборка #{active[0]} ещё не завершена. Передайте её '
+                                         f'в доставку — потом создавайте новую',
+                                'activeSupplyId': active[0],
+                            }, ensure_ascii=False),
+                        }
 
                 marketplace_esc = marketplace.replace("'", "''")
                 type_esc = supply_type.replace("'", "''")

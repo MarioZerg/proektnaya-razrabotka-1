@@ -111,6 +111,8 @@ export interface WbSupplyOrder {
   stickerUrl: string | null;
   stickerName: string | null;
   scannedAt: string | null;
+  /** Покупатель отказался, пока вещь шла в короб: везти нельзя, кладём на полку. */
+  isCancelled?: boolean;
 }
 
 export interface SupplyDetail extends Supply {
