@@ -1684,7 +1684,13 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': 'Откройте рабочую смену, чтобы брать заказы в работу'}),
                     }
-                where_parts.append(f"workshop_id = {int(session_workshop_id)}")
+                # Заказы, заведённые вручную/загрузкой из старой базы (source = 'import'),
+                # цеха не имеют: их не раскраивал закройщик, и проставить цех было неоткуда.
+                # Без поблажки они висят мёртвым грузом — швея своего цеха их не видит,
+                # а другого цеха у них нет. Поэтому берём либо свой цех, либо «без цеха».
+                where_parts.append(
+                    f"(workshop_id = {int(session_workshop_id)} OR workshop_id IS NULL)"
+                )
                 if orders_filter_setting == 'fbo':
                     where_parts.append("order_type = 'FBO'")
                 elif orders_filter_setting == 'fbs':
@@ -1744,9 +1750,17 @@ def handler(event: dict, context) -> dict:
 
                 # Проверяем, что материалы для этого товара есть в цехе смены. Если чего-то
                 # не хватает — заказ в работу не выдаём и пишем, какого именно материала мало.
-                cur.execute("SELECT material, width, height FROM orders WHERE id = %s", (order_id,))
+                # У заказов, заведённых вручную (source = 'import'), расход материалов в
+                # карточках товара ещё не заполнен — проверка остатка отбраковала бы их все.
+                # Такие заказы отдаём в работу без проверки: материал по ним списывается
+                # по факту, а не планируется заранее.
+                cur.execute(
+                    "SELECT material, width, height, COALESCE(source, '') FROM orders WHERE id = %s",
+                    (order_id,),
+                )
                 o_row = cur.fetchone()
-                if o_row and o_row[0] and o_row[1] and o_row[2]:
+                is_manual_order = bool(o_row) and o_row[3] == 'import'
+                if o_row and o_row[0] and o_row[1] and o_row[2] and not is_manual_order:
                     cur.execute(
                         "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
                         (o_row[0], o_row[1], o_row[2]),
