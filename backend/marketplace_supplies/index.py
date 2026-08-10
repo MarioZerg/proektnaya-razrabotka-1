@@ -1030,22 +1030,45 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': f'Товар со штрихкодом {storage_barcode} не найден на складе'}),
                     }
                 goods_id, goods_status, order_number = gw_row
+
+                # Сначала смотрим, не лежит ли товар УЖЕ в поставке. Добавленный товар
+                # становится 'reserved', и проверка статуса ниже принимала его за
+                # неотобранный — кладовщик видел «сначала отсканируйте на складе»,
+                # хотя вещь была у него в руках и давно в этой же поставке.
+                cur.execute(
+                    "SELECT si.id, si.supply_id, s.status FROM marketplace_supply_items si "
+                    "JOIN marketplace_supplies s ON s.id = si.supply_id "
+                    "WHERE si.goods_warehouse_id = %s",
+                    (goods_id,),
+                )
+                exists = cur.fetchone()
+                if exists:
+                    if exists[1] == int(supply_id):
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Товар {order_number or ""} уже добавлен в эту поставку'
+                            }, ensure_ascii=False),
+                        }
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Товар {order_number or ""} уже в поставке #{exists[1]} '
+                                     f'({exists[2]}) — уберите его оттуда, если он нужен здесь'
+                        }, ensure_ascii=False),
+                    }
+
                 if goods_status != 'picking':
                     return {
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({
                             'error': f'Товар {order_number or ""} не отобран к подбору (статус: {goods_status}) — '
-                            'сначала отсканируйте его на складе в разделе "Товар к подбору"'
+                            'сначала отсканируйте его на складе в разделе "Сборка товара с полок"'
                         }),
                     }
-
-                cur.execute(
-                    "SELECT id FROM marketplace_supply_items WHERE supply_id = %s AND goods_warehouse_id = %s",
-                    (int(supply_id), goods_id),
-                )
-                if cur.fetchone():
-                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Заказ {order_number} уже в этой поставке'})}
 
                 cur.execute(
                     f"INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id) VALUES ({int(supply_id)}, {goods_id})"
@@ -1298,6 +1321,34 @@ def handler(event: dict, context) -> dict:
                         }),
                     }
                 goods_id, goods_status, goods_order_number = gw_row
+                order_number = goods_order_number or order_number
+
+                # «Уже в поставке» проверяем ПЕРЕД статусом: добавленный товар становится
+                # 'reserved', и иначе кладовщик получал невнятное «уже зарезервирован»
+                # вместо понятного «этот товар уже в коробе».
+                cur.execute(
+                    "SELECT si.id, si.supply_id FROM marketplace_supply_items si "
+                    "WHERE si.goods_warehouse_id = %s",
+                    (goods_id,),
+                )
+                exists = cur.fetchone()
+                if exists:
+                    if exists[1] == supply_id:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Товар {order_number or ""} уже добавлен в эту поставку'
+                            }, ensure_ascii=False),
+                        }
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Товар {order_number or ""} уже в поставке #{exists[1]}'
+                        }, ensure_ascii=False),
+                    }
+
                 if goods_status == 'awaiting_shelf':
                     return {
                         'statusCode': 409,
@@ -1310,14 +1361,6 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': f'Товар {goods_order_number or ""} уже зарезервирован или отгружен'}),
                     }
-                order_number = goods_order_number or order_number
-
-                cur.execute(
-                    "SELECT id FROM marketplace_supply_items WHERE supply_id = %s AND goods_warehouse_id = %s",
-                    (supply_id, goods_id),
-                )
-                if cur.fetchone():
-                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Заказ {order_number} уже в этой поставке'})}
 
                 cur.execute(
                     f"INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id, box_id) "
