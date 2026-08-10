@@ -370,18 +370,24 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
               </div>
             </div>
 
-            <Button
-              size="lg"
-              variant={tracePrinted ? 'outline' : 'default'}
-              className="h-16 w-full text-lg"
-              onClick={() => {
-                printTraceSticker(order);
-                setTracePrinted(true);
-              }}
-            >
-              <Icon name={tracePrinted ? 'Check' : 'QrCode'} size={24} className="mr-2" />
-              {tracePrinted ? 'Стикер в пакет напечатан' : 'Стикер в пакет (кто шил)'}
-            </Button>
+            {/* Стикер «кто шил» нужен только на FBO: там вещь уезжает на склад
+                маркетплейса обезличенной, и по возврату иначе не понять, чья работа.
+                У FBS в пакет кладётся ярлык отправления маркетплейса, заказ привязан
+                к конкретному покупателю — второй стикер только путает упаковщицу. */}
+            {order.orderType !== 'FBS' && (
+              <Button
+                size="lg"
+                variant={tracePrinted ? 'outline' : 'default'}
+                className="h-16 w-full text-lg"
+                onClick={() => {
+                  printTraceSticker(order);
+                  setTracePrinted(true);
+                }}
+              >
+                <Icon name={tracePrinted ? 'Check' : 'QrCode'} size={24} className="mr-2" />
+                {tracePrinted ? 'Стикер в пакет напечатан' : 'Стикер в пакет (кто шил)'}
+              </Button>
+            )}
 
             {order.isCancelled ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-center">
