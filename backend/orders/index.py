@@ -1762,10 +1762,39 @@ def handler(event: dict, context) -> dict:
                     )
                     row = cur.fetchone()
                 if not row:
+                    # Объясняем ПОЧЕМУ пусто, иначе швея видит «нет заказов» и не понимает,
+                    # что делать. Самая частая причина — смена открыта не в том цехе:
+                    # человек физически стоит в одном цехе, а смену открыл на терминале
+                    # другого, и вся очередь чужого цеха ему недоступна.
+                    cur.execute(
+                        "SELECT w.id, w.name, COUNT(o.id) FROM orders o "
+                        "JOIN workshops w ON w.id = o.workshop_id "
+                        "WHERE o.sewing_status = 'Раскроено' "
+                        "AND COALESCE(o.status, '') <> 'Отменён' "
+                        "GROUP BY w.id, w.name ORDER BY COUNT(o.id) DESC"
+                    )
+                    elsewhere = [r for r in cur.fetchall() if r[0] != session_workshop_id]
+
+                    cur.execute("SELECT name FROM workshops WHERE id = %s", (int(session_workshop_id),))
+                    ws_name_row = cur.fetchone()
+                    ws_name = ws_name_row[0] if ws_name_row else f'#{session_workshop_id}'
+
+                    if elsewhere:
+                        where_txt = ', '.join(f'{r[1]} — {r[2]} шт.' for r in elsewhere)
+                        msg = (
+                            f'В {ws_name} нет раскроенных заказов. Они есть в другом цехе: '
+                            f'{where_txt}. Ваша смена открыта в {ws_name} — если вы работаете '
+                            f'в другом цехе, закройте смену и откройте её на терминале того цеха'
+                        )
+                    else:
+                        msg = (
+                            f'В {ws_name} нет раскроенных заказов — закройщики ещё не сдали крой. '
+                            f'Подождите или спросите закройщицу'
+                        )
                     return {
                         'statusCode': 404,
                         'headers': headers,
-                        'body': json.dumps({'error': 'Нет раскроенных заказов в очереди'}),
+                        'body': json.dumps({'error': msg}, ensure_ascii=False),
                     }
                 order_id = row[0]
 
