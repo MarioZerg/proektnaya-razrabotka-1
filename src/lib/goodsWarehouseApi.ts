@@ -185,6 +185,39 @@ export const fetchPickingOrders = async (): Promise<PickingOrder[]> => {
   return res.json();
 };
 
+/** Уведомление на панели администратора. */
+export interface AdminNotification {
+  id: number;
+  kind: string;
+  title: string;
+  message: string | null;
+  actorName: string | null;
+  link: string | null;
+  createdAt: string | null;
+  isRead: boolean;
+}
+
+/** Уведомления для панели администратора. */
+export const fetchAdminNotifications = async (): Promise<{
+  items: AdminNotification[];
+  unread: number;
+}> => {
+  const res = await fetch(`${GOODS_WAREHOUSE_URL}?notifications=1`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить уведомления');
+  return data;
+};
+
+/** Убрать уведомления с панели. Без списка id очищает все. */
+export const dismissNotifications = (
+  ids: number[],
+  actorId?: number,
+  actorName?: string,
+) => postAction({ action: 'dismiss_notification', ids, actorId, actorName }) as Promise<{
+  success: true;
+  removed: number;
+}>;
+
 /** Этапы движения возврата: от приёмки до полки. */
 export type InspectionStage =
   | 'fromReturn'
@@ -348,8 +381,13 @@ export const deleteGoods = (id: number, actorId?: number, actorName?: string) =>
   postAction({ action: 'delete_goods', id, actorId, actorName });
 
 /** Вещь испорчена: списываем её со склада, а заказ возвращаем в производство — сошьют заново. */
-export const sendGoodsToSewing = (id: number, reason: string) =>
-  postAction({ action: 'send_to_sewing', id, reason }) as Promise<{
+export const sendGoodsToSewing = (
+  id: number,
+  reason: string,
+  actorId?: number,
+  actorName?: string,
+) =>
+  postAction({ action: 'send_to_sewing', id, reason, actorId, actorName }) as Promise<{
     success: true;
     returnedOrder: string | null;
   }>;

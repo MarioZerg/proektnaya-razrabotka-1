@@ -13,6 +13,8 @@ import {
   type GoodsCard as GoodsCardType,
 } from '@/lib/goodsWarehouseApi';
 import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
+import SendToSewingDialog from '@/components/crm/goodsWarehouse/SendToSewingDialog';
+import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import {
   statusLabels,
   statusVariant,
@@ -61,6 +63,8 @@ const GoodsCard = () => {
   const [sending, setSending] = useState(false);
   /** Стикер напечатан в этой сессии — показываем кнопку отправки сразу. */
   const [justPrinted, setJustPrinted] = useState(false);
+  /** Открыт диалог отправки в пошив (нужна причина). */
+  const [sewingItem, setSewingItem] = useState<GoodsWarehouseItem | null>(null);
 
   const load = () => {
     if (!id) return;
@@ -225,6 +229,28 @@ const GoodsCard = () => {
                     Вещь пока не подобрана под заказ — стикер печатать не из чего
                   </p>
                 )}
+
+                {/* Вещь испорчена и отгружать её нельзя: списываем со склада, а заказ
+                    возвращаем на конвейер. Админ получит уведомление на панель. */}
+                <div className="border-t border-border pt-3">
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      setSewingItem({
+                        id: card.id,
+                        product: card.product,
+                        orderNumber: card.reservedOrderNumber || card.sourceOrderNumber,
+                        storageBarcode: card.storageBarcode,
+                      } as GoodsWarehouseItem)
+                    }
+                  >
+                    <Icon name="Shirt" size={18} className="mr-2" />
+                    Отправить на пошив
+                  </Button>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Вещь спишется со склада, а заказ вернётся на конвейер в статус «Новый»
+                  </p>
+                </div>
               </>
             )}
           </CardContent>
@@ -263,6 +289,15 @@ const GoodsCard = () => {
             </CardContent>
           </Card>
         </div>
+
+        <SendToSewingDialog
+          item={sewingItem}
+          onOpenChange={(v) => !v && setSewingItem(null)}
+          onDone={() => {
+            setSewingItem(null);
+            load();
+          }}
+        />
 
         {/* История движения: кто из сотрудников что делал с этой вещью. */}
         <div className="space-y-2">

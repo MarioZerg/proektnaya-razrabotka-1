@@ -20,6 +20,7 @@ import {
 } from '@/lib/shiftSessionsApi';
 import { fetchShifts, type ShiftListItem } from '@/lib/shiftsApi';
 import DashboardWidgetsGrid from '@/components/crm/dashboard/DashboardWidgetsGrid';
+import AdminNotifications from '@/components/crm/dashboard/AdminNotifications';
 import WorkingTodayCard from '@/components/crm/dashboard/WorkingTodayCard';
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
@@ -354,6 +355,10 @@ const CrmDashboard = () => {
           Обзор производства и складских процессов на сегодня
         </p>
       </div>
+
+      {/* Решения склада, которые стоят денег, — сразу перед виджетами: админ видит их
+          первыми, ещё до сводки по цеху. */}
+      {user?.role === 'admin' && <AdminNotifications />}
 
       {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
 

@@ -5,6 +5,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import { sendGoodsToSewing, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 
 interface SendToSewingDialogProps {
@@ -19,6 +20,7 @@ const REASONS = ['Порвана', 'Пятно', 'Брак пошива', 'Не 
  * возвращаем в производство — его сошьют заново, и он не зависнет на подборе. */
 const SendToSewingDialog = ({ item, onOpenChange, onDone }: SendToSewingDialogProps) => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -26,7 +28,7 @@ const SendToSewingDialog = ({ item, onOpenChange, onDone }: SendToSewingDialogPr
     if (!item || !reason.trim()) return;
     setSaving(true);
     try {
-      const res = await sendGoodsToSewing(item.id, reason.trim());
+      const res = await sendGoodsToSewing(item.id, reason.trim(), user?.id, user?.name);
       toast({
         title: 'Вещь списана, заказ отправлен в пошив',
         description: res.returnedOrder

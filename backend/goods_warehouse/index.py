@@ -88,6 +88,26 @@ def is_admin(cur, actor_id) -> bool:
     return bool(row and row[0] == 'admin')
 
 
+def notify_admin(cur, kind, title, message, actor_id, actor_name, link=None,
+                 entity_type=None, entity_id=None):
+    """Кладёт событие на панель администратора.
+
+    Решения кладовщика, стоящие денег (списание готовой вещи, отправка в пошив заново),
+    админ должен увидеть сразу, а не найти случайно в журнале через неделю.
+    """
+    cur.execute(
+        "INSERT INTO admin_notifications (kind, title, message, actor_id, actor_name, "
+        "link, entity_type, entity_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            kind, title, message,
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            link, entity_type,
+            int(entity_id) if entity_id not in (None, '') else None,
+        ),
+    )
+
+
 def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
     """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit()."""
     cur.execute(
@@ -378,6 +398,35 @@ def handler(event: dict, context) -> dict:
             # Воронка осмотра возвратов: шесть счётчиков + список выбранного этапа.
             # Кладовщик видит, сколько вещей застряло на каждом шаге, и не теряет их
             # «где-то между цехом и складом».
+            # Уведомления для панели администратора.
+            if params.get('notifications'):
+                cur.execute(
+                    "SELECT id, kind, title, message, actor_name, link, created_at, is_read "
+                    "FROM admin_notifications WHERE hidden_at IS NULL "
+                    "ORDER BY created_at DESC LIMIT 100"
+                )
+                rows = cur.fetchall()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'items': [
+                            {
+                                'id': r[0],
+                                'kind': r[1],
+                                'title': r[2],
+                                'message': r[3],
+                                'actorName': r[4],
+                                'link': r[5],
+                                'createdAt': r[6].isoformat() if r[6] else None,
+                                'isRead': r[7],
+                            }
+                            for r in rows
+                        ],
+                        'unread': sum(1 for r in rows if not r[7]),
+                    }, ensure_ascii=False),
+                }
+
             if params.get('inspection'):
                 stage = (params.get('stage') or '').strip()
 
@@ -1089,6 +1138,32 @@ def handler(event: dict, context) -> dict:
                     }, ensure_ascii=False),
                 }
 
+            if action == 'dismiss_notification':
+                # Админ убирает уведомление с панели. Физически запись не удаляем —
+                # история решений по складу должна остаться целой.
+                if not is_admin(cur, actor_id):
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Управлять уведомлениями может только администратор'}, ensure_ascii=False),
+                    }
+                ids = body_data.get('ids') or ([body_data['id']] if body_data.get('id') else [])
+                if ids:
+                    ids_csv = ','.join(str(int(i)) for i in ids)
+                    cur.execute(
+                        f"UPDATE admin_notifications SET hidden_at = now(), is_read = true "
+                        f"WHERE id IN ({ids_csv}) AND hidden_at IS NULL RETURNING id"
+                    )
+                else:
+                    # Без списка id — «очистить всё».
+                    cur.execute(
+                        "UPDATE admin_notifications SET hidden_at = now(), is_read = true "
+                        "WHERE hidden_at IS NULL RETURNING id"
+                    )
+                removed = len(cur.fetchall())
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'removed': removed})}
+
             if action == 'move_to_workshop':
                 # Кладовщик отобрал принятые возвраты и передал их упаковщицам на осмотр.
                 # Работаем пачкой: обычно за раз уезжает целая тележка, а не одна вещь.
@@ -1430,6 +1505,17 @@ def handler(event: dict, context) -> dict:
                     f'Вещь {gw_barcode} ({gw_product or gw_order_number}) списана как брак и '
                     f'отправлена в пошив: {reason}'
                     + (f'. Заказ {returned_order} вернулся в производство' if returned_order else ''),
+                )
+                # Списание готовой вещи — деньги и лишняя работа цеха. Админ должен
+                # увидеть это на панели сразу, а не откопать в журнале через неделю.
+                notify_admin(
+                    cur, 'send_to_sewing',
+                    'Кладовщик отправил товар на пошив',
+                    f'{gw_product or gw_order_number or "Товар"} ({gw_barcode}). Причина: {reason}'
+                    + (f'. Заказ {returned_order} вернулся на конвейер' if returned_order else ''),
+                    actor_id, actor_name,
+                    link=f'/crm/inventory/goods/{int(item_id)}',
+                    entity_type='goods_warehouse', entity_id=item_id,
                 )
                 conn.commit()
                 return {
