@@ -234,8 +234,13 @@ def handle_sync(cur, body_data=None):
     wb_stage = (body_data.get('wbStage') or 'false').strip()
     wb_skip = int(body_data.get('wbSkip') or 0)
     # По 200 за вызов: 1000 отзывов не успевают сопоставиться с заказами за отведённое
-    # функции время, и синхронизация обрывалась на середине.
-    page_size = 200
+    # функции время, и синхронизация обрывалась на середине. Размер порции можно
+    # уменьшить запросом — на медленных ответах WB даже 200 не успевают дойти.
+    try:
+        page_size = int(body_data.get('pageSize') or 200)
+    except (TypeError, ValueError):
+        page_size = 200
+    page_size = max(20, min(page_size, 1000))
     done = True
 
     # OZON тянем только на первом шаге: его отзывов немного, они проходят за раз.
