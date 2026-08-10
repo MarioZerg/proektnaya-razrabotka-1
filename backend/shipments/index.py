@@ -965,6 +965,61 @@ def handler(event: dict, context) -> dict:
                 if not roll_ids:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Соберите хотя бы один рулон перед отправкой'})}
 
+                # Лимит открытых коробок тесьмы на смену. Швеи держат в работе не больше
+                # двух коробок КАЖДОГО вида: пока не закроют одну, третью везти нельзя.
+                # Иначе вскрытые коробки копятся, остатки теряются, а список выбора у
+                # швеи превращается в свалку из давно закончившейся тесьмы.
+                cur.execute(
+                    "SELECT value FROM system_settings WHERE key = 'max_open_trim_rolls_per_shift'"
+                )
+                lim_row = cur.fetchone()
+                try:
+                    trim_limit = int(lim_row[0]) if lim_row and lim_row[0] else 2
+                except (TypeError, ValueError):
+                    trim_limit = 2
+
+                if trim_limit > 0:
+                    # Считаем по КАЖДОМУ материалу отдельно: тесьма 6 см и 4 см — разные
+                    # коробки, и лимит у них свой.
+                    cur.execute(
+                        "SELECT m.id, m.name, COUNT(*) FROM rolls r "
+                        "JOIN materials m ON m.id = r.material_id "
+                        "JOIN material_types mt ON mt.id = m.type_id "
+                        "WHERE mt.name = 'Аксессуары' AND r.status = 'in_workshop' "
+                        "AND r.workshop_id = %s AND r.shift_number = %s "
+                        "AND r.id <> ALL(%s) "
+                        "GROUP BY m.id, m.name",
+                        (int(workshop_id), int(shift_number), roll_ids),
+                    )
+                    open_by_material = {r[0]: (r[1], int(r[2])) for r in cur.fetchall()}
+
+                    cur.execute(
+                        "SELECT m.id, m.name, COUNT(*) FROM rolls r "
+                        "JOIN materials m ON m.id = r.material_id "
+                        "JOIN material_types mt ON mt.id = m.type_id "
+                        "WHERE mt.name = 'Аксессуары' AND r.id = ANY(%s) "
+                        "GROUP BY m.id, m.name",
+                        (roll_ids,),
+                    )
+                    over = []
+                    for mat_id, mat_name, adding in cur.fetchall():
+                        already = open_by_material.get(mat_id, (mat_name, 0))[1]
+                        if already + int(adding) > trim_limit:
+                            over.append(
+                                f'{mat_name}: в смене уже {already} шт., везёте ещё {int(adding)} '
+                                f'(разрешено {trim_limit})'
+                            )
+                    if over:
+                        conn.rollback()
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Слишком много коробок тесьмы на смену. '
+                                         'Закройте начатые, потом везите новые. ' + '; '.join(over)
+                            }, ensure_ascii=False),
+                        }
+
                 # accepted_at = NULL — рулон уехал в цех, но пока «в пути»: в раскрой он
                 # не идёт, пока смена не пересчитает привезённое и не примет заявку.
                 for roll_id in roll_ids:
