@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -11,7 +12,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
-import { fetchPickingOrders, type PickingOrder } from '@/lib/goodsWarehouseApi';
+import ShipLabelDialog from '@/components/crm/goodsWarehouse/ShipLabelDialog';
+import {
+  fetchGoodsWarehouse,
+  fetchPickingOrders,
+  type GoodsWarehouseItem,
+  type PickingOrder,
+} from '@/lib/goodsWarehouseApi';
 
 /** Дата в привычном виде: «10.08.2026, 16:15». */
 const formatDate = (value: string | null) => {
@@ -38,11 +45,19 @@ const GoodsPicking = () => {
 
   const [orders, setOrders] = useState<PickingOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [scanOpen, setScanOpen] = useState(false);
+  /** Вещи с полок, подобранные под заказы: их сканируют и стикеруют. */
+  const [matched, setMatched] = useState<GoodsWarehouseItem[]>([]);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
     setLoading(true);
-    fetchPickingOrders()
-      .then(setOrders)
+    Promise.all([fetchPickingOrders(), fetchGoodsWarehouse('in_stock')])
+      .then(([ordersData, stock]) => {
+        setOrders(ordersData);
+        setMatched(stock.filter((i) => i.reservedOrderId && !i.shippingLabeledAt));
+      })
       .catch(() => setOrders([]))
       .finally(() => setLoading(false));
   };
@@ -53,6 +68,23 @@ const GoodsPicking = () => {
     const timer = setInterval(load, 30000);
     return () => clearInterval(timer);
   }, []);
+
+  // Фокус в поиске: кладовщик заходит на страницу и сразу пикает сканером, не мышкой.
+  useEffect(() => {
+    searchRef.current?.focus();
+  }, []);
+
+  // Ищем по названию товара и номеру заказа: сканер «пикает» номер — строка находится сразу.
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter(
+      (o) =>
+        o.product?.toLowerCase().includes(q) ||
+        o.orderNumber?.toLowerCase().includes(q) ||
+        o.material?.toLowerCase().includes(q)
+    );
+  }, [orders, search]);
 
   return (
     <CrmLayout>
@@ -74,27 +106,81 @@ const GoodsPicking = () => {
                 Заказы, под которые нужно найти готовую вещь на складе
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-              <Icon
-                name={loading ? 'Loader2' : 'RefreshCw'}
-                size={14}
-                className={`mr-1.5 ${loading ? 'animate-spin' : ''}`}
-              />
-              Обновить
-            </Button>
+            <div className="flex gap-2">
+              {/* Сканер подбора: отсканировал вещь с полки — сразу печать стикера. */}
+              <Button onClick={() => setScanOpen(true)}>
+                <Icon name="ScanLine" size={16} className="mr-2" />
+                Сканер подбора
+                {matched.length > 0 && (
+                  <span className="ml-2 rounded-full bg-background/25 px-2 text-xs">
+                    {matched.length}
+                  </span>
+                )}
+              </Button>
+              <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+                <Icon
+                  name={loading ? 'Loader2' : 'RefreshCw'}
+                  size={14}
+                  className={`mr-1.5 ${loading ? 'animate-spin' : ''}`}
+                />
+                Обновить
+              </Button>
+            </div>
           </div>
         </div>
+
+        {/* Поиск по списку: поле в фокусе, можно пикнуть сканером и сразу найти товар. */}
+        <div className="relative max-w-xl">
+          <Icon
+            name="Search"
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            ref={searchRef}
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Поиск: товар, номер заказа или ткань"
+            className="pl-9 pr-9"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch('');
+                searchRef.current?.focus();
+              }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <Icon name="X" size={16} />
+            </button>
+          )}
+        </div>
+
+        <ShipLabelDialog
+          open={scanOpen}
+          onOpenChange={setScanOpen}
+          matched={matched}
+          onDone={load}
+        />
 
         {loading && orders.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
-        ) : orders.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Заказов к подбору нет</p>
+        ) : filtered.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {search ? 'По запросу ничего не найдено' : 'Заказов к подбору нет'}
+          </p>
         ) : (
           <>
-            <p className="text-sm text-muted-foreground">Заказов к подбору: {orders.length}</p>
+            <p className="text-sm text-muted-foreground">
+              {search
+                ? `Найдено: ${filtered.length} из ${orders.length}`
+                : `Заказов к подбору: ${orders.length}`}
+            </p>
             <div className="rounded-md border border-border">
               <Table>
                 <TableHeader>
@@ -104,7 +190,7 @@ const GoodsPicking = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {orders.map((o) => (
+                  {filtered.map((o) => (
                     <TableRow key={o.id}>
                       <TableCell>
                         <div className="font-medium">{o.product || '—'}</div>
