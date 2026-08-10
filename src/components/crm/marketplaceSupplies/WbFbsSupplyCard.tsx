@@ -21,6 +21,7 @@ import {
   deliverWbSupply,
   removeWbOrderFromSupply,
 } from '@/lib/wbFbsApi';
+import WbPendingOrdersPanel from '@/components/crm/marketplaceSupplies/WbPendingOrdersPanel';
 
 interface WbFbsSupplyCardProps {
   supply: SupplyDetail;
@@ -196,6 +197,10 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
           </CardContent>
         </Card>
       )}
+
+      {/* Вещи, уже собранные упаковщицами: кладовщик отмечает нужные и забирает
+          их в свою поставку, не сканируя каждую заново. */}
+      {canScan && <WbPendingOrdersPanel supplyId={supplyId} onMoved={onReload} />}
 
       {canScan && (
         <Card className="border-primary/30 bg-primary/5 shadow-none">

@@ -78,3 +78,34 @@ export const fetchWbLabel = async (orderNumber: string): Promise<string> => {
   const data = (await post({ action: 'label', orderNumber })) as { pngBase64: string };
   return data.pngBase64;
 };
+
+/** Заказ, собранный упаковщицей и ждущий в свободной поставке. */
+export interface WbPendingOrder {
+  orderId: number;
+  orderNumber: string;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  fromSupplyId: number;
+  fromSupplyNumber: string | null;
+}
+
+/** Заказы, накопленные упаковщицами при печати стикеров, — их можно забрать в поставку. */
+export const fetchWbPendingOrders = (
+  supplyId?: number
+): Promise<{ orders: WbPendingOrder[]; count: number }> =>
+  post({ action: 'list_pending_orders', supplyId }) as Promise<{
+    orders: WbPendingOrder[];
+    count: number;
+  }>;
+
+/** Переносит выбранные накопленные заказы в поставку кладовщика. */
+export const moveWbOrdersToSupply = (
+  supplyId: number,
+  orderIds: number[]
+): Promise<{ moved: number; errors: string[] }> =>
+  post({ action: 'move_orders_to_supply', supplyId, orderIds }) as Promise<{
+    moved: number;
+    errors: string[];
+  }>;

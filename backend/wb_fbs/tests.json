@@ -10,7 +10,9 @@
       "name": "Unknown action fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "nope"},
+      "body": {
+        "action": "nope"
+      },
       "expectedStatus": 400
     },
     {
@@ -23,21 +25,37 @@
       "name": "Create supply without supplyId fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "create_supply"},
+      "body": {
+        "action": "create_supply"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Deliver supply without supplyId fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "deliver_supply"},
+      "body": {
+        "action": "deliver_supply"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Remove order without ids fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "remove_order_from_supply"},
+      "body": {
+        "action": "remove_order_from_supply"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Move orders without ids fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "move_orders_to_supply",
+        "supplyId": 1
+      },
       "expectedStatus": 400
     }
   ]

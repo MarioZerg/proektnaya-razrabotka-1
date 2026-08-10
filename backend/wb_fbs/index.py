@@ -383,6 +383,127 @@ def handle_remove_order(cur, conn, body_data, api_key, use_sandbox):
     return _resp(200, {'success': True, 'orderNumber': order_number})
 
 
+def handle_list_pending(cur, body_data):
+    """Заказы, накопленные в свободных поставках WB FBS.
+
+    Кладовщик создал свою поставку и должен видеть, что уже собрано упаковщицами:
+    список вещей с номером заказа и товаром, чтобы отметить нужные и забрать к себе.
+    Заказы из своей же поставки в список не попадают — переносить их некуда.
+    """
+    supply_id = body_data.get('supplyId')
+
+    exclude = f"AND wso.supply_id <> {int(supply_id)}" if supply_id else ""
+    cur.execute(
+        "SELECT wso.order_id, o.order_number, o.product, o.material, o.width, o.height, "
+        "wso.supply_id, s.supply_number "
+        "FROM wb_supply_orders wso "
+        "JOIN orders o ON o.id = wso.order_id "
+        "JOIN marketplace_supplies s ON s.id = wso.supply_id "
+        "WHERE s.marketplace = 'WB' AND s.type = 'FBS' "
+        f"AND s.status IN ('Открытая', 'На сборке') {exclude} "
+        "ORDER BY wso.order_id DESC"
+    )
+    orders = [
+        {
+            'orderId': r[0],
+            'orderNumber': r[1],
+            'product': r[2],
+            'material': r[3],
+            'width': float(r[4]) if r[4] is not None else None,
+            'height': float(r[5]) if r[5] is not None else None,
+            'fromSupplyId': r[6],
+            'fromSupplyNumber': r[7],
+        }
+        for r in cur.fetchall()
+    ]
+    return _resp(200, {'orders': orders, 'count': len(orders)})
+
+
+def handle_move_orders(cur, conn, body_data, api_key, use_sandbox):
+    """Переносит выбранные заказы из накопительной поставки в поставку кладовщика.
+
+    На стороне WB заказ просто добавляется в новую поставку — WB сам убирает его из
+    прежней. У себя переставляем связь. Опустевшую накопительную поставку удаляем,
+    чтобы она не мозолила глаза в списке.
+    """
+    supply_id = body_data.get('supplyId')
+    order_ids = body_data.get('orderIds') or []
+    if not supply_id or not order_ids:
+        return _resp(400, {'error': 'Укажите поставку и заказы'})
+
+    cur.execute(
+        "SELECT marketplace, type, status, wb_supply_id FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    s_row = cur.fetchone()
+    if not s_row:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    marketplace, supply_type, s_status, wb_supply_id = s_row
+    if marketplace != 'WB' or supply_type != 'FBS':
+        return _resp(400, {'error': 'Действие доступно только для поставок WB FBS'})
+    if s_status not in ('Открытая', 'На сборке'):
+        return _resp(409, {'error': 'В эту поставку уже нельзя добавлять заказы'})
+    if not wb_supply_id:
+        return _resp(409, {'error': 'Поставка ещё не создана на стороне WB'})
+
+    moved, errors = 0, []
+    touched_supplies = set()
+
+    for oid in order_ids:
+        cur.execute(
+            "SELECT o.order_number, o.wb_order_id, wso.supply_id FROM orders o "
+            "LEFT JOIN wb_supply_orders wso ON wso.order_id = o.id WHERE o.id = %s",
+            (int(oid),),
+        )
+        row = cur.fetchone()
+        if not row or not row[1]:
+            errors.append(f'Заказ #{oid}: нет сборочного задания WB')
+            continue
+        order_number, wb_order_id, from_supply_id = row
+        if from_supply_id == int(supply_id):
+            continue
+
+        status_code, data = wb_request(
+            'PATCH', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}',
+            api_key, use_sandbox,
+        )
+        if status_code not in (200, 204):
+            errors.append(f'{order_number}: {wb_error_text(status_code, data)}')
+            continue
+
+        if from_supply_id:
+            touched_supplies.add(from_supply_id)
+            cur.execute(
+                "UPDATE wb_supply_orders SET supply_id = %s WHERE order_id = %s",
+                (int(supply_id), int(oid)),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO wb_supply_orders (supply_id, order_id) VALUES (%s, %s)",
+                (int(supply_id), int(oid)),
+            )
+        moved += 1
+
+    if moved:
+        cur.execute(
+            "UPDATE marketplace_supplies SET status = 'На сборке' "
+            "WHERE id = %s AND status = 'Открытая'",
+            (int(supply_id),),
+        )
+        # Накопительные поставки, из которых всё забрали, убираем из списка.
+        for sid in touched_supplies:
+            cur.execute("SELECT COUNT(*) FROM wb_supply_orders WHERE supply_id = %s", (sid,))
+            if cur.fetchone()[0] == 0:
+                cur.execute(
+                    "DELETE FROM marketplace_supplies WHERE id = %s "
+                    "AND marketplace = 'WB' AND type = 'FBS' "
+                    "AND status IN ('Открытая', 'На сборке')",
+                    (sid,),
+                )
+    conn.commit()
+    return _resp(200, {'moved': moved, 'errors': errors})
+
+
 def handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox):
     """Передача поставки в доставку: закрывает поставку на WB (PATCH .../deliver),
     после чего тянет стикеры коробов trbx (PNG) и сохраняет их в нашей системе."""
@@ -447,6 +568,106 @@ def handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox):
 
 
 
+def ensure_open_supply(cur, conn, api_key, use_sandbox):
+    """Находит свободную поставку WB FBS, а если её нет — заводит новую.
+
+    Упаковщица печатает стикеры весь день и не должна думать о поставках. Поэтому
+    заказы копятся в одной «свободной» поставке: она открыта, ещё не уехала в доставку
+    и в неё можно докладывать. Кладовщик потом видит накопленный счётчик и решает,
+    что забрать в свою поставку.
+
+    Поставка создаётся сразу и у нас, и на стороне WB: WB не принимает заказы в
+    поставку, которой у него нет.
+
+    Возвращает (ошибка, supply_id, wb_supply_id).
+    """
+    cur.execute(
+        "SELECT id, wb_supply_id FROM marketplace_supplies "
+        "WHERE marketplace = 'WB' AND type = 'FBS' AND status IN ('Открытая', 'На сборке') "
+        "ORDER BY id DESC LIMIT 1"
+    )
+    row = cur.fetchone()
+    supply_id = row[0] if row else None
+    wb_supply_id = row[1] if row else None
+
+    if not supply_id:
+        cur.execute(
+            "INSERT INTO marketplace_supplies (marketplace, type, status, comment) "
+            "VALUES ('WB', 'FBS', 'Открытая', %s) RETURNING id",
+            ('Накопительная поставка: заказы добавляются при печати стикера',),
+        )
+        supply_id = cur.fetchone()[0]
+
+    if not wb_supply_id:
+        name = f'Поставка #{supply_id}'[:128]
+        status_code, data = wb_request(
+            'POST', '/api/v3/supplies', api_key, use_sandbox, {'name': name}
+        )
+        if status_code not in (200, 201):
+            return (
+                f'WB не создал поставку ({status_code}): '
+                f'{wb_error_text(status_code, data)}'
+            ), None, None
+        wb_supply_id = data.get('id') if isinstance(data, dict) else None
+        if not wb_supply_id:
+            return 'WB не вернул идентификатор поставки', None, None
+        cur.execute(
+            "UPDATE marketplace_supplies SET wb_supply_id = %s WHERE id = %s",
+            (wb_supply_id, supply_id),
+        )
+        conn.commit()
+
+    return None, supply_id, wb_supply_id
+
+
+def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
+    """Кладёт заказ в свободную поставку WB при печати стикера.
+
+    Раньше готовый заказ просто ждал, пока кладовщик отсканирует его в поставку вручную.
+    Теперь он попадает туда сразу при печати — сканировать каждую вещь повторно не нужно.
+
+    Ошибки здесь не должны срывать печать: стикер важнее. Возвращает текст проблемы
+    (или None), а печать идёт в любом случае.
+    """
+    cur.execute(
+        "SELECT id, wb_order_id FROM orders "
+        "WHERE order_number = %s AND marketplace = 'WB' AND order_type = 'FBS'",
+        (order_number,),
+    )
+    o_row = cur.fetchone()
+    if not o_row or not o_row[1]:
+        return 'У заказа нет сборочного задания WB'
+    order_id, wb_order_id = o_row
+
+    # Заказ уже лежит в какой-то поставке — второй раз не добавляем.
+    cur.execute("SELECT supply_id FROM wb_supply_orders WHERE order_id = %s", (order_id,))
+    if cur.fetchone():
+        return None
+
+    err, supply_id, wb_supply_id = ensure_open_supply(cur, conn, api_key, use_sandbox)
+    if err:
+        return err
+
+    status_code, data = wb_request(
+        'PATCH', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}',
+        api_key, use_sandbox,
+    )
+    if status_code not in (200, 204):
+        return f'WB не принял заказ в поставку ({status_code}): {wb_error_text(status_code, data)}'
+
+    cur.execute(
+        "INSERT INTO wb_supply_orders (supply_id, order_id) VALUES (%s, %s)",
+        (supply_id, order_id),
+    )
+    cur.execute(
+        "UPDATE marketplace_supplies SET status = 'На сборке' "
+        "WHERE id = %s AND status = 'Открытая'",
+        (supply_id,),
+    )
+    conn.commit()
+    return None
+
+
 def get_order_sticker(cur, api_key, use_sandbox, order_number):
     """Маркетплейсный стикер WB на сборочное задание FBS.
 
@@ -501,7 +722,17 @@ def handler(event: dict, context) -> dict:
           из поставки на WB (DELETE /supplies/{sid}/orders/{orderId}) и снимает связь у нас;
           заказ снова становится готовым к отгрузке. Доступно, пока поставка не в доставке.
     POST /  { action: 'label', orderNumber }
-        - маркетплейсный стикер WB на вещь (png 58×40) в base64 — для печати на терминале
+        - маркетплейсный стикер WB на вещь (png 58×40) в base64 — для печати на терминале.
+          Печать означает, что вещь собрана: заказ сразу кладётся в свободную поставку
+          WB FBS (она создаётся автоматически, если открытой нет). Проблемы с поставкой
+          печать не срывают — они возвращаются в поле supplyWarning.
+    POST /  { action: 'list_pending_orders', supplyId? }
+        - заказы, накопленные в свободных поставках WB FBS: кладовщик выбирает из них
+          то, что заберёт в свою поставку.
+    POST /  { action: 'move_orders_to_supply', supplyId, orderIds[] }
+        - переносит выбранные заказы в поставку кладовщика (на WB заказ добавляется в
+          новую поставку, WB сам убирает его из прежней). Опустевшая накопительная
+          поставка удаляется.
     POST /  { action: 'deliver_supply', supplyId }
         - передаёт поставку в доставку на WB (PATCH /supplies/{sid}/deliver), тянет PNG-стикеры
           коробов trbx (POST /supplies/{sid}/trbx/stickers), сохраняет их в S3 и привязывает
@@ -546,7 +777,7 @@ def handler(event: dict, context) -> dict:
 
     if action not in ('sync_orders', 'create_supply', 'scan_order_to_supply',
                       'remove_order_from_supply', 'deliver_supply', 'list_warehouses',
-                      'label'):
+                      'label', 'list_pending_orders', 'move_orders_to_supply'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -568,6 +799,10 @@ def handler(event: dict, context) -> dict:
             return handle_scan_order(cur, conn, body_data, api_key, use_sandbox)
         if action == 'remove_order_from_supply':
             return handle_remove_order(cur, conn, body_data, api_key, use_sandbox)
+        if action == 'list_pending_orders':
+            return handle_list_pending(cur, body_data)
+        if action == 'move_orders_to_supply':
+            return handle_move_orders(cur, conn, body_data, api_key, use_sandbox)
         if action == 'label':
             # Маркетплейсный стикер на вещь — печатается на терминале упаковщика.
             order_number = (body_data.get('orderNumber') or '').strip()
@@ -576,7 +811,18 @@ def handler(event: dict, context) -> dict:
             err, png_b64 = get_order_sticker(cur, api_key, use_sandbox, order_number)
             if err:
                 return _resp(502, {'error': err})
-            return _resp(200, {'orderNumber': order_number, 'pngBase64': png_b64})
+            # Печать стикера означает, что вещь собрана — сразу кладём её в свободную
+            # поставку. Если с поставкой что-то не так, стикер всё равно печатаем:
+            # упаковщица не должна стоять из-за проблем на стороне WB, а заказ
+            # кладовщик добавит сканированием как раньше.
+            supply_warning = add_order_to_open_supply(
+                cur, conn, api_key, use_sandbox, order_number
+            )
+            return _resp(200, {
+                'orderNumber': order_number,
+                'pngBase64': png_b64,
+                'supplyWarning': supply_warning,
+            })
 
         if action == 'deliver_supply':
             return handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox)
