@@ -86,6 +86,35 @@ def ozon_post(path, client_id, api_key, payload):
         return 0, str(e)
 
 
+def ozon_post_raw(path, client_id, api_key, payload):
+    """POST к OZON, ответ возвращается СЫРЫМИ БАЙТАМИ.
+
+    Нужен для этикетки: она приходит бинарным PDF, а обычный ozon_post декодирует
+    ответ как UTF-8 и падает на первом же не-текстовом байте («utf-8 codec can't
+    decode byte 0xe2»). Из-за этого готовая этикетка не доезжала до принтера, хотя
+    OZON её уже отдал.
+
+    Возвращает (status_code, bytes_or_text).
+    """
+    body = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(OZON_API_BASE + path, method='POST', data=body)
+    req.add_header('Client-Id', client_id)
+    req.add_header('Api-Key', api_key)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode('utf-8', errors='replace')
+        try:
+            detail = json.loads(detail)
+        except Exception:
+            pass
+        return e.code, detail
+    except Exception as e:
+        return 0, str(e)
+
+
 def ozon_error_text(status_code, data):
     if isinstance(data, dict):
         return data.get('message') or data.get('error') or json.dumps(data, ensure_ascii=False)
@@ -650,7 +679,7 @@ def get_posting_label(cur, client_id, api_key, order_number):
             (new_status, posting_number),
         )
 
-    status, data = ozon_post(
+    status, data = ozon_post_raw(
         '/v2/posting/fbs/package-label', client_id, api_key,
         {'posting_number': [posting_number]},
     )
@@ -664,13 +693,21 @@ def get_posting_label(cur, client_id, api_key, order_number):
                 'Она появляется после сборки заказа на стороне OZON — попробуйте позже.'
             ), None
         return f'OZON не отдал этикетку (код {status}): {str(data)[:250]}', None
-    # Этикетка приходит бинарным PDF — ozon_post уже вернул распарсенное тело, поэтому
-    # при бинарном ответе оно приходит строкой.
+    # Этикетка приходит бинарным PDF — отдаём её в base64 как есть, без перекодировок.
     if isinstance(data, (bytes, bytearray)):
-        return None, base64.b64encode(bytes(data)).decode()
-    if isinstance(data, str):
-        return None, base64.b64encode(data.encode('latin-1', 'ignore')).decode()
-    return 'OZON вернул этикетку в неожиданном формате', None
+        pdf_bytes = bytes(data)
+        if not pdf_bytes:
+            return 'OZON вернул пустую этикетку — попробуйте ещё раз', None
+        # OZON при ошибке отвечает JSON-ом с тем же кодом 200 — распознаём это,
+        # чтобы на принтер не ушёл мусор вместо ярлыка.
+        if pdf_bytes[:1] == b'{':
+            try:
+                err_json = json.loads(pdf_bytes.decode('utf-8', 'replace'))
+                return f'OZON не отдал этикетку: {ozon_error_text(200, err_json)}', None
+            except Exception:
+                pass
+        return None, base64.b64encode(pdf_bytes).decode()
+    return f'OZON не отдал этикетку: {ozon_error_text(status, data)}', None
 
 
 def handler(event: dict, context) -> dict:
