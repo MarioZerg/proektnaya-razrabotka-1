@@ -14,6 +14,7 @@ import {
   fetchShiftCalendar,
   openShift,
   closeShift,
+  moveShiftToWorkshop,
   type EmployeeShiftStatus,
   type ShiftCalendarDay,
 } from '@/lib/shiftSessionsApi';
@@ -159,8 +160,24 @@ const CrmDashboard = () => {
     const shift = allShifts.find((s) => s.id === shiftId);
     if (!shift) return;
     try {
+      // Меняем ШТАТНУЮ смену в профиле — она действует со следующего открытия.
       await updateEmployee(employeeId, { workshop: shift.workshopName, shiftNumber: shift.shiftNumber });
-      toast({ title: 'Смена сотрудника переключена' });
+
+      // И, если смена уже открыта, переносим ТЕКУЩУЮ смену в этот же цех. Без этого
+      // перевод не давал никакого эффекта прямо сейчас: очередь заказов и материал
+      // берутся из цеха открытой смены, и человек продолжал видеть пустой список.
+      const emp = employeeShifts.find((e) => e.id === employeeId);
+      let movedNow = false;
+      if (emp?.isOpen && shift.workshopId) {
+        const res = await moveShiftToWorkshop(employeeId, shift.workshopId);
+        movedNow = !!res.moved;
+      }
+      toast({
+        title: 'Смена сотрудника переключена',
+        description: movedNow
+          ? `Текущая смена перенесена в ${shift.workshopName} — заказы этого цеха уже доступны`
+          : 'Начнёт действовать со следующего открытия смены',
+      });
       loadShifts();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });

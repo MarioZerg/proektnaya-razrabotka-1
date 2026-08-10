@@ -214,6 +214,12 @@ const ShiftManagementCard = ({
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
               Сотрудник будет постоянно числиться в выбранной смене, пока вы не переключите его снова.
+              {switchTarget?.isOpen && (
+                <>
+                  {' '}Открытая сейчас смена сразу переедет в новый цех — заказы и материал
+                  этого цеха станут доступны немедленно, время прихода сохранится.
+                </>
+              )}
             </p>
             <div className="space-y-1.5">
               <Label>Новая смена</Label>
