@@ -1017,19 +1017,60 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять заказы'})}
 
                 barcode_esc = storage_barcode.replace("'", "''")
+
+                # В поставку принимается ТОЛЬКО стикер маркетплейса (номер отправления).
+                # Складской стикер хранения здесь не работает: по нему кладовщик может
+                # лишь застикеровать вещь на складе. Иначе в короб уезжала вещь без
+                # ярлыка маркетплейса — на приёмке её не опознают.
                 cur.execute(
-                    "SELECT gw.id, gw.status, o.order_number FROM goods_warehouse gw "
-                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "SELECT gw.id, gw.storage_barcode FROM goods_warehouse gw "
                     f"WHERE gw.storage_barcode = '{barcode_esc}'"
+                )
+                storage_hit = cur.fetchone()
+                if storage_hit:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Это складской стикер хранения. В поставку сканируйте '
+                                     'стикер маркетплейса (ярлык отправления), наклеенный '
+                                     'на вещь при сборке с полок'
+                        }, ensure_ascii=False),
+                    }
+
+                # Ищем вещь по номеру отправления маркетплейса: именно он напечатан на
+                # ярлыке, который кладовщик клеит при сборке с полок.
+                cur.execute(
+                    "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
+                    "FROM orders o "
+                    "JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+                    f"WHERE o.order_number = '{barcode_esc}'"
                 )
                 gw_row = cur.fetchone()
                 if not gw_row:
                     return {
                         'statusCode': 404,
                         'headers': headers,
-                        'body': json.dumps({'error': f'Товар со штрихкодом {storage_barcode} не найден на складе'}),
+                        'body': json.dumps({
+                            'error': f'Отправление {storage_barcode} не найдено среди собранных '
+                                     f'с полок. Соберите и отстикеруйте вещь в разделе '
+                                     f'«Сборка товара с полок»'
+                        }, ensure_ascii=False),
                     }
-                goods_id, goods_status, order_number = gw_row
+                goods_id, goods_status, order_number, labeled_at = gw_row
+
+                # Ярлык маркетплейса ещё не наклеен: вещь лежит на полке, в короб её
+                # класть нельзя — на приёмке маркетплейса её не опознают.
+                if not labeled_at:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'На вещь {order_number} ещё не наклеен ярлык маркетплейса. '
+                                     f'Соберите её с полки и отстикеруйте в разделе '
+                                     f'«Сборка товара с полок»'
+                        }, ensure_ascii=False),
+                    }
 
                 # Сначала смотрим, не лежит ли товар УЖЕ в поставке. Добавленный товар
                 # становится 'reserved', и проверка статуса ниже принимала его за

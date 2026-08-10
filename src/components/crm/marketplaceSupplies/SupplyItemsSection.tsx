@@ -85,13 +85,13 @@ const SupplyItemsSection = ({
           >
             <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
               <Icon name="ScanLine" size={18} />
-              Отсканируйте штрихкод хранения товара, отобранного на складе
+              Отсканируйте ярлык маркетплейса на собранной вещи
             </div>
             <div className="flex gap-2">
               <Input
                 ref={scanInputRef}
                 autoFocus
-                placeholder="Штрихкод хранения (GW-000001)"
+                placeholder="Номер отправления с ярлыка маркетплейса"
                 value={scanOrderNumber}
                 onChange={(e) => setScanOrderNumber(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && onScanOrder()}
