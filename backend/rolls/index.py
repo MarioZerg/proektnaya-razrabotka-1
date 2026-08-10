@@ -800,11 +800,16 @@ def handler(event: dict, context) -> dict:
                 shift_sql = int(shift_number) if shift_number not in (None, '') else 'NULL'
                 status = 'in_workshop' if workshop_id not in (None, '') else 'in_storage'
 
+                # Рулон, заведённый сразу в цех, считается принятым: подтверждать нечего —
+                # его не везли заявкой, он уже лежит у смены. Отметка о приёмке нужна,
+                # иначе такой рулон навсегда остаётся «не принят» и его нельзя закрыть.
+                accepted_sql = 'now()' if status == 'in_workshop' else 'NULL'
+
                 cur.execute(
                     f"INSERT INTO rolls (barcode, material_id, workshop_id, shift_number, "
-                    f"initial_quantity, remaining_quantity, status) "
+                    f"initial_quantity, remaining_quantity, status, accepted_at) "
                     f"VALUES ('{barcode_esc}', {int(material_id)}, {workshop_sql}, {shift_sql}, "
-                    f"{float(initial_quantity)}, {float(initial_quantity)}, '{status}') "
+                    f"{float(initial_quantity)}, {float(initial_quantity)}, '{status}', {accepted_sql}) "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
@@ -844,6 +849,10 @@ def handler(event: dict, context) -> dict:
                     fields.append(f"status = '{status_esc}'")
                     if body_data['status'] == 'completed':
                         fields.append("completed_at = now()")
+                    # Рулон переводят в цех руками (не заявкой) — подтверждать доставку
+                    # некому, поэтому сразу считаем его принятым и годным в работу.
+                    if body_data['status'] == 'in_workshop':
+                        fields.append("accepted_at = COALESCE(accepted_at, now())")
                 if 'workshopId' in body_data:
                     val = body_data['workshopId']
                     fields.append(f"workshop_id = {int(val) if val not in (None, '') else 'NULL'}")
