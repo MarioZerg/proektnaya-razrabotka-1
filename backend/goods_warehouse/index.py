@@ -1341,14 +1341,57 @@ def handler(event: dict, context) -> dict:
                 if not barcode:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте штрихкод хранения'})}
                 barcode_esc = barcode.replace("'", "''")
-                cur.execute(f"SELECT id FROM goods_warehouse WHERE storage_barcode = '{barcode_esc}'")
+                # Возвращаем товар и ПРЕЖНЮЮ полку: кладовщик раскладывает пачкой, глядя
+                # на стеллаж, и по строке на экране сразу видит, что именно переложил
+                # и откуда — так заметна случайная вещь из чужого ряда.
+                cur.execute(
+                    "SELECT gw.id, o.product, s.name, gw.shelf_id "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN shelves s ON s.id = gw.shelf_id "
+                    f"WHERE gw.storage_barcode = '{barcode_esc}'"
+                )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Товар со штрихкодом {barcode} не найден'})}
+                gw_id, gw_product, old_shelf_name, old_shelf_id = row
+
+                # Вещь уже лежит на этой полке — второй раз её не двигаем и честно
+                # говорим об этом: иначе кладовщик думает, что переложил, а он повторился.
+                if shelf_id not in (None, '') and old_shelf_id == int(shelf_id):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'{gw_product or "Товар"} уже лежит на полке {old_shelf_name or ""}'.strip()
+                        }, ensure_ascii=False),
+                    }
+
                 shelf_sql = int(shelf_id) if shelf_id not in (None, '') else 'NULL'
-                cur.execute(f"UPDATE goods_warehouse SET shelf_id = {shelf_sql} WHERE id = {row[0]}")
+                cur.execute(f"UPDATE goods_warehouse SET shelf_id = {shelf_sql} WHERE id = {gw_id}")
+                new_shelf_name = None
+                if shelf_id not in (None, ''):
+                    cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+                    nm = cur.fetchone()
+                    new_shelf_name = nm[0] if nm else None
+                log_action(
+                    cur, actor_id, actor_name, 'move_shelf', 'goods_warehouse', gw_id,
+                    f'Переложил {gw_product or barcode} с полки {old_shelf_name or "—"} '
+                    f'на {new_shelf_name or "—"}',
+                )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'id': row[0]})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'id': gw_id,
+                        'product': gw_product,
+                        'fromShelf': old_shelf_name,
+                        'toShelf': new_shelf_name,
+                        'storageBarcode': barcode,
+                    }, ensure_ascii=False),
+                }
 
             if action == 'return_to_workshop':
                 item_id = body_data.get('id')

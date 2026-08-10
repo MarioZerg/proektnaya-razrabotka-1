@@ -133,8 +133,20 @@ export const shipLabelGoods = (barcode: string, actorId?: number, actorName?: st
     orderType: string | null;
   }>;
 
-export const moveGoodsShelfByBarcode = (barcode: string, shelfId: number | null) =>
-  postAction({ action: 'move_shelf_by_barcode', barcode, shelfId });
+export const moveGoodsShelfByBarcode = (
+  barcode: string,
+  shelfId: number | null,
+  actorId?: number,
+  actorName?: string,
+) =>
+  postAction({ action: 'move_shelf_by_barcode', barcode, shelfId, actorId, actorName }) as Promise<{
+    success: true;
+    id: number;
+    product: string | null;
+    fromShelf: string | null;
+    toShelf: string | null;
+    storageBarcode: string;
+  }>;
 
 export const returnGoodsToWorkshop = (id: number) => postAction({ action: 'return_to_workshop', id });
 

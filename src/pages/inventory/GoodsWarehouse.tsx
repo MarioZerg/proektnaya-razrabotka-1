@@ -10,7 +10,6 @@ import {
   returnGoodsToWorkshop,
   markGoodsLost,
   deleteGoods,
-  moveGoodsShelfByBarcode,
   type GoodsWarehouseItem,
 } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
@@ -55,9 +54,6 @@ const GoodsWarehouse = () => {
 
   // Смена полки
   const [moveOpen, setMoveOpen] = useState(false);
-  const [moveSaving, setMoveSaving] = useState(false);
-  const [moveBarcode, setMoveBarcode] = useState('');
-  const [moveShelfId, setMoveShelfId] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -185,29 +181,9 @@ const GoodsWarehouse = () => {
 
 
   const openMove = () => {
-    setMoveBarcode('');
-    setMoveShelfId('');
     setMoveOpen(true);
   };
 
-  const handleMoveShelf = async () => {
-    const barcode = moveBarcode.trim();
-    if (!barcode || !moveShelfId) return;
-    // Поле очищаем сразу, до ответа сервера — чтобы не было повторных отправок того же
-    // штрихкода при случайных повторных нажатиях, пока идёт запрос.
-    setMoveBarcode('');
-    setMoveSaving(true);
-    try {
-      await moveGoodsShelfByBarcode(barcode, Number(moveShelfId));
-      toast({ title: 'Полка обновлена' });
-      setMoveOpen(false);
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setMoveSaving(false);
-    }
-  };
 
   const handleReturn = async (id: number) => {
     try {
@@ -321,12 +297,7 @@ const GoodsWarehouse = () => {
               onOpenChange={setMoveOpen}
               onOpenCreate={openMove}
               shelves={shelves}
-              barcode={moveBarcode}
-              setBarcode={setMoveBarcode}
-              shelfId={moveShelfId}
-              setShelfId={setMoveShelfId}
-              saving={moveSaving}
-              onSave={handleMoveShelf}
+              onDone={load}
             />
           </div>
         </div>
