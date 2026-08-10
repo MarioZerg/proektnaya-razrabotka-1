@@ -281,6 +281,13 @@ const GoodsWarehouse = () => {
                 </span>
               )}
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => navigate('/crm/inventory/returns-inspection')}
+            >
+              <Icon name="Search" size={16} className="mr-2" />
+              Возвраты на осмотре
+            </Button>
             <PlaceOnShelfDialog
               open={placeOpen}
               onOpenChange={setPlaceOpen}

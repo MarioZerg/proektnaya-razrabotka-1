@@ -5,6 +5,14 @@ export type GoodsStatus =
   | 'awaiting_shelf'
   /** Возврат с маркетплейса проверяют: годен ли товар к повторной продаже. */
   | 'checking'
+  /** Передан упаковщицам в цех на осмотр. */
+  | 'repacking'
+  /** Упаковщица осмотрела и наклеила стикер — вещь ждёт кладовщика. */
+  | 'inspected'
+  /** Кладовщик забрал из цеха, полку ещё не определил. */
+  | 'taken'
+  /** Направлен на утилизацию: чистит только администратор. */
+  | 'to_dispose'
   | 'in_stock'
   | 'picking'
   /** Сшит в цехе и застикерован ярлыком маркетплейса: лежит в контейнере, ждёт поставки. */
@@ -176,6 +184,85 @@ export const fetchPickingOrders = async (): Promise<PickingOrder[]> => {
   if (!res.ok) throw new Error('Не удалось загрузить заказы к подбору');
   return res.json();
 };
+
+/** Этапы движения возврата: от приёмки до полки. */
+export type InspectionStage =
+  | 'fromReturn'
+  | 'atPackers'
+  | 'inspected'
+  | 'taken'
+  | 'toDispose'
+  | 'disposed';
+
+/** Счётчики по всем шести этапам осмотра возвратов. */
+export type InspectionCounts = Record<InspectionStage, number>;
+
+/** Вещь на одном из этапов осмотра. */
+export interface InspectionItem {
+  id: number;
+  storageBarcode: string;
+  status: string;
+  receivedAt: string | null;
+  inspectedAt: string | null;
+  takenAt: string | null;
+  disposeReason: string | null;
+  lostReason: string | null;
+  orderNumber: string | null;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  marketplace: string | null;
+  inspectedByName: string | null;
+  takenByName: string | null;
+}
+
+/** Счётчики виджетов и список выбранного этапа осмотра. */
+export const fetchInspection = async (
+  stage?: InspectionStage,
+): Promise<{ counts: InspectionCounts; items: InspectionItem[] }> => {
+  const res = await fetch(
+    `${GOODS_WAREHOUSE_URL}?inspection=1${stage ? `&stage=${stage}` : ''}`,
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить осмотр');
+  return data;
+};
+
+/** Передать принятые возвраты упаковщицам на осмотр. */
+export const moveToWorkshop = (ids: number[], actorId?: number, actorName?: string) =>
+  postAction({ action: 'move_to_workshop', ids, actorId, actorName }) as Promise<{
+    success: true;
+    moved: number;
+  }>;
+
+/** Кладовщик забирает осмотренную вещь из цеха по стикеру хранения. */
+export const takeFromWorkshop = (barcode: string, actorId?: number, actorName?: string) =>
+  postAction({ action: 'take_from_workshop', barcode, actorId, actorName }) as Promise<{
+    id: number;
+    product: string | null;
+    orderNumber: string | null;
+    storageBarcode: string;
+    toDispose: boolean;
+  }>;
+
+/** Отправить вещи на утилизацию (брак, плохое качество). */
+export const sendToDispose = (
+  ids: number[],
+  reason: string,
+  actorId?: number,
+  actorName?: string,
+) => postAction({ action: 'send_to_dispose', ids, reason, actorId, actorName }) as Promise<{
+  success: true;
+  moved: number;
+}>;
+
+/** Списать утилизированные вещи — доступно только администратору. */
+export const clearDisposed = (ids: number[], actorId?: number, actorName?: string) =>
+  postAction({ action: 'clear_disposed', ids, actorId, actorName }) as Promise<{
+    success: true;
+    cleared: number;
+  }>;
 
 /** Карточка возврата: что за вещь, кто её делал и почему её вернули. */
 export interface ScannedReturn {

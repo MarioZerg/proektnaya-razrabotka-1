@@ -27,6 +27,7 @@ const MarketplaceSupplyAssemble = lazy(() => import("./pages/shipments/Marketpla
 const GoodsWarehouse = lazy(() => import("./pages/inventory/GoodsWarehouse"));
 const GoodsPicking = lazy(() => import("./pages/inventory/GoodsPicking"));
 const GoodsCard = lazy(() => import("./pages/inventory/GoodsCard"));
+const ReturnsInspection = lazy(() => import("./pages/inventory/ReturnsInspection"));
 const PackagingGuide = lazy(() => import("./pages/inventory/PackagingGuide"));
 const WarehouseGuide = lazy(() => import("./pages/inventory/WarehouseGuide"));
 const RollsGuide = lazy(() => import("./pages/inventory/RollsGuide"));
@@ -124,6 +125,7 @@ const App = () => (
             <Route path="/crm/inventory/goods-warehouse" element={<GoodsWarehouse />} />
             <Route path="/crm/inventory/goods-picking" element={<GoodsPicking />} />
             <Route path="/crm/inventory/goods/:id" element={<GoodsCard />} />
+            <Route path="/crm/inventory/returns-inspection" element={<ReturnsInspection />} />
             <Route path="/crm/inventory/packaging-guide" element={<PackagingGuide />} />
             <Route path="/crm/inventory/warehouse-guide" element={<WarehouseGuide />} />
             <Route path="/crm/inventory/rolls-guide" element={<RollsGuide />} />

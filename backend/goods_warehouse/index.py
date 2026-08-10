@@ -375,6 +375,88 @@ def handler(event: dict, context) -> dict:
             # Заказы, пришедшие на подбор: их ещё не начали шить и под них не нашли
             # готовую вещь на складе. Кладовщик смотрит список и решает, что можно
             # закрыть остатками, а что уйдёт в цех.
+            # Воронка осмотра возвратов: шесть счётчиков + список выбранного этапа.
+            # Кладовщик видит, сколько вещей застряло на каждом шаге, и не теряет их
+            # «где-то между цехом и складом».
+            if params.get('inspection'):
+                stage = (params.get('stage') or '').strip()
+
+                cur.execute(
+                    "SELECT "
+                    "  COUNT(*) FILTER (WHERE status = 'checking'), "
+                    "  COUNT(*) FILTER (WHERE status = 'repacking'), "
+                    "  COUNT(*) FILTER (WHERE status = 'inspected'), "
+                    "  COUNT(*) FILTER (WHERE status = 'taken'), "
+                    "  COUNT(*) FILTER (WHERE status = 'to_dispose'), "
+                    "  COUNT(*) FILTER (WHERE status = 'lost' AND disposed_at IS NOT NULL) "
+                    "FROM goods_warehouse"
+                )
+                c = cur.fetchone()
+                counts = {
+                    'fromReturn': c[0],
+                    'atPackers': c[1],
+                    'inspected': c[2],
+                    'taken': c[3],
+                    'toDispose': c[4],
+                    'disposed': c[5],
+                }
+
+                items = []
+                stage_status = {
+                    'fromReturn': 'checking',
+                    'atPackers': 'repacking',
+                    'inspected': 'inspected',
+                    'taken': 'taken',
+                    'toDispose': 'to_dispose',
+                }.get(stage)
+                if stage == 'disposed':
+                    where_stage = "gw.status = 'lost' AND gw.disposed_at IS NOT NULL"
+                elif stage_status:
+                    where_stage = f"gw.status = '{stage_status}'"
+                else:
+                    where_stage = None
+
+                if where_stage:
+                    cur.execute(
+                        "SELECT gw.id, gw.storage_barcode, gw.status, gw.received_at, "
+                        "       gw.inspected_at, gw.taken_at, gw.dispose_reason, gw.lost_reason, "
+                        "       o.order_number, o.product, o.material, o.width, o.height, "
+                        "       o.marketplace, ins.full_name, tk.full_name "
+                        "FROM goods_warehouse gw "
+                        "LEFT JOIN orders o ON o.id = gw.order_id "
+                        "LEFT JOIN users ins ON ins.id = gw.inspected_by "
+                        "LEFT JOIN users tk ON tk.id = gw.taken_by "
+                        f"WHERE {where_stage} "
+                        "ORDER BY gw.received_at ASC LIMIT 300"
+                    )
+                    items = [
+                        {
+                            'id': r[0],
+                            'storageBarcode': r[1],
+                            'status': r[2],
+                            'receivedAt': r[3].isoformat() if r[3] else None,
+                            'inspectedAt': r[4].isoformat() if r[4] else None,
+                            'takenAt': r[5].isoformat() if r[5] else None,
+                            'disposeReason': r[6],
+                            'lostReason': r[7],
+                            'orderNumber': r[8],
+                            'product': r[9],
+                            'material': r[10],
+                            'width': r[11],
+                            'height': r[12],
+                            'marketplace': r[13],
+                            'inspectedByName': r[14],
+                            'takenByName': r[15],
+                        }
+                        for r in cur.fetchall()
+                    ]
+
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'counts': counts, 'items': items}, ensure_ascii=False),
+                }
+
             if params.get('picking_orders'):
                 # Реальная работа на сегодня: вещи, которые система уже подобрала под
                 # заказы и которые лежат на полке в ожидании стикера отправления.
@@ -814,7 +896,9 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': f'Товар {gw_order_number or ""} уже лежит на полке'}),
                     }
-                if gw_status != 'awaiting_shelf':
+                # taken — вещь, которую кладовщик забрал из цеха после осмотра: полку
+                # он определяет здесь же, и на этом маршрут возврата заканчивается.
+                if gw_status not in ('awaiting_shelf', 'taken'):
                     return {
                         'statusCode': 409,
                         'headers': headers,
@@ -1004,6 +1088,128 @@ def handler(event: dict, context) -> dict:
                         'storageBarcode': cur.fetchone()[0],
                     }, ensure_ascii=False),
                 }
+
+            if action == 'move_to_workshop':
+                # Кладовщик отобрал принятые возвраты и передал их упаковщицам на осмотр.
+                # Работаем пачкой: обычно за раз уезжает целая тележка, а не одна вещь.
+                ids = body_data.get('ids') or []
+                if not ids:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товары'})}
+                ids_csv = ','.join(str(int(i)) for i in ids)
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'repacking' "
+                    f"WHERE id IN ({ids_csv}) AND status = 'checking' RETURNING id"
+                )
+                moved = len(cur.fetchall())
+                log_action(
+                    cur, actor_id, actor_name, 'move_to_workshop', 'goods_warehouse', None,
+                    f'Передал на осмотр упаковщицам вещей: {moved}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'moved': moved})}
+
+            if action == 'take_from_workshop':
+                # Кладовщик забирает осмотренную вещь из цеха: сканирует стикер хранения,
+                # который наклеила упаковщица. Полку определит позже — сейчас вещь «на руках».
+                scan = (body_data.get('barcode') or '').strip()
+                if not scan:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте стикер хранения'})}
+                bc = scan.replace("'", "''")
+                cur.execute(
+                    "SELECT gw.id, gw.status, o.product, o.order_number FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    f"WHERE gw.storage_barcode = '{bc}'"
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Стикер {scan} не найден'}, ensure_ascii=False),
+                    }
+                gw_id, gw_status, gw_product, gw_number = row
+                # Утилизированную вещь кладовщик тоже физически забирает и несёт старшему —
+                # поэтому её сканирование разрешено, но статус остаётся утилизацией.
+                if gw_status not in ('inspected', 'to_dispose'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Вещь ещё не осмотрена упаковщицей (статус: {gw_status})'
+                        }, ensure_ascii=False),
+                    }
+                if gw_status == 'inspected':
+                    cur.execute(
+                        f"UPDATE goods_warehouse SET status = 'taken', taken_at = now(), "
+                        f"taken_by = {int(actor_id) if actor_id else 'NULL'} WHERE id = {int(gw_id)}"
+                    )
+                log_action(
+                    cur, actor_id, actor_name, 'take_from_workshop', 'goods_warehouse', gw_id,
+                    f'Забрал из цеха вещь #{gw_number or "—"} ({scan})',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'id': gw_id,
+                        'product': gw_product,
+                        'orderNumber': gw_number,
+                        'storageBarcode': scan,
+                        'toDispose': gw_status == 'to_dispose',
+                    }, ensure_ascii=False),
+                }
+
+            if action == 'send_to_dispose':
+                # Кладовщик увидел брак или плохое качество — вещь на утилизацию.
+                # Причина обязательна: иначе через месяц никто не вспомнит, за что списали.
+                ids = body_data.get('ids') or ([body_data['id']] if body_data.get('id') else [])
+                reason = (body_data.get('reason') or '').strip()
+                if not ids:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товары'})}
+                if not reason:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите причину утилизации'})}
+                ids_csv = ','.join(str(int(i)) for i in ids)
+                reason_esc = reason.replace("'", "''")
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'to_dispose', "
+                    f"dispose_reason = '{reason_esc}', reserved_order_id = NULL, shelf_id = NULL "
+                    f"WHERE id IN ({ids_csv}) RETURNING id"
+                )
+                moved = len(cur.fetchall())
+                log_action(
+                    cur, actor_id, actor_name, 'send_to_dispose', 'goods_warehouse', None,
+                    f'Отправил на утилизацию вещей: {moved}. Причина: {reason}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'moved': moved})}
+
+            if action == 'clear_disposed':
+                # Чистка кладки утилизации — только администратор. Вещи не удаляем,
+                # а помечаем списанными: история склада должна оставаться целой.
+                if not is_admin(cur, actor_id):
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Чистить утилизацию может только администратор'}, ensure_ascii=False),
+                    }
+                ids = body_data.get('ids') or []
+                where_ids = ''
+                if ids:
+                    where_ids = ' AND id IN (' + ','.join(str(int(i)) for i in ids) + ')'
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'lost', disposed_at = now(), "
+                    f"disposed_by = {int(actor_id)}, "
+                    f"lost_reason = COALESCE(dispose_reason, 'Утилизация') "
+                    f"WHERE status = 'to_dispose'{where_ids} RETURNING id"
+                )
+                cleared = len(cur.fetchall())
+                log_action(
+                    cur, actor_id, actor_name, 'clear_disposed', 'goods_warehouse', None,
+                    f'Списал утилизированные вещи: {cleared}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'cleared': cleared})}
 
             if action == 'receive_return':
                 order_number = (body_data.get('orderNumber') or '').strip()

@@ -916,11 +916,15 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Эта вещь не на перепаковке'})}
 
                 if outcome == 'utilized':
-                    # Вещь физически уничтожена — на складе её быть не должно.
+                    # Упаковщица нашла брак. Вещь НЕ списываем сразу: кладовщик всё равно
+                    # физически забирает её из цеха и несёт старшему кладовщику. Ставим
+                    # «На утилизацию» — оттуда кладку чистит только админ.
                     cur.execute(
-                        "UPDATE goods_warehouse SET status = 'lost', lost_reason = %s, "
-                        "lost_at = now(), repack_return_id = NULL WHERE id = %s",
-                        (f'Брак при перепаковке: {note}', int(gw_id)),
+                        "UPDATE goods_warehouse SET status = 'to_dispose', "
+                        "dispose_reason = %s, inspected_at = now(), inspected_by = %s, "
+                        "repack_return_id = NULL WHERE id = %s",
+                        (f'Брак при перепаковке: {note}',
+                         int(actor_id) if actor_id else None, int(gw_id)),
                     )
                     if row[2]:
                         cur.execute(
@@ -939,10 +943,12 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'success': True, 'outcome': 'utilized', 'storageBarcode': None}),
                     }
 
+                # Вещь осмотрена и годна: упаковщица наклеила стикер хранения. Теперь она
+                # ждёт, пока кладовщик заберёт её из цеха — это виджет «Уже осмотрено».
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'awaiting_shelf', repack_return_id = NULL, "
-                    "repack_new_bag = %s WHERE id = %s",
-                    (bool(new_bag), int(gw_id)),
+                    "UPDATE goods_warehouse SET status = 'inspected', repack_return_id = NULL, "
+                    "inspected_at = now(), inspected_by = %s, repack_new_bag = %s WHERE id = %s",
+                    (int(actor_id) if actor_id else None, bool(new_bag), int(gw_id)),
                 )
                 if row[2]:
                     cur.execute(

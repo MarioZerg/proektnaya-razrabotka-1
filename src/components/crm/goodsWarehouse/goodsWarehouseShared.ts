@@ -5,6 +5,10 @@ export { formatDateTime as formatDate } from '@/lib/dateUtils';
 export const statusLabels: Record<GoodsStatus, string> = {
   awaiting_shelf: 'На разборе',
   checking: 'На проверке',
+  repacking: 'На осмотре в цехе',
+  inspected: 'Осмотрено',
+  taken: 'Забрано с цеха',
+  to_dispose: 'На утилизацию',
   in_stock: 'На хранении',
   // Вещь снята с полки и отстикерована — дальше её сканируют в поставку.
   picking: 'На сборке',
@@ -18,6 +22,10 @@ export const statusLabels: Record<GoodsStatus, string> = {
 export const statusVariant: Record<GoodsStatus, 'secondary' | 'default' | 'outline' | 'destructive'> = {
   awaiting_shelf: 'destructive',
   checking: 'secondary',
+  repacking: 'secondary',
+  inspected: 'default',
+  taken: 'default',
+  to_dispose: 'destructive',
   in_stock: 'secondary',
   picking: 'default',
   awaiting_supply: 'default',
