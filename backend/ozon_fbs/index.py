@@ -558,6 +558,67 @@ def handle_refresh_all(cur, conn, client_id, api_key):
 
 
 
+def assemble_posting(client_id, api_key, posting_number):
+    """Собирает отправление FBS на стороне OZON (/v4/posting/fbs/ship).
+
+    OZON отдаёт этикетку только после сборки: пока отправление в статусе
+    «ожидает упаковки» (awaiting_packaging), запрос этикетки отвечает ошибкой.
+    Раньше упаковщице просто показывали «этикетка ещё не готова, попробуйте позже»,
+    и заказ вставал — собрать его из системы было нельзя, приходилось идти в личный
+    кабинет OZON руками.
+
+    Этот вызов переводит отправление в «ожидает отгрузки» (awaiting_deliver), после
+    чего этикетка становится доступна. Состав берём из самого отправления: OZON
+    требует перечислить товары с количеством.
+
+    Возвращает (ошибка, новый_статус). Если отправление уже собрано — не ошибка.
+    """
+    status, data = ozon_post(
+        '/v3/posting/fbs/get', client_id, api_key,
+        {'posting_number': posting_number, 'with': {}},
+    )
+    if status != 200:
+        return f'OZON не отдал состав отправления (код {status}): {ozon_error_text(status, data)}', None
+
+    result = (data or {}).get('result') or {}
+    current_status = result.get('status')
+    # Уже собрано или уехало дальше — собирать повторно не нужно и нельзя.
+    if current_status and current_status != 'awaiting_packaging':
+        return None, current_status
+
+    products = result.get('products') or []
+    if not products:
+        return 'В отправлении OZON нет товаров — обратитесь в поддержку OZON', None
+
+    items = [
+        {'product_id': int(pr.get('sku')), 'quantity': int(pr.get('quantity') or 1)}
+        for pr in products if pr.get('sku')
+    ]
+    if not items:
+        return 'У товаров отправления нет кода OZON — собрать не получится', None
+
+    # OZON принимает сборку в двух форматах, и какой именно — зависит от схемы работы
+    # продавца. Пробуем оба: сначала с перечислением товаров (обычная схема), затем
+    # упрощённый вызов без состава. Так упаковщица не упрётся в ошибку формата.
+    attempts = [
+        {'posting_number': posting_number, 'packages': [{'products': items}]},
+        {'posting_number': posting_number},
+    ]
+    last_status, last_data = None, None
+    for payload in attempts:
+        ship_status, ship_data = ozon_post(
+            '/v4/posting/fbs/ship', client_id, api_key, payload
+        )
+        if ship_status == 200:
+            return None, 'awaiting_deliver'
+        last_status, last_data = ship_status, ship_data
+
+    return (
+        f'OZON не принял сборку отправления (код {last_status}): '
+        f'{ozon_error_text(last_status, last_data)}'
+    ), None
+
+
 def get_posting_label(cur, client_id, api_key, order_number):
     """Маркетплейсный ярлык OZON на отправление FBS.
 
@@ -575,6 +636,19 @@ def get_posting_label(cur, client_id, api_key, order_number):
     if not row or not row[0]:
         return 'У этого заказа нет отправления OZON', None
     posting_number = row[0]
+
+    # Сначала собираем отправление на стороне OZON — без этого этикетки просто нет.
+    # Упаковщица нажимает «Распечатать ярлык», а система сама переводит заказ в
+    # «ожидает отгрузки» и сразу отдаёт этикетку: лишних действий в личном кабинете
+    # OZON делать не нужно.
+    ship_err, new_status = assemble_posting(client_id, api_key, posting_number)
+    if ship_err:
+        return ship_err, None
+    if new_status:
+        cur.execute(
+            "UPDATE orders SET ozon_status = %s WHERE ozon_posting_number = %s",
+            (new_status, posting_number),
+        )
 
     status, data = ozon_post(
         '/v2/posting/fbs/package-label', client_id, api_key,
@@ -682,7 +756,10 @@ def handler(event: dict, context) -> dict:
                 return _resp(400, {'error': 'Укажите номер заказа'})
             err, pdf_b64 = get_posting_label(cur, client_id, api_key, order_number)
             if err:
+                conn.rollback()
                 return _resp(502, {'error': err})
+            # Сборка отправления меняет статус заказа — сохраняем его у себя.
+            conn.commit()
             return _resp(200, {'orderNumber': order_number, 'pdfBase64': pdf_b64})
     finally:
         conn.close()
