@@ -100,7 +100,10 @@ const WbPendingOrdersPanel = ({ supplyId, onMoved }: WbPendingOrdersPanelProps) 
     }
   };
 
-  if (!loading && orders.length === 0) return null;
+  // Панель рисуем ТОЛЬКО когда реально есть что забрать. Раньше она успевала
+  // мелькнуть жёлтым блоком на время запроса и пропадала, если забирать нечего —
+  // выглядело как подмигивание страницы при каждом заходе в поставку.
+  if (orders.length === 0) return null;
 
   return (
     <Card className="border-amber-300 bg-amber-50/60 shadow-none">
