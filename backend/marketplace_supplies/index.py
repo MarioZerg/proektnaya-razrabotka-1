@@ -1245,11 +1245,16 @@ def handler(event: dict, context) -> dict:
 
                 # Ищем вещь по номеру отправления маркетплейса: именно он напечатан на
                 # ярлыке, который кладовщик клеит при сборке с полок.
+                # Вещь могла попасть сюда двумя путями: сшита в цехе и застикерована
+                # (gw.order_id, статус «на поставку») либо взята с полки под новый заказ
+                # (fulfilled_from_stock_id). Ищем оба варианта.
                 cur.execute(
                     "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
                     "FROM orders o "
-                    "JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
-                    f"WHERE o.order_number = '{barcode_esc}'"
+                    "JOIN goods_warehouse gw "
+                    "  ON gw.id = o.fulfilled_from_stock_id OR gw.order_id = o.id "
+                    f"WHERE o.order_number = '{barcode_esc}' "
+                    "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
                 )
                 gw_row = cur.fetchone()
 
@@ -1466,8 +1471,8 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите itemId'})}
 
                 cur.execute(
-                    "SELECT msi.goods_warehouse_id, s.status, gw.storage_barcode, "
-                    "o.order_number, gw.shelf_id, sh.name, src.product "
+                    "SELECT msi.goods_warehouse_id, s.status, s.type, gw.storage_barcode, "
+                    "o.order_number, gw.shelf_id, sh.name, src.product, gw.receive_reason "
                     "FROM marketplace_supply_items msi "
                     "JOIN marketplace_supplies s ON s.id = msi.supply_id "
                     "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
@@ -1480,40 +1485,50 @@ def handler(event: dict, context) -> dict:
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Позиция не найдена'})}
-                (goods_id, supply_status, storage_barcode, reserved_order_number,
-                 shelf_id, shelf_name, product) = row
+                (goods_id, supply_status, supply_type, storage_barcode, reserved_order_number,
+                 shelf_id, shelf_name, product, receive_reason) = row
                 if supply_status not in ('Открытая', 'На сборке'):
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Из этой поставки уже нельзя убрать товар'})}
 
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(item_id)}")
 
-                # Вещь вынули из короба — она едет обратно на полку. Снимаем отметку о
-                # наклеенном ярлыке маркетплейса: этот ярлык больше не действует, вещь
-                # снова обычный складской остаток. Раньше отметка оставалась, и вещь
-                # висела «собранной», но в поставку уже не сканировалась — кладовщик
-                # видел «отправление не найдено среди собранных с полок».
-                cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', "
-                    "shipping_labeled_at = NULL, reserved_order_id = NULL, matched_at = NULL "
-                    f"WHERE id = {int(goods_id)}"
-                )
-                # Заказ, под который вещь резервировали, снова ждёт подбора: система
-                # подберёт под него другую вещь или отправит его в пошив. Правим строго
-                # тот заказ, что был привязан к этой вещи.
-                cur.execute(
-                    "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
-                    "WHERE fulfilled_from_stock_id = %s",
-                    (int(goods_id),),
-                )
+                # Вещь, сшитая в цехе под FBS-заказ, при удалении из поставки НЕ едет на
+                # полку: она остаётся застикерованной и ждёт следующей поставки в статусе
+                # «на поставку». Ярлык маркетплейса на ней действует, покупатель её ждёт —
+                # отправлять её на хранение и рвать связь с заказом нельзя. Кладовщик
+                # просто убрал позицию из короба, и она снова доступна к сканированию.
+                back_to_supply = supply_type == 'FBS' and receive_reason == 'fbs_ready'
+
+                if back_to_supply:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'awaiting_supply' "
+                        f"WHERE id = {int(goods_id)}"
+                    )
+                else:
+                    # Вещь брали с полки склада — возвращаем её туда. Ярлык маркетплейса
+                    # аннулируем: он выписан под конкретное отправление.
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', "
+                        "shipping_labeled_at = NULL, reserved_order_id = NULL, matched_at = NULL "
+                        f"WHERE id = {int(goods_id)}"
+                    )
+                    # Заказ, под который вещь резервировали, снова ждёт подбора: система
+                    # подберёт под него другую вещь или отправит его в пошив.
+                    cur.execute(
+                        "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
+                        "WHERE fulfilled_from_stock_id = %s",
+                        (int(goods_id),),
+                    )
                 conn.commit()
                 return {
                     'statusCode': 200,
                     'headers': headers,
                     'body': json.dumps({
                         'success': True,
-                        # По этим данным интерфейс печатает стикер хранения: без него
-                        # вещь уедет на полку без опознавательного знака.
-                        'storageBarcode': storage_barcode,
+                        # Вещь вернулась в «на поставку» — стикер хранения не печатаем,
+                        # она никуда не уезжает и ждёт следующей поставки.
+                        'backToSupply': back_to_supply,
+                        'storageBarcode': None if back_to_supply else storage_barcode,
                         'orderNumber': reserved_order_number,
                         'product': product,
                         'shelfName': shelf_name,
@@ -1750,8 +1765,8 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите itemId'})}
 
                 cur.execute(
-                    "SELECT msi.goods_warehouse_id, s.status, gw.storage_barcode, "
-                    "o.order_number, sh.name, src.product "
+                    "SELECT msi.goods_warehouse_id, s.status, s.type, gw.storage_barcode, "
+                    "o.order_number, sh.name, src.product, gw.receive_reason "
                     "FROM marketplace_supply_items msi "
                     "JOIN marketplace_supplies s ON s.id = msi.supply_id "
                     "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
@@ -1764,30 +1779,41 @@ def handler(event: dict, context) -> dict:
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Позиция не найдена'})}
-                (goods_id, supply_status, storage_barcode, reserved_order_number,
-                 shelf_name, product) = row
+                (goods_id, supply_status, supply_type, storage_barcode, reserved_order_number,
+                 shelf_name, product, receive_reason) = row
                 if supply_status not in ('Открытая', 'На сборке'):
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Из этой поставки уже нельзя убрать товар'})}
 
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(item_id)}")
-                # Вещь вынули из короба — ярлык маркетплейса на ней больше не действует.
-                cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', "
-                    "shipping_labeled_at = NULL, reserved_order_id = NULL, matched_at = NULL "
-                    f"WHERE id = {int(goods_id)}"
-                )
-                cur.execute(
-                    "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
-                    "WHERE fulfilled_from_stock_id = %s",
-                    (int(goods_id),),
-                )
+
+                # Вещь, сшитая под FBS-заказ, возвращается в «на поставку»: ярлык на ней
+                # действует, покупатель её ждёт. На полку она не едет — просто снова
+                # доступна к сканированию в поставку.
+                back_to_supply = supply_type == 'FBS' and receive_reason == 'fbs_ready'
+                if back_to_supply:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'awaiting_supply' "
+                        f"WHERE id = {int(goods_id)}"
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', "
+                        "shipping_labeled_at = NULL, reserved_order_id = NULL, matched_at = NULL "
+                        f"WHERE id = {int(goods_id)}"
+                    )
+                    cur.execute(
+                        "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
+                        "WHERE fulfilled_from_stock_id = %s",
+                        (int(goods_id),),
+                    )
                 conn.commit()
                 return {
                     'statusCode': 200,
                     'headers': headers,
                     'body': json.dumps({
                         'success': True,
-                        'storageBarcode': storage_barcode,
+                        'backToSupply': back_to_supply,
+                        'storageBarcode': None if back_to_supply else storage_barcode,
                         'orderNumber': reserved_order_number,
                         'product': product,
                         'shelfName': shelf_name,

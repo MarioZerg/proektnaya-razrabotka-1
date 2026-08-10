@@ -270,6 +270,8 @@ export const removeSupplyItem = (
   itemId: number
 ): Promise<{
   success: true;
+  /** Вещь вернулась в «на поставку» и ждёт следующей — на полку не едет. */
+  backToSupply?: boolean;
   storageBarcode: string | null;
   orderNumber: string | null;
   product: string | null;
@@ -277,6 +279,7 @@ export const removeSupplyItem = (
 }> =>
   postAction({ action: 'remove_item', itemId }) as Promise<{
     success: true;
+    backToSupply?: boolean;
     storageBarcode: string | null;
     orderNumber: string | null;
     product: string | null;
