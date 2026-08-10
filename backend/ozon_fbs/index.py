@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
@@ -587,7 +588,7 @@ def handle_refresh_all(cur, conn, client_id, api_key):
 
 
 
-def assemble_posting(client_id, api_key, posting_number):
+def assemble_posting(client_id, api_key, posting_number, debug=None):
     """Собирает отправление FBS на стороне OZON (/v4/posting/fbs/ship).
 
     OZON отдаёт этикетку только после сборки: пока отправление в статусе
@@ -611,6 +612,10 @@ def assemble_posting(client_id, api_key, posting_number):
 
     result = (data or {}).get('result') or {}
     current_status = result.get('status')
+    if debug is not None:
+        debug['postingStatus'] = current_status
+        debug['substatus'] = result.get('substatus')
+        debug['productsCount'] = len(result.get('products') or [])
     # Уже собрано или уехало дальше — собирать повторно не нужно и нельзя.
     if current_status and current_status != 'awaiting_packaging':
         return None, current_status
@@ -641,6 +646,10 @@ def assemble_posting(client_id, api_key, posting_number):
         if ship_status == 200:
             return None, 'awaiting_deliver'
         last_status, last_data = ship_status, ship_data
+        if debug is not None:
+            debug.setdefault('shipAttempts', []).append({
+                'status': ship_status, 'response': str(ship_data)[:400],
+            })
 
     return (
         f'OZON не принял сборку отправления (код {last_status}): '
@@ -648,7 +657,7 @@ def assemble_posting(client_id, api_key, posting_number):
     ), None
 
 
-def get_posting_label(cur, client_id, api_key, order_number):
+def get_posting_label(cur, client_id, api_key, order_number, debug=None):
     """Маркетплейсный ярлык OZON на отправление FBS.
 
     OZON отдаёт готовую этикетку PDF по номеру отправления — печатаем её как есть, а не
@@ -670,7 +679,7 @@ def get_posting_label(cur, client_id, api_key, order_number):
     # Упаковщица нажимает «Распечатать ярлык», а система сама переводит заказ в
     # «ожидает отгрузки» и сразу отдаёт этикетку: лишних действий в личном кабинете
     # OZON делать не нужно.
-    ship_err, new_status = assemble_posting(client_id, api_key, posting_number)
+    ship_err, new_status = assemble_posting(client_id, api_key, posting_number, debug=debug)
     if ship_err:
         return ship_err, None
     if new_status:
@@ -679,18 +688,36 @@ def get_posting_label(cur, client_id, api_key, order_number):
             (new_status, posting_number),
         )
 
+    # OZON принимает сборку сразу, но САМУ ЭТИКЕТКУ готовит с задержкой в пару секунд.
+    # Из-за этого стикеровка работала через раз: заказ, который только что собрали,
+    # отвечал INVALID_ARGUMENT, и упаковщица видела «этикетка ещё не готова» — хотя
+    # со второго нажатия всё печаталось. Ждём и пробуем снова, вместо того чтобы
+    # гонять человека нажимать кнопку повторно.
     status, data = ozon_post_raw(
         '/v2/posting/fbs/package-label', client_id, api_key,
         {'posting_number': [posting_number]},
     )
+    retries = 0
+    while status != 200 and 'INVALID_ARGUMENT' in str(data) and retries < 3:
+        retries += 1
+        time.sleep(1.2)
+        status, data = ozon_post_raw(
+            '/v2/posting/fbs/package-label', client_id, api_key,
+            {'posting_number': [posting_number]},
+        )
+    if debug is not None:
+        debug['retries'] = retries
     if status != 200:
         # OZON отдаёт этикетку только после того, как отправление собрано на его стороне.
         # Пока заказ в статусе «ожидает упаковки», API отвечает INVALID_ARGUMENT — объясняем
         # это упаковщику человеческим языком, а не кодом ошибки.
+        if debug is not None:
+            debug['labelStatus'] = status
+            debug['labelResponse'] = str(data)[:400]
         if 'INVALID_ARGUMENT' in str(data):
             return (
-                'OZON ещё не подготовил этикетку для этого отправления. '
-                'Она появляется после сборки заказа на стороне OZON — попробуйте позже.'
+                'OZON пока не отдал этикетку: он готовит её несколько секунд после сборки. '
+                'Нажмите «Распечатать» ещё раз через полминуты.'
             ), None
         return f'OZON не отдал этикетку (код {status}): {str(data)[:250]}', None
     # Этикетка приходит бинарным PDF — отдаём её в base64 как есть, без перекодировок.
@@ -791,10 +818,16 @@ def handler(event: dict, context) -> dict:
             order_number = (body_data.get('orderNumber') or '').strip()
             if not order_number:
                 return _resp(400, {'error': 'Укажите номер заказа'})
-            err, pdf_b64 = get_posting_label(cur, client_id, api_key, order_number)
+            # debug=1 — вернуть, что именно ответил OZON. Нужен, чтобы понять причину
+            # отказа: обычное сообщение для упаковщицы деталей не содержит.
+            want_debug = str(body_data.get('debug') or '') in ('1', 'true', 'True')
+            debug = {} if want_debug else None
+            err, pdf_b64 = get_posting_label(
+                cur, client_id, api_key, order_number, debug=debug
+            )
             if err:
                 conn.rollback()
-                return _resp(502, {'error': err})
+                return _resp(502, {'error': err, 'debug': debug} if want_debug else {'error': err})
             # Сборка отправления меняет статус заказа — сохраняем его у себя.
             conn.commit()
             return _resp(200, {'orderNumber': order_number, 'pdfBase64': pdf_b64})
