@@ -56,7 +56,12 @@ const Index = () => {
   }, [user, navigate]);
 
   useEffect(() => {
-    fetchMaxBotUrl().then(setBotUrl);
+    // Ссылка на бота — необязательная деталь: если сервер молчит, экран входа всё равно
+    // должен открыться. Без перехвата ошибка всплывала наверх и оставляла страницу
+    // в состоянии загрузки.
+    fetchMaxBotUrl()
+      .then(setBotUrl)
+      .catch(() => setBotUrl(null));
   }, []);
 
   const handleOpenBot = () => {

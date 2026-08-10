@@ -2,6 +2,28 @@ import type { Role } from '@/lib/roles';
 
 const AUTH_URL = 'https://functions.poehali.dev/eca1843f-b794-48c6-a9e6-4dead2174136';
 
+/**
+ * Запрос с ограничением по времени.
+ *
+ * В цехе связь проседает, а у обычного fetch нет предела ожидания: браузер держит
+ * запрос минутами, экран входа всё это время крутится и в конце показывает
+ * «плохое соединение». Обрываем сами через 12 секунд — страница откроется, пусть
+ * и без необязательных данных вроде счётчика смены.
+ */
+const fetchWithTimeout = async (
+  url: string,
+  options: RequestInit,
+  ms = 12000
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export interface TestAccount {
   id: number;
   name: string;
@@ -12,7 +34,7 @@ export interface TestAccount {
 }
 
 export const fetchTestAccounts = async (): Promise<TestAccount[]> => {
-  const res = await fetch(AUTH_URL, {
+  const res = await fetchWithTimeout(AUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'test_accounts' }),
@@ -23,7 +45,7 @@ export const fetchTestAccounts = async (): Promise<TestAccount[]> => {
 
 /** Публичная ссылка на бота MAX для кнопки «Войти через MAX». */
 export const fetchMaxBotUrl = async (): Promise<string | null> => {
-  const res = await fetch(AUTH_URL, {
+  const res = await fetchWithTimeout(AUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'bot_info' }),
@@ -39,7 +61,7 @@ export interface OnlineNow {
 
 /** Сколько человек сейчас на смене — для экрана входа. Данные обезличенные: только числа. */
 export const fetchOnlineNow = async (): Promise<OnlineNow> => {
-  const res = await fetch(AUTH_URL, {
+  const res = await fetchWithTimeout(AUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'online_now' }),
@@ -49,7 +71,7 @@ export const fetchOnlineNow = async (): Promise<OnlineNow> => {
 };
 
 const postAuthAction = async (payload: Record<string, unknown>) => {
-  const res = await fetch(AUTH_URL, {
+  const res = await fetchWithTimeout(AUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -136,7 +158,7 @@ export const checkAccess = async (
   userId: number,
   role?: string
 ): Promise<{ active: boolean; reason?: string }> => {
-  const res = await fetch(AUTH_URL, {
+  const res = await fetchWithTimeout(AUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'check_access', userId, role }),
