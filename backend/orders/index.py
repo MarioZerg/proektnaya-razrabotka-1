@@ -1902,22 +1902,34 @@ def handler(event: dict, context) -> dict:
                         ),
                     }
 
-                # Текущая смена швеи берётся из её ОТКРЫТОЙ shift_sessions (учитывает
-                # гостевой режим), с fallback на штатную смену профиля.
+                # Цех и смена, с материалами которых работает швея ПРЯМО СЕЙЧАС, берутся из
+                # её открытой смены (shift_sessions), а не из заказа.
+                #
+                # Это принципиально для гостевого режима: швея из цеха №1 вышла работать
+                # в цех №2, рулоны тесьмы у неё под руками — цеха №2, а заказ помечен цехом,
+                # где его раскроили. Раньше рулон сверялся с цехом ЗАКАЗА, и гостю прилетало
+                # «Рулон не принадлежит вашему цеху/смене» — списать тесьму он не мог вообще,
+                # хотя физически держал рулон в руках. Сверяем с фактической сменой швеи.
                 order_shift_number = None
+                sewer_workshop_id = None
                 if order_assigned_user_id:
                     cur.execute(
-                        "SELECT shift_number FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                        "SELECT workshop_id, shift_number FROM shift_sessions "
+                        "WHERE user_id = %s AND closed_at IS NULL "
                         "ORDER BY opened_at DESC LIMIT 1",
                         (order_assigned_user_id,),
                     )
                     session_row = cur.fetchone()
-                    if session_row and session_row[0] is not None:
-                        order_shift_number = session_row[0]
-                    else:
+                    if session_row:
+                        sewer_workshop_id = session_row[0]
+                        order_shift_number = session_row[1]
+                    if order_shift_number is None:
                         cur.execute("SELECT shift_number FROM users WHERE id = %s", (order_assigned_user_id,))
                         u_row = cur.fetchone()
                         order_shift_number = u_row[0] if u_row else None
+
+                # Цех для сверки рулона: где швея работает сейчас, иначе — цех заказа.
+                check_workshop_id = sewer_workshop_id or order_workshop_id
 
                 cur.execute(
                     "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
@@ -1990,7 +2002,7 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': 'Выбранный рулон тесьмы не найден или недоступен'}),
                     }
-                if order_workshop_id and roll_row[2] != order_workshop_id:
+                if check_workshop_id and roll_row[2] != check_workshop_id:
                     return {
                         'statusCode': 409,
                         'headers': headers,

@@ -5,6 +5,7 @@ import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, fetchWorkshopDetail, type Workshop } from '@/lib/workshopsApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
+import { fetchEmployeeShifts } from '@/lib/shiftSessionsApi';
 import { statusTabs } from '@/components/crm/sewingItems/sewingItemsShared';
 
 /** Данные страницы "Товары для пошива": роль пользователя, список заказов и справочников,
@@ -56,8 +57,33 @@ export const useSewingItemsData = () => {
   // Цех/смена ТЕКУЩЕЙ открытой рабочей смены (может отличаться от штатных в гостевом
   // режиме) — именно они используются для взятия стека и фильтрации доступных рулонов,
   // чтобы сотрудник в гостях работал с материалами той смены, куда зашёл.
-  const effectiveWorkshopId = user?.activeWorkshopId ?? user?.workshopId ?? null;
-  const effectiveShiftNumber = user?.activeShiftNumber ?? user?.shiftNumber ?? null;
+  //
+  // Смену спрашиваем у сервера прямо здесь, а не полагаемся только на данные входа:
+  // гость открывает смену в чужом цехе на терминале, а на сайте в его сессии остаётся
+  // штатный цех. Из-за этого в списке рулонов тесьмы у гостя было пусто — он видел
+  // материалы своего цеха, которых рядом с ним физически нет.
+  const [sessionWorkshopId, setSessionWorkshopId] = useState<number | null>(null);
+  const [sessionShiftNumber, setSessionShiftNumber] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    fetchEmployeeShifts()
+      .then((list) => {
+        const mine = list.find((e) => e.id === user.id);
+        if (mine?.isOpen) {
+          setSessionWorkshopId(mine.sessionWorkshopId);
+          setSessionShiftNumber(mine.sessionShiftNumber);
+        }
+      })
+      .catch(() => {
+        // Нет связи — работаем по данным входа, они уже есть в сессии.
+      });
+  }, [user?.id]);
+
+  const effectiveWorkshopId =
+    sessionWorkshopId ?? user?.activeWorkshopId ?? user?.workshopId ?? null;
+  const effectiveShiftNumber =
+    sessionShiftNumber ?? user?.activeShiftNumber ?? user?.shiftNumber ?? null;
 
   const load = () => {
     setLoading(true);

@@ -251,6 +251,17 @@ const SewingItemActionsSection = ({
                   )}
                 </SelectContent>
               </Select>
+              {/* Пустой список — тупик: швея не понимает, почему нельзя отправить заказ.
+                  Называем нужную тесьму, чтобы было с чем идти к кладовщику. */}
+              {availableRolls.length === 0 && (
+                <p className="text-xs text-amber-700">
+                  В вашем цехе и смене нет рулонов
+                  {orderDetail?.requiredTrimMaterialName
+                    ? ` «${orderDetail.requiredTrimMaterialName}»`
+                    : ' нужной тесьмы'}
+                  . Попросите кладовщика передать рулон в цех.
+                </p>
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
