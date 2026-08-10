@@ -662,7 +662,7 @@ def handler(event: dict, context) -> dict:
             for_user_id = params.get('forUserId')
             if for_user_id:
                 cur.execute(
-                    "SELECT ss.workshop_id, ss.shift_number FROM shift_sessions ss "
+                    "SELECT ss.workshop_id, ss.shift_number, ss.role FROM shift_sessions ss "
                     "WHERE ss.user_id = %s AND ss.closed_at IS NULL "
                     "ORDER BY ss.opened_at DESC LIMIT 1",
                     (int(for_user_id),),
@@ -683,14 +683,23 @@ def handler(event: dict, context) -> dict:
                 #   закройщик — тюль (полотно, которое он кроит);
                 #   швея      — тесьма (аксессуары, которые она пришивает);
                 #   упаковщик — пакеты и этикетки (упаковка).
-                cur.execute("SELECT role FROM users WHERE id = %s", (int(for_user_id),))
-                role_row = cur.fetchone()
+                # Роль берём из ОТКРЫТОЙ СМЕНЫ, а не из карточки сотрудника. В гостевом
+                # режиме человек выходит в чужой цех и может работать другой ролью —
+                # по карточке ему подбирался не тот материал, и, например, швея-гость
+                # не видела ни одного рулона тесьмы.
+                actual_role = None
+                if sess and len(sess) > 2 and sess[2]:
+                    actual_role = sess[2]
+                if not actual_role:
+                    cur.execute("SELECT role FROM users WHERE id = %s", (int(for_user_id),))
+                    role_row = cur.fetchone()
+                    actual_role = role_row[0] if role_row else None
                 role_types = {
                     'cutter': 'Тюль',
                     'sewer': 'Аксессуары',
                     'packer': 'Упаковка',
                 }
-                allowed_type = role_types.get(role_row[0]) if role_row else None
+                allowed_type = role_types.get(actual_role)
                 if allowed_type:
                     type_esc = allowed_type.replace("'", "''")
                     conditions.append(

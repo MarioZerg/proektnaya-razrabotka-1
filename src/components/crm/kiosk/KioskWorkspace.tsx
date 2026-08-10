@@ -351,7 +351,7 @@ const KioskWorkspace = ({
               shiftNumber={shift?.shiftNumber ?? user.shiftFromCode ?? null}
               userId={user.id}
               userName={user.name}
-              role={user.role}
+              role={shift?.role || user.role}
             />
           </div>
         )}

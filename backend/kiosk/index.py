@@ -494,7 +494,7 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник неактивен'})}
 
                 cur.execute(
-                    "SELECT id, opened_at, workshop_id, shift_number FROM shift_sessions "
+                    "SELECT id, opened_at, workshop_id, shift_number, role FROM shift_sessions "
                     "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
                     (user_id,),
                 )
@@ -535,6 +535,10 @@ def handler(event: dict, context) -> dict:
                             'workshopId': s_row[2] if s_row else None,
                             'shiftNumber': s_row[3] if s_row else None,
                             'canCloseAt': can_close_at,
+                            # Роль ИМЕННО этой смены: в гостевом режиме человек выходит
+                            # в чужой цех и может работать другой ролью. По ней терминал
+                            # подбирает материал, с которым ему разрешено работать.
+                            'role': (s_row[4] if s_row else None) or u_row[2],
                         },
                     }),
                 }

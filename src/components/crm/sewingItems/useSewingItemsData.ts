@@ -100,7 +100,21 @@ export const useSewingItemsData = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchOrders(), fetchEmployees(), fetchMaterialsData(), fetchWorkshops(), fetchRolls({ status: 'in_workshop' })])
+    // forUserId — сервер отдаёт рулоны ТОЛЬКО цеха и смены текущей открытой смены
+    // сотрудника и только «его» типа материала (швея — тесьма, закройщик — ткань).
+    // Раньше тянулся общий список: он обрезается по лимиту свежими рулонами, и тесьма
+    // чужого цеха в него не попадала — швея-гость не могла указать тесьму совсем.
+    Promise.all([
+      fetchOrders(),
+      fetchEmployees(),
+      fetchMaterialsData(),
+      fetchWorkshops(),
+      fetchRolls(
+        isProductionRole && user?.id
+          ? { status: 'in_workshop', forUserId: user.id }
+          : { status: 'in_workshop' }
+      ),
+    ])
       .then(([ordersData, employeesData, materialsData, workshopsData, rollsData]) => {
         setOrders(ordersData);
         setEmployees(employeesData);
@@ -117,7 +131,8 @@ export const useSewingItemsData = () => {
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, isProductionRole]);
 
   // Настройка "печать листа закройщика при взятии стека" + список материалов цеха —
   // читаются из настроек ТЕКУЩЕГО цеха сотрудника. Ткани в фильтре ограничиваем
