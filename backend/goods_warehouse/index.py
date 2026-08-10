@@ -339,6 +339,92 @@ def handler(event: dict, context) -> dict:
                     ], ensure_ascii=False),
                 }
 
+            # Карточка одной вещи: что это, где лежит, под какой заказ и вся история
+            # её движения — кто принял, кто наклеил стикер, кто отправил.
+            if params.get('card_id'):
+                card_id = int(params['card_id'])
+                cur.execute(
+                    "SELECT gw.id, gw.status, gw.storage_barcode, gw.receive_reason, "
+                    "       gw.received_at, gw.shipped_at, gw.shipping_labeled_at, gw.matched_at, "
+                    "       sh.name, "
+                    "       src.order_number, src.product, src.material, src.width, src.height, "
+                    "       src.marketplace, "
+                    "       res.id, res.order_number, res.marketplace, res.order_type, "
+                    "       gw.lost_reason "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "LEFT JOIN orders src ON src.id = gw.order_id "
+                    "LEFT JOIN orders res ON res.id = gw.reserved_order_id "
+                    "WHERE gw.id = %s",
+                    (card_id,),
+                )
+                r = cur.fetchone()
+                if not r:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
+
+                # Уже в поставке? Тогда кнопку «Отправить на поставку» показывать не надо.
+                cur.execute(
+                    "SELECT s.id, s.status FROM marketplace_supply_items msi "
+                    "JOIN marketplace_supplies s ON s.id = msi.supply_id "
+                    "WHERE msi.goods_warehouse_id = %s LIMIT 1",
+                    (card_id,),
+                )
+                sup = cur.fetchone()
+
+                # История: события и по самой вещи, и по заказам, с которыми она связана.
+                # Так видно всю цепочку — от пошива до наклейки стикера.
+                order_ids = [x for x in (r[15],) if x]
+                cur.execute("SELECT order_id FROM goods_warehouse WHERE id = %s", (card_id,))
+                own = cur.fetchone()
+                if own and own[0]:
+                    order_ids.append(own[0])
+                ids_csv = ','.join(str(int(i)) for i in set(order_ids)) or '0'
+                cur.execute(
+                    "SELECT user_name, action, description, created_at FROM audit_log "
+                    f"WHERE (entity_type = 'goods_warehouse' AND entity_id = {card_id}) "
+                    f"   OR (entity_type = 'order' AND entity_id IN ({ids_csv})) "
+                    "ORDER BY created_at DESC LIMIT 100"
+                )
+                history = [
+                    {
+                        'userName': h[0],
+                        'action': h[1],
+                        'description': h[2],
+                        'createdAt': h[3].isoformat() if h[3] else None,
+                    }
+                    for h in cur.fetchall()
+                ]
+
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'id': r[0],
+                        'status': r[1],
+                        'storageBarcode': r[2],
+                        'receiveReason': r[3],
+                        'receivedAt': r[4].isoformat() if r[4] else None,
+                        'shippedAt': r[5].isoformat() if r[5] else None,
+                        'shippingLabeledAt': r[6].isoformat() if r[6] else None,
+                        'matchedAt': r[7].isoformat() if r[7] else None,
+                        'shelfName': r[8],
+                        'sourceOrderNumber': r[9],
+                        'product': r[10],
+                        'material': r[11],
+                        'width': r[12],
+                        'height': r[13],
+                        'sourceMarketplace': r[14],
+                        'reservedOrderId': r[15],
+                        'reservedOrderNumber': r[16],
+                        'reservedMarketplace': r[17],
+                        'reservedOrderType': r[18],
+                        'lostReason': r[19],
+                        'supplyId': sup[0] if sup else None,
+                        'supplyStatus': sup[1] if sup else None,
+                        'history': history,
+                    }, ensure_ascii=False),
+                }
+
             if barcode:
                 barcode_esc = barcode.strip().replace("'", "''")
                 cur.execute(
@@ -574,6 +660,53 @@ def handler(event: dict, context) -> dict:
                         'orderType': order_type,
                     }, ensure_ascii=False),
                 }
+
+            if action == 'send_to_supply':
+                # Вещь отстикерована ярлыком маркетплейса и готова ехать: переводим её
+                # в «На поставку». После этого она появляется в счётчике поставки FBS
+                # OZON, и кладовщик сканирует её в короб.
+                gw_id = body_data.get('id')
+                if not gw_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                cur.execute(
+                    "SELECT gw.status, gw.shipping_labeled_at, o.order_number "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.reserved_order_id "
+                    "WHERE gw.id = %s",
+                    (int(gw_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
+                gw_status, labeled_at, target_number = row
+                # Без ярлыка маркетплейса вещь на приёмке не опознают — не пускаем.
+                if not labeled_at:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Сначала напечатайте стикер FBS и наклейте его на вещь'}, ensure_ascii=False),
+                    }
+                if gw_status == 'awaiting_supply':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Вещь уже отправлена на поставку'}, ensure_ascii=False),
+                    }
+                if gw_status not in ('in_stock', 'picking'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Вещь недоступна (статус: {gw_status})'}, ensure_ascii=False),
+                    }
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'awaiting_supply' WHERE id = {int(gw_id)}"
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'send_to_supply', 'goods_warehouse', gw_id,
+                    f'Отправил вещь на поставку по заказу #{target_number or "—"}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'place_on_shelf':
                 # Кладовщик забрал из цеха вещь, отменённую клиентом (упаковщик уже наклеил

@@ -112,8 +112,8 @@ export const placeOnShelf = (barcode: string, shelfId: number) =>
   postAction({ action: 'place_on_shelf', barcode, shelfId });
 
 /** Кладовщик наклеил стикер отправления на вещь с полки, подобранную под новый заказ. */
-export const shipLabelGoods = (barcode: string) =>
-  postAction({ action: 'ship_label', barcode }) as Promise<{
+export const shipLabelGoods = (barcode: string, actorId?: number, actorName?: string) =>
+  postAction({ action: 'ship_label', barcode, actorId, actorName }) as Promise<{
     id: number;
     orderId: number;
     orderNumber: string;
@@ -176,6 +176,53 @@ export const fetchPickingOrders = async (): Promise<PickingOrder[]> => {
   if (!res.ok) throw new Error('Не удалось загрузить заказы к подбору');
   return res.json();
 };
+
+/** Одно событие в истории вещи: кто и что с ней сделал. */
+export interface GoodsHistoryEntry {
+  userName: string | null;
+  action: string;
+  description: string | null;
+  createdAt: string | null;
+}
+
+/** Карточка вещи со склада: что это, где лежит и вся история движения. */
+export interface GoodsCard {
+  id: number;
+  status: GoodsStatus;
+  storageBarcode: string;
+  receiveReason: string;
+  receivedAt: string | null;
+  shippedAt: string | null;
+  shippingLabeledAt: string | null;
+  matchedAt: string | null;
+  shelfName: string | null;
+  sourceOrderNumber: string | null;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  sourceMarketplace: string | null;
+  reservedOrderId: number | null;
+  reservedOrderNumber: string | null;
+  reservedMarketplace: string | null;
+  reservedOrderType: string | null;
+  lostReason: string | null;
+  supplyId: number | null;
+  supplyStatus: string | null;
+  history: GoodsHistoryEntry[];
+}
+
+/** Карточка вещи со всей историей её движения по складу. */
+export const fetchGoodsCard = async (id: number): Promise<GoodsCard> => {
+  const res = await fetch(`${GOODS_WAREHOUSE_URL}?card_id=${id}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить карточку');
+  return data;
+};
+
+/** Вещь отстикерована и едет в поставку: попадёт в счётчик FBS OZON. */
+export const sendGoodsToSupply = (id: number, actorId?: number, actorName?: string) =>
+  postAction({ action: 'send_to_supply', id, actorId, actorName });
 
 /** Удалить запись со склада. Только администратор и только для вещей на хранении. */
 export const deleteGoods = (id: number, actorId?: number, actorName?: string) =>

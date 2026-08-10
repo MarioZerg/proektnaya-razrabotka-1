@@ -12,13 +12,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
-import ShipLabelDialog from '@/components/crm/goodsWarehouse/ShipLabelDialog';
-import {
-  fetchGoodsWarehouse,
-  fetchPickingOrders,
-  type GoodsWarehouseItem,
-  type PickingOrder,
-} from '@/lib/goodsWarehouseApi';
+import PickingScanDialog from '@/components/crm/goodsWarehouse/PickingScanDialog';
+import { fetchPickingOrders, type PickingOrder } from '@/lib/goodsWarehouseApi';
 
 /** Дата в привычном виде: «10.08.2026, 16:15». */
 const formatDate = (value: string | null) => {
@@ -47,17 +42,12 @@ const GoodsPicking = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [scanOpen, setScanOpen] = useState(false);
-  /** Вещи с полок, подобранные под заказы: их сканируют и стикеруют. */
-  const [matched, setMatched] = useState<GoodsWarehouseItem[]>([]);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchPickingOrders(), fetchGoodsWarehouse('in_stock')])
-      .then(([ordersData, stock]) => {
-        setOrders(ordersData);
-        setMatched(stock.filter((i) => i.reservedOrderId && !i.shippingLabeledAt));
-      })
+    fetchPickingOrders()
+      .then(setOrders)
       .catch(() => setOrders([]))
       .finally(() => setLoading(false));
   };
@@ -113,11 +103,6 @@ const GoodsPicking = () => {
               <Button onClick={() => setScanOpen(true)}>
                 <Icon name="ScanLine" size={16} className="mr-2" />
                 Сканер подбора
-                {matched.length > 0 && (
-                  <span className="ml-2 rounded-full bg-background/25 px-2 text-xs">
-                    {matched.length}
-                  </span>
-                )}
               </Button>
               <Button variant="outline" size="sm" onClick={load} disabled={loading}>
                 <Icon
@@ -160,11 +145,10 @@ const GoodsPicking = () => {
           )}
         </div>
 
-        <ShipLabelDialog
+        <PickingScanDialog
           open={scanOpen}
           onOpenChange={setScanOpen}
-          matched={matched}
-          onDone={load}
+          onOpenCard={(goodsId) => navigate(`/crm/inventory/goods/${goodsId}`)}
         />
 
         {loading && orders.length === 0 ? (
@@ -194,7 +178,11 @@ const GoodsPicking = () => {
                 </TableHeader>
                 <TableBody>
                   {filtered.map((o) => (
-                    <TableRow key={o.id}>
+                    <TableRow
+                      key={o.id}
+                      onClick={() => navigate(`/crm/inventory/goods/${o.id}`)}
+                      className="cursor-pointer hover:bg-muted/60"
+                    >
                       <TableCell>
                         <div className="font-medium">{o.product || '—'}</div>
                         <div className="text-xs text-muted-foreground">

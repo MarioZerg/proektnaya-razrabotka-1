@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { shipLabelGoods, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
@@ -46,6 +47,7 @@ interface FoundItem {
  */
 const ShipLabelDialog = ({ open, onOpenChange, matched, onDone }: ShipLabelDialogProps) => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [barcode, setBarcode] = useState('');
   const [saving, setSaving] = useState(false);
   const [printing, setPrinting] = useState(false);
@@ -63,7 +65,7 @@ const ShipLabelDialog = ({ open, onOpenChange, matched, onDone }: ShipLabelDialo
     setBarcode('');
     setSaving(true);
     try {
-      const res = await shipLabelGoods(code);
+      const res = await shipLabelGoods(code, user?.id, user?.name);
       playScanSound();
       setFound(res);
       setLabeled((prev) =>
