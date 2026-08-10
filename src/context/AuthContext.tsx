@@ -18,6 +18,9 @@ export interface User {
    * при раскрое/сборке, пока смена открыта. Пока смена не открыта — null. */
   activeWorkshopId?: number | null;
   activeShiftNumber?: number | null;
+  /** Админ смотрит панель этого сотрудника его глазами. Пока флаг стоит, наверху
+   * висит полоса с кнопкой возврата, чтобы никто не забыл, в чьём аккаунте работает. */
+  isImpersonated?: boolean;
 }
 
 interface AuthContextValue {
@@ -26,11 +29,17 @@ interface AuthContextValue {
   logout: () => void;
   switchRole: (role: Role) => void;
   setActiveShift: (workshopId: number | null, shiftNumber: number | null) => void;
+  /** Войти в аккаунт сотрудника, запомнив свой. */
+  impersonate: (target: User) => void;
+  /** Вернуться в свой аккаунт администратора. */
+  stopImpersonation: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_KEY = 'megatul_user';
+/** Аккаунт администратора, отложенный на время просмотра чужой панели. */
+const ADMIN_BACKUP_KEY = 'megatul_admin_backup';
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(() => {
@@ -45,7 +54,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = () => {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(ADMIN_BACKUP_KEY);
     setUser(null);
+  };
+
+  // Админ уходит смотреть панель сотрудника. Свой аккаунт откладываем отдельно,
+  // чтобы вернуться одной кнопкой и не логиниться заново.
+  const impersonate = (target: User) => {
+    setUser((prev) => {
+      if (prev && !prev.isImpersonated) {
+        localStorage.setItem(ADMIN_BACKUP_KEY, JSON.stringify(prev));
+      }
+      const next = { ...target, isImpersonated: true };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const stopImpersonation = () => {
+    const raw = localStorage.getItem(ADMIN_BACKUP_KEY);
+    if (!raw) return;
+    const admin = JSON.parse(raw) as User;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(admin));
+    localStorage.removeItem(ADMIN_BACKUP_KEY);
+    setUser(admin);
   };
 
   const switchRole = (role: Role) => {
@@ -87,8 +119,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       try {
         const res = await checkAccess(user.id, user.role);
         if (!stopped && res.active === false) {
-          localStorage.removeItem(STORAGE_KEY);
-          setUser(null);
+          // Админ смотрит чужую панель, а у сотрудника отозвали доступ — возвращаем
+          // администратора в его аккаунт, а не выкидываем из системы совсем.
+          const backup = localStorage.getItem(ADMIN_BACKUP_KEY);
+          if (user.isImpersonated && backup) {
+            const admin = JSON.parse(backup) as User;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(admin));
+            localStorage.removeItem(ADMIN_BACKUP_KEY);
+            setUser(admin);
+          } else {
+            localStorage.removeItem(STORAGE_KEY);
+            setUser(null);
+          }
           if (res.reason) window.alert(res.reason);
         }
       } catch {
@@ -105,7 +147,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [user?.id, user?.role, user?.isDemo]);
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, switchRole, setActiveShift }}>
+    <AuthContext.Provider
+      value={{ user, login, logout, switchRole, setActiveShift, impersonate, stopImpersonation }}
+    >
       {children}
     </AuthContext.Provider>
   );

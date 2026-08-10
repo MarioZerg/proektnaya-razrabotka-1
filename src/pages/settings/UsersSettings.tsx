@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { impersonateUser } from '@/lib/authApi';
 import { useToast } from '@/hooks/use-toast';
 import {
   fetchEmployees,
@@ -26,7 +28,9 @@ import DeleteEmployeeDialog from '@/components/crm/users/DeleteEmployeeDialog';
 
 const UsersSettings = () => {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, impersonate } = useAuth();
+  const navigate = useNavigate();
+  const [enteringId, setEnteringId] = useState<number | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -86,6 +90,38 @@ const UsersSettings = () => {
       });
     } finally {
       setCreating(false);
+    }
+  };
+
+  /**
+   * Админ входит в аккаунт сотрудника, чтобы увидеть его рабочую панель.
+   *
+   * Пароль не нужен — права проверяет сервер. После входа приложение ведёт туда же,
+   * куда попадает сам сотрудник, а сверху висит полоса с возвратом в свой аккаунт.
+   */
+  const handleImpersonate = async (emp: Employee) => {
+    if (!user) return;
+    setEnteringId(emp.id);
+    try {
+      const target = await impersonateUser(user.id, emp.id);
+      impersonate({
+        id: target.id,
+        name: target.name,
+        role: target.role,
+        availableRoles: target.availableRoles,
+        workshopId: target.workshopId,
+        workshopName: target.workshopName,
+        shiftNumber: target.shiftNumber,
+      });
+      navigate('/');
+    } catch (e) {
+      toast({
+        title: 'Не удалось войти',
+        description: e instanceof Error ? e.message : 'Попробуйте ещё раз',
+        variant: 'destructive',
+      });
+    } finally {
+      setEnteringId(null);
     }
   };
 
@@ -279,6 +315,9 @@ const UsersSettings = () => {
           setWorkshopFilter={setWorkshopFilter}
           onOpenCard={openCard}
           onDeleteRequest={setDeleteId}
+          onImpersonate={handleImpersonate}
+          enteringId={enteringId}
+          currentUserId={user?.id}
         />
       </div>
 

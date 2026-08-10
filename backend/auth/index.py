@@ -63,6 +63,10 @@ def handler(event: dict, context) -> dict:
     Проверяет, что роль утверждена, и возвращает полные данные сессии
     (id, name, role, workshopId, workshopName, shiftNumber).
 
+    POST { action: 'impersonate', adminId, userId, role? } — администратор входит
+    в аккаунт сотрудника, чтобы увидеть его рабочую панель. Права проверяются на
+    сервере по adminId; пароль сотрудника не нужен.
+
     POST { action: 'bot_info' } — отдаёт публичную ссылку на бота MAX (кнопка
     «Войти через MAX» на сайте открывает её в новой вкладке).
 
@@ -417,6 +421,85 @@ def handler(event: dict, context) -> dict:
                     'workshopName': workshop_name,
                     'shiftNumber': shift_number,
                 }
+            ),
+        }
+
+    if action == 'impersonate':
+        # Вход администратора в аккаунт сотрудника, чтобы увидеть его рабочую панель
+        # своими глазами: что показывает терминал закройщицы, какие рулоны видит швея.
+        # Разбирать жалобу «у меня не тот список» иначе приходится вслепую.
+        #
+        # Пароль сотрудника при этом не нужен и не раскрывается — админ и так может
+        # задать любой в карточке. Права проверяем на сервере: свою роль браузер
+        # мог бы подменить, и тогда войти в чужой аккаунт смог бы любой сотрудник.
+        admin_id = body_data.get('adminId')
+        target_id = body_data.get('userId')
+        role = (body_data.get('role') or '').strip()
+        if not admin_id or not target_id:
+            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректные данные'})}
+
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT 1 FROM user_roles WHERE user_id = %s AND role = 'admin' AND is_approved = true",
+                (int(admin_id),),
+            )
+            if not cur.fetchone():
+                return {'statusCode': 403, 'headers': headers,
+                        'body': json.dumps({'error': 'Доступно только администратору'})}
+
+            cur.execute('SELECT is_active FROM users WHERE id = %s', (int(admin_id),))
+            adm = cur.fetchone()
+            if not adm or not adm[0]:
+                return {'statusCode': 403, 'headers': headers,
+                        'body': json.dumps({'error': 'Учётная запись отключена'})}
+
+            cur.execute(
+                "SELECT u.id, u.full_name, u.is_active, u.workshop, u.shift_number, w.id "
+                "FROM users u LEFT JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
+                (int(target_id),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Сотрудник не найден'})}
+            uid, full_name, is_active, workshop_name, shift_number, workshop_id = row
+            if not is_active:
+                return {'statusCode': 403, 'headers': headers,
+                        'body': json.dumps({'error': 'Учётная запись сотрудника отключена'})}
+
+            # Роли берём утверждённые. Заходить в неутверждённую должность нельзя:
+            # сотрудник её ещё не получил, и панель показала бы то, чего у него нет.
+            cur.execute(
+                'SELECT role FROM user_roles WHERE user_id = %s AND is_approved = true ORDER BY id',
+                (uid,),
+            )
+            roles = [r[0] for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+        if not roles:
+            return {'statusCode': 403, 'headers': headers,
+                    'body': json.dumps({'error': 'У сотрудника нет утверждённых должностей'})}
+        if role and role not in roles:
+            return {'statusCode': 403, 'headers': headers,
+                    'body': json.dumps({'error': 'Эта должность у сотрудника не утверждена'})}
+
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': json.dumps(
+                {
+                    'id': uid,
+                    'name': full_name,
+                    'role': role or roles[0],
+                    'availableRoles': roles,
+                    'workshopId': workshop_id,
+                    'workshopName': workshop_name,
+                    'shiftNumber': shift_number,
+                },
+                ensure_ascii=False,
             ),
         }
 

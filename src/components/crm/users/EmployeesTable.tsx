@@ -29,6 +29,12 @@ interface EmployeesTableProps {
   setWorkshopFilter: (value: string) => void;
   onOpenCard: (emp: Employee) => void;
   onDeleteRequest: (id: number) => void;
+  /** Войти в аккаунт сотрудника и посмотреть его рабочую панель. */
+  onImpersonate: (emp: Employee) => void;
+  /** Кто смотрит таблицу — на своей строке кнопка входа не нужна. */
+  currentUserId?: number;
+  /** Сотрудник, в чей аккаунт сейчас выполняется вход — на его кнопке крутится ожидание. */
+  enteringId: number | null;
 }
 
 const EmployeesTable = ({
@@ -40,6 +46,9 @@ const EmployeesTable = ({
   setWorkshopFilter,
   onOpenCard,
   onDeleteRequest,
+  onImpersonate,
+  enteringId,
+  currentUserId,
 }: EmployeesTableProps) => {
   return (
     <>
@@ -120,7 +129,19 @@ const EmployeesTable = ({
                   <TableCell className="whitespace-nowrap">{formatDateTime(emp.updatedAt)}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-2">
-                      <Button size="icon" variant="secondary" onClick={() => onOpenCard(emp)}>
+                      {emp.id !== currentUserId && (
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        title="Войти в аккаунт и посмотреть панель сотрудника"
+                        disabled={enteringId !== null}
+                        onClick={() => onImpersonate(emp)}
+                      >
+                        <Icon name={enteringId === emp.id ? 'Loader2' : 'LogIn'} size={14}
+                          className={enteringId === emp.id ? 'animate-spin' : undefined} />
+                      </Button>
+                      )}
+                      <Button size="icon" variant="secondary" title="Редактировать" onClick={() => onOpenCard(emp)}>
                         <Icon name="Pencil" size={14} />
                       </Button>
                       <Button size="icon" variant="destructive" onClick={() => onDeleteRequest(emp.id)}>

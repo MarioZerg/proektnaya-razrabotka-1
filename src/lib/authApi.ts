@@ -109,6 +109,24 @@ export interface EnterRoleResult {
 export const enterRole = (userId: number, role: Role): Promise<EnterRoleResult> =>
   postAuthAction({ action: 'enter_role', userId, role });
 
+export interface ImpersonateResult extends EnterRoleResult {
+  availableRoles: Role[];
+}
+
+/**
+ * Вход администратора в аккаунт сотрудника — посмотреть его рабочую панель.
+ *
+ * Пароль сотрудника не нужен: права проверяет сервер по adminId. Возвращает такие же
+ * данные сессии, как обычный вход, плюс все утверждённые должности — чтобы внутри
+ * аккаунта можно было переключаться между ними.
+ */
+export const impersonateUser = (
+  adminId: number,
+  userId: number,
+  role?: Role
+): Promise<ImpersonateResult> =>
+  postAuthAction({ action: 'impersonate', adminId, userId, role });
+
 export { AUTH_URL };
 
 /**

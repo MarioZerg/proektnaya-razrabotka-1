@@ -72,6 +72,7 @@ import NotFoundRedirect from "./pages/NotFoundRedirect";
 
 import KioskTerminal from "./pages/KioskTerminal";
 import { AuthProvider } from "@/context/AuthContext";
+import ImpersonationBar from "@/components/crm/users/ImpersonationBar";
 
 const queryClient = new QueryClient();
 
@@ -82,6 +83,9 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          {/* Пока администратор смотрит панель сотрудника — заметная полоса с
+              кнопкой возврата в свой аккаунт. */}
+          <ImpersonationBar />
           {/* Пока подгружается страница, показываем спокойную заглушку —
               иначе на секунду мелькал бы пустой белый экран. */}
           <Suspense

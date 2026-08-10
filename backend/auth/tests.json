@@ -67,6 +67,26 @@
         "action": "online_now"
       },
       "expectedStatus": 200
+    },
+    {
+      "name": "Impersonate without data fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "impersonate"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Impersonate by non-admin fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "impersonate",
+        "adminId": 999999,
+        "userId": 1
+      },
+      "expectedStatus": 403
     }
   ]
 }
