@@ -59,7 +59,10 @@ GROUPS = {
             "DELETE FROM marketplace_supply_boxes",
             "DELETE FROM marketplace_supplies",
             "DELETE FROM marketplace_returns",
-            "DELETE FROM return_pickup_codes",
+            # Коды ПВЗ здесь НЕ трогаем. Это постоянные штрихкоды кабинета продавца
+            # (по ним на пункте выдачи отдают возвраты), а не данные заказов. Раньше
+            # очистка заказов стирала их вместе с возвратами, и кладовщик оставался
+            # без кода прямо на ПВЗ — восстановить можно только руками из кабинета.
             "DELETE FROM goods_warehouse",
             "DELETE FROM orders",
         ],
