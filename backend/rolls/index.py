@@ -625,7 +625,7 @@ def handler(event: dict, context) -> dict:
             for_user_id = params.get('forUserId')
             if for_user_id:
                 cur.execute(
-                    "SELECT ss.workshop_id FROM shift_sessions ss "
+                    "SELECT ss.workshop_id, ss.shift_number FROM shift_sessions ss "
                     "WHERE ss.user_id = %s AND ss.closed_at IS NULL "
                     "ORDER BY ss.opened_at DESC LIMIT 1",
                     (int(for_user_id),),
@@ -633,6 +633,11 @@ def handler(event: dict, context) -> dict:
                 sess = cur.fetchone()
                 if sess and sess[0]:
                     conditions.append(f"r.workshop_id = {int(sess[0])}")
+                    # И только рулоны СВОЕЙ смены: в одном цехе работают разные смены,
+                    # и чужие рулоны в списке путают закройщика — он может закрыть
+                    # рулон, который режет другая смена.
+                    if sess[1] is not None:
+                        conditions.append(f"r.shift_number = {int(sess[1])}")
                 else:
                     conditions.append("1 = 0")
 

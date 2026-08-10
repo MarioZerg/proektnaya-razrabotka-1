@@ -6,6 +6,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchRolls, closeRoll, flagRollDefect, type Roll } from '@/lib/rollsApi';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import {
   Dialog,
   DialogContent,
@@ -43,6 +44,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   const [materials, setMaterials] = useState<Material[]>([]);
   const [types, setTypes] = useState<MaterialType[]>([]);
   const [typeFilter, setTypeFilter] = useState<number | 'all'>('all');
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Roll | null>(null);
   const [shortage, setShortage] = useState('');
@@ -54,18 +56,15 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   const load = () => {
     setLoading(true);
     Promise.all([
-      fetchRolls({ status: 'in_workshop', usedSinceUserId: userId }),
+      // forUserId — сервер сам отдаёт рулоны ТОЛЬКО цеха и смены этого сотрудника.
+      // Раньше запрашивался общий список и отсеивался уже в планшете: список
+      // обрезался по общему лимиту, и часть своих рулонов до закройщика не доезжала,
+      // зато мелькали чужие.
+      fetchRolls({ status: 'in_workshop', usedSinceUserId: userId, forUserId: userId }),
       fetchMaterialsData(),
     ])
       .then(([list, matData]) => {
-        // Показываем рулоны только своего цеха и только своей смены.
-        setRolls(
-          list.filter(
-            (r) =>
-              r.workshopId === workshopId &&
-              (shiftNumber == null || r.shiftNumber === shiftNumber)
-          )
-        );
+        setRolls(list);
         setMaterials(matData.materials);
         setTypes(matData.types);
       })
@@ -91,10 +90,21 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
       })
     : rolls;
 
-  const visibleRolls =
+  const byType =
     typeFilter === 'all'
       ? roleRolls
       : roleRolls.filter((r) => typeIdByMaterial.get(r.materialId) === typeFilter);
+
+  // Поиск по номеру и названию материала: в смене бывает несколько десятков рулонов,
+  // и пролистывать их на планшете долго.
+  const query = search.trim().toLowerCase();
+  const visibleRolls = query
+    ? byType.filter(
+        (r) =>
+          r.barcode.toLowerCase().includes(query) ||
+          (r.materialName || '').toLowerCase().includes(query)
+      )
+    : byType;
 
   const handleClose = async (withShortage: boolean) => {
     if (!selected) return;
@@ -281,6 +291,13 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
         ))}
       </div>
 
+      <Input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Поиск по номеру рулона или материалу"
+        className="h-12 text-base"
+      />
+
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
           <Icon name="Loader2" size={24} className="animate-spin" />
@@ -288,14 +305,20 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
         </div>
       ) : visibleRolls.length === 0 ? (
         <p className="py-10 text-center text-lg text-muted-foreground">
-          В вашей смене нет открытых рулонов
+          {search.trim()
+            ? 'Рулон не найден — проверьте номер'
+            : 'В вашей смене нет открытых рулонов'}
         </p>
       ) : (
         visibleRolls.map((r) => {
-          // Рулон доступен, только если по нему уже было движение материала в этой смене
-          // и поставка принята: непринятый материал мог не доехать, работать с ним нельзя.
-          // Отставленный из-за брака рулон в работу не берём: он ждёт кладовщика.
-          const active = !!r.usedInShift && !r.pendingAcceptance && !r.defectFlaggedAt;
+          // Рулон закрывается вручную: закройщик сам выбирает его из списка своей смены,
+          // сканер не нужен. Раньше рулон открывался только после движения материала в
+          // смене — но закончившийся рулон, по которому в эту смену ещё не резали,
+          // из-за этого закрыть было нельзя.
+          //
+          // Остаются два запрета: непринятый материал (мог не доехать) и отставленный
+          // из-за брака рулон (он ждёт кладовщика).
+          const active = !r.pendingAcceptance && !r.defectFlaggedAt;
           return (
             <button
               key={r.id}
@@ -317,8 +340,8 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
                     Не принят — подтвердите поставку
                   </div>
                 ) : (
-                  !active && (
-                    <div className="text-xs text-muted-foreground">Нет движения в смене</div>
+                  r.usedInShift && (
+                    <div className="text-xs text-emerald-600">Резали в эту смену</div>
                   )
                 )}
               </div>
