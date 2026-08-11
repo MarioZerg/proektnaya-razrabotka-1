@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
   Table,
@@ -99,9 +100,23 @@ const GoodsPicking = () => {
         o.orderNumber?.toLowerCase().includes(q) ||
         o.storageBarcode?.toLowerCase().includes(q) ||
         o.shelfName?.toLowerCase().includes(q) ||
-        o.material?.toLowerCase().includes(q)
+        o.material?.toLowerCase().includes(q) ||
+        // По «ozon», «wb», «fbs», «fbo» — кладовщик отбирает работу одного вида,
+        // чтобы собрать её за один проход по складу.
+        o.marketplace?.toLowerCase().includes(q) ||
+        o.orderType?.toLowerCase().includes(q)
     );
   }, [orders, search]);
+
+  /** Разбивка отобранного по площадке и схеме: «OZON FBS: 9», «OZON FBO: 19». */
+  const byScheme = useMemo(() => {
+    const acc: Record<string, number> = {};
+    filtered.forEach((o) => {
+      const label = `${(o.marketplace || '—').toUpperCase()} ${o.orderType || ''}`.trim();
+      acc[label] = (acc[label] || 0) + 1;
+    });
+    return acc;
+  }, [filtered]);
 
   return (
     <CrmLayout>
@@ -187,16 +202,26 @@ const GoodsPicking = () => {
           </p>
         ) : (
           <>
-            <p className="text-sm text-muted-foreground">
-              {search
-                ? `Найдено: ${filtered.length} из ${orders.length}`
-                : `Заказов к подбору: ${orders.length}`}
-            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-muted-foreground">
+                {search
+                  ? `Найдено: ${filtered.length} из ${orders.length}`
+                  : `Заказов к подбору: ${orders.length}`}
+              </p>
+              {/* Сколько работы какого вида: FBS собирают поштучно с ярлыками,
+                  FBO складывают коробкой. Кладовщик планирует день по этим числам. */}
+              {Object.entries(byScheme).map(([label, count]) => (
+                <Badge key={label} variant="outline" className="font-normal">
+                  {label}: {count}
+                </Badge>
+              ))}
+            </div>
             <div className="rounded-md border border-border">
               <Table>
                 <TableHeader>
                   <TableRow className="bg-primary hover:bg-primary">
                     <TableHead className="text-primary-foreground">Товар</TableHead>
+                    <TableHead className="text-primary-foreground">Куда поедет</TableHead>
                     <TableHead className="text-primary-foreground">Полка</TableHead>
                     <TableHead className="text-primary-foreground">Дата создания</TableHead>
                   </TableRow>
@@ -214,6 +239,33 @@ const GoodsPicking = () => {
                           {o.orderNumber || '—'}
                           {o.storageBarcode ? ` · ${o.storageBarcode}` : ''}
                         </div>
+                      </TableCell>
+                      {/* Куда поедет вещь: площадка и схема. Работа у них разная —
+                          на FBS клеится ярлык маркетплейса и вещь едет своим пакетом,
+                          FBO уходит коробкой на склад площадки. Кладовщик должен видеть
+                          это в списке, а не открывать карточку каждой вещи. */}
+                      <TableCell className="whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="secondary" className="font-normal">
+                            {(o.marketplace || '—').toUpperCase()}
+                          </Badge>
+                          {o.orderType && (
+                            <Badge
+                              className={
+                                o.orderType === 'FBS'
+                                  ? 'bg-sky-100 font-semibold text-sky-800 hover:bg-sky-100'
+                                  : 'bg-violet-100 font-semibold text-violet-800 hover:bg-violet-100'
+                              }
+                            >
+                              {o.orderType}
+                            </Badge>
+                          )}
+                        </div>
+                        {o.cluster && (
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            {o.cluster}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>{o.shelfName || '—'}</TableCell>
                       <TableCell className="whitespace-nowrap">

@@ -540,7 +540,11 @@ def handler(event: dict, context) -> dict:
                 # складом можно лишь те, под которые реально лежит нужная вещь.
                 cur.execute(
                     "SELECT gw.id, o.order_number, o.product, o.material, o.width, o.height, "
-                    "       gw.matched_at, o.marketplace, gw.storage_barcode, sh.name "
+                    "       gw.matched_at, o.marketplace, gw.storage_barcode, sh.name, "
+                    # Схема поставки и кластер: по ним кладовщик сразу видит, куда поедет
+                    # вещь. FBS клеится ярлык маркетплейса и едет отдельным пакетом,
+                    # FBO уходит коробкой на склад площадки — работа разная.
+                    "       o.order_type, o.cluster "
                     "FROM goods_warehouse gw "
                     "JOIN orders o ON o.id = gw.reserved_order_id "
                     "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
@@ -572,6 +576,8 @@ def handler(event: dict, context) -> dict:
                             'marketplace': r[7],
                             'storageBarcode': r[8],
                             'shelfName': r[9],
+                            'orderType': r[10],
+                            'cluster': r[11],
                         }
                         for r in orders_rows
                     ], ensure_ascii=False),
