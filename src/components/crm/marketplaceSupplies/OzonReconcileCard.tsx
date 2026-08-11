@@ -41,13 +41,32 @@ const OzonReconcileCard = ({
       hint: 'сканер развернёт — сначала напечатать стикер',
     },
     {
+      label: 'На полке хранения',
+      value: data.onShelf,
+      icon: 'Archive',
+      tone: 'text-amber-700',
+      hint: 'заказ ждёт отгрузки, а вещь не отобрана в сборку',
+    },
+    {
       label: 'На конвейере',
       value: data.inProduction,
       icon: 'Factory',
       tone: 'text-muted-foreground',
       hint: 'ещё шьётся, до склада не дошло',
     },
-  ];
+    {
+      label: 'Прочее',
+      value: data.other,
+      icon: 'CircleHelp',
+      tone: 'text-muted-foreground',
+      hint: 'редкие статусы вещей',
+    },
+    // Строки с нулём прячем: пустые «0 шт» только загромождают сверку. Но если
+    // в строке что-то есть — показываем всегда, даже «Прочее»: именно там
+    // всплывает вещь, которая иначе потерялась бы и сломала сумму.
+  ].filter((r) => r.value > 0);
+
+  const total = rows.reduce((s, r) => s + r.value, 0);
 
   return (
     <Card className="p-4">
@@ -99,6 +118,13 @@ const OzonReconcileCard = ({
             </span>
           </div>
         ))}
+      </div>
+
+      {/* Итог столбика. Кладовщик всё равно складывает строки в уме и проверяет
+          сходимость — показываем сумму сами, чтобы он не считал и не сомневался. */}
+      <div className="mt-2 flex items-center justify-between border-t border-border pt-2">
+        <span className="text-sm font-medium">Итого</span>
+        <span className="text-sm font-bold">{total} шт</span>
       </div>
 
       {typeof readyInSupply === 'number' && (

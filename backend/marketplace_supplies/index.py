@@ -868,7 +868,13 @@ def handler(event: dict, context) -> dict:
                         "    AND gw.shipping_labeled_at IS NULL) AS no_label, "
                         "  count(*) FILTER (WHERE gw.id IS NOT NULL "
                         "    AND gw.status = 'reserved') AS in_supply, "
-                        "  count(*) FILTER (WHERE gw.id IS NULL) AS in_production "
+                        "  count(*) FILTER (WHERE gw.id IS NULL) AS in_production, "
+                        # Вещь лежит на полке хранения, хотя заказ под неё уже ждёт
+                        # отгрузки: её не отобрали в сборку. Раньше такие вещи не
+                        # попадали НИ В ОДНУ строку разбивки — сумма не сходилась с
+                        # общим числом, и сверка теряла смысл.
+                        "  count(*) FILTER (WHERE gw.id IS NOT NULL "
+                        "    AND gw.status = 'in_stock') AS on_shelf "
                         "FROM orders o "
                         "LEFT JOIN goods_warehouse gw "
                         "  ON gw.id = o.fulfilled_from_stock_id OR gw.reserved_order_id = o.id "
@@ -877,13 +883,24 @@ def handler(event: dict, context) -> dict:
                         "  AND COALESCE(o.ozon_status, '') = 'awaiting_deliver'"
                     )
                     rc = cur.fetchone()
-                    reconcile = {
-                        'units': int(rc[0] or 0),
-                        'postings': int(rc[1] or 0),
+                    units = int(rc[0] or 0)
+                    parts = {
                         'ready': int(rc[2] or 0),
                         'noLabel': int(rc[3] or 0),
                         'inSupply': int(rc[4] or 0),
                         'inProduction': int(rc[5] or 0),
+                        'onShelf': int(rc[6] or 0),
+                    }
+                    # Всё, что не подошло ни под одну строку (редкие статусы вроде
+                    # «отгружено» или «утеряно»). Считаем ОСТАТКОМ, а не отдельным
+                    # условием: тогда сумма строк равна общему числу ВСЕГДА, даже
+                    # если завтра появится новый статус. Иначе кладовщик снова
+                    # сложит столбик, недосчитается штуки и перестанет верить сверке.
+                    reconcile = {
+                        'units': units,
+                        'postings': int(rc[1] or 0),
+                        **parts,
+                        'other': max(0, units - sum(parts.values())),
                     }
 
                 detail = {

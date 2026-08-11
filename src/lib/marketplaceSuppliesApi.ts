@@ -138,6 +138,10 @@ export interface SupplyReconcile {
   inSupply: number;
   /** Ещё на конвейере: до склада не дошло. */
   inProduction: number;
+  /** Лежит на полке хранения — в сборку не отобрана. */
+  onShelf: number;
+  /** Всё остальное (редкие статусы). Считается остатком, чтобы сумма всегда сходилась. */
+  other: number;
 }
 
 export interface SupplyDetail extends Supply {
