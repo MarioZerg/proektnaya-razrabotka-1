@@ -38,6 +38,7 @@ import {
 } from '@/lib/marketplaceSuppliesApi';
 import CreateOzonFboDialog from '@/components/crm/marketplaceSupplies/CreateOzonFboDialog';
 import SupplySewingProgress from '@/components/crm/marketplaceSupplies/SupplySewingProgress';
+import SupplyTypeWidgets from '@/components/crm/marketplaceSupplies/SupplyTypeWidgets';
 import { importOzonFboComposition } from '@/lib/ozonFboApi';
 import { formatDate, formatDateTime } from '@/lib/dateUtils';
 
@@ -67,6 +68,8 @@ const ToMarketplace = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [supplies, setSupplies] = useState<Supply[]>([]);
+  /** Тот же список, но без фильтра по схеме — по нему считаются плашки FBS/FBO. */
+  const [allSupplies, setAllSupplies] = useState<Supply[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [ozonFboDialogOpen, setOzonFboDialogOpen] = useState(false);
@@ -86,6 +89,22 @@ const ToMarketplace = () => {
 
   const load = () => {
     setLoading(true);
+    // Плашки считаем по списку БЕЗ фильтра по схеме. Иначе, выбрав FBS, кладовщик
+    // увидел бы в плашке FBO ноль поставок — и решил, что они куда-то делись.
+    fetchSupplies({
+      status: statusFilter === 'open' ? undefined : statusFilter,
+      marketplace: marketplaceFilter !== 'all' ? marketplaceFilter : undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+      search: search || undefined,
+    })
+      .then((data) =>
+        setAllSupplies(
+          statusFilter === 'open' ? data.filter((s) => s.status !== 'Выполнена') : data,
+        ),
+      )
+      .catch(() => undefined);
+
     fetchSupplies({
       status: statusFilter === 'open' ? undefined : statusFilter,
       type: typeFilter !== 'all' ? (typeFilter as SupplyType) : undefined,
@@ -188,6 +207,17 @@ const ToMarketplace = () => {
             Формирование отгрузки готового товара со склада на маркетплейс
           </p>
         </div>
+
+        {/* Плашки по схемам: сколько работы каждого вида прямо сейчас. Таблица ниже
+            отвечает «что с конкретной поставкой», а это — «сколько всего сегодня».
+            Клик по плашке фильтрует таблицу, повторный клик снимает фильтр. */}
+        {!loading && allSupplies.length > 0 && (
+          <SupplyTypeWidgets
+            supplies={allSupplies}
+            activeType={typeFilter}
+            onSelectType={setTypeFilter}
+          />
+        )}
 
         <div className="flex flex-wrap items-end gap-3 rounded-md border border-border bg-muted/30 p-3">
           <DropdownMenu>
