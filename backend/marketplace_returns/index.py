@@ -192,12 +192,13 @@ def sync_ozon(cur, days):
     # Берём возвраты по СТАТУСУ, а не по дате логистики: у вещей, которые ещё лежат в
     # пункте выдачи, дата возврата не проставлена, и фильтр по ней отдавал пустой список —
     # склад видел «24 ждут» из кабинета OZON, а принять сканером было нечего.
-    #   ArrivedAtReturnPlace — доехал до пункта выдачи, ждёт нас (это и есть те 24);
-    #   ReturnedToOzon       — уже забрали / у площадки.
-    # Другие названия статусов OZON отвергает с ошибкой, поэтому список строго такой.
-    for visual_status in ('ArrivedAtReturnPlace', 'ReturnedToOzon'):
+    # Берём только ArrivedAtReturnPlace — «возврат доехал до пункта выдачи и ждёт нас».
+    # Это ровно те вещи, за которыми кладовщик едет и которые потом сканирует. Забранные
+    # ранее (ReturnedToOzon) тянуть незачем: их сотни, страницы грузятся секунды, и
+    # функция не успевала ответить за отведённое время.
+    for visual_status in ('ArrivedAtReturnPlace',):
         last_id = 0
-        for _ in range(20):  # страховка от бесконечной постраничной выборки
+        for _ in range(4):  # страховка от бесконечной постраничной выборки
             status, data = http_json(
                 OZON_API_BASE + '/v1/returns/list',
                 'POST',
@@ -633,6 +634,24 @@ def handler(event: dict, context) -> dict:
 
             if action == 'sync':
                 days = int(body_data.get('days') or 30)
+
+                # Фоновая загрузка (страница открылась сама) не должна дёргать
+                # маркетплейсы на каждом заходе: если возвраты обновляли меньше
+                # 10 минут назад, отвечаем сразу и не тратим лимиты площадок.
+                if body_data.get('auto'):
+                    cur.execute(
+                        "SELECT max(synced_at) FROM marketplace_returns_sync WHERE id = 1"
+                    )
+                    row = cur.fetchone()
+                    if row and row[0] and (datetime.now(timezone.utc) - row[0]).total_seconds() < 600:
+                        return _resp(200, {
+                            'ozon': {'created': 0, 'updated': 0, 'error': None},
+                            'wildberries': {'created': 0, 'updated': 0, 'error': None},
+                            'yandexMarket': {'created': 0, 'updated': 0, 'error': None},
+                            'created': 0,
+                            'skipped': True,
+                        })
+
                 ozon = sync_ozon(cur, days)
                 wb = sync_wb(cur, days)
                 yandex = sync_yandex(cur, days)
@@ -643,6 +662,11 @@ def handler(event: dict, context) -> dict:
                         f'Загрузка возвратов: новых {total_created}',
                         {'ozon': ozon, 'wb': wb, 'yandex': yandex},
                     )
+                # Отметка времени: по ней фоновая загрузка понимает, что данные свежие.
+                cur.execute(
+                    "INSERT INTO marketplace_returns_sync (id, synced_at) VALUES (1, now()) "
+                    "ON CONFLICT (id) DO UPDATE SET synced_at = now()"
+                )
                 conn.commit()
                 return _resp(200, {
                     'ozon': ozon,

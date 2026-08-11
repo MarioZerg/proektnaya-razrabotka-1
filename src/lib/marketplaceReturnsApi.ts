@@ -101,16 +101,20 @@ const postAction = async (payload: Record<string, unknown>) => {
 };
 
 /** Загрузить свежие заявки на возврат с OZON и Wildberries. */
+/** auto — фоновая загрузка при открытии страницы: сервер пропустит её, если возвраты
+ * обновляли меньше 10 минут назад, чтобы не жечь лимиты маркетплейсов. */
 export const syncMarketplaceReturns = (
   days: number,
   actorId?: number,
-  actorName?: string
+  actorName?: string,
+  auto?: boolean
 ): Promise<{
   ozon: ReturnsSyncResult;
   wildberries: ReturnsSyncResult;
   yandexMarket: ReturnsSyncResult;
   created: number;
-}> => postAction({ action: 'sync', days, actorId, actorName });
+  skipped?: boolean;
+}> => postAction({ action: 'sync', days, actorId, actorName, auto });
 
 /** Админ одобряет заявку: вещь поедет к нам и появится у кладовщика в приёмке. */
 export const approveMarketplaceReturn = (id: number, actorId?: number, actorName?: string) =>
