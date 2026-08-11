@@ -15,7 +15,9 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
+import { isStorekeeperRole } from '@/lib/roles';
 import TakeFromWorkshopDialog from '@/components/crm/goodsWarehouse/TakeFromWorkshopDialog';
+import PlaceInspectedDialog from '@/components/crm/goodsWarehouse/PlaceInspectedDialog';
 import {
   INSPECTION_STAGES,
   toneClass,
@@ -32,6 +34,7 @@ import {
 } from '@/lib/goodsWarehouseApi';
 
 const EMPTY_COUNTS: InspectionCounts = {
+  fromMarketplace: 0,
   fromReturn: 0,
   atPackers: 0,
   inspected: 0,
@@ -74,9 +77,12 @@ const ReturnsInspection = () => {
   const [selected, setSelected] = useState<number[]>([]);
   const [acting, setActing] = useState(false);
   const [takeOpen, setTakeOpen] = useState(false);
+  const [placeOpen, setPlaceOpen] = useState(false);
   const [disposeReason, setDisposeReason] = useState('');
 
   const isAdmin = user?.role === 'admin';
+  // Раскладывать по полкам могут кладовщик и админ — это конец пути возврата.
+  const canPlace = isAdmin || isStorekeeperRole(user?.role);
 
   const load = (nextStage: InspectionStage = stage) => {
     setLoading(true);
@@ -178,6 +184,17 @@ const ReturnsInspection = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            {/* Главное действие кладовщика на этой странице: забрать осмотренное
+                с производства и разложить по полкам хранения. */}
+            {canPlace && (
+              <Button onClick={() => setPlaceOpen(true)}>
+                <Icon name="Warehouse" size={16} className="mr-2" />
+                Принять осмотренные возвраты на производстве
+                {counts.inspected + counts.taken > 0
+                  ? ` (${counts.inspected + counts.taken})`
+                  : ''}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setTakeOpen(true)}>
               <Icon name="ScanLine" size={16} className="mr-2" />
               Забрать из цеха
@@ -189,8 +206,8 @@ const ReturnsInspection = () => {
           </div>
         </div>
 
-        {/* Шесть виджетов движения: клик переключает список ниже. */}
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        {/* Виджеты движения: клик переключает список ниже. */}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
           {INSPECTION_STAGES.map((s) => (
             <button
               key={s.key}
@@ -215,7 +232,9 @@ const ReturnsInspection = () => {
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
             <span className="text-sm font-medium">Выбрано: {selected.length}</span>
 
-            {stage === 'fromReturn' && (
+            {/* Разбирая привезённое с ПВЗ и принятое ранее, кладовщик отправляет часть
+                вещей упаковщицам на осмотр — действие одинаковое для обоих этапов. */}
+            {(stage === 'fromReturn' || stage === 'fromMarketplace') && (
               <Button size="sm" onClick={handleMoveToWorkshop} disabled={acting}>
                 <Icon name="Truck" size={16} className="mr-2" />
                 Переместить в цех на осмотр
@@ -330,6 +349,12 @@ const ReturnsInspection = () => {
         <TakeFromWorkshopDialog
           open={takeOpen}
           onOpenChange={setTakeOpen}
+          onDone={() => load()}
+        />
+
+        <PlaceInspectedDialog
+          open={placeOpen}
+          onOpenChange={setPlaceOpen}
           onDone={() => load()}
         />
       </div>

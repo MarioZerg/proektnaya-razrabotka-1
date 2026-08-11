@@ -274,15 +274,19 @@ export const dismissNotifications = (
 
 /** Этапы движения возврата: от приёмки до полки. */
 export type InspectionStage =
+  | 'fromMarketplace'
   | 'fromReturn'
   | 'atPackers'
   | 'inspected'
   | 'taken'
   | 'toDispose'
-  | 'disposed';
+  | 'disposed'
+  /** Служебный запрос: всё, что кладовщик может прямо сейчас положить на полку
+   * (осмотрено + забрано с производства). Виджетом не показывается. */
+  | 'readyShelf';
 
 /** Счётчики по всем шести этапам осмотра возвратов. */
-export type InspectionCounts = Record<InspectionStage, number>;
+export type InspectionCounts = Record<Exclude<InspectionStage, 'readyShelf'>, number>;
 
 /** Вещь на одном из этапов осмотра. */
 export interface InspectionItem {
@@ -322,6 +326,30 @@ export const moveToWorkshop = (ids: number[], actorId?: number, actorName?: stri
     success: true;
     moved: number;
   }>;
+
+/** Одна пачка раскладки: полка и стикеры вещей, которые кладут именно на неё. */
+export interface ShelfBatch {
+  shelfId: number;
+  barcodes: string[];
+}
+
+/** Приём осмотренных возвратов с производства сразу на полки хранения.
+ * Кладовщик может чередовать полки в одном окне — отправляем всё одним запросом. */
+export const placeInspectedBatch = (
+  groups: ShelfBatch[],
+  actorId?: number,
+  actorName?: string,
+) => postAction({ action: 'place_inspected_batch', groups, actorId, actorName }) as Promise<{
+  total: number;
+  placed: {
+    barcode: string;
+    orderNumber: string | null;
+    product: string | null;
+    shelfName: string;
+    autoMatched: number;
+  }[];
+  errors: { barcode: string; error: string }[];
+}>;
 
 /** Кладовщик забирает осмотренную вещь из цеха по стикеру хранения. */
 export const takeFromWorkshop = (barcode: string, actorId?: number, actorName?: string) =>

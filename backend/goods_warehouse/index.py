@@ -447,6 +447,9 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(
                     "SELECT "
+                    # Приехало с ПВЗ и лежит у кладовщика неразобранным: он ещё не решил,
+                    # положить вещь на полку или отдать упаковщицам на осмотр.
+                    "  COUNT(*) FILTER (WHERE status = 'mp_return'), "
                     "  COUNT(*) FILTER (WHERE status = 'checking'), "
                     "  COUNT(*) FILTER (WHERE status = 'repacking'), "
                     "  COUNT(*) FILTER (WHERE status = 'inspected'), "
@@ -457,16 +460,18 @@ def handler(event: dict, context) -> dict:
                 )
                 c = cur.fetchone()
                 counts = {
-                    'fromReturn': c[0],
-                    'atPackers': c[1],
-                    'inspected': c[2],
-                    'taken': c[3],
-                    'toDispose': c[4],
-                    'disposed': c[5],
+                    'fromMarketplace': c[0],
+                    'fromReturn': c[1],
+                    'atPackers': c[2],
+                    'inspected': c[3],
+                    'taken': c[4],
+                    'toDispose': c[5],
+                    'disposed': c[6],
                 }
 
                 items = []
                 stage_status = {
+                    'fromMarketplace': 'mp_return',
                     'fromReturn': 'checking',
                     'atPackers': 'repacking',
                     'inspected': 'inspected',
@@ -475,6 +480,11 @@ def handler(event: dict, context) -> dict:
                 }.get(stage)
                 if stage == 'disposed':
                     where_stage = "gw.status = 'lost' AND gw.disposed_at IS NOT NULL"
+                elif stage == 'readyShelf':
+                    # Всё, что кладовщик может прямо сейчас разложить по полкам: осмотренные
+                    # упаковщицей и уже забранные им из цеха. Список нужен окну приёмки, чтобы
+                    # проверять сканы в браузере и не дёргать сервер на каждый штрихкод.
+                    where_stage = "gw.status IN ('inspected', 'taken')"
                 elif stage_status:
                     where_stage = f"gw.status = '{stage_status}'"
                 else:
@@ -1062,6 +1072,77 @@ def handler(event: dict, context) -> dict:
                     }),
                 }
 
+            if action == 'place_inspected_batch':
+                # Кладовщик забирает осмотренные возвраты с производства и раскладывает их
+                # по полкам. Раскладка идёт «пачками»: выбрал полку, пикнул несколько вещей,
+                # сменил полку, пикнул ещё — и один раз нажал «Положить на полки хранения».
+                # Так вещи не путаются по местам, а сервер дёргается один раз вместо тридцати.
+                groups = body_data.get('groups') or []
+                if not groups:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте вещи'})}
+
+                placed, errors = [], []
+                for g in groups:
+                    shelf_id = g.get('shelfId')
+                    codes = g.get('barcodes') or []
+                    if shelf_id in (None, '') or not codes:
+                        continue
+                    cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+                    sh = cur.fetchone()
+                    shelf_name = sh[0] if sh else str(shelf_id)
+
+                    for code in codes:
+                        bc = str(code).strip().replace("'", "''")
+                        cur.execute(
+                            "SELECT gw.id, gw.status, o.order_number, o.product "
+                            "FROM goods_warehouse gw "
+                            "LEFT JOIN orders o ON o.id = gw.order_id "
+                            f"WHERE gw.storage_barcode = '{bc}'"
+                        )
+                        row = cur.fetchone()
+                        if not row:
+                            errors.append({'barcode': code, 'error': 'Стикер не найден'})
+                            continue
+                        gid, gstatus, gnum, gprod = row
+                        # На полку кладём только реально осмотренное: 'inspected' —
+                        # упаковщица закончила и наклеила стикер, 'taken' — кладовщик
+                        # уже забрал вещь из цеха и держит в руках.
+                        if gstatus not in ('inspected', 'taken'):
+                            errors.append({
+                                'barcode': code,
+                                'error': f'{gnum or "Вещь"} не осмотрена (статус: {gstatus})',
+                            })
+                            continue
+                        cur.execute(
+                            f"UPDATE goods_warehouse SET status = 'in_stock', "
+                            f"shelf_id = {int(shelf_id)}, taken_at = COALESCE(taken_at, now()), "
+                            f"taken_by = COALESCE(taken_by, {int(actor_id) if actor_id else 'NULL'}), "
+                            f"received_at = now() WHERE id = {gid}"
+                        )
+                        matched = try_match_orders_from_stock(cur, gw_id=gid)
+                        placed.append({
+                            'barcode': code,
+                            'orderNumber': gnum,
+                            'product': gprod,
+                            'shelfName': shelf_name,
+                            'autoMatched': len(matched),
+                        })
+
+                log_action(
+                    cur, actor_id, actor_name, 'place_inspected_batch', 'goods_warehouse', None,
+                    f'Разложил осмотренные возвраты по полкам: {len(placed)}',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'placed': placed,
+                        'errors': errors,
+                        'total': len(placed),
+                    }, ensure_ascii=False),
+                }
+
             if action == 'scan_return':
                 # Сканер возвратов: кладовщик пикает ярлык FBS на приехавшей вещи.
                 # Возвращаем карточку товара с цепочкой исполнителей и причиной отказа,
@@ -1297,9 +1378,11 @@ def handler(event: dict, context) -> dict:
                 if not ids:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товары'})}
                 ids_csv = ','.join(str(int(i)) for i in ids)
+                # В цех уезжают и вещи прямо с ПВЗ (mp_return): кладовщик разбирает
+                # привезённое и часть сразу отдаёт упаковщицам, не заводя промежуточный шаг.
                 cur.execute(
                     f"UPDATE goods_warehouse SET status = 'repacking' "
-                    f"WHERE id IN ({ids_csv}) AND status = 'checking' RETURNING id"
+                    f"WHERE id IN ({ids_csv}) AND status IN ('checking', 'mp_return') RETURNING id"
                 )
                 moved = len(cur.fetchall())
                 log_action(

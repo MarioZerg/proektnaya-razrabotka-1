@@ -74,9 +74,12 @@ const GoodsWarehouseFilters = ({
                 состоянии. Названия разные, иначе два пункта не отличить. */}
             <SelectItem value="mp_return">Возврат с маркетплейса</SelectItem>
             <SelectItem value="returns">Все возвраты (за всё время)</SelectItem>
-            <SelectItem value="awaiting_shelf">На разборе</SelectItem>
+            <SelectItem value="awaiting_shelf">На разборе с производства</SelectItem>
+            <SelectItem value="checking">На разборе с маркетплейса</SelectItem>
+            <SelectItem value="repacking">На проверке</SelectItem>
+            <SelectItem value="inspected">Осмотрено</SelectItem>
+            <SelectItem value="taken">Забрано с производства</SelectItem>
             <SelectItem value="in_stock">На хранении</SelectItem>
-            <SelectItem value="checking">На проверке</SelectItem>
             <SelectItem value="picking">На сборке</SelectItem>
             <SelectItem value="lost">Утерян</SelectItem>
           </SelectContent>
