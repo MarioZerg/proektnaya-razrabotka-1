@@ -7,7 +7,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import {
   Select,
@@ -23,21 +22,17 @@ import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { fetchGoodsByBarcode, moveGoodsShelfBatch } from '@/lib/goodsWarehouseApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
-
 interface MoveShelfDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onOpenCreate: () => void;
   shelves: Shelf[];
   onDone: () => void;
 }
-
 /** Вещь, набранная в буфер до нажатия «Перенести». */
 interface BufferItem {
   barcode: string;
   product: string | null;
 }
-
 /**
  * Смена полки — набрал пачку и перенёс.
  *
@@ -52,13 +47,11 @@ interface BufferItem {
 const MoveShelfDialog = ({
   open,
   onOpenChange,
-  onOpenCreate,
   shelves,
   onDone,
 }: MoveShelfDialogProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
-
   /** Откуда переносим — только подсказка кладовщику, вещи ищутся по стикеру. */
   const [fromShelfId, setFromShelfId] = useState('');
   const [toShelfId, setToShelfId] = useState('');
@@ -72,9 +65,7 @@ const MoveShelfDialog = ({
   /** Сколько сканов ушло мимо: бронь, чужие, не найдены. */
   const [skipped, setSkipped] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
-
   const resetAll = () => {
     setBuffer([]);
     setLastOk(null);
@@ -82,7 +73,6 @@ const MoveShelfDialog = ({
     setSkipped(0);
     setBarcode('');
   };
-
   useEffect(() => {
     if (open) {
       primeScanSounds();
@@ -91,13 +81,10 @@ const MoveShelfDialog = ({
       setToShelfId('');
     }
   }, [open]);
-
   useEffect(() => {
     if (toShelfId) focusInput();
   }, [toShelfId]);
-
   const toShelfName = shelves.find((s) => String(s.id) === toShelfId)?.name || '';
-
   const handleScan = async () => {
     const code = barcode.trim();
     if (!code || !toShelfId) return;
@@ -106,7 +93,6 @@ const MoveShelfDialog = ({
     setLastError(null);
     try {
       const item = await fetchGoodsByBarcode(code);
-
       // Бронь под заказ FBS не двигаем: за вещью уже идёт сборщик по конкретной полке.
       if (item.reservedOrderId) {
         playScanErrorSound();
@@ -130,7 +116,6 @@ const MoveShelfDialog = ({
         setLastError('Эта вещь уже в пачке');
         return;
       }
-
       playScanSound();
       const row = { barcode: code, product: item.product };
       setBuffer((prev) => [...prev, row]);
@@ -144,9 +129,7 @@ const MoveShelfDialog = ({
       focusInput();
     }
   };
-
   useScannerAutoSubmit(barcode, handleScan, !!toShelfId && !busy);
-
   const handleMove = async () => {
     if (!buffer.length || !toShelfId) return;
     setSaving(true);
@@ -176,20 +159,14 @@ const MoveShelfDialog = ({
       setSaving(false);
     }
   };
-
   return (
+    // Кнопку окно больше не рисует само: все действия склада собраны в одной панели
+    // наверху страницы, иначе они разъезжались по экрану в случайном порядке.
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        <Button variant="outline" onClick={onOpenCreate}>
-          <Icon name="ArrowLeftRight" size={16} className="mr-2" />
-          Смена полки
-        </Button>
-      </DialogTrigger>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Смена полки</DialogTitle>
         </DialogHeader>
-
         <div
           className="space-y-4"
           onClick={(e) => {
@@ -215,11 +192,9 @@ const MoveShelfDialog = ({
                 </SelectContent>
               </Select>
             </div>
-
             <div className="pb-2.5">
               <Icon name="ArrowRight" size={28} className="text-muted-foreground" />
             </div>
-
             <div className="space-y-1.5">
               <Label>Куда кладём</Label>
               <Select value={toShelfId} onValueChange={setToShelfId}>
@@ -238,7 +213,6 @@ const MoveShelfDialog = ({
               </Select>
             </div>
           </div>
-
           {toShelfId ? (
             <div className="space-y-1.5">
               <Label>Сканируйте вещи для полки «{toShelfName}»</Label>
@@ -261,7 +235,6 @@ const MoveShelfDialog = ({
               </p>
             </div>
           )}
-
           {/* Кубики вместо списка: набрано и мимо. Видно с расстояния. */}
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3">
@@ -273,7 +246,6 @@ const MoveShelfDialog = ({
               <p className="text-sm text-muted-foreground">Мимо (нельзя двигать)</p>
             </div>
           </div>
-
           {/* Только последняя вещь и последняя ошибка — без портянки. */}
           {lastError ? (
             <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
@@ -291,7 +263,6 @@ const MoveShelfDialog = ({
               </div>
             </div>
           ) : null}
-
           <div className="flex flex-wrap gap-2">
             <Button
               size="lg"
@@ -323,5 +294,4 @@ const MoveShelfDialog = ({
     </Dialog>
   );
 };
-
 export default MoveShelfDialog;

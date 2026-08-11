@@ -6,7 +6,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
@@ -15,14 +14,11 @@ import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { scanReturn, sendReturnToCheck, type ScannedReturn } from '@/lib/goodsWarehouseApi';
 import { fetchReturnByBarcode } from '@/lib/marketplaceReturnsApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
-
 interface ReceiveReturnDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onOpenCreate: () => void;
   onDone: () => void;
 }
-
 const formatDate = (value: string | null) => {
   if (!value) return '—';
   const d = new Date(value);
@@ -35,7 +31,6 @@ const formatDate = (value: string | null) => {
     minute: '2-digit',
   });
 };
-
 /** Строка «свойство — значение» в карточке возврата. */
 const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
   <div className="flex justify-between gap-3 border-b border-border py-1.5 last:border-0">
@@ -43,7 +38,6 @@ const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
     <span className="text-right text-xs font-medium">{value || '—'}</span>
   </div>
 );
-
 /**
  * Приём возвратов с маркетплейса по ярлыку FBS.
  *
@@ -57,21 +51,17 @@ const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
 const ReceiveReturnDialog = ({
   open,
   onOpenChange,
-  onOpenCreate,
   onDone,
 }: ReceiveReturnDialogProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
-
   const [barcode, setBarcode] = useState('');
   const [busy, setBusy] = useState(false);
   const [found, setFound] = useState<ScannedReturn | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
-
   useEffect(() => {
     if (open) {
       // Открытие окна — разрешённое браузером взаимодействие: греем звук заранее,
@@ -83,7 +73,6 @@ const ReceiveReturnDialog = ({
       setTimeout(() => inputRef.current?.focus(), 80);
     }
   }, [open]);
-
   const handleScan = async () => {
     const code = barcode.trim();
     if (!code) return;
@@ -114,9 +103,7 @@ const ReceiveReturnDialog = ({
       setBusy(false);
     }
   };
-
   useScannerAutoSubmit(barcode, handleScan, !busy && !found);
-
   /** @param toPacker true — вещь сразу уезжает упаковщице, false — остаётся на разборе. */
   const handleSendToCheck = async (toPacker: boolean) => {
     if (!found) return;
@@ -142,26 +129,19 @@ const ReceiveReturnDialog = ({
       setSending(false);
     }
   };
-
   const handleNext = () => {
     setFound(null);
     setError(null);
     focusInput();
   };
-
   return (
+    // Кнопку окно больше не рисует само: все действия склада собраны в одной панели
+    // наверху страницы, иначе они разъезжались по экрану в случайном порядке.
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        <Button variant="outline" onClick={onOpenCreate}>
-          <Icon name="PackageCheck" size={16} className="mr-2" />
-          Принять новые возвраты
-        </Button>
-      </DialogTrigger>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Сканер возвратов с маркетплейса</DialogTitle>
         </DialogHeader>
-
         {found ? (
           // Вещь опознана: слева карточка, справа действия.
           <div className="grid gap-4 md:grid-cols-[1fr_auto]">
@@ -170,7 +150,6 @@ const ReceiveReturnDialog = ({
                 <p className="font-bold text-emerald-900">{found.product || 'Товар'}</p>
                 <p className="text-sm text-emerald-900">Заказ {found.orderNumber}</p>
               </div>
-
               <div className="rounded-md border border-border p-3">
                 <Row label="Материал" value={found.material} />
                 <Row
@@ -183,7 +162,6 @@ const ReceiveReturnDialog = ({
                 <Row label="Заказ создан" value={formatDate(found.createdAt)} />
                 <Row label="Отменён" value={formatDate(found.cancelledAt)} />
               </div>
-
               {/* Почему покупатель отказался — по этому кладовщик понимает, чего ждать
                   от вещи: отказ при вручении обычно значит, что она как новая. */}
               <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
@@ -193,7 +171,6 @@ const ReceiveReturnDialog = ({
                 </p>
               </div>
             </div>
-
             {/* Два пути вещи. Основной — сразу упаковщице: кладовщик пикнул коробку и
                 одним нажатием отдал её в цех, не заходя больше никуда. Второй — взять
                 на разбор, если решение по вещи он примет позже. */}
@@ -235,7 +212,6 @@ const ReceiveReturnDialog = ({
                 сами. Заказы, которые не были у покупателя, принять не дадим
               </p>
             </div>
-
             <div className="space-y-1.5">
               <p className="text-sm font-medium">Ярлык отправления</p>
               <Input
@@ -250,7 +226,6 @@ const ReceiveReturnDialog = ({
                 autoComplete="off"
               />
             </div>
-
             {error && (
               <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
                 <Icon name="CircleAlert" size={18} className="mt-0.5 shrink-0 text-destructive" />
@@ -263,5 +238,4 @@ const ReceiveReturnDialog = ({
     </Dialog>
   );
 };
-
 export default ReceiveReturnDialog;

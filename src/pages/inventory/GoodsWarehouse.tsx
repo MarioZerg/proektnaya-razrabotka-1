@@ -25,6 +25,13 @@ import AdminReceiveDialog from '@/components/crm/goodsWarehouse/AdminReceiveDial
 import { printShelfPickList } from '@/lib/printShelfPickList';
 import GoodsWarehouseFilters from '@/components/crm/goodsWarehouse/GoodsWarehouseFilters';
 import GoodsWarehouseTable from '@/components/crm/goodsWarehouse/GoodsWarehouseTable';
+import WorkTile from '@/components/crm/goodsWarehouse/WorkTile';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 const GoodsWarehouse = () => {
   const { toast } = useToast();
@@ -257,78 +264,112 @@ const GoodsWarehouse = () => {
               Готовые изделия по полкам — источник для поставок на маркетплейс
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <ReceiveReturnDialog
-              open={returnOpen}
-              onOpenChange={setReturnOpen}
-              onOpenCreate={openReturn}
-              onDone={load}
-            />
-            {/* Добавить товары вручную — приёмка партии (админ и кладовщики). */}
-            {canReceiveManually && (
-              <Button variant="outline" onClick={() => setAdminReceiveOpen(true)}>
-                <Icon name="PackagePlus" size={16} className="mr-2" />
-                Добавить товары вручную
-              </Button>
-            )}
-            <Button
-              variant={pickingPending > 0 ? 'default' : 'outline'}
-              onClick={() => navigate('/crm/inventory/goods-picking')}
-            >
-              <Icon name="ScanLine" size={16} className="mr-2" />
-              Товар к подбору
-              {pickingPending > 0 && (
-                <span className="ml-2 rounded-full bg-background/25 px-2 text-xs">
-                  {pickingPending}
-                </span>
-              )}
+          {/* Редкие действия убраны под «Ещё»: раньше десять кнопок в один ряд
+              переносились на две-три строки, и глазами приходилось искать нужную. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={openReturn}>
+              <Icon name="PackageCheck" size={16} className="mr-2" />
+              Принять возвраты
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => navigate('/crm/inventory/returns-inspection')}
-            >
-              <Icon name="Search" size={16} className="mr-2" />
-              Возвраты на осмотре
-            </Button>
-            <PlaceOnShelfDialog
-              open={placeOpen}
-              onOpenChange={setPlaceOpen}
-              shelves={shelves}
-              pendingCount={pendingShelf.length}
-              onDone={load}
-            />
-            <ShipLabelDialog
-              open={shipLabelOpen}
-              onOpenChange={setShipLabelOpen}
-              matched={matchedFromStock}
-              onDone={load}
-            />
-            {canReceiveManually && (
-              <AdminReceiveDialog
-                open={adminReceiveOpen}
-                onOpenChange={setAdminReceiveOpen}
-                shelves={shelves}
-                onDone={load}
-              />
-            )}
-            {isAdmin && (
-              <>
-                <Button variant="outline" onClick={() => setReprintOpen(true)}>
-                  <Icon name="FileWarning" size={16} className="mr-2" />
-                  Пропущенные стикеры
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">
+                  <Icon name="Ellipsis" size={16} className="mr-2" />
+                  Ещё
                 </Button>
-                <ReprintReportDialog open={reprintOpen} onOpenChange={setReprintOpen} />
-              </>
-            )}
-            <MoveShelfDialog
-              open={moveOpen}
-              onOpenChange={setMoveOpen}
-              onOpenCreate={openMove}
-              shelves={shelves}
-              onDone={load}
-            />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuItem onClick={openMove}>
+                  <Icon name="ArrowLeftRight" size={16} className="mr-2" />
+                  Сменить полку
+                </DropdownMenuItem>
+                {canReceiveManually && (
+                  <DropdownMenuItem onClick={() => setAdminReceiveOpen(true)}>
+                    <Icon name="PackagePlus" size={16} className="mr-2" />
+                    Добавить товары вручную
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem
+                  onClick={() => navigate('/crm/inventory/returns-inspection')}
+                >
+                  <Icon name="Search" size={16} className="mr-2" />
+                  Возвраты на осмотре
+                </DropdownMenuItem>
+                {isAdmin && (
+                  <DropdownMenuItem onClick={() => setReprintOpen(true)}>
+                    <Icon name="FileWarning" size={16} className="mr-2" />
+                    Пропущенные стикеры
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
+
+        {/* Работа на сейчас — три плитки с числами. Кладовщик видит, сколько вещей ждёт
+            на каждом шаге, и нажимает ту, где есть работа: пустые остаются серыми и в
+            глаза не лезут. Раньше два из этих окон вообще нельзя было открыть — кнопок
+            к ним на странице не было. */}
+        <div className="grid gap-3 sm:grid-cols-3">
+          <WorkTile
+            icon="Boxes"
+            title="Разложить по полкам"
+            hint="Приняты, полка не назначена"
+            count={pendingShelf.length}
+            onClick={() => setPlaceOpen(true)}
+          />
+          <WorkTile
+            icon="ScanLine"
+            title="Собрать с полок"
+            hint="Подобраны под заказы, ждут стикера"
+            count={matchedFromStock.length}
+            onClick={() => setShipLabelOpen(true)}
+          />
+          <WorkTile
+            icon="Truck"
+            title="Товар к подбору"
+            hint="Список к сборке на сегодня"
+            count={pickingPending}
+            onClick={() => navigate('/crm/inventory/goods-picking')}
+          />
+        </div>
+
+        <ReceiveReturnDialog
+          open={returnOpen}
+          onOpenChange={setReturnOpen}
+          onDone={load}
+        />
+        <PlaceOnShelfDialog
+          open={placeOpen}
+          onOpenChange={setPlaceOpen}
+          shelves={shelves}
+          pendingCount={pendingShelf.length}
+          onDone={load}
+        />
+        <ShipLabelDialog
+          open={shipLabelOpen}
+          onOpenChange={setShipLabelOpen}
+          matched={matchedFromStock}
+          onDone={load}
+        />
+        <MoveShelfDialog
+          open={moveOpen}
+          onOpenChange={setMoveOpen}
+          shelves={shelves}
+          onDone={load}
+        />
+        {canReceiveManually && (
+          <AdminReceiveDialog
+            open={adminReceiveOpen}
+            onOpenChange={setAdminReceiveOpen}
+            shelves={shelves}
+            onDone={load}
+          />
+        )}
+        {isAdmin && (
+          <ReprintReportDialog open={reprintOpen} onOpenChange={setReprintOpen} />
+        )}
 
         {/* Привезли с ПВЗ, но ещё не осмотрели. Такой товар нельзя продавать:
             он не проверен и в подбор не идёт, пока не ляжет на полку. */}
