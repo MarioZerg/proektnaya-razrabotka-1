@@ -58,6 +58,8 @@ export interface GoodsWarehouseItem {
   orderType: string | null;
   /** Кластер приёмки — важен для FBO: у каждого кластера своя поставка. */
   cluster: string | null;
+  /** Поставка, в которой вещь уже лежит. Заполнено — значит второй раз её не сканировать. */
+  supplyId: number | null;
 }
 
 export interface GoodsWarehouseFilters {

@@ -88,7 +88,14 @@ const MarketplaceSupplyShow = () => {
             (g) =>
               g.marketplace === data.marketplace &&
               g.orderType === data.type &&
-              (data.type !== 'FBO' || !data.cluster || g.cluster === data.cluster),
+              (data.type !== 'FBO' || !data.cluster || g.cluster === data.cluster) &&
+              // Без наклеенного ярлыка маркетплейса вещь в поставку не принимается —
+              // сканер её развернёт. Считать такие «готовыми» нельзя: кладовщик видел
+              // 82 шт, а отсканировать мог только 35, и искал по складу несуществующее.
+              !!g.shippingLabeledAt &&
+              // Уже лежит в какой-то поставке — либо в этой, либо в чужой. В обоих
+              // случаях это не «готовое к сборке», сканировать её больше не нужно.
+              (g.supplyId === null || g.supplyId === data.id),
           ),
         );
         setSupplyNumber(data.supplyNumber || '');

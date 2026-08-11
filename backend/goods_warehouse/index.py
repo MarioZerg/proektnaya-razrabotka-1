@@ -700,7 +700,11 @@ def handler(event: dict, context) -> dict:
                 # вещи для OZON FBS считались готовыми и для поставки WB.
                 f"COALESCE(ro.marketplace, o.marketplace), "
                 f"COALESCE(ro.order_type, o.order_type), "
-                f"COALESCE(ro.cluster, o.cluster) "
+                f"COALESCE(ro.cluster, o.cluster), "
+                # Вещь, уже лежащая в какой-то поставке, второй раз никуда не поедет.
+                # Без этого она считалась «готовой к сборке» и в новой поставке тоже.
+                f"(SELECT msi.supply_id FROM marketplace_supply_items msi "
+                f" WHERE msi.goods_warehouse_id = gw.id LIMIT 1) "
                 f"FROM goods_warehouse gw "
                 f"LEFT JOIN orders o ON o.id = gw.order_id "
                 f"LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -733,6 +737,7 @@ def handler(event: dict, context) -> dict:
                     'marketplace': r[19],
                     'orderType': r[20],
                     'cluster': r[21],
+                    'supplyId': r[22],
                 }
                 for r in cur.fetchall()
             ]
