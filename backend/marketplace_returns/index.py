@@ -682,6 +682,58 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
+            if action == 'fetch_by_barcode':
+                # Точечный поиск возврата по наклейке на коробке.
+                #
+                # Возвратов у площадки тысячи, и выкачивать их все, чтобы найти одну
+                # коробку, бессмысленно: OZON умеет искать по штрихкоду сам. Кладовщик
+                # пикает наклейку — мы спрашиваем возврат у площадки и заводим его у себя.
+                # Так работает приёмка любой коробки, даже если её ещё не было в списке.
+                code = (body_data.get('barcode') or '').strip()
+                if not code:
+                    return _resp(400, {'error': 'Отсканируйте штрихкод возврата'})
+                creds, enabled = get_credentials(cur, 'ozon')
+                if not enabled:
+                    return _resp(409, {'error': 'Интеграция OZON выключена'})
+                st, data = http_json(
+                    OZON_API_BASE + '/v1/returns/list', 'POST',
+                    {'Client-Id': (creds.get('clientId') or '').strip(),
+                     'Api-Key': (creds.get('apiKey') or '').strip()},
+                    {'filter': {'barcode': code}, 'limit': 10, 'last_id': 0},
+                )
+                if st != 200:
+                    return _resp(502, {'error': error_text(data)})
+                rows = (data or {}).get('returns') or []
+                # Площадка на неизвестный код отвечает не пустым списком, а «похожими»
+                # возвратами — берём только точное совпадение по наклейке.
+                exact = [
+                    r for r in rows
+                    if ((r.get('logistic') or {}).get('barcode') or '') == code
+                ]
+                if not exact:
+                    return _resp(404, {'error': f'OZON не знает возврат {code}'})
+
+                saved = 0
+                for it in exact:
+                    product = it.get('product') or {}
+                    rec = {
+                        'externalId': str(it.get('id') or ''),
+                        'postingNumber': it.get('posting_number'),
+                        'offerId': product.get('offer_id'),
+                        'sku': product.get('sku'),
+                        'productName': product.get('name'),
+                        'quantity': product.get('quantity') or 1,
+                        'mpStatus': (it.get('visual') or {}).get('status', {}).get('display_name'),
+                        'reason': it.get('return_reason_name'),
+                        'createdAt': (it.get('logistic') or {}).get('return_date'),
+                        'returnBarcode': (it.get('logistic') or {}).get('barcode'),
+                    }
+                    if rec['externalId']:
+                        save_return(cur, 'OZON', rec)
+                        saved += 1
+                conn.commit()
+                return _resp(200, {'found': saved, 'barcode': code})
+
             if action == 'sync_status':
                 # Догрузка возвратов с конкретным статусом. Нужна сканеру приёмки: коробку
                 # уже забрали, OZON перевёл возврат в «едет к нам», и в списке «ждёт в ПВЗ»

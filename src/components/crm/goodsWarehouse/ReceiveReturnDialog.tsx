@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { scanReturn, sendReturnToCheck, type ScannedReturn } from '@/lib/goodsWarehouseApi';
+import { fetchReturnByBarcode } from '@/lib/marketplaceReturnsApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 
 interface ReceiveReturnDialogProps {
@@ -90,7 +91,18 @@ const ReceiveReturnDialog = ({
     setBusy(true);
     setError(null);
     try {
-      const res = await scanReturn(code);
+      let res: ScannedReturn;
+      try {
+        res = await scanReturn(code);
+      } catch (first) {
+        // Возврата нет в нашей базе — возможно, коробку только что выдали в пункте
+        // выдачи и до нас она ещё не доехала списком. Спрашиваем её у OZON точечно
+        // по наклейке и сразу пробуем снова: кладовщик держит вещь в руках, ждать
+        // общей загрузки он не может.
+        const looked = await fetchReturnByBarcode(code).catch(() => null);
+        if (!looked || looked.found === 0) throw first;
+        res = await scanReturn(code);
+      }
       playScanSound();
       setFound(res);
     } catch (e) {
@@ -203,8 +215,9 @@ const ReceiveReturnDialog = ({
           >
             <div className="rounded-md border border-border bg-muted/40 p-3">
               <p className="text-sm text-muted-foreground">
-                Отсканируйте ярлык FBS на приехавшей вещи. Заказы, которые ещё не были
-                у покупателя, система принять не даст
+                Сканируйте наклейку возврата на коробке (код вида «ii15847049514») или
+                ярлык FBS. Если возврата ещё нет в системе, мы спросим его у маркетплейса
+                сами. Заказы, которые не были у покупателя, принять не дадим
               </p>
             </div>
 

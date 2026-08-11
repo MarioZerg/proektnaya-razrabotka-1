@@ -100,6 +100,16 @@ const postAction = async (payload: Record<string, unknown>) => {
   return data;
 };
 
+/** Спросить у OZON один конкретный возврат по наклейке на коробке.
+ *
+ * Нужно сканеру приёмки: возвратов у площадки тысячи, и ждать, пока общая загрузка
+ * дойдёт до нужной коробки, кладовщик не может — вещь у него в руках прямо сейчас. */
+export const fetchReturnByBarcode = (barcode: string) =>
+  postAction({ action: 'fetch_by_barcode', barcode }) as Promise<{
+    found: number;
+    barcode: string;
+  }>;
+
 /** Загрузить свежие заявки на возврат с OZON и Wildberries. */
 /** auto — фоновая загрузка при открытии страницы: сервер пропустит её, если возвраты
  * обновляли меньше 10 минут назад, чтобы не жечь лимиты маркетплейсов. */
