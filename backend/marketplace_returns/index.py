@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -137,18 +138,20 @@ def find_order(cur, marketplace, posting_number):
 def save_return(cur, marketplace, r):
     """Сохраняет одну заявку на возврат. Повторная загрузка обновляет статус, но не плодит
     дубли (уникальный индекс marketplace + external_id). Возвращает 'created'/'updated'."""
+    # Сразу пробуем обновить: возвраты повторно загружаются гораздо чаще, чем появляются
+    # новые, и лишний SELECT перед каждым UPDATE удваивал работу базы на всей выборке.
+    # Свой статус обработки не трогаем — обновляем только данные со стороны маркетплейса.
+    # Штрихкод с наклейки дописываем и старым записям: возвраты, загруженные до того,
+    # как мы научились его читать, иначе остались бы несканируемыми.
     cur.execute(
-        "SELECT id, status FROM marketplace_returns WHERE marketplace = %s AND external_id = %s",
-        (marketplace, r['externalId']),
+        "UPDATE marketplace_returns SET mp_status = %s, return_reason = %s, "
+        "product_name = COALESCE(%s, product_name), "
+        "return_barcode = COALESCE(return_barcode, %s) "
+        "WHERE marketplace = %s AND external_id = %s RETURNING id",
+        (r.get('mpStatus'), r.get('reason'), r.get('productName'),
+         r.get('returnBarcode'), marketplace, r['externalId']),
     )
-    existing = cur.fetchone()
-    if existing:
-        # Свой статус обработки не трогаем — обновляем только данные со стороны маркетплейса.
-        cur.execute(
-            "UPDATE marketplace_returns SET mp_status = %s, return_reason = %s, "
-            "product_name = COALESCE(%s, product_name) WHERE id = %s",
-            (r.get('mpStatus'), r.get('reason'), r.get('productName'), existing[0]),
-        )
+    if cur.fetchone():
         return 'updated'
 
     item_id, item_name = find_item(cur, r.get('sku'), r.get('offerId'))
@@ -156,7 +159,8 @@ def save_return(cur, marketplace, r):
     cur.execute(
         "INSERT INTO marketplace_returns (marketplace, external_id, posting_number, order_id, "
         "offer_id, sku, product_name, marketplace_item_id, quantity, mp_status, return_reason, "
-        "mp_created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "mp_created_at, return_barcode) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             marketplace,
             r['externalId'],
@@ -170,12 +174,13 @@ def save_return(cur, marketplace, r):
             r.get('mpStatus'),
             r.get('reason'),
             r.get('createdAt'),
+            r.get('returnBarcode'),
         ),
     )
     return 'created'
 
 
-def sync_ozon(cur, days):
+def sync_ozon(cur, days, r_statuses=None):
     """Заявки на возврат OZON (FBS и FBO). Читаем список возвратов за период."""
     creds, enabled = get_credentials(cur, 'ozon')
     if not enabled:
@@ -192,20 +197,42 @@ def sync_ozon(cur, days):
     # Берём возвраты по СТАТУСУ, а не по дате логистики: у вещей, которые ещё лежат в
     # пункте выдачи, дата возврата не проставлена, и фильтр по ней отдавал пустой список —
     # склад видел «24 ждут» из кабинета OZON, а принять сканером было нечего.
-    # Берём только ArrivedAtReturnPlace — «возврат доехал до пункта выдачи и ждёт нас».
-    # Это ровно те вещи, за которыми кладовщик едет и которые потом сканирует. Забранные
-    # ранее (ReturnedToOzon) тянуть незачем: их сотни, страницы грузятся секунды, и
-    # функция не успевала ответить за отведённое время.
-    for visual_status in ('ArrivedAtReturnPlace',):
-        last_id = 0
-        for _ in range(4):  # страховка от бесконечной постраничной выборки
+    #   ArrivedAtReturnPlace — доехал до пункта выдачи, ждёт нас;
+    #   MovingToOzon         — едет к нам;
+    #   ReturnedToOzon       — уже забрали / у площадки.
+    # Последние два тоже нужны: кладовщик привозит коробку и пикает наклейку уже ПОСЛЕ
+    # того, как OZON сменил статус, — без них свежезабранный возврат не опознавался.
+    # Другие названия статусов площадка отвергает с ошибкой, поэтому список строго такой.
+    # Статусы можно ограничить снаружи: страница возвратов грузит только «ждёт в ПВЗ»
+    # (быстро, укладывается в лимит времени), а полную загрузку со всеми статусами
+    # запускают кнопкой, когда нужно найти уже забранную коробку.
+    wanted = r_statuses or ('ArrivedAtReturnPlace',)
+    # Функции отведено немного времени на ответ, а забранных возвратов у площадки сотни.
+    # Держим бюджет: как только время подходит к концу, останавливаемся и отдаём то, что
+    # успели сохранить. Следующий запуск продолжит с того же места — данные копятся, а
+    # кладовщик не получает пустой ответ по таймауту.
+    deadline = time.monotonic() + 3.0
+    for visual_status in wanted:
+        # Продолжаем с того места, где остановились в прошлый раз: иначе каждый запуск
+        # перечитывал первую страницу, и дальние возвраты в систему никогда не попадали.
+        cur.execute(
+            "SELECT last_id FROM marketplace_returns_cursor "
+            "WHERE marketplace = 'OZON' AND visual_status = %s",
+            (visual_status,),
+        )
+        cur_row = cur.fetchone()
+        last_id = int(cur_row[0]) if cur_row else 0
+
+        for _ in range(6):  # страховка от бесконечной постраничной выборки
+            if time.monotonic() > deadline:
+                break
             status, data = http_json(
                 OZON_API_BASE + '/v1/returns/list',
                 'POST',
                 headers,
                 {
                     'filter': {'visual_status_name': visual_status},
-                    'limit': 500,
+                    'limit': 100,
                     'last_id': last_id,
                 },
             )
@@ -233,16 +260,39 @@ def sync_ozon(cur, days):
                     'reason': it.get('return_reason_name') or it.get('reason'),
                     'createdAt': it.get('logistic', {}).get('return_date')
                     or it.get('created_at'),
+                    # Возвратный штрихкод с наклейки на коробке (вида «ii9093249974»).
+                    # Именно его кладовщик пикает сканером при приёмке — без него
+                    # система не могла опознать приехавшую вещь.
+                    'returnBarcode': (it.get('logistic') or {}).get('barcode'),
                 }
                 if not rec['externalId']:
                     continue
+                # Бюджет проверяем на КАЖДОЙ записи, а не только между страницами:
+                # сохранение одного возврата — это несколько обращений к базе, и сотня
+                # записей подряд успевала съесть всё отведённое функции время.
+                if time.monotonic() > deadline:
+                    break
                 if save_return(cur, 'OZON', rec) == 'created':
                     created += 1
                 else:
                     updated += 1
+                # Двигаем закладку по каждой сохранённой записи: если время кончится
+                # посередине страницы, следующий запуск продолжит ровно отсюда.
+                last_id = it.get('id') or last_id
+
+            # Страницы кончились — начинаем круг заново, чтобы подхватывать новые возвраты
+            # и обновлять статусы уже загруженных.
             if not (data or {}).get('has_next'):
+                last_id = 0
                 break
-            last_id = returns[-1].get('id') or 0
+
+        cur.execute(
+            "INSERT INTO marketplace_returns_cursor (marketplace, visual_status, last_id, updated_at) "
+            "VALUES ('OZON', %s, %s, now()) "
+            "ON CONFLICT (marketplace, visual_status) "
+            "DO UPDATE SET last_id = EXCLUDED.last_id, updated_at = now()",
+            (visual_status, int(last_id or 0)),
+        )
     # Ошибку показываем, только если совсем ничего не загрузилось.
     return {
         'created': created,
@@ -631,6 +681,16 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if action == 'sync_status':
+                # Догрузка возвратов с конкретным статусом. Нужна сканеру приёмки: коробку
+                # уже забрали, OZON перевёл возврат в «едет к нам», и в списке «ждёт в ПВЗ»
+                # его больше нет. Отдельным запросом, чтобы обычная загрузка оставалась
+                # быстрой и укладывалась во время работы функции.
+                st_name = (body_data.get('visualStatus') or 'MovingToOzon').strip()
+                res = sync_ozon(cur, 30, (st_name,))
+                conn.commit()
+                return _resp(200, res)
 
             if action == 'sync':
                 days = int(body_data.get('days') or 30)
