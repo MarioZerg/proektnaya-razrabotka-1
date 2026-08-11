@@ -50,6 +50,17 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
   const [skipped, setSkipped] = useState(0);
   /** Сколько нужных найдено за сессию — прогресс сборки контейнера. */
   const [foundCount, setFoundCount] = useState(0);
+  /**
+   * Штрихкоды, уже посчитанные в этой сессии.
+   *
+   * Вещь физически одна, поэтому и считаться она должна один раз. Сканер часто
+   * срабатывает дважды по одной наклейке (рука дрогнула, повторный пик по той же
+   * коробке) — раньше счётчик накручивался, и кладовщик думал, что собрал больше
+   * вещей, чем лежит в контейнере.
+   */
+  const scannedRef = useRef<Set<string>>(new Set());
+  /** Повторно отсканированный код — показываем предупреждение, но НЕ считаем. */
+  const [duplicate, setDuplicate] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
@@ -63,6 +74,8 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
       setSkipped(0);
       setFoundCount(0);
       setBarcode('');
+      setDuplicate(null);
+      scannedRef.current.clear();
       setTimeout(() => inputRef.current?.focus(), 80);
     }
   }, [open]);
@@ -71,9 +84,21 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
     const code = barcode.trim();
     if (!code) return;
     setBarcode('');
+
+    // Эту наклейку уже пикали — вещь одна, второй раз её не считаем ни в нужные,
+    // ни в «мимо». Просто предупреждаем, чтобы кладовщик не искал её снова.
+    if (scannedRef.current.has(code.toUpperCase())) {
+      playScanErrorSound();
+      setDuplicate(code);
+      focusInput();
+      return;
+    }
+
     setBusy(true);
+    setDuplicate(null);
     try {
       const item: GoodsWarehouseItem = await fetchGoodsByBarcode(code);
+      scannedRef.current.add(code.toUpperCase());
       // Нужная вещь — та, что подобрана под заказ. Всё остальное лежит на складе
       // «просто так» и в текущий контейнер не идёт.
       if (item.reservedOrderId) {
@@ -92,6 +117,8 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
       }
     } catch {
       // Вещь не найдена или недоступна — для кладовщика это тот же неликвид.
+      // Запоминаем и её: повторный пик по той же наклейке не должен накручивать «мимо».
+      scannedRef.current.add(code.toUpperCase());
       playScanErrorSound();
       setSkipped((n) => n + 1);
     } finally {
@@ -141,6 +168,19 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
               <p className="text-sm text-muted-foreground">Мимо (не в подбор)</p>
             </div>
           </div>
+
+          {/* Повтор: вещь уже пикали, счётчики не тронуты. */}
+          {duplicate && (
+            <div className="flex items-center gap-3 rounded-lg border-2 border-amber-400 bg-amber-50 p-3">
+              <Icon name="TriangleAlert" size={22} className="shrink-0 text-amber-600" />
+              <div className="min-w-0">
+                <p className="font-semibold text-amber-900">Эту вещь уже сканировали</p>
+                <p className="text-sm text-amber-900">
+                  {duplicate} — повтор не засчитан, ищите следующую
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Единственная строка, ради которой кладовщик смотрит на экран. */}
           {hit ? (
