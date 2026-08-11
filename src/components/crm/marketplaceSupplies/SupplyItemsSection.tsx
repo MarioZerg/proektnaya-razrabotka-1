@@ -52,19 +52,38 @@ const SupplyItemsSection = ({
 }: SupplyItemsSectionProps) => {
   useScannerAutoSubmit(scanOrderNumber, onScanOrder, !scanning && supply.type === 'FBS' && canEditItems);
 
+  // Готовые вещи, которые ещё не попали в эту поставку. Сверяем по стикеру хранения:
+  // это единственный признак конкретной физической вещи.
+  const inSupply = new Set(
+    supply.items.map((i) => i.storageBarcode).filter(Boolean) as string[],
+  );
+  const remaining = readyGoods.filter((g) => !inSupply.has(g.storageBarcode)).length;
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-3">
         {supply.type === 'FBS' ? (
-          <div className="flex flex-wrap gap-4 text-sm">
-            {/* Сколько вещей уже собрано и отстикеровано на складе — по этому числу
-                кладовщик понимает, есть ли что нести в поставку. */}
+          <div className="flex flex-wrap items-center gap-4 text-sm">
+            {/* Сколько вещей для ЭТОЙ поставки собрано и отстикеровано на складе. */}
             <span>
               Готово к сборке: <b>{readyGoods.length}</b>
             </span>
             <span>
               Добавлено товаров: <b>{supply.items.length}</b>
             </span>
+            {/* Главное число для кладовщика: сколько ещё нести и пикать. Без него он
+                считал разницу в уме и не понимал, когда поставка собрана полностью. */}
+            {remaining > 0 ? (
+              <span className="rounded-full bg-amber-100 px-3 py-0.5 font-semibold text-amber-900">
+                Осталось отсканировать: {remaining}
+              </span>
+            ) : (
+              readyGoods.length > 0 && (
+                <span className="rounded-full bg-emerald-100 px-3 py-0.5 font-semibold text-emerald-800">
+                  Всё отсканировано
+                </span>
+              )
+            )}
           </div>
         ) : (
           <h2 className="font-semibold">Товары в поставке ({supply.items.length})</h2>

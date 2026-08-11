@@ -80,7 +80,17 @@ const MarketplaceSupplyShow = () => {
     ])
       .then(([data, goods]) => {
         setSupply(data);
-        setReadyGoods(goods);
+        // Считаем готовым только то, что поедет ИМЕННО в эту поставку: своя площадка,
+        // своя схема (FBS/FBO), а для FBO — ещё и свой кластер. Раньше счётчик брал весь
+        // склад разом, и в поставке WB показывалось несколько десятков вещей для OZON.
+        setReadyGoods(
+          goods.filter(
+            (g) =>
+              g.marketplace === data.marketplace &&
+              g.orderType === data.type &&
+              (data.type !== 'FBO' || !data.cluster || g.cluster === data.cluster),
+          ),
+        );
         setSupplyNumber(data.supplyNumber || '');
         setSupplyBarcode(data.supplyBarcode || '');
         setCluster(data.cluster || '');

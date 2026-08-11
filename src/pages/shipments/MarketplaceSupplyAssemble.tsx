@@ -256,6 +256,11 @@ const MarketplaceSupplyAssemble = () => {
 
   const canEdit = supply.status === 'Открытая' || supply.status === 'На сборке';
   const totalBoxedItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
+  // Сколько ещё вещей нужно уложить в короба по заявке маркетплейса.
+  const remainingToScan =
+    supply.totalQuantityMarketplace != null
+      ? Math.max(0, supply.totalQuantityMarketplace - totalBoxedItems)
+      : 0;
   const isOzonFbo = supply.marketplace === 'OZON' && supply.type === 'FBO';
   const isWbFbo = supply.marketplace === 'WB' && supply.type === 'FBO';
   // Закрывать короба можно, когда есть непустые короба (у OZON FBO это создаёт грузоместа на OZON).
@@ -286,6 +291,27 @@ const MarketplaceSupplyAssemble = () => {
             Номер поставки: {supply.supplyNumber || 'не указан'} · Создана{' '}
             {formatDateTime(supply.createdAt)}
           </p>
+
+          {/* Прогресс сборки: сколько уже в коробах и сколько ещё нести. Без этого
+              кладовщик держал план поставки в голове и узнавал о недоборе только
+              при попытке её закрыть. */}
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
+            <span>
+              В коробах: <b>{totalBoxedItems}</b>
+              {supply.totalQuantityMarketplace ? ` из ${supply.totalQuantityMarketplace}` : ''}
+            </span>
+            {remainingToScan > 0 ? (
+              <span className="rounded-full bg-amber-100 px-3 py-0.5 font-semibold text-amber-900">
+                Осталось отсканировать: {remainingToScan}
+              </span>
+            ) : (
+              supply.totalQuantityMarketplace != null && (
+                <span className="rounded-full bg-emerald-100 px-3 py-0.5 font-semibold text-emerald-800">
+                  Поставка собрана полностью
+                </span>
+              )
+            )}
+          </div>
         </div>
 
         {supply.marketplace === 'WB' && (

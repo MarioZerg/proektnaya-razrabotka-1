@@ -2022,6 +2022,21 @@ def handler(event: dict, context) -> dict:
                     for gid in goods_ids:
                         cur.execute(f"UPDATE goods_warehouse SET status = 'shipped', shipped_at = now() WHERE id = {gid}")
 
+                    # Сами ЗАКАЗЫ тоже закрываем: вещь уехала к покупателю, ждать её
+                    # больше нечего. Раньше отгружалась только вещь на складе, а заказ
+                    # оставался «Новый» — он висел в работе у производства и мешал
+                    # понять, что реально осталось сшить.
+                    if goods_ids:
+                        gids_csv = ','.join(str(int(g)) for g in goods_ids)
+                        cur.execute(
+                            "UPDATE orders SET status = 'Отгружен', "
+                            "completed_at = COALESCE(completed_at, now()) "
+                            "WHERE status <> 'Отменён' AND id IN ("
+                            f"  SELECT COALESCE(reserved_order_id, order_id) FROM goods_warehouse "
+                            f"  WHERE id IN ({gids_csv})"
+                            ")"
+                        )
+
                     # Сообщаем OZON, что короб уехал: отправления уходят из «ожидает
                     # отгрузки» в «доставляется». Без этого площадка считает товар у
                     # продавца и начисляет просрочку, хотя вещь уже в пути.
@@ -2142,6 +2157,18 @@ def handler(event: dict, context) -> dict:
                 goods_ids = [r[0] for r in cur.fetchall()]
                 for gid in goods_ids:
                     cur.execute(f"UPDATE goods_warehouse SET status = 'shipped', shipped_at = COALESCE(shipped_at, now()) WHERE id = {gid}")
+
+                # Заказы тоже закрываем — вещь уехала, производству она больше не нужна.
+                if goods_ids:
+                    gids_csv = ','.join(str(int(g)) for g in goods_ids)
+                    cur.execute(
+                        "UPDATE orders SET status = 'Отгружен', "
+                        "completed_at = COALESCE(completed_at, now()) "
+                        "WHERE status <> 'Отменён' AND id IN ("
+                        f"  SELECT COALESCE(reserved_order_id, order_id) FROM goods_warehouse "
+                        f"  WHERE id IN ({gids_csv})"
+                        ")"
+                    )
 
                 cur.execute(
                     f"UPDATE marketplace_supplies SET status = 'Выполнена', "

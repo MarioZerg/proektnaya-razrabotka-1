@@ -96,6 +96,9 @@ const EditOrderDialog = ({
                   <SelectItem value="Новый">Новый</SelectItem>
                   <SelectItem value="В работе">В работе</SelectItem>
                   <SelectItem value="Выполнен">Выполнен</SelectItem>
+                  {/* Ставится автоматически при закрытии поставки, но нужен и в списке:
+                      иначе у отгруженного заказа поле статуса выглядело бы пустым. */}
+                  <SelectItem value="Отгружен">Отгружен</SelectItem>
                   <SelectItem value="Отменён">Отменён</SelectItem>
                 </SelectContent>
               </Select>

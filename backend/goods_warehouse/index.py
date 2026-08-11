@@ -693,7 +693,14 @@ def handler(event: dict, context) -> dict:
                 f"SELECT gw.id, gw.order_id, o.order_number, o.product, o.material, o.width, o.height, "
                 f"gw.shelf_id, s.name, gw.status, gw.received_at, gw.shipped_at, gw.storage_barcode, "
                 f"gw.lost_reason, gw.lost_at, gw.receive_reason, gw.reserved_order_id, ro.order_number, "
-                f"gw.shipping_labeled_at "
+                f"gw.shipping_labeled_at, "
+                # Куда вещь поедет: площадка и схема берутся у ЗАКРЕПЛЁННОГО заказа
+                # (reserved), а если его нет — у заказа, в котором вещь сшили. Без этого
+                # счётчик «Готово к сборке» показывал в каждой поставке весь склад разом:
+                # вещи для OZON FBS считались готовыми и для поставки WB.
+                f"COALESCE(ro.marketplace, o.marketplace), "
+                f"COALESCE(ro.order_type, o.order_type), "
+                f"COALESCE(ro.cluster, o.cluster) "
                 f"FROM goods_warehouse gw "
                 f"LEFT JOIN orders o ON o.id = gw.order_id "
                 f"LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -722,6 +729,10 @@ def handler(event: dict, context) -> dict:
                     'reservedOrderId': r[16],
                     'reservedOrderNumber': r[17],
                     'shippingLabeledAt': (r[18].isoformat() + 'Z') if r[18] else None,
+                    # Назначение вещи: в какую поставку она должна попасть.
+                    'marketplace': r[19],
+                    'orderType': r[20],
+                    'cluster': r[21],
                 }
                 for r in cur.fetchall()
             ]

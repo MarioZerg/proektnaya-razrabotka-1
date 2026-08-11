@@ -52,6 +52,12 @@ export interface GoodsWarehouseItem {
   reservedOrderNumber: string | null;
   /** Когда кладовщик наклеил стикер отправления — после этого можно сканировать в поставку. */
   shippingLabeledAt: string | null;
+  /** Площадка, куда вещь поедет: OZON / WB / Yandex. */
+  marketplace: string | null;
+  /** Схема поставки: FBS или FBO. */
+  orderType: string | null;
+  /** Кластер приёмки — важен для FBO: у каждого кластера своя поставка. */
+  cluster: string | null;
 }
 
 export interface GoodsWarehouseFilters {

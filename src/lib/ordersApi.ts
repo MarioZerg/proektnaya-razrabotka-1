@@ -1,6 +1,7 @@
 const ORDERS_URL = 'https://functions.poehali.dev/1d8ed922-bded-4f5a-a367-a0742711203a';
 
-export type OrderStatus = 'Новый' | 'В работе' | 'Выполнен' | 'Отменён';
+/** 'Отгружен' — заказ уехал на маркетплейс в составе закрытой поставки. */
+export type OrderStatus = 'Новый' | 'В работе' | 'Выполнен' | 'Отгружен' | 'Отменён';
 export type OrderType = 'FBO' | 'FBS' | 'Индивидуальный';
 export type Marketplace = 'OZON' | 'WB' | 'Yandex';
 /** 'Со склада' — заказ закрывается вещью, которая уже лежит на полке склада (осталась от

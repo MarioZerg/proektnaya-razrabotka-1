@@ -18,6 +18,8 @@ export const statusVariant = (
   status: OrderStatus
 ): 'default' | 'secondary' | 'destructive' | 'outline' => {
   if (status === 'Выполнен') return 'secondary';
+  // Уехал на маркетплейс — работа по нему закончена, показываем спокойно.
+  if (status === 'Отгружен') return 'secondary';
   if (status === 'Отменён') return 'destructive';
   if (status === 'В работе') return 'default';
   return 'outline';
