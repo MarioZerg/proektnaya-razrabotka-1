@@ -441,7 +441,10 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox):
     cur.execute(
         "SELECT id, wb_order_id, order_number FROM orders "
         "WHERE marketplace = 'WB' AND order_type = 'FBS' "
-        "AND sewing_status = 'Готовые' AND wb_order_id IS NOT NULL "
+        # «Со склада» — заказ закрыт вещью с полки. Такие проверять НУЖНО так же, как
+        # сшитые: их задание могло закрыться у WB, и тогда вещь висит в подборе мёртвым
+        # грузом — кладовщик идёт к стеллажу и упирается в ошибку печати стикера.
+        "AND sewing_status IN ('Готовые', 'Со склада') AND wb_order_id IS NOT NULL "
         "AND NOT EXISTS (SELECT 1 FROM wb_supply_orders w WHERE w.order_id = orders.id)"
     )
     rows = cur.fetchall()
