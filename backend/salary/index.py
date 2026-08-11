@@ -241,6 +241,78 @@ def handler(event: dict, context) -> dict:
                 ]
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'rates': rates})}
 
+            if params.get('missedAccruals'):
+                # Кто отработал, но денег не получил.
+                #
+                # Начисление создаётся в момент завершения этапа. Если в этот момент
+                # чего-то не хватило (у заказа не проставлен цех, не заведена ставка),
+                # начисление молча НЕ создаётся: ошибки нет, человек просто остаётся
+                # без денег, а в отчётах выглядит как не работавший. Так Привезенцева
+                # Елена отшила 23 заказа и не получила ничего — заметили случайно.
+                # Этот запрос ищет такие дыры сам.
+                #
+                # Осознанные исключения, которые НЕ являются дырой:
+                #  - раскрой заказов, перенесённых из старой системы (source='import'):
+                #    их кроили до переезда, деньги за них уже выплачены;
+                #  - вещи, взятые готовыми со склада (sewing_status='Со склада'):
+                #    их никто не шил в этот раз.
+                missed = []
+
+                cur.execute(
+                    "SELECT u.id, u.full_name, count(*), min(o.cut_at)::date, max(o.cut_at)::date "
+                    "FROM orders o JOIN users u ON u.id = o.cutter_user_id "
+                    "WHERE o.cut_at IS NOT NULL AND COALESCE(o.source, '') <> 'import' "
+                    "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
+                    "                  WHERE a.order_id = o.id AND a.type = 'cutter_cut') "
+                    "GROUP BY u.id, u.full_name ORDER BY count(*) DESC LIMIT 50"
+                )
+                for r in cur.fetchall():
+                    missed.append({
+                        'userId': r[0], 'userName': r[1], 'stage': 'Раскрой',
+                        'count': int(r[2]),
+                        'dateFrom': r[3].isoformat() if r[3] else None,
+                        'dateTo': r[4].isoformat() if r[4] else None,
+                    })
+
+                cur.execute(
+                    "SELECT u.id, u.full_name, count(*), min(o.created_at)::date, max(o.created_at)::date "
+                    "FROM orders o JOIN users u ON u.id = o.assigned_user_id "
+                    "WHERE o.sewing_status = 'Готовые' AND COALESCE(o.sewing_status, '') <> 'Со склада' "
+                    "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
+                    "                  WHERE a.order_id = o.id AND a.type = 'sewer_piece') "
+                    "GROUP BY u.id, u.full_name ORDER BY count(*) DESC LIMIT 50"
+                )
+                for r in cur.fetchall():
+                    missed.append({
+                        'userId': r[0], 'userName': r[1], 'stage': 'Пошив',
+                        'count': int(r[2]),
+                        'dateFrom': r[3].isoformat() if r[3] else None,
+                        'dateTo': r[4].isoformat() if r[4] else None,
+                    })
+
+                cur.execute(
+                    "SELECT u.id, u.full_name, count(*), min(o.created_at)::date, max(o.created_at)::date "
+                    "FROM orders o JOIN users u ON u.id = o.packer_user_id "
+                    "WHERE o.sewing_status = 'Готовые' "
+                    "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
+                    "                  WHERE a.order_id = o.id AND a.type = 'packer_stickering') "
+                    "GROUP BY u.id, u.full_name ORDER BY count(*) DESC LIMIT 50"
+                )
+                for r in cur.fetchall():
+                    missed.append({
+                        'userId': r[0], 'userName': r[1], 'stage': 'Стикеровка',
+                        'count': int(r[2]),
+                        'dateFrom': r[3].isoformat() if r[3] else None,
+                        'dateTo': r[4].isoformat() if r[4] else None,
+                    })
+
+                missed.sort(key=lambda x: x['count'], reverse=True)
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'missed': missed}, ensure_ascii=False),
+                }
+
             if params.get('cashBox'):
                 cur.execute("SELECT COALESCE(SUM(amount), 0) FROM cash_box_transactions")
                 balance = float(cur.fetchone()[0])

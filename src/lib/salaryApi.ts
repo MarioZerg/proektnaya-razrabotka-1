@@ -225,5 +225,22 @@ export const fetchCashBox = async (): Promise<CashBoxData> => {
   };
 };
 
+/** Сотрудник, у которого есть выполненная работа без начисления. */
+export interface MissedAccrual {
+  userId: number;
+  userName: string;
+  /** Этап, за который не заплатили: Раскрой / Пошив / Стикеровка. */
+  stage: string;
+  count: number;
+  dateFrom: string | null;
+  dateTo: string | null;
+}
+
+export const fetchMissedAccruals = async (): Promise<MissedAccrual[]> => {
+  const res = await fetch(`${SALARY_URL}?missedAccruals=1`);
+  const data = res.ok ? await res.json() : {};
+  return Array.isArray(data.missed) ? data.missed : [];
+};
+
 export const cashDeposit = (payload: { amount: number; description: string; actorId?: number; actorName?: string }) =>
   postAction({ action: 'cash_deposit', ...payload });

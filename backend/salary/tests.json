@@ -28,35 +28,45 @@
       "name": "Manual accrual without userId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "manual_accrual" },
+      "body": {
+        "action": "manual_accrual"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Penalty without userId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "penalty" },
+      "body": {
+        "action": "penalty"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Delete accrual without id fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "delete_accrual" },
+      "body": {
+        "action": "delete_accrual"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Payout without userId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "payout" },
+      "body": {
+        "action": "payout"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Update rate without id fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "update_rate" },
+      "body": {
+        "action": "update_rate"
+      },
       "expectedStatus": 400
     },
     {
@@ -69,22 +79,34 @@
       "name": "Update accrual without id fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "update_accrual" },
+      "body": {
+        "action": "update_accrual"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Delete payout without id fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "delete_payout" },
+      "body": {
+        "action": "delete_payout"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Cash deposit without amount fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "cash_deposit" },
+      "body": {
+        "action": "cash_deposit"
+      },
       "expectedStatus": 400
+    },
+    {
+      "name": "Get missed accruals",
+      "method": "GET",
+      "path": "/?missedAccruals=1",
+      "expectedStatus": 200
     }
   ]
 }

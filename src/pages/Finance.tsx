@@ -31,6 +31,7 @@ import SalaryRatesCard from '@/components/crm/finance/SalaryRatesCard';
 import MyAccrualsTable from '@/components/crm/finance/MyAccrualsTable';
 import MyPayoutsCard from '@/components/crm/finance/MyPayoutsCard';
 import CashBoxCard from '@/components/crm/finance/CashBoxCard';
+import MissedAccrualsAlert from '@/components/crm/finance/MissedAccrualsAlert';
 import { formatMoney } from '@/components/crm/finance/financeShared';
 
 const Finance = () => {
@@ -295,6 +296,10 @@ const Finance = () => {
     <CrmLayout>
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Финансы компании</h1>
+
+        {/* Люди работали, а денег им не начислили. Молчаливая потеря: ошибки нет,
+            человек просто остаётся без зарплаты. Показываем сразу под шапкой. */}
+        <MissedAccrualsAlert />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
           <div className="space-y-4 lg:col-span-3">
