@@ -873,6 +873,37 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
         'PATCH', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}',
         api_key, use_sandbox,
     )
+
+    # 404 — накопительной поставки на стороне WB больше нет: её закрыли, отгрузили или
+    # удалили в кабинете. Наша запись при этом осталась «Открытой», и все стикеры
+    # переставали печататься: WB рисует ярлык только для задания, лежащего в поставке.
+    # Закрываем устаревшую запись, заводим новую поставку и добавляем заказ в неё —
+    # кладовщик просто печатает ярлык и ничего об этом не знает.
+    if status_code == 404:
+        cur.execute(
+            "UPDATE marketplace_supplies SET status = 'Выполнена', "
+            "comment = COALESCE(comment, '') || ' · Закрыта на стороне WB' "
+            "WHERE id = %s",
+            (supply_id,),
+        )
+        conn.commit()
+        err, supply_id, wb_supply_id = ensure_open_supply(cur, conn, api_key, use_sandbox)
+        if err:
+            return err
+        status_code, data = wb_request(
+            'PATCH', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}',
+            api_key, use_sandbox,
+        )
+
+    if status_code == 404:
+        # Поставку мы только что пересоздали, значит дело в самом задании: на стороне WB
+        # его уже нет в работе — чаще всего оно лежит в другой, уже отгруженной поставке
+        # или было закрыто в кабинете. Стикер для него WB больше не рисует.
+        return (
+            'Wildberries не принимает этот заказ в поставку: задание уже закрыто или '
+            'лежит в другой поставке на стороне WB. Стикер для него больше не печатается — '
+            'проверьте заказ в кабинете WB'
+        )
     if status_code not in (200, 204):
         return f'WB не принял заказ в поставку ({status_code}): {wb_error_text(status_code, data)}'
 
@@ -1065,6 +1096,12 @@ def handler(event: dict, context) -> dict:
             # добавлено, и откат оставил бы наши данные расходиться с маркетплейсом.
             conn.commit()
             if err:
+                # WB рисует стикер только для задания, лежащего в поставке. Если стикера
+                # нет, настоящая причина — в неудачном добавлении, а не в самой печати:
+                # показываем её кладовщику, иначе он видит невнятное «WB не вернул стикер»
+                # и не понимает, что делать дальше.
+                if supply_warning:
+                    return _resp(502, {'error': supply_warning})
                 return _resp(502, {'error': err})
             return _resp(200, {
                 'orderNumber': order_number,
