@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
+import { isStorekeeperRole } from '@/lib/roles';
 import {
   fetchGoodsWarehouse,
   returnGoodsToWorkshop,
@@ -30,6 +31,9 @@ const GoodsWarehouse = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  /** Ручную приёмку делает и кладовщик: излишек с производства приносят прямо ему на склад,
+   * ждать администратора, чтобы завести вещь и напечатать стикер, — терять время. */
+  const canReceiveManually = isAdmin || isStorekeeperRole(user?.role);
 
   const [items, setItems] = useState<GoodsWarehouseItem[]>([]);
   const [shelves, setShelves] = useState<Shelf[]>([]);
@@ -238,8 +242,8 @@ const GoodsWarehouse = () => {
               onOpenCreate={openReturn}
               onDone={load}
             />
-            {/* Добавить товары вручную — приёмка партии вручную (админ). */}
-            {isAdmin && (
+            {/* Добавить товары вручную — приёмка партии (админ и кладовщики). */}
+            {canReceiveManually && (
               <Button variant="outline" onClick={() => setAdminReceiveOpen(true)}>
                 <Icon name="PackagePlus" size={16} className="mr-2" />
                 Добавить товары вручную
@@ -277,14 +281,16 @@ const GoodsWarehouse = () => {
               matched={matchedFromStock}
               onDone={load}
             />
+            {canReceiveManually && (
+              <AdminReceiveDialog
+                open={adminReceiveOpen}
+                onOpenChange={setAdminReceiveOpen}
+                shelves={shelves}
+                onDone={load}
+              />
+            )}
             {isAdmin && (
               <>
-                <AdminReceiveDialog
-                  open={adminReceiveOpen}
-                  onOpenChange={setAdminReceiveOpen}
-                  shelves={shelves}
-                  onDone={load}
-                />
                 <Button variant="outline" onClick={() => setReprintOpen(true)}>
                   <Icon name="FileWarning" size={16} className="mr-2" />
                   Пропущенные стикеры
