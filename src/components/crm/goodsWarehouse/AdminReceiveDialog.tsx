@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import type { Shelf } from '@/lib/shelvesApi';
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { adminReceiveGoods } from '@/lib/goodsWarehouseApi';
@@ -50,6 +51,7 @@ interface CartRow {
  */
 const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiveDialogProps) => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
   const [query, setQuery] = useState('');
   const [cart, setCart] = useState<CartRow[]>([]);
@@ -114,18 +116,30 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
       // штуки в одной транзакции. Раньше фронт слал запрос на каждую штуку — параллельные
       // запросы делили один служебный номер заказа, часть падала, и на складе оказывалось
       // меньше вещей, чем напечатано стикеров.
-      const printed: { storageBarcode: string; title: string; orderNumber: string }[] = [];
+      const printed: {
+        storageBarcode: string;
+        title: string;
+        orderNumber: string;
+        status: string;
+      }[] = [];
       let failed = 0;
 
       for (const row of cart) {
         try {
-          const res = await adminReceiveGoods(row.item.id, Number(shelfId), row.qty);
+          const res = await adminReceiveGoods(
+            row.item.id,
+            Number(shelfId),
+            row.qty,
+            user?.id,
+            user?.name,
+          );
           const list = res.created?.length ? res.created : [res];
           list.forEach((g) =>
             printed.push({
               storageBarcode: g.storageBarcode,
               title: g.product || res.product,
               orderNumber: g.orderNumber,
+              status: g.status,
             })
           );
           // Стикеры печатаем только на реально заведённые вещи.
@@ -139,13 +153,18 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
         printStorageStickers(printed);
       }
 
+      // Часть принятых вещей система тут же забирает под ожидающие заказы — они уходят
+      // в «На сборке». Без этой строки кладовщик открывал склад с фильтром «На хранении»,
+      // видел там меньше вещей, чем принял, и думал, что приёмка сработала не полностью.
+      const toPicking = printed.filter((p) => p.status === 'picking').length;
+      const parts: string[] = [];
+      if (toPicking) parts.push(`${toPicking} сразу ушло в сборку под заказы`);
+      if (failed) parts.push(`не удалось принять: ${failed}`);
+      if (autoPrint) parts.push('лента стикеров отправлена на печать');
+
       toast({
         title: `Принято вещей: ${printed.length}`,
-        description: failed
-          ? `Не удалось принять: ${failed}`
-          : autoPrint
-            ? 'Лента стикеров хранения отправлена на печать'
-            : 'Стикеры можно напечатать из списка склада',
+        description: parts.join(' · ') || 'Все вещи лежат на выбранной полке',
         variant: failed ? 'destructive' : undefined,
       });
 

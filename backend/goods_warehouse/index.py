@@ -816,7 +816,7 @@ def handler(event: dict, context) -> dict:
                     new_gw_id = cur.fetchone()[0]
                     log_action(
                         cur, actor_id, actor_name, 'admin_receive', 'goods_warehouse', new_gw_id,
-                        f'Принят товар вручную: {product} ({storage_barcode})',
+                        f'Принял товар вручную: {product} ({storage_barcode})',
                     )
                     created.append({
                         'id': new_gw_id,
@@ -832,6 +832,19 @@ def handler(event: dict, context) -> dict:
                 if status_val == 'in_stock':
                     for row in created:
                         try_match_orders_from_stock(cur, gw_id=row['id'])
+
+                    # Часть вещей подбор мог тут же забрать под ожидающие заказы — они
+                    # уже «На сборке», а не «На хранении». Возвращаем РЕАЛЬНЫЙ статус
+                    # каждой вещи: иначе принявший видит «принято 12», открывает склад
+                    # с фильтром «На хранении», находит там 8 и считает, что приёмка
+                    # сработала наполовину.
+                    ids_csv = ','.join(str(int(r['id'])) for r in created)
+                    cur.execute(
+                        f"SELECT id, status FROM goods_warehouse WHERE id IN ({ids_csv})"
+                    )
+                    real_status = {int(r[0]): r[1] for r in cur.fetchall()}
+                    for row in created:
+                        row['status'] = real_status.get(row['id'], row['status'])
 
                 conn.commit()
                 first = created[0]

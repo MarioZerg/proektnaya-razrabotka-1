@@ -116,15 +116,24 @@ export interface ReceivedGood {
   status: string;
 }
 
-/** Ручная приёмка партии: quantity штук одного товара заводятся одним запросом. */
+/** Ручная приёмка партии: quantity штук одного товара заводятся одним запросом.
+ * actorId/actorName — кто принял: в истории вещи должно стоять имя реального человека,
+ * а не обезличенное «админ». */
 export const adminReceiveGoods = (
   marketplaceItemId: number,
   shelfId?: number,
   quantity = 1,
+  actorId?: number,
+  actorName?: string,
 ) =>
-  postAction({ action: 'admin_receive', marketplaceItemId, shelfId, quantity }) as Promise<
-    ReceivedGood & { created: ReceivedGood[]; count: number }
-  >;
+  postAction({
+    action: 'admin_receive',
+    marketplaceItemId,
+    shelfId,
+    quantity,
+    actorId,
+    actorName,
+  }) as Promise<ReceivedGood & { created: ReceivedGood[]; count: number }>;
 
 /** Кладовщик сканирует стикер хранения вещи, отменённой клиентом, и кладёт её на полку. */
 export const placeOnShelf = (barcode: string, shelfId: number) =>
