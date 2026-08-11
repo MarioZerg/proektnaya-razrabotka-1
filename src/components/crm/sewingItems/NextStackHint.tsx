@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Icon from '@/components/ui/icon';
 import { fetchStackPreview, type StackPreview } from '@/lib/ordersApi';
+import { usePolling } from '@/hooks/usePolling';
 
 interface NextStackHintProps {
   workshopId: number | null;
@@ -19,29 +20,20 @@ const NextStackHint = ({ workshopId, refreshKey }: NextStackHintProps) => {
   const [preview, setPreview] = useState<StackPreview | null>(null);
 
   useEffect(() => {
-    if (!workshopId) {
-      setPreview(null);
-      return;
-    }
-    let cancelled = false;
-    const load = () => {
-      fetchStackPreview(workshopId)
-        .then((data) => {
-          if (!cancelled) setPreview(data);
-        })
-        .catch(() => {
-          if (!cancelled) setPreview(null);
-        });
-    };
-    load();
-    // Очередь общая на цех — обновляем, чтобы подсказка не устаревала, пока
-    // закройщик стоит на странице, а коллеги разбирают заказы.
-    const timer = setInterval(load, 20000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
+    if (!workshopId) setPreview(null);
+  }, [workshopId]);
+
+  const load = useCallback(() => {
+    if (!workshopId) return;
+    return fetchStackPreview(workshopId)
+      .then(setPreview)
+      .catch(() => setPreview(null));
   }, [workshopId, refreshKey]);
+
+  // Очередь общая на цех — обновляем, чтобы подсказка не устаревала, пока закройщик
+  // стоит на странице, а коллеги разбирают заказы. Раз в минуту: стек берут не чаще,
+  // а при 20 секундах каждый открытый планшет цеха давал 180 обращений в час.
+  usePolling(load, 60000, !!workshopId);
 
   if (!preview || preview.kind === 'none' || preview.count === 0) return null;
 

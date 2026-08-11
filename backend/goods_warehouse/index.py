@@ -386,19 +386,21 @@ def handler(event: dict, context) -> dict:
             # Счётчик для кладовщика: сколько вещей на полках уже подобрано под заказы и
             # ждёт, чтобы он наклеил стикер отправления. По нему в меню горит значок.
             if params.get('pending_count'):
+                # Этот счётчик висит в меню у каждого кладовщика весь день — самый
+                # частый запрос во всей системе. Считаем оба числа ОДНИМ проходом по
+                # таблице вместо двух запросов подряд: результат тот же, работы вдвое
+                # меньше. Возврат с маркетплейса тоже ждёт полку — иначе кладовщик не
+                # увидит его в значке задач.
                 cur.execute(
-                    "SELECT count(*) FROM goods_warehouse "
-                    "WHERE reserved_order_id IS NOT NULL AND status = 'picking' "
-                    "AND shipping_labeled_at IS NULL"
+                    "SELECT "
+                    " count(*) FILTER (WHERE reserved_order_id IS NOT NULL "
+                    "                  AND status = 'picking' AND shipping_labeled_at IS NULL), "
+                    " count(*) FILTER (WHERE status IN ('awaiting_shelf', 'mp_return')) "
+                    "FROM goods_warehouse "
+                    "WHERE status IN ('picking', 'awaiting_shelf', 'mp_return')"
                 )
-                pending = int(cur.fetchone()[0])
-                cur.execute(
-                    # Возврат с маркетплейса тоже ждёт полку — считаем вместе, иначе
-                    # кладовщик не увидит его в значке задач.
-                    "SELECT count(*) FROM goods_warehouse "
-                    "WHERE status IN ('awaiting_shelf', 'mp_return')"
-                )
-                awaiting = int(cur.fetchone()[0])
+                row = cur.fetchone()
+                pending, awaiting = int(row[0]), int(row[1])
                 return {
                     'statusCode': 200,
                     'headers': headers,

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { usePolling } from '@/hooks/usePolling';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
@@ -82,25 +83,18 @@ const ReturnPickupCodes = () => {
 
   useEffect(loadGiveouts, []);
 
-  // Пока идёт приёмка, сотрудник ПВЗ сканирует коробки — опрашиваем OZON каждые
-  // 5 секунд, чтобы счётчик на телефоне кладовщика рос в реальном времени.
-  useEffect(() => {
+  // Пока идёт приёмка, сотрудник ПВЗ сканирует коробки — счётчик на телефоне кладовщика
+  // растёт почти в реальном времени. 10 секунд достаточно: коробку сканируют дольше, а
+  // при 5 секундах экран приёмки в одиночку давал 720 обращений в час.
+  // Экран погас или кладовщик ушёл в другое приложение — опрос замирает до возвращения.
+  const tickProgress = useCallback(() => {
     if (!watchingId) return;
-    let stop = false;
-    const tick = () => {
-      fetchGiveoutProgress(watchingId)
-        .then((d) => {
-          if (!stop) setProgress(d);
-        })
-        .catch(() => undefined);
-    };
-    tick();
-    const timer = setInterval(tick, 5000);
-    return () => {
-      stop = true;
-      clearInterval(timer);
-    };
+    return fetchGiveoutProgress(watchingId)
+      .then((d) => setProgress(d))
+      .catch(() => undefined);
   }, [watchingId]);
+
+  usePolling(tickProgress, 10000, !!watchingId);
 
   // Код OZON приходит из личного кабинета и меняется — если сегодня его ещё не
   // забирали, подтягиваем свежий сами. Кладовщик открывает раздел и сразу видит

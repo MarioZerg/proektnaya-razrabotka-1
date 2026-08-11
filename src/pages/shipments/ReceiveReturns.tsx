@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -100,27 +101,20 @@ const ReceiveReturns = () => {
   // Новые возвраты приходят сами: подтягиваем их при открытии страницы и раз в 5 минут,
   // пока она открыта. Кнопка остаётся для случая «жду прямо сейчас, обнови немедленно».
   // Сервер сам пропустит запрос, если данные свежие, — лимиты маркетплейсов бережём.
-  useEffect(() => {
-    let alive = true;
-    const autoSync = async () => {
-      try {
-        const res = await syncMarketplaceReturns(30, user?.id, user?.name, true);
-        if (alive && res.created > 0) {
-          toast({ title: `Пришли новые возвраты: ${res.created}` });
-          load();
-        }
-      } catch {
-        // Молча: фоновая загрузка не должна мешать работать со списком.
+  const autoSync = useCallback(async () => {
+    try {
+      const res = await syncMarketplaceReturns(30, user?.id, user?.name, true);
+      if (res.created > 0) {
+        toast({ title: `Пришли новые возвраты: ${res.created}` });
+        load();
       }
-    };
-    autoSync();
-    const timer = setInterval(autoSync, 300000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
+    } catch {
+      // Молча: фоновая загрузка не должна мешать работать со списком.
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user?.id, user?.name]);
+
+  usePolling(autoSync, 300000);
 
   const handleSync = async () => {
     setSyncing(true);

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -52,12 +53,9 @@ const GoodsPicking = () => {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => {
-    load();
-    // Заказы приходят в течение дня — обновляем сами, чтобы кладовщик не жал F5.
-    const timer = setInterval(load, 30000);
-    return () => clearInterval(timer);
-  }, []);
+  // Заказы приходят в течение дня — обновляем сами, чтобы кладовщик не жал F5.
+  // Раз в минуту и только пока на экран смотрят: свёрнутая вкладка не тратит ничего.
+  usePolling(load, 60000);
 
   // Фокус в поиске: кладовщик заходит на страницу и сразу пикает сканером, не мышкой.
   useEffect(() => {

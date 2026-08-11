@@ -1,17 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { fetchOnlineNow, type OnlineNow } from '@/lib/authApi';
+import { usePolling } from '@/hooks/usePolling';
 
-/** Сколько человек сейчас на смене во всех цехах. Показывается на экране входа,
- * обновляется каждую минуту. Имён не показываем — экран виден кому угодно. */
+/** Сколько человек сейчас на смене во всех цехах. Показывается на экране входа.
+ * Имён не показываем — экран виден кому угодно.
+ *
+ * Экран входа часто остаётся открытым на планшете весь день. Обновляем раз в 5 минут
+ * и только когда на него смотрят: точнее эта справочная цифра быть не обязана. */
 const OnlineNowBadge = () => {
   const [data, setData] = useState<OnlineNow | null>(null);
 
-  useEffect(() => {
-    const load = () => fetchOnlineNow().then(setData).catch(() => setData(null));
-    load();
-    const timer = setInterval(load, 60000);
-    return () => clearInterval(timer);
-  }, []);
+  const load = useCallback(
+    () => fetchOnlineNow().then(setData).catch(() => setData(null)),
+    [],
+  );
+
+  usePolling(load, 300000);
 
   if (!data) return null;
 

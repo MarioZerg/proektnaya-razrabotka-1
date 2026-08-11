@@ -108,8 +108,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
    * доступ должен уметь отзываться: как только администратор отключит учётную запись
    * или снимет должность, приложение выйдет само.
    *
-   * Проверяем при запуске и раз в 10 минут. Если сервер недоступен, работу не прерываем:
-   * в цехе связь может пропадать, а из-за этого нельзя терять рабочую сессию.
+   * Проверяем при запуске и раз в 30 минут, и только пока приложением пользуются:
+   * в свёрнутой вкладке проверять нечего — нажать там всё равно ничего нельзя, а
+   * отозванный доступ сработает сразу, как только на экран снова посмотрят.
+   * Если сервер недоступен, работу не прерываем: в цехе связь может пропадать, а
+   * из-за этого нельзя терять рабочую сессию.
    */
   useEffect(() => {
     if (!user || user.isDemo) return;
@@ -138,11 +141,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     };
 
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer === null) timer = setInterval(verify, 30 * 60 * 1000);
+    };
+    const stop = () => {
+      if (timer !== null) clearInterval(timer);
+      timer = null;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        verify();
+        start();
+      } else {
+        stop();
+      }
+    };
+
     verify();
-    const timer = setInterval(verify, 10 * 60 * 1000);
+    start();
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       stopped = true;
-      clearInterval(timer);
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [user?.id, user?.role, user?.isDemo]);
 
