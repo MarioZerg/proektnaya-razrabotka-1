@@ -1248,14 +1248,26 @@ def handler(event: dict, context) -> dict:
                 # Вещь могла попасть сюда двумя путями: сшита в цехе и застикерована
                 # (gw.order_id, статус «на поставку») либо взята с полки под новый заказ
                 # (fulfilled_from_stock_id). Ищем оба варианта.
-                cur.execute(
+                # Ищем и по НОМЕРУ ОТПРАВЛЕНИЯ (ozon_posting_number), а не только по номеру
+                # заказа. В одном отправлении OZON может ехать несколько вещей: мы дробим
+                # его на заказы с суффиксом («…-0530-1-1», «…-0530-1-2»), а на ярлыке
+                # напечатан общий номер «…-0530-1». По нему поиск не находил ничего, и
+                # кладовщика разворачивали на склад с уже собранной вещью в руках.
+                #
+                # Вещи одного отправления кладовщик сканирует по одной — каждая в своём
+                # пакете со своим ярлыком. Поэтому берём первую подходящую: отстикерованную
+                # и ещё не лежащую ни в одной поставке.
+                find_sql = (
                     "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
                     "FROM orders o "
                     "JOIN goods_warehouse gw "
                     "  ON gw.id = o.fulfilled_from_stock_id OR gw.order_id = o.id "
-                    f"WHERE o.order_number = '{barcode_esc}' "
-                    "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
+                    "LEFT JOIN marketplace_supply_items msi ON msi.goods_warehouse_id = gw.id "
+                    "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}') "
+                    "ORDER BY (msi.id IS NULL) DESC, (gw.shipping_labeled_at IS NOT NULL) DESC, "
+                    "         (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
                 )
+                cur.execute(find_sql.format(code=barcode_esc))
                 gw_row = cur.fetchone()
 
                 # Не нашли по номеру — возможно, отсканирован ШТРИХКОД с ярлыка OZON
@@ -1264,15 +1276,7 @@ def handler(event: dict, context) -> dict:
                 if not gw_row:
                     resolved = resolve_ozon_barcode(cur, storage_barcode)
                     if resolved:
-                        resolved_esc = resolved.replace("'", "''")
-                        cur.execute(
-                            "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
-                            "FROM orders o "
-                            "JOIN goods_warehouse gw "
-                            "  ON gw.id = o.fulfilled_from_stock_id OR gw.order_id = o.id "
-                            f"WHERE o.order_number = '{resolved_esc}' "
-                            "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
-                        )
+                        cur.execute(find_sql.format(code=resolved.replace("'", "''")))
                         gw_row = cur.fetchone()
                 if not gw_row:
                     return {
@@ -1651,29 +1655,27 @@ def handler(event: dict, context) -> dict:
                         }, ensure_ascii=False),
                     }
 
-                cur.execute(
+                # Как и при добавлении в поставку, ищем по номеру заказа И по номеру
+                # отправления: на ярлыке напечатан общий номер отправления, а одно
+                # отправление у нас может быть разбито на несколько заказов-вещей.
+                box_find_sql = (
                     "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
                     "FROM orders o "
                     "JOIN goods_warehouse gw "
                     "  ON gw.id = o.fulfilled_from_stock_id OR gw.order_id = o.id "
-                    f"WHERE o.order_number = '{scan_esc}' "
-                    "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
+                    "LEFT JOIN marketplace_supply_items msi ON msi.goods_warehouse_id = gw.id "
+                    "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}') "
+                    "ORDER BY (msi.id IS NULL) DESC, (gw.shipping_labeled_at IS NOT NULL) DESC, "
+                    "         (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
                 )
+                cur.execute(box_find_sql.format(code=scan_esc))
                 gw_row = cur.fetchone()
 
                 # Отсканирован штрихкод с ярлыка OZON — узнаём номер отправления у OZON.
                 if not gw_row:
                     resolved = resolve_ozon_barcode(cur, order_number)
                     if resolved:
-                        resolved_esc = resolved.replace("'", "''")
-                        cur.execute(
-                            "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
-                            "FROM orders o "
-                            "JOIN goods_warehouse gw "
-                            "  ON gw.id = o.fulfilled_from_stock_id OR gw.order_id = o.id "
-                            f"WHERE o.order_number = '{resolved_esc}' "
-                            "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
-                        )
+                        cur.execute(box_find_sql.format(code=resolved.replace("'", "''")))
                         gw_row = cur.fetchone()
                 if not gw_row:
                     return {
