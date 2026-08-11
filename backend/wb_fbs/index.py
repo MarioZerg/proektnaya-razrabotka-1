@@ -776,6 +776,48 @@ def handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox):
 
 
 
+def drop_stale_accumulator(cur, conn, api_key, use_sandbox):
+    """Закрывает накопительную поставку WB, которой на стороне маркетплейса больше нет.
+
+    Заказы копятся в одной служебной поставке, и стикер WB рисует только для задания,
+    которое в ней лежит. Если поставку отгрузили или удалили в кабинете WB, наша запись
+    остаётся «Открытой» — и печать стикеров ломается разом для ВСЕХ заказов WB.
+    Раньше это вскрывалось только в момент печати: упаковщица упиралась в ошибку и
+    вставала. Проверяем заранее, при загрузке заказов.
+
+    Возвращает True, если устаревшую поставку пришлось закрыть.
+    """
+    cur.execute(
+        "SELECT id, wb_supply_id FROM marketplace_supplies "
+        "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
+        "AND status IN ('Открытая', 'На сборке') AND wb_supply_id IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1"
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    supply_id, wb_supply_id = row
+
+    status_code, data = wb_request(
+        'GET', f'/api/v3/supplies/{wb_supply_id}', api_key, use_sandbox
+    )
+    # 404 — поставки у WB нет вовсе. done=true — она уже отгружена, докладывать нельзя.
+    gone = status_code == 404
+    if status_code == 200 and isinstance(data, dict) and data.get('done'):
+        gone = True
+    if not gone:
+        return False
+
+    cur.execute(
+        "UPDATE marketplace_supplies SET status = 'Выполнена', "
+        "comment = COALESCE(comment, '') || ' · Закрыта на стороне WB' "
+        "WHERE id = %s",
+        (supply_id,),
+    )
+    conn.commit()
+    return True
+
+
 def ensure_open_supply(cur, conn, api_key, use_sandbox):
     """Находит свободную поставку WB FBS, а если её нет — заводит новую.
 
@@ -1113,6 +1155,12 @@ def handler(event: dict, context) -> dict:
             return handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox)
 
         # action == 'sync_orders'
+        # Пока идём к WB за заказами, заодно проверяем накопительную поставку: если её
+        # закрыли или отгрузили в кабинете, печать стикеров ломается для всех заказов WB
+        # разом. Закрываем устаревшую запись здесь, а не в момент печати — упаковщица
+        # не должна упираться в ошибку с вещью в руках.
+        supply_reset = drop_stale_accumulator(cur, conn, api_key, use_sandbox)
+
         status_code, data = wb_get('/api/v3/orders/new', api_key, use_sandbox)
         if status_code == 401:
             return _resp(400, {'error': 'WildBerries отклонил API-ключ (401). Проверьте ключ в настройках интеграции.'})
@@ -1221,6 +1269,9 @@ def handler(event: dict, context) -> dict:
             'unmatched': unmatched[:50],
             'createdNumbers': created_numbers[:50],
             'sandbox': use_sandbox,
+            # Накопительную поставку пришлось пересоздать: полезно видеть в отчёте,
+            # чтобы понимать, почему счётчик поставки обнулился.
+            'supplyReset': supply_reset,
         })
     finally:
         conn.close()
