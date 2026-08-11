@@ -146,7 +146,9 @@ const GoodsCard = () => {
       await sendGoodsToSupply(card.id, user?.id, user?.name);
       toast({
         title: 'Отправлено на поставку',
-        description: 'Позиция появилась в счётчике поставки FBS OZON',
+        description: `Позиция появилась в счётчике поставки ${schemeLabel} ${
+          card.reservedMarketplace || ''
+        }`.trim(),
       });
       load();
     } catch (e) {
@@ -181,6 +183,14 @@ const GoodsCard = () => {
 
   // Стикер уже наклеен (в базе) или напечатан прямо сейчас — можно отправлять.
   const labeled = !!card.shippingLabeledAt || justPrinted;
+  // Схема заказа, под который подобрана вещь. FBS и FBO — разные стикеры и разный
+  // смысл действия: на FBS клеится ярлык маркетплейса (вещь поедет своим пакетом
+  // к покупателю), на FBO — наш складской стикер с кодом товара (вещь пойдёт
+  // коробкой на склад площадки). Раньше кнопка везде называлась «Напечатать стикер
+  // FBS», хотя для FBO печатался правильный, FBO-стикер, — кладовщик видел «FBS»
+  // на FBO-товаре и не решался печатать.
+  const isFbo = (card.reservedOrderType || '').toUpperCase() === 'FBO';
+  const schemeLabel = isFbo ? 'FBO' : 'FBS';
   const alreadyInSupply = card.status === 'awaiting_supply' || !!card.supplyId;
 
   return (
@@ -207,7 +217,8 @@ const GoodsCard = () => {
           </div>
         </div>
 
-        {/* Действия по порядку: сначала стикер FBS, потом отправка на поставку. */}
+        {/* Действия по порядку: сначала стикер (FBS или FBO — по схеме заказа),
+            потом отправка на поставку. */}
         <Card className="border-primary/30 bg-primary/5 shadow-none">
           <CardContent className="space-y-3 pt-6">
             {alreadyInSupply ? (
@@ -218,7 +229,9 @@ const GoodsCard = () => {
                   <p className="text-sm text-muted-foreground">
                     {card.supplyId
                       ? `Добавлена в поставку №${card.supplyId}`
-                      : 'Ждёт сканирования в короб поставки FBS OZON'}
+                      : `Ждёт сканирования в короб поставки ${schemeLabel} ${
+                          card.reservedMarketplace || ''
+                        }`.trim()}
                   </p>
                 </div>
               </div>
@@ -227,8 +240,16 @@ const GoodsCard = () => {
                 <p className="text-sm font-medium">
                   {labeled
                     ? 'Стикер готов — отправьте вещь на поставку'
-                    : 'Напечатайте стикер FBS и наклейте его на вещь'}
+                    : `Напечатайте стикер ${schemeLabel} и наклейте его на вещь`}
                 </p>
+                {isFbo && (
+                  // Кладовщик должен понимать, ЧТО он печатает: на FBO-стикере код
+                  // товара, по нему вещь принимают на складе маркетплейса.
+                  <p className="text-xs text-muted-foreground">
+                    Это FBO: печатается складской стикер с кодом товара — вещь поедет
+                    коробкой на склад маркетплейса.
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <Button
                     size="lg"
@@ -241,7 +262,7 @@ const GoodsCard = () => {
                       size={18}
                       className={`mr-2 ${printing ? 'animate-spin' : ''}`}
                     />
-                    {labeled ? 'Напечатать ещё раз' : 'Напечатать стикер FBS'}
+                    {labeled ? 'Напечатать ещё раз' : `Напечатать стикер ${schemeLabel}`}
                   </Button>
                   {labeled && (
                     <Button size="lg" onClick={handleSendToSupply} disabled={sending}>

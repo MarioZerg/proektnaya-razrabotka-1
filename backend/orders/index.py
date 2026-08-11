@@ -408,7 +408,13 @@ def handler(event: dict, context) -> dict:
 
             if order_id:
                 cur.execute(
-                    "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
+                    # Кластер берём из поставки, если в заказе он не заполнен. Кластер —
+                    # это склад приёмки FBO, и печатается он на стикере: по нему вещь
+                    # сортируют. У заказов, загруженных из заявки OZON FBO, поле в самом
+                    # заказе пустое, а кластер задан у поставки — на стикере получалась
+                    # пустая строка, и вещь ехала без адреса приёмки.
+                    "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, "
+                    "COALESCE(o.cluster, sup.cluster), o.product, "
                     "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
                     "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
                     "o.cutter_user_id, cu.full_name, o.hanger_number, "
@@ -429,6 +435,7 @@ def handler(event: dict, context) -> dict:
                     "LEFT JOIN users su ON su.id = o.sewer_user_id "
                     "LEFT JOIN users pu ON pu.id = o.packer_user_id "
                     "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                    "LEFT JOIN marketplace_supplies sup ON sup.id = o.supply_id "
                     "WHERE o.id = %s",
                     (int(order_id),),
                 )
