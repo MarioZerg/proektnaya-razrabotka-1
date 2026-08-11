@@ -308,9 +308,19 @@ def handler(event: dict, context) -> dict:
                 "(updated_at::date = CURRENT_DATE) "
                 "FROM return_pickup_codes ORDER BY title"
             )
+            # Забираем строки СРАЗУ. Ниже идёт поход в OZON, который использует этот же
+            # курсор: любой новый запрос затирает ещё не прочитанный результат, и список
+            # кодов уезжал пустым — страница оставалась без штрихкодов.
+            code_rows = cur.fetchall()
+
             # Живой счётчик OZON: сколько вещей реально лежит в пункте выдачи. Своя
             # таблица заявок этого не знает, поэтому спрашиваем площадку напрямую.
-            ozon_waiting, ozon_places, ozon_err = fetch_ozon_pvz_waiting(cur)
+            # Штрихкоды от этого запроса не зависят: если OZON не ответит, коды всё
+            # равно покажутся — без них кладовщик не заберёт возвраты вообще.
+            try:
+                ozon_waiting, ozon_places, ozon_err = fetch_ozon_pvz_waiting(cur)
+            except Exception as e:
+                ozon_waiting, ozon_places, ozon_err = 0, [], str(e)[:200]
             if not ozon_err:
                 waiting['ozon'] = ozon_waiting
 
@@ -330,7 +340,7 @@ def handler(event: dict, context) -> dict:
                     'dailyRefresh': bool(r[7]),
                     'updatedToday': bool(r[8]),
                 }
-                for r in cur.fetchall()
+                for r in code_rows
             ]
             return _resp(200, {
                 'items': items,
