@@ -11,7 +11,11 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import { shipLabelGoods, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import {
+  shipLabelGoods,
+  sendGoodsToSupply,
+  type GoodsWarehouseItem,
+} from '@/lib/goodsWarehouseApi';
 import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 
@@ -51,6 +55,9 @@ const ShipLabelDialog = ({ open, onOpenChange, matched, onDone }: ShipLabelDialo
   const [barcode, setBarcode] = useState('');
   const [saving, setSaving] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [sending, setSending] = useState(false);
+  /** Стикер уже напечатан — можно отправлять вещь на поставку. */
+  const [printed, setPrinted] = useState(false);
   const [found, setFound] = useState<FoundItem | null>(null);
   const [labeled, setLabeled] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -97,6 +104,7 @@ const ShipLabelDialog = ({ open, onOpenChange, matched, onDone }: ShipLabelDialo
         marketplace: found.marketplace,
         orderType: found.orderType,
       });
+      setPrinted(true);
     } catch (e) {
       toast({
         title: 'Стикер не пришёл',
@@ -108,8 +116,36 @@ const ShipLabelDialog = ({ open, onOpenChange, matched, onDone }: ShipLabelDialo
     }
   };
 
+  /** Вещь наклеена и уложена в отгрузку — она уходит из подбора и ждёт поставку.
+   *
+   * Раньше этого шага не было вовсе: кладовщик печатал стикер, закрывал окно, и вещь
+   * навсегда оставалась «на сборке». Работа выглядела незакрытой, а в поставку такие
+   * вещи не попадали. */
+  const handleSendToSupply = async () => {
+    if (!found) return;
+    setSending(true);
+    try {
+      await sendGoodsToSupply(found.id, user?.id, user?.name);
+      toast({
+        title: 'Вещь готова к поставке',
+        description: `${found.orderNumber} — положите её в зону отгрузки`,
+      });
+      onDone();
+      handleNext();
+    } catch (e) {
+      toast({
+        title: 'Не удалось отправить на поставку',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
   const handleNext = () => {
     setFound(null);
+    setPrinted(false);
     setTimeout(() => inputRef.current?.focus(), 80);
   };
 
@@ -159,22 +195,39 @@ const ShipLabelDialog = ({ open, onOpenChange, matched, onDone }: ShipLabelDialo
               <p className="text-sm font-medium">Что дальше</p>
               <ol className="mt-1.5 space-y-1 text-sm text-muted-foreground">
                 <li>1. Напечатайте стикер и наклейте его на пакет</li>
-                <li>2. Положите вещь в зону отгрузки</li>
+                <li>2. Нажмите «Готово — на поставку» и положите вещь в отгрузку</li>
                 <li>3. Сканируйте следующую</li>
               </ol>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button size="lg" disabled={printing} onClick={handlePrint}>
+              <Button
+                size="lg"
+                variant={printed ? 'outline' : 'default'}
+                disabled={printing}
+                onClick={handlePrint}
+              >
                 {printing ? (
                   <Icon name="Loader2" size={18} className="mr-2 animate-spin" />
                 ) : (
                   <Icon name="Printer" size={18} className="mr-2" />
                 )}
-                Напечатать стикер
+                {printed ? 'Печатать ещё раз' : 'Напечатать стикер'}
               </Button>
-              <Button size="lg" variant="outline" onClick={handleNext}>
-                Следующая вещь
+
+              {/* Завершающий шаг. Без него вещь оставалась «на сборке» навсегда:
+                  кладовщик печатал стикер, закрывал окно — и работа висела незакрытой. */}
+              <Button size="lg" disabled={sending} onClick={handleSendToSupply}>
+                <Icon
+                  name={sending ? 'Loader2' : 'PackageCheck'}
+                  size={18}
+                  className={`mr-2 ${sending ? 'animate-spin' : ''}`}
+                />
+                Готово — на поставку
+              </Button>
+
+              <Button size="lg" variant="ghost" onClick={handleNext}>
+                Пропустить
               </Button>
             </div>
           </div>
