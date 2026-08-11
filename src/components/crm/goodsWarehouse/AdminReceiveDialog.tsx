@@ -67,7 +67,8 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
 
   const found = useMemo(() => {
     const q = normalize(query);
-    if (!q) return [];
+    // Без выбранной полки товар не ищем: класть его будет некуда.
+    if (!q || !shelfId) return [];
     const words = q.split(' ');
     return items
       .filter((i) => {
@@ -77,7 +78,7 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
         return words.every((w) => haystack.includes(w));
       })
       .slice(0, 20);
-  }, [items, query]);
+  }, [items, query, shelfId]);
 
   const totalPieces = cart.reduce((sum, r) => sum + r.qty, 0);
 
@@ -106,7 +107,7 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
   };
 
   const handleSave = async () => {
-    if (!cart.length) return;
+    if (!cart.length || !shelfId) return;
     setSaving(true);
     try {
       // Каждая позиция уходит ОДНИМ запросом со своим количеством, а сервер заводит все
@@ -118,11 +119,7 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
 
       for (const row of cart) {
         try {
-          const res = await adminReceiveGoods(
-            row.item.id,
-            shelfId ? Number(shelfId) : undefined,
-            row.qty
-          );
+          const res = await adminReceiveGoods(row.item.id, Number(shelfId), row.qty);
           const list = res.created?.length ? res.created : [res];
           list.forEach((g) =>
             printed.push({
@@ -185,6 +182,25 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
             ленту стикеров хранения
           </p>
 
+          {/* Полка выбирается ПЕРВОЙ и обязательна: вещь, принятая без полки, повисает
+              в статусе «Ждёт полку» — по факту она уже лежит на складе, но найти её
+              нельзя, пока кладовщик отдельно не отсканирует её на полку. */}
+          <div className="space-y-1.5">
+            <Label>Полка</Label>
+            <Select value={shelfId} onValueChange={setShelfId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Выберите полку, куда кладёте товар" />
+              </SelectTrigger>
+              <SelectContent>
+                {shelves.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="space-y-1.5">
             <Label>Найти товар</Label>
             <Input
@@ -192,10 +208,16 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
               placeholder="Например: вуаль 300x250"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              disabled={!shelfId}
             />
+            {!shelfId && (
+              <p className="text-xs text-muted-foreground">
+                Сначала выберите полку — товар кладётся сразу на неё
+              </p>
+            )}
           </div>
 
-          {query.trim() && (
+          {shelfId && query.trim() && (
             <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-border p-2">
               {found.length === 0 ? (
                 <p className="p-2 text-sm text-muted-foreground">
@@ -275,23 +297,6 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
             </div>
           )}
 
-          <div className="space-y-1.5">
-            <Label>Полка (необязательно)</Label>
-            <Select value={shelfId || 'none'} onValueChange={(v) => setShelfId(v === 'none' ? '' : v)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Положу на полку сканированием" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Положу на полку сканированием</SelectItem>
-                {shelves.map((s) => (
-                  <SelectItem key={s.id} value={String(s.id)}>
-                    {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
           <label className="flex cursor-pointer items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -302,7 +307,12 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
             Сразу напечатать ленту стикеров хранения
           </label>
 
-          <Button className="w-full" size="lg" onClick={handleSave} disabled={saving || !cart.length}>
+          <Button
+            className="w-full"
+            size="lg"
+            onClick={handleSave}
+            disabled={saving || !cart.length || !shelfId}
+          >
             {saving ? (
               <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
             ) : (
