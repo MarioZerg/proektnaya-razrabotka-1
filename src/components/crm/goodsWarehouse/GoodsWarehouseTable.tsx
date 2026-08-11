@@ -25,6 +25,8 @@ import GoodsWarehouseCards from '@/components/crm/goodsWarehouse/GoodsWarehouseC
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printIndividualSticker } from '@/lib/printIndividualSticker';
+import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
+import { useToast } from '@/hooks/use-toast';
 import {
   formatDate,
   statusLabels,
@@ -56,6 +58,31 @@ const GoodsWarehouseTable = ({
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** Какой вещи сейчас тянем ярлык у маркетплейса: он приходит по сети, не мгновенно. */
+  const [labelBusyId, setLabelBusyId] = useState<number | null>(null);
+  const { toast } = useToast();
+
+  /** Перепечатка ярлыка маркетплейса по вещи, собранной с полки. */
+  const handlePrintMpLabel = async (i: GoodsWarehouseItem) => {
+    if (!i.reservedOrderId) return;
+    setLabelBusyId(i.id);
+    try {
+      await printOrderMarketplaceLabel({
+        id: i.reservedOrderId,
+        orderNumber: i.reservedOrderNumber || '',
+        marketplace: i.marketplace,
+        orderType: i.orderType,
+      });
+    } catch (e) {
+      toast({
+        title: 'Ярлык не пришёл',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setLabelBusyId(null);
+    }
+  };
 
   const handleConfirmDelete = async () => {
     if (!deleteId || !onDelete) return;
@@ -105,6 +132,7 @@ const GoodsWarehouseTable = ({
           items={items}
           onReturnToWorkshop={onReturnToWorkshop}
           onMarkLost={openLostDialog}
+          onPrintMpLabel={handlePrintMpLabel}
         />
       </div>
 
@@ -114,7 +142,7 @@ const GoodsWarehouseTable = ({
             <TableRow className="bg-primary hover:bg-primary">
               <TableHead className="text-primary-foreground">Товар</TableHead>
               <TableHead className="text-primary-foreground">Статус</TableHead>
-              <TableHead className="text-primary-foreground">Стикер</TableHead>
+              <TableHead className="text-primary-foreground">Стикеры</TableHead>
               <TableHead className="text-primary-foreground">№ полки</TableHead>
               <TableHead className="text-primary-foreground">Дата отгрузки</TableHead>
               <TableHead className="text-primary-foreground">Дата возврата</TableHead>
@@ -179,6 +207,27 @@ const GoodsWarehouseTable = ({
                     >
                       <Icon name="Barcode" size={12} />
                     </Button>
+
+                    {/* Ярлык маркетплейса для вещей, которые уже собрали с полки.
+                        Кладовщик мог наклеить его криво, порвать при укладке или просто
+                        забыть — а вещь к этому моменту ушла из подбора, и напечатать
+                        ярлык было уже неоткуда. Теперь он всегда под рукой в списке. */}
+                    {i.reservedOrderId && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        title={`Напечатать ярлык ${(i.marketplace || 'маркетплейса').toUpperCase()} по заказу ${i.reservedOrderNumber || ''}`}
+                        disabled={labelBusyId === i.id}
+                        onClick={() => handlePrintMpLabel(i)}
+                      >
+                        <Icon
+                          name={labelBusyId === i.id ? 'Loader2' : 'Printer'}
+                          size={12}
+                          className={labelBusyId === i.id ? 'animate-spin' : ''}
+                        />
+                      </Button>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell>{i.shelfName || '—'}</TableCell>

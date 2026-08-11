@@ -17,6 +17,8 @@ interface GoodsWarehouseCardsProps {
   items: GoodsWarehouseItem[];
   onReturnToWorkshop: (id: number) => void;
   onMarkLost: (id: number) => void;
+  /** Перепечатать ярлык маркетплейса по вещи, собранной с полки. */
+  onPrintMpLabel?: (item: GoodsWarehouseItem) => void;
 }
 
 /** Мобильный вид склада готового товара — карточки вместо широкой таблицы,
@@ -25,6 +27,7 @@ const GoodsWarehouseCards = ({
   items,
   onReturnToWorkshop,
   onMarkLost,
+  onPrintMpLabel,
 }: GoodsWarehouseCardsProps) => {
   return (
     <div className="space-y-3">
@@ -72,6 +75,19 @@ const GoodsWarehouseCards = ({
               <Icon name="Barcode" size={12} />
               {i.storageBarcode}
             </button>
+
+            {/* Ярлык маркетплейса для собранной с полки вещи: если наклейку порвали или
+                забыли, кладовщик печатает её прямо отсюда, с телефона у стеллажа. */}
+            {i.reservedOrderId && (
+              <button
+                type="button"
+                onClick={() => onPrintMpLabel?.(i)}
+                className="mt-1.5 flex items-center gap-1.5 text-xs text-primary underline-offset-2 hover:underline"
+              >
+                <Icon name="Printer" size={12} />
+                Ярлык {(i.marketplace || '').toUpperCase() || 'маркетплейса'}
+              </button>
+            )}
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Badge
