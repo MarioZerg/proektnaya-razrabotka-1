@@ -1296,9 +1296,15 @@ def handler(event: dict, context) -> dict:
                 }
 
             if action == 'send_to_check':
-                # Отправка возврата на осмотр в цех: вещь получает статус «На проверке».
+                # Приём возврата на склад. Кладовщик решает прямо в карточке, куда вещь идёт:
+                #   toPacker=False — «На разборе с маркетплейса» (checking): коробку принял,
+                #     разберёт позже;
+                #   toPacker=True  — сразу «На проверке» (repacking): вещь уходит упаковщице
+                #     в цех одним нажатием, без промежуточного шага и лишнего сканирования.
                 # После осмотра её либо перепакуют и вернут в продажу, либо спишут.
                 order_id = body_data.get('orderId')
+                to_packer = bool(body_data.get('toPacker'))
+                new_status = 'repacking' if to_packer else 'checking'
                 if not order_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите orderId'})}
 
@@ -1313,7 +1319,7 @@ def handler(event: dict, context) -> dict:
                 if exists:
                     gw_id = exists[0]
                     cur.execute(
-                        "UPDATE goods_warehouse SET status = 'checking', shelf_id = NULL, "
+                        f"UPDATE goods_warehouse SET status = '{new_status}', shelf_id = NULL, "
                         "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
                         "reserved_order_id = NULL, shipping_labeled_at = NULL, "
                         "receive_reason = 'return', received_at = now() "
@@ -1324,14 +1330,15 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         "INSERT INTO goods_warehouse (order_id, status, storage_barcode, "
                         "receive_reason, received_at) "
-                        "VALUES (%s, 'checking', %s, 'return', now()) RETURNING id",
+                        f"VALUES (%s, '{new_status}', %s, 'return', now()) RETURNING id",
                         (int(order_id), barcode_new),
                     )
                     gw_id = cur.fetchone()[0]
 
                 log_action(
                     cur, actor_id, actor_name, 'send_to_check', 'goods_warehouse', gw_id,
-                    f'Принял возврат #{num} и отправил на осмотр в цех',
+                    f'Принял возврат #{num}: '
+                    + ('передал упаковщице на осмотр' if to_packer else 'взял на разбор'),
                 )
                 conn.commit()
                 cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE id = %s", (int(gw_id),))
@@ -1342,6 +1349,7 @@ def handler(event: dict, context) -> dict:
                         'success': True,
                         'id': gw_id,
                         'storageBarcode': cur.fetchone()[0],
+                        'toPacker': to_packer,
                     }, ensure_ascii=False),
                 }
 

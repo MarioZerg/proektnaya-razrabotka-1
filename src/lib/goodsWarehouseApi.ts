@@ -404,8 +404,15 @@ export const scanReturn = (barcode: string) =>
   postAction({ action: 'scan_return', barcode }) as Promise<ScannedReturn>;
 
 /** Возврат уходит на осмотр в цех: вещь получает статус «На проверке». */
-export const sendReturnToCheck = (orderId: number, actorId?: number, actorName?: string) =>
-  postAction({ action: 'send_to_check', orderId, actorId, actorName }) as Promise<{
+/** @param toPacker true — вещь сразу уходит упаковщице в цех («На проверке»),
+ * false — кладовщик берёт её на разбор и решит позже. */
+export const sendReturnToCheck = (
+  orderId: number,
+  actorId?: number,
+  actorName?: string,
+  toPacker?: boolean,
+) =>
+  postAction({ action: 'send_to_check', orderId, actorId, actorName, toPacker }) as Promise<{
     success: true;
     id: number;
     storageBarcode: string;

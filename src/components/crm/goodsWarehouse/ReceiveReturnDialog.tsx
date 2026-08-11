@@ -117,14 +117,17 @@ const ReceiveReturnDialog = ({
 
   useScannerAutoSubmit(barcode, handleScan, !busy && !found);
 
-  const handleSendToCheck = async () => {
+  /** @param toPacker true — вещь сразу уезжает упаковщице, false — остаётся на разборе. */
+  const handleSendToCheck = async (toPacker: boolean) => {
     if (!found) return;
     setSending(true);
     try {
-      const res = await sendReturnToCheck(found.orderId, user?.id, user?.name);
+      const res = await sendReturnToCheck(found.orderId, user?.id, user?.name, toPacker);
       toast({
-        title: 'Возврат принят на осмотр',
-        description: `Стикер хранения ${res.storageBarcode} — отнесите вещь в цех`,
+        title: toPacker ? 'Передано упаковщице на осмотр' : 'Возврат принят на разбор',
+        description: toPacker
+          ? `Стикер хранения ${res.storageBarcode} — отнесите вещь в цех`
+          : `Стикер хранения ${res.storageBarcode} — вещь ждёт вашего решения`,
       });
       setFound(null);
       onDone();
@@ -191,16 +194,28 @@ const ReceiveReturnDialog = ({
               </div>
             </div>
 
-            <div className="flex flex-col gap-2 md:w-52">
-              <Button size="lg" onClick={handleSendToCheck} disabled={sending}>
+            {/* Два пути вещи. Основной — сразу упаковщице: кладовщик пикнул коробку и
+                одним нажатием отдал её в цех, не заходя больше никуда. Второй — взять
+                на разбор, если решение по вещи он примет позже. */}
+            <div className="flex flex-col gap-2 md:w-56">
+              <Button size="lg" onClick={() => handleSendToCheck(true)} disabled={sending}>
                 <Icon
                   name={sending ? 'Loader2' : 'Wrench'}
                   size={18}
                   className={`mr-2 ${sending ? 'animate-spin' : ''}`}
                 />
-                Отправить на осмотр в цех
+                Сразу упаковщице на осмотр
               </Button>
-              <Button size="lg" variant="outline" onClick={handleNext}>
+              <Button
+                size="lg"
+                variant="outline"
+                onClick={() => handleSendToCheck(false)}
+                disabled={sending}
+              >
+                <Icon name="PackageSearch" size={18} className="mr-2" />
+                Взять на разбор
+              </Button>
+              <Button size="lg" variant="ghost" onClick={handleNext}>
                 <Icon name="ScanLine" size={18} className="mr-2" />
                 Следующий возврат
               </Button>
