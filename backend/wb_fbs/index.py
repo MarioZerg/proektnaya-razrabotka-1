@@ -270,7 +270,7 @@ def handle_create_supply(cur, conn, body_data, api_key, use_sandbox):
 
 def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
     """Сканирование готового FBS-заказа WB в поставку: добавляет сборочное задание в
-    WB-поставку (PATCH /api/v3/supplies/{sid}/orders/{orderId}) и фиксирует связь у нас."""
+    WB-поставку (PATCH /api/marketplace/v3/supplies/{sid}/orders) и фиксирует связь у нас."""
     supply_id = body_data.get('supplyId')
     order_number = (body_data.get('orderNumber') or '').strip()
     if not supply_id or not order_number:
@@ -341,8 +341,8 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
             return _resp(409, {'error': f'Заказ {order_number} уже добавлен в другую поставку'})
         move_from_accumulator = True
 
-    status_code, data = wb_request(
-        'PATCH', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}', api_key, use_sandbox
+    status_code, data = wb_add_orders_to_supply(
+        api_key, use_sandbox, wb_supply_id, [wb_order_id]
     )
     if status_code not in (200, 204):
         return _resp(502, {'error': f'WB не принял заказ в поставку ({status_code}): {wb_error_text(status_code, data)}'})
@@ -577,9 +577,8 @@ def handle_move_orders(cur, conn, body_data, api_key, use_sandbox):
         if from_supply_id == int(supply_id):
             continue
 
-        status_code, data = wb_request(
-            'PATCH', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}',
-            api_key, use_sandbox,
+        status_code, data = wb_add_orders_to_supply(
+            api_key, use_sandbox, wb_supply_id, [wb_order_id]
         )
         if status_code not in (200, 204):
             errors.append(f'{order_number}: {wb_error_text(status_code, data)}')
@@ -876,6 +875,24 @@ def ensure_open_supply(cur, conn, api_key, use_sandbox):
     return None, supply_id, wb_supply_id
 
 
+def wb_add_orders_to_supply(api_key, use_sandbox, wb_supply_id, wb_order_ids):
+    """Кладёт сборочные задания в поставку на стороне WB.
+
+    ВАЖНО ПРО АДРЕС. Раньше задание добавлялось по одному:
+    PATCH /api/v3/supplies/{supplyId}/orders/{orderId}. Wildberries этот адрес
+    отключил — на него приходит 404 «path not found», и печать стикеров встала
+    целиком: WB рисует ярлык только для задания, лежащего в поставке. Действующий
+    метод принимает СПИСОК заданий телом запроса:
+    PATCH /api/marketplace/v3/supplies/{supplyId}/orders  {"orders": [id, ...]}
+
+    Возвращает (status_code, data). Успех — 200 или 204.
+    """
+    return wb_request(
+        'PATCH', f'/api/marketplace/v3/supplies/{wb_supply_id}/orders',
+        api_key, use_sandbox, {'orders': [int(i) for i in wb_order_ids]},
+    )
+
+
 def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
     """Кладёт заказ в свободную поставку WB при печати стикера.
 
@@ -886,24 +903,25 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
     (или None), а печать идёт в любом случае.
     """
     cur.execute(
-        "SELECT o.id, o.wb_order_id, o.sewing_status, o.fulfilled_from_stock_id, "
-        "gw.shipping_labeled_at "
+        "SELECT o.id, o.wb_order_id, o.sewing_status, o.fulfilled_from_stock_id "
         "FROM orders o "
-        "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
         "WHERE o.order_number = %s AND o.marketplace = 'WB' AND o.order_type = 'FBS'",
         (order_number,),
     )
     o_row = cur.fetchone()
     if not o_row or not o_row[1]:
         return 'У заказа нет сборочного задания WB'
-    order_id, wb_order_id, sewing_status, from_stock_id, labeled_at = o_row
+    order_id, wb_order_id, sewing_status, from_stock_id = o_row
 
-    # Заказ закрыт вещью с полки, но её ещё не сняли и не отстикеровали. В поставку
-    # такую вещь не пускаем: физически она лежит на полке, и в коробе её нет.
-    # Кладовщик сначала собирает и стикерует её на странице «Сборка товара с полок» —
-    # оттуда она и попадёт в поставку.
-    if from_stock_id and not labeled_at:
-        return 'Вещь ещё лежит на полке — соберите и отстикеруйте её в разделе «Сборка товара с полок»'
+    # ЗДЕСЬ НЕЛЬЗЯ ТРЕБОВАТЬ ОТМЕТКУ О СТИКЕРОВКЕ. Раньше стояла проверка «вещь ещё
+    # лежит на полке — соберите и отстикеруйте её», и вещи со склада вообще нельзя
+    # было отправить: отметка о стикеровке ставится ПОСЛЕ успешной печати ярлыка, а
+    # ярлык WB рисует только для задания, лежащего в поставке. Круг замыкался —
+    # кладовщик стоял у стеллажа с вещью в руках, жал «Печать» и получал совет пойти
+    # отстикеровать её в том самом разделе, где он уже находится.
+    # Печать ярлыка и ЕСТЬ момент сборки вещи с полки, поэтому в поставку пускаем.
+    # Реальная защита от «вещи нет в коробе» стоит на сканировании заказа в поставку
+    # (handle_scan_order) — там вещь уже должна быть отстикерована.
 
     # Заказ уже лежит в какой-то поставке — второй раз не добавляем.
     cur.execute("SELECT supply_id FROM wb_supply_orders WHERE order_id = %s", (order_id,))
@@ -914,17 +932,28 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
     if err:
         return err
 
-    status_code, data = wb_request(
-        'PATCH', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}',
-        api_key, use_sandbox,
+    status_code, data = wb_add_orders_to_supply(
+        api_key, use_sandbox, wb_supply_id, [wb_order_id]
     )
 
-    # 404 — накопительной поставки на стороне WB больше нет: её закрыли, отгрузили или
-    # удалили в кабинете. Наша запись при этом осталась «Открытой», и все стикеры
-    # переставали печататься: WB рисует ярлык только для задания, лежащего в поставке.
-    # Закрываем устаревшую запись, заводим новую поставку и добавляем заказ в неё —
-    # кладовщик просто печатает ярлык и ничего об этом не знает.
+    # 404 у WB означает две РАЗНЫЕ вещи: «нет такой поставки» и «нет такого задания».
+    # Раньше мы считали, что виновата поставка, и на каждую печать закрывали её и
+    # заводили новую. За один день так наплодилось восемь пустых поставок в кабинете
+    # WB, а стикер всё равно не печатался — настоящая причина была в задании.
+    # Поэтому сначала спрашиваем WB напрямую, жива ли поставка.
+    supply_alive = None
     if status_code == 404:
+        chk_code, _ = wb_request(
+            'GET', f'/api/v3/supplies/{wb_supply_id}', api_key, use_sandbox
+        )
+        supply_alive = chk_code == 200
+
+    # Поставки на стороне WB действительно нет: её закрыли, отгрузили или удалили в
+    # кабинете. Наша запись при этом осталась «Открытой», и все стикеры переставали
+    # печататься: WB рисует ярлык только для задания, лежащего в поставке. Закрываем
+    # устаревшую запись, заводим новую и добавляем заказ в неё — кладовщик просто
+    # печатает ярлык и ничего об этом не знает.
+    if status_code == 404 and supply_alive is False:
         cur.execute(
             "UPDATE marketplace_supplies SET status = 'Выполнена', "
             "comment = COALESCE(comment, '') || ' · Закрыта на стороне WB' "
@@ -935,19 +964,19 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
         err, supply_id, wb_supply_id = ensure_open_supply(cur, conn, api_key, use_sandbox)
         if err:
             return err
-        status_code, data = wb_request(
-            'PATCH', f'/api/v3/supplies/{wb_supply_id}/orders/{int(wb_order_id)}',
-            api_key, use_sandbox,
+        status_code, data = wb_add_orders_to_supply(
+            api_key, use_sandbox, wb_supply_id, [wb_order_id]
         )
 
     if status_code == 404:
-        # Поставку мы только что пересоздали, значит дело в самом задании: на стороне WB
-        # его уже нет в работе — чаще всего оно лежит в другой, уже отгруженной поставке
-        # или было закрыто в кабинете. Стикер для него WB больше не рисует.
+        # Поставка жива (или мы её только что пересоздали), а WB всё равно отвечает
+        # 404 — значит дело в самом задании: на стороне WB его уже нет в работе.
+        # Чаще всего оно лежит в другой, уже отгруженной поставке либо было закрыто
+        # в кабинете. Стикер для него WB больше не рисует.
         return (
-            'Wildberries не принимает этот заказ в поставку: задание уже закрыто или '
-            'лежит в другой поставке на стороне WB. Стикер для него больше не печатается — '
-            'проверьте заказ в кабинете WB'
+            f'Wildberries не находит сборочное задание {wb_order_id}: оно закрыто или '
+            'лежит в другой поставке на стороне WB. Стикер для него больше не '
+            'печатается — проверьте заказ в кабинете WB'
         )
     if status_code not in (200, 204):
         return f'WB не принял заказ в поставку ({status_code}): {wb_error_text(status_code, data)}'
@@ -1125,6 +1154,7 @@ def handler(event: dict, context) -> dict:
             return handle_list_pending(cur, body_data)
         if action == 'move_orders_to_supply':
             return handle_move_orders(cur, conn, body_data, api_key, use_sandbox)
+
         if action == 'label':
             # Маркетплейсный стикер на вещь — печатается на терминале упаковщика.
             order_number = (body_data.get('orderNumber') or '').strip()
