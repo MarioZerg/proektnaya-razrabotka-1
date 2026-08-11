@@ -1876,7 +1876,15 @@ def handler(event: dict, context) -> dict:
 
                 ids_csv = ','.join(str(int(i)) for i in taken_ids)
                 cur.execute(
+                    # Цех проставляем по смене швеи, если у заказа его ещё нет.
+                    #
+                    # Заказы маркетплейсов приходят без цеха — его задаёт раскрой. Но FBO-заказы
+                    # попадают в пошив, минуя раскрой (ткань уже готова), и цех оставался пустым.
+                    # Дальше по цепочке зарплата швеи считается по ставке ЦЕХА ЗАКАЗА: нет цеха —
+                    # нет ставки — начисление молча не создаётся. Швея отшивала смену и не
+                    # получала за неё ничего, а в отчётах это выглядело как «не работала».
                     f"UPDATE orders SET sewing_status = 'В работе', assigned_user_id = {int(user_id)}, "
+                    f"workshop_id = COALESCE(workshop_id, {int(session_workshop_id)}), "
                     f"taken_at = now() WHERE id IN ({ids_csv})"
                 )
                 if group_key and len(taken_ids) > 1:

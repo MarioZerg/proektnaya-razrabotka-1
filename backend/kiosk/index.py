@@ -744,10 +744,24 @@ def handler(event: dict, context) -> dict:
                 # Швея получает фиксированную ставку за штуку по ширине товара — именно сейчас,
                 # когда заказ реально дошит и прошёл стикеровку (не раньше). Ставка берётся из
                 # тарифов цеха, в котором выполняется заказ (order_workshop_id).
-                if assigned_user_id and width and order_workshop_id:
+                # Цех для ставки: у заказа, если проставлен, иначе штатный цех самой швеи.
+                # Без этой подстраховки заказ без цеха (FBO приходит в пошив мимо раскроя)
+                # давал нулевую ставку, и начисление молча не создавалось — швея работала
+                # смену бесплатно, а в отчётах выглядела как «не работавшая».
+                sewer_workshop_for_rate = order_workshop_id
+                if assigned_user_id and not sewer_workshop_for_rate:
+                    cur.execute(
+                        "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                        "WHERE u.id = %s",
+                        (int(assigned_user_id),),
+                    )
+                    sw_row = cur.fetchone()
+                    sewer_workshop_for_rate = sw_row[0] if sw_row else None
+
+                if assigned_user_id and width and sewer_workshop_for_rate:
                     cur.execute(
                         "SELECT rate FROM salary_rates WHERE role = 'sewer' AND width = %s AND workshop_id = %s",
-                        (int(width), order_workshop_id),
+                        (int(width), sewer_workshop_for_rate),
                     )
                     rate_row = cur.fetchone()
                     sewer_rate = float(rate_row[0]) if rate_row else 0
