@@ -39,6 +39,7 @@ const GoodsWarehouse = () => {
   const [shelves, setShelves] = useState<Shelf[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('in_stock');
   const [materialFilter, setMaterialFilter] = useState('');
   const [widthFilter, setWidthFilter] = useState('');
@@ -121,8 +122,27 @@ const GoodsWarehouse = () => {
     [items]
   );
 
+  const q = search.trim().toLowerCase();
+
   const filtered = items.filter((i) => {
-    if (statusFilter !== 'all' && i.status !== statusFilter) return false;
+    // Поиск идёт по всему, чем вещь можно назвать: стикер хранения (его пикают сканером),
+    // номер заказа — свой и тот, под который вещь подобрана, название и материал.
+    // Пока в строке что-то есть, статус не ограничиваем: кладовщик ищет конкретную вещь
+    // и не должен гадать, в каком она сейчас состоянии.
+    if (q) {
+      const haystack = [
+        i.storageBarcode,
+        i.orderNumber,
+        i.reservedOrderNumber,
+        i.product,
+        i.material,
+        i.shelfName,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (!haystack.includes(q)) return false;
+    } else if (statusFilter !== 'all' && i.status !== statusFilter) return false;
     if (materialFilter && i.material !== materialFilter) return false;
     if (widthFilter && i.width !== Number(widthFilter)) return false;
     if (heightFilter && i.height !== Number(heightFilter)) return false;
@@ -155,6 +175,7 @@ const GoodsWarehouse = () => {
   );
 
   const activeFiltersCount = [
+    !!q,
     statusFilter !== 'in_stock',
     !!materialFilter,
     !!widthFilter,
@@ -163,6 +184,7 @@ const GoodsWarehouse = () => {
   ].filter(Boolean).length;
 
   const resetFilters = () => {
+    setSearch('');
     setStatusFilter('all');
     setMaterialFilter('');
     setWidthFilter('');
@@ -331,6 +353,8 @@ const GoodsWarehouse = () => {
         )}
 
         <GoodsWarehouseFilters
+          search={search}
+          setSearch={setSearch}
           statusFilter={statusFilter}
           setStatusFilter={setStatusFilter}
           materialFilter={materialFilter}

@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -10,6 +11,9 @@ import Icon from '@/components/ui/icon';
 import type { Shelf } from '@/lib/shelvesApi';
 
 interface GoodsWarehouseFiltersProps {
+  /** Строка поиска: стикер хранения, номер заказа или название товара. */
+  search: string;
+  setSearch: (value: string) => void;
   statusFilter: string;
   setStatusFilter: (value: string) => void;
   materialFilter: string;
@@ -39,6 +43,8 @@ interface GoodsWarehouseFiltersProps {
  * и без опечаток, чем набирать число руками.
  */
 const GoodsWarehouseFilters = ({
+  search,
+  setSearch,
   statusFilter,
   setStatusFilter,
   materialFilter,
@@ -59,6 +65,41 @@ const GoodsWarehouseFilters = ({
   onReset,
 }: GoodsWarehouseFiltersProps) => {
   return (
+    <div className="space-y-3">
+      {/* Поиск отдельной строкой над фильтрами: чаще всего кладовщик ищет ОДНУ вещь —
+          пикает её стикер сканером или вбивает номер заказа. Перебирать ради этого
+          фильтры бессмысленно. Сканер подставит код сам, поле ловит фокус первым. */}
+      <div className="relative max-w-xl">
+        <Icon
+          name="Search"
+          size={16}
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Поиск: стикер хранения, номер заказа, товар или материал"
+          className="h-11 pl-9 pr-9"
+          autoComplete="off"
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
+            title="Очистить поиск"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+          >
+            <Icon name="X" size={16} />
+          </button>
+        )}
+      </div>
+
+      {search.trim() && (
+        <p className="text-xs text-muted-foreground">
+          Ищем по всему складу — состояние вещи не учитывается
+        </p>
+      )}
+
     <div className="flex flex-wrap items-center gap-3">
       {/* 1. Состояние вещи. «Возвраты с маркетплейса» — не статус, а происхождение:
           вещи, приехавшие обратно от покупателя, в любом состоянии. */}
@@ -176,6 +217,7 @@ const GoodsWarehouseFilters = ({
           Сбросить ({activeFiltersCount})
         </Button>
       )}
+      </div>
     </div>
   );
 };
