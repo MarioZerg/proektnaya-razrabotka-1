@@ -10,6 +10,7 @@ import { useAuth } from '@/context/AuthContext';
 import {
   fetchGoodsCard,
   sendGoodsToSupply,
+  shipLabelGoods,
   type GoodsCard as GoodsCardType,
 } from '@/lib/goodsWarehouseApi';
 import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
@@ -96,8 +97,15 @@ const GoodsCard = () => {
         marketplace: card.reservedMarketplace,
         orderType: card.reservedOrderType,
       });
+      // Отмечаем наклейку ярлыка в системе, а не только на экране.
+      //
+      // Раньше кнопка лишь запоминала печать в браузере: вещь выглядела готовой,
+      // но сервер об этом не знал и на «Отправить на поставку» отвечал «сначала
+      // напечатайте стикер FBS». Кладовщик оказывался в тупике — печатал снова и снова.
+      await shipLabelGoods(card.storageBarcode, user?.id, user?.name).catch(() => undefined);
       setJustPrinted(true);
       toast({ title: 'Стикер отправлен на печать' });
+      load();
     } catch (e) {
       toast({
         title: 'Стикер не пришёл',
@@ -113,6 +121,12 @@ const GoodsCard = () => {
     if (!card) return;
     setSending(true);
     try {
+      // Если ярлык печатали, но отметка в системе не легла (сбой сети, старая вкладка),
+      // проставляем её здесь же. Кладовщик держит наклеенную вещь в руках — разворачивать
+      // его сообщением «сначала напечатайте стикер» нельзя.
+      if (!card.shippingLabeledAt) {
+        await shipLabelGoods(card.storageBarcode, user?.id, user?.name).catch(() => undefined);
+      }
       await sendGoodsToSupply(card.id, user?.id, user?.name);
       toast({
         title: 'Отправлено на поставку',
