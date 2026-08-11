@@ -122,11 +122,7 @@ const GoodsWarehouse = () => {
   );
 
   const filtered = items.filter((i) => {
-    // «Возвраты с маркетплейса» — не состояние, а происхождение вещи: она приехала
-    // обратно от покупателя. Показываем такие в любом состоянии.
-    if (statusFilter === 'returns') {
-      if (i.receiveReason !== 'return' && i.receiveReason !== 'cancelled') return false;
-    } else if (statusFilter !== 'all' && i.status !== statusFilter) return false;
+    if (statusFilter !== 'all' && i.status !== statusFilter) return false;
     if (materialFilter && i.material !== materialFilter) return false;
     if (widthFilter && i.width !== Number(widthFilter)) return false;
     if (heightFilter && i.height !== Number(heightFilter)) return false;

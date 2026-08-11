@@ -69,18 +69,18 @@ const GoodsWarehouseFilters = ({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все</SelectItem>
-            {/* mp_return — состояние «лежит у кладовщика, полки нет».
-                returns — происхождение вещи: она когда-либо приезжала назад, в любом
-                состоянии. Названия разные, иначе два пункта не отличить. */}
+            {/* mp_return — состояние «приехал с ПВЗ, лежит у кладовщика».
+                Этапы разбора и осмотра сюда не выносим: их место в воронке
+                «Возвраты на осмотре», где по ним и работают. */}
             <SelectItem value="mp_return">Возврат с маркетплейса</SelectItem>
-            <SelectItem value="returns">Все возвраты (за всё время)</SelectItem>
-            <SelectItem value="awaiting_shelf">На разборе с производства</SelectItem>
-            <SelectItem value="checking">На разборе с маркетплейса</SelectItem>
             <SelectItem value="repacking">На проверке</SelectItem>
             <SelectItem value="inspected">Осмотрено</SelectItem>
             <SelectItem value="taken">Забрано с производства</SelectItem>
             <SelectItem value="in_stock">На хранении</SelectItem>
             <SelectItem value="picking">На сборке</SelectItem>
+            {/* Отстикерованные вещи, ждущие поставку: и FBS, и FBO. Кладовщику нужно
+                быстро найти такую вещь, чтобы перепечатать ярлык маркетплейса. */}
+            <SelectItem value="awaiting_supply">На поставке</SelectItem>
             <SelectItem value="lost">Утерян</SelectItem>
           </SelectContent>
         </Select>
