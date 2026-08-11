@@ -32,6 +32,7 @@ import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels, isStorekeeperRole } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
 import { usePickingPending } from '@/hooks/usePickingPending';
+import { useRepackPending } from '@/hooks/useRepackPending';
 import KioskPreviewDialog from '@/components/crm/kiosk/KioskPreviewDialog';
 import ContractGate from '@/components/crm/contracts/ContractGate';
 import DocsGate from '@/components/crm/personal/DocsGate';
@@ -53,6 +54,9 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   const { pending: pickingPending } = usePickingPending(
     isStorekeeperRole(user?.role) || user?.role === 'admin',
   );
+
+  // Счётчик работы у упаковщицы: возвраты, переданные кладовщиком в цех на осмотр.
+  const repackPending = useRepackPending(user?.role === 'packer' || user?.role === 'admin');
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -169,6 +173,14 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                           <Link to={item.path!}>
                             <Icon name={item.icon} size={16} />
                             <span>{item.label}</span>
+                            {/* Возвраты, переданные в цех: упаковщица видит новую работу,
+                                не заходя на страницу. */}
+                            {item.path === '/crm/inventory/packer-repack' &&
+                              repackPending > 0 && (
+                                <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
+                                  {repackPending}
+                                </span>
+                              )}
                           </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
