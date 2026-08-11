@@ -185,53 +185,69 @@ def sync_ozon(cur, days):
     if not client_id or not api_key:
         return {'created': 0, 'updated': 0, 'error': 'Не заполнены Client Id и Api Key OZON'}
 
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
     headers = {'Client-Id': client_id, 'Api-Key': api_key}
     created = updated = 0
-    last_id = 0
-    for _ in range(20):  # страховка от бесконечной постраничной выборки
-        status, data = http_json(
-            OZON_API_BASE + '/v1/returns/list',
-            'POST',
-            headers,
-            {
-                'filter': {'logistic_return_date': {'time_from': since}},
-                'limit': 500,
-                'last_id': last_id,
-            },
-        )
-        if status != 200:
-            return {'created': created, 'updated': updated, 'error': error_text(data)}
+    sync_error = None
 
-        returns = (data or {}).get('returns') or []
-        if not returns:
-            break
-        for it in returns:
-            product = it.get('product') or {}
-            exchange = it.get('exchange_order') or {}
-            rec = {
-                'externalId': str(it.get('id') or exchange.get('id') or ''),
-                'postingNumber': it.get('posting_number'),
-                'offerId': product.get('offer_id'),
-                'sku': product.get('sku'),
-                'productName': product.get('name'),
-                'quantity': product.get('quantity') or 1,
-                'mpStatus': (it.get('visual') or {}).get('status', {}).get('display_name')
-                or it.get('status'),
-                'reason': it.get('return_reason_name') or it.get('reason'),
-                'createdAt': it.get('logistic', {}).get('return_date')
-                or it.get('created_at'),
-            }
-            if not rec['externalId']:
-                continue
-            if save_return(cur, 'OZON', rec) == 'created':
-                created += 1
-            else:
-                updated += 1
-        if not (data or {}).get('has_next'):
-            break
-        last_id = returns[-1].get('id') or 0
-    return {'created': created, 'updated': updated, 'error': None}
+    # Берём возвраты по СТАТУСУ, а не по дате логистики: у вещей, которые ещё лежат в
+    # пункте выдачи, дата возврата не проставлена, и фильтр по ней отдавал пустой список —
+    # склад видел «24 ждут» из кабинета OZON, а принять сканером было нечего.
+    #   ArrivedAtReturnPlace — доехал до пункта выдачи, ждёт нас (это и есть те 24);
+    #   ReturnedToOzon       — уже забрали / у площадки.
+    # Другие названия статусов OZON отвергает с ошибкой, поэтому список строго такой.
+    for visual_status in ('ArrivedAtReturnPlace', 'ReturnedToOzon'):
+        last_id = 0
+        for _ in range(20):  # страховка от бесконечной постраничной выборки
+            status, data = http_json(
+                OZON_API_BASE + '/v1/returns/list',
+                'POST',
+                headers,
+                {
+                    'filter': {'visual_status_name': visual_status},
+                    'limit': 500,
+                    'last_id': last_id,
+                },
+            )
+            if status != 200:
+                # Один статус не принят площадкой — не роняем всю загрузку: остальные
+                # возвраты важнее, кладовщику нужно принять то, что уже приехало.
+                sync_error = error_text(data)
+                break
+
+            returns = (data or {}).get('returns') or []
+            if not returns:
+                break
+            for it in returns:
+                product = it.get('product') or {}
+                exchange = it.get('exchange_order') or {}
+                rec = {
+                    'externalId': str(it.get('id') or exchange.get('id') or ''),
+                    'postingNumber': it.get('posting_number'),
+                    'offerId': product.get('offer_id'),
+                    'sku': product.get('sku'),
+                    'productName': product.get('name'),
+                    'quantity': product.get('quantity') or 1,
+                    'mpStatus': (it.get('visual') or {}).get('status', {}).get('display_name')
+                    or it.get('status'),
+                    'reason': it.get('return_reason_name') or it.get('reason'),
+                    'createdAt': it.get('logistic', {}).get('return_date')
+                    or it.get('created_at'),
+                }
+                if not rec['externalId']:
+                    continue
+                if save_return(cur, 'OZON', rec) == 'created':
+                    created += 1
+                else:
+                    updated += 1
+            if not (data or {}).get('has_next'):
+                break
+            last_id = returns[-1].get('id') or 0
+    # Ошибку показываем, только если совсем ничего не загрузилось.
+    return {
+        'created': created,
+        'updated': updated,
+        'error': None if (created or updated) else sync_error,
+    }
 
 
 def sync_wb(cur, days):

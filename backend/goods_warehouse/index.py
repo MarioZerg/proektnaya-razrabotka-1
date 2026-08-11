@@ -1083,6 +1083,54 @@ def handler(event: dict, context) -> dict:
                             (resolved, resolved),
                         )
                         found = cur.fetchone()
+                # Заказа с таким номером у нас нет — но возврат по нему мог приехать
+                # с маркетплейса и лежать в списке возвратов. Вещь физически в руках у
+                # кладовщика, разворачивать его нельзя.
+                if not found:
+                    cur.execute(
+                        "SELECT order_id FROM marketplace_returns "
+                        "WHERE posting_number = %s OR return_barcode = %s OR external_id = %s "
+                        "ORDER BY id DESC LIMIT 1",
+                        (scan, scan, scan),
+                    )
+                    ret_row = cur.fetchone()
+                    if ret_row and ret_row[0]:
+                        found = (ret_row[0],)
+                    elif ret_row:
+                        # Возврат приехал по заказу, которого у нас нет: он старше нашей
+                        # системы или пришёл до подключения площадки. Вещь физически на
+                        # руках у кладовщика — заводим заказ по данным возврата и
+                        # принимаем её как обычно.
+                        cur.execute(
+                            "SELECT posting_number, product_name, marketplace, marketplace_item_id "
+                            "FROM marketplace_returns "
+                            "WHERE posting_number = %s OR return_barcode = %s OR external_id = %s "
+                            "ORDER BY id DESC LIMIT 1",
+                            (scan, scan, scan),
+                        )
+                        rp, rname, rmp, ritem = cur.fetchone()
+                        cur.execute(
+                            "INSERT INTO orders (order_number, ozon_posting_number, marketplace, "
+                            "order_type, status, product, quantity, source, marketplace_item_id, "
+                            "sewing_status) "
+                            "VALUES (%s, %s, %s, 'FBS', 'Отменён', %s, 1, 'api', %s, 'Готовые') "
+                            "RETURNING id",
+                            (
+                                rp or scan,
+                                rp or scan,
+                                rmp or 'OZON',
+                                (rname or 'Возврат с маркетплейса')[:250],
+                                int(ritem) if ritem else None,
+                            ),
+                        )
+                        new_id = cur.fetchone()[0]
+                        cur.execute(
+                            "UPDATE marketplace_returns SET order_id = %s "
+                            "WHERE posting_number = %s OR return_barcode = %s OR external_id = %s",
+                            (new_id, scan, scan, scan),
+                        )
+                        conn.commit()
+                        found = (new_id,)
                 if not found:
                     return {
                         'statusCode': 404,
