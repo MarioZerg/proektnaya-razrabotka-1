@@ -109,26 +109,32 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
     if (!cart.length) return;
     setSaving(true);
     try {
-      // Заводим вещи по одной: у каждой свой стикер хранения, склад не терпит «пачек»
-      // без индивидуального штрихкода — иначе вещь на полке не опознать.
+      // Каждая позиция уходит ОДНИМ запросом со своим количеством, а сервер заводит все
+      // штуки в одной транзакции. Раньше фронт слал запрос на каждую штуку — параллельные
+      // запросы делили один служебный номер заказа, часть падала, и на складе оказывалось
+      // меньше вещей, чем напечатано стикеров.
       const printed: { storageBarcode: string; title: string; orderNumber: string }[] = [];
       let failed = 0;
 
       for (const row of cart) {
-        for (let n = 0; n < row.qty; n += 1) {
-          try {
-            const res = await adminReceiveGoods(
-              row.item.id,
-              shelfId ? Number(shelfId) : undefined
-            );
+        try {
+          const res = await adminReceiveGoods(
+            row.item.id,
+            shelfId ? Number(shelfId) : undefined,
+            row.qty
+          );
+          const list = res.created?.length ? res.created : [res];
+          list.forEach((g) =>
             printed.push({
-              storageBarcode: res.storageBarcode,
-              title: res.product,
-              orderNumber: res.orderNumber,
-            });
-          } catch {
-            failed += 1;
-          }
+              storageBarcode: g.storageBarcode,
+              title: g.product || res.product,
+              orderNumber: g.orderNumber,
+            })
+          );
+          // Стикеры печатаем только на реально заведённые вещи.
+          failed += Math.max(0, row.qty - list.length);
+        } catch {
+          failed += row.qty;
         }
       }
 

@@ -106,14 +106,23 @@ export const receiveReturn = (orderNumber: string) =>
 
 /** Ручной приём администратором: вещь без заказа с маркетплейса кладётся на склад по товару
  * из справочника. Такие записи помечаются как принятые админом. */
-export const adminReceiveGoods = (marketplaceItemId: number, shelfId?: number) =>
-  postAction({ action: 'admin_receive', marketplaceItemId, shelfId }) as Promise<{
-    id: number;
-    orderNumber: string;
-    product: string;
-    storageBarcode: string;
-    status: string;
-  }>;
+export interface ReceivedGood {
+  id: number;
+  orderNumber: string;
+  product: string;
+  storageBarcode: string;
+  status: string;
+}
+
+/** Ручная приёмка партии: quantity штук одного товара заводятся одним запросом. */
+export const adminReceiveGoods = (
+  marketplaceItemId: number,
+  shelfId?: number,
+  quantity = 1,
+) =>
+  postAction({ action: 'admin_receive', marketplaceItemId, shelfId, quantity }) as Promise<
+    ReceivedGood & { created: ReceivedGood[]; count: number }
+  >;
 
 /** Кладовщик сканирует стикер хранения вещи, отменённой клиентом, и кладёт её на полку. */
 export const placeOnShelf = (barcode: string, shelfId: number) =>

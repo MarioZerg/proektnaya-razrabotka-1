@@ -738,13 +738,24 @@ def handler(event: dict, context) -> dict:
             cur = conn.cursor()
 
             if action == 'admin_receive':
-                # Ручной приём администратором: он находит товар в справочнике по названию
-                # («Вуаль 300x250») и кладёт вещь на склад без заказа с маркетплейса — например,
-                # излишек с производства или найденный на складе товар. Под такую вещь создаётся
-                # служебный заказ (source='manual'), а запись помечается receive_reason='admin',
-                # чтобы в списке было видно: это принял админ вручную.
+                # Ручной приём администратором или кладовщиком: он находит товар в справочнике
+                # по названию («Вуаль 300x250») и кладёт вещи на склад без заказа с маркетплейса —
+                # например, излишек с производства или найденный на складе товар. Под каждую вещь
+                # создаётся служебный заказ (source='manual'), а запись помечается
+                # receive_reason='admin', чтобы в списке было видно: это принято вручную.
+                #
+                # Приём идёт ПАРТИЕЙ (quantity): раньше фронт слал отдельный запрос на каждую
+                # штуку, и параллельные запросы разбирали один и тот же служебный номер заказа —
+                # часть вещей падала на конфликте, и на складе оказывалось меньше вещей, чем
+                # напечатано стикеров. Теперь вся партия заводится одним запросом в одной
+                # транзакции: сколько стикеров — столько вещей.
                 item_id = body_data.get('marketplaceItemId')
                 shelf_id = body_data.get('shelfId')
+                try:
+                    quantity = int(body_data.get('quantity') or 1)
+                except (TypeError, ValueError):
+                    quantity = 1
+                quantity = max(1, min(200, quantity))
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товар'})}
 
@@ -769,56 +780,71 @@ def handler(event: dict, context) -> dict:
                 )
                 last_row = cur.fetchone()
                 next_seq = (int(last_row[0].split('-')[1]) + 1) if last_row else 1
-                order_number = f"WH-{next_seq:05d}"
 
-                cur.execute(
-                    "INSERT INTO orders (order_number, marketplace, order_type, status, product, quantity, "
-                    "source, material, width, height, marketplace_item_id, product_barcode, product_ozon_sku, "
-                    "sewing_status) "
-                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'manual', %s, %s, %s, %s, %s, %s, 'Готовые') "
-                    "RETURNING id",
-                    (
-                        order_number, product, item_material,
-                        int(item_width) if item_width else None,
-                        int(item_height) if item_height else None,
-                        int(item_id), item_barcode or None, item_ozon_sku or None,
-                    ),
-                )
-                new_order_id = cur.fetchone()[0]
-
-                storage_barcode = next_storage_barcode(cur)
-                # Полку админ может указать сразу (он принимает вещь осознанно), а если не
-                # указал — вещь встанет в очередь «Ждёт полку» и ляжет на полку по скану.
+                # Полку можно указать сразу (вещь принимают осознанно), а если не указали —
+                # вещь встанет в очередь «Ждёт полку» и ляжет на полку по скану.
                 status_val = 'in_stock' if shelf_id not in (None, '') else 'awaiting_shelf'
-                cur.execute(
-                    "INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, receive_reason) "
-                    "VALUES (%s, %s, %s, %s, 'admin') RETURNING id",
-                    (
-                        new_order_id,
-                        int(shelf_id) if shelf_id not in (None, '') else None,
-                        status_val,
-                        storage_barcode,
-                    ),
-                )
-                new_gw_id = cur.fetchone()[0]
-                log_action(
-                    cur, actor_id, actor_name, 'admin_receive', 'goods_warehouse', new_gw_id,
-                    f'Администратор принял товар вручную: {product} ({storage_barcode})',
-                )
-                # Принятая вещь сразу на полке — вдруг её уже ждёт незапущенный заказ.
-                if status_val == 'in_stock':
-                    try_match_orders_from_stock(cur, gw_id=new_gw_id)
-                conn.commit()
-                return {
-                    'statusCode': 200,
-                    'headers': headers,
-                    'body': json.dumps({
+                shelf_val = int(shelf_id) if shelf_id not in (None, '') else None
+
+                created = []
+                for n in range(quantity):
+                    order_number = f"WH-{next_seq + n:05d}"
+                    cur.execute(
+                        "INSERT INTO orders (order_number, marketplace, order_type, status, product, quantity, "
+                        "source, material, width, height, marketplace_item_id, product_barcode, product_ozon_sku, "
+                        "sewing_status) "
+                        "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'manual', %s, %s, %s, %s, %s, %s, 'Готовые') "
+                        "RETURNING id",
+                        (
+                            order_number, product, item_material,
+                            int(item_width) if item_width else None,
+                            int(item_height) if item_height else None,
+                            int(item_id), item_barcode or None, item_ozon_sku or None,
+                        ),
+                    )
+                    new_order_id = cur.fetchone()[0]
+
+                    storage_barcode = next_storage_barcode(cur)
+                    cur.execute(
+                        "INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, receive_reason) "
+                        "VALUES (%s, %s, %s, %s, 'admin') RETURNING id",
+                        (new_order_id, shelf_val, status_val, storage_barcode),
+                    )
+                    new_gw_id = cur.fetchone()[0]
+                    log_action(
+                        cur, actor_id, actor_name, 'admin_receive', 'goods_warehouse', new_gw_id,
+                        f'Принят товар вручную: {product} ({storage_barcode})',
+                    )
+                    created.append({
                         'id': new_gw_id,
                         'orderNumber': order_number,
                         'product': product,
                         'storageBarcode': storage_barcode,
                         'status': status_val,
-                    }),
+                    })
+
+                # Вещи уже на полке — вдруг их ждёт незапущенный заказ. Подбор делаем после
+                # того, как заведена вся партия: иначе первая же вещь ушла бы в резерв,
+                # а остальные считались бы отдельно и матчинг сработал бы вразнобой.
+                if status_val == 'in_stock':
+                    for row in created:
+                        try_match_orders_from_stock(cur, gw_id=row['id'])
+
+                conn.commit()
+                first = created[0]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        # Одиночные поля — для совместимости со старым вызовом на одну вещь.
+                        'id': first['id'],
+                        'orderNumber': first['orderNumber'],
+                        'product': product,
+                        'storageBarcode': first['storageBarcode'],
+                        'status': status_val,
+                        'created': created,
+                        'count': len(created),
+                    }, ensure_ascii=False),
                 }
 
             if action == 'ship_label':
