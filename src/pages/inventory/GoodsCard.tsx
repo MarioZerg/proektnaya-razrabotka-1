@@ -11,6 +11,7 @@ import {
   fetchGoodsCard,
   sendGoodsToSupply,
   shipLabelGoods,
+  verifyPicking,
   type GoodsCard as GoodsCardType,
 } from '@/lib/goodsWarehouseApi';
 import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
@@ -91,6 +92,21 @@ const GoodsCard = () => {
     if (!card?.reservedOrderId) return;
     setPrinting(true);
     try {
+      // Перед печатью проверяем, нужна ли вещь под этот заказ до сих пор: он мог
+      // уехать к покупателю или отмениться, пока она лежала на полке. Тогда ярлык
+      // маркетплейс уже не отдаст, и печатать нечего — вещь возвращается на полку,
+      // а кладовщик получает понятное объяснение вместо ошибки печати.
+      const check = await verifyPicking(card.id, user?.id, user?.name).catch(() => null);
+      if (check && check.total > 0) {
+        toast({
+          title: 'Вещь больше не нужна под этот заказ',
+          description: `${check.released[0]?.reason}. Вещь возвращена на полку хранения`,
+          variant: 'destructive',
+        });
+        load();
+        return;
+      }
+
       await printOrderMarketplaceLabel({
         id: card.reservedOrderId,
         orderNumber: card.reservedOrderNumber || '',

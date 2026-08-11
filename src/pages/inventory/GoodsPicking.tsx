@@ -14,7 +14,13 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import PickingScanDialog from '@/components/crm/goodsWarehouse/PickingScanDialog';
-import { fetchPickingOrders, type PickingOrder } from '@/lib/goodsWarehouseApi';
+import {
+  fetchPickingOrders,
+  verifyPicking,
+  type PickingOrder,
+} from '@/lib/goodsWarehouseApi';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 
 /** Дата в привычном виде: «10.08.2026, 16:15». */
 const formatDate = (value: string | null) => {
@@ -38,6 +44,8 @@ const formatDate = (value: string | null) => {
  */
 const GoodsPicking = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
+  const { user } = useAuth();
 
   const [orders, setOrders] = useState<PickingOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,6 +64,25 @@ const GoodsPicking = () => {
   // Заказы приходят в течение дня — обновляем сами, чтобы кладовщик не жал F5.
   // Раз в минуту и только пока на экран смотрят: свёрнутая вкладка не тратит ничего.
   usePolling(load, 60000);
+
+  // Перед работой сверяем список с маркетплейсом: часть заказов, пока вещи лежали на
+  // полке, уже уехала к покупателю или отменилась. Ярлык для них не выдадут, собрать
+  // такие вещи невозможно — они возвращаются на полку, а не отправляют кладовщика
+  // к стеллажу за мёртвой работой.
+  useEffect(() => {
+    verifyPicking(undefined, user?.id, user?.name)
+      .then((res) => {
+        if (res.total > 0) {
+          toast({
+            title: `Снято с подбора: ${res.total}`,
+            description: 'Заказы отменены или уже уехали — вещи вернулись на полку хранения',
+          });
+          load();
+        }
+      })
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Фокус в поиске: кладовщик заходит на страницу и сразу пикает сканером, не мышкой.
   useEffect(() => {

@@ -205,6 +205,22 @@ export const fetchPickingPending = async (): Promise<PickingPending> => {
   return { pendingLabel: data.pendingLabel || 0, awaitingShelf: data.awaitingShelf || 0 };
 };
 
+/** Проверка подбора: нужны ли ещё вещи, подобранные под заказы.
+ *
+ * Заказ мог уехать к покупателю или отмениться — ярлык для него маркетплейс уже не
+ * отдаёт. Такие вещи возвращаются на полку, чтобы не висеть в подборе мёртвым грузом.
+ * @param gwId проверить одну вещь; без него проверяется весь подбор. */
+export const verifyPicking = (gwId?: number, actorId?: number, actorName?: string) =>
+  postAction({ action: 'verify_picking', gwId, actorId, actorName }) as Promise<{
+    total: number;
+    released: {
+      id: number;
+      storageBarcode: string;
+      orderNumber: string | null;
+      reason: string;
+    }[];
+  }>;
+
 /** Ручной пересчёт подбора по всему складу — страховка, если что-то не подхватилось. */
 export const rematchStock = () =>
   postAction({ action: 'rematch_stock' }) as Promise<{ matched: number }>;

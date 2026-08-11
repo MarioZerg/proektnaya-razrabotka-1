@@ -1701,6 +1701,64 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            if action == 'verify_picking':
+                # Проверка подбора: нужны ли ещё эти вещи.
+                #
+                # Заказ, под который вещь подобрали, мог за это время уехать к покупателю,
+                # отмениться или закрыться сам. Ярлык для него маркетплейс уже не отдаёт —
+                # собрать вещь физически невозможно. Раньше такая вещь висела в подборе
+                # вечно: кладовщик шёл к стеллажу, упирался в ошибку печати и не понимал,
+                # что делать. Снимаем резерв и возвращаем вещь на полку — она годная,
+                # просто этот заказ ею уже не закрыть.
+                #
+                # gwId — проверить одну вещь (нажали «Напечатать стикер» в её карточке).
+                # Без него проверяется весь подбор разом.
+                gw_id = body_data.get('gwId')
+                dead = "('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup')"
+                where_one = f' AND gw.id = {int(gw_id)}' if gw_id else ''
+                cur.execute(
+                    "SELECT gw.id, gw.storage_barcode, o.order_number, o.ozon_status, o.status "
+                    "FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.reserved_order_id "
+                    "WHERE gw.status IN ('picking', 'in_stock') "
+                    "  AND gw.shipping_labeled_at IS NULL "
+                    f"  AND (COALESCE(o.ozon_status, '') IN {dead} OR o.status = 'Отменён')"
+                    + where_one
+                )
+                stale = cur.fetchall()
+
+                released = []
+                for sid, barcode_v, num, oz_status, o_status in stale:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', "
+                        "reserved_order_id = NULL, matched_at = NULL WHERE id = %s",
+                        (int(sid),),
+                    )
+                    released.append({
+                        'id': sid,
+                        'storageBarcode': barcode_v,
+                        'orderNumber': num,
+                        'reason': 'Заказ отменён' if (o_status == 'Отменён'
+                                                      or oz_status == 'cancelled')
+                        else 'Отправление уже уехало к покупателю',
+                    })
+
+                if released:
+                    log_action(
+                        cur, actor_id, actor_name, 'verify_picking', 'goods_warehouse', None,
+                        f'Проверка подбора: снят резерв с вещей {len(released)} '
+                        f'(заказы отменены или уже уехали)',
+                    )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'released': released,
+                        'total': len(released),
+                    }, ensure_ascii=False),
+                }
+
             if action == 'rematch_stock':
                 # Ручной перезапуск подбора по всему складу. Нужен как страховка: если
                 # заказы пришли раньше, чем вещи легли на полку, или подбор пропустил
