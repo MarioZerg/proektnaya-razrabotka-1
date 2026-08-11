@@ -547,6 +547,13 @@ def handler(event: dict, context) -> dict:
                     "WHERE gw.status = 'picking' "
                     "  AND gw.reserved_order_id IS NOT NULL "
                     "  AND gw.shipping_labeled_at IS NULL "
+                    # Отправление уже уехало от нас или отменено — ярлык для него OZON
+                    # больше не отдаёт, собрать такую вещь невозможно. Раньше она висела
+                    # в подборе вечно: кладовщик шёл к стеллажу, а на печати получал
+                    # «OZON готовит этикетку, нажмите ещё раз» — и так по кругу.
+                    "  AND COALESCE(o.ozon_status, '') NOT IN "
+                    "      ('delivering', 'delivered', 'cancelled', 'not_accepted', "
+                    "       'driver_pickup') "
                     "ORDER BY gw.matched_at ASC NULLS LAST, gw.id ASC"
                 )
                 orders_rows = cur.fetchall()

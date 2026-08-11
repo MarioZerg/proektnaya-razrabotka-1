@@ -731,6 +731,25 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
     ship_err, new_status = assemble_posting(client_id, api_key, posting_number, debug=debug)
     if ship_err:
         return ship_err, None
+
+    # Отправление уже уехало от нас — этикетки для него у OZON больше нет, и ждать
+    # бессмысленно. Раньше в этом случае показывали «OZON готовит этикетку, нажмите
+    # через полминуты», и кладовщик жал кнопку по кругу без всякого результата.
+    # Такие вещи попадают на подбор, когда покупатель отказался ещё в пути: их не
+    # стикеруют, а принимают как возврат, когда коробка доедет назад.
+    gone = {
+        'delivering': 'уже едет к покупателю',
+        'delivered': 'уже доставлено покупателю',
+        'cancelled': 'отменено',
+        'not_accepted': 'не принято складом OZON',
+        'driver_pickup': 'передано водителю',
+    }
+    if new_status in gone:
+        return (
+            f'Ярлык не нужен: отправление {gone[new_status]}. '
+            f'Эта вещь не поедет в поставку — дождитесь возврата и примите его '
+            f'в разделе «Принять возвраты»'
+        ), None
     if new_status:
         cur.execute(
             "UPDATE orders SET ozon_status = %s, "
