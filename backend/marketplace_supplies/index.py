@@ -1257,15 +1257,27 @@ def handler(event: dict, context) -> dict:
                 # Вещи одного отправления кладовщик сканирует по одной — каждая в своём
                 # пакете со своим ярлыком. Поэтому берём первую подходящую: отстикерованную
                 # и ещё не лежащую ни в одной поставке.
+                # Связь вещи с заказом бывает трёх видов, и учитывать надо все:
+                #   gw.reserved_order_id — вещь ПОДОБРАНА под заказ с полки (главный случай
+                #     для сборки: именно так работает автоподбор);
+                #   o.fulfilled_from_stock_id — обратная ссылка, её проставляют не всегда;
+                #   gw.order_id — вещь сшили в цехе именно под этот заказ.
+                # Раньше резерв не проверялся, и собранная с полки вещь в поставку не
+                # сканировалась: система находила ВТОРУЮ вещь того же отправления и
+                # говорила «на неё не наклеен ярлык», хотя в руках была первая.
                 find_sql = (
                     "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
                     "FROM orders o "
                     "JOIN goods_warehouse gw "
-                    "  ON gw.id = o.fulfilled_from_stock_id OR gw.order_id = o.id "
+                    "  ON gw.reserved_order_id = o.id "
+                    "  OR gw.id = o.fulfilled_from_stock_id "
+                    "  OR gw.order_id = o.id "
                     "LEFT JOIN marketplace_supply_items msi ON msi.goods_warehouse_id = gw.id "
                     "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}') "
+                    # Сначала берём вещь, готовую ехать: свободна от поставок и с ярлыком.
                     "ORDER BY (msi.id IS NULL) DESC, (gw.shipping_labeled_at IS NOT NULL) DESC, "
-                    "         (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
+                    "         (gw.status = 'awaiting_supply') DESC, "
+                    "         (gw.reserved_order_id = o.id) DESC LIMIT 1"
                 )
                 cur.execute(find_sql.format(code=barcode_esc))
                 gw_row = cur.fetchone()
@@ -1662,11 +1674,14 @@ def handler(event: dict, context) -> dict:
                     "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
                     "FROM orders o "
                     "JOIN goods_warehouse gw "
-                    "  ON gw.id = o.fulfilled_from_stock_id OR gw.order_id = o.id "
+                    "  ON gw.reserved_order_id = o.id "
+                    "  OR gw.id = o.fulfilled_from_stock_id "
+                    "  OR gw.order_id = o.id "
                     "LEFT JOIN marketplace_supply_items msi ON msi.goods_warehouse_id = gw.id "
                     "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}') "
                     "ORDER BY (msi.id IS NULL) DESC, (gw.shipping_labeled_at IS NOT NULL) DESC, "
-                    "         (gw.id = o.fulfilled_from_stock_id) DESC LIMIT 1"
+                    "         (gw.status = 'awaiting_supply') DESC, "
+                    "         (gw.reserved_order_id = o.id) DESC LIMIT 1"
                 )
                 cur.execute(box_find_sql.format(code=scan_esc))
                 gw_row = cur.fetchone()
