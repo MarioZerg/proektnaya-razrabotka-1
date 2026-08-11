@@ -118,7 +118,31 @@ export interface WbSupplyOrder {
   isCancelled?: boolean;
 }
 
+/**
+ * Сверка с кабинетом OZON (только FBS).
+ *
+ * OZON считает ОТПРАВЛЕНИЯ, склад считает ВЕЩИ: одно отправление бывает на семь
+ * штук. Поэтому кладовщик видит в кабинете «114», а у себя «152» и думает, что
+ * система врёт. Показываем обе единицы и раскладываем, где вещи находятся.
+ */
+export interface SupplyReconcile {
+  /** Штук, которые OZON ждёт к отгрузке. */
+  units: number;
+  /** Столько же в отправлениях — это число видно в кабинете OZON. */
+  postings: number;
+  /** Отстикеровано и ждёт сканирования в поставку. */
+  ready: number;
+  /** На складе, но ярлык не наклеен — сканер такую вещь развернёт. */
+  noLabel: number;
+  /** Уже лежит в поставке. */
+  inSupply: number;
+  /** Ещё на конвейере: до склада не дошло. */
+  inProduction: number;
+}
+
 export interface SupplyDetail extends Supply {
+  /** Сверка «сколько ждёт OZON / сколько готово у нас». Только для OZON FBS. */
+  reconcile?: SupplyReconcile | null;
   items: SupplyItem[];
   /** Связки заказов с общим ярлыком, попавшие в эту поставку. */
   groups?: SupplyGroup[];

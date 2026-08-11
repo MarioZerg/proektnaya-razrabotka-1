@@ -847,7 +847,47 @@ def handler(event: dict, context) -> dict:
                     )
                     wb_ready_count = cur.fetchone()[0]
 
+                # СВЕРКА С МАРКЕТПЛЕЙСОМ (только OZON FBS).
+                #
+                # Кладовщик закрывает поставку и сверяет её с кабинетом OZON, а числа
+                # не сходятся: OZON пишет «114», у нас «152». Причина не в ошибке —
+                # OZON считает ОТПРАВЛЕНИЯ, а мы ВЕЩИ. Одно отправление бывает на семь
+                # штук: OZON покажет одну строку, а швеи отшили семь и кладовщик ищет
+                # на складе семь. Поэтому показываем обе единицы сразу и раскладываем,
+                # где вещи находятся — тогда видно, чего именно не хватает до закрытия.
+                reconcile = None
+                if row[1] == 'OZON' and row[2] == 'FBS':
+                    cur.execute(
+                        "SELECT count(*) AS units, "
+                        "  count(DISTINCT o.ozon_posting_number) AS postings, "
+                        "  count(*) FILTER (WHERE gw.id IS NOT NULL "
+                        "    AND gw.status IN ('picking', 'awaiting_supply') "
+                        "    AND gw.shipping_labeled_at IS NOT NULL) AS ready, "
+                        "  count(*) FILTER (WHERE gw.id IS NOT NULL "
+                        "    AND gw.status IN ('picking', 'awaiting_supply') "
+                        "    AND gw.shipping_labeled_at IS NULL) AS no_label, "
+                        "  count(*) FILTER (WHERE gw.id IS NOT NULL "
+                        "    AND gw.status = 'reserved') AS in_supply, "
+                        "  count(*) FILTER (WHERE gw.id IS NULL) AS in_production "
+                        "FROM orders o "
+                        "LEFT JOIN goods_warehouse gw "
+                        "  ON gw.id = o.fulfilled_from_stock_id OR gw.reserved_order_id = o.id "
+                        "WHERE o.marketplace = 'OZON' AND o.order_type = 'FBS' "
+                        "  AND COALESCE(o.status, '') <> 'Отменён' "
+                        "  AND COALESCE(o.ozon_status, '') = 'awaiting_deliver'"
+                    )
+                    rc = cur.fetchone()
+                    reconcile = {
+                        'units': int(rc[0] or 0),
+                        'postings': int(rc[1] or 0),
+                        'ready': int(rc[2] or 0),
+                        'noLabel': int(rc[3] or 0),
+                        'inSupply': int(rc[4] or 0),
+                        'inProduction': int(rc[5] or 0),
+                    }
+
                 detail = {
+                    'reconcile': reconcile,
                     'id': row[0],
                     'marketplace': row[1],
                     'type': row[2],
