@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
 import {
   fetchReturnCodes,
+  type OzonPvzPlace,
   saveReturnCode,
   refreshReturnCode,
   fetchPickupList,
@@ -39,6 +40,8 @@ const ReturnPickupCodes = () => {
 
   const [items, setItems] = useState<ReturnPickupCode[]>([]);
   const [totalWaiting, setTotalWaiting] = useState(0);
+  /** По каким пунктам выдачи разложены ждущие вещи OZON — кладовщику нужно знать, куда ехать. */
+  const [ozonPlaces, setOzonPlaces] = useState<OzonPvzPlace[]>([]);
   const [loading, setLoading] = useState(true);
   const [shown, setShown] = useState<ReturnPickupCode | null>(null);
   const [editing, setEditing] = useState<ReturnPickupCode | null>(null);
@@ -61,6 +64,7 @@ const ReturnPickupCodes = () => {
       .then((d) => {
         setItems(d.items);
         setTotalWaiting(d.totalWaiting);
+        setOzonPlaces(d.ozonPlaces);
       })
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
@@ -204,8 +208,22 @@ const ReturnPickupCodes = () => {
                   Ждёт на ПВЗ: {totalWaiting} шт.
                 </p>
                 <p className="text-sm text-amber-900">
-                  Возвраты одобрены и готовы к выдаче — заберите их с пунктов выдачи
+                  Возвраты доехали до пункта выдачи и ждут вас — это же число видно
+                  в кабинете продавца
                 </p>
+                {/* Куда именно ехать: без адреса счётчик бесполезен, если пунктов несколько. */}
+                {ozonPlaces.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {ozonPlaces.map((p) => (
+                      <span
+                        key={p.name}
+                        className="rounded-full bg-amber-200/70 px-3 py-1 text-xs font-medium text-amber-900"
+                      >
+                        {p.name} — {p.count} шт.
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

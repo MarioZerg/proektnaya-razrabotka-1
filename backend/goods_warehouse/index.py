@@ -393,7 +393,10 @@ def handler(event: dict, context) -> dict:
                 )
                 pending = int(cur.fetchone()[0])
                 cur.execute(
-                    "SELECT count(*) FROM goods_warehouse WHERE status = 'awaiting_shelf'"
+                    # Возврат с маркетплейса тоже ждёт полку — считаем вместе, иначе
+                    # кладовщик не увидит его в значке задач.
+                    "SELECT count(*) FROM goods_warehouse "
+                    "WHERE status IN ('awaiting_shelf', 'mp_return')"
                 )
                 awaiting = int(cur.fetchone()[0])
                 return {
@@ -989,7 +992,9 @@ def handler(event: dict, context) -> dict:
                     }
                 # taken — вещь, которую кладовщик забрал из цеха после осмотра: полку
                 # он определяет здесь же, и на этом маршрут возврата заканчивается.
-                if gw_status not in ('awaiting_shelf', 'taken'):
+                # mp_return — вещь, приехавшая назад с маркетплейса: кладовщик определяет
+                # ей полку так же, как разобранному товару.
+                if gw_status not in ('awaiting_shelf', 'taken', 'mp_return'):
                     return {
                         'statusCode': 409,
                         'headers': headers,
@@ -1088,7 +1093,7 @@ def handler(event: dict, context) -> dict:
                     }
 
                 # Уже лежит на складе — второй раз тот же возврат не принимаем.
-                if gw_id and gw_status in ('awaiting_shelf', 'checking', 'in_stock'):
+                if gw_id and gw_status in ('awaiting_shelf', 'checking', 'in_stock', 'mp_return'):
                     return {
                         'statusCode': 409,
                         'headers': headers,
@@ -1352,7 +1357,7 @@ def handler(event: dict, context) -> dict:
                 if existing:
                     gw_id, storage_barcode = existing
                     cur.execute(
-                        f"UPDATE goods_warehouse SET status = 'awaiting_shelf', shelf_id = NULL, "
+                        f"UPDATE goods_warehouse SET status = 'mp_return', shelf_id = NULL, "
                         f"shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
                         f"reserved_order_id = NULL, shipping_labeled_at = NULL, "
                         f"receive_reason = 'return' WHERE id = {gw_id}"
@@ -1364,7 +1369,7 @@ def handler(event: dict, context) -> dict:
                 storage_barcode = next_storage_barcode(cur)
                 cur.execute(
                     f"INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason) "
-                    f"VALUES ({order_id}, 'awaiting_shelf', '{storage_barcode}', 'return') RETURNING id"
+                    f"VALUES ({order_id}, 'mp_return', '{storage_barcode}', 'return') RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
                 log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', new_id, f'Принял возврат заказа #{order_number} ({storage_barcode})')

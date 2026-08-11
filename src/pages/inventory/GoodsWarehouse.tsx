@@ -94,7 +94,9 @@ const GoodsWarehouse = () => {
   // Вещи, отменённые клиентом: упаковщик наклеил стикер хранения, кладовщик ещё не положил
   // их на полку — именно их он забирает из цеха.
   const pendingShelf = useMemo(
-    () => items.filter((i) => i.status === 'awaiting_shelf'),
+    // Возвраты с маркетплейса (mp_return) кладовщик раскладывает тем же действием:
+    // вещь у него в руках, ей нужна полка.
+    () => items.filter((i) => i.status === 'awaiting_shelf' || i.status === 'mp_return'),
     [items],
   );
 
@@ -149,7 +151,9 @@ const GoodsWarehouse = () => {
   const noShelfCount = useMemo(
     () =>
       items.filter(
-        (i) => i.shelfId == null && (i.status === 'in_stock' || i.status === 'awaiting_shelf'),
+        (i) =>
+          i.shelfId == null &&
+          (i.status === 'in_stock' || i.status === 'awaiting_shelf' || i.status === 'mp_return'),
       ).length,
     [items],
   );

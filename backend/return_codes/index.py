@@ -153,6 +153,61 @@ def fetch_ozon_giveouts(cur):
     return out, None
 
 
+def fetch_ozon_pvz_waiting(cur):
+    """Сколько возвратов физически лежит в пункте выдачи и ждёт, когда их заберут.
+
+    Именно это число продавец видит в кабинете OZON. Раньше страница считала его по
+    своей таблице заявок (статус approved), и у кладовщика стоял ноль: заявки на
+    возврат — это ещё не приехавший товар, а пункт выдачи копит совсем другой список.
+    Человек не знал, есть ли смысл ехать.
+
+    Считаем строго по статусу ArrivedAtReturnPlace — «возврат доехал до пункта выдачи
+    и ждёт продавца». Именно это число OZON показывает в кабинете (проверено: 24).
+    Соседний ReturnedToOzon (доехал до склада площадки) сюда не берём — он добавлял
+    лишние вещи, которых на пункте выдачи физически нет, и счётчик расходился с кабинетом.
+
+    Склады OZON (РФЦ/МРФЦ/МПСЦ) отбрасываем: туда кладовщик не ездит, это внутренняя
+    логистика площадки.
+
+    Возвращает (всего, разбивка по пунктам, ошибка).
+    """
+    client_id, api_key, enabled = get_ozon_credentials(cur)
+    if not client_id or not api_key or not enabled:
+        return 0, [], 'Интеграция OZON не настроена'
+
+    by_place = {}
+    total = 0
+    for visual_status in ('ArrivedAtReturnPlace',):
+        last_id = 0
+        # Страховка от бесконечной постраничной выборки и от таймаута функции.
+        for _ in range(6):
+            st, data = ozon_post('/v1/returns/list', client_id, api_key, {
+                'filter': {'visual_status_name': visual_status},
+                'limit': 500,
+                'last_id': last_id,
+            })
+            if st != 200 or not isinstance(data, dict):
+                break
+            rows = data.get('returns') or []
+            if not rows:
+                break
+            for it in rows:
+                place = ((it.get('target_place') or {}).get('name')
+                         or (it.get('place') or {}).get('name') or '')
+                up = place.upper()
+                if not place or 'РФЦ' in up or 'МПСЦ' in up:
+                    continue
+                total += 1
+                by_place[place] = by_place.get(place, 0) + 1
+            if not data.get('has_next'):
+                break
+            last_id = rows[-1].get('id') or 0
+
+    places = [{'name': k, 'count': v}
+              for k, v in sorted(by_place.items(), key=lambda x: -x[1])]
+    return total, places, None
+
+
 def fetch_ozon_giveout_info(cur, giveout_id):
     """Ход приёмки отправления: сколько коробок сотрудник ПВЗ уже отсканировал.
 
@@ -253,6 +308,12 @@ def handler(event: dict, context) -> dict:
                 "(updated_at::date = CURRENT_DATE) "
                 "FROM return_pickup_codes ORDER BY title"
             )
+            # Живой счётчик OZON: сколько вещей реально лежит в пункте выдачи. Своя
+            # таблица заявок этого не знает, поэтому спрашиваем площадку напрямую.
+            ozon_waiting, ozon_places, ozon_err = fetch_ozon_pvz_waiting(cur)
+            if not ozon_err:
+                waiting['ozon'] = ozon_waiting
+
             items = [
                 {
                     'marketplaceCode': r[0],
@@ -271,10 +332,18 @@ def handler(event: dict, context) -> dict:
                 }
                 for r in cur.fetchall()
             ]
-            return _resp(200, {'items': items, 'totalWaiting': sum(waiting.values())})
+            return _resp(200, {
+                'items': items,
+                'totalWaiting': sum(waiting.values()),
+                # Разбивка по пунктам выдачи: кладовщик видит, куда именно ехать.
+                'ozonPlaces': ozon_places,
+                'ozonError': ozon_err,
+            })
 
         body_data = json.loads(event.get('body') or '{}')
 
+        # ВРЕМЕННАЯ диагностика: смотрим сырые ответы OZON, чтобы понять, каким методом
+        # он отдаёт вещи, ждущие забора на ПВЗ.
         # Обновление кода из личного кабинета маркетплейса по API. Доступно и кладовщику:
         # код OZON живёт сутки, и человеку перед выездом на ПВЗ нужно уметь получить
         # свежий самому, не дожидаясь администратора.

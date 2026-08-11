@@ -20,13 +20,26 @@ export interface ReturnPickupCode {
   updatedToday: boolean;
 }
 
+/** Пункт выдачи и сколько вещей там ждёт кладовщика. */
+export interface OzonPvzPlace {
+  name: string;
+  count: number;
+}
+
 export const fetchReturnCodes = async (): Promise<{
   items: ReturnPickupCode[];
   totalWaiting: number;
+  ozonPlaces: OzonPvzPlace[];
+  ozonError: string | null;
 }> => {
   const res = await fetch(RETURN_CODES_URL);
   const data = await res.json();
-  return { items: data.items || [], totalWaiting: data.totalWaiting || 0 };
+  return {
+    items: data.items || [],
+    totalWaiting: data.totalWaiting || 0,
+    ozonPlaces: data.ozonPlaces || [],
+    ozonError: data.ozonError || null,
+  };
 };
 
 export const saveReturnCode = async (payload: {

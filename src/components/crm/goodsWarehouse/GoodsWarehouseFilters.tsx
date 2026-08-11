@@ -69,7 +69,11 @@ const GoodsWarehouseFilters = ({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все</SelectItem>
-            <SelectItem value="returns">Возвраты с маркетплейса</SelectItem>
+            {/* mp_return — состояние «лежит у кладовщика, полки нет».
+                returns — происхождение вещи: она когда-либо приезжала назад, в любом
+                состоянии. Названия разные, иначе два пункта не отличить. */}
+            <SelectItem value="mp_return">Возврат с маркетплейса</SelectItem>
+            <SelectItem value="returns">Все возвраты (за всё время)</SelectItem>
             <SelectItem value="awaiting_shelf">На разборе</SelectItem>
             <SelectItem value="in_stock">На хранении</SelectItem>
             <SelectItem value="checking">На проверке</SelectItem>

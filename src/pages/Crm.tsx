@@ -265,10 +265,12 @@ const CrmDashboard = () => {
       ).length;
       // Вещи, отменённые клиентом: упаковщик наклеил стикер хранения, но кладовщик ещё не
       // забрал их из цеха и не положил на полку — это его прямая задача на сегодня.
-      const awaitingShelf = goodsItems.filter((g) => g.status === 'awaiting_shelf').length;
+      const awaitingShelf = goodsItems.filter(
+        (g) => g.status === 'awaiting_shelf' || g.status === 'mp_return',
+      ).length;
       // Заказы, которые закрываются вещью с полки и ждут стикера отправления от кладовщика.
       const awaitingShipLabel = goodsItems.filter(
-        (g) => g.reservedOrderId && !g.shippingLabeledAt && g.status === 'in_stock',
+        (g) => g.reservedOrderId && !g.shippingLabeledAt && g.status === 'picking',
       ).length;
       // Виджета «Товары к подбору со склада» больше нет: он показывал ВЕСЬ товар на
       // полках (сотни штук) и выглядел как гора работы, хотя это просто остаток.

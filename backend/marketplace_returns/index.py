@@ -884,7 +884,11 @@ def handler(event: dict, context) -> dict:
                     if place_now:
                         gw_status = 'in_stock'
                     else:
-                        gw_status = 'repacking' if outcome == 'repack' else 'awaiting_shelf'
+                        # Вещь приехала назад с маркетплейса и физически лежит у кладовщика,
+                        # но полку ей ещё не назначили. Отдельный статус нужен, чтобы такие
+                        # вещи не терялись среди обычного «На разборе» из цеха: у возврата
+                        # другой маршрут и другая ответственность.
+                        gw_status = 'repacking' if outcome == 'repack' else 'mp_return'
                     if order_id:
                         cur.execute(
                             "SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s",

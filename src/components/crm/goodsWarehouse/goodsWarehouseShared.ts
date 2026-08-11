@@ -5,6 +5,8 @@ export { formatDateTime as formatDate } from '@/lib/dateUtils';
 export const statusLabels: Record<GoodsStatus, string> = {
   awaiting_shelf: 'На разборе',
   checking: 'На проверке',
+  // Приехал назад с маркетплейса и лежит у кладовщика — полку ещё не назначили.
+  mp_return: 'Возврат с маркетплейса',
   repacking: 'На осмотре в цехе',
   inspected: 'Осмотрено',
   taken: 'Забрано с цеха',
@@ -22,6 +24,7 @@ export const statusLabels: Record<GoodsStatus, string> = {
 export const statusVariant: Record<GoodsStatus, 'secondary' | 'default' | 'outline' | 'destructive'> = {
   awaiting_shelf: 'destructive',
   checking: 'secondary',
+  mp_return: 'destructive',
   repacking: 'secondary',
   inspected: 'default',
   taken: 'default',
