@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import Icon from '@/components/ui/icon';
+import { zoneDotClass, zoneLabels } from '@/lib/workZone';
 import GoodsWarehouseCards from '@/components/crm/goodsWarehouse/GoodsWarehouseCards';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { printStorageSticker } from '@/lib/printStorageSticker';
@@ -31,6 +32,7 @@ import {
   formatDate,
   statusLabels,
   statusVariant,
+  statusZone,
   reasonLabels,
   canPrintMarketplaceLabel,
 } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
@@ -156,7 +158,7 @@ const GoodsWarehouseTable = ({
             {items.map((i) => (
               <TableRow
                 key={i.id}
-                className={i.receiveReason === 'admin' ? 'bg-violet-50 hover:bg-violet-100' : ''}
+                className={i.receiveReason === 'admin' ? 'bg-amber-50 hover:bg-amber-100' : ''}
               >
                 {/* Товар: что за вещь, её размеры и номер заказа — по ним кладовщик
                     опознаёт её на полке. */}
@@ -173,7 +175,15 @@ const GoodsWarehouseTable = ({
                   )}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={statusVariant[i.status]}>{statusLabels[i.status]}</Badge>
+                  {/* Цветная точка = чья это работа: фиолетовая — цех, зелёная —
+                      склад, двухцветная — момент передачи между ними. */}
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${zoneDotClass[statusZone[i.status]]}`}
+                      title={zoneLabels[statusZone[i.status]]}
+                    />
+                    <Badge variant={statusVariant[i.status]}>{statusLabels[i.status]}</Badge>
+                  </div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     {reasonLabels[i.receiveReason] || 'Принят вручную'}
                   </div>

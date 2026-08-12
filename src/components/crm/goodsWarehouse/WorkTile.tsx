@@ -1,4 +1,12 @@
 import Icon from '@/components/ui/icon';
+import {
+  zoneAccentClass,
+  zoneBarClass,
+  zoneLabels,
+  zoneTextClass,
+  zoneTileClass,
+  type WorkZone,
+} from '@/lib/workZone';
 
 interface WorkTileProps {
   icon: string;
@@ -7,6 +15,8 @@ interface WorkTileProps {
   hint: string;
   count: number;
   onClick: () => void;
+  /** Чья это работа: цех, склад или передача между ними. Задаёт цвет плитки. */
+  zone?: WorkZone;
   /** Подпись кнопки шага, который идёт ПЕРЕД этой плиткой (рисуется сверху со стрелкой). */
   stepLabel?: string;
   stepIcon?: string;
@@ -29,6 +39,7 @@ const WorkTile = ({
   hint,
   count,
   onClick,
+  zone = 'warehouse',
   stepLabel,
   stepIcon,
   onStep,
@@ -39,15 +50,17 @@ const WorkTile = ({
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center gap-3 rounded-lg border p-4 text-left transition ${
-        active
-          ? 'border-primary/40 bg-primary/5 hover:bg-primary/10'
-          : 'border-border bg-card hover:bg-muted/50'
+      className={`relative flex w-full items-center gap-3 overflow-hidden rounded-lg border p-4 pl-5 text-left transition ${
+        active ? zoneTileClass[zone] : 'border-border bg-card hover:bg-muted/50'
       }`}
+      title={zoneLabels[zone]}
     >
+      {/* Полоса зоны: фиолетовая — производство, зелёная — склад, двухцветная —
+          передача между ними. Кладовщик видит свой участок работы, не читая. */}
+      <span className={`absolute inset-y-0 left-0 w-1.5 ${zoneBarClass[zone]}`} />
       <div
         className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md ${
-          active ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+          active ? zoneAccentClass[zone] : 'bg-muted text-muted-foreground'
         }`}
       >
         <Icon name={icon} size={20} />
@@ -58,7 +71,7 @@ const WorkTile = ({
       </div>
       <span
         className={`shrink-0 text-2xl font-bold ${
-          active ? 'text-primary' : 'text-muted-foreground/50'
+          active ? zoneTextClass[zone] : 'text-muted-foreground/50'
         }`}
       >
         {count}
@@ -77,9 +90,9 @@ const WorkTile = ({
       <button
         type="button"
         onClick={onStep}
-        className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-primary/40 bg-card px-3 py-2 text-sm font-medium transition hover:bg-muted/50"
+        className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-emerald-400 bg-card px-3 py-2 text-sm font-medium transition hover:bg-muted/50"
       >
-        <Icon name={stepIcon || 'PackageOpen'} size={16} className="text-primary" />
+        <Icon name={stepIcon || 'PackageOpen'} size={16} className="text-emerald-600" />
         {stepLabel}
       </button>
       <div className="flex justify-center py-0.5">

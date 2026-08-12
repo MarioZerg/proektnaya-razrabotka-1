@@ -1,4 +1,5 @@
 import type { GoodsStatus, GoodsWarehouseItem, ReceiveReason } from '@/lib/goodsWarehouseApi';
+import type { WorkZone } from '@/lib/workZone';
 
 export { formatDateTime as formatDate } from '@/lib/dateUtils';
 
@@ -82,4 +83,33 @@ export const reasonClass: Record<ReceiveReason, string> = {
   manual: 'bg-slate-100 text-slate-700 hover:bg-slate-100',
   admin: 'bg-violet-100 text-violet-700 hover:bg-violet-100',
   individual: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100',
+};
+/**
+ * Чья это сейчас работа: цеха, склада или обоих сразу.
+ *
+ * Вещь путешествует между цехом и складом, и по названию статуса не всегда очевидно,
+ * кто за неё отвечает прямо сейчас. Цветная метка снимает вопрос: фиолетовый —
+ * производство, зелёный — склад, двухцветный — момент передачи из рук в руки.
+ */
+export const statusZone: Record<GoodsStatus, WorkZone> = {
+  // Упаковщица ещё не перепаковала вещь и не наклеила складской стикер — она в цехе,
+  // но её уже ждёт кладовщик: это стык.
+  awaiting_shelf: 'both',
+  // Кладовщик разбирает привезённое: часть уйдёт в цех, часть — на полку.
+  checking: 'both',
+  mp_return: 'both',
+  // Вещь в цехе у упаковщицы.
+  repacking: 'production',
+  // Упаковщица закончила и наклеила стикер — вещь ждёт, когда её заберёт кладовщик.
+  inspected: 'both',
+  taken: 'both',
+  // Решение об утилизации принимает производство: вещь бракуют по состоянию.
+  to_dispose: 'production',
+  // Дальше всё складское: полка, сборка, поставка, отгрузка.
+  in_stock: 'warehouse',
+  picking: 'warehouse',
+  awaiting_supply: 'warehouse',
+  reserved: 'warehouse',
+  shipped: 'warehouse',
+  lost: 'warehouse',
 };

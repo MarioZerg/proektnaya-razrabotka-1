@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
+import { zoneBarClass, zoneLabels } from '@/lib/workZone';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printIndividualSticker } from '@/lib/printIndividualSticker';
@@ -8,6 +9,7 @@ import {
   formatDate,
   statusLabels,
   statusVariant,
+  statusZone,
   reasonLabels,
   reasonIcons,
   reasonClass,
@@ -37,12 +39,18 @@ const GoodsWarehouseCards = ({
         return (
           <div
             key={i.id}
-            className={`rounded-md border border-border p-3 ${
+            className={`relative overflow-hidden rounded-md border border-border p-3 pl-4 ${
               // Принятые администратором вручную подсвечены: их не было в заказах
               // маркетплейса, по ним может понадобиться отдельная сверка.
-              i.receiveReason === 'admin' ? 'bg-violet-50' : ''
+              i.receiveReason === 'admin' ? 'bg-amber-50' : ''
             }`}
           >
+            {/* Полоса слева = чья это работа: фиолетовая — цех, зелёная — склад,
+                двухцветная — вещь передают из рук в руки. Видно на бегу, не читая. */}
+            <span
+              className={`absolute inset-y-0 left-0 w-1.5 ${zoneBarClass[statusZone[i.status]]}`}
+              title={zoneLabels[statusZone[i.status]]}
+            />
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="font-semibold">{i.product || '—'}</div>

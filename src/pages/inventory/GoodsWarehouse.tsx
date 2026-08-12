@@ -342,12 +342,30 @@ const GoodsWarehouse = () => {
             каким из них пользоваться. */}
         {/* items-end: у плитки возвратов сверху надстроен шаг «Привёз с ПВЗ», и без
             выравнивания по низу три плитки стояли бы на разной высоте. */}
+        {/* Легенда цветов: без неё маркеры пришлось бы объяснять устно каждому новому
+            сотруднику. Одна строка снимает все вопросы. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-violet-500" />
+            Производство
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+            Склад
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-gradient-to-r from-violet-500 to-emerald-500" />
+            Передача из цеха на склад
+          </span>
+        </div>
+
         <div className="grid items-end gap-3 sm:grid-cols-3">
           <WorkTile
             icon="Boxes"
             title="Разложить по полкам"
             hint="Отказы клиентов из цеха"
             count={pendingShelf.length}
+            zone="both"
             onClick={() => setPlaceOpen(true)}
           />
           {/* Возвраты от покупателей — два шага подряд, поэтому они связаны стрелкой:
@@ -359,6 +377,7 @@ const GoodsWarehouse = () => {
             title="Разобрать возвраты"
             hint="Решить: в цех на осмотр или на полку"
             count={pendingReturns.length}
+            zone="both"
             onClick={() => navigate('/crm/inventory/returns-inspection')}
             stepLabel="Привёз с пункта выдачи"
             stepIcon="Truck"
@@ -369,6 +388,7 @@ const GoodsWarehouse = () => {
             title="Товар к подбору"
             hint="Собрать с полок и наклеить стикеры"
             count={pickingPending}
+            zone="warehouse"
             onClick={() => navigate('/crm/inventory/goods-picking')}
           />
         </div>
