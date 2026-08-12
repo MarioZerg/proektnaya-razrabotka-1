@@ -1054,6 +1054,61 @@ def handler(event: dict, context) -> dict:
                     'height': row[10],
                 }})
 
+            if action == 'undo_pickup':
+                # Откат ошибочной приёмки: вещи вернутся в пункт выдачи, складские
+                # записи по ним удаляются. Нужно, когда забрали лишнее — например,
+                # приняли всё, что числилось в ПВЗ, а привезли только часть.
+                ids = body_data.get('ids') or []
+                if ids:
+                    ids_csv = ','.join(str(int(i)) for i in ids)
+                    where = f"r.id IN ({ids_csv})"
+                else:
+                    where = "r.picked_up_at::date = CURRENT_DATE"
+
+                # Какие складские записи создала приёмка: возврат с маркетплейса,
+                # ещё не разобранный и не положенный на полку. Разобранные вещи и всё
+                # остальное на складе не трогаем — там уже работал человек.
+                cur.execute(
+                    "SELECT gw.id, gw.order_id FROM goods_warehouse gw "
+                    "JOIN marketplace_returns r ON r.goods_warehouse_id = gw.id "
+                    f"WHERE r.status = 'picked_up' AND {where} "
+                    "AND gw.status = 'mp_return' AND gw.shelf_id IS NULL"
+                )
+                gw_rows = cur.fetchall()
+                gw_ids = [r[0] for r in gw_rows]
+                freed_orders = [r[1] for r in gw_rows if r[1]]
+
+                # ПОРЯДОК ВАЖЕН: сначала снимаем ссылки на складские записи, только потом
+                # их удаляем. Иначе база не даёт удалить строку, на которую кто-то ссылается.
+                cur.execute(
+                    "UPDATE marketplace_returns r SET status = 'new', picked_up_at = NULL, "
+                    "picked_up_by = NULL, goods_warehouse_id = NULL, received_at = NULL "
+                    f"WHERE r.status = 'picked_up' AND {where} RETURNING r.id"
+                )
+                reverted = len(cur.fetchall())
+
+                if gw_ids:
+                    gw_csv = ','.join(str(int(i)) for i in gw_ids)
+                    # Вещь, попавшая в поставку, — уже не «свежая приёмка»: её не трогаем.
+                    cur.execute(
+                        f"DELETE FROM goods_warehouse WHERE id IN ({gw_csv}) "
+                        "AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                        "                WHERE msi.goods_warehouse_id = goods_warehouse.id)"
+                    )
+
+                # Технические заказы-карточки (source='return') НЕ удаляем. На них могут
+                # ссылаться другие записи — например, начисления, — и удаление обрывается
+                # на полпути, оставляя данные в раскоряку. Пустая карточка безвредна:
+                # на конвейер она не идёт, а при повторной приёмке того же возврата
+                # переиспользуется по номеру.
+                _ = freed_orders
+                log_action(
+                    cur, actor_id, actor_name, 'undo_pickup',
+                    f'Отменил приёмку возвратов с ПВЗ: {reverted}',
+                )
+                conn.commit()
+                return _resp(200, {'success': True, 'reverted': reverted})
+
             if action == 'pickup':
                 # Кладовщик привёз коробки с пункта выдачи и отмечает, что забрал их.
                 #
@@ -1062,26 +1117,25 @@ def handler(event: dict, context) -> dict:
                 # выдачу уже закрыли (а обычно так и есть — вещи привезли, а в систему зашли
                 # позже), забрать их в систему нечем, и склад остаётся пустым.
                 #
-                # Принимаем либо конкретные заявки (ids), либо все, что числятся в пункте
-                # выдачи. Вещи сразу заводятся на склад в «подвешенном» состоянии — решение
-                # (в цех или на полку) кладовщик примет потом.
+                # Принимаем ТОЛЬКО отмеченные заявки (ids). Приём «всего, что числится
+                # в пункте выдачи», убран намеренно: в ПВЗ возвраты капают весь день,
+                # и к моменту, когда кладовщик вернулся и зашёл в систему, там уже лежат
+                # вещи, которых он не забирал. Одно нажатие — и на складе повисали
+                # 52 позиции вместо реальных 25, то есть недостача на ровном месте.
+                #
+                # Отмечает человек: он один знает, сколько коробок реально привёз.
+                # Вещи заводятся на склад в «подвешенном» состоянии — решение (в цех
+                # или на полку) принимается потом, на разборе.
                 ids = body_data.get('ids') or []
-                if ids:
-                    ids_csv = ','.join(str(int(i)) for i in ids)
-                    cur.execute(
-                        "UPDATE marketplace_returns SET status = 'picked_up', "
-                        "picked_up_at = now(), picked_up_by = %s "
-                        f"WHERE id IN ({ids_csv}) AND status IN ('new', 'approved') RETURNING id",
-                        (int(actor_id) if actor_id else None,),
-                    )
-                else:
-                    cur.execute(
-                        "UPDATE marketplace_returns SET status = 'picked_up', "
-                        "picked_up_at = now(), picked_up_by = %s "
-                        "WHERE status IN ('new', 'approved') "
-                        "AND mp_status IN ('В пункте выдачи', 'Получен') RETURNING id",
-                        (int(actor_id) if actor_id else None,),
-                    )
+                if not ids:
+                    return _resp(400, {'error': 'Отметьте возвраты, которые реально привезли'})
+                ids_csv = ','.join(str(int(i)) for i in ids)
+                cur.execute(
+                    "UPDATE marketplace_returns SET status = 'picked_up', "
+                    "picked_up_at = now(), picked_up_by = %s "
+                    f"WHERE id IN ({ids_csv}) AND status IN ('new', 'approved') RETURNING id",
+                    (int(actor_id) if actor_id else None,),
+                )
                 marked = [r[0] for r in cur.fetchall()]
                 conn.commit()
                 # Заводим на склад порциями: на полусотне вещей функция не укладывалась

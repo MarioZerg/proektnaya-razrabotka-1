@@ -23,10 +23,10 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import ReturnScanCard from '@/components/crm/returns/ReturnScanCard';
+import PickupReturnsDialog from '@/components/crm/returns/PickupReturnsDialog';
 import {
   fetchMarketplaceReturns,
   syncMarketplaceReturns,
-  pickupMarketplaceReturns,
   approveMarketplaceReturn,
   rejectMarketplaceReturn,
   type MarketplaceReturn,
@@ -75,7 +75,7 @@ const ReceiveReturns = () => {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [pickingUp, setPickingUp] = useState(false);
+  const [pickupOpen, setPickupOpen] = useState(false);
   const [processingId, setProcessingId] = useState<number | null>(null);
   const [outcomes, setOutcomes] = useState<Record<string, number>>({});
   // Админ решает по заявкам (одобрить/отклонить) и видит отчёт по утилизации.
@@ -117,32 +117,6 @@ const ReceiveReturns = () => {
   }, [user?.id, user?.name]);
 
   usePolling(autoSync, 300000);
-
-  // Коробки привезли с пункта выдачи. Автоматическая отметка через OZON срабатывает,
-  // только пока выдача открыта, — а в систему обычно заходят позже, когда её закрыли.
-  // Тогда вещи негде было принять и склад оставался пустым.
-  const handlePickup = async () => {
-    setPickingUp(true);
-    try {
-      const res = await pickupMarketplaceReturns(undefined, user?.id, user?.name);
-      toast({
-        title: res.picked > 0 ? `Забрано с пункта выдачи: ${res.picked}` : 'Забирать нечего',
-        description:
-          res.stocked > 0
-            ? `Вещи на складе, фильтр «Возврат с маркетплейса». Решите: в цех или на полку.`
-            : undefined,
-      });
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось отметить забор',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setPickingUp(false);
-    }
-  };
 
   const handleSync = async () => {
     setSyncing(true);
@@ -223,16 +197,12 @@ const ReceiveReturns = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {/* Забрал коробки с ПВЗ — нажал, и вещи встали на склад. Нужна и кладовщику,
-                и админу: сканировать полсотни стикеров по одному никто не будет. */}
-            <Button variant="outline" onClick={handlePickup} disabled={pickingUp}>
-              <Icon
-                name={pickingUp ? 'Loader2' : 'PackageOpen'}
-                size={16}
-                className={`mr-2 ${pickingUp ? 'animate-spin' : ''}`}
-              />
-              Забрал с пункта выдачи
-              {counts.new || counts.approved ? ` (${(counts.new || 0) + (counts.approved || 0)})` : ''}
+            {/* Привёз коробки с ПВЗ — открывает список, где отмечают ТОЛЬКО реально
+                привезённое. Забирать всё скопом нельзя: возвраты капают в пункт выдачи
+                весь день, и на складе оказались бы вещи, которых у нас нет. */}
+            <Button variant="outline" onClick={() => setPickupOpen(true)}>
+              <Icon name="PackageOpen" size={16} className="mr-2" />
+              Привёз с пункта выдачи
             </Button>
             {isAdmin && (
               <Button onClick={handleSync} disabled={syncing}>
@@ -249,6 +219,8 @@ const ReceiveReturns = () => {
 
         {/* Кладовщик принимает приехавшие вещи сканированием — заявки он не одобряет. */}
         {!isAdmin && <ReturnScanCard onProcessed={load} />}
+
+        <PickupReturnsDialog open={pickupOpen} onOpenChange={setPickupOpen} onDone={load} />
 
         <div className="flex flex-wrap gap-2">
           {isAdmin && (

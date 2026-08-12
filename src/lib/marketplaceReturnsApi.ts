@@ -137,19 +137,22 @@ export const rejectMarketplaceReturn = (id: number, actorId?: number, actorName?
 /**
  * Кладовщик привёз коробки с пункта выдачи и отмечает, что забрал их.
  *
- * Без ids забираются все возвраты, числящиеся в пункте выдачи. Вещи сразу встают
- * на склад в состоянии «Возврат с маркетплейса» — решение (в цех на перепаковку
- * или на полку) кладовщик принимает уже на складе.
+ * Принимаются ТОЛЬКО отмеченные вещи: возвраты капают в пункт выдачи весь день, и
+ * приём «всего сразу» заводил на склад то, чего кладовщик не привозил. Вещи встают
+ * в состояние «Возврат с маркетплейса» — решение (в цех на осмотр или на полку)
+ * принимается потом, на разборе.
  */
 export const pickupMarketplaceReturns = (
-  ids?: number[],
+  ids: number[],
   actorId?: number,
   actorName?: string
-): Promise<{ success: true; picked: number; stocked: number }> =>
+): Promise<{ success: true; picked: number; stocked: number; remaining: number }> =>
   postAction({ action: 'pickup', ids, actorId, actorName }) as Promise<{
     success: true;
     picked: number;
     stocked: number;
+    /** Сколько принятых вещей ещё не заведено на склад — заводим порциями. */
+    remaining: number;
   }>;
 
 /** Кладовщик сканирует стикер возврата с коробки — система находит заявку. */
