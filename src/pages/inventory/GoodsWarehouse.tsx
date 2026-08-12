@@ -25,6 +25,8 @@ import AdminReceiveDialog from '@/components/crm/goodsWarehouse/AdminReceiveDial
 import { printShelfPickList } from '@/lib/printShelfPickList';
 import GoodsWarehouseFilters from '@/components/crm/goodsWarehouse/GoodsWarehouseFilters';
 import GoodsWarehouseTable from '@/components/crm/goodsWarehouse/GoodsWarehouseTable';
+import TablePager from '@/components/crm/finance/TablePager';
+import { useTablePage } from '@/components/crm/finance/useTablePage';
 import WorkTile from '@/components/crm/goodsWarehouse/WorkTile';
 import {
   DropdownMenu,
@@ -160,6 +162,24 @@ const GoodsWarehouse = () => {
       return false;
     return true;
   });
+
+  // Склад копится каждый день: без фильтра в списке больше тысячи вещей всех статусов.
+  // Такая портянка грузит планшет и в ней невозможно ничего найти глазами — режем на
+  // страницы по 50 строк. Данные уже загружены, лишних запросов к серверу не будет.
+  const {
+    visible: pagedItems,
+    page,
+    setPage,
+    totalPages,
+    total,
+  } = useTablePage(filtered, 50);
+
+  // Сменили фильтр или поиск — возвращаемся на первую страницу: иначе человек остаётся
+  // на пятой странице нового, короткого списка и видит пустоту.
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, statusFilter, materialFilter, widthFilter, heightFilter, shelfFilter]);
 
   // Считаем остатки по полкам только среди товаров, которые реально лежат на складе:
   // отгруженные и утерянные вещи собирать не нужно.
@@ -438,12 +458,13 @@ const GoodsWarehouse = () => {
 
         <GoodsWarehouseTable
           loading={loading}
-          items={filtered}
+          items={pagedItems}
           onReturnToWorkshop={handleReturn}
           onMarkLost={handleMarkLost}
           isAdmin={isAdmin}
           onDelete={handleDeleteGoods}
         />
+        <TablePager page={page} totalPages={totalPages} total={total} setPage={setPage} />
       </div>
     </CrmLayout>
   );
