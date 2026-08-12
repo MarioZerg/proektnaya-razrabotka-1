@@ -65,6 +65,7 @@ const SewingItems = () => {
     totalPieces,
     countForTab,
     myUnfinishedCount,
+    myUnfinishedOrders,
     myInWorkCount,
     myGroups,
   } = useSewingItemsFilters({
@@ -123,6 +124,7 @@ const SewingItems = () => {
     load,
     setActiveTab,
     myUnfinishedCount,
+    unfinishedOrders: myUnfinishedOrders,
     ordersLoading: loading,
   });
 
@@ -216,7 +218,11 @@ const SewingItems = () => {
                     </>
                   )}
                 </Button>
-                {printQrCuttingEnabled && lastTakenStack.length > 0 && (
+                {/* Кнопка живёт, пока есть нераскроенные заказы — это данные с сервера.
+                    Раньше она зависела от памяти браузера: закройщица обновляла страницу
+                    или заходила с другого планшета, и кнопка пропадала вместе с
+                    возможностью распечатать лист по уже взятому стеку. */}
+                {printQrCuttingEnabled && (myUnfinishedCount > 0 || lastTakenStack.length > 0) && (
                   <Button variant="outline" onClick={handlePrintTask} className="w-full sm:w-auto">
                     <Icon name="Printer" size={16} className="mr-2" />
                     Распечатать задание

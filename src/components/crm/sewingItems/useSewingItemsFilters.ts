@@ -145,9 +145,13 @@ export const useSewingItemsFilters = ({
     return orders.filter((o) => o.sewingStatus === status).length;
   };
 
-  const myUnfinishedCount = orders.filter(
+  // Нераскроенные заказы закройщика — и число, и сами заказы. По ним печатается лист
+  // задания, поэтому важно брать их с сервера, а не из памяти браузера: планшет могли
+  // сменить, вкладку открыть заново, кэш очистить — а лист всё равно нужен.
+  const myUnfinishedOrders = orders.filter(
     (o) => o.sewingStatus === 'На раскрое' && o.assignedUserId === userId
-  ).length;
+  );
+  const myUnfinishedCount = myUnfinishedOrders.length;
 
   const myInWorkCount = orders.filter(
     (o) => o.sewingStatus === 'В работе' && o.assignedUserId === userId
@@ -195,6 +199,7 @@ export const useSewingItemsFilters = ({
     totalPieces,
     countForTab,
     myUnfinishedCount,
+    myUnfinishedOrders,
     myInWorkCount,
     myGroups,
   };

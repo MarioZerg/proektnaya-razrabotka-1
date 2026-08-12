@@ -34,6 +34,10 @@ interface UseSewingItemsQueueActionsArgs {
   /** Сколько заказов текущего стека ещё не раскроено (статус "На раскрое" у этого
    * закройщика) — когда доходит до 0, кнопка печати должна исчезнуть. */
   myUnfinishedCount: number;
+  /** Сами нераскроенные заказы закройщика — по ним печатается лист задания.
+   * Это данные с сервера, поэтому лист можно распечатать даже если память браузера
+   * очистили или закройщица зашла с другого планшета. */
+  unfinishedOrders: TakenOrder[];
   /** Пока список заказов ещё грузится с сервера, myUnfinishedCount временно равен 0 —
    * нельзя по этому значению стирать восстановленный из localStorage стек раньше времени. */
   ordersLoading: boolean;
@@ -51,6 +55,7 @@ export const useSewingItemsQueueActions = ({
   load,
   setActiveTab,
   myUnfinishedCount,
+  unfinishedOrders,
   ordersLoading,
 }: UseSewingItemsQueueActionsArgs) => {
   const { toast } = useToast();
@@ -59,6 +64,20 @@ export const useSewingItemsQueueActions = ({
   const [takingOrder, setTakingOrder] = useState(false);
   const [takeOrderCooldown, setTakeOrderCooldown] = useState(false);
   const [lastTakenStack, setLastTakenStack] = useState<TakenOrder[]>(() => loadStoredStack(userId));
+
+  // Подхватываем сохранённый стек, когда стал известен сотрудник.
+  //
+  // При открытии страницы userId ещё не определён (профиль подгружается), и первое
+  // чтение памяти браузера уходит в пустоту — ключ хранения зависит от userId. Раньше
+  // повторной попытки не было: закройщица брала стек, обновляла страницу — и кнопка
+  // «Распечатать задание» пропадала навсегда, хотя стек был не раскроен. Приходилось
+  // резать по памяти или просить взять новый стек.
+  useEffect(() => {
+    if (!userId || lastTakenStack.length > 0) return;
+    const stored = loadStoredStack(userId);
+    if (stored.length > 0) setLastTakenStack(stored);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   // Стек считается завершённым, когда у закройщика не осталось ни одного заказа "На
   // раскрое" — именно тогда убираем сохранённый стек и кнопка печати пропадает. Ждём
@@ -91,10 +110,14 @@ export const useSewingItemsQueueActions = ({
   };
 
   const handlePrintTask = () => {
-    if (lastTakenStack.length === 0) return;
+    // Печатаем то, что реально не раскроено СЕЙЧАС (данные с сервера), а если сервер
+    // ещё не ответил — сохранённый стек. Память браузера тут только подсказка: её
+    // чистят, планшет меняют, вкладку открывают заново, — а лист закройщице нужен.
+    const toPrint = unfinishedOrders.length > 0 ? unfinishedOrders : lastTakenStack;
+    if (toPrint.length === 0) return;
     // ID закройщика (внутренний id пользователя) печатается на листе — по нему швея находит
     // крои закройщика на вешалках в цехе.
-    printCuttingSheet(lastTakenStack, userName || '', userId ?? null);
+    printCuttingSheet(toPrint, userName || '', userId ?? null);
   };
 
   const handleTakeOrder = async () => {
