@@ -16,7 +16,6 @@ import {
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { fetchMarketplaceReturns } from '@/lib/marketplaceReturnsApi';
 import { usePickingPending } from '@/hooks/usePickingPending';
-import ReceiveReturnDialog from '@/components/crm/goodsWarehouse/ReceiveReturnDialog';
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
 import PickupReturnsDialog from '@/components/crm/returns/PickupReturnsDialog';
@@ -57,7 +56,6 @@ const GoodsWarehouse = () => {
 
 
   // Принять новые возвраты
-  const [returnOpen, setReturnOpen] = useState(false);
 
 
   // Разложить отменённые товары по полкам (сканером) и стикеровка заказов с полок
@@ -233,11 +231,6 @@ const GoodsWarehouse = () => {
     printShelfPickList(filtered, shelfName);
   };
 
-  const openReturn = () => {
-    setReturnOpen(true);
-  };
-
-
 
   const openMove = () => {
     setMoveOpen(true);
@@ -293,11 +286,6 @@ const GoodsWarehouse = () => {
           {/* Редкие действия убраны под «Ещё»: раньше десять кнопок в один ряд
               переносились на две-три строки, и глазами приходилось искать нужную. */}
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={openReturn}>
-              <Icon name="PackageCheck" size={16} className="mr-2" />
-              Принять возвраты
-            </Button>
-
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline">
@@ -393,11 +381,6 @@ const GoodsWarehouse = () => {
           />
         </div>
 
-        <ReceiveReturnDialog
-          open={returnOpen}
-          onOpenChange={setReturnOpen}
-          onDone={load}
-        />
         <PlaceOnShelfDialog
           open={placeOpen}
           onOpenChange={setPlaceOpen}
