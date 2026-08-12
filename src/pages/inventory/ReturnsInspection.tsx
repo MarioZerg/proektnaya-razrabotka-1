@@ -12,10 +12,19 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
+import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
+import { printStorageSticker } from '@/lib/printStorageSticker';
 import PlaceInspectedDialog from '@/components/crm/goodsWarehouse/PlaceInspectedDialog';
 import {
   INSPECTION_STAGES,
@@ -78,6 +87,9 @@ const ReturnsInspection = () => {
   const [acting, setActing] = useState(false);
   const [placeOpen, setPlaceOpen] = useState(false);
   const [disposeReason, setDisposeReason] = useState('');
+  // Полки для укладки прямо с разбора — грузим один раз при открытии страницы.
+  const [shelves, setShelves] = useState<Shelf[]>([]);
+  const [shelfId, setShelfId] = useState('');
 
   const isAdmin = user?.role === 'admin';
   // Раскладывать по полкам могут кладовщик и админ — это конец пути возврата.
@@ -99,6 +111,10 @@ const ReturnsInspection = () => {
     setSelected([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage]);
+
+  useEffect(() => {
+    fetchShelves().then(setShelves).catch(() => setShelves([]));
+  }, []);
 
   const toggle = (id: number) =>
     setSelected((prev) =>
@@ -130,19 +146,38 @@ const ReturnsInspection = () => {
   };
 
   // Вещь приехала в порядке — в цех её везти незачем, сразу в очередь на укладку.
+  // Кладём вещи на полку прямо здесь и сразу печатаем стикеры хранения.
+  //
+  // Раньше вещь уходила «ждать укладки» и второй раз всплывала в виджете «Разложить
+  // по полкам»: кладовщик заново её сканировал и выбирал полку. Двойная работа — вещь
+  // уже у него в руках, полку он знает.
   const handleToShelf = async () => {
+    if (!shelfId) {
+      toast({ title: 'Выберите полку', variant: 'destructive' });
+      return;
+    }
     setActing(true);
     try {
-      const res = await toShelfFromInspection(selected, user?.id, user?.name);
+      const res = await toShelfFromInspection(selected, Number(shelfId), user?.id, user?.name);
+      res.items.forEach((i) =>
+        printStorageSticker({
+          storageBarcode: i.storageBarcode,
+          title:
+            i.material && i.width && i.height
+              ? `${i.material} ${i.width}x${i.height}`
+              : i.product || 'Возврат',
+          orderNumber: i.orderNumber,
+        })
+      );
       toast({
-        title: 'Отправлено на полку',
-        description: `Ждут укладки: ${res.moved}. Назначьте полку в окне «Разложить по полкам».`,
+        title: `Положено на «${res.shelfName}»: ${res.moved}`,
+        description: 'Стикеры хранения отправлены на печать',
       });
       setSelected([]);
       load();
     } catch (e) {
       toast({
-        title: 'Не удалось отправить на полку',
+        title: 'Не удалось положить на полку',
         description: e instanceof Error ? e.message : undefined,
         variant: 'destructive',
       });
@@ -271,10 +306,28 @@ const ReturnsInspection = () => {
                 </Button>
                 {/* Вещь вернулась в порядке — везти её к упаковщицам незачем. Раньше
                     с разбора был один путь, через цех, и годная вещь делала лишний круг
-                    по производству. */}
-                <Button size="sm" variant="outline" onClick={handleToShelf} disabled={acting}>
+                    по производству. Полку выбирают тут же: вещь в руках, и второй заход
+                    через «Разложить по полкам» не нужен. */}
+                <Select value={shelfId} onValueChange={setShelfId}>
+                  <SelectTrigger className="h-9 w-44">
+                    <SelectValue placeholder="Полка" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {shelves.map((sh) => (
+                      <SelectItem key={sh.id} value={String(sh.id)}>
+                        {sh.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleToShelf}
+                  disabled={acting || !shelfId}
+                >
                   <Icon name="Boxes" size={16} className="mr-2" />
-                  Положить на полку
+                  На полку + стикер
                 </Button>
               </>
             )}

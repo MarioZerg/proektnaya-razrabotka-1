@@ -354,10 +354,33 @@ export const moveToWorkshop = (ids: number[], actorId?: number, actorName?: stri
  * Вещь приехала в порядке — гонять её к упаковщицам незачем. Вещи встают в очередь
  * на укладку, полку кладовщик назначит сканированием в окне «Разложить по полкам».
  */
-export const toShelfFromInspection = (ids: number[], actorId?: number, actorName?: string) =>
-  postAction({ action: 'to_shelf_from_inspection', ids, actorId, actorName }) as Promise<{
+/** Вещь, уложенная на полку: по ней сразу печатается стикер хранения. */
+export interface PlacedFromInspection {
+  id: number;
+  storageBarcode: string;
+  orderNumber: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  product: string | null;
+}
+
+export const toShelfFromInspection = (
+  ids: number[],
+  shelfId: number,
+  actorId?: number,
+  actorName?: string
+): Promise<{
+  success: true;
+  moved: number;
+  shelfName: string;
+  items: PlacedFromInspection[];
+}> =>
+  postAction({ action: 'to_shelf_from_inspection', ids, shelfId, actorId, actorName }) as Promise<{
     success: true;
     moved: number;
+    shelfName: string;
+    items: PlacedFromInspection[];
   }>;
 
 /** Одна пачка раскладки: полка и стикеры вещей, которые кладут именно на неё. */

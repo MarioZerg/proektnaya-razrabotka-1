@@ -127,11 +127,18 @@ export const scanPickupReturn = (
   barcode: string,
   actorId?: number,
   actorName?: string
-): Promise<{ found: number; barcode: string; accepted: AcceptedReturn | null }> =>
+): Promise<{
+  found: number;
+  barcode: string;
+  accepted: AcceptedReturn | null;
+  /** Вещь уже принимали раньше — повторный скан ничего не добавляет. */
+  alreadyPicked: boolean;
+}> =>
   postAction({ action: 'fetch_by_barcode', barcode, accept: 1, actorId, actorName }) as Promise<{
     found: number;
     barcode: string;
     accepted: AcceptedReturn | null;
+    alreadyPicked: boolean;
   }>;
 
 /** Загрузить свежие заявки на возврат с OZON и Wildberries. */

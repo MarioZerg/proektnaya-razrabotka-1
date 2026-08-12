@@ -862,10 +862,21 @@ def handler(event: dict, context) -> dict:
                 # чтобы кладовщик не искал её потом галочками в списке: он держит коробку
                 # в руках, подтверждать это второй раз бессмысленно.
                 accepted = None
+                already = False
                 if body_data.get('accept'):
                     ext_ids = [str(it.get('id')) for it in exact if it.get('id')]
                     if ext_ids:
                         ids_sql = ','.join("'" + i.replace("'", "''") + "'" for i in ext_ids)
+                        # Эту вещь уже принимали? Тогда повторный скан ничего не меняет —
+                        # кладовщик просто пикнул ту же наклейку дважды. Сообщаем об этом
+                        # и НЕ трогаем данные: иначе счётчик принятого врал бы.
+                        cur.execute(
+                            "SELECT id FROM marketplace_returns "
+                            f"WHERE marketplace = 'OZON' AND external_id IN ({ids_sql}) "
+                            "AND status NOT IN ('new', 'approved') LIMIT 1"
+                        )
+                        already = cur.fetchone() is not None
+
                         cur.execute(
                             "UPDATE marketplace_returns SET status = 'picked_up', "
                             "picked_up_at = COALESCE(picked_up_at, now()), picked_up_by = %s "
@@ -875,8 +886,13 @@ def handler(event: dict, context) -> dict:
                         )
                         marked = [r[0] for r in cur.fetchall()]
                         conn.commit()
-                        stock_picked_up_returns(cur, marked or None)
-                        conn.commit()
+                        # ВАЖНО: заводим на склад ТОЛЬКО отсканированную вещь. Раньше при
+                        # повторном скане список принятых оказывался пустым, и функция
+                        # принималась заводить все ждущие возвраты подряд — на складе
+                        # появлялись вещи, которых кладовщик не привозил.
+                        if marked:
+                            stock_picked_up_returns(cur, marked)
+                            conn.commit()
                         # Что показать кладовщику: ткань, размер и стикер хранения —
                         # по ним он сразу видит, ту ли вещь принял.
                         cur.execute(
@@ -896,7 +912,14 @@ def handler(event: dict, context) -> dict:
                                 'productName': info[4],
                             }
 
-                return _resp(200, {'found': saved, 'barcode': code, 'accepted': accepted})
+                return _resp(200, {
+                    'found': saved,
+                    'barcode': code,
+                    'accepted': accepted,
+                    # Вещь уже была принята раньше — фронт покажет это отдельно и не
+                    # прибавит её к счётчику принятого.
+                    'alreadyPicked': already,
+                })
 
             if action == 'sync_status':
                 # Догрузка возвратов с конкретным статусом. Нужна сканеру приёмки: коробку

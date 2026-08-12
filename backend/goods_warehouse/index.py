@@ -1437,24 +1437,85 @@ def handler(event: dict, context) -> dict:
                 # по производству ради вещи, с которой всё хорошо. Теперь кладовщик кладёт
                 # её на полку прямо здесь.
                 #
-                # Ставим 'awaiting_shelf': вещь ждёт укладки, полку кладовщик назначит
-                # сканированием в окне «Разложить по полкам». Сразу в 'in_stock' не
-                # переводим — иначе вещь числилась бы на складе, не лежа ни на одной полке.
+                # Полку указывают ПРЯМО ЗДЕСЬ (shelfId) — вещь сразу встаёт на место.
+                #
+                # Раньше она уходила в 'awaiting_shelf' и попадала в виджет «Разложить по
+                # полкам», где кладовщик заново сканировал её и выбирал полку. Двойная
+                # работа на ровном месте: вещь уже у него в руках, и полку он знает.
+                # Стикер хранения печатается сразу после этого действия.
                 ids = body_data.get('ids') or []
                 if not ids:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товары'})}
+                shelf_id = body_data.get('shelfId')
+                if not shelf_id:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Выберите полку'}, ensure_ascii=False),
+                    }
+                cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+                shelf_row = cur.fetchone()
+                if not shelf_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Полка не найдена'}, ensure_ascii=False),
+                    }
+
                 ids_csv = ','.join(str(int(i)) for i in ids)
                 cur.execute(
-                    f"UPDATE goods_warehouse SET status = 'awaiting_shelf' "
-                    f"WHERE id IN ({ids_csv}) AND status IN ('checking', 'mp_return') RETURNING id"
+                    f"UPDATE goods_warehouse SET status = 'in_stock', shelf_id = {int(shelf_id)}, "
+                    f"received_at = now() "
+                    f"WHERE id IN ({ids_csv}) AND status IN ('checking', 'mp_return') "
+                    f"RETURNING id, storage_barcode, order_id"
                 )
-                moved = len(cur.fetchall())
+                placed_rows = cur.fetchall()
+                moved = len(placed_rows)
+
+                # Вещь легла на полку — она снова свободный остаток и может закрыть
+                # заказ, который сейчас ждёт пошива. Проверяем сразу, чтобы не шить
+                # то, что уже лежит на складе.
+                for gw_id, _bc, _oid in placed_rows:
+                    try_match_orders_from_stock(cur, gw_id=gw_id)
+
+                # Что печатать: стикеры хранения по каждой уложенной вещи.
+                items_out = []
+                if placed_rows:
+                    placed_csv = ','.join(str(int(r[0])) for r in placed_rows)
+                    cur.execute(
+                        "SELECT gw.id, gw.storage_barcode, o.order_number, o.material, "
+                        "       o.width, o.height, o.product "
+                        "FROM goods_warehouse gw LEFT JOIN orders o ON o.id = gw.order_id "
+                        f"WHERE gw.id IN ({placed_csv})"
+                    )
+                    items_out = [
+                        {
+                            'id': r[0],
+                            'storageBarcode': r[1],
+                            'orderNumber': r[2],
+                            'material': r[3],
+                            'width': r[4],
+                            'height': r[5],
+                            'product': r[6],
+                        }
+                        for r in cur.fetchall()
+                    ]
+
                 log_action(
                     cur, actor_id, actor_name, 'to_shelf_from_inspection', 'goods_warehouse', None,
-                    f'Отправил на полку без осмотра в цехе вещей: {moved}',
+                    f'Положил на полку «{shelf_row[0]}» без осмотра в цехе вещей: {moved}',
                 )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'moved': moved})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'moved': moved,
+                        'shelfName': shelf_row[0],
+                        'items': items_out,
+                    }, ensure_ascii=False),
+                }
 
             if action == 'take_from_workshop':
                 # Кладовщик забирает осмотренную вещь из цеха: сканирует стикер хранения,

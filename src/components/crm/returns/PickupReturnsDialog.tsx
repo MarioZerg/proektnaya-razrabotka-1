@@ -26,6 +26,8 @@ interface ScanRow {
   barcode: string;
   title?: string;
   storageBarcode?: string | null;
+  /** Эту вещь уже принимали — повторный скан не считается. */
+  already?: boolean;
   error?: string;
 }
 
@@ -76,9 +78,19 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
         a && a.material && a.width && a.height
           ? `${a.material} ${a.width}×${a.height}`
           : a?.productName || 'Возврат принят';
-      playScanSound();
+      // Повторный скан той же вещи — не ошибка, но и не приёмка: сообщаем об этом
+      // отдельным сигналом и не прибавляем к счётчику, иначе число принятого врёт.
+      if (res.alreadyPicked) playScanErrorSound();
+      else playScanSound();
       setRows((prev) => [
-        { key: Date.now(), ok: true, barcode: code, title, storageBarcode: a?.storageBarcode },
+        {
+          key: Date.now(),
+          ok: true,
+          barcode: code,
+          title,
+          storageBarcode: a?.storageBarcode,
+          already: res.alreadyPicked,
+        },
         ...prev,
       ]);
       onDone();
@@ -101,7 +113,7 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
 
   useScannerAutoSubmit(barcode, handleScan, !busy);
 
-  const okCount = rows.filter((r) => r.ok).length;
+  const okCount = rows.filter((r) => r.ok && !r.already).length;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -137,19 +149,24 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
                 {rows.map((r) => (
                   <div key={r.key} className="flex items-start gap-2 text-sm">
                     <Icon
-                      name={r.ok ? 'Check' : 'X'}
+                      name={!r.ok ? 'X' : r.already ? 'Info' : 'Check'}
                       size={15}
-                      className={`mt-0.5 shrink-0 ${r.ok ? 'text-emerald-600' : 'text-destructive'}`}
+                      className={`mt-0.5 shrink-0 ${
+                        !r.ok
+                          ? 'text-destructive'
+                          : r.already
+                            ? 'text-amber-600'
+                            : 'text-emerald-600'
+                      }`}
                     />
                     <div className="min-w-0 flex-1">
                       {r.ok ? (
                         <>
                           <p className="font-medium leading-tight">{r.title}</p>
-                          {r.storageBarcode && (
-                            <p className="font-mono-tech text-xs text-muted-foreground">
-                              {r.storageBarcode}
-                            </p>
-                          )}
+                          <p className="text-xs text-muted-foreground">
+                            {r.already ? 'Уже принята ранее · ' : ''}
+                            {r.storageBarcode || r.barcode}
+                          </p>
                         </>
                       ) : (
                         <>
