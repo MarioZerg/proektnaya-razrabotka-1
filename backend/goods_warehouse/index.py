@@ -1413,6 +1413,33 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'moved': moved})}
 
+            if action == 'to_shelf_from_inspection':
+                # Вещь вернулась с маркетплейса в порядке — осматривать её в цехе незачем.
+                #
+                # Раньше с разбора был только один путь: «в цех на осмотр». Годную вещь
+                # приходилось гонять к упаковщицам и ждать, пока её вернут, — лишний круг
+                # по производству ради вещи, с которой всё хорошо. Теперь кладовщик кладёт
+                # её на полку прямо здесь.
+                #
+                # Ставим 'awaiting_shelf': вещь ждёт укладки, полку кладовщик назначит
+                # сканированием в окне «Разложить по полкам». Сразу в 'in_stock' не
+                # переводим — иначе вещь числилась бы на складе, не лежа ни на одной полке.
+                ids = body_data.get('ids') or []
+                if not ids:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товары'})}
+                ids_csv = ','.join(str(int(i)) for i in ids)
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'awaiting_shelf' "
+                    f"WHERE id IN ({ids_csv}) AND status IN ('checking', 'mp_return') RETURNING id"
+                )
+                moved = len(cur.fetchall())
+                log_action(
+                    cur, actor_id, actor_name, 'to_shelf_from_inspection', 'goods_warehouse', None,
+                    f'Отправил на полку без осмотра в цехе вещей: {moved}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'moved': moved})}
+
             if action == 'take_from_workshop':
                 # Кладовщик забирает осмотренную вещь из цеха: сканирует стикер хранения,
                 # который наклеила упаковщица. Полку определит позже — сейчас вещь «на руках».

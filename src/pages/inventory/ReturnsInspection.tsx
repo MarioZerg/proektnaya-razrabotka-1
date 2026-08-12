@@ -26,6 +26,7 @@ import {
 import {
   fetchInspection,
   moveToWorkshop,
+  toShelfFromInspection,
   sendToDispose,
   clearDisposed,
   type InspectionCounts,
@@ -122,6 +123,28 @@ const ReturnsInspection = () => {
     } catch (e) {
       toast({
         title: 'Не удалось передать',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setActing(false);
+    }
+  };
+
+  // Вещь приехала в порядке — в цех её везти незачем, сразу в очередь на укладку.
+  const handleToShelf = async () => {
+    setActing(true);
+    try {
+      const res = await toShelfFromInspection(selected, user?.id, user?.name);
+      toast({
+        title: 'Отправлено на полку',
+        description: `Ждут укладки: ${res.moved}. Назначьте полку в окне «Разложить по полкам».`,
+      });
+      setSelected([]);
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось отправить на полку',
         description: e instanceof Error ? e.message : undefined,
         variant: 'destructive',
       });
@@ -235,10 +258,19 @@ const ReturnsInspection = () => {
             {/* Разбирая привезённое с ПВЗ и принятое ранее, кладовщик отправляет часть
                 вещей упаковщицам на осмотр — действие одинаковое для обоих этапов. */}
             {(stage === 'fromReturn' || stage === 'fromMarketplace') && (
-              <Button size="sm" onClick={handleMoveToWorkshop} disabled={acting}>
-                <Icon name="Truck" size={16} className="mr-2" />
-                Переместить в цех на осмотр
-              </Button>
+              <>
+                <Button size="sm" onClick={handleMoveToWorkshop} disabled={acting}>
+                  <Icon name="Truck" size={16} className="mr-2" />
+                  Переместить в цех на осмотр
+                </Button>
+                {/* Вещь вернулась в порядке — везти её к упаковщицам незачем. Раньше
+                    с разбора был один путь, через цех, и годная вещь делала лишний круг
+                    по производству. */}
+                <Button size="sm" variant="outline" onClick={handleToShelf} disabled={acting}>
+                  <Icon name="Boxes" size={16} className="mr-2" />
+                  Положить на полку
+                </Button>
+              </>
             )}
 
             {stage !== 'disposed' && stage !== 'toDispose' && (

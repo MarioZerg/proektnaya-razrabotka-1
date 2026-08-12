@@ -348,6 +348,18 @@ export const moveToWorkshop = (ids: number[], actorId?: number, actorName?: stri
     moved: number;
   }>;
 
+/**
+ * Отправить возвраты сразу на полку, минуя осмотр в цехе.
+ *
+ * Вещь приехала в порядке — гонять её к упаковщицам незачем. Вещи встают в очередь
+ * на укладку, полку кладовщик назначит сканированием в окне «Разложить по полкам».
+ */
+export const toShelfFromInspection = (ids: number[], actorId?: number, actorName?: string) =>
+  postAction({ action: 'to_shelf_from_inspection', ids, actorId, actorName }) as Promise<{
+    success: true;
+    moved: number;
+  }>;
+
 /** Одна пачка раскладки: полка и стикеры вещей, которые кладут именно на неё. */
 export interface ShelfBatch {
   shelfId: number;

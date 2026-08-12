@@ -83,6 +83,15 @@
         "reason": "порвана"
       },
       "expectedStatus": 404
+    },
+    {
+      "name": "To shelf from inspection without ids fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "to_shelf_from_inspection"
+      },
+      "expectedStatus": 400
     }
   ]
 }
