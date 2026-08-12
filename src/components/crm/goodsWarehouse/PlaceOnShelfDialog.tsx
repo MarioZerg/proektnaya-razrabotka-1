@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -49,6 +49,16 @@ const PlaceOnShelfDialog = ({
   const [shelfId, setShelfId] = useState('');
   const [saving, setSaving] = useState(false);
   const [placed, setPlaced] = useState<string[]>([]);
+
+  // Сменили полку — начинаем счёт заново.
+  //
+  // Список подписан текущей полкой («Положено на "Верхняя": 5»), но раньше он копил
+  // вещи со всех полок подряд. Кладовщик раскладывал пять штук на одну полку,
+  // переключался на другую — и видел «Положено на "Нижняя": 5», хотя туда не положил
+  // ещё ничего. Пересчитывать приходилось руками.
+  useEffect(() => {
+    setPlaced([]);
+  }, [shelfId]);
 
   const handleSave = async () => {
     if (!barcode.trim() || !shelfId) return;
