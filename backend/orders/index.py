@@ -732,6 +732,44 @@ def handler(event: dict, context) -> dict:
                 if single_mode:
                     stack_size = 1
 
+                # Остаток лимита метража на смену. Раньше стек выдавался целиком, не глядя
+                # на лимит: закройщик с 490 из 500 пог.м. получал ещё 20 заказов, кроил один
+                # и упирался в «лимит исчерпан» — остальные 19 висели на нём нераскроенными
+                # и блокировали работу (взять новый стек нельзя, пока есть незакрытые).
+                # Теперь считаем, сколько метров осталось, и отдаём ровно столько заказов,
+                # сколько в него влезает. Дальше закройщик добирает по одному сам.
+                # Лимит действует только на открытой смене — как и его проверка при раскрое.
+                cutter_meters_left = None
+                cur.execute(
+                    "SELECT opened_at FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "ORDER BY opened_at DESC LIMIT 1",
+                    (int(user_id),),
+                )
+                shift_row = cur.fetchone()
+                if shift_row:
+                    daily_limit = get_setting_float(cur, int(workshop_id), 'cutter_daily_limit', 0)
+                    if daily_limit > 0:
+                        # Метраж считаем ТЕМ ЖЕ запросом, что и проверка при раскрое, —
+                        # иначе выдача и проверка разошлись бы, и человек снова упирался
+                        # бы в отказ на заказе, который система ему сама и выдала.
+                        cur.execute(
+                            "SELECT COALESCE(SUM(width), 0) FROM orders WHERE assigned_user_id = %s "
+                            "AND sewing_status IN ('Раскроено', 'В работе', 'Стикеровка', 'Готовые') "
+                            "AND cut_at >= %s",
+                            (int(user_id), shift_row[0]),
+                        )
+                        cut_meters = float(cur.fetchone()[0] or 0) / 100
+                        cutter_meters_left = daily_limit - cut_meters
+                        if cutter_meters_left <= 0:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': f'Лимит метража на смену исчерпан: '
+                                             f'{round(cut_meters, 2)}/{daily_limit} пог.м.'
+                                }, ensure_ascii=False),
+                            }
+
                 # Цех берёт в раскрой только заказы на РАЗРЕШЁННЫЕ ему материалы
                 # (workshops.allowed_materials — список id материалов, отмеченных в настройках
                 # цеха галочками). Заказ хранит материал текстом (orders.material), поэтому
@@ -789,7 +827,8 @@ def handler(event: dict, context) -> dict:
                     if single_mode else " "
                 )
                 cur.execute(
-                    "SELECT id, group_key, group_size FROM orders WHERE sewing_status = 'Новый' "
+                    "SELECT id, group_key, group_size, COALESCE(width, 0) FROM orders "
+                    "WHERE sewing_status = 'Новый' "
                     "AND fulfilled_from_stock_id IS NULL "
                     "AND COALESCE(status, '') <> 'Отменён' "
                     "AND material IN (" + names_csv + ") "
@@ -801,6 +840,22 @@ def handler(event: dict, context) -> dict:
                     (stack_size,),
                 )
                 picked = cur.fetchall()
+
+                # Обрезаем стек по остатку лимита: набираем заказы по очереди, пока их
+                # суммарная ширина влезает в оставшиеся метры. Первый заказ отдаём всегда,
+                # даже если он один перекрывает остаток, — иначе при остатке в 1 метр
+                # закройщик не получил бы вообще ничего и встал бы совсем.
+                if cutter_meters_left is not None and picked:
+                    limited = []
+                    used = 0.0
+                    for row in picked:
+                        row_meters = float(row[3] or 0) / 100
+                        if limited and used + row_meters > cutter_meters_left:
+                            break
+                        limited.append(row)
+                        used += row_meters
+                    picked = limited
+
                 order_ids = [r[0] for r in picked]
 
                 # НАСТОЯЩАЯ связка — заказ покупателя от ДВУХ вещей и больше. Она выдаётся
