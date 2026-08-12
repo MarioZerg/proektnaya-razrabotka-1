@@ -1,4 +1,4 @@
-import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -6,19 +6,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import Icon from '@/components/ui/icon';
 import { roleLabels } from '@/lib/roles';
 import type { Employee } from '@/lib/usersApi';
-import { formatDateTime, initials, roleOptions, workshopOptions } from '@/components/crm/users/usersShared';
+import { roleOptions, workshopOptions } from '@/components/crm/users/usersShared';
+import EmployeeCard from '@/components/crm/users/EmployeeCard';
 
 interface EmployeesTableProps {
   loading: boolean;
@@ -27,16 +19,30 @@ interface EmployeesTableProps {
   setRoleFilter: (value: string) => void;
   workshopFilter: string;
   setWorkshopFilter: (value: string) => void;
+  /** Поиск по имени, логину, телефону или почте. */
+  search: string;
+  setSearch: (value: string) => void;
   onOpenCard: (emp: Employee) => void;
   onDeleteRequest: (id: number) => void;
   /** Войти в аккаунт сотрудника и посмотреть его рабочую панель. */
   onImpersonate: (emp: Employee) => void;
-  /** Кто смотрит таблицу — на своей строке кнопка входа не нужна. */
+  /** Кто смотрит список — на своей строке кнопка входа не нужна. */
   currentUserId?: number;
   /** Сотрудник, в чей аккаунт сейчас выполняется вход — на его кнопке крутится ожидание. */
   enteringId: number | null;
 }
 
+/**
+ * Список сотрудников карточками.
+ *
+ * Раньше это была таблица из девяти столбцов: даты создания и обновления занимали
+ * половину ширины, а кнопки правки уезжали за правый край. Чтобы поправить профиль,
+ * администратор прокручивал список вбок и терял из вида имя сотрудника.
+ *
+ * Здесь на строке только то, по чему человека узнают, — фото, имя, должность, цех и
+ * логин, — а кнопки всегда на экране. Технические даты остались в карточке сотрудника:
+ * они нужны редко, а места занимали больше всего.
+ */
 const EmployeesTable = ({
   loading,
   filtered,
@@ -44,6 +50,8 @@ const EmployeesTable = ({
   setRoleFilter,
   workshopFilter,
   setWorkshopFilter,
+  search,
+  setSearch,
   onOpenCard,
   onDeleteRequest,
   onImpersonate,
@@ -51,8 +59,35 @@ const EmployeesTable = ({
   currentUserId,
 }: EmployeesTableProps) => {
   return (
-    <>
-      <div className="flex flex-wrap gap-3">
+    <div className="space-y-3">
+      {/* Поиск отдельной строкой сверху: в списке два десятка человек, и найти нужного
+          по имени быстрее, чем перебирать фильтры по должности и цеху. */}
+      <div className="relative max-w-xl">
+        <Icon
+          name="Search"
+          size={16}
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Поиск: имя, логин, телефон или почта"
+          className="h-10 pl-9 pr-9"
+          autoComplete="off"
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
+            title="Очистить поиск"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+          >
+            <Icon name="X" size={16} />
+          </button>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
         <Select value={roleFilter} onValueChange={setRoleFilter}>
           <SelectTrigger className="w-full sm:w-[180px]">
             <SelectValue />
@@ -79,6 +114,11 @@ const EmployeesTable = ({
             ))}
           </SelectContent>
         </Select>
+        {!loading && (
+          <p className="text-sm text-muted-foreground">
+            Сотрудников: <span className="text-base font-bold text-foreground">{filtered.length}</span>
+          </p>
+        )}
       </div>
 
       {loading ? (
@@ -87,75 +127,27 @@ const EmployeesTable = ({
           Загрузка...
         </div>
       ) : filtered.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Сотрудников пока нет.</p>
+        <p className="text-sm text-muted-foreground">
+          {search.trim()
+            ? 'По этому запросу никого не нашлось'
+            : 'Сотрудников пока нет.'}
+        </p>
       ) : (
-        <div className="rounded-md border border-border">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-primary hover:bg-primary">
-                <TableHead className="text-primary-foreground">#</TableHead>
-                <TableHead className="text-primary-foreground">Аватар</TableHead>
-                <TableHead className="text-primary-foreground">Имя</TableHead>
-                <TableHead className="text-primary-foreground">Роль</TableHead>
-                <TableHead className="text-primary-foreground">Цех</TableHead>
-                <TableHead className="text-primary-foreground">Email / Телефон</TableHead>
-                <TableHead className="text-primary-foreground">Создан</TableHead>
-                <TableHead className="text-primary-foreground">Обновлен</TableHead>
-                <TableHead className="text-primary-foreground">Действия</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((emp) => (
-                <TableRow key={emp.id} className="cursor-pointer" onClick={() => onOpenCard(emp)}>
-                  <TableCell>{emp.id}</TableCell>
-                  <TableCell>
-                    <Avatar className="h-9 w-9">
-                      {emp.avatarUrl && <AvatarImage src={emp.avatarUrl} />}
-                      <AvatarFallback className="text-xs">{initials(emp.fullName)}</AvatarFallback>
-                    </Avatar>
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    <div>{emp.fullName}</div>
-                    <div className="text-xs text-muted-foreground">
-                      Логин: <span className="font-mono-tech">{emp.login}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>{roleLabels[emp.role]}</TableCell>
-                  <TableCell>{emp.workshop || '—'}</TableCell>
-                  <TableCell>
-                    <div>{emp.email}</div>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">{formatDateTime(emp.createdAt)}</TableCell>
-                  <TableCell className="whitespace-nowrap">{formatDateTime(emp.updatedAt)}</TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <div className="flex gap-2">
-                      {emp.id !== currentUserId && (
-                      <Button
-                        size="icon"
-                        variant="outline"
-                        title="Войти в аккаунт и посмотреть панель сотрудника"
-                        disabled={enteringId !== null}
-                        onClick={() => onImpersonate(emp)}
-                      >
-                        <Icon name={enteringId === emp.id ? 'Loader2' : 'LogIn'} size={14}
-                          className={enteringId === emp.id ? 'animate-spin' : undefined} />
-                      </Button>
-                      )}
-                      <Button size="icon" variant="secondary" title="Редактировать" onClick={() => onOpenCard(emp)}>
-                        <Icon name="Pencil" size={14} />
-                      </Button>
-                      <Button size="icon" variant="destructive" onClick={() => onDeleteRequest(emp.id)}>
-                        <Icon name="Trash2" size={14} />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <div className="space-y-2">
+          {filtered.map((emp) => (
+            <EmployeeCard
+              key={emp.id}
+              emp={emp}
+              onOpenCard={onOpenCard}
+              onDeleteRequest={onDeleteRequest}
+              onImpersonate={onImpersonate}
+              currentUserId={currentUserId}
+              enteringId={enteringId}
+            />
+          ))}
         </div>
       )}
-    </>
+    </div>
   );
 };
 

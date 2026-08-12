@@ -210,8 +210,11 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             cur.execute(
+                # Фото: загруженное администратором главнее, иначе берём из профиля MAX —
+                # так в списках сотрудник узнаётся по лицу, а не по инициалам.
                 "SELECT id, login, email, full_name, role, workshop, salary, "
-                "shift_from, shift_to, avatar_url, is_active, created_at, updated_at, shift_number, "
+                "shift_from, shift_to, NULLIF(COALESCE(avatar_url, max_avatar_url), ''), "
+                "is_active, created_at, updated_at, shift_number, "
                 "max_user_id, phone, registered_via_max, shift_free, salary_unlock_at, "
                 "CEIL(GREATEST(0, EXTRACT(EPOCH FROM (salary_unlock_at - now())) / 86400))::int, "
                 "work_schedule, COALESCE(late_tolerance_minutes, 15) "

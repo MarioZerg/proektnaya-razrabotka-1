@@ -34,6 +34,7 @@ const UsersSettings = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [roleFilter, setRoleFilter] = useState<string>('all');
+  const [search, setSearch] = useState('');
   const [workshopFilter, setWorkshopFilter] = useState<string>('all');
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -282,7 +283,18 @@ const UsersSettings = () => {
     }
   };
 
+  const q = search.trim().toLowerCase();
+
   const filtered = employees.filter((e) => {
+    // Пока в поиске что-то есть, фильтры по должности и цеху не сужают выборку:
+    // администратор ищет КОНКРЕТНОГО человека и не должен гадать, в каком он цехе.
+    if (q) {
+      const haystack = [e.fullName, e.login, e.email, e.phone, e.workshop]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    }
     if (roleFilter !== 'all' && e.role !== roleFilter) return false;
     if (workshopFilter !== 'all' && (e.workshop || '') !== workshopFilter) return false;
     return true;
@@ -313,6 +325,8 @@ const UsersSettings = () => {
           setRoleFilter={setRoleFilter}
           workshopFilter={workshopFilter}
           setWorkshopFilter={setWorkshopFilter}
+          search={search}
+          setSearch={setSearch}
           onOpenCard={openCard}
           onDeleteRequest={setDeleteId}
           onImpersonate={handleImpersonate}

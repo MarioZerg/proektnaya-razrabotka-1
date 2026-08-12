@@ -18,6 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { roleLabels, type Role } from '@/lib/roles';
 import type { Employee } from '@/lib/usersApi';
 import {
+  formatDateTime,
   initials,
   readFileAsBase64,
   roleOptions,
@@ -134,6 +135,14 @@ const EmployeeCardDialog = ({
                 <Icon name="Copy" size={14} />
               </Button>
             </div>
+
+            {/* Технические даты переехали сюда из списка: там они занимали два широких
+                столбца и выдавливали кнопки правки за край экрана, а нужны редко —
+                чтобы понять, когда человека завели и когда последний раз меняли. */}
+            <p className="text-xs text-muted-foreground">
+              Создан: {formatDateTime(cardEmployee.createdAt)} · Изменён:{' '}
+              {formatDateTime(cardEmployee.updatedAt)}
+            </p>
 
             <div className="space-y-1.5">
               <Label>Имя</Label>
