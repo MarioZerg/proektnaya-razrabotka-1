@@ -480,7 +480,17 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox):
         # сшитые: их задание могло закрыться у WB, и тогда вещь висит в подборе мёртвым
         # грузом — кладовщик идёт к стеллажу и упирается в ошибку печати стикера.
         "AND sewing_status IN ('Готовые', 'Со склада') AND wb_order_id IS NOT NULL "
-        "AND NOT EXISTS (SELECT 1 FROM wb_supply_orders w WHERE w.order_id = orders.id)"
+        "AND status <> 'Отгружен' "
+        # Заказы, лежащие в НАКОПИТЕЛЕ, тоже проверяем. Раньше проверка пропускала
+        # всё, что попало в любую поставку, — а накопитель это и есть поставка.
+        # В итоге вещи, которые физически уже уехали на WB, годами висели в счётчике
+        # «Готово к сборке»: кладовщик видел 27 штук, а на полках их не было.
+        # Заказы в РЕАЛЬНОЙ поставке кладовщика не трогаем: он их сейчас собирает.
+        "AND NOT EXISTS ("
+        "  SELECT 1 FROM wb_supply_orders w "
+        "  JOIN marketplace_supplies s ON s.id = w.supply_id "
+        "  WHERE w.order_id = orders.id AND COALESCE(s.is_accumulator, false) = false"
+        ")"
     )
     rows = cur.fetchall()
     if not rows:
@@ -516,6 +526,7 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox):
             cur.execute(
                 "UPDATE orders SET status = 'Отменён' WHERE id = %s", (order_id,)
             )
+            _drop_from_accumulator(cur, order_id)
             cancelled += 1
         # Уже уехал: на WB отправление собрано и передано — у нас тоже закрываем.
         elif st['wb'] in ('sold', 'sorted', 'ready_for_pickup', 'received') or st['supplier'] == 'complete':
@@ -524,12 +535,38 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox):
                 "WHERE id = %s",
                 (order_id,),
             )
+            # Вещь физически уехала — из буфера «Готово к сборке» она должна исчезнуть,
+            # иначе кладовщик ищет на полках то, чего там уже нет.
+            _drop_from_accumulator(cur, order_id)
             closed += 1
 
     conn.commit()
     return _resp(200, {
         'checked': len(rows), 'closed': closed, 'cancelled': cancelled, 'statuses': stats,
     })
+
+
+def _drop_from_accumulator(cur, order_id):
+    """Убирает заказ из накопительного буфера «Готово к сборке».
+
+    Буфер показывает, что лежит в контейнере на производстве и ждёт кладовщика.
+    Уехавшая или отменённая вещь там висеть не должна: кладовщик идёт к полкам
+    за товаром, которого нет, и не понимает, куда он делся.
+
+    Складскую запись при этом помечаем отгруженной — вещь покинула склад.
+    """
+    cur.execute(
+        "DELETE FROM wb_supply_orders w USING marketplace_supplies s "
+        "WHERE w.supply_id = s.id AND w.order_id = %s "
+        "AND COALESCE(s.is_accumulator, false) = true",
+        (int(order_id),),
+    )
+    cur.execute(
+        "UPDATE goods_warehouse SET status = 'shipped', shipped_at = COALESCE(shipped_at, now()) "
+        "WHERE (order_id = %s OR reserved_order_id = %s) "
+        "AND status IN ('picking', 'awaiting_supply')",
+        (int(order_id), int(order_id)),
+    )
 
 
 def handle_list_pending(cur, body_data):
