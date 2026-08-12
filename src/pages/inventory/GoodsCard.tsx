@@ -192,6 +192,12 @@ const GoodsCard = () => {
   const isFbo = (card.reservedOrderType || '').toUpperCase() === 'FBO';
   const schemeLabel = isFbo ? 'FBO' : 'FBS';
   const alreadyInSupply = card.status === 'awaiting_supply' || !!card.supplyId;
+  // Стикер отправления печатаем только на вещь, которую собирают ПРЯМО СЕЙЧАС:
+  // снята с полки («На сборке») или сшита и ждёт поставки («На поставку»).
+  // Вещь «На хранении» лежит свободной, даже если за ней когда-то закрепляли заказ, —
+  // ярлык ей не нужен, а наклеенный по ошибке уводит чужой товар в поставку.
+  const canPrintLabel =
+    !!card.reservedOrderId && (card.status === 'picking' || card.status === 'awaiting_supply');
 
   return (
     <CrmLayout>
@@ -254,7 +260,7 @@ const GoodsCard = () => {
                   <Button
                     size="lg"
                     onClick={handlePrint}
-                    disabled={printing || !card.reservedOrderId}
+                    disabled={printing || !canPrintLabel}
                     variant={labeled ? 'outline' : 'default'}
                   >
                     <Icon
@@ -275,9 +281,11 @@ const GoodsCard = () => {
                     </Button>
                   )}
                 </div>
-                {!card.reservedOrderId && (
+                {!canPrintLabel && (
                   <p className="text-sm text-muted-foreground">
-                    Вещь пока не подобрана под заказ — стикер печатать не из чего
+                    {card.reservedOrderId
+                      ? 'Вещь лежит на хранении — стикер отправления печатают только при сборке под заказ'
+                      : 'Вещь пока не подобрана под заказ — стикер печатать не из чего'}
                   </p>
                 )}
 

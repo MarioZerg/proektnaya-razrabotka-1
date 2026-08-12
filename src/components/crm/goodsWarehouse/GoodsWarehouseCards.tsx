@@ -11,6 +11,7 @@ import {
   reasonLabels,
   reasonIcons,
   reasonClass,
+  canPrintMarketplaceLabel,
 } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
 
 interface GoodsWarehouseCardsProps {
@@ -76,9 +77,11 @@ const GoodsWarehouseCards = ({
               {i.storageBarcode}
             </button>
 
-            {/* Ярлык маркетплейса для собранной с полки вещи: если наклейку порвали или
-                забыли, кладовщик печатает её прямо отсюда, с телефона у стеллажа. */}
-            {i.reservedOrderId && (
+            {/* Ярлык маркетплейса для вещи, которую сейчас собирают под заказ: если
+                наклейку порвали или забыли, кладовщик печатает её прямо отсюда, с
+                телефона у стеллажа. Для вещей на хранении кнопки нет — они лежат
+                свободными, ярлык отправления им не положен. */}
+            {canPrintMarketplaceLabel(i) && (
               <button
                 type="button"
                 onClick={() => onPrintMpLabel?.(i)}

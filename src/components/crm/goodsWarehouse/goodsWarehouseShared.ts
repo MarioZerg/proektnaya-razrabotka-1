@@ -1,6 +1,21 @@
-import type { GoodsStatus, ReceiveReason } from '@/lib/goodsWarehouseApi';
+import type { GoodsStatus, GoodsWarehouseItem, ReceiveReason } from '@/lib/goodsWarehouseApi';
 
 export { formatDateTime as formatDate } from '@/lib/dateUtils';
+
+/**
+ * Можно ли печатать ярлык маркетплейса на эту вещь.
+ *
+ * Ярлык отправления клеят только на вещь, которую СЕЙЧАС собирают под конкретный
+ * заказ: снята с полки («На сборке») или сшита и ждёт поставки («На поставку»).
+ *
+ * Вещь «На хранении» лежит на полке свободной — даже если за ней когда-то был
+ * закреплён заказ. Раньше кнопка печати показывалась по одному факту привязки,
+ * и на складе печатали ярлык FBS для товара, который никто не собирает: наклейка
+ * уходила на вещь, а отправление к этому времени могло быть закрыто или отменено.
+ * Итог — чужой ярлык на полке и путаница при следующей сборке.
+ */
+export const canPrintMarketplaceLabel = (item: GoodsWarehouseItem): boolean =>
+  Boolean(item.reservedOrderId) && (item.status === 'picking' || item.status === 'awaiting_supply');
 
 export const statusLabels: Record<GoodsStatus, string> = {
   // Вещь висит на разборе у производства: упаковщица её ещё не перепаковала и

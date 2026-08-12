@@ -32,6 +32,7 @@ import {
   statusLabels,
   statusVariant,
   reasonLabels,
+  canPrintMarketplaceLabel,
 } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
 
 interface GoodsWarehouseTableProps {
@@ -208,11 +209,13 @@ const GoodsWarehouseTable = ({
                       <Icon name="Barcode" size={12} />
                     </Button>
 
-                    {/* Ярлык маркетплейса для вещей, которые уже собрали с полки.
+                    {/* Ярлык маркетплейса для вещей, которые СЕЙЧАС собирают под заказ.
                         Кладовщик мог наклеить его криво, порвать при укладке или просто
                         забыть — а вещь к этому моменту ушла из подбора, и напечатать
-                        ярлык было уже неоткуда. Теперь он всегда под рукой в списке. */}
-                    {i.reservedOrderId && (
+                        ярлык было уже неоткуда. Теперь он под рукой прямо в списке.
+                        Для вещей на хранении кнопки нет: они лежат на полке свободными,
+                        и ярлык отправления им не положен. */}
+                    {canPrintMarketplaceLabel(i) && (
                       <Button
                         variant="ghost"
                         size="icon"
