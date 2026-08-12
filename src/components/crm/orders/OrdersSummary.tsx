@@ -37,10 +37,25 @@ const byMaterial = (list: Order[]) => {
   return [...map.entries()].sort((a, b) => b[1].meters - a[1].meters);
 };
 
-/** Сводка сверху страницы заказов: новые заказы (кол-во + пог.м.) и разбивка заказов
- * по типу поставки (FBO/FBS) и площадкам (OZON/WB/Яндекс). Отменённые не учитываются. */
+/**
+ * Сводка сверху страницы заказов: новые заказы (кол-во + пог.м.) и разбивка ТЕКУЩЕЙ
+ * работы по типу поставки (FBO/FBS) и площадкам (OZON/WB/Яндекс).
+ *
+ * Считаем только заказы, которые ещё в работе. Раньше сюда попадала вся история за
+ * всё время, и цифры не сходились ни с чем: например, «FBO WB — 4 шт.» — это четыре
+ * заказа, отшитых ещё весной и давно отгруженных, хотя таких заказов в работе нет
+ * вообще. Сводка должна отвечать на вопрос «сколько мне сейчас делать», а не
+ * «сколько сделано за всё время» — для истории есть вкладка «Готовые».
+ */
 const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
-  const active = orders.filter((o) => o.status !== 'Отменён');
+  const active = orders.filter(
+    (o) =>
+      o.status !== 'Отменён' &&
+      // «Готовые» — заказ отшит и закрыт, «Со склада» — закрыт готовой вещью с полки:
+      // ни там, ни там работы для цеха уже нет.
+      o.sewingStatus !== 'Готовые' &&
+      o.sewingStatus !== 'Со склада',
+  );
   const newOrders = active.filter((o) => o.sewingStatus === 'Новый');
 
   const materialRows = byMaterial(newOrders);
@@ -56,7 +71,7 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="flex items-center gap-1.5 text-sm font-semibold">
               <Icon name={icon} size={15} className="text-muted-foreground" />
-              {title}
+              {title} — в работе
             </span>
             <span className="text-lg font-bold">{total}</span>
           </div>
