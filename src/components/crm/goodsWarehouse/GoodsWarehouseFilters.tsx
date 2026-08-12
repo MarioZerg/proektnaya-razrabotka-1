@@ -34,6 +34,12 @@ interface GoodsWarehouseFiltersProps {
   noShelfCount: number;
   activeFiltersCount: number;
   onReset: () => void;
+  /** Сколько вещей отобрано текущим фильтром — показываем прямо у поиска. */
+  resultCount?: number;
+  /** Идёт загрузка: число ещё не показываем, чтобы не мигало старым. */
+  loading?: boolean;
+  /** Выбрана конкретная полка — тогда подпись про полку, а не про весь склад. */
+  shelfSelected?: boolean;
 }
 
 /**
@@ -63,6 +69,9 @@ const GoodsWarehouseFilters = ({
   noShelfCount,
   activeFiltersCount,
   onReset,
+  resultCount,
+  loading = false,
+  shelfSelected = false,
 }: GoodsWarehouseFiltersProps) => {
   return (
     <div className="space-y-3">
@@ -93,6 +102,16 @@ const GoodsWarehouseFilters = ({
           </button>
         )}
       </div>
+
+      {/* Количество найденного — крупной цифрой рядом с поиском. Раньше оно стояло
+          мелким серым текстом ниже фильтров и терялось, хотя это первое, что хочет
+          знать кладовщик: сколько вещей идти собирать. */}
+      {!loading && resultCount !== undefined && (
+        <p className="text-sm text-muted-foreground">
+          {shelfSelected ? 'На выбранной полке:' : 'Показано товаров:'}{' '}
+          <span className="text-lg font-bold text-foreground">{resultCount}</span> шт
+        </p>
+      )}
 
       {search.trim() && (
         <p className="text-xs text-muted-foreground">

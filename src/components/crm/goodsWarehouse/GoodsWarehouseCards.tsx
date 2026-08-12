@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { zoneBarClass, zoneLabels } from '@/lib/workZone';
+import { shortProductName } from '@/lib/shortProductName';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useAuth } from '@/context/AuthContext';
 import { printStorageSticker } from '@/lib/printStorageSticker';
@@ -59,7 +60,9 @@ const GoodsWarehouseCards = ({
             />
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-semibold">{i.product || '—'}</div>
+                <div className="font-semibold" title={i.product || ''}>
+                  {shortProductName(i)}
+                </div>
                 <div className="text-xs text-muted-foreground">
                   {i.orderNumber || 'без заказа'} · #{i.id}
                 </div>

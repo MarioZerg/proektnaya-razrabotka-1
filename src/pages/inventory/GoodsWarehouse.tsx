@@ -23,7 +23,6 @@ import PickupReturnsDialog from '@/components/crm/returns/PickupReturnsDialog';
 import PlaceInspectedDialog from '@/components/crm/goodsWarehouse/PlaceInspectedDialog';
 import ReprintReportDialog from '@/components/crm/goodsWarehouse/ReprintReportDialog';
 import AdminReceiveDialog from '@/components/crm/goodsWarehouse/AdminReceiveDialog';
-import { printShelfPickList } from '@/lib/printShelfPickList';
 import GoodsWarehouseFilters from '@/components/crm/goodsWarehouse/GoodsWarehouseFilters';
 import GoodsWarehouseTable from '@/components/crm/goodsWarehouse/GoodsWarehouseTable';
 import TablePager from '@/components/crm/finance/TablePager';
@@ -238,14 +237,6 @@ const GoodsWarehouse = () => {
     setWidthFilter('');
     setHeightFilter('');
     setShelfFilter('');
-  };
-
-  const handlePrintPickList = () => {
-    const shelfName =
-      shelfFilter === 'none'
-        ? 'Без полки'
-        : shelves.find((s) => String(s.id) === shelfFilter)?.name || 'Все полки';
-    printShelfPickList(filtered, shelfName);
   };
 
 
@@ -465,6 +456,10 @@ const GoodsWarehouse = () => {
           </button>
         )}
 
+        {/* Фильтры и таблица — единый блок: между ними почти нет зазора, поэтому
+            видно, что список подчиняется этим полям. Раньше их разделял отступ и
+            строка со счётчиком, и связь читалась не сразу. */}
+        <div className="space-y-2">
         <GoodsWarehouseFilters
           search={search}
           setSearch={setSearch}
@@ -486,25 +481,10 @@ const GoodsWarehouse = () => {
           shelves={shelves}
           activeFiltersCount={activeFiltersCount}
           onReset={resetFilters}
+          resultCount={filtered.length}
+          loading={loading}
+          shelfSelected={Boolean(shelfFilter)}
         />
-
-        {/* Сколько вещей отобрано текущим фильтром — кладовщик видит объём работы до того,
-            как пойдёт к стеллажу, и может распечатать список, чтобы собирать с бумагой. */}
-        {!loading && (
-          <div className="flex items-center gap-3">
-            <p className="text-sm text-muted-foreground">
-              {shelfFilter
-                ? `На выбранной полке: ${filtered.length} шт`
-                : `Показано товаров: ${filtered.length}`}
-            </p>
-            {filtered.length > 0 && (
-              <Button variant="outline" size="sm" onClick={handlePrintPickList}>
-                <Icon name="Printer" size={14} className="mr-2" />
-                Печать списка
-              </Button>
-            )}
-          </div>
-        )}
 
         <GoodsWarehouseTable
           loading={loading}
@@ -515,6 +495,7 @@ const GoodsWarehouse = () => {
           onDelete={handleDeleteGoods}
         />
         <TablePager page={page} totalPages={totalPages} total={total} setPage={setPage} />
+        </div>
       </div>
     </CrmLayout>
   );

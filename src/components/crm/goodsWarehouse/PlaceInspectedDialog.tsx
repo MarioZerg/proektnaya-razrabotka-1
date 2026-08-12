@@ -22,6 +22,7 @@ import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { fetchInspection, placeInspectedBatch } from '@/lib/goodsWarehouseApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
+import { shortProductName } from '@/lib/shortProductName';
 
 interface PlaceInspectedDialogProps {
   open: boolean;
@@ -267,7 +268,9 @@ const PlaceInspectedDialog = ({ open, onOpenChange, onDone }: PlaceInspectedDial
                     className="flex items-start justify-between gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-2.5"
                   >
                     <div className="min-w-0">
-                      <p className="text-sm font-medium">{r.product || 'Товар'}</p>
+                      <p className="text-sm font-medium" title={r.product || ''}>
+                        {shortProductName(r)}
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         {r.orderNumber || '—'} · {r.barcode} · полка {r.shelfName}
                       </p>

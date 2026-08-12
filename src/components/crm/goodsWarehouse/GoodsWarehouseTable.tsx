@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import Icon from '@/components/ui/icon';
 import { zoneDotClass, zoneLabels } from '@/lib/workZone';
+import { shortProductName } from '@/lib/shortProductName';
 import GoodsWarehouseCards from '@/components/crm/goodsWarehouse/GoodsWarehouseCards';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { printStorageSticker } from '@/lib/printStorageSticker';
@@ -176,11 +177,11 @@ const GoodsWarehouseTable = ({
                 {/* Товар: что за вещь, её размеры и номер заказа — по ним кладовщик
                     опознаёт её на полке. */}
                 <TableCell>
-                  <div className="font-medium">{i.product || '—'}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {[i.material, i.width && i.height ? `${i.width}×${i.height}` : null]
-                      .filter(Boolean)
-                      .join(' · ') || '—'}
+                  {/* Коротко: ткань и размер — по ним вещь ищут на полке. Полный
+                      заголовок с маркетплейса занимал три строки и прятал главное;
+                      он остался в подсказке при наведении. */}
+                  <div className="font-medium" title={i.product || ''}>
+                    {shortProductName(i)}
                   </div>
                   <div className="text-xs text-muted-foreground">{i.orderNumber || '—'}</div>
                   {i.status === 'lost' && i.lostReason && (

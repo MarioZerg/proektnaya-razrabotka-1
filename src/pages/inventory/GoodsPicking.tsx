@@ -22,6 +22,7 @@ import {
 } from '@/lib/goodsWarehouseApi';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
+import { shortProductName } from '@/lib/shortProductName';
 
 /** Дата в привычном виде: «10.08.2026, 16:15». */
 const formatDate = (value: string | null) => {
@@ -234,7 +235,9 @@ const GoodsPicking = () => {
                       className="cursor-pointer hover:bg-muted/60"
                     >
                       <TableCell>
-                        <div className="font-medium">{o.product || '—'}</div>
+                        <div className="font-medium" title={o.product || ''}>
+                          {shortProductName(o)}
+                        </div>
                         <div className="text-xs text-muted-foreground">
                           {o.orderNumber || '—'}
                           {o.storageBarcode ? ` · ${o.storageBarcode}` : ''}

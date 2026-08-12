@@ -22,15 +22,14 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import { isStorekeeperRole } from '@/lib/roles';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { printStorageStickers } from '@/lib/printStorageSticker';
-import PlaceInspectedDialog from '@/components/crm/goodsWarehouse/PlaceInspectedDialog';
 import {
   INSPECTION_STAGES,
   toneClass,
   toneIconClass,
 } from '@/components/crm/goodsWarehouse/inspectionStages';
+import { shortProductName } from '@/lib/shortProductName';
 import {
   fetchInspection,
   moveToWorkshop,
@@ -85,7 +84,6 @@ const ReturnsInspection = () => {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<number[]>([]);
   const [acting, setActing] = useState(false);
-  const [placeOpen, setPlaceOpen] = useState(false);
   const [disposeReason, setDisposeReason] = useState('');
   // Полки для укладки прямо с разбора — грузим один раз при открытии страницы.
   const [shelves, setShelves] = useState<Shelf[]>([]);
@@ -93,7 +91,6 @@ const ReturnsInspection = () => {
 
   const isAdmin = user?.role === 'admin';
   // Раскладывать по полкам могут кладовщик и админ — это конец пути возврата.
-  const canPlace = isAdmin || isStorekeeperRole(user?.role);
 
   const load = (nextStage: InspectionStage = stage) => {
     setLoading(true);
@@ -257,23 +254,10 @@ const ReturnsInspection = () => {
               Путь возвращённой вещи от приёмки до полки
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {/* Главное действие кладовщика на этой странице: забрать осмотренное
-                с производства и разложить по полкам хранения. */}
-            {canPlace && (
-              <Button onClick={() => setPlaceOpen(true)}>
-                <Icon name="Warehouse" size={16} className="mr-2" />
-                Принять осмотренные возвраты на производстве
-                {counts.inspected + counts.taken > 0
-                  ? ` (${counts.inspected + counts.taken})`
-                  : ''}
-              </Button>
-            )}
-            {/* Кнопка «Забрать из цеха» убрана: она дублировала приёмку осмотренных.
-                Там кладовщик сканирует те же стикеры, но сразу назначает полку — вещь
-                доходит до места за одно действие. Отдельный шаг «забрал, полку назначу
-                потом» только плодил вещи, висящие на руках. */}
-          </div>
+          {/* Кнопка «Принять осмотренные возвраты» отсюда убрана: она переехала на
+              склад товара третьим шагом цепочки возвратов (привёз → разобрал →
+              принял осмотренное). Эта страница показывает движение вещи, а действия
+              кладовщик делает в одном месте — на складе. */}
         </div>
 
         {/* Виджеты движения: клик переключает список ниже. */}
@@ -417,7 +401,9 @@ const ReturnsInspection = () => {
                         className="cursor-pointer"
                         onClick={() => navigate(`/crm/inventory/goods/${i.id}`)}
                       >
-                        <div className="font-medium">{i.product || 'Товар'}</div>
+                        <div className="font-medium" title={i.product || ''}>
+                          {shortProductName(i)}
+                        </div>
                         <div className="text-xs text-muted-foreground">
                           {i.orderNumber || '—'} · {i.storageBarcode}
                         </div>
@@ -443,11 +429,6 @@ const ReturnsInspection = () => {
           )}
         </div>
 
-        <PlaceInspectedDialog
-          open={placeOpen}
-          onOpenChange={setPlaceOpen}
-          onDone={() => load()}
-        />
       </div>
     </CrmLayout>
   );
