@@ -297,19 +297,23 @@ const CrmDashboard = () => {
       });
       // Вещи привезли с ПВЗ, но кладовщик их ещё не осмотрел. Пока они не лежат
       // на полке, товар считается непроверенным и в подбор не идёт.
+      // Обе плитки ведут на склад товара: там кладовщик и принимает привезённое
+      // с ПВЗ, и разбирает его. Страница «Приём возвратов» ему не нужна — на ней
+      // видно всё движение возврата и принимаются решения по нему, а это работа
+      // руководителя.
       list.push({
         label: 'Возвраты — непроверенные, разобрать',
         value: returnsPickedUp,
         icon: 'PackageOpen',
         tone: returnsPickedUp > 0 ? 'urgent' : 'default',
-        path: '/crm/shipments/receive-returns',
+        path: '/crm/inventory/goods-warehouse',
       });
       list.push({
         label: 'Возвраты — принять на склад',
         value: returnsWaiting,
         icon: 'Undo2',
         tone: returnsWaiting > 0 ? 'warning' : 'default',
-        path: '/crm/shipments/receive-returns',
+        path: '/crm/inventory/goods-warehouse',
       });
       list.push({
         label: 'Рулоны с малым остатком',

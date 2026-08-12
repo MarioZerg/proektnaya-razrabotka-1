@@ -240,9 +240,9 @@ const storekeeperNav: NavItem[] = [
       { label: 'Приём брака из цеха', path: '/crm/inventory/defect-receive' },
       { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
-      { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
-      { label: 'Анализ возвратов', path: '/crm/analytics/returns' },
-      { label: 'Анализ брака', path: '/crm/analytics/defects' },
+      // Аналитика (недостачи, возвраты, брак) убрана: это разбор движения товара и
+      // решения по нему — работа руководителя, а не кладовщика. Его дело — принять
+      // вещь, положить на полку и отгрузить.
     ],
   },
   {
@@ -254,7 +254,9 @@ const storekeeperNav: NavItem[] = [
       { label: 'Списание брака', path: '/crm/shipments/defect-writeoff' },
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
       { label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' },
-      { label: 'Приём возвратов', path: '/crm/shipments/receive-returns' },
+      // «Приём возвратов» убран: там видно всё движение возврата и принимаются решения
+      // по нему. Кладовщику это не нужно — он забирает вещи по кодам для ПВЗ и заводит
+      // их на склад кнопкой «Привёз с пункта выдачи» на складе товара.
       // Штрихкоды продавца: без них возвраты на ПВЗ не выдают.
       { label: 'Коды для ПВЗ', path: '/crm/shipments/return-codes' },
     ],
@@ -265,7 +267,7 @@ const storekeeperNav: NavItem[] = [
     children: [
       { label: 'Заказы с маркетплейса', path: '/crm/marketplace/orders' },
       { label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' },
-      { label: 'Отзывы', path: '/crm/marketplace/reviews' },
+      // «Отзывы» убраны: работа с репутацией — не склад.
     ],
   },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },

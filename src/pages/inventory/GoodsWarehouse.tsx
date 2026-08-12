@@ -433,7 +433,7 @@ const GoodsWarehouse = () => {
         {uncheckedReturns > 0 && (
           <button
             type="button"
-            onClick={() => navigate('/crm/shipments/receive-returns')}
+            onClick={() => navigate('/crm/inventory/returns-inspection')}
             className="flex w-full items-center gap-3 rounded-lg border border-violet-300 bg-violet-50 px-4 py-3 text-left"
           >
             <Icon name="PackageOpen" size={24} className="shrink-0 text-violet-600" />
