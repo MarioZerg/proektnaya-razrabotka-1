@@ -23,9 +23,9 @@ interface PickingScanDialogProps {
 interface Hit {
   goodsId: number;
   barcode: string;
-  product: string | null;
-  shelfName: string | null;
-  orderNumber: string | null;
+  product?: string | null;
+  shelfName?: string | null;
+  orderNumber?: string | null;
 }
 
 /**

@@ -31,7 +31,7 @@ interface MoveShelfDialogProps {
 /** Вещь, набранная в буфер до нажатия «Перенести». */
 interface BufferItem {
   barcode: string;
-  product: string | null;
+  product?: string | null;
 }
 /**
  * Смена полки — набрал пачку и перенёс.

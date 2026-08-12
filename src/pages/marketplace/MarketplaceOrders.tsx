@@ -73,7 +73,7 @@ const MarketplaceOrders = () => {
       marketplace: order.marketplace,
       orderType: order.orderType,
       status: order.status,
-      product: order.product,
+      product: order.product || '',
     });
   };
 

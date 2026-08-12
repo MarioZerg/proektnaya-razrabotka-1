@@ -31,35 +31,38 @@ export type GoodsStatus =
 export type ReceiveReason = 'cancelled' | 'return' | 'manual' | 'admin' | 'individual';
 
 export interface GoodsWarehouseItem {
+  // Пустые поля сервер в ответ не кладёт — так список склада легче на сотни килобайт.
+  // Всё, что бывает пустым, помечено необязательным: отсутствующее поле читается
+  // так же, как пустое.
   id: number;
   orderId: number;
-  orderNumber: string | null;
-  product: string | null;
-  material: string | null;
-  width: number | null;
-  height: number | null;
-  shelfId: number | null;
-  shelfName: string | null;
+  orderNumber?: string | null;
+  product?: string | null;
+  material?: string | null;
+  width?: number | null;
+  height?: number | null;
+  shelfId?: number | null;
+  shelfName?: string | null;
   status: GoodsStatus;
   receivedAt: string;
-  shippedAt: string | null;
+  shippedAt?: string | null;
   storageBarcode: string;
-  lostReason: string | null;
-  lostAt: string | null;
+  lostReason?: string | null;
+  lostAt?: string | null;
   receiveReason: ReceiveReason;
   /** Новый заказ маркетплейса, который закрывается этой вещью с полки (автоподбор). */
-  reservedOrderId: number | null;
-  reservedOrderNumber: string | null;
+  reservedOrderId?: number | null;
+  reservedOrderNumber?: string | null;
   /** Когда кладовщик наклеил стикер отправления — после этого можно сканировать в поставку. */
-  shippingLabeledAt: string | null;
+  shippingLabeledAt?: string | null;
   /** Площадка, куда вещь поедет: OZON / WB / Yandex. */
-  marketplace: string | null;
+  marketplace?: string | null;
   /** Схема поставки: FBS или FBO. */
-  orderType: string | null;
+  orderType?: string | null;
   /** Кластер приёмки — важен для FBO: у каждого кластера своя поставка. */
-  cluster: string | null;
+  cluster?: string | null;
   /** Поставка, в которой вещь уже лежит. Заполнено — значит второй раз её не сканировать. */
-  supplyId: number | null;
+  supplyId?: number | null;
 }
 
 export interface GoodsWarehouseFilters {

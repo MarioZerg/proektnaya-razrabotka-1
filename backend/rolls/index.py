@@ -799,6 +799,14 @@ def handler(event: dict, context) -> dict:
                 }
                 for r in cur.fetchall()
             ]
+
+            # Выбрасываем пустые поля: отметки о браке и о чужой смене есть у единиц
+            # рулонов, а место занимают в каждом из восьмисот. Интерфейс везде проверяет
+            # значение на пустоту, поэтому отсутствующее поле читается так же, как пустое.
+            rolls = [
+                {k: v for k, v in roll.items() if v is not None and v != ''}
+                for roll in rolls
+            ]
         finally:
             conn.close()
 

@@ -10,8 +10,8 @@ export const statusVariant: Record<string, 'secondary' | 'default' | 'outline'> 
 
 export const shiftLabel = (
   workshops: Workshop[],
-  workshopId: number | null,
-  shiftNumber: number | null
+  workshopId?: number | null,
+  shiftNumber?: number | null
 ) => {
   if (!shiftNumber) return '—';
   const w = workshops.find((wk) => wk.id === workshopId);

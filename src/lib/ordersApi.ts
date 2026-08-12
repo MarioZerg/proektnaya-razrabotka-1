@@ -22,15 +22,18 @@ export interface Order {
   marketplace: Marketplace;
   orderType: OrderType;
   status: OrderStatus;
-  cluster: string | null;
-  product: string;
+  // Пустые поля сервер в ответ не кладёт — так список заказов легче на сотни
+  // килобайт. Поэтому всё, что бывает пустым, помечено как необязательное:
+  // отсутствующее поле читается так же, как пустое.
+  cluster?: string | null;
+  product?: string;
   quantity: number;
-  source: 'manual' | 'api';
+  source?: 'manual' | 'api';
   createdAt: string;
-  completedAt: string | null;
-  material: string | null;
-  width: number | null;
-  height: number | null;
+  completedAt?: string | null;
+  material?: string | null;
+  width?: number | null;
+  height?: number | null;
   sewingStatus: string;
   assignedUserId: number | null;
   assignedUserName: string | null;
@@ -207,9 +210,9 @@ export interface TakenOrder {
   orderNumber: string;
   orderType: OrderType;
   marketplace: Marketplace;
-  material: string | null;
-  width: number | null;
-  height: number | null;
+  material?: string | null;
+  width?: number | null;
+  height?: number | null;
   /** Связка Яндекса: вещи одного заказа покупателя вешаются вместе на одну вешалку. */
   groupKey?: string | null;
   groupSize?: number | null;

@@ -3,19 +3,21 @@ const ROLLS_URL = 'https://functions.poehali.dev/10824802-d4e4-48de-b98a-0fc06f8
 export type RollStatus = 'in_storage' | 'in_workshop' | 'completed';
 
 export interface Roll {
+  // Пустые поля сервер не присылает — список рулонов легче. Всё, что бывает пустым,
+  // помечено необязательным: отсутствующее поле читается так же, как пустое.
   id: number;
   barcode: string;
   materialId: number;
-  materialName: string | null;
-  unit: string | null;
-  workshopId: number | null;
-  workshopName: string | null;
-  shiftNumber: number | null;
+  materialName?: string | null;
+  unit?: string | null;
+  workshopId?: number | null;
+  workshopName?: string | null;
+  shiftNumber?: number | null;
   initialQuantity: number;
   remainingQuantity: number;
   status: RollStatus;
   createdAt: string;
-  completedAt: string | null;
+  completedAt?: string | null;
   /** По рулону было движение материала в текущей смене (заполняется при запросе с usedSinceUserId). */
   usedInShift?: boolean;
   /** Рулон другой смены этого же цеха: гость работает чужим материалом. */

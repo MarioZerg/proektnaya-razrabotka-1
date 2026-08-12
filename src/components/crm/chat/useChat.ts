@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { withNightSlowdown } from '@/lib/workingHours';
 import {
   fetchMessages,
   fetchNewMessages,
@@ -110,10 +111,15 @@ export const useChat = (userId?: number, userName?: string) => {
           pollingRef.current = false;
         }
       }
-      timer = window.setTimeout(tick, hidden || idle ? IDLE_INTERVAL : ACTIVE_INTERVAL);
+      // Ночью (с 24:00 до 5:00) опрос замедляется: производство не работает, и чат,
+      // забытый открытым на планшете, не должен всю ночь дёргать сервер.
+      timer = window.setTimeout(
+        tick,
+        withNightSlowdown(hidden || idle ? IDLE_INTERVAL : ACTIVE_INTERVAL),
+      );
     };
 
-    timer = window.setTimeout(tick, ACTIVE_INTERVAL);
+    timer = window.setTimeout(tick, withNightSlowdown(ACTIVE_INTERVAL));
     return () => window.clearTimeout(timer);
   }, [applyIncoming]);
 
