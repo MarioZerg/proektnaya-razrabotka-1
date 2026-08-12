@@ -48,6 +48,10 @@ export interface Order {
    * заказа (backend/kiosk, action 'close_order') и дальше не меняется. */
   packerUserId: number | null;
   packerUserName: string | null;
+  /** Когда вещь раскроили и отшили — по этим датам цех сверяет свою выработку.
+   * Дата заказа покупателя для этого не годится: заказ мог пролежать в очереди. */
+  cutAt?: string | null;
+  sewnAt?: string | null;
   /** Номер вешалки, на которую подвешен раскроенный товар. 0 = не назначена (заполняется
    * через отдельную вкладку "Вешалки", ещё не реализована). */
   hangerNumber: number;
@@ -219,8 +223,20 @@ export interface TakeStackResult {
   orders: TakenOrder[];
 }
 
-export const takeStack = (userId: number, workshopId: number, shiftNumber?: number | null): Promise<TakeStackResult> =>
-  postAction({ action: 'take_stack', userId, workshopId, shiftNumber });
+/**
+ * Взять работу в раскрой.
+ *
+ * @param single взять ОДИН заказ вместо стека. Связки Яндекса при этом пропускаются:
+ * заказ покупателя из нескольких вещей раскраивается только целиком, поэтому выдаётся
+ * следующий одиночный заказ по очереди.
+ */
+export const takeStack = (
+  userId: number,
+  workshopId: number,
+  shiftNumber?: number | null,
+  single?: boolean,
+): Promise<TakeStackResult> =>
+  postAction({ action: 'take_stack', userId, workshopId, shiftNumber, single });
 
 export interface TakeOrderResult {
   success: true;

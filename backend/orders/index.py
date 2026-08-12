@@ -232,7 +232,10 @@ def handler(event: dict, context) -> dict:
         - если sewingStatus вручную возвращается на "Новый"/"На раскрое" — снимается
           невыплаченное начисление закройщику за раскрой этого заказа (salary_accruals,
           type='cutter_cut'), как если бы заказ убрали из раскроя
-    POST /  { action: 'take_stack', userId, workshopId, shiftNumber }
+    POST /  { action: 'take_stack', userId, workshopId, shiftNumber, single? }
+        - single=true — взять ОДИН заказ вместо стека. Связки Яндекса (group_size > 1)
+          в этом режиме пропускаются: заказ покупателя из нескольких вещей раскраивается
+          только целиком, поэтому выдаётся следующий одиночный заказ по очереди.
         - закройщик берёт стек заказов из статуса "Новый": количество берётся из настройки
           цеха max_quantity_orders_to_cutter (или глобальной system_settings, по умолчанию 20).
           Заказы назначаются на userId, переводятся в "На раскрое" и получают workshopId.
@@ -567,7 +570,11 @@ def handler(event: dict, context) -> dict:
                 " JOIN materials mm ON mm.id = mim.material_id "
                 " JOIN material_types mmt ON mmt.id = mm.type_id "
                 " WHERE mmt.name = 'Тюль' AND fmi.material = o.material "
-                "   AND fmi.width = o.width AND fmi.height = o.height LIMIT 1) AS fabric_per_item "
+                "   AND fmi.width = o.width AND fmi.height = o.height LIMIT 1) AS fabric_per_item, "
+                # Когда вещь реально раскроили и отшили. По этим датам закройщик и швея
+                # сверяют свою выработку за смену или неделю: дата заказа покупателя для
+                # этого не годится — заказ мог пролежать в очереди неделю.
+                "o.cut_at, o.sewn_at "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -646,6 +653,8 @@ def handler(event: dict, context) -> dict:
                     'legalCompanyName': r[35],
                     'legalInn': r[36],
                     'fabricPerItem': float(r[37]) if r[37] is not None else None,
+                    'cutAt': (r[38].isoformat() + 'Z') if r[38] else None,
+                    'sewnAt': (r[39].isoformat() + 'Z') if r[39] else None,
                 }
                 for r in cur.fetchall()
             ]
@@ -668,6 +677,12 @@ def handler(event: dict, context) -> dict:
                 user_id = body_data.get('userId')
                 workshop_id = body_data.get('workshopId')
                 shift_number = body_data.get('shiftNumber')
+                # «Взять 1 заказ» — режим для добора одной вещи, когда полный стек брать
+                # незачем (конец смены, доделать остаток ткани). Связки Яндекса в этом
+                # режиме пропускаем: заказ покупателя из нескольких вещей раскраивается
+                # только целиком, поштучно его разрывать нельзя — вещи разъедутся по цеху
+                # и отгрузить заказ будет нечем. Поэтому берём следующий ОДИНОЧНЫЙ заказ.
+                single_mode = bool(body_data.get('single'))
 
                 if not user_id or not workshop_id:
                     return {
@@ -714,6 +729,8 @@ def handler(event: dict, context) -> dict:
                     )
                     row = cur.fetchone()
                 stack_size = int(row[0]) if row and row[0] else 20
+                if single_mode:
+                    stack_size = 1
 
                 # Цех берёт в раскрой только заказы на РАЗРЕШЁННЫЕ ему материалы
                 # (workshops.allowed_materials — список id материалов, отмеченных в настройках
@@ -764,11 +781,19 @@ def handler(event: dict, context) -> dict:
                 # подобран со склада, пока мы его забираем в раскрой.
                 # fulfilled_from_stock_id IS NULL — заказ, уже закрытый вещью со склада,
                 # шить не нужно (он ждёт стикеровки у кладовщика).
+                # В режиме «взять 1 заказ» связки отсекаем прямо в запросе: иначе первой
+                # в очереди могла оказаться связка, и закройщик получил бы отказ вместо
+                # работы. Так он всегда получает следующий одиночный заказ по очереди.
+                single_sql = (
+                    " AND (group_key IS NULL OR COALESCE(group_size, 1) <= 1) "
+                    if single_mode else " "
+                )
                 cur.execute(
                     "SELECT id, group_key, group_size FROM orders WHERE sewing_status = 'Новый' "
                     "AND fulfilled_from_stock_id IS NULL "
                     "AND COALESCE(status, '') <> 'Отменён' "
                     "AND material IN (" + names_csv + ") "
+                    + single_sql +
                     "ORDER BY (order_type = 'FBS') DESC, "
                     "COALESCE(marketplace_created_at, created_at) ASC, "
                     "group_key NULLS FIRST, group_position ASC NULLS LAST, id ASC LIMIT %s "
@@ -879,10 +904,18 @@ def handler(event: dict, context) -> dict:
                         }
 
                 if not order_ids:
+                    # В режиме одного заказа очередь может состоять только из связок —
+                    # объясняем это прямо, иначе закройщик решит, что работы нет вообще.
+                    msg = (
+                        'Нет одиночных заказов — в очереди только связки Яндекса. '
+                        'Возьмите стек: связка раскраивается целиком'
+                        if single_mode
+                        else 'Нет новых заказов на разрешённые вашему цеху материалы'
+                    )
                     return {
                         'statusCode': 404,
                         'headers': headers,
-                        'body': json.dumps({'error': 'Нет новых заказов на разрешённые вашему цеху материалы'}),
+                        'body': json.dumps({'error': msg}, ensure_ascii=False),
                     }
 
                 ids_csv = ','.join(str(i) for i in order_ids)
@@ -892,7 +925,8 @@ def handler(event: dict, context) -> dict:
                 )
                 log_action(
                     cur, actor_id, actor_name, 'take_stack', 'order', None,
-                    f'Взял в раскрой стек из {len(order_ids)} заказов',
+                    (f'Взял в раскрой 1 заказ' if single_mode
+                     else f'Взял в раскрой стек из {len(order_ids)} заказов'),
                     {'orderIds': order_ids, 'workshopId': workshop_id, 'shiftNumber': shift_number},
                 )
 

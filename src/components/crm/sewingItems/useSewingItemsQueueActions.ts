@@ -89,21 +89,30 @@ export const useSewingItemsQueueActions = ({
     }
   }, [ordersLoading, myUnfinishedCount, lastTakenStack.length, userId]);
 
-  const handleTakeStack = async () => {
+  /**
+   * @param single взять ОДИН заказ вместо стека — для добора в конце смены или под
+   * остаток ткани. Связки Яндекса при этом пропускаются: заказ из нескольких вещей
+   * раскраивается только целиком, поэтому придёт следующий одиночный заказ.
+   */
+  const handleTakeStack = async (single = false) => {
     if (!effectiveWorkshopId) {
       toast({ title: 'У вас не указан цех — откройте смену на главной странице', variant: 'destructive' });
       return;
     }
     setTakingStack(true);
     try {
-      const res = await takeStack(userId!, effectiveWorkshopId, effectiveShiftNumber);
+      const res = await takeStack(userId!, effectiveWorkshopId, effectiveShiftNumber, single);
       toast({ title: `Взято в работу заказов: ${res.count}` });
       setActiveTab('На раскрое');
       load();
       setLastTakenStack(res.orders);
       saveStoredStack(userId, res.orders);
     } catch (e) {
-      toast({ title: 'Не удалось взять стек', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+      toast({
+        title: single ? 'Не удалось взять заказ' : 'Не удалось взять стек',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
     } finally {
       setTakingStack(false);
     }

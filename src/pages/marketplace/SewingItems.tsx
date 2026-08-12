@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import type { SewingStatus } from '@/lib/ordersApi';
 import SewingItemsFilters from '@/components/crm/sewingItems/SewingItemsFilters';
+import DonePeriodFilter from '@/components/crm/sewingItems/DonePeriodFilter';
 import SewingItemsTable from '@/components/crm/sewingItems/SewingItemsTable';
 import SewingItemDetailDialog from '@/components/crm/sewingItems/SewingItemDetailDialog';
 import { useSewingItemsData } from '@/components/crm/sewingItems/useSewingItemsData';
@@ -45,6 +46,10 @@ const SewingItems = () => {
     setSearchQuery,
     typeFilter,
     setTypeFilter,
+    doneFrom,
+    setDoneFrom,
+    doneTo,
+    setDoneTo,
     employeeFilter,
     setEmployeeFilter,
     materialFilter,
@@ -194,6 +199,21 @@ const SewingItems = () => {
           showWorkshopFilter={false}
         />
 
+        {/* Сверка выработки: сколько сотрудник реально сделал за смену или неделю.
+            Нужна только на «Готовых» и только тем, кто работает руками, — у админа
+            для этого есть отчёты по зарплате. */}
+        {activeTab === 'Готовые' && (isSewer || isCutter) && (
+          <DonePeriodFilter
+            from={doneFrom}
+            to={doneTo}
+            setFrom={setDoneFrom}
+            setTo={setDoneTo}
+            count={filteredOrders.length}
+            meters={totalMeters}
+            onChange={() => setPage(1)}
+          />
+        )}
+
         {(isCutter || isSewer) && (
           <div className="flex flex-col gap-2">
             {/* Что сейчас первое в общей очереди цеха — связка или обычный стек. */}
@@ -205,7 +225,7 @@ const SewingItems = () => {
             )}
             {isCutter && (
               <div className="flex flex-wrap gap-2">
-                <Button onClick={handleTakeStack} disabled={takingStack || myUnfinishedCount > 0} className="w-full sm:w-auto">
+                <Button onClick={() => handleTakeStack()} disabled={takingStack || myUnfinishedCount > 0} className="w-full sm:w-auto">
                   {takingStack ? (
                     <>
                       <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
@@ -217,6 +237,19 @@ const SewingItems = () => {
                       Взять стек заказов
                     </>
                   )}
+                </Button>
+                {/* Добор одной вещи: в конце смены или под остаток ткани брать полный
+                    стек незачем. Связки Яндекса сюда не попадают — заказ из нескольких
+                    вещей раскраивается только целиком, поэтому придёт следующий
+                    одиночный заказ по очереди. */}
+                <Button
+                  variant="outline"
+                  onClick={() => handleTakeStack(true)}
+                  disabled={takingStack || myUnfinishedCount > 0}
+                  className="w-full sm:w-auto"
+                >
+                  <Icon name="Plus" size={16} className="mr-2" />
+                  Взять 1 заказ
                 </Button>
                 {/* Кнопка живёт, пока есть нераскроенные заказы — это данные с сервера.
                     Раньше она зависела от памяти браузера: закройщица обновляла страницу

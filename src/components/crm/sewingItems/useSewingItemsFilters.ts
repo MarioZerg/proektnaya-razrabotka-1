@@ -45,6 +45,10 @@ export const useSewingItemsFilters = ({
   const [heightFilter, setHeightFilter] = useState('all');
   const [workshopFilter, setWorkshopFilter] = useState('all');
   const [marketplaceFilter, setMarketplaceFilter] = useState('all');
+  // Период выполнения работы — только для вкладки «Готовые». Швея и закройщик сверяют
+  // по нему свою выработку: «что я сделала за эту неделю». Пустые значения = без границ.
+  const [doneFrom, setDoneFrom] = useState('');
+  const [doneTo, setDoneTo] = useState('');
 
   // Упаковщица весь конвейер видит только для просмотра — реальные действия она выполняет
   // на отдельном терминале стикеровки (Kiosk), а не на этой странице. Швея не может ничего
@@ -93,6 +97,16 @@ export const useSewingItemsFilters = ({
       return false;
     }
     if (marketplaceFilter !== 'all' && o.marketplace !== marketplaceFilter) return false;
+    // Период считаем по СВОЕЙ дате: закройщик — по дате раскроя, швея — по дате пошива.
+    // Иначе в отчёт попадали бы вещи, которые человек сделал в другой день: заказ мог
+    // пролежать в очереди неделю между раскроем и пошивом.
+    if (activeTab === 'Готовые' && (doneFrom || doneTo)) {
+      const own = isCutter ? o.cutAt : isSewer ? o.sewnAt : o.cutAt || o.sewnAt;
+      if (!own) return false;
+      const day = own.slice(0, 10);
+      if (doneFrom && day < doneFrom) return false;
+      if (doneTo && day > doneTo) return false;
+    }
     // Владение по вкладкам: закройщик на "На раскрое" видит только свой стек, швея на
     // "В работе" — только свои заказы. Упаковщица на "В работе" видит ЗАКАЗЫ ВСЕХ швей
     // (с именами), поэтому под этот фильтр не попадает.
@@ -183,6 +197,10 @@ export const useSewingItemsFilters = ({
     setSearchQuery,
     typeFilter,
     setTypeFilter,
+    doneFrom,
+    setDoneFrom,
+    doneTo,
+    setDoneTo,
     employeeFilter,
     setEmployeeFilter,
     materialFilter,
