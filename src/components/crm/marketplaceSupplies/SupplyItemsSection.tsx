@@ -108,7 +108,7 @@ const SupplyItemsSection = ({
           >
             <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
               <Icon name="ScanLine" size={18} />
-              Отсканируйте ярлык маркетплейса на собранной вещи
+              Сканируйте пакет с товаром — ярлык маркетплейса на нём
             </div>
             <div className="flex gap-2">
               <Input

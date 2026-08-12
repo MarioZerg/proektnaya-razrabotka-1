@@ -143,7 +143,7 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
           }}
         >
           <div className="space-y-1.5">
-            <p className="text-sm font-medium">Отсканируйте стикер на вещи</p>
+            <p className="text-sm font-medium">Сканируйте пакет с товаром</p>
             <Input
               ref={inputRef}
               autoFocus
@@ -151,7 +151,7 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
               onChange={(e) => setBarcode(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleScan()}
               onBlur={focusInput}
-              placeholder="Наведите сканер на штрихкод"
+              placeholder="Сканируйте пакет с товаром"
               className="h-12 font-mono-tech text-lg"
               autoComplete="off"
             />

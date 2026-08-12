@@ -240,7 +240,7 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
           >
             <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
               <Icon name="ScanLine" size={18} />
-              Отсканируйте стикер готового заказа WB FBS (номер заказа)
+              Сканируйте пакет с товаром — стикер заказа WB FBS (номер заказа)
             </div>
             <div className="flex gap-2">
               <Input

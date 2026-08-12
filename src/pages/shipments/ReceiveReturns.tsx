@@ -191,7 +191,7 @@ const ReceiveReturns = () => {
             <p className="mt-1 text-sm text-muted-foreground">
               {isAdmin
                 ? 'Заявки с OZON и Wildberries. Одобренные вещи поедут к нам — кладовщик примет их по стикеру возврата'
-                : 'Отсканируйте стикер возврата на коробке и решите судьбу вещи'}
+                : 'Сканируйте пакет с товаром и решите судьбу вещи'}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">

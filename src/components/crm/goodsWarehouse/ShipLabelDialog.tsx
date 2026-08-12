@@ -249,7 +249,7 @@ const ShipLabelDialog = ({ open, onOpenChange, matched, onDone }: ShipLabelDialo
                 value={barcode}
                 onChange={(e) => setBarcode(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-                placeholder="Наведите сканер на штрихкод"
+                placeholder="Сканируйте пакет с товаром"
                 className="h-12 font-mono-tech text-lg"
                 autoComplete="off"
                 disabled={saving}

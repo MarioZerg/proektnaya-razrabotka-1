@@ -25,7 +25,7 @@ interface ReturnScanCardProps {
   onProcessed: () => void;
 }
 
-/** Приёмка приехавших возвратов: кладовщик сканирует стикер возврата с коробки, осматривает
+/** Приёмка приехавших возвратов: кладовщик сканирует пакет с товаром, осматривает
  * вещь и решает её судьбу — утилизировать, отправить на перепаковку или положить на полку. */
 const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
   const { toast } = useToast();
@@ -132,7 +132,7 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
       <CardContent className="space-y-4 pt-6">
         <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <Icon name="ScanLine" size={18} />
-          Отсканируйте стикер возврата с коробки или наш стикер из пакета
+          Сканируйте пакет с товаром: наклейку возврата или наш стикер внутри
         </div>
         <div className="flex gap-2">
           <Input
