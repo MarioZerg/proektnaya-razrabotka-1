@@ -346,7 +346,7 @@ const GoodsWarehouse = () => {
           open={placeOpen}
           onOpenChange={setPlaceOpen}
           shelves={shelves}
-          pendingCount={pendingShelf.length}
+          pendingItems={pendingShelf}
           onDone={load}
         />
         <ShipLabelDialog

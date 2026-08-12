@@ -19,14 +19,18 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import type { Shelf } from '@/lib/shelvesApi';
-import { placeOnShelf } from '@/lib/goodsWarehouseApi';
+import { placeOnShelf, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 
 interface PlaceOnShelfDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   shelves: Shelf[];
-  /** Сколько вещей забрано из цеха, но ещё не разложено по полкам. */
-  pendingCount: number;
+  /** Вещи, забранные из цеха, но ещё не разложенные по полкам.
+   *
+   * Именно вещи, а не их количество: раньше кладовщик видел только цифру «ждут укладки: 7»
+   * и шёл в цех вслепую — какая ткань, какой размер, от какого заказа, непонятно.
+   * Найти нужное среди похожих вещей по одному числу невозможно. */
+  pendingItems: GoodsWarehouseItem[];
   onDone: () => void;
 }
 
@@ -36,9 +40,10 @@ const PlaceOnShelfDialog = ({
   open,
   onOpenChange,
   shelves,
-  pendingCount,
+  pendingItems,
   onDone,
 }: PlaceOnShelfDialogProps) => {
+  const pendingCount = pendingItems.length;
   const { toast } = useToast();
   const [barcode, setBarcode] = useState('');
   const [shelfId, setShelfId] = useState('');
@@ -49,8 +54,18 @@ const PlaceOnShelfDialog = ({
     if (!barcode.trim() || !shelfId) return;
     setSaving(true);
     try {
-      const res = await placeOnShelf(barcode.trim(), Number(shelfId));
-      setPlaced((prev) => [`${res.orderNumber || ''} · ${res.product || ''}`, ...prev].slice(0, 8));
+      const scanned = barcode.trim();
+      const res = await placeOnShelf(scanned, Number(shelfId));
+      // Подписываем положенную вещь тканью и размером — по названию товара их не
+      // различить, а кладовщику важно видеть, что именно он сейчас убрал на полку.
+      const item = pendingItems.find((i) => i.storageBarcode === scanned);
+      const title =
+        item && item.material && item.width && item.height
+          ? `${item.material} ${item.width}×${item.height}`
+          : res.product || '';
+      setPlaced((prev) =>
+        [[res.orderNumber, title].filter(Boolean).join(' · '), ...prev].slice(0, 8)
+      );
       setBarcode('');
       onDone();
     } catch (e) {
@@ -89,6 +104,33 @@ const PlaceOnShelfDialog = ({
             Ждут укладки: <span className="font-semibold text-foreground">{pendingCount}</span>.
             Выберите полку и сканируйте стикеры хранения один за другим.
           </p>
+
+          {/* Что именно нужно забрать из цеха: ткань, размер, номер заказа и стикер
+              хранения. Без этого списка кладовщик шёл к упаковщицам с одной цифрой
+              и не мог отличить нужную вещь от десятка похожих. */}
+          {pendingCount > 0 && (
+            <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-md border border-border p-3">
+              <p className="text-sm font-medium">Забрать из цеха</p>
+              {pendingItems.map((i) => (
+                <div key={i.id} className="flex items-start justify-between gap-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="font-medium leading-tight">
+                      {[i.material, i.width && i.height ? `${i.width}×${i.height}` : null]
+                        .filter(Boolean)
+                        .join(' ') || i.product || '—'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {i.status === 'mp_return' ? 'Возврат' : 'Отменён'}
+                      {i.orderNumber ? ` · заказ ${i.orderNumber}` : ''}
+                    </p>
+                  </div>
+                  <span className="shrink-0 font-mono-tech text-xs text-muted-foreground">
+                    {i.storageBarcode}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>Полка</Label>
