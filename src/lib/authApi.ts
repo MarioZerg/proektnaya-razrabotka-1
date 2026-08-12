@@ -99,19 +99,10 @@ export interface MaxVerifyResult {
 export const verifyMaxCode = (code: string): Promise<MaxVerifyResult> =>
   postAuthAction({ action: 'max_verify_code', code });
 
-export interface RegistrationForm {
-  fullName: string;
-  role: Role;
-  email: string;
-  phone: string;
-  /** Согласие на обработку персональных данных — без него заявку не принимаем. */
-  consent?: boolean;
-}
-
-/** Заявка на регистрацию от нового человека, которого ещё нет в системе. Пароль ему
- * задаст администратор при утверждении — до этого войти нельзя. */
-export const submitRegistration = (form: RegistrationForm): Promise<{ success: true }> =>
-  postAuthAction({ action: 'register_request', ...form });
+// Заявка на доступ убрана с экрана входа: вход в систему только через MAX. Бот сам
+// заводит нового человека по номеру телефона и присылает код, должность он выбирает
+// на сайте. Серверное действие 'register_request' пока оставлено — на случай, если
+// понадобится вернуть приём заявок для людей без MAX.
 
 export interface EnterRoleResult {
   id: number;

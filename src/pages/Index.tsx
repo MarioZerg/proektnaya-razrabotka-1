@@ -5,23 +5,13 @@ import InstallAppButton from '@/components/InstallAppButton';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import type { Role } from '@/lib/roles';
-import {
-  fetchMaxBotUrl,
-  submitRegistration,
-  enterRole,
-  type UserRoleEntry,
-  type RegistrationForm as RegistrationFormData,
-} from '@/lib/authApi';
+import { fetchMaxBotUrl, enterRole, type UserRoleEntry } from '@/lib/authApi';
 import OnlineNowBadge from '@/components/auth/OnlineNowBadge';
 import RoleSelectScreen from '@/components/auth/RoleSelectScreen';
-import RegistrationForm from '@/components/auth/RegistrationForm';
 import PendingApprovalScreen from '@/components/auth/PendingApprovalScreen';
-import { roleOptions } from '@/components/crm/users/usersShared';
 
 type Step =
   | 'start'
-  | 'register'
-  | 'registerDone'
   | 'pendingApproval'
   | 'pickActiveRole';
 
@@ -41,7 +31,6 @@ const Index = () => {
     phone: string | null;
     roles: UserRoleEntry[];
   } | null>(null);
-  const [selecting, setSelecting] = useState(false);
   const [entering, setEntering] = useState(false);
 
   // Уже вошедшего сотрудника сразу уводим в систему.
@@ -102,19 +91,6 @@ const Index = () => {
       shiftNumber: data.shiftNumber ?? null,
     });
     navigate('/crm');
-  };
-
-  const handleSubmitRegistration = async (form: RegistrationFormData) => {
-    setSelecting(true);
-    setError('');
-    try {
-      await submitRegistration(form);
-      setStep('registerDone');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось отправить заявку');
-    } finally {
-      setSelecting(false);
-    }
   };
 
   const handlePickActiveRole = async (role: Role) => {
@@ -205,26 +181,10 @@ const Index = () => {
               Откроется бот МЕГАТЮЛЬ — поделитесь номером телефона, и бот пришлёт код для входа
             </p>
 
-            <div className="flex items-center gap-3 pt-2">
-              <div className="h-px flex-1 bg-border" />
-              <p className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                или
-              </p>
-              <div className="h-px flex-1 bg-border" />
-            </div>
-
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setError('');
-                setStep('register');
-              }}
-              className="h-12 w-full rounded-sm"
-            >
-              <Icon name="UserPlus" size={18} className="mr-2" />
-              Подать заявку на доступ
-            </Button>
+            {/* Вход в систему только через MAX. Отдельная заявка на доступ убрана:
+                бот сам заводит нового человека по номеру телефона и присылает код,
+                а должность он выбирает уже на сайте. Вторая дверь только путала —
+                люди подавали заявку и ждали ответа вместо того, чтобы просто войти. */}
 
             {/* Установка на главный экран планшета/телефона. Кнопка появляется только
                 когда установка возможна и приложение ещё не установлено. */}
@@ -251,34 +211,6 @@ const Index = () => {
               </p>
             </div>
 
-          </div>
-        )}
-
-        {step === 'register' && (
-          <RegistrationForm
-            roles={roleOptions.filter((r) => r !== 'admin')}
-            submitting={selecting}
-            error={error}
-            onSubmit={handleSubmitRegistration}
-            onBack={handleBackToStart}
-          />
-        )}
-
-        {step === 'registerDone' && (
-          <div className="space-y-4 text-center">
-            <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-500/10 text-emerald-600">
-              <Icon name="MailCheck" size={28} />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold">Заявка отправлена</h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Администратор проверит её и откроет вам доступ. После этого
-                возвращайтесь и заходите через MAX.
-              </p>
-            </div>
-            <Button variant="outline" className="h-11 w-full rounded-sm" onClick={handleBackToStart}>
-              На главную
-            </Button>
           </div>
         )}
 
