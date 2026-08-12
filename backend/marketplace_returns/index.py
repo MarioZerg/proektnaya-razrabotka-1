@@ -803,13 +803,39 @@ def handler(event: dict, context) -> dict:
                 if st != 200:
                     return _resp(502, {'error': error_text(data)})
                 rows = (data or {}).get('returns') or []
-                # Площадка на неизвестный код отвечает не пустым списком, а «похожими»
-                # возвратами — берём только точное совпадение по наклейке.
+                # Что считать попаданием.
+                #
+                # Раньше требовали, чтобы логистический штрихкод возврата в точности
+                # совпал с отсканированным. На практике на коробке печатают ДРУГОЙ код
+                # (например, 801842665330000), а внутри у возврата свой — ii18460940928.
+                # OZON по коду с коробки ищет правильно и отдаёт нужный возврат, но наша
+                # проверка его отбрасывала: кладовщик пикал наклейку и получал «OZON не
+                # знает возврат», хотя площадка его только что нашла.
+                #
+                # Теперь: есть точное совпадение — берём его. Нет, но площадка вернула
+                # ровно один возврат — берём его тоже: искали по конкретному коду, и
+                # ответ однозначен. Несколько результатов без точного совпадения не
+                # принимаем — угадывать, какую из коробок принёс кладовщик, нельзя.
                 exact = [
                     r for r in rows
                     if ((r.get('logistic') or {}).get('barcode') or '') == code
                 ]
+                if not exact and len(rows) == 1:
+                    exact = rows
                 if not exact:
+                    if body_data.get('debug'):
+                        return _resp(404, {
+                            'error': f'OZON не знает возврат {code}',
+                            'debugCount': len(rows),
+                            'debugSample': [
+                                {
+                                    'id': r.get('id'),
+                                    'posting': r.get('posting_number'),
+                                    'barcode': (r.get('logistic') or {}).get('barcode'),
+                                }
+                                for r in rows[:5]
+                            ],
+                        })
                     return _resp(404, {'error': f'OZON не знает возврат {code}'})
 
                 saved = 0
@@ -831,7 +857,46 @@ def handler(event: dict, context) -> dict:
                         save_return(cur, 'OZON', rec)
                         saved += 1
                 conn.commit()
-                return _resp(200, {'found': saved, 'barcode': code})
+
+                # Отсканировал — значит привёз. Сразу принимаем вещь и заводим её на склад,
+                # чтобы кладовщик не искал её потом галочками в списке: он держит коробку
+                # в руках, подтверждать это второй раз бессмысленно.
+                accepted = None
+                if body_data.get('accept'):
+                    ext_ids = [str(it.get('id')) for it in exact if it.get('id')]
+                    if ext_ids:
+                        ids_sql = ','.join("'" + i.replace("'", "''") + "'" for i in ext_ids)
+                        cur.execute(
+                            "UPDATE marketplace_returns SET status = 'picked_up', "
+                            "picked_up_at = COALESCE(picked_up_at, now()), picked_up_by = %s "
+                            f"WHERE marketplace = 'OZON' AND external_id IN ({ids_sql}) "
+                            "AND status IN ('new', 'approved') RETURNING id",
+                            (int(actor_id) if actor_id else None,),
+                        )
+                        marked = [r[0] for r in cur.fetchall()]
+                        conn.commit()
+                        stock_picked_up_returns(cur, marked or None)
+                        conn.commit()
+                        # Что показать кладовщику: ткань, размер и стикер хранения —
+                        # по ним он сразу видит, ту ли вещь принял.
+                        cur.execute(
+                            "SELECT o.material, o.width, o.height, gw.storage_barcode, r.product_name "
+                            "FROM marketplace_returns r "
+                            "LEFT JOIN goods_warehouse gw ON gw.id = r.goods_warehouse_id "
+                            "LEFT JOIN orders o ON o.id = gw.order_id "
+                            f"WHERE r.marketplace = 'OZON' AND r.external_id IN ({ids_sql}) LIMIT 1"
+                        )
+                        info = cur.fetchone()
+                        if info:
+                            accepted = {
+                                'material': info[0],
+                                'width': info[1],
+                                'height': info[2],
+                                'storageBarcode': info[3],
+                                'productName': info[4],
+                            }
+
+                return _resp(200, {'found': saved, 'barcode': code, 'accepted': accepted})
 
             if action == 'sync_status':
                 # Догрузка возвратов с конкретным статусом. Нужна сканеру приёмки: коробку

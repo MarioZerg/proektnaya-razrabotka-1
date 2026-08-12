@@ -110,6 +110,30 @@ export const fetchReturnByBarcode = (barcode: string) =>
     barcode: string;
   }>;
 
+/** Что приняли по отсканированной коробке — показываем кладовщику для сверки. */
+export interface AcceptedReturn {
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  storageBarcode: string | null;
+  productName: string | null;
+}
+
+/**
+ * Приёмка возврата сканированием: пикнул наклейку на коробке — вещь принята и заведена
+ * на склад. Отдельно подтверждать галочками не нужно: кладовщик держит коробку в руках.
+ */
+export const scanPickupReturn = (
+  barcode: string,
+  actorId?: number,
+  actorName?: string
+): Promise<{ found: number; barcode: string; accepted: AcceptedReturn | null }> =>
+  postAction({ action: 'fetch_by_barcode', barcode, accept: 1, actorId, actorName }) as Promise<{
+    found: number;
+    barcode: string;
+    accepted: AcceptedReturn | null;
+  }>;
+
 /** Загрузить свежие заявки на возврат с OZON и Wildberries. */
 /** auto — фоновая загрузка при открытии страницы: сервер пропустит её, если возвраты
  * обновляли меньше 10 минут назад, чтобы не жечь лимиты маркетплейсов. */
