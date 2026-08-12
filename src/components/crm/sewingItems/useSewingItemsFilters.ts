@@ -112,8 +112,12 @@ export const useSewingItemsFilters = ({
     return true;
   });
 
-  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / 10));
-  const pagedOrders = filteredOrders.slice((page - 1) * 10, page * 10);
+  // «Готовые» — это архив выработки: у швеи там сотня-другая своих заказов, и по
+  // десять штук на страницу их пришлось бы листать пятнадцать раз. Остальные вкладки —
+  // рабочие очереди на планшете: там вещей единицы, и длинный список только мешает.
+  const pageSize = activeTab === 'Готовые' ? 50 : 10;
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+  const pagedOrders = filteredOrders.slice((page - 1) * pageSize, page * pageSize);
 
   // Итого по текущему отфильтрованному списку (вся вкладка, не только видимая страница):
   // ширина (width) хранится в см — переводим в погонные метры (п.м.), quantity — штуки.
