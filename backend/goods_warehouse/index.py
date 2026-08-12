@@ -1949,9 +1949,17 @@ def handler(event: dict, context) -> dict:
                 }
 
             if action == 'delete_goods':
-                # Удаление записи со склада. Доступно ТОЛЬКО администратору и только для
-                # вещей на хранении: в остальных состояниях вещь в работе (едет в поставку,
-                # ждёт разбора), и удаление порвало бы связь с заказом.
+                # Удаление записи со склада. Доступно ТОЛЬКО администратору.
+                #
+                # Разрешены два состояния:
+                #  - 'in_stock' — вещь спокойно лежит на полке;
+                #  - 'awaiting_shelf' — вещь забрали с производства, но на полку ещё не
+                #    положили. Сюда попадают ошибочные приёмки и вещи, которых по факту
+                #    нет: без удаления они висели вечно, кладовщик каждый раз шёл искать
+                #    несуществующий товар, а счётчик «разложить по полкам» не обнулялся.
+                #
+                # Остальные состояния не трогаем: там вещь в работе (едет в поставку,
+                # на проверке у упаковщицы), и удаление порвало бы связь с заказом.
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -1965,11 +1973,14 @@ def handler(event: dict, context) -> dict:
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Запись не найдена'})}
-                if row[0] != 'in_stock':
+                if row[0] not in ('in_stock', 'awaiting_shelf'):
                     return {
                         'statusCode': 409,
                         'headers': headers,
-                        'body': json.dumps({'error': 'Удалить можно только товар на хранении'}, ensure_ascii=False),
+                        'body': json.dumps(
+                            {'error': 'Удалить можно только товар на хранении или на разборе с производства'},
+                            ensure_ascii=False,
+                        ),
                     }
                 cur.execute(
                     "SELECT 1 FROM marketplace_supply_items WHERE goods_warehouse_id = %s LIMIT 1",
@@ -1981,8 +1992,40 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': 'Товар добавлен в поставку — сначала уберите его оттуда'}, ensure_ascii=False),
                     }
-                log_action(cur, actor_id, actor_name, 'delete_goods', 'goods_warehouse', item_id,
-                           f'Удалил товар #{item_id} со склада')
+                # Вещь уже подобрана под заказ покупателя — удалять нельзя: заказ
+                # останется без товара, и на сборке кладовщик упрётся в пустоту.
+                cur.execute(
+                    "SELECT reserved_order_id FROM goods_warehouse WHERE id = %s", (int(item_id),)
+                )
+                reserved_row = cur.fetchone()
+                if reserved_row and reserved_row[0]:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Вещь подобрана под заказ — сначала снимите её с заказа'},
+                            ensure_ascii=False,
+                        ),
+                    }
+                # В журнале сохраняем стикер и состояние: по одному номеру записи потом
+                # не понять, что за вещь исчезла со склада и откуда её удалили.
+                cur.execute(
+                    "SELECT gw.storage_barcode, o.order_number FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id WHERE gw.id = %s",
+                    (int(item_id),),
+                )
+                info = cur.fetchone()
+                where = 'с разбора с производства' if row[0] == 'awaiting_shelf' else 'со склада'
+                details = ', '.join(
+                    part for part in (
+                        f'стикер {info[0]}' if info and info[0] else '',
+                        f'заказ {info[1]}' if info and info[1] else '',
+                    ) if part
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'delete_goods', 'goods_warehouse', item_id,
+                    f'Удалил товар #{item_id} {where}' + (f' ({details})' if details else ''),
+                )
                 cur.execute("DELETE FROM goods_warehouse WHERE id = %s", (int(item_id),))
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
