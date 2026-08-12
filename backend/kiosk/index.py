@@ -567,7 +567,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT sewing_status, width, assigned_user_id, order_number, workshop_id, "
                     "status, ozon_status, order_type, material, height, product, "
-                    "group_key, group_size, group_position FROM orders WHERE id = %s",
+                    "group_key, group_size, group_position, marketplace FROM orders WHERE id = %s",
                     (int(order_id),),
                 )
                 row = cur.fetchone()
@@ -575,8 +575,17 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
                 (sewing_status, width, assigned_user_id, order_number, order_workshop_id,
                  order_status, order_ozon_status, order_type, order_material,
-                 order_height, order_product, group_key, group_size, group_position) = row
-                is_cancelled = order_status == 'Отменён' or 'cancel' in (order_ozon_status or '').lower()
+                 order_height, order_product, group_key, group_size, group_position,
+                 order_marketplace) = row
+                # Отправление уже уехало к покупателю — ярлык не выдадут, и вещь ему не
+                # поедет. Для цеха и склада это то же самое, что отмена: вещь получает
+                # стикер хранения и ложится на полку, а не в поставку.
+                label_gone = is_label_gone(order_marketplace, order_ozon_status)
+                is_cancelled = (
+                    order_status == 'Отменён'
+                    or 'cancel' in (order_ozon_status or '').lower()
+                    or label_gone
+                )
 
                 # Заказы, перенесённые из старой системы, приехали без цеха: их не раскраивал
                 # закройщик, и проставить цех было неоткуда. Все ставки зарплаты привязаны к
@@ -1149,6 +1158,8 @@ def handler(event: dict, context) -> dict:
                         'assignedUserId': r[7],
                         'assignedUserName': r[8],
                         'isCancelled': r[9] == 'Отменён' or 'cancel' in (r[10] or '').lower(),
+                        # Ярлык уже не получить — вещь пойдёт на полку хранения.
+                        'labelGone': is_label_gone(r[11], r[10]),
                         'marketplace': r[11],
                     }
                     for r in cur.fetchall()

@@ -117,9 +117,18 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         toast({ title: 'Обновляем систему…', description: 'Через миг повторите печать' });
         return;
       }
+      // Маркетплейс отказал в ярлыке, потому что отправление уже уехало. Показываем
+      // это как ситуацию, а не как сбой печати, и сразу открываем «Закрыть заказ»:
+      // иначе вещь остаётся в цехе, а заказ навсегда висит в очереди стикеровки.
+      const msg = e instanceof Error ? e.message : '';
+      if (msg.includes('Ярлык не нужен')) {
+        setOrder((prev) => (prev ? { ...prev, labelGone: true } : prev));
+        toast({ title: 'Ярлык не нужен', description: msg });
+        return;
+      }
       toast({
         title: 'Не удалось напечатать стикер',
-        description: e instanceof Error ? e.message : undefined,
+        description: msg || undefined,
         variant: 'destructive',
       });
     }
@@ -401,12 +410,17 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
               </Button>
             )}
 
-            {order.isCancelled ? (
+            {order.isCancelled || order.labelGone ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-center">
-                <p className="text-lg font-bold text-destructive">Клиент отменил заказ</p>
+                <p className="text-lg font-bold text-destructive">
+                  {order.labelGone && !order.isCancelled
+                    ? 'Отправление уже уехало к покупателю'
+                    : 'Клиент отменил заказ'}
+                </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Стикер отправления не нужен. Нажмите «Закрыть заказ» — распечатается стикер
-                  хранения, наклейте его и оставьте вещь для кладовщика
+                  {order.labelGone && !order.isCancelled
+                    ? 'Маркетплейс больше не выдаёт ярлык на это отправление. Нажмите «Закрыть заказ» — распечатается стикер хранения, наклейте его и оставьте вещь для кладовщика'
+                    : 'Стикер отправления не нужен. Нажмите «Закрыть заказ» — распечатается стикер хранения, наклейте его и оставьте вещь для кладовщика'}
                 </p>
               </div>
             ) : (
@@ -418,7 +432,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
               </Button>
             )}
 
-            {(printed || order.isCancelled) && (
+            {(printed || order.isCancelled || order.labelGone) && (
               <Button
                 size="lg"
                 className="h-16 w-full bg-emerald-600 text-lg text-white hover:bg-emerald-700"
