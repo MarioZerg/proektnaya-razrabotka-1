@@ -19,6 +19,7 @@ import { usePickingPending } from '@/hooks/usePickingPending';
 import ReceiveReturnDialog from '@/components/crm/goodsWarehouse/ReceiveReturnDialog';
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
+import PickupReturnsDialog from '@/components/crm/returns/PickupReturnsDialog';
 import ReprintReportDialog from '@/components/crm/goodsWarehouse/ReprintReportDialog';
 import AdminReceiveDialog from '@/components/crm/goodsWarehouse/AdminReceiveDialog';
 import { printShelfPickList } from '@/lib/printShelfPickList';
@@ -61,6 +62,7 @@ const GoodsWarehouse = () => {
 
   // Разложить отменённые товары по полкам (сканером) и стикеровка заказов с полок
   const [placeOpen, setPlaceOpen] = useState(false);
+  const [pickupOpen, setPickupOpen] = useState(false);
   const [reprintOpen, setReprintOpen] = useState(false);
   const [adminReceiveOpen, setAdminReceiveOpen] = useState(false);
 
@@ -338,7 +340,9 @@ const GoodsWarehouse = () => {
             к подбору» — там список вещей с полками и сканер, который сразу печатает
             стикер. Два входа в одну работу только заставляли кладовщика выбирать,
             каким из них пользоваться. */}
-        <div className="grid gap-3 sm:grid-cols-3">
+        {/* items-end: у плитки возвратов сверху надстроен шаг «Привёз с ПВЗ», и без
+            выравнивания по низу три плитки стояли бы на разной высоте. */}
+        <div className="grid items-end gap-3 sm:grid-cols-3">
           <WorkTile
             icon="Boxes"
             title="Разложить по полкам"
@@ -346,15 +350,19 @@ const GoodsWarehouse = () => {
             count={pendingShelf.length}
             onClick={() => setPlaceOpen(true)}
           />
-          {/* Возвраты от покупателей разбираются отдельно: по каждой вещи кладовщик
-              решает — в цех на осмотр или сразу на полку. Автоматически раскладывать
-              их нельзя, среди них бывают мятые и с дефектом. */}
+          {/* Возвраты от покупателей — два шага подряд, поэтому они связаны стрелкой:
+              сначала кладовщик отмечает, что привёз с пункта выдачи, и вещи встают на
+              склад; потом разбирает их — в цех на осмотр или на полку. Автоматически
+              раскладывать нельзя: среди возвратов бывают мятые и с дефектом. */}
           <WorkTile
             icon="Undo2"
             title="Разобрать возвраты"
             hint="Решить: в цех на осмотр или на полку"
             count={pendingReturns.length}
             onClick={() => navigate('/crm/inventory/returns-inspection')}
+            stepLabel="Привёз с пункта выдачи"
+            stepIcon="Truck"
+            onStep={() => setPickupOpen(true)}
           />
           <WorkTile
             icon="Truck"
@@ -375,6 +383,11 @@ const GoodsWarehouse = () => {
           onOpenChange={setPlaceOpen}
           shelves={shelves}
           pendingItems={pendingShelf}
+          onDone={load}
+        />
+        <PickupReturnsDialog
+          open={pickupOpen}
+          onOpenChange={setPickupOpen}
           onDone={load}
         />
         <MoveShelfDialog
