@@ -1245,7 +1245,8 @@ def handler(event: dict, context) -> dict:
     if action not in ('sync_orders', 'create_supply', 'scan_order_to_supply',
                       'remove_order_from_supply', 'deliver_supply', 'list_warehouses',
                       'label', 'list_pending_orders', 'move_orders_to_supply',
-                      'check_statuses', 'shelf_cancelled_order'):
+                      'check_statuses', 'shelf_cancelled_order', 'supply_qr',
+                      'supply_state'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -1310,6 +1311,25 @@ def handler(event: dict, context) -> dict:
 
         if action == 'supply_qr':
             return handle_supply_qr(cur, conn, body_data, api_key, use_sandbox)
+
+        if action == 'supply_state':
+            # Что о поставке думает сам WB. Нужно, когда WB отказывается принимать
+            # заказы в поставку и отвечает общей фразой «не соблюдены требования»:
+            # без этого причина не видна ни кладовщику, ни в журнале.
+            supply_id = body_data.get('supplyId')
+            if not supply_id:
+                return _resp(400, {'error': 'Укажите supplyId'})
+            cur.execute(
+                "SELECT wb_supply_id FROM marketplace_supplies WHERE id = %s",
+                (int(supply_id),),
+            )
+            row = cur.fetchone()
+            if not row or not row[0]:
+                return _resp(404, {'error': 'Поставка не создана на стороне WB'})
+            st, data = wb_request('GET', f'/api/v3/supplies/{row[0]}', api_key, use_sandbox)
+            return _resp(200, {
+                'wbSupplyId': row[0], 'httpStatus': st, 'supply': data,
+            })
 
         # action == 'sync_orders'
         # Пока идём к WB за заказами, заодно проверяем накопительную поставку: если её
