@@ -18,6 +18,7 @@ import {
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { importOzonFboComposition } from '@/lib/ozonFboApi';
+import { fetchWbSupplyQr } from '@/lib/wbFbsApi';
 import { useAuth } from '@/context/AuthContext';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
@@ -40,6 +41,7 @@ const MarketplaceSupplyShow = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [importingFbo, setImportingFbo] = useState(false);
+  const [loadingQr, setLoadingQr] = useState(false);
 
   const [supply, setSupply] = useState<SupplyDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -250,6 +252,25 @@ const MarketplaceSupplyShow = () => {
     }
   };
 
+  // QR поставки WB. Обычно приходит сам при переводе в доставку — эта кнопка нужна,
+  // если WB тогда ответил не сразу, чтобы кладовщик не искал стикер в кабинете.
+  const handleLoadQr = async () => {
+    setLoadingQr(true);
+    try {
+      await fetchWbSupplyQr(supplyId);
+      load();
+      toast({ title: 'Стикер загружен' });
+    } catch (e) {
+      toast({
+        title: 'Не удалось получить стикер',
+        description: (e as Error).message,
+        variant: 'destructive',
+      });
+    } finally {
+      setLoadingQr(false);
+    }
+  };
+
   const handleForceComplete = async () => {
     setForceCompleting(true);
     try {
@@ -363,6 +384,8 @@ const MarketplaceSupplyShow = () => {
           onDelete={handleDelete}
           onForceComplete={handleForceComplete}
           onMoveStatus={handleMoveStatus}
+          loadingQr={loadingQr}
+          onLoadQr={handleLoadQr}
         />
 
         {isOzonFbo && (

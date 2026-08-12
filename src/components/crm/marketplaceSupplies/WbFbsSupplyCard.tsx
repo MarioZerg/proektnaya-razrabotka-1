@@ -122,9 +122,16 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
     setDelivering(true);
     try {
       const r = await deliverWbSupply(supplyId);
+      // Про QR поставки говорим отдельно: это тот лист, который водитель показывает
+      // на складе WB. Если он не пришёл, кладовщик должен узнать сразу, а не у ворот.
       toast({
         title: r.sandbox ? 'WB (тест): поставка передана в доставку' : 'Поставка передана в доставку',
-        description: r.stickersSaved > 0 ? `Стикеров коробов получено: ${r.stickersSaved}` : 'Стикеры коробов появятся в строках заказов',
+        description: r.qrWarning
+          ? `QR поставки пока не пришёл — нажмите «Загрузить стикер WB». ${r.qrWarning}`
+          : r.stickersSaved > 0
+            ? `QR поставки получен. Стикеров коробов: ${r.stickersSaved}`
+            : 'QR поставки получен',
+        variant: r.qrWarning ? 'destructive' : undefined,
       });
       onReload();
     } catch (e) {

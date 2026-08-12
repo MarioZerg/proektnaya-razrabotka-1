@@ -32,10 +32,13 @@ interface SupplyHeaderProps {
   nextStatusLabel: Record<string, string>;
   saving: boolean;
   forceCompleting: boolean;
+  /** Идёт запрос QR поставки у WB. */
+  loadingQr?: boolean;
   onBack: () => void;
   onDelete: () => void;
   onForceComplete: () => void;
   onMoveStatus: () => void;
+  onLoadQr?: () => void;
 }
 
 const SupplyHeader = ({
@@ -47,10 +50,12 @@ const SupplyHeader = ({
   nextStatusLabel,
   saving,
   forceCompleting,
+  loadingQr = false,
   onBack,
   onDelete,
   onForceComplete,
   onMoveStatus,
+  onLoadQr,
 }: SupplyHeaderProps) => {
   // Что именно потеряется при удалении: несшитые заказы уходят вместе с поставкой,
   // а вещи с полок просто освобождаются и остаются на складе.
@@ -187,10 +192,28 @@ const SupplyHeader = ({
               <span>Стикер маркетплейса для отгрузки</span>
             </div>
             {supply.marketplace === 'WB' ? (
-              <Button variant="outline" size="sm" disabled>
-                <Icon name="Download" size={14} className="mr-1.5" />
-                Подгрузится после подключения API
-              </Button>
+              // QR поставки приходит от WB сам, когда поставку переводят в доставку.
+              // Если WB тогда ответил не сразу — даём кнопку запросить повторно,
+              // чтобы кладовщик не искал стикер в кабинете маркетплейса вручную.
+              supply.passStickerUrl ? (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={supply.passStickerUrl} target="_blank" rel="noopener noreferrer">
+                    <Icon name="Download" size={14} className="mr-1.5" />
+                    Открыть стикер
+                  </a>
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={loadingQr}
+                  onClick={onLoadQr}
+                >
+                  <Icon name={loadingQr ? 'Loader2' : 'Download'} size={14}
+                    className={loadingQr ? 'mr-1.5 animate-spin' : 'mr-1.5'} />
+                  {loadingQr ? 'Загружаем…' : 'Загрузить стикер WB'}
+                </Button>
+              )
             ) : (
               <span className="text-xs text-muted-foreground">
                 У OZON FBS нет стикера — только движение товаров по статусам

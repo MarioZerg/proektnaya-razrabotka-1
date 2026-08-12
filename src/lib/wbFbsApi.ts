@@ -67,11 +67,32 @@ export const removeWbOrderFromSupply = (
 
 export const deliverWbSupply = (
   supplyId: number
-): Promise<{ success: true; stickersSaved: number; sandbox: boolean }> =>
+): Promise<{
+  success: true;
+  stickersSaved: number;
+  /** WB не отдал QR поставки — стикер можно запросить повторно кнопкой. */
+  qrWarning: string | null;
+  sandbox: boolean;
+}> =>
   post({ action: 'deliver_supply', supplyId }) as Promise<{
     success: true;
     stickersSaved: number;
+    qrWarning: string | null;
     sandbox: boolean;
+  }>;
+
+/**
+ * QR-стикер поставки WB — лист, который водитель показывает на складе при сдаче.
+ * Приходит сам при переводе поставки в доставку; эта кнопка нужна, если WB тогда
+ * ответил не сразу и стикер не пришёл.
+ */
+export const fetchWbSupplyQr = (
+  supplyId: number
+): Promise<{ success: true; passStickerUrl: string | null; passStickerName: string | null }> =>
+  post({ action: 'supply_qr', supplyId }) as Promise<{
+    success: true;
+    passStickerUrl: string | null;
+    passStickerName: string | null;
   }>;
 /** Маркетплейсный стикер WB на вещь FBS (PNG 58×40 в base64). */
 export const fetchWbLabel = async (orderNumber: string): Promise<string> => {

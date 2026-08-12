@@ -232,6 +232,41 @@ def upload_sticker_png(base64_data: str, name: str) -> str:
     return f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
 
 
+def fetch_supply_qr(cur, api_key, use_sandbox, supply_id, wb_supply_id):
+    """Забирает у WB QR-стикер самой поставки и сохраняет его как пропуск поставки.
+
+    Это тот лист, который водитель показывает на складе WB при сдаче. Раньше система
+    его не запрашивала, и после перевода поставки в доставку кладовщик видел заглушку
+    «Подгрузится после подключения API» — стикер приходилось искать в кабинете WB
+    вручную. Теперь он появляется сам, сразу после отгрузки.
+
+    QR отдаётся только для поставки, уже переданной в доставку — поэтому запрашиваем
+    его строго после PATCH /deliver.
+
+    Возвращает текст ошибки, если стикер получить не удалось (или None при успехе).
+    Ошибка НЕ должна отменять отгрузку: поставка на стороне WB уже закрыта, откат
+    оставил бы наши данные расходиться с маркетплейсом. Стикер всегда можно
+    перезапросить кнопкой.
+    """
+    status_code, data = wb_request(
+        'GET', f'/api/v3/supplies/{wb_supply_id}/barcode?type=png', api_key, use_sandbox
+    )
+    if status_code != 200 or not isinstance(data, dict):
+        return f'WB не отдал QR поставки ({status_code}): {wb_error_text(status_code, data)}'
+
+    b64 = (data.get('file') or data.get('barcode') or '').strip()
+    if not b64:
+        return 'WB вернул пустой QR поставки'
+
+    url = upload_sticker_png(b64, f'supply-{wb_supply_id}')
+    cur.execute(
+        "UPDATE marketplace_supplies SET pass_sticker_url = %s, pass_sticker_name = %s "
+        "WHERE id = %s",
+        (url, f'WB QR поставки {wb_supply_id}.png', int(supply_id)),
+    )
+    return None
+
+
 def handle_create_supply(cur, conn, body_data, api_key, use_sandbox):
     """Создаёт поставку FBS на стороне WB (POST /api/v3/supplies) и привязывает её
     WB-идентификатор к нашей поставке (marketplace_supplies.wb_supply_id)."""
@@ -767,6 +802,10 @@ def handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox):
                 )
                 stickers_saved += 1
 
+    # QR самой поставки — тот лист, который водитель показывает на складе WB.
+    # Запрашиваем ПОСЛЕ /deliver: до передачи в доставку WB его не отдаёт.
+    qr_warning = fetch_supply_qr(cur, api_key, use_sandbox, supply_id, wb_supply_id)
+
     cur.execute(
         "UPDATE marketplace_supplies SET status = 'Отгрузка', "
         "ship_to_gazelka_at = COALESCE(ship_to_gazelka_at, now()), "
@@ -774,7 +813,52 @@ def handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox):
         (int(supply_id),),
     )
     conn.commit()
-    return _resp(200, {'success': True, 'stickersSaved': stickers_saved, 'sandbox': use_sandbox})
+    return _resp(200, {
+        'success': True,
+        'stickersSaved': stickers_saved,
+        'qrWarning': qr_warning,
+        'sandbox': use_sandbox,
+    })
+
+
+def handle_supply_qr(cur, conn, body_data, api_key, use_sandbox):
+    """Повторно запрашивает QR поставки у WB — кнопкой, если при отгрузке он не пришёл.
+
+    WB иногда отвечает не сразу: поставка уже в доставке, а стикер ещё не готов.
+    Чтобы кладовщик не лез в кабинет маркетплейса, даём ему кнопку «Загрузить стикер».
+    """
+    supply_id = body_data.get('supplyId')
+    if not supply_id:
+        return _resp(400, {'error': 'Укажите supplyId'})
+
+    cur.execute(
+        "SELECT marketplace, type, wb_supply_id FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    s_row = cur.fetchone()
+    if not s_row:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    marketplace, supply_type, wb_supply_id = s_row
+    if marketplace != 'WB' or supply_type != 'FBS':
+        return _resp(400, {'error': 'Действие доступно только для поставок WB FBS'})
+    if not wb_supply_id:
+        return _resp(409, {'error': 'Поставка не создана на стороне WB'})
+
+    err = fetch_supply_qr(cur, api_key, use_sandbox, supply_id, wb_supply_id)
+    if err:
+        return _resp(502, {'error': err})
+    conn.commit()
+
+    cur.execute(
+        "SELECT pass_sticker_url, pass_sticker_name FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    row = cur.fetchone()
+    return _resp(200, {
+        'success': True,
+        'passStickerUrl': row[0] if row else None,
+        'passStickerName': row[1] if row else None,
+    })
 
 
 
@@ -1186,6 +1270,9 @@ def handler(event: dict, context) -> dict:
 
         if action == 'deliver_supply':
             return handle_deliver_supply(cur, conn, body_data, api_key, use_sandbox)
+
+        if action == 'supply_qr':
+            return handle_supply_qr(cur, conn, body_data, api_key, use_sandbox)
 
         # action == 'sync_orders'
         # Пока идём к WB за заказами, заодно проверяем накопительную поставку: если её

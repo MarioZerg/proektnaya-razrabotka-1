@@ -57,6 +57,15 @@
         "supplyId": 1
       },
       "expectedStatus": 400
+    },
+    {
+      "name": "Supply QR without supplyId fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "supply_qr"
+      },
+      "expectedStatus": 400
     }
   ]
 }
