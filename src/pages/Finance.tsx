@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
@@ -95,7 +95,15 @@ const Finance = () => {
     setOperationsPage(1);
   }, [userFilter, typeFilter, dateFrom, dateTo]);
 
+  // Номер последнего отправленного запроса. Переключая сотрудника или тип, админ
+  // запускает несколько запросов подряд, и отвечают они не по порядку: ответ по
+  // ПРЕДЫДУЩЕМУ сотруднику мог прийти последним и затереть правильные цифры — на
+  // экране висела сумма чужого начисления, которого у этого человека нет.
+  // Принимаем только ответ на самый свежий запрос, остальные игнорируем.
+  const operationsReqId = useRef(0);
+
   const loadOperations = () => {
+    const reqId = ++operationsReqId.current;
     setOperationsLoading(true);
     fetchSalarySummary({
       userId: userFilter !== 'all' ? Number(userFilter) : undefined,
@@ -105,6 +113,7 @@ const Finance = () => {
       page: operationsPage,
     })
       .then((data) => {
+        if (reqId !== operationsReqId.current) return;
         setOperations(data.operations);
         setTotalPages(data.totalPages);
         setFilteredTotal(data.filteredTotal);
@@ -113,7 +122,10 @@ const Finance = () => {
         setPeriod1Total(data.period1Total);
         setPeriod2Total(data.period2Total);
       })
-      .finally(() => setOperationsLoading(false));
+      .finally(() => {
+        if (reqId !== operationsReqId.current) return;
+        setOperationsLoading(false);
+      });
   };
 
   const loadPayouts = () => {
