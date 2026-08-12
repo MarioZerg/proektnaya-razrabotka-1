@@ -15,10 +15,12 @@ import {
 } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { fetchMarketplaceReturns } from '@/lib/marketplaceReturnsApi';
+import { fetchInspection } from '@/lib/goodsWarehouseApi';
 import { usePickingPending } from '@/hooks/usePickingPending';
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
 import PickupReturnsDialog from '@/components/crm/returns/PickupReturnsDialog';
+import PlaceInspectedDialog from '@/components/crm/goodsWarehouse/PlaceInspectedDialog';
 import ReprintReportDialog from '@/components/crm/goodsWarehouse/ReprintReportDialog';
 import AdminReceiveDialog from '@/components/crm/goodsWarehouse/AdminReceiveDialog';
 import { printShelfPickList } from '@/lib/printShelfPickList';
@@ -61,6 +63,9 @@ const GoodsWarehouse = () => {
   // Разложить отменённые товары по полкам (сканером) и стикеровка заказов с полок
   const [placeOpen, setPlaceOpen] = useState(false);
   const [pickupOpen, setPickupOpen] = useState(false);
+  // Осмотренные в цехе вещи, которые ждут, когда кладовщик заберёт их на полку.
+  const [inspectedReady, setInspectedReady] = useState(0);
+  const [placeInspectedOpen, setPlaceInspectedOpen] = useState(false);
   const [reprintOpen, setReprintOpen] = useState(false);
   const [adminReceiveOpen, setAdminReceiveOpen] = useState(false);
 
@@ -94,6 +99,18 @@ const GoodsWarehouse = () => {
   // чтобы кладовщик видел работу, не заходя внутрь. Звук не нужен: он уже есть
   // в общем меню, дублировать сигнал на этой странице ни к чему.
   const { pending: pickingPending } = usePickingPending(true, false);
+
+  // Сколько вещей упаковщица уже осмотрела и подготовила к выдаче на склад.
+  // Это третий шаг работы с возвратами, поэтому счётчик нужен прямо на плитке.
+  const loadInspectedReady = () => {
+    fetchInspection('inspected')
+      .then((d) => setInspectedReady((d.counts.inspected || 0) + (d.counts.taken || 0)))
+      .catch(() => setInspectedReady(0));
+  };
+
+  useEffect(() => {
+    loadInspectedReady();
+  }, []);
 
   useEffect(() => {
     fetchMarketplaceReturns({ status: 'picked_up' })
@@ -370,6 +387,10 @@ const GoodsWarehouse = () => {
             stepLabel="Привёз с пункта выдачи"
             stepIcon="Truck"
             onStep={() => setPickupOpen(true)}
+            afterLabel="Принять осмотренные из цеха"
+            afterIcon="Warehouse"
+            afterCount={inspectedReady}
+            onAfter={() => setPlaceInspectedOpen(true)}
           />
           <WorkTile
             icon="Truck"
@@ -392,6 +413,17 @@ const GoodsWarehouse = () => {
           open={pickupOpen}
           onOpenChange={setPickupOpen}
           onDone={load}
+        />
+        {/* Третий шаг цепочки возвратов: вещи, которые уехали в цех на осмотр,
+            вернулись проверенными — кладовщик сканирует их и кладёт на полки,
+            не уходя со склада товара. */}
+        <PlaceInspectedDialog
+          open={placeInspectedOpen}
+          onOpenChange={setPlaceInspectedOpen}
+          onDone={() => {
+            load();
+            loadInspectedReady();
+          }}
         />
         <MoveShelfDialog
           open={moveOpen}

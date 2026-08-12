@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { zoneBarClass, zoneLabels } from '@/lib/workZone';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import { useAuth } from '@/context/AuthContext';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printIndividualSticker } from '@/lib/printIndividualSticker';
 import {
@@ -32,6 +33,11 @@ const GoodsWarehouseCards = ({
   onMarkLost,
   onPrintMpLabel,
 }: GoodsWarehouseCardsProps) => {
+  const { user } = useAuth();
+  // Печать наклеек из списка — только старшему кладовщику: см. пояснение в таблице.
+  // Обычный кладовщик печатает стикер тогда, когда держит вещь в руках, — на сборке.
+  const canPrintStickers = user?.role === 'senior_storekeeper' || user?.role === 'admin';
+
   return (
     <div className="space-y-3">
       {items.map((i) => {
@@ -61,35 +67,44 @@ const GoodsWarehouseCards = ({
               <Badge variant={statusVariant[i.status]}>{statusLabels[i.status]}</Badge>
             </div>
 
-            <button
-              type="button"
-              onClick={() =>
-                i.receiveReason === 'individual'
-                  ? printIndividualSticker({
-                      orderNumber: i.orderNumber || '',
-                      material: i.material,
-                      width: i.width,
-                      height: i.height,
-                      storageBarcode: i.storageBarcode,
-                      product: i.product,
-                    })
-                  : printStorageSticker({
-                      storageBarcode: i.storageBarcode,
-                      title: i.product,
-                      orderNumber: i.orderNumber,
-                    })
-              }
-              className="mt-2 flex items-center gap-1.5 font-mono-tech text-xs text-muted-foreground underline-offset-2 hover:underline"
-            >
-              <Icon name="Barcode" size={12} />
-              {i.storageBarcode}
-            </button>
+            {canPrintStickers ? (
+              <button
+                type="button"
+                onClick={() =>
+                  i.receiveReason === 'individual'
+                    ? printIndividualSticker({
+                        orderNumber: i.orderNumber || '',
+                        material: i.material,
+                        width: i.width,
+                        height: i.height,
+                        storageBarcode: i.storageBarcode,
+                        product: i.product,
+                      })
+                    : printStorageSticker({
+                        storageBarcode: i.storageBarcode,
+                        title: i.product,
+                        orderNumber: i.orderNumber,
+                      })
+                }
+                className="mt-2 flex items-center gap-1.5 font-mono-tech text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                <Icon name="Barcode" size={12} />
+                {i.storageBarcode}
+              </button>
+            ) : (
+              /* Обычному кладовщику показываем только номер: по нему он находит вещь
+                 на полке, а печать делает на сборке, держа вещь в руках. */
+              <div className="mt-2 flex items-center gap-1.5 font-mono-tech text-xs text-muted-foreground">
+                <Icon name="Barcode" size={12} />
+                {i.storageBarcode}
+              </div>
+            )}
 
             {/* Ярлык маркетплейса для вещи, которую сейчас собирают под заказ: если
                 наклейку порвали или забыли, кладовщик печатает её прямо отсюда, с
                 телефона у стеллажа. Для вещей на хранении кнопки нет — они лежат
                 свободными, ярлык отправления им не положен. */}
-            {canPrintMarketplaceLabel(i) && (
+            {canPrintStickers && canPrintMarketplaceLabel(i) && (
               <button
                 type="button"
                 onClick={() => onPrintMpLabel?.(i)}

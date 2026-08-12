@@ -28,6 +28,7 @@ import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printIndividualSticker } from '@/lib/printIndividualSticker';
 import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import {
   formatDate,
   statusLabels,
@@ -66,6 +67,18 @@ const GoodsWarehouseTable = ({
   const { toast } = useToast();
 
   /** Перепечатка ярлыка маркетплейса по вещи, собранной с полки. */
+  const { user } = useAuth();
+  /**
+   * Печатать наклейки из общего списка склада может только старший кладовщик.
+   *
+   * Обычный кладовщик печатает стикеры там, где реально работает руками: собирает
+   * вещь с полки — и сканер сразу выдаёт наклейку. Печать из таблицы — это печать
+   * «вслепую», не держа вещь в руках: наклейка уходит не на ту вещь, а старый ярлык
+   * остаётся на пакете. Номер стикера ему по-прежнему виден — найти вещь на полке
+   * и назвать её он может.
+   */
+  const canPrintStickers = user?.role === 'senior_storekeeper' || user?.role === 'admin';
+
   const handlePrintMpLabel = async (i: GoodsWarehouseItem) => {
     if (!i.reservedOrderId) return;
     setLabelBusyId(i.id);
@@ -192,6 +205,7 @@ const GoodsWarehouseTable = ({
                 <TableCell>
                   <div className="flex items-center gap-1.5">
                     <span className="font-mono-tech text-xs">{i.storageBarcode}</span>
+                    {canPrintStickers && (
                     <Button
                       variant="ghost"
                       size="icon"
@@ -218,6 +232,7 @@ const GoodsWarehouseTable = ({
                     >
                       <Icon name="Barcode" size={12} />
                     </Button>
+                    )}
 
                     {/* Ярлык маркетплейса для вещей, которые СЕЙЧАС собирают под заказ.
                         Кладовщик мог наклеить его криво, порвать при укладке или просто
@@ -225,7 +240,7 @@ const GoodsWarehouseTable = ({
                         ярлык было уже неоткуда. Теперь он под рукой прямо в списке.
                         Для вещей на хранении кнопки нет: они лежат на полке свободными,
                         и ярлык отправления им не положен. */}
-                    {canPrintMarketplaceLabel(i) && (
+                    {canPrintStickers && canPrintMarketplaceLabel(i) && (
                       <Button
                         variant="ghost"
                         size="icon"

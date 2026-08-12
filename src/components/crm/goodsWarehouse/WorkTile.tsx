@@ -21,6 +21,12 @@ interface WorkTileProps {
   stepLabel?: string;
   stepIcon?: string;
   onStep?: () => void;
+  /** Третий шаг — ПОСЛЕ основного действия (рисуется снизу со стрелкой). */
+  afterLabel?: string;
+  afterIcon?: string;
+  /** Счётчик у третьего шага: сколько вещей ждёт этого действия. */
+  afterCount?: number;
+  onAfter?: () => void;
 }
 
 /**
@@ -43,6 +49,10 @@ const WorkTile = ({
   stepLabel,
   stepIcon,
   onStep,
+  afterLabel,
+  afterIcon,
+  afterCount,
+  onAfter,
 }: WorkTileProps) => {
   const active = count > 0;
 
@@ -79,7 +89,38 @@ const WorkTile = ({
     </button>
   );
 
-  if (!onStep) return tile;
+  // Шаг, который идёт ПОСЛЕ основного действия. Рисуется так же, как верхний,
+  // но с меткой количества: кладовщик видит, ждёт ли его там работа.
+  const afterStep = onAfter ? (
+    <>
+      <div className="flex justify-center py-0.5">
+        <Icon name="ArrowDown" size={16} className="text-muted-foreground" />
+      </div>
+      <button
+        type="button"
+        onClick={onAfter}
+        className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-violet-400 bg-card px-3 py-2 text-sm font-medium transition hover:bg-muted/50"
+      >
+        <Icon name={afterIcon || 'Warehouse'} size={16} className="text-violet-600" />
+        <span className="text-center leading-tight">{afterLabel}</span>
+        {afterCount ? (
+          <span className="shrink-0 rounded-full bg-violet-600 px-2 py-0.5 text-xs font-bold text-white">
+            {afterCount}
+          </span>
+        ) : null}
+      </button>
+    </>
+  ) : null;
+
+  if (!onStep) {
+    if (!afterStep) return tile;
+    return (
+      <div className="flex flex-col">
+        {tile}
+        {afterStep}
+      </div>
+    );
+  }
 
   // Двухуровневая плитка: сверху шаг, который делают ПЕРВЫМ, снизу — куда это ведёт.
   // Стрелка показывает порядок: сначала принял привезённое, потом разбираешь его.
@@ -99,6 +140,7 @@ const WorkTile = ({
         <Icon name="ArrowDown" size={16} className="text-muted-foreground" />
       </div>
       {tile}
+      {afterStep}
     </div>
   );
 };
