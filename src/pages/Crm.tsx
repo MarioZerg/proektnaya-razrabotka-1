@@ -54,7 +54,6 @@ const CrmDashboard = () => {
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [goodsItems, setGoodsItems] = useState<GoodsWarehouseItem[]>([]);
   const [shipmentsToWorkshop, setShipmentsToWorkshop] = useState<Shipment[]>([]);
-  const [returnsWaiting, setReturnsWaiting] = useState(0);
   // Возвраты, забранные с пункта выдачи, но ещё не осмотренные кладовщиком.
   const [returnsPickedUp, setReturnsPickedUp] = useState(0);
 
@@ -87,10 +86,11 @@ const CrmDashboard = () => {
     if (canSeeWarehouseWidgets) {
       fetchRolls({ status: 'in_workshop' }).then(setRolls).catch(() => {});
       fetchGoodsWarehouse().then(setGoodsItems).catch(() => {});
-      // Возвраты с маркетплейсов, которые ждут приёмки на складе — задача кладовщика.
-      fetchMarketplaceReturns({ status: 'new' })
+      // Вещи, которые кладовщик сам отсканировал и привёз с пункта выдачи, но ещё
+      // не разобрал. Запрашиваем именно их: по статусу 'new' сервер отдавал полторы
+      // тысячи записей всей истории маркетплейса ради одного числа.
+      fetchMarketplaceReturns({ status: 'picked_up' })
         .then((returnsData) => {
-          setReturnsWaiting(returnsData.counts.new || 0);
           setReturnsPickedUp(returnsData.counts.picked_up || 0);
         })
         .catch(() => {});
@@ -302,19 +302,18 @@ const CrmDashboard = () => {
       // видно всё движение возврата и принимаются решения по нему, а это работа
       // руководителя.
       list.push({
-        label: 'Возвраты — непроверенные, разобрать',
+        label: 'Возвраты с ПВЗ — разобрать',
         value: returnsPickedUp,
         icon: 'PackageOpen',
         tone: returnsPickedUp > 0 ? 'urgent' : 'default',
         path: '/crm/inventory/goods-warehouse',
       });
-      list.push({
-        label: 'Возвраты — принять на склад',
-        value: returnsWaiting,
-        icon: 'Undo2',
-        tone: returnsWaiting > 0 ? 'warning' : 'default',
-        path: '/crm/inventory/goods-warehouse',
-      });
+      // Виджет «Возвраты — принять на склад» убран: он считал ВСЕ возвраты,
+      // заведённые маркетплейсом (больше полутора тысяч за всё время), включая те,
+      // которые кладовщик в глаза не видел и которые могут никогда не доехать.
+      // Цифра выглядела как гора работы, хотя работой не была. Реальная задача
+      // кладовщика — вещи, которые он сам отсканировал и привёз с ПВЗ: они в
+      // виджете ниже.
       list.push({
         label: 'Рулоны с малым остатком',
         value: lowStockRolls,
@@ -354,7 +353,7 @@ const CrmDashboard = () => {
     }
 
     return list;
-  }, [isCleaner, isCutter, isSewer, user?.id, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop, returnsWaiting, returnsPickedUp]);
+  }, [isCleaner, isCutter, isSewer, user?.id, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop, returnsPickedUp]);
 
   const content = (
     <div className="space-y-8">
