@@ -1478,6 +1478,19 @@ def handler(event: dict, context) -> dict:
                 for gw_id, _bc, _oid in placed_rows:
                     try_match_orders_from_stock(cur, gw_id=gw_id)
 
+                # Возврат разобран — закрываем заявку.
+                #
+                # Раньше вещь ложилась на полку, а заявка возврата так и висела
+                # «Забран, ждёт разбора»: кладовщик уже всё решил и определил место,
+                # а список делал вид, что работа не сделана. Он открывал вкладку и
+                # заново разбирал то, что стоит на полке.
+                if placed_rows:
+                    placed_ids = ','.join(str(int(r[0])) for r in placed_rows)
+                    cur.execute(
+                        "UPDATE marketplace_returns SET status = 'processed', outcome = 'stored' "
+                        f"WHERE goods_warehouse_id IN ({placed_ids}) AND status = 'picked_up'"
+                    )
+
                 # Что печатать: стикеры хранения по каждой уложенной вещи.
                 items_out = []
                 if placed_rows:
