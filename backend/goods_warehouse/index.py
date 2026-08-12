@@ -1421,7 +1421,21 @@ def handler(event: dict, context) -> dict:
                     f"UPDATE goods_warehouse SET status = 'repacking' "
                     f"WHERE id IN ({ids_csv}) AND status IN ('checking', 'mp_return') RETURNING id"
                 )
-                moved = len(cur.fetchall())
+                moved_rows = cur.fetchall()
+                moved = len(moved_rows)
+
+                # Возврат разобран — закрываем заявку.
+                #
+                # Кладовщик решил судьбу вещи: она уехала в цех на осмотр. Работа с
+                # разбором окончена, дальше отвечает упаковщица. Раньше заявка
+                # оставалась «Забран, ждёт разбора», и на складе висела плашка
+                # «Непроверенные возвраты» — звала разбирать то, что уже в цехе.
+                if moved_rows:
+                    moved_ids = ','.join(str(int(r[0])) for r in moved_rows)
+                    cur.execute(
+                        "UPDATE marketplace_returns SET status = 'processed', outcome = 'repack' "
+                        f"WHERE goods_warehouse_id IN ({moved_ids}) AND status = 'picked_up'"
+                    )
                 log_action(
                     cur, actor_id, actor_name, 'move_to_workshop', 'goods_warehouse', None,
                     f'Передал на осмотр упаковщицам вещей: {moved}',
