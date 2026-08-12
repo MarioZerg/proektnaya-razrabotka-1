@@ -16,7 +16,6 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
-import TakeFromWorkshopDialog from '@/components/crm/goodsWarehouse/TakeFromWorkshopDialog';
 import PlaceInspectedDialog from '@/components/crm/goodsWarehouse/PlaceInspectedDialog';
 import {
   INSPECTION_STAGES,
@@ -77,7 +76,6 @@ const ReturnsInspection = () => {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<number[]>([]);
   const [acting, setActing] = useState(false);
-  const [takeOpen, setTakeOpen] = useState(false);
   const [placeOpen, setPlaceOpen] = useState(false);
   const [disposeReason, setDisposeReason] = useState('');
 
@@ -218,10 +216,10 @@ const ReturnsInspection = () => {
                   : ''}
               </Button>
             )}
-            <Button variant="outline" onClick={() => setTakeOpen(true)}>
-              <Icon name="ScanLine" size={16} className="mr-2" />
-              Забрать из цеха
-            </Button>
+            {/* Кнопка «Забрать из цеха» убрана: она дублировала приёмку осмотренных.
+                Там кладовщик сканирует те же стикеры, но сразу назначает полку — вещь
+                доходит до места за одно действие. Отдельный шаг «забрал, полку назначу
+                потом» только плодил вещи, висящие на руках. */}
             <Button variant="outline" onClick={() => navigate('/crm/inventory/goods-warehouse')}>
               <Icon name="Warehouse" size={16} className="mr-2" />
               Склад товара
@@ -377,12 +375,6 @@ const ReturnsInspection = () => {
             </div>
           )}
         </div>
-
-        <TakeFromWorkshopDialog
-          open={takeOpen}
-          onOpenChange={setTakeOpen}
-          onDone={() => load()}
-        />
 
         <PlaceInspectedDialog
           open={placeOpen}
