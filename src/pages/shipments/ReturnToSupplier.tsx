@@ -57,12 +57,16 @@ const ReturnToSupplier = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchShipments('return_to_supplier'), fetchSuppliers(), fetchRolls()])
-      .then(([shipmentsData, suppliersData, rollsData]) => {
-        setShipments(shipmentsData);
-        setSuppliers(suppliersData);
-        setRolls(rollsData.filter((r) => r.status !== 'completed'));
-      })
+    // Справочники для формы возврата идут каждый сам по себе: если связь моргнула и один
+    // не дошёл, список отгрузок всё равно покажется. Раньше сбой оставлял страницу пустой.
+    fetchSuppliers().then(setSuppliers).catch(() => {});
+    fetchRolls()
+      .then((rollsData) => setRolls(rollsData.filter((r) => r.status !== 'completed')))
+      .catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchShipments('return_to_supplier')
+      .then(setShipments)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

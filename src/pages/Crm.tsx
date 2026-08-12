@@ -73,25 +73,28 @@ const CrmDashboard = () => {
       return;
     }
     setDataLoading(true);
-    Promise.all([
-      fetchOrders(),
-      canSeeWarehouseWidgets ? fetchRolls({ status: 'in_workshop' }) : Promise.resolve([]),
-      canSeeWarehouseWidgets ? fetchGoodsWarehouse() : Promise.resolve([]),
-      fetchShipments('to_workshop'),
-      // Возвраты с маркетплейсов, которые ждут приёмки на складе — задача кладовщика.
-      canSeeWarehouseWidgets
-        ? fetchMarketplaceReturns({ status: 'new' })
-        : Promise.resolve({ returns: [], counts: {} as Record<string, number> }),
-    ])
-      .then(([ordersData, rollsData, goodsData, shipmentsData, returnsData]) => {
-        setOrders(ordersData);
-        setRolls(rollsData);
-        setGoodsItems(goodsData);
-        setShipmentsToWorkshop(shipmentsData);
-        setReturnsWaiting(returnsData.counts.new || 0);
-        setReturnsPickedUp(returnsData.counts.picked_up || 0);
-      })
+    // Каждый блок панели грузится сам по себе. Раньше все запросы шли одной связкой:
+    // стоило одному не дойти (связь моргнула), и панель оставалась пустой целиком —
+    // ни заказов, ни смен, ни поставок. Теперь сбой одного запроса гасит только свой
+    // виджет, остальная панель работает.
+    // Кружок снимаем по главному запросу панели — заказам. Остальное подтягивается
+    // следом и само показывает свои цифры, каждое в свой срок.
+    fetchOrders()
+      .then(setOrders)
+      .catch(() => {})
       .finally(() => setDataLoading(false));
+    fetchShipments('to_workshop').then(setShipmentsToWorkshop).catch(() => {});
+    if (canSeeWarehouseWidgets) {
+      fetchRolls({ status: 'in_workshop' }).then(setRolls).catch(() => {});
+      fetchGoodsWarehouse().then(setGoodsItems).catch(() => {});
+      // Возвраты с маркетплейсов, которые ждут приёмки на складе — задача кладовщика.
+      fetchMarketplaceReturns({ status: 'new' })
+        .then((returnsData) => {
+          setReturnsWaiting(returnsData.counts.new || 0);
+          setReturnsPickedUp(returnsData.counts.picked_up || 0);
+        })
+        .catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.role]);
 

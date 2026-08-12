@@ -11,13 +11,20 @@
  * Версию поднимаем при изменении правил кэширования: старый кэш при этом удаляется.
  */
 
-const CACHE = 'megatul-shell-v5';
+const CACHE = 'megatul-shell-v6';
 
-// Оболочка приложения: только иконки. Заглавную страницу СЮДА НЕ КЛАДЁМ — в ней
-// прописаны имена файлов сборки, которые меняются при каждом обновлении. Сохранённая
-// страница просила бы файлы, которых на сервере уже нет, и система зависала бы
-// на вечном кружке загрузки.
+// Оболочка приложения: только иконки. Заглавную страницу заранее СЮДА НЕ КЛАДЁМ —
+// в ней прописаны имена файлов сборки, которые меняются при каждом обновлении.
 const SHELL = ['/icons/icon-192.png', '/icons/icon-512.png'];
+
+// Последняя удачно открытая версия заглавной страницы. Сохраняем её на ходу — при
+// каждом успешном открытии сайта. Если связь моргнула, отдаём эту копию: сотрудник
+// видит рабочий интерфейс, а данные подтянутся сами, когда связь вернётся.
+//
+// Копия может оказаться устаревшей после выхода новой версии — тогда она попросит
+// файлы, которых на сервере уже нет. Это не тупик: приложение ловит такую ошибку,
+// чистит сохранённые копии и один раз перезагружается (см. src/lib/chunkReload.ts).
+const APP_SHELL = '/index.html';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -68,13 +75,17 @@ self.addEventListener('fetch', (event) => {
   // и любое вмешательство кэша здесь приводит к зависанию на загрузке.
   if (url.pathname.startsWith('/assets/')) return;
 
-  // Переходы по страницам — всегда из сети, чтобы сотрудник открыл актуальную версию.
-  // Без связи показываем короткое понятное сообщение вместо пустого экрана.
+  // Открытие страницы. Сначала пробуем сеть — сотрудник должен получить свежую версию.
+  // Но если связь моргнула, сайт НЕ должен превращаться в заглушку «нет интернета»:
+  // отдаём последнюю удачную копию страницы. Приложение откроется как обычно, а данные
+  // (заказы, смены, остатки) подгрузятся отдельно — они всегда идут в сеть напрямую.
+  //
+  // Так и было задумано: связь рвётся часто, а работать надо. Раньше любая заминка
+  // дольше 8 секунд стирала весь интерфейс и показывала тупиковый экран с кнопкой
+  // «Обновить» — по сути, сайт «падал» на ровном месте.
   if (request.mode === 'navigate') {
-    // Ждём сервер не дольше 8 секунд. Без предела браузер висит на запросе минутами:
-    // в цехе связь проседает, и вместо страницы сотрудник видел бесконечный кружок,
-    // а в конце — «плохое соединение». Теперь при заминке сразу пробуем обычную
-    // загрузку (она может взяться из кэша браузера), и только потом сообщение.
+    // Ждём сервер не дольше 8 секунд: без предела браузер висит на запросе минутами,
+    // и вместо страницы сотрудник видит бесконечный кружок.
     const withTimeout = (ms) =>
       new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('timeout')), ms);
@@ -85,25 +96,38 @@ self.addEventListener('fetch', (event) => {
 
     event.respondWith(
       withTimeout(8000)
+        .then((response) => {
+          // Удачно открыли — запоминаем эту версию страницы на случай обрыва связи.
+          if (response && response.status === 200) {
+            const copy = response.clone();
+            caches.open(CACHE).then((cache) => cache.put(APP_SHELL, copy));
+          }
+          return response;
+        })
+        // Сеть подвела: пробуем обычную загрузку (может взяться из памяти браузера),
+        // затем — сохранённую копию страницы. Заглушку показываем только если и её нет,
+        // то есть человек ни разу не открывал систему на этом устройстве.
         .catch(() => fetch(request))
-        .catch(
-        () =>
-          new Response(
-            '<!doctype html><html lang="ru"><head><meta charset="utf-8">' +
-              '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-              '<title>Нет связи</title></head>' +
-              '<body style="font-family:system-ui;display:flex;min-height:100vh;' +
-              'align-items:center;justify-content:center;margin:0;background:#f3f3f1">' +
-              '<div style="text-align:center;padding:24px;max-width:360px">' +
-              '<h1 style="font-size:18px;margin:0 0 8px">Нет связи с интернетом</h1>' +
-              '<p style="color:#666;font-size:14px;margin:0 0 16px">' +
-              'Проверьте подключение и обновите страницу</p>' +
-              '<button onclick="location.reload()" style="padding:10px 20px;border:0;' +
-              'border-radius:6px;background:#3f4a35;color:#fff;font-size:15px">' +
-              'Обновить</button></div></body></html>',
-            { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-          )
-      )
+        .catch(() => caches.match(APP_SHELL))
+        .then(
+          (response) =>
+            response ||
+            new Response(
+              '<!doctype html><html lang="ru"><head><meta charset="utf-8">' +
+                '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+                '<title>Нет связи</title></head>' +
+                '<body style="font-family:system-ui;display:flex;min-height:100vh;' +
+                'align-items:center;justify-content:center;margin:0;background:#f3f3f1">' +
+                '<div style="text-align:center;padding:24px;max-width:360px">' +
+                '<h1 style="font-size:18px;margin:0 0 8px">Нет связи с интернетом</h1>' +
+                '<p style="color:#666;font-size:14px;margin:0 0 16px">' +
+                'Проверьте подключение и обновите страницу</p>' +
+                '<button onclick="location.reload()" style="padding:10px 20px;border:0;' +
+                'border-radius:6px;background:#3f4a35;color:#fff;font-size:15px">' +
+                'Обновить</button></div></body></html>',
+              { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+            )
+        )
     );
     return;
   }

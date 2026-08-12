@@ -104,28 +104,30 @@ export const useSewingItemsData = () => {
     // сотрудника и только «его» типа материала (швея — тесьма, закройщик — ткань).
     // Раньше тянулся общий список: он обрезается по лимиту свежими рулонами, и тесьма
     // чужого цеха в него не попадала — швея-гость не могла указать тесьму совсем.
-    Promise.all([
-      fetchOrders(),
-      fetchEmployees(),
-      fetchMaterialsData(),
-      fetchWorkshops(),
-      fetchRolls(
-        isProductionRole && user?.id
-          ? { status: 'in_workshop', forUserId: user.id }
-          : { status: 'in_workshop' }
-      ),
-    ])
-      .then(([ordersData, employeesData, materialsData, workshopsData, rollsData]) => {
-        setOrders(ordersData);
-        setEmployees(employeesData);
+    // Каждый справочник идёт сам по себе: в цехе связь моргает, и раньше единственный
+    // недошедший запрос оставлял конвейер полностью пустым.
+    fetchEmployees().then(setEmployees).catch(() => {});
+    fetchMaterialsData()
+      .then((materialsData) => {
         // Фильтр материалов на конвейере — это фильтр по заказам, а заказ всегда шьётся из
         // ткани (material_types.name === 'Тюль'), поэтому в выпадающем списке нужна только
         // ткань — тесьма/пакеты/этикетки тут никогда не встретятся и только мешают поиску.
         const fabricTypeId = materialsData.types.find((t) => t.name === 'Тюль')?.id;
         setMaterials(fabricTypeId ? materialsData.materials.filter((m) => m.typeId === fabricTypeId) : materialsData.materials);
-        setWorkshops(workshopsData);
-        setRolls(rollsData);
       })
+      .catch(() => {});
+    fetchWorkshops().then(setWorkshops).catch(() => {});
+    fetchRolls(
+      isProductionRole && user?.id
+        ? { status: 'in_workshop', forUserId: user.id }
+        : { status: 'in_workshop' }
+    )
+      .then(setRolls)
+      .catch(() => {});
+    // Кружок загрузки снимаем по главному запросу — списку заказов.
+    fetchOrders()
+      .then(setOrders)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

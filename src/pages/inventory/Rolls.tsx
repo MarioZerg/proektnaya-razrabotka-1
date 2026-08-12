@@ -94,20 +94,22 @@ const Rolls = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([
-      fetchRolls({
-        ...(isProductionRole && user ? { forUserId: user.id } : {}),
-        ...(search.trim() ? { search: search.trim() } : {}),
-      }),
-      fetchMaterialsData(),
-      fetchWorkshops(),
-    ])
-      .then(([rollsData, materialsData, workshopsData]) => {
-        setRolls(rollsData);
+    // Справочники запрашиваем каждый сам по себе: если связь моргнула и один не дошёл,
+    // список рулонов всё равно покажется. Раньше один сбой оставлял страницу пустой.
+    fetchMaterialsData()
+      .then((materialsData) => {
         setMaterials(materialsData.materials);
         setMaterialTypes(materialsData.types);
-        setWorkshops(workshopsData);
       })
+      .catch(() => {});
+    fetchWorkshops().then(setWorkshops).catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchRolls({
+      ...(isProductionRole && user ? { forUserId: user.id } : {}),
+      ...(search.trim() ? { search: search.trim() } : {}),
+    })
+      .then(setRolls)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

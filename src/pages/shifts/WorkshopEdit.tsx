@@ -51,10 +51,15 @@ const WorkshopEdit = () => {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    Promise.all([fetchWorkshopDetail(Number(id)), fetchMaterialsData()])
-      .then(([w, materialsData]) => {
+    // Справочник материалов грузим отдельно: если связь моргнула и он не дошёл, карточка
+    // цеха всё равно откроется. Раньше один сбой оставлял страницу пустой.
+    fetchMaterialsData()
+      .then((materialsData) => setMaterials(materialsData.materials.filter((m) => m.status === 'active')))
+      .catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchWorkshopDetail(Number(id))
+      .then((w) => {
         setWorkshop(w);
-        setMaterials(materialsData.materials.filter((m) => m.status === 'active'));
         setName(w.name);
         setStatus(w.isActive ? 'active' : 'inactive');
         setAllowedProducts(new Set(w.allowedProducts));
@@ -65,6 +70,7 @@ const WorkshopEdit = () => {
         });
         setSettingsValues(initialValues);
       })
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, [id]);
 

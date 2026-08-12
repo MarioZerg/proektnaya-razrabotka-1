@@ -69,12 +69,16 @@ const ToWorkshop = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchShipments('to_workshop'), fetchWorkshops(), fetchMaterialsData()])
-      .then(([shipmentsData, workshopsData, materialsData]) => {
-        setShipments(shipmentsData);
-        setWorkshops(workshopsData);
-        setMaterials(materialsData.materials);
-      })
+    // Справочники запрашиваем каждый сам по себе: если связь моргнула и один не дошёл,
+    // список заявок всё равно покажется. Раньше один сбой оставлял страницу пустой.
+    fetchWorkshops().then(setWorkshops).catch(() => {});
+    fetchMaterialsData()
+      .then((materialsData) => setMaterials(materialsData.materials))
+      .catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchShipments('to_workshop')
+      .then(setShipments)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

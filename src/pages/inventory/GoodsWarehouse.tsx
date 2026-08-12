@@ -71,11 +71,13 @@ const GoodsWarehouse = () => {
     setLoading(true);
     // Товар попадает на склад только по сканированию стикера хранения — вручную выбрать
     // заказ и «положить» его на полку нельзя, поэтому список заказов здесь больше не нужен.
-    Promise.all([fetchGoodsWarehouse(), fetchShelves()])
-      .then(([itemsData, shelvesData]) => {
-        setItems(itemsData);
-        setShelves(shelvesData);
-      })
+    // Полки грузим отдельно от товара: если связь моргнула и справочник не дошёл,
+    // склад всё равно покажется. Раньше один сбой оставлял страницу пустой.
+    fetchShelves().then(setShelves).catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchGoodsWarehouse()
+      .then(setItems)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

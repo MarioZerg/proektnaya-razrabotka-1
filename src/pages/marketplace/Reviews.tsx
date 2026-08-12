@@ -37,11 +37,13 @@ const Reviews = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchReviews(), fetchReviewsRating()])
-      .then(([rv, rt]) => {
-        setReviews(rv);
-        setRating(rt);
-      })
+    // Рейтинг тянем отдельно от отзывов: не дошёл один запрос — второй блок страницы
+    // всё равно наполнится. Раньше единственный сбой связи оставлял страницу пустой.
+    fetchReviewsRating().then(setRating).catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchReviews()
+      .then(setReviews)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

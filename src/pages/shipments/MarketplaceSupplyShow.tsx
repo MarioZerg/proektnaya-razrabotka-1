@@ -105,6 +105,9 @@ const MarketplaceSupplyShow = () => {
         setGazelkaId(data.gazelkaId || '');
         setComment(data.comment || '');
       })
+      // Счётчик готового считается из карточки поставки и склада вместе, поэтому запросы
+      // не разделить. Ловим ошибку, чтобы обрыв связи не оставлял вечный кружок загрузки.
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

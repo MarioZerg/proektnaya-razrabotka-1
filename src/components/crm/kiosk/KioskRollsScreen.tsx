@@ -55,19 +55,22 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
 
   const load = () => {
     setLoading(true);
-    Promise.all([
-      // forUserId — сервер сам отдаёт рулоны ТОЛЬКО цеха и смены этого сотрудника.
-      // Раньше запрашивался общий список и отсеивался уже в планшете: список
-      // обрезался по общему лимиту, и часть своих рулонов до закройщика не доезжала,
-      // зато мелькали чужие.
-      fetchRolls({ status: 'in_workshop', usedSinceUserId: userId, forUserId: userId }),
-      fetchMaterialsData(),
-    ])
-      .then(([list, matData]) => {
-        setRolls(list);
+    // Справочник материалов грузим отдельно: в цехе связь моргает, и раньше из-за одного
+    // недошедшего запроса планшет показывал пустой экран вместо рулонов.
+    fetchMaterialsData()
+      .then((matData) => {
         setMaterials(matData.materials);
         setTypes(matData.types);
       })
+      .catch(() => {});
+    // Кружок загрузки снимаем по главному запросу экрана.
+    // forUserId — сервер сам отдаёт рулоны ТОЛЬКО цеха и смены этого сотрудника.
+    // Раньше запрашивался общий список и отсеивался уже в планшете: список
+    // обрезался по общему лимиту, и часть своих рулонов до закройщика не доезжала,
+    // зато мелькали чужие.
+    fetchRolls({ status: 'in_workshop', usedSinceUserId: userId, forUserId: userId })
+      .then(setRolls)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

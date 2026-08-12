@@ -65,22 +65,22 @@ const FromSupplier = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([
-      fetchShipments({
-        type: 'from_supplier',
-        status: statusFilter !== 'all' ? statusFilter : undefined,
-        supplierId: supplierFilter !== 'all' ? Number(supplierFilter) : undefined,
-        dateFrom: dateFrom || undefined,
-        dateTo: dateTo || undefined,
-      }),
-      fetchSuppliers(),
-      fetchMaterialsData(),
-    ])
-      .then(([shipmentsData, suppliersData, materialsData]) => {
-        setShipments(shipmentsData);
-        setSuppliers(suppliersData);
-        setMaterials(materialsData.materials);
-      })
+    // Справочники запрашиваем каждый сам по себе: если связь моргнула и один не дошёл,
+    // список поставок всё равно покажется. Раньше один сбой оставлял страницу пустой.
+    fetchSuppliers().then(setSuppliers).catch(() => {});
+    fetchMaterialsData()
+      .then((materialsData) => setMaterials(materialsData.materials))
+      .catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchShipments({
+      type: 'from_supplier',
+      status: statusFilter !== 'all' ? statusFilter : undefined,
+      supplierId: supplierFilter !== 'all' ? Number(supplierFilter) : undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    })
+      .then(setShipments)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

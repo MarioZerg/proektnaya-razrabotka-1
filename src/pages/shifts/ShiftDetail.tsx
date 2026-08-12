@@ -52,11 +52,13 @@ const ShiftDetailPage = () => {
   const load = () => {
     if (!id) return;
     setLoading(true);
-    Promise.all([fetchShiftDetail(Number(id)), fetchEmployees()])
-      .then(([shiftData, employeesData]) => {
-        setShift(shiftData);
-        setEmployees(employeesData);
-      })
+    // Запросы идут раздельно: не дошёл список сотрудников — карточка смены всё равно
+    // откроется. Раньше любой обрыв связи оставлял страницу пустой.
+    fetchEmployees().then(setEmployees).catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchShiftDetail(Number(id))
+      .then(setShift)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

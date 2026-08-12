@@ -60,11 +60,13 @@ const ShiftsList = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchShifts(), fetchWorkshops()])
-      .then(([shiftsData, workshopsData]) => {
-        setShifts(shiftsData);
-        setWorkshops(workshopsData);
-      })
+    // Каждый запрос идёт сам по себе: если связь моргнула и справочник цехов не дошёл,
+    // список смен всё равно покажется. Раньше один сбой оставлял страницу пустой.
+    fetchWorkshops().then(setWorkshops).catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchShifts()
+      .then(setShifts)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

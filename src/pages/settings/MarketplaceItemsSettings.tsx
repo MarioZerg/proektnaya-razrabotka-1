@@ -47,11 +47,15 @@ const MarketplaceItemsSettings = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchMarketplaceItems(), fetchMaterialsData()])
-      .then(([itemsData, materialsData]) => {
-        setItems(itemsData);
-        setMaterials(materialsData.materials);
-      })
+    // Справочник материалов запрашиваем отдельно: если он не дошёл из-за обрыва связи,
+    // список товаров всё равно покажется. Раньше один сбой оставлял страницу пустой.
+    fetchMaterialsData()
+      .then((materialsData) => setMaterials(materialsData.materials))
+      .catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchMarketplaceItems()
+      .then(setItems)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

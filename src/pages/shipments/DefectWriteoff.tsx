@@ -54,11 +54,15 @@ const DefectWriteoff = () => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchShipments('defect_writeoff'), fetchRolls()])
-      .then(([shipmentsData, rollsData]) => {
-        setShipments(shipmentsData);
-        setRolls(rollsData.filter((r) => r.status !== 'completed'));
-      })
+    // Рулоны для формы списания грузим отдельно: если связь моргнула и они не дошли,
+    // список отгрузок всё равно покажется. Раньше один сбой оставлял страницу пустой.
+    fetchRolls()
+      .then((rollsData) => setRolls(rollsData.filter((r) => r.status !== 'completed')))
+      .catch(() => {});
+    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchShipments('defect_writeoff')
+      .then(setShipments)
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

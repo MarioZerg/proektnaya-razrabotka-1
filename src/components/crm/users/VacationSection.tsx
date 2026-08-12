@@ -44,10 +44,15 @@ const VacationSection = ({ userId, role, actorId }: VacationSectionProps) => {
 
   const load = () => {
     setLoading(true);
-    Promise.all([fetchVacationRight(userId), fetchVacations()])
-      .then(([r, list]) => {
+    // Список отпусков тянем отдельно от права на отпуск: если связь моргнула и один
+    // запрос не дошёл, вторая половина блока всё равно наполнится.
+    fetchVacations()
+      .then((list) => setItems(list.filter((v) => v.userId === userId && !v.cancelled)))
+      .catch(() => {});
+    // Кружок загрузки снимаем по главному запросу блока.
+    fetchVacationRight(userId)
+      .then((r) => {
         setRight(r);
-        setItems(list.filter((v) => v.userId === userId && !v.cancelled));
         if (r.nextDate) setStartsOn(r.nextDate.slice(0, 10));
       })
       .catch(() => setRight(null))

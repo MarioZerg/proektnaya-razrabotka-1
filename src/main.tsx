@@ -3,11 +3,16 @@ import App from './App'
 import AppErrorBoundary from './components/AppErrorBoundary'
 import AppUpdateBanner from './components/AppUpdateBanner'
 import { setupChunkReload } from './lib/chunkReload'
+import { setupResilientFetch } from './lib/resilientFetch'
 import './index.css'
 
 // Ставим до отрисовки: после обновления системы старая вкладка просит файлы, которых
 // на сервере уже нет, — без этого экран загрузки застывал бы навсегда.
 setupChunkReload();
+
+// Тоже до отрисовки: в цехе связь моргает, и одного мига хватало, чтобы раздел
+// остался пустым. Короткие обрывы теперь переживаются молча, без участия человека.
+setupResilientFetch();
 
 createRoot(document.getElementById("root")!).render(
   <AppErrorBoundary>
@@ -31,4 +36,3 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
     });
   });
 }
-
