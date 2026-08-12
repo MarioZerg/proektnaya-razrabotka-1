@@ -539,8 +539,22 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
 
         # Вещь этого заказа уже заводили на склад (например, она уезжала и вернулась) —
         # переиспользуем запись, чтобы не плодить дубли одной и той же вещи.
+        #
+        # НО: запись занимают только под СВОЙ возврат. В одном отправлении бывает две
+        # одинаковые вещи (например, две «Молния 200x270»), и обе цепляются к одному
+        # заказу. Раньше вторая вещь занимала карточку первой: штрихкод хранения
+        # перезаписывался, на складе оставалась одна строка вместо двух, а сканер на
+        # второй пакет отвечал «уже принята». Вещь физически есть, а в системе её нет.
+        #
+        # Поэтому карточку, за которой уже закреплён ДРУГОЙ возврат, не трогаем —
+        # заводим новую со своим стикером.
         cur.execute(
-            "SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s", (order_id,)
+            "SELECT gw.id, gw.storage_barcode FROM goods_warehouse gw "
+            "WHERE gw.order_id = %s AND NOT EXISTS ("
+            "  SELECT 1 FROM marketplace_returns mr "
+            "  WHERE mr.goods_warehouse_id = gw.id AND mr.id <> %s"
+            ") LIMIT 1",
+            (order_id, r_id),
         )
         gw_row = cur.fetchone()
         if gw_row:
@@ -1413,9 +1427,16 @@ def handler(event: dict, context) -> dict:
                         # другой маршрут и другая ответственность.
                         gw_status = 'repacking' if outcome == 'repack' else 'mp_return'
                     if order_id:
+                        # Берём карточку этого заказа, но только если она не занята
+                        # ДРУГИМ возвратом: две одинаковые вещи одного отправления
+                        # должны лежать на складе двумя строками со своими стикерами.
                         cur.execute(
-                            "SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s",
-                            (int(order_id),),
+                            "SELECT gw.id, gw.storage_barcode FROM goods_warehouse gw "
+                            "WHERE gw.order_id = %s AND NOT EXISTS ("
+                            "  SELECT 1 FROM marketplace_returns mr "
+                            "  WHERE mr.goods_warehouse_id = gw.id AND mr.id <> %s"
+                            ") LIMIT 1",
+                            (int(order_id), int(return_id)),
                         )
                         gw_row = cur.fetchone()
                         if gw_row:
