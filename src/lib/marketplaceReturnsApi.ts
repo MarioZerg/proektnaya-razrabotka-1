@@ -134,6 +134,24 @@ export const approveMarketplaceReturn = (id: number, actorId?: number, actorName
 export const rejectMarketplaceReturn = (id: number, actorId?: number, actorName?: string) =>
   postAction({ action: 'reject', id, actorId, actorName, actorRole: 'admin' });
 
+/**
+ * Кладовщик привёз коробки с пункта выдачи и отмечает, что забрал их.
+ *
+ * Без ids забираются все возвраты, числящиеся в пункте выдачи. Вещи сразу встают
+ * на склад в состоянии «Возврат с маркетплейса» — решение (в цех на перепаковку
+ * или на полку) кладовщик принимает уже на складе.
+ */
+export const pickupMarketplaceReturns = (
+  ids?: number[],
+  actorId?: number,
+  actorName?: string
+): Promise<{ success: true; picked: number; stocked: number }> =>
+  postAction({ action: 'pickup', ids, actorId, actorName }) as Promise<{
+    success: true;
+    picked: number;
+    stocked: number;
+  }>;
+
 /** Кладовщик сканирует стикер возврата с коробки — система находит заявку. */
 export const scanMarketplaceReturn = (code: string): Promise<{ return: MarketplaceReturn }> =>
   postAction({ action: 'scan', code });

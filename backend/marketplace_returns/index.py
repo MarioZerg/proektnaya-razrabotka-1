@@ -470,7 +470,7 @@ def next_storage_barcode(cur):
     return 'GW-' + str(cur.fetchone()[0]).zfill(6)
 
 
-def stock_picked_up_returns(cur, ids=None):
+def stock_picked_up_returns(cur, ids=None, limit=None):
     """Заводит забранные с ПВЗ возвраты на склад в «подвешенном» состоянии.
 
     Кладовщик получил коробки на пункте выдачи — вещи физически у нас. До этой
@@ -498,7 +498,9 @@ def stock_picked_up_returns(cur, ids=None):
         "       mi.material, mi.width, mi.height, mi.name "
         "FROM marketplace_returns r "
         "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
-        "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL" + where_ids
+        "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL"
+        + where_ids
+        + (f' ORDER BY r.id LIMIT {int(limit)}' if limit else '')
     )
     rows = cur.fetchall()
     created = 0
@@ -1011,8 +1013,21 @@ def handler(event: dict, context) -> dict:
                 row = cur.fetchone()
                 if not row:
                     return _resp(404, {'error': f'Возврат по коду {code} не найден'})
+                # Заявку в статусе 'new' раньше отвергали: «не одобрена администратором».
+                # На практике одобрение никто не проставляет — вещи забирают с ПВЗ по коду
+                # выдачи, и все заявки остаются новыми. Кладовщик стоял с коробкой в руках
+                # и упирался в отказ, а на складе возвраты не появлялись вовсе.
+                #
+                # Отсканированный стикер — это и есть подтверждение: вещь физически здесь.
+                # Помечаем её забранной и работаем дальше.
                 if row[6] == 'new':
-                    return _resp(409, {'error': 'Заявка ещё не одобрена администратором'})
+                    cur.execute(
+                        "UPDATE marketplace_returns SET status = 'picked_up', "
+                        "picked_up_at = COALESCE(picked_up_at, now()) WHERE id = %s",
+                        (row[0],),
+                    )
+                    row = list(row)
+                    row[6] = 'picked_up'
                 if row[6] == 'rejected':
                     return _resp(409, {'error': 'Эта заявка отклонена'})
                 if row[6] == 'processed':
@@ -1038,6 +1053,62 @@ def handler(event: dict, context) -> dict:
                     'width': row[9],
                     'height': row[10],
                 }})
+
+            if action == 'pickup':
+                # Кладовщик привёз коробки с пункта выдачи и отмечает, что забрал их.
+                #
+                # Нужно, потому что автоматическая отметка через OZON работает, только пока
+                # выдача открыта: сотрудник ПВЗ отсканировал коробки — мы это увидели. Если
+                # выдачу уже закрыли (а обычно так и есть — вещи привезли, а в систему зашли
+                # позже), забрать их в систему нечем, и склад остаётся пустым.
+                #
+                # Принимаем либо конкретные заявки (ids), либо все, что числятся в пункте
+                # выдачи. Вещи сразу заводятся на склад в «подвешенном» состоянии — решение
+                # (в цех или на полку) кладовщик примет потом.
+                ids = body_data.get('ids') or []
+                if ids:
+                    ids_csv = ','.join(str(int(i)) for i in ids)
+                    cur.execute(
+                        "UPDATE marketplace_returns SET status = 'picked_up', "
+                        "picked_up_at = now(), picked_up_by = %s "
+                        f"WHERE id IN ({ids_csv}) AND status IN ('new', 'approved') RETURNING id",
+                        (int(actor_id) if actor_id else None,),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE marketplace_returns SET status = 'picked_up', "
+                        "picked_up_at = now(), picked_up_by = %s "
+                        "WHERE status IN ('new', 'approved') "
+                        "AND mp_status IN ('В пункте выдачи', 'Получен') RETURNING id",
+                        (int(actor_id) if actor_id else None,),
+                    )
+                marked = [r[0] for r in cur.fetchall()]
+                conn.commit()
+                # Заводим на склад порциями: на полусотне вещей функция не укладывалась
+                # в отведённое время и обрывалась, оставляя часть коробок неразобранными.
+                # Каждая порция сохраняется сразу, поэтому повторное нажатие продолжит
+                # с того места, где остановились, — ничего не потеряется и не задвоится.
+                stocked = stock_picked_up_returns(cur, limit=25)
+                conn.commit()
+                # Сколько коробок ещё не заведено — показываем кладовщику, чтобы он знал,
+                # что нужно нажать ещё раз, а не гадал, всё ли принято.
+                cur.execute(
+                    "SELECT count(*) FROM marketplace_returns "
+                    "WHERE status = 'picked_up' AND goods_warehouse_id IS NULL"
+                )
+                remaining = cur.fetchone()[0]
+                if marked:
+                    log_action(
+                        cur, actor_id, actor_name, 'pickup',
+                        f'Забрал возвраты с пункта выдачи: {len(marked)}',
+                    )
+                conn.commit()
+                return _resp(200, {
+                    'success': True,
+                    'picked': len(marked),
+                    'stocked': stocked,
+                    'remaining': remaining,
+                })
 
             if action == 'process':
                 # Кладовщик осмотрел вещь и решил её судьбу:
