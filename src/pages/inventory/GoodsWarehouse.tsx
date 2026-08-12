@@ -19,7 +19,6 @@ import { usePickingPending } from '@/hooks/usePickingPending';
 import ReceiveReturnDialog from '@/components/crm/goodsWarehouse/ReceiveReturnDialog';
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
-import ShipLabelDialog from '@/components/crm/goodsWarehouse/ShipLabelDialog';
 import ReprintReportDialog from '@/components/crm/goodsWarehouse/ReprintReportDialog';
 import AdminReceiveDialog from '@/components/crm/goodsWarehouse/AdminReceiveDialog';
 import { printShelfPickList } from '@/lib/printShelfPickList';
@@ -62,7 +61,6 @@ const GoodsWarehouse = () => {
 
   // Разложить отменённые товары по полкам (сканером) и стикеровка заказов с полок
   const [placeOpen, setPlaceOpen] = useState(false);
-  const [shipLabelOpen, setShipLabelOpen] = useState(false);
   const [reprintOpen, setReprintOpen] = useState(false);
   const [adminReceiveOpen, setAdminReceiveOpen] = useState(false);
 
@@ -109,12 +107,6 @@ const GoodsWarehouse = () => {
     // Возвраты с маркетплейса (mp_return) кладовщик раскладывает тем же действием:
     // вещь у него в руках, ей нужна полка.
     () => items.filter((i) => i.status === 'awaiting_shelf' || i.status === 'mp_return'),
-    [items],
-  );
-
-  // Вещи с полок, подобранные под новые заказы FBS и ждущие стикера отправления.
-  const matchedFromStock = useMemo(
-    () => items.filter((i) => i.reservedOrderId && !i.shippingLabeledAt && i.status === 'picking'),
     [items],
   );
 
@@ -329,11 +321,14 @@ const GoodsWarehouse = () => {
           </div>
         </div>
 
-        {/* Работа на сейчас — три плитки с числами. Кладовщик видит, сколько вещей ждёт
+        {/* Работа на сейчас — плитки с числами. Кладовщик видит, сколько вещей ждёт
             на каждом шаге, и нажимает ту, где есть работа: пустые остаются серыми и в
-            глаза не лезут. Раньше два из этих окон вообще нельзя было открыть — кнопок
-            к ним на странице не было. */}
-        <div className="grid gap-3 sm:grid-cols-3">
+            глаза не лезут. */}
+        {/* Плитка «Собрать с полок» убрана: то же самое делается на странице «Товар
+            к подбору» — там список вещей с полками и сканер, который сразу печатает
+            стикер. Два входа в одну работу только заставляли кладовщика выбирать,
+            каким из них пользоваться. */}
+        <div className="grid gap-3 sm:grid-cols-2">
           <WorkTile
             icon="Boxes"
             title="Разложить по полкам"
@@ -342,16 +337,9 @@ const GoodsWarehouse = () => {
             onClick={() => setPlaceOpen(true)}
           />
           <WorkTile
-            icon="ScanLine"
-            title="Собрать с полок"
-            hint="Подобраны под заказы, ждут стикера"
-            count={matchedFromStock.length}
-            onClick={() => setShipLabelOpen(true)}
-          />
-          <WorkTile
             icon="Truck"
             title="Товар к подбору"
-            hint="Список к сборке на сегодня"
+            hint="Собрать с полок и наклеить стикеры"
             count={pickingPending}
             onClick={() => navigate('/crm/inventory/goods-picking')}
           />
@@ -367,12 +355,6 @@ const GoodsWarehouse = () => {
           onOpenChange={setPlaceOpen}
           shelves={shelves}
           pendingItems={pendingShelf}
-          onDone={load}
-        />
-        <ShipLabelDialog
-          open={shipLabelOpen}
-          onOpenChange={setShipLabelOpen}
-          matched={matchedFromStock}
           onDone={load}
         />
         <MoveShelfDialog

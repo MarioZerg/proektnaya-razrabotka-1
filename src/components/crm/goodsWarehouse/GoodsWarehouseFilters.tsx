@@ -100,10 +100,15 @@ const GoodsWarehouseFilters = ({
         </p>
       )}
 
-    <div className="flex flex-wrap items-center gap-3">
+    {/* Все пять фильтров в одну строку. Раньше у каждого была своя жёсткая ширина —
+        в сумме они не помещались, и выбор полки уезжал на вторую строку, отодвигая
+        таблицу вниз. Теперь это сетка: поля делят строку поровну и сжимаются вместе
+        с окном. На телефоне встают в две колонки — там одна строка нечитаема. */}
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
       {/* 1. Состояние вещи. «Возвраты с маркетплейса» — не статус, а происхождение:
           вещи, приехавшие обратно от покупателя, в любом состоянии. */}
-      <div className="w-56">
+      <div className="min-w-0">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger>
             <SelectValue />
@@ -128,7 +133,7 @@ const GoodsWarehouseFilters = ({
       </div>
 
       {/* 2. Материал */}
-      <div className="w-48">
+      <div className="min-w-0">
         <Select
           value={materialFilter || 'all'}
           onValueChange={(v) => setMaterialFilter(v === 'all' ? '' : v)}
@@ -148,7 +153,7 @@ const GoodsWarehouseFilters = ({
       </div>
 
       {/* 3. Ширина изделия */}
-      <div className="w-40">
+      <div className="min-w-0">
         <Select
           value={widthFilter || 'all'}
           onValueChange={(v) => setWidthFilter(v === 'all' ? '' : v)}
@@ -168,7 +173,7 @@ const GoodsWarehouseFilters = ({
       </div>
 
       {/* 4. Высота изделия */}
-      <div className="w-40">
+      <div className="min-w-0">
         <Select
           value={heightFilter || 'all'}
           onValueChange={(v) => setHeightFilter(v === 'all' ? '' : v)}
@@ -188,7 +193,7 @@ const GoodsWarehouseFilters = ({
       </div>
 
       {/* 5. Полка. Рядом с названием — сколько вещей на ней лежит. */}
-      <div className="w-52">
+      <div className="min-w-0">
         <Select
           value={shelfFilter || 'all'}
           onValueChange={(v) => setShelfFilter(v === 'all' ? '' : v)}
@@ -211,8 +216,10 @@ const GoodsWarehouseFilters = ({
         </Select>
       </div>
 
+      </div>
+
       {activeFiltersCount > 0 && (
-        <Button variant="ghost" size="sm" onClick={onReset}>
+        <Button variant="ghost" size="sm" onClick={onReset} className="shrink-0">
           <Icon name="X" size={14} className="mr-1" />
           Сбросить ({activeFiltersCount})
         </Button>

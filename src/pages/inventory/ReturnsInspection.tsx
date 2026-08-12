@@ -197,6 +197,18 @@ const ReturnsInspection = () => {
   return (
     <CrmLayout>
       <div className="space-y-6">
+        {/* Возврат к складу — стрелкой над заголовком, как на других вложенных страницах.
+            Раньше здесь стояла кнопка «Склад товара» в один ряд с рабочими действиями:
+            навигация мешалась среди кнопок, которыми что-то делают. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate('/crm/inventory/goods-warehouse')}
+          className="-ml-2 -mb-2"
+        >
+          <Icon name="ChevronLeft" size={16} className="mr-1" />
+          К складу товара
+        </Button>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-bold">Возвраты на осмотре</h1>
@@ -220,10 +232,6 @@ const ReturnsInspection = () => {
                 Там кладовщик сканирует те же стикеры, но сразу назначает полку — вещь
                 доходит до места за одно действие. Отдельный шаг «забрал, полку назначу
                 потом» только плодил вещи, висящие на руках. */}
-            <Button variant="outline" onClick={() => navigate('/crm/inventory/goods-warehouse')}>
-              <Icon name="Warehouse" size={16} className="mr-2" />
-              Склад товара
-            </Button>
           </div>
         </div>
 
