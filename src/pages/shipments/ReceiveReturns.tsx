@@ -23,7 +23,6 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import ReturnScanCard from '@/components/crm/returns/ReturnScanCard';
-import PickupReturnsDialog from '@/components/crm/returns/PickupReturnsDialog';
 import {
   fetchMarketplaceReturns,
   syncMarketplaceReturns,
@@ -75,7 +74,6 @@ const ReceiveReturns = () => {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [pickupOpen, setPickupOpen] = useState(false);
   const [processingId, setProcessingId] = useState<number | null>(null);
   const [outcomes, setOutcomes] = useState<Record<string, number>>({});
   // Админ решает по заявкам (одобрить/отклонить) и видит отчёт по утилизации.
@@ -197,13 +195,10 @@ const ReceiveReturns = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {/* Привёз коробки с ПВЗ — открывает список, где отмечают ТОЛЬКО реально
-                привезённое. Забирать всё скопом нельзя: возвраты капают в пункт выдачи
-                весь день, и на складе оказались бы вещи, которых у нас нет. */}
-            <Button variant="outline" onClick={() => setPickupOpen(true)}>
-              <Icon name="PackageOpen" size={16} className="mr-2" />
-              Привёз с пункта выдачи
-            </Button>
+            {/* Кнопка «Привёз с пункта выдачи» переехала на склад товара — к плитке
+                «Разобрать возвраты». Там кладовщик и работает с привезённым: принял
+                коробки и тут же разбирает их. Здесь, на приёме заявок, она была не
+                к месту: эта страница про решения по заявкам, а не про физический товар. */}
             {isAdmin && (
               <Button onClick={handleSync} disabled={syncing}>
                 <Icon
@@ -219,8 +214,6 @@ const ReceiveReturns = () => {
 
         {/* Кладовщик принимает приехавшие вещи сканированием — заявки он не одобряет. */}
         {!isAdmin && <ReturnScanCard onProcessed={load} />}
-
-        <PickupReturnsDialog open={pickupOpen} onOpenChange={setPickupOpen} onDone={load} />
 
         <div className="flex flex-wrap gap-2">
           {isAdmin && (
