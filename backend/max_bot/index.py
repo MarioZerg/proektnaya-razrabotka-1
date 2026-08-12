@@ -279,6 +279,11 @@ def handler(event: dict, context) -> dict:
             or 'Сотрудник'
         )
 
+        # Фото профиля из MAX. Люди уже поставили себе аватар в мессенджере — берём
+        # его, чтобы в чате и списках сотрудник узнавался по лицу, а не по инициалам.
+        # Ключ у MAX менялся между версиями API, поэтому смотрим оба варианта.
+        sender_avatar = (sender.get('avatar_url') or sender.get('photo_url') or '').strip()
+
         phone_raw, contact_name = extract_phone_from_message(message)
         if contact_name:
             sender_name = contact_name
@@ -315,15 +320,24 @@ def handler(event: dict, context) -> dict:
 
             if row:
                 user_id = row[0]
+                # Обновляем фото при каждом входе: сменил аватар в MAX — сменится
+                # и в системе. Пишем в отдельное поле, чтобы не затереть фото,
+                # загруженное администратором вручную: оно главнее.
+                if sender_avatar:
+                    cur.execute(
+                        "UPDATE users SET max_avatar_url = %s WHERE id = %s",
+                        (sender_avatar, user_id),
+                    )
             else:
                 salt = secrets.token_hex(16)
                 dummy_hash = hashlib.sha256(secrets.token_bytes(16)).hexdigest()
                 login = f'max{max_user_id}{secrets.token_hex(2)}'
                 cur.execute(
                     "INSERT INTO users (login, password_hash, password_salt, full_name, role, phone, "
-                    "max_user_id, registered_via_max, is_active) "
-                    "VALUES (%s, %s, %s, %s, '', %s, %s, true, true) RETURNING id",
-                    (login, dummy_hash, salt, sender_name[:200], phone_norm, max_user_id),
+                    "max_user_id, registered_via_max, is_active, max_avatar_url) "
+                    "VALUES (%s, %s, %s, %s, '', %s, %s, true, true, %s) RETURNING id",
+                    (login, dummy_hash, salt, sender_name[:200], phone_norm, max_user_id,
+                     sender_avatar or None),
                 )
                 user_id = cur.fetchone()[0]
 

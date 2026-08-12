@@ -141,7 +141,19 @@ def handler(event: dict, context) -> dict:
             'userName': r[2],
             'text': r[3],
             'createdAt': r[4].isoformat() + 'Z',
+            # Фото автора: сначала загруженное администратором, иначе — из профиля MAX.
+            # Берём его в момент чтения, а не пишем в сообщение: человек сменил аватар —
+            # он обновится сразу во всей переписке, включая старые сообщения.
+            'avatarUrl': (r[5] if len(r) > 5 else None),
         }
+
+    # Сообщения всегда читаем вместе с фото автора — отдельный запрос за аватарами
+    # на каждое сообщение превратил бы дешёвый опрос в десятки запросов.
+    CHAT_SELECT = (
+        "SELECT m.id, m.user_id, m.user_name, m.text, m.created_at, "
+        "       NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), '') "
+        "FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id "
+    )
 
     if method == 'GET' and params.get('chat'):
         conn = psycopg2.connect(dsn)
@@ -154,8 +166,8 @@ def handler(event: dict, context) -> dict:
                 # Условие по id попадает в индекс — при отсутствии новых сообщений
                 # запрос не читает ни одной строки.
                 cur.execute(
-                    "SELECT id, user_id, user_name, text, created_at FROM chat_messages "
-                    "WHERE hidden_at IS NULL AND id > %s ORDER BY id ASC LIMIT 200",
+                    CHAT_SELECT + "WHERE m.hidden_at IS NULL AND m.id > %s "
+                    "ORDER BY m.id ASC LIMIT 200",
                     (int(since),),
                 )
                 return {
@@ -168,14 +180,13 @@ def handler(event: dict, context) -> dict:
                 }
             if before:
                 cur.execute(
-                    "SELECT id, user_id, user_name, text, created_at FROM chat_messages "
-                    "WHERE hidden_at IS NULL AND id < %s ORDER BY id DESC LIMIT %s",
+                    CHAT_SELECT + "WHERE m.hidden_at IS NULL AND m.id < %s "
+                    "ORDER BY m.id DESC LIMIT %s",
                     (int(before), CHAT_PAGE),
                 )
             else:
                 cur.execute(
-                    "SELECT id, user_id, user_name, text, created_at FROM chat_messages "
-                    "WHERE hidden_at IS NULL ORDER BY id DESC LIMIT %s",
+                    CHAT_SELECT + "WHERE m.hidden_at IS NULL ORDER BY m.id DESC LIMIT %s",
                     (CHAT_PAGE,),
                 )
             # Читаем свежие сверху (так работает индекс), отдаём в порядке беседы.
@@ -278,7 +289,11 @@ def handler(event: dict, context) -> dict:
                     }
                 # Имя автора берём из профиля, а не с клиента: иначе можно было бы
                 # написать от чужого имени, подменив его в запросе.
-                cur.execute("SELECT full_name FROM users WHERE id = %s", (int(chat_user_id),))
+                cur.execute(
+                    "SELECT full_name, NULLIF(COALESCE(avatar_url, max_avatar_url), '') "
+                    "FROM users WHERE id = %s",
+                    (int(chat_user_id),),
+                )
                 author_row = cur.fetchone()
                 if not author_row:
                     return {
@@ -291,7 +306,8 @@ def handler(event: dict, context) -> dict:
                     "RETURNING id, user_id, user_name, text, created_at",
                     (int(chat_user_id), author_row[0] or 'Сотрудник', chat_text),
                 )
-                new_message = _chat_row(cur.fetchone())
+                inserted = cur.fetchone()
+                new_message = _chat_row(list(inserted) + [author_row[1]])
                 conn.commit()
                 return {
                     'statusCode': 200,

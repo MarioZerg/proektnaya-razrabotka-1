@@ -12,6 +12,8 @@ export interface ChatMessage {
   userName: string;
   text: string;
   createdAt: string;
+  /** Фото автора: загруженное администратором или из профиля MAX. */
+  avatarUrl?: string | null;
 }
 
 /** Последние сообщения ленты. */

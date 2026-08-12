@@ -6,30 +6,8 @@ import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useChat } from '@/components/crm/chat/useChat';
+import ChatAvatar from '@/components/crm/chat/ChatAvatar';
 import { formatDateTime } from '@/lib/dateUtils';
-
-/** Цвет кружка с инициалами — по имени, чтобы собеседники различались с одного взгляда. */
-const avatarColor = (name: string) => {
-  const colors = [
-    'bg-violet-500',
-    'bg-emerald-500',
-    'bg-sky-500',
-    'bg-amber-500',
-    'bg-rose-500',
-    'bg-teal-500',
-  ];
-  let sum = 0;
-  for (let i = 0; i < name.length; i += 1) sum += name.charCodeAt(i);
-  return colors[sum % colors.length];
-};
-
-const initials = (name: string) =>
-  name
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() || '')
-    .join('');
 
 /** Отбивка «Сегодня / Вчера / дата» между сообщениями разных дней. */
 const dayLabel = (iso: string) => {
@@ -160,11 +138,7 @@ const Chat = () => {
                       </div>
                     )}
                     <div className={`flex gap-2.5 ${mine ? 'flex-row-reverse' : ''}`}>
-                      <div
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${avatarColor(m.userName)}`}
-                      >
-                        {initials(m.userName)}
-                      </div>
+                      <ChatAvatar name={m.userName} url={m.avatarUrl} />
                       <div className={`min-w-0 max-w-[75%] ${mine ? 'items-end text-right' : ''}`}>
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           <span className="font-medium text-foreground">
