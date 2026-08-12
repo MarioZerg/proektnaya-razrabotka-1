@@ -1,4 +1,3 @@
-import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import {
@@ -25,8 +24,6 @@ const GoodsWarehouseHeader = ({
   onAdminReceive,
   onReprint,
 }: GoodsWarehouseHeaderProps) => {
-  const navigate = useNavigate();
-
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
@@ -56,12 +53,6 @@ const GoodsWarehouseHeader = ({
                 Добавить товары вручную
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              onClick={() => navigate('/crm/inventory/returns-inspection')}
-            >
-              <Icon name="Search" size={16} className="mr-2" />
-              Возвраты на осмотре
-            </DropdownMenuItem>
             {isAdmin && (
               <DropdownMenuItem onClick={onReprint}>
                 <Icon name="FileWarning" size={16} className="mr-2" />
