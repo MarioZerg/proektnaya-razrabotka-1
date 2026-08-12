@@ -14,6 +14,8 @@ export const accrualTypeLabels: Record<string, string> = {
   admin_daily: 'Оклад за день',
   manual: 'Ручное начисление',
   penalty: 'Штраф',
+  /** Премия за выработку по итогам месяца (бонусная программа швей). */
+  bonus: 'Бонус',
 };
 
 /**

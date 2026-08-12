@@ -31,6 +31,7 @@ import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components
 import { isMetersUnit } from '@/lib/stockLevels';
 import { isStorekeeperRole } from '@/lib/roles';
 import { countDuplicateOrders } from '@/lib/findDuplicateOrders';
+import SewerBonusCard from '@/components/crm/dashboard/SewerBonusCard';
 
 const CrmDashboard = () => {
   const { user, setActiveShift } = useAuth();
@@ -367,6 +368,12 @@ const CrmDashboard = () => {
       {/* Решения склада, которые стоят денег, — сразу перед виджетами: админ видит их
           первыми, ещё до сводки по цеху. */}
       {user?.role === 'admin' && <AdminNotifications />}
+
+      {/* Бонусная программа: швея видит СВОЙ прогресс к премии, руководство — всех.
+          Остальным ролям карточка не нужна: программа только для швей. */}
+      {(isSewer || isAdmin) && (
+        <SewerBonusCard onlyUserId={isSewer ? user?.id : undefined} />
+      )}
 
       {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
 

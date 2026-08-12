@@ -244,3 +244,36 @@ export const fetchMissedAccruals = async (): Promise<MissedAccrual[]> => {
 
 export const cashDeposit = (payload: { amount: number; description: string; actorId?: number; actorName?: string }) =>
   postAction({ action: 'cash_deposit', ...payload });
+/** Прогресс одной швеи в бонусной программе. */
+export interface SewerBonusRow {
+  userId: number;
+  userName: string;
+  /** Сдано на стикеровку за расчётный месяц, пог.м. */
+  meters: number;
+}
+
+export interface SewerBonusInfo {
+  /** upcoming — программа ещё не началась, active — идёт, finished — месяц закрыт. */
+  state: 'upcoming' | 'active' | 'finished';
+  periodFrom: string;
+  periodTo: string;
+  /** Сколько метров нужно сдать за месяц ради премии. */
+  target: number;
+  /** Размер премии в рублях. */
+  amount: number;
+  sewers: SewerBonusRow[];
+}
+
+/**
+ * Бонусная программа швей: цель месяца и текущая выработка каждой.
+ *
+ * Этот же запрос запускает начисление премий за прошедший месяц — платформа не умеет
+ * работать по расписанию, поэтому расчёт привязан к первому обращению в новом месяце.
+ */
+export const fetchSewerBonus = async (): Promise<SewerBonusInfo | null> => {
+  const res = await fetch(`${SALARY_URL}?sewerBonus=1`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!data || !Array.isArray(data.sewers)) return null;
+  return data as SewerBonusInfo;
+};

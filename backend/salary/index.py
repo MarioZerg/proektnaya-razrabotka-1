@@ -1,8 +1,13 @@
 import json
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import psycopg2
+
+# Бонусная программа швей: сколько метров нужно сдать на стикеровку за календарный
+# месяц и сколько за это платим. Первый расчётный период — сентябрь 2026.
+BONUS_METERS_TARGET = 5000
+BONUS_AMOUNT = 10000
 
 
 def _esc_date(value: str) -> str:
@@ -175,6 +180,111 @@ def handler(event: dict, context) -> dict:
                 )
             if admin_rows:
                 conn.commit()
+
+            # --- Бонусная программа швей ------------------------------------------
+            # 5000 пог.м., сданных на стикеровку за календарный месяц, дают +10 000 ₽.
+            # Первый расчётный период — сентябрь 2026.
+            #
+            # Начисление за прошедший месяц происходит САМО при первом обращении к
+            # зарплате в новом месяце: планировщика задач у платформы нет, а привязка
+            # к чьему-то входу надёжнее ручной кнопки — премию невозможно забыть
+            # начислить. От повторов защищает уникальный индекс в sewer_monthly_bonus.
+            bonus_month_start = date.today().replace(day=1)
+            # Месяц, за который считаем: предыдущий по отношению к текущему.
+            if bonus_month_start.month == 1:
+                prev_month = date(bonus_month_start.year - 1, 12, 1)
+            else:
+                prev_month = date(bonus_month_start.year, bonus_month_start.month - 1, 1)
+
+            # Программа стартует с сентября 2026 — за более ранние месяцы не платим.
+            if prev_month >= date(2026, 9, 1):
+                cur.execute(
+                    "SELECT 1 FROM sewer_monthly_bonus WHERE period_month = %s LIMIT 1",
+                    (prev_month,),
+                )
+                if not cur.fetchone():
+                    # Метраж считаем по дате сдачи на стикеровку (sewn_at) — именно так
+                    # звучит условие программы: «как швея скинула на стикеровку».
+                    cur.execute(
+                        "SELECT o.sewer_user_id, SUM(o.width) / 100.0 AS meters "
+                        "FROM orders o "
+                        "WHERE o.sewer_user_id IS NOT NULL AND o.sewn_at >= %s "
+                        "  AND o.sewn_at < %s AND COALESCE(o.status, '') <> 'Отменён' "
+                        "GROUP BY o.sewer_user_id HAVING SUM(o.width) / 100.0 >= %s",
+                        (prev_month, bonus_month_start, BONUS_METERS_TARGET),
+                    )
+                    for bonus_user_id, bonus_meters in cur.fetchall():
+                        cur.execute(
+                            "INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
+                            "VALUES (%s, 'bonus', %s, %s, %s) RETURNING id",
+                            (
+                                bonus_user_id,
+                                BONUS_AMOUNT,
+                                f'Бонус за выработку {round(float(bonus_meters))} пог.м. '
+                                f'за {prev_month.strftime("%m.%Y")}',
+                                bonus_month_start,
+                            ),
+                        )
+                        bonus_accrual_id = cur.fetchone()[0]
+                        cur.execute(
+                            "INSERT INTO sewer_monthly_bonus "
+                            "(user_id, period_month, meters, amount, accrual_id) "
+                            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id, period_month) DO NOTHING",
+                            (bonus_user_id, prev_month, round(float(bonus_meters), 2),
+                             BONUS_AMOUNT, bonus_accrual_id),
+                        )
+                    conn.commit()
+
+            if params.get('sewerBonus'):
+                # Прогресс швей по бонусной программе — для виджета на главной.
+                bonus_from = date(2026, 9, 1)
+                bonus_to = date(2026, 10, 1)
+                today = date.today()
+                # До старта программы показываем предупреждение, во время — прогресс,
+                # после — итог месяца.
+                if today < bonus_from:
+                    period_from, period_to = bonus_from, bonus_to
+                    state = 'upcoming'
+                elif today < bonus_to:
+                    period_from, period_to = bonus_from, bonus_to
+                    state = 'active'
+                else:
+                    period_from, period_to = bonus_from, bonus_to
+                    state = 'finished'
+
+                cur.execute(
+                    "SELECT u.id, u.full_name, "
+                    "  COALESCE(SUM(o.width) / 100.0, 0) AS meters "
+                    "FROM users u "
+                    "LEFT JOIN orders o ON o.sewer_user_id = u.id "
+                    "  AND o.sewn_at >= %s AND o.sewn_at < %s "
+                    "  AND COALESCE(o.status, '') <> 'Отменён' "
+                    "WHERE u.is_active = true AND EXISTS ("
+                    "  SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role = 'sewer'"
+                    ") "
+                    "GROUP BY u.id, u.full_name ORDER BY meters DESC, u.full_name",
+                    (period_from, period_to),
+                )
+                rows = [
+                    {
+                        'userId': r[0],
+                        'userName': r[1],
+                        'meters': round(float(r[2]), 1),
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'state': state,
+                        'periodFrom': period_from.isoformat(),
+                        'periodTo': (bonus_to - timedelta(days=1)).isoformat(),
+                        'target': BONUS_METERS_TARGET,
+                        'amount': BONUS_AMOUNT,
+                        'sewers': rows,
+                    }, ensure_ascii=False),
+                }
 
             if params.get('rates'):
                 workshop_id_filter = params.get('workshopId')

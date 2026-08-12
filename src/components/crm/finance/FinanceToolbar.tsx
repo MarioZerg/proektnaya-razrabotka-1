@@ -111,6 +111,7 @@ const FinanceToolbar = ({
             <SelectItem value="admin_daily">Оклад администратора</SelectItem>
             <SelectItem value="manual">Ручное начисление</SelectItem>
             <SelectItem value="penalty">Штраф</SelectItem>
+            <SelectItem value="bonus">Бонус за выработку</SelectItem>
           </SelectContent>
         </Select>
 

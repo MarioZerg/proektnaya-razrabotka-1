@@ -2181,7 +2181,13 @@ def handler(event: dict, context) -> dict:
                     # только для начисления зарплаты, а сама привязка на orders не меняется.
                     sewer_sql = f", sewer_user_id = {order_assigned_user_id}" if order_assigned_user_id else ""
                     cur.execute(
-                        f"UPDATE orders SET sewing_status = 'Стикеровка'{sewer_sql} WHERE id = {int(item_id)}"
+                        # sewn_at — момент, когда швея реально сдала вещь. По нему считается
+                        # её выработка за месяц (в том числе бонусная программа) и период
+                        # на вкладке «Готовые». Раньше поле заполнялось только разовой
+                        # миграцией по дате начисления зарплаты, а при новых сдачах
+                        # оставалось пустым — выработка «терялась».
+                        f"UPDATE orders SET sewing_status = 'Стикеровка', "
+                        f"sewn_at = COALESCE(sewn_at, now()){sewer_sql} WHERE id = {int(item_id)}"
                     )
                     # Швея получает случайные варики (внутренняя игровая валюта, не финансы).
                     award_variki(cur, order_assigned_user_id)
@@ -2258,7 +2264,9 @@ def handler(event: dict, context) -> dict:
                 )
                 sewer_sql = f", sewer_user_id = {order_assigned_user_id}" if order_assigned_user_id else ""
                 cur.execute(
-                    f"UPDATE orders SET sewing_status = 'Стикеровка'{sewer_sql} WHERE id = {int(item_id)}"
+                    # sewn_at — момент сдачи вещи швеёй, см. пояснение выше.
+                    f"UPDATE orders SET sewing_status = 'Стикеровка', "
+                    f"sewn_at = COALESCE(sewn_at, now()){sewer_sql} WHERE id = {int(item_id)}"
                 )
                 # Швея получает случайные варики (внутренняя игровая валюта, не финансы).
                 award_variki(cur, order_assigned_user_id)
