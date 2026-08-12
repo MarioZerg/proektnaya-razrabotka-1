@@ -120,7 +120,7 @@ const PlaceOnShelfDialog = ({
                         .join(' ') || i.product || '—'}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {i.status === 'mp_return' ? 'Возврат' : 'Отменён'}
+                      Отменён клиентом
                       {i.orderNumber ? ` · заказ ${i.orderNumber}` : ''}
                     </p>
                   </div>
