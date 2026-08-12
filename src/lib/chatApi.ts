@@ -1,6 +1,10 @@
 import funcUrls from '../../backend/func2url.json';
 
-const CHAT_URL = (funcUrls as Record<string, string>).chat;
+/**
+ * Чат живёт внутри функции сотрудников: тариф ограничивает число облачных функций,
+ * и заводить отдельную ради переписки расточительно. Тема общая — люди.
+ */
+const CHAT_URL = (funcUrls as Record<string, string>).users;
 
 export interface ChatMessage {
   id: number;
@@ -15,7 +19,7 @@ export const fetchMessages = async (): Promise<{
   messages: ChatMessage[];
   hasMore: boolean;
 }> => {
-  const res = await fetch(CHAT_URL);
+  const res = await fetch(`${CHAT_URL}?chat=1`);
   const data = res.ok ? await res.json() : {};
   return {
     messages: Array.isArray(data.messages) ? data.messages : [],
@@ -30,7 +34,7 @@ export const fetchMessages = async (): Promise<{
  * возвращает пустой список, поэтому его можно повторять часто.
  */
 export const fetchNewMessages = async (sinceId: number): Promise<ChatMessage[]> => {
-  const res = await fetch(`${CHAT_URL}?since=${sinceId}`);
+  const res = await fetch(`${CHAT_URL}?chat=1&since=${sinceId}`);
   const data = res.ok ? await res.json() : {};
   return Array.isArray(data.messages) ? data.messages : [];
 };
@@ -39,7 +43,7 @@ export const fetchNewMessages = async (sinceId: number): Promise<ChatMessage[]> 
 export const fetchOlderMessages = async (
   beforeId: number,
 ): Promise<{ messages: ChatMessage[]; hasMore: boolean }> => {
-  const res = await fetch(`${CHAT_URL}?before=${beforeId}`);
+  const res = await fetch(`${CHAT_URL}?chat=1&before=${beforeId}`);
   const data = res.ok ? await res.json() : {};
   return {
     messages: Array.isArray(data.messages) ? data.messages : [],
@@ -55,7 +59,7 @@ export const sendMessage = async (
   const res = await fetch(CHAT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'send', userId, userName, text }),
+    body: JSON.stringify({ action: 'chat_send', userId, userName, text }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось отправить сообщение');
@@ -67,7 +71,7 @@ export const hideMessage = async (id: number, actorId: number): Promise<void> =>
   const res = await fetch(CHAT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'hide', id, actorId }),
+    body: JSON.stringify({ action: 'chat_hide', id, actorId }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось убрать сообщение');

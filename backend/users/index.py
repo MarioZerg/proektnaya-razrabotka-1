@@ -89,6 +89,16 @@ def handler(event: dict, context) -> dict:
         убирает её и отключает учётную запись, если других должностей не осталось
     POST /  { action: 'remove_role', id, role } — убирает должность у пользователя
 
+    ЧАТ СОТРУДНИКОВ (живёт здесь же — тариф ограничивает число облачных функций,
+    а заводить отдельную ради переписки расточительно; тема общая — люди):
+    GET  /?chat=1              - последние сообщения ленты
+    GET  /?chat=1&since=123    - только новее id=123 (этим лента живёт в реальном
+                                 времени: ответ почти всегда пустой и очень дешёвый)
+    GET  /?chat=1&before=123   - более старые сообщения (история вверх)
+    POST /  { action: 'chat_send', userId, text }      - отправить сообщение
+    POST /  { action: 'chat_hide', id, actorId }       - убрать сообщение
+                                 (своё — автор, любое — администратор)
+
     Логин сотрудника генерируется из email (часть до @). Пароль хранится как
     PBKDF2-HMAC-SHA256 с солью. Аватар загружается в S3, сохраняется публичная ссылка.
 
@@ -115,6 +125,74 @@ def handler(event: dict, context) -> dict:
 
     headers = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
     dsn = os.environ['DATABASE_URL']
+
+    params = event.get('queryStringParameters') or {}
+
+    # --- Чат сотрудников ---------------------------------------------------------
+    # Сколько сообщений отдаём при открытии: цеху нужны последние вопросы смены,
+    # а не переписка месячной давности.
+    CHAT_PAGE = 50
+    CHAT_MAX_TEXT = 2000
+
+    def _chat_row(r):
+        return {
+            'id': r[0],
+            'userId': r[1],
+            'userName': r[2],
+            'text': r[3],
+            'createdAt': r[4].isoformat() + 'Z',
+        }
+
+    if method == 'GET' and params.get('chat'):
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            since = params.get('since')
+            before = params.get('before')
+            if since:
+                # Горячий запрос: его шлёт каждый открытый чат каждые несколько секунд.
+                # Условие по id попадает в индекс — при отсутствии новых сообщений
+                # запрос не читает ни одной строки.
+                cur.execute(
+                    "SELECT id, user_id, user_name, text, created_at FROM chat_messages "
+                    "WHERE hidden_at IS NULL AND id > %s ORDER BY id ASC LIMIT 200",
+                    (int(since),),
+                )
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps(
+                        {'messages': [_chat_row(r) for r in cur.fetchall()]},
+                        ensure_ascii=False,
+                    ),
+                }
+            if before:
+                cur.execute(
+                    "SELECT id, user_id, user_name, text, created_at FROM chat_messages "
+                    "WHERE hidden_at IS NULL AND id < %s ORDER BY id DESC LIMIT %s",
+                    (int(before), CHAT_PAGE),
+                )
+            else:
+                cur.execute(
+                    "SELECT id, user_id, user_name, text, created_at FROM chat_messages "
+                    "WHERE hidden_at IS NULL ORDER BY id DESC LIMIT %s",
+                    (CHAT_PAGE,),
+                )
+            # Читаем свежие сверху (так работает индекс), отдаём в порядке беседы.
+            rows = list(reversed(cur.fetchall()))
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps(
+                    {
+                        'messages': [_chat_row(r) for r in rows],
+                        'hasMore': len(rows) == CHAT_PAGE,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        finally:
+            conn.close()
 
     if method == 'GET':
         conn = psycopg2.connect(dsn)
@@ -179,6 +257,86 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if action == 'chat_send':
+                chat_user_id = body_data.get('userId')
+                chat_text = (body_data.get('text') or '').strip()
+                if not chat_user_id or not chat_text:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите userId и текст сообщения'}, ensure_ascii=False),
+                    }
+                if len(chat_text) > CHAT_MAX_TEXT:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Сообщение длиннее {CHAT_MAX_TEXT} символов'},
+                            ensure_ascii=False,
+                        ),
+                    }
+                # Имя автора берём из профиля, а не с клиента: иначе можно было бы
+                # написать от чужого имени, подменив его в запросе.
+                cur.execute("SELECT full_name FROM users WHERE id = %s", (int(chat_user_id),))
+                author_row = cur.fetchone()
+                if not author_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Сотрудник не найден'}, ensure_ascii=False),
+                    }
+                cur.execute(
+                    "INSERT INTO chat_messages (user_id, user_name, text) VALUES (%s, %s, %s) "
+                    "RETURNING id, user_id, user_name, text, created_at",
+                    (int(chat_user_id), author_row[0] or 'Сотрудник', chat_text),
+                )
+                new_message = _chat_row(cur.fetchone())
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'message': new_message}, ensure_ascii=False),
+                }
+
+            if action == 'chat_hide':
+                message_id = body_data.get('id')
+                chat_actor_id = body_data.get('actorId')
+                if not message_id or not chat_actor_id:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите id и actorId'}, ensure_ascii=False),
+                    }
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(chat_actor_id),))
+                actor_row = cur.fetchone()
+                # Своё сообщение убирает автор, любое — администратор. Проверка на
+                # сервере: без неё правило обходится подменой запроса.
+                if actor_row and actor_row[0] == 'admin':
+                    cur.execute(
+                        "UPDATE chat_messages SET hidden_at = now(), hidden_by = %s "
+                        "WHERE id = %s AND hidden_at IS NULL RETURNING id",
+                        (int(chat_actor_id), int(message_id)),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE chat_messages SET hidden_at = now(), hidden_by = %s "
+                        "WHERE id = %s AND user_id = %s AND hidden_at IS NULL RETURNING id",
+                        (int(chat_actor_id), int(message_id), int(chat_actor_id)),
+                    )
+                hidden = cur.fetchone()
+                conn.commit()
+                if not hidden:
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Можно убрать только своё сообщение'}, ensure_ascii=False),
+                    }
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True}, ensure_ascii=False),
+                }
 
             if action == 'create':
                 full_name = (body_data.get('fullName') or '').strip()

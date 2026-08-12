@@ -79,6 +79,38 @@
         "id": 20
       },
       "expectedStatus": 409
+    },
+    {
+      "name": "Chat: get messages",
+      "method": "GET",
+      "path": "/?chat=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Chat: poll since id",
+      "method": "GET",
+      "path": "/?chat=1&since=0",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Chat: send without text fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "chat_send",
+        "userId": 1
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Chat: hide without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "chat_hide",
+        "actorId": 1
+      },
+      "expectedStatus": 400
     }
   ]
 }
