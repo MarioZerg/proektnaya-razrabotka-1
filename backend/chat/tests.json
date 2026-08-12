@@ -1,0 +1,50 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get messages list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Poll new messages since id",
+      "method": "GET",
+      "path": "/?since=0",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Send without text fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "send", "userId": 1},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Send without userId fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "send", "text": "привет"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Hide without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "hide", "actorId": 1},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "nope"},
+      "expectedStatus": 400
+    }
+  ]
+}

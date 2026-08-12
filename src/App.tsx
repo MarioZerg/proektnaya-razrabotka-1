@@ -11,6 +11,7 @@ import { lazy, Suspense } from "react";
 // вход открывался очень долго. Экран входа и терминал цеха грузим сразу: это
 // первые экраны, их ждать нельзя.
 const Crm = lazy(() => import("./pages/Crm"));
+const Chat = lazy(() => import("./pages/Chat"));
 const WarehouseMaterials = lazy(() => import("./pages/inventory/WarehouseMaterials"));
 const WorkshopMaterials = lazy(() => import("./pages/inventory/WorkshopMaterials"));
 const Rolls = lazy(() => import("./pages/inventory/Rolls"));
@@ -107,6 +108,7 @@ const App = () => (
             {/* Терминал цеха: вход по личному QR-коду сотрудника, без пароля. */}
             <Route path="/kiosk/:workshopId" element={<KioskTerminal />} />
             <Route path="/crm" element={<Crm />} />
+            <Route path="/crm/chat" element={<Chat />} />
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
             <Route path="/crm/analytics/roll-shortage" element={<RollShortageAnalysis />} />
             <Route path="/crm/analytics/returns" element={<ReturnsAnalysis />} />

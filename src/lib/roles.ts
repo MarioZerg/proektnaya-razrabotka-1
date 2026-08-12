@@ -393,9 +393,19 @@ const baseNavByRole: Record<Role, NavItem[]> = {
  * Меню роли. «Инструкции» добавляются последним пунктом и собираются под роль:
  * человек видит только те памятки, что относятся к его работе.
  */
+/**
+ * Чат доступен ВСЕМ без исключения — это общая переписка компании, а не раздел
+ * какого-то отдела. Поэтому добавляется в меню всем ролям одинаково, сразу после
+ * главной: рабочие вопросы задают чаще, чем открывают справочники.
+ */
+const chatNavItem: NavItem = { label: 'Чат', icon: 'MessagesSquare', path: '/crm/chat' };
+
 export const navByRole: Record<Role, NavItem[]> = Object.fromEntries(
   (Object.keys(baseNavByRole) as Role[]).map((role) => {
     const guides = buildGuidesNav(role);
-    return [role, guides.children?.length ? [...baseNavByRole[role], guides] : baseNavByRole[role]];
+    // Чат ставим вторым пунктом — сразу после «Главной».
+    const base = baseNavByRole[role];
+    const withChat = [base[0], chatNavItem, ...base.slice(1)];
+    return [role, guides.children?.length ? [...withChat, guides] : withChat];
   }),
 ) as Record<Role, NavItem[]>;
