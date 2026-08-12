@@ -232,10 +232,23 @@ def fetch_ozon_giveout_info(cur, giveout_id):
     # Сотрудник ПВЗ отсканировал всё — значит коробки физически переданы кладовщику.
     # Помечаем возвраты забранными, чтобы никто не отмечал это руками. Решение по
     # каждой вещи (полка / перепаковка / утиль) кладовщик примет уже на складе.
+    #
+    # Берём и 'new', и 'approved'. Раньше условие было только по 'approved' — а заявки
+    # с OZON приезжают в статусе 'new' и одобряет их админ вручную. На практике этого
+    # никто не делает: вещи забирают с ПВЗ по коду выдачи, минуя одобрение. В итоге
+    # 25 привезённых коробок нигде не появлялись, склад их не видел, и кладовщик искал
+    # товар, которого по системе не существует.
+    #
+    # Физическая выдача на ПВЗ — сама по себе подтверждение: вещь уже у нас в руках,
+    # спорить с этим бессмысленно.
     if total and scanned >= total:
         cur.execute(
             "UPDATE marketplace_returns SET status = 'picked_up', picked_up_at = now(), "
-            "giveout_id = %s WHERE marketplace = 'OZON' AND status = 'approved'",
+            "giveout_id = %s "
+            "WHERE marketplace = 'OZON' AND status IN ('new', 'approved') "
+            # Только те, что реально ехали к нам: на складе OZON лежат сотни заявок,
+            # которые ещё никуда не отправлены — их забирать нечем.
+            "AND mp_status IN ('В пункте выдачи', 'Получен')",
             (giveout_id,),
         )
 
@@ -250,6 +263,108 @@ def fetch_ozon_giveout_info(cur, giveout_id):
             for a in articles[:200]
         ],
     }, None
+
+
+def next_storage_barcode(cur):
+    cur.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM goods_warehouse")
+    return 'GW-' + str(cur.fetchone()[0]).zfill(6)
+
+
+def stock_picked_up_returns(cur, ids=None):
+    """Заводит забранные с ПВЗ возвраты на склад в «подвешенном» состоянии.
+
+    Кладовщик получил коробки на пункте выдачи — вещи физически у нас. До этой
+    правки они нигде не появлялись: заявка меняла статус, а на складе было пусто.
+    Забрали 25 штук, а в фильтре «Возврат с маркетплейса» — ноль, и кладовщик
+    искал товар, которого по системе не существует.
+
+    Заводим со статусом 'mp_return': вещь на складе, но её судьба не решена.
+    Кладовщик потом сам определит — в цех на перепаковку или на полку хранения.
+    Полку здесь НЕ назначаем: вещь ещё никуда не положили.
+
+    Для FBO маркетплейс не сообщает, какую именно штуку из партии выкупили,
+    поэтому под вещь заводится технический заказ-возврат: он не идёт на конвейер,
+    а служит карточкой вещи (ткань, размер, номер) — иначе на складе появилась бы
+    безымянная строка, которую невозможно опознать.
+
+    Возвращает, сколько вещей завели.
+    """
+    where_ids = ''
+    if ids:
+        where_ids = ' AND r.id IN (' + ','.join(str(int(i)) for i in ids) + ')'
+
+    cur.execute(
+        "SELECT r.id, r.order_id, r.marketplace, r.external_id, r.product_name, "
+        "       mi.material, mi.width, mi.height, mi.name "
+        "FROM marketplace_returns r "
+        "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
+        "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL" + where_ids
+    )
+    rows = cur.fetchall()
+    created = 0
+
+    for r_id, order_id, marketplace, external_id, product_name, material, width, height, item_name in rows:
+        if not order_id:
+            product = (
+                f'{material} {width}x{height}'
+                if material and width and height
+                else (product_name or item_name or 'Возврат')
+            )
+            order_number = f'RET-{marketplace}-{external_id}'
+            cur.execute(
+                "INSERT INTO orders (order_number, marketplace, order_type, status, "
+                "sewing_status, product, quantity, source, material, width, height) "
+                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s) "
+                "ON CONFLICT (order_number) DO NOTHING RETURNING id",
+                (order_number, marketplace, product, material, width, height),
+            )
+            created_order = cur.fetchone()
+            if created_order:
+                order_id = created_order[0]
+            else:
+                cur.execute("SELECT id FROM orders WHERE order_number = %s", (order_number,))
+                found = cur.fetchone()
+                order_id = found[0] if found else None
+            if order_id:
+                cur.execute(
+                    "UPDATE marketplace_returns SET order_id = %s WHERE id = %s",
+                    (order_id, r_id),
+                )
+
+        if not order_id:
+            continue
+
+        # Вещь этого заказа уже заводили на склад (например, она уезжала и вернулась) —
+        # переиспользуем запись, чтобы не плодить дубли одной и той же вещи.
+        cur.execute(
+            "SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s", (order_id,)
+        )
+        gw_row = cur.fetchone()
+        if gw_row:
+            gw_id = gw_row[0]
+            cur.execute(
+                "UPDATE goods_warehouse SET status = 'mp_return', shelf_id = NULL, "
+                "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
+                "reserved_order_id = NULL, shipping_labeled_at = NULL, "
+                "receive_reason = 'return', received_at = now() WHERE id = %s",
+                (gw_id,),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason) "
+                "VALUES (%s, 'mp_return', %s, 'return') RETURNING id",
+                (order_id, next_storage_barcode(cur)),
+            )
+            gw_id = cur.fetchone()[0]
+
+        cur.execute(
+            "UPDATE marketplace_returns SET goods_warehouse_id = %s, received_at = now() "
+            "WHERE id = %s",
+            (gw_id, r_id),
+        )
+        created += 1
+
+    return created
 
 
 def _resp(status, body):
@@ -402,6 +517,12 @@ def handler(event: dict, context) -> dict:
             info, err = fetch_ozon_giveout_info(cur, int(giveout_id))
             if err:
                 return _resp(502, {'error': err})
+            # Забранные с ПВЗ вещи сразу заводим на склад в «подвешенном» состоянии:
+            # они физически у кладовщика, и он должен их видеть. Решение — в цех на
+            # перепаковку или на полку — принимается уже на складе.
+            stocked = stock_picked_up_returns(cur)
+            if stocked:
+                info['stocked'] = stocked
             # Отметки о заборе, сделанные внутри, нужно сохранить.
             conn.commit()
             return _resp(200, info)

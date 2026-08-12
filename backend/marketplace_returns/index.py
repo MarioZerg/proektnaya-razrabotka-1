@@ -470,6 +470,103 @@ def next_storage_barcode(cur):
     return 'GW-' + str(cur.fetchone()[0]).zfill(6)
 
 
+def stock_picked_up_returns(cur, ids=None):
+    """Заводит забранные с ПВЗ возвраты на склад в «подвешенном» состоянии.
+
+    Кладовщик получил коробки на пункте выдачи — вещи физически у нас. До этой
+    правки они нигде не появлялись: заявка меняла статус, а на складе было пусто.
+    Забрали 25 штук, а в фильтре «Возврат с маркетплейса» — ноль, и кладовщик
+    искал товар, которого по системе не существует.
+
+    Заводим со статусом 'mp_return': вещь на складе, но её судьба не решена.
+    Кладовщик потом сам определит — в цех на перепаковку или на полку хранения.
+    Полку здесь НЕ назначаем: вещь ещё никуда не положили.
+
+    Для FBO маркетплейс не сообщает, какую именно штуку из партии выкупили,
+    поэтому под вещь заводится технический заказ-возврат: он не идёт на конвейер,
+    а служит карточкой вещи (ткань, размер, номер) — иначе на складе появилась бы
+    безымянная строка, которую невозможно опознать.
+
+    Возвращает, сколько вещей завели.
+    """
+    where_ids = ''
+    if ids:
+        where_ids = ' AND r.id IN (' + ','.join(str(int(i)) for i in ids) + ')'
+
+    cur.execute(
+        "SELECT r.id, r.order_id, r.marketplace, r.external_id, r.product_name, "
+        "       mi.material, mi.width, mi.height, mi.name "
+        "FROM marketplace_returns r "
+        "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
+        "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL" + where_ids
+    )
+    rows = cur.fetchall()
+    created = 0
+
+    for r_id, order_id, marketplace, external_id, product_name, material, width, height, item_name in rows:
+        if not order_id:
+            product = (
+                f'{material} {width}x{height}'
+                if material and width and height
+                else (product_name or item_name or 'Возврат')
+            )
+            order_number = f'RET-{marketplace}-{external_id}'
+            cur.execute(
+                "INSERT INTO orders (order_number, marketplace, order_type, status, "
+                "sewing_status, product, quantity, source, material, width, height) "
+                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s) "
+                "ON CONFLICT (order_number) DO NOTHING RETURNING id",
+                (order_number, marketplace, product, material, width, height),
+            )
+            created_order = cur.fetchone()
+            if created_order:
+                order_id = created_order[0]
+            else:
+                cur.execute("SELECT id FROM orders WHERE order_number = %s", (order_number,))
+                found = cur.fetchone()
+                order_id = found[0] if found else None
+            if order_id:
+                cur.execute(
+                    "UPDATE marketplace_returns SET order_id = %s WHERE id = %s",
+                    (order_id, r_id),
+                )
+
+        if not order_id:
+            continue
+
+        # Вещь этого заказа уже заводили на склад (например, она уезжала и вернулась) —
+        # переиспользуем запись, чтобы не плодить дубли одной и той же вещи.
+        cur.execute(
+            "SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s", (order_id,)
+        )
+        gw_row = cur.fetchone()
+        if gw_row:
+            gw_id = gw_row[0]
+            cur.execute(
+                "UPDATE goods_warehouse SET status = 'mp_return', shelf_id = NULL, "
+                "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
+                "reserved_order_id = NULL, shipping_labeled_at = NULL, "
+                "receive_reason = 'return', received_at = now() WHERE id = %s",
+                (gw_id,),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason) "
+                "VALUES (%s, 'mp_return', %s, 'return') RETURNING id",
+                (order_id, next_storage_barcode(cur)),
+            )
+            gw_id = cur.fetchone()[0]
+
+        cur.execute(
+            "UPDATE marketplace_returns SET goods_warehouse_id = %s, received_at = now() "
+            "WHERE id = %s",
+            (gw_id, r_id),
+        )
+        created += 1
+
+    return created
+
+
 def handler(event: dict, context) -> dict:
     """Возвраты с маркетплейсов: загрузка заявок по API и приём вещей на склад.
 

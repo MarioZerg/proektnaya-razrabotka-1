@@ -703,6 +703,14 @@ def handler(event: dict, context) -> dict:
             if status:
                 status_esc = status.replace("'", "''")
                 conditions.append(f"gw.status = '{status_esc}'")
+                # Возвраты с маркетплейса: показываем только СВЕЖИЕ (за сегодня и вчера).
+                #
+                # Кладовщик открывает этот фильтр, чтобы разобрать привезённое сегодня,
+                # а не изучать историю за всё время. Без ограничения сюда падали сотни
+                # старых записей, среди которых сегодняшние 25 коробок терялись.
+                # Захочет посмотреть старое — найдёт поиском по номеру или стикеру.
+                if status == 'mp_return':
+                    conditions.append("gw.received_at >= CURRENT_DATE - interval '1 day'")
             if material:
                 material_esc = material.replace("'", "''")
                 conditions.append(f"o.material = '{material_esc}'")
