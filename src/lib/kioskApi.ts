@@ -126,6 +126,8 @@ export const finishRepack = async (payload: {
   storageBarcode: string | null;
   newBag?: boolean;
   accrued?: number;
+  /** Причина списания — печатается на стикере брака, чтобы вещь не перепутали. */
+  disposeReason?: string | null;
 }> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',

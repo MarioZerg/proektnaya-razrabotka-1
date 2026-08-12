@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { printStorageSticker } from '@/lib/printStorageSticker';
+import { printDisposeSticker } from '@/lib/printDisposeSticker';
 import { fetchRepackItems, finishRepack, type RepackItem } from '@/lib/kioskApi';
 
 interface KioskRepackScreenProps {
@@ -74,9 +75,23 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
           description: 'Наклейте стикер хранения — кладовщик заберёт вещь на полку',
         });
       } else {
+        // Бракованную вещь тоже стикеруем: без наклейки она уезжает из цеха безымянной,
+        // и на складе никто не знает, что это и за что списано. Стикер брака заметно
+        // отличается от обычного — вещь не положат на полку по ошибке.
+        if (res.storageBarcode) {
+          printDisposeSticker({
+            storageBarcode: res.storageBarcode,
+            title:
+              item.material && item.width
+                ? `${item.material} ${item.width}×${item.height}`
+                : item.product,
+            orderNumber: item.orderNumber,
+            reason: res.disposeReason || note,
+          });
+        }
         toast({
-          title: 'Товар списан',
-          description: 'Брак попадёт в отчёт администратору',
+          title: 'Товар отправлен на утилизацию',
+          description: 'Наклейте стикер брака — кладовщик передаст вещь администратору',
         });
       }
       setNotes((prev) => ({ ...prev, [item.id]: '' }));
@@ -215,7 +230,7 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
                 disabled={processingId === item.id}
               >
                 <Icon name="Trash2" size={24} className="mr-2" />
-                Брак — списать
+                Брак — печать стикера
               </Button>
             </div>
           </CardContent>

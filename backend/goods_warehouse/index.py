@@ -456,7 +456,9 @@ def handler(event: dict, context) -> dict:
                     "  COUNT(*) FILTER (WHERE status = 'mp_return'), "
                     "  COUNT(*) FILTER (WHERE status = 'checking'), "
                     "  COUNT(*) FILTER (WHERE status = 'repacking'), "
-                    "  COUNT(*) FILTER (WHERE status = 'inspected'), "
+                    # «Осмотрено» и «Забрано с производства» слиты в один этап: для
+                    # кладовщика это одна и та же работа — положить вещь на полку.
+                    "  COUNT(*) FILTER (WHERE status IN ('inspected', 'taken')), "
                     "  COUNT(*) FILTER (WHERE status = 'taken'), "
                     "  COUNT(*) FILTER (WHERE status = 'to_dispose'), "
                     "  COUNT(*) FILTER (WHERE status = 'lost' AND disposed_at IS NOT NULL) "
@@ -478,11 +480,14 @@ def handler(event: dict, context) -> dict:
                     'fromMarketplace': 'mp_return',
                     'fromReturn': 'checking',
                     'atPackers': 'repacking',
-                    'inspected': 'inspected',
                     'taken': 'taken',
                     'toDispose': 'to_dispose',
                 }.get(stage)
-                if stage == 'disposed':
+                if stage == 'inspected':
+                    # Один список: и осмотренные упаковщицей, и уже забранные из цеха —
+                    # кладовщик кладёт на полку и те, и другие.
+                    where_stage = "gw.status IN ('inspected', 'taken')"
+                elif stage == 'disposed':
                     where_stage = "gw.status = 'lost' AND gw.disposed_at IS NOT NULL"
                 elif stage == 'readyShelf':
                     # Всё, что кладовщик может прямо сейчас разложить по полкам: осмотренные
@@ -1477,10 +1482,18 @@ def handler(event: dict, context) -> dict:
                     }
 
                 ids_csv = ','.join(str(int(i)) for i in ids)
+                # Сюда же приходят вещи с этапа «Осмотрено»: упаковщица закончила проверку
+                # и наклеила стикер, кладовщику остаётся положить вещь на полку. Раньше
+                # эти статусы здесь не принимались, и на «Осмотрено» кнопки укладки не
+                # было вовсе — приходилось идти в отдельное окно раскладки.
+                # 'taken' — вещи, забранные из цеха по старой схеме: их тоже кладём.
                 cur.execute(
                     f"UPDATE goods_warehouse SET status = 'in_stock', shelf_id = {int(shelf_id)}, "
-                    f"received_at = now() "
-                    f"WHERE id IN ({ids_csv}) AND status IN ('checking', 'mp_return') "
+                    f"received_at = now(), "
+                    f"taken_at = COALESCE(taken_at, now()), "
+                    f"taken_by = COALESCE(taken_by, {int(actor_id) if actor_id else 'NULL'}) "
+                    f"WHERE id IN ({ids_csv}) "
+                    f"AND status IN ('checking', 'mp_return', 'inspected', 'taken') "
                     f"RETURNING id, storage_barcode, order_id"
                 )
                 placed_rows = cur.fetchall()
@@ -1530,7 +1543,7 @@ def handler(event: dict, context) -> dict:
 
                 log_action(
                     cur, actor_id, actor_name, 'to_shelf_from_inspection', 'goods_warehouse', None,
-                    f'Положил на полку «{shelf_row[0]}» без осмотра в цехе вещей: {moved}',
+                    f'Положил на полку «{shelf_row[0]}» вещей: {moved}',
                 )
                 conn.commit()
                 return {
@@ -1597,7 +1610,19 @@ def handler(event: dict, context) -> dict:
                 }
 
             if action == 'send_to_dispose':
-                # Кладовщик увидел брак или плохое качество — вещь на утилизацию.
+                # Решение забраковать вещь принимают двое: упаковщица в цехе (кнопкой
+                # на терминале, вещь она держит в руках) и администратор. Кладовщику
+                # это не положено — он вещь не осматривал. Раньше проверки не было, и
+                # со склада можно было отправить в утиль что угодно мимо осмотра.
+                if not is_admin(cur, actor_id):
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Отправить на утилизацию может только администратор. '
+                                     'Брак отмечает упаковщица на терминале при осмотре'
+                        }, ensure_ascii=False),
+                    }
                 # Причина обязательна: иначе через месяц никто не вспомнит, за что списали.
                 ids = body_data.get('ids') or ([body_data['id']] if body_data.get('id') else [])
                 reason = (body_data.get('reason') or '').strip()

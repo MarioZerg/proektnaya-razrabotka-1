@@ -975,10 +975,20 @@ def handler(event: dict, context) -> dict:
                         f'Вещь {row[0]} списана при перепаковке: {note}',
                     )
                     conn.commit()
+                    # Отдаём штрихкод: упаковщица клеит стикер и на бракованную вещь.
+                    # Раньше здесь стоял None — вещь уезжала из цеха безымянной, и на
+                    # складе её нельзя было опознать среди утиля: кладовщик не знал,
+                    # что за товар и за что списан. Стикер держит вещь связанной с
+                    # карточкой до самого решения администратора.
                     return {
                         'statusCode': 200,
                         'headers': headers,
-                        'body': json.dumps({'success': True, 'outcome': 'utilized', 'storageBarcode': None}),
+                        'body': json.dumps({
+                            'success': True,
+                            'outcome': 'utilized',
+                            'storageBarcode': row[0],
+                            'disposeReason': note,
+                        }, ensure_ascii=False),
                     }
 
                 # Вещь осмотрена и годна: упаковщица наклеила стикер хранения. Теперь она

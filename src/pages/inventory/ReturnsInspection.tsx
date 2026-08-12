@@ -322,7 +322,39 @@ const ReturnsInspection = () => {
               </>
             )}
 
-            {stage !== 'disposed' && stage !== 'toDispose' && (
+            {/* Осмотрено: упаковщица уже проверила вещь и наклеила стикер. Кладовщику
+                здесь нужно ровно одно — положить на полку. Можно по одной вещи (один
+                стикер) или отметить сразу несколько: тогда печатается лента стикеров,
+                и рулонный принтер режет её сам. */}
+            {stage === 'inspected' && (
+              <>
+                <Select value={shelfId} onValueChange={setShelfId}>
+                  <SelectTrigger className="h-9 w-44">
+                    <SelectValue placeholder="Полка" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {shelves.map((sh) => (
+                      <SelectItem key={sh.id} value={String(sh.id)}>
+                        {sh.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button size="sm" onClick={handleToShelf} disabled={acting || !shelfId}>
+                  <Icon name="Boxes" size={16} className="mr-2" />
+                  {selected.length > 1
+                    ? `На полку + лента из ${selected.length} стикеров`
+                    : 'На полку + стикер'}
+                </Button>
+              </>
+            )}
+
+            {/* Утилизация — решение о судьбе товара, а не складская операция. Кладовщик
+                её не принимает: на осмотре брак определяет упаковщица в цехе (кнопкой
+                на терминале), а окончательно списывает администратор. Раньше кнопка
+                стояла на всех этапах, и вещь можно было отправить в утиль со склада
+                мимо осмотра — никто потом не мог сказать, кто и почему её забраковал. */}
+            {stage !== 'disposed' && stage !== 'toDispose' && isAdmin && (
               <>
                 <Input
                   value={disposeReason}
@@ -355,9 +387,17 @@ const ReturnsInspection = () => {
           </div>
         )}
 
+        {stage === 'atPackers' && !isAdmin && (
+          <p className="text-sm text-muted-foreground">
+            Вещи в цехе у упаковщицы. Брак отмечает она на терминале — со склада
+            отправить в утилизацию нельзя
+          </p>
+        )}
+
         {stage === 'toDispose' && !isAdmin && (
           <p className="text-sm text-muted-foreground">
-            Очистить утилизацию может только администратор
+            Забракованные вещи ждут решения администратора. Сообщите ему об этих товарах —
+            списать их может только он
           </p>
         )}
 

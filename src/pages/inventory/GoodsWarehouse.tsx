@@ -103,7 +103,8 @@ const GoodsWarehouse = () => {
   // Это третий шаг работы с возвратами, поэтому счётчик нужен прямо на плитке.
   const loadInspectedReady = () => {
     fetchInspection('inspected')
-      .then((d) => setInspectedReady((d.counts.inspected || 0) + (d.counts.taken || 0)))
+      // counts.inspected уже включает забранные из цеха — складывать не нужно.
+      .then((d) => setInspectedReady(d.counts.inspected || 0))
       .catch(() => setInspectedReady(0));
   };
 
