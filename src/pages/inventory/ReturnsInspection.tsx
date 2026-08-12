@@ -24,7 +24,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
-import { printStorageSticker } from '@/lib/printStorageSticker';
+import { printStorageStickers } from '@/lib/printStorageSticker';
 import PlaceInspectedDialog from '@/components/crm/goodsWarehouse/PlaceInspectedDialog';
 import {
   INSPECTION_STAGES,
@@ -159,19 +159,25 @@ const ReturnsInspection = () => {
     setActing(true);
     try {
       const res = await toShelfFromInspection(selected, Number(shelfId), user?.id, user?.name);
-      res.items.forEach((i) =>
-        printStorageSticker({
+      // Печатаем ОДНОЙ лентой, а не по стикеру на вещь: при выборе нескольких товаров
+      // окна печати открывались стопкой друг на друга, и кладовщик закрывал их по одному.
+      // Рулонный принтер режет ленту сам по границе наклеек.
+      printStorageStickers(
+        res.items.map((i) => ({
           storageBarcode: i.storageBarcode,
           title:
             i.material && i.width && i.height
               ? `${i.material} ${i.width}x${i.height}`
               : i.product || 'Возврат',
           orderNumber: i.orderNumber,
-        })
+        }))
       );
       toast({
         title: `Положено на «${res.shelfName}»: ${res.moved}`,
-        description: 'Стикеры хранения отправлены на печать',
+        description:
+          res.moved > 1
+            ? `Лента из ${res.moved} стикеров отправлена на печать`
+            : 'Стикер хранения отправлен на печать',
       });
       setSelected([]);
       load();
