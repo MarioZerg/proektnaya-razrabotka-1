@@ -745,10 +745,18 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
         'driver_pickup': 'передано водителю',
     }
     if new_status in gone:
+        # Сохраняем статус у себя ДО выхода. Раньше выходили сразу, и в базе оставался
+        # старый «ожидает отгрузки»: терминал не знал, что отправление уже уехало, и
+        # упаковщица упиралась в эту ошибку при каждом сканировании — заказ было
+        # нечем закрыть. Теперь следующий скан сразу покажет, что делать с вещью.
+        cur.execute(
+            "UPDATE orders SET ozon_status = %s WHERE ozon_posting_number = %s",
+            (new_status, posting_number),
+        )
         return (
             f'Ярлык не нужен: отправление {gone[new_status]}. '
-            f'Эта вещь не поедет в поставку — дождитесь возврата и примите его '
-            f'в разделе «Принять возвраты»'
+            f'Эта вещь не поедет покупателю — закройте заказ, наклейте стикер '
+            f'хранения и оставьте вещь кладовщику'
         ), None
     if new_status:
         cur.execute(
@@ -911,7 +919,10 @@ def handler(event: dict, context) -> dict:
                 cur, client_id, api_key, order_number, debug=debug
             )
             if err:
-                conn.rollback()
+                # Коммитим даже при отказе: внутри мог обновиться статус отправления
+                # («уже едет к покупателю» и т.п.). Раньше здесь был откат, и этот
+                # факт терялся — терминал каждый раз заново упирался в ту же ошибку.
+                conn.commit()
                 return _resp(502, {'error': err, 'debug': debug} if want_debug else {'error': err})
             # Сборка отправления меняет статус заказа — сохраняем его у себя.
             conn.commit()
