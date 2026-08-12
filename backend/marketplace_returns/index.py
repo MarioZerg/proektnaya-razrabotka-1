@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -822,6 +823,34 @@ def handler(event: dict, context) -> dict:
                 ]
                 if not exact and len(rows) == 1:
                     exact = rows
+
+                # Отдали с КЛИЕНТСКИМ стикером, без возвратного.
+                #
+                # Бывает, что возврат уже оформлен, а отдельной наклейки возврата на
+                # пакете нет — на нём остался стикер покупателя с номером отправления
+                # (вида 39761729-0146-3). Поиск по штрихкоду такой код не находит:
+                # это не логистический штрихкод возврата. Кладовщик держит вещь в
+                # руках, возврат в системе есть, а принять её нечем.
+                #
+                # Поэтому вторая попытка: ищем возврат по номеру отправления.
+                if not exact and re.match(r'^\d{6,}-\d{3,}-\d+$', code):
+                    st2, data2 = http_json(
+                        OZON_API_BASE + '/v1/returns/list', 'POST',
+                        {'Client-Id': (creds.get('clientId') or '').strip(),
+                         'Api-Key': (creds.get('apiKey') or '').strip()},
+                        {'filter': {'posting_number': code}, 'limit': 50, 'last_id': 0},
+                    )
+                    if st2 == 200:
+                        by_posting = [
+                            r for r in ((data2 or {}).get('returns') or [])
+                            if (r.get('posting_number') or '') == code
+                        ]
+                        # В отправлении может быть несколько вещей, и вернуть могли не
+                        # все. Один возврат — принимаем сразу. Несколько — принимаем их
+                        # все: пакет с этим стикером один, покупатель вернул его целиком.
+                        if by_posting:
+                            exact = by_posting
+
                 if not exact:
                     if body_data.get('debug'):
                         return _resp(404, {
@@ -836,7 +865,10 @@ def handler(event: dict, context) -> dict:
                                 for r in rows[:5]
                             ],
                         })
-                    return _resp(404, {'error': f'OZON не знает возврат {code}'})
+                    return _resp(404, {
+                        'error': f'OZON не знает возврат {code}. Попробуйте отсканировать '
+                                 f'наклейку возврата или номер отправления с клиентского стикера'
+                    })
 
                 saved = 0
                 for it in exact:
