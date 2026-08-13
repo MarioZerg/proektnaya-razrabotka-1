@@ -576,6 +576,10 @@ def handler(event: dict, context) -> dict:
                     "  AND COALESCE(o.ozon_status, '') NOT IN "
                     "      ('delivering', 'delivered', 'cancelled', 'not_accepted', "
                     "       'driver_pickup') "
+                    # Заказ забрали в цех — его кроят или шьют. Стикер отправления
+                    # уйдёт на то, что выйдет с конвейера, а не на эту вещь. Гонять
+                    # кладовщика к стеллажу за ней бессмысленно.
+                    "  AND COALESCE(o.sewing_status, '') IN ('Новый', 'Со склада') "
                     "ORDER BY gw.matched_at ASC NULLS LAST, gw.id ASC"
                 )
                 orders_rows = cur.fetchall()
@@ -755,7 +759,11 @@ def handler(event: dict, context) -> dict:
                 # Вещь, уже лежащая в какой-то поставке, второй раз никуда не поедет.
                 # Без этого она считалась «готовой к сборке» и в новой поставке тоже.
                 f"(SELECT msi.supply_id FROM marketplace_supply_items msi "
-                f" WHERE msi.goods_warehouse_id = gw.id LIMIT 1) "
+                f" WHERE msi.goods_warehouse_id = gw.id LIMIT 1), "
+                # Заказ, под который вещь закреплена, уже забрали в цех: его кроят или
+                # шьют. Стикер отправления на такую вещь не напечатать — отправление
+                # закроет то, что выйдет с конвейера. Для склада вещь недоступна.
+                f"COALESCE(ro.sewing_status, '') NOT IN ('Новый', 'Со склада') "
                 f"FROM goods_warehouse gw "
                 f"LEFT JOIN orders o ON o.id = gw.order_id "
                 f"LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -789,6 +797,8 @@ def handler(event: dict, context) -> dict:
                     'orderType': r[20],
                     'cluster': r[21],
                     'supplyId': r[22],
+                    # true — заказ ушёл на конвейер, вещь для подбора недоступна.
+                    'orderInProduction': r[23],
                 }
                 for r in cur.fetchall()
             ]
@@ -976,6 +986,24 @@ def handler(event: dict, context) -> dict:
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({'error': f'Вещь недоступна (статус: {gw_status})'}),
+                    }
+
+                # Заказ уже на конвейере: его кроят или шьют. Отправление закроет то,
+                # что выйдет из цеха, — печатать стикер на складскую вещь нельзя, иначе
+                # один и тот же заказ уедет дважды.
+                cur.execute(
+                    "SELECT sewing_status FROM orders WHERE id = %s", (int(reserved_order_id),)
+                )
+                sew_row = cur.fetchone()
+                if sew_row and sew_row[0] not in ('Новый', 'Со склада'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Заказ #{target_number} уже шьётся в цехе '
+                                     f'(этап: {sew_row[0]}). Эта вещь остаётся на складе — '
+                                     f'отправление закроет то, что выйдет с конвейера.'
+                        }, ensure_ascii=False),
                     }
 
                 # picking = отстикерована и готова к сканированию в поставку FBS.
