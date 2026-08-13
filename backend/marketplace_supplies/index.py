@@ -876,8 +876,16 @@ def handler(event: dict, context) -> dict:
                         "  count(*) FILTER (WHERE gw.id IS NOT NULL "
                         "    AND gw.status = 'in_stock') AS on_shelf "
                         "FROM orders o "
+                        # Вещь связана с заказом ТРЕМЯ способами, и раньше учитывались
+                        # только два. Третий — gw.order_id — это вещь, сшитая в цехе
+                        # ПОД ЭТОТ ЖЕ заказ: у неё нет резерва, потому что резерв нужен
+                        # только для подбора со склада. Из-за пропуска этой связи 81 вещь
+                        # из 103 не попадала в сверку, и кладовщик видел «Готово: 0»,
+                        # хотя весь контейнер был застикерован и ждал сканирования.
                         "LEFT JOIN goods_warehouse gw "
-                        "  ON gw.id = o.fulfilled_from_stock_id OR gw.reserved_order_id = o.id "
+                        "  ON gw.id = o.fulfilled_from_stock_id "
+                        "  OR gw.reserved_order_id = o.id "
+                        "  OR gw.order_id = o.id "
                         "WHERE o.marketplace = 'OZON' AND o.order_type = 'FBS' "
                         "  AND COALESCE(o.status, '') <> 'Отменён' "
                         "  AND COALESCE(o.ozon_status, '') = 'awaiting_deliver'"
