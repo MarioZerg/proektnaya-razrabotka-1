@@ -31,6 +31,9 @@ const ITEMS_PER_PAGE = COLS * ROWS_PER_PAGE;
 // лист к глазам. Кегли увеличены вдвое, но число позиций осталось прежним — 20 на
 // лист, иначе закройщик печатал бы вдвое больше бумаги.
 const CELL_HEIGHT_PX = 79;
+// QR печатается ВНУТРИ рамки, поэтому он должен быть заметно меньше её высоты:
+// иначе картинка упирается в границы и вылезает за рамку соседней колонки.
+const QR_SIZE_PX = 64;
 
 const formatToday = () => {
   const d = new Date();
@@ -98,13 +101,12 @@ const numberFont = (o: TakenOrder, max: number) => {
 /** Ячейка одной позиции. Вещи связки выделяем жирной рамкой и серой заливкой: на листе
  * из 20 позиций закройщик должен видеть их с одного взгляда, а не вычитывать подписи. */
 const cell = (inner: string, isGroup = false) =>
-  `<div style="display:grid;grid-template-columns:1fr 56px;border:${
+  `<div style="border:${
     isGroup ? '4px solid #000' : '2px solid #000'
-  };box-sizing:border-box;height:${CELL_HEIGHT_PX}px;${
+  };box-sizing:border-box;height:${CELL_HEIGHT_PX}px;overflow:hidden;${
     isGroup ? 'background:#e8e8e8;' : ''
   }">
      ${inner}
-     <div style="border-left:2px solid #000;"></div>
    </div>`;
 
 /** Сетка позиций, сгруппированная по материалу: между группами материала — визуальный отступ. */
@@ -180,19 +182,19 @@ const buildQrPageHtml = (
   const grid = groupedGrid(
     pageOrders,
     (o) => `
-      <div style="display:flex;align-items:center;gap:8px;padding:4px 8px;height:100%;
-                  box-sizing:border-box;">
-        <img src="${qrDataUrls[o.id]}" style="width:74px;height:74px;flex-shrink:0;" />
-        <div style="min-width:0;text-align:center;flex:1;">
-          <div style="font-size:${sizeFont(o, 20)}px;font-weight:800;line-height:1.05;
-                      white-space:nowrap;">${sizeLabel(o)}</div>
-          <div style="font-size:${numberFont(o, 17)}px;font-weight:800;margin-top:3px;
-                      white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
-          <div style="font-size:11px;font-weight:700;color:#222;margin-top:2px;">
-            ${o.marketplace} [${o.orderType}]${cutterId != null ? ` · ID: ${cutterId}` : ''}
-          </div>
-          ${groupNote(o)}
+      <div style="position:relative;height:100%;box-sizing:border-box;padding:4px 6px;
+                  display:flex;flex-direction:column;justify-content:center;text-align:center;">
+        <img src="${qrDataUrls[o.id]}"
+             style="position:absolute;left:5px;top:50%;transform:translateY(-50%);
+                    width:${QR_SIZE_PX}px;height:${QR_SIZE_PX}px;" />
+        <div style="font-size:${sizeFont(o, 20)}px;font-weight:800;line-height:1.05;
+                    white-space:nowrap;">${sizeLabel(o)}</div>
+        <div style="font-size:${numberFont(o, 17)}px;font-weight:800;margin-top:2px;
+                    white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
+        <div style="font-size:10px;font-weight:700;color:#222;margin-top:1px;line-height:1;">
+          ${o.marketplace} [${o.orderType}]${cutterId != null ? ` · ID: ${cutterId}` : ''}
         </div>
+        ${groupNote(o)}
       </div>`
   );
   return page(grid);
