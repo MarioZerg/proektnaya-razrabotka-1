@@ -5,8 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchRolls, closeRoll, flagRollDefect, type Roll } from '@/lib/rollsApi';
-import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import KioskNumPad from '@/components/crm/kiosk/KioskNumPad';
 import {
   Dialog,
   DialogContent,
@@ -158,9 +158,6 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
     }
   };
 
-  const pressDigit = (d: string) => setShortage((s) => (s + d).slice(0, 6));
-  const pressDot = () => setShortage((s) => (s.includes('.') ? s : `${s || '0'}.`));
-  const pressBack = () => setShortage((s) => s.slice(0, -1));
 
   if (selected) {
     return (
@@ -196,22 +193,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
-              <Button key={d} variant="outline" className="h-16 text-2xl" onClick={() => pressDigit(d)}>
-                {d}
-              </Button>
-            ))}
-            <Button variant="outline" className="h-16 text-2xl" onClick={pressDot}>
-              ,
-            </Button>
-            <Button variant="outline" className="h-16 text-2xl" onClick={() => pressDigit('0')}>
-              0
-            </Button>
-            <Button variant="outline" className="h-16" onClick={pressBack}>
-              <Icon name="Delete" size={24} />
-            </Button>
-          </div>
+          <KioskNumPad value={shortage} onChange={setShortage} />
 
           <Button
             size="lg"
@@ -259,14 +241,35 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
                   Рулон перестанет идти в раскрой и будет ждать, пока кладовщик заберёт его
                   на склад. Обязательно сообщите руководителю
                 </p>
-                <Textarea
-                  autoFocus
-                  value={defectReason}
-                  onChange={(e) => setDefectReason(e.target.value)}
-                  placeholder="Что не так: дырки, полосы, затяжки. Сколько метров испорчено"
-                  rows={3}
-                  className="text-base"
-                />
+                {/* Причина — кнопками: закройщик стоит у станка и работает пальцами,
+                    клавиатуры в цехе нет. Можно отметить несколько дефектов сразу. */}
+                <div className="grid grid-cols-2 gap-2">
+                  {['Дырки', 'Затяжки', 'Полосы', 'Пятна', 'Кривая кромка', 'Разнотон', 'Рвётся', 'Не тот метраж'].map(
+                    (label) => {
+                      const chosen = defectReason.split(', ').filter(Boolean);
+                      const active = chosen.includes(label);
+                      return (
+                        <Button
+                          key={label}
+                          type="button"
+                          variant={active ? 'default' : 'outline'}
+                          className="h-14 text-base"
+                          onClick={() =>
+                            setDefectReason(
+                              (active
+                                ? chosen.filter((c) => c !== label)
+                                : [...chosen, label]
+                              ).join(', ')
+                            )
+                          }
+                        >
+                          {active && <Icon name="Check" size={18} className="mr-1.5" />}
+                          {label}
+                        </Button>
+                      );
+                    }
+                  )}
+                </div>
                 <Button
                   size="lg"
                   className="h-14 w-full"

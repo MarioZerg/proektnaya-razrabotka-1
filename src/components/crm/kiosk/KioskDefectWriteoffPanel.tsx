@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import KioskNumPad from '@/components/crm/kiosk/KioskNumPad';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -211,25 +212,34 @@ const KioskDefectWriteoffPanel = ({
               {isPacker ? 'Количество брака' : 'Метраж брака'}
               {selectedRoll?.unit ? `, ${selectedRoll.unit}` : ''}
             </Label>
-            <Input
-              inputMode="decimal"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              placeholder="0"
-              className="h-14 text-lg"
-            />
+            {/* Крупное табло + кнопки: в цехе набирают пальцем, клавиатуры нет. */}
+            <div className="rounded-md border-2 border-border bg-muted/40 p-3 text-center">
+              <p className="font-mono-tech text-3xl font-bold">{quantity || '0'}</p>
+            </div>
+            <KioskNumPad value={quantity} onChange={setQuantity} />
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-sm">Уточнение (необязательно)</Label>
-            <Input
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              placeholder={
-                isPacker ? 'Например: вся пачка слиплась' : 'Например: по всей длине кромки'
-              }
-              className="h-14 text-lg"
-            />
+            <Label className="text-sm">Где брак (необязательно)</Label>
+            {/* Свободный текст в киоске не набрать — даём готовые варианты кнопками.
+                Повторное нажатие снимает выбор: уточнение необязательное. */}
+            <div className="grid grid-cols-2 gap-2">
+              {(isPacker
+                ? ['Вся пачка', 'Часть пачки', 'Края', 'Отдельные штуки']
+                : ['По всей длине', 'По кромке', 'В начале рулона', 'В середине', 'В конце', 'Местами']
+              ).map((label) => (
+                <Button
+                  key={label}
+                  type="button"
+                  variant={comment === label ? 'default' : 'outline'}
+                  className="h-14 text-base"
+                  onClick={() => setComment((c) => (c === label ? '' : label))}
+                >
+                  {comment === label && <Icon name="Check" size={18} className="mr-1.5" />}
+                  {label}
+                </Button>
+              ))}
+            </div>
           </div>
 
           <div className="flex gap-2">

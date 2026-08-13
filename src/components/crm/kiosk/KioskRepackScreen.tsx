@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
@@ -201,12 +200,43 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
               </div>
             )}
 
-            <Textarea
-              placeholder="Что с вещью: дырки, пятна, затяжки (обязательно при списании)"
-              value={notes[item.id] || ''}
-              onChange={(e) => setNotes((prev) => ({ ...prev, [item.id]: e.target.value }))}
-              rows={2}
-            />
+            {/* Что с вещью — кнопками: на сенсорном киоске текст не набрать.
+                Можно отметить несколько дефектов сразу (дырка + пятно), повторное
+                нажатие снимает отметку. Выбранное собирается в ту же строку, что
+                раньше писали руками, — дальше по системе ничего не меняется. */}
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium">Что с вещью (обязательно при списании)</p>
+              <div className="grid grid-cols-2 gap-2">
+                {['Дырка', 'Затяжка', 'Пятно', 'Брак шва', 'Не тот размер', 'Мятая', 'Грязная', 'Без дефектов'].map(
+                  (label) => {
+                    const chosen = (notes[item.id] || '')
+                      .split(', ')
+                      .filter(Boolean);
+                    const active = chosen.includes(label);
+                    return (
+                      <Button
+                        key={label}
+                        type="button"
+                        variant={active ? 'default' : 'outline'}
+                        className="h-14 text-base"
+                        onClick={() =>
+                          setNotes((prev) => {
+                            const cur = (prev[item.id] || '').split(', ').filter(Boolean);
+                            const next = active
+                              ? cur.filter((c) => c !== label)
+                              : [...cur, label];
+                            return { ...prev, [item.id]: next.join(', ') };
+                          })
+                        }
+                      >
+                        {active && <Icon name="Check" size={18} className="mr-1.5" />}
+                        {label}
+                      </Button>
+                    );
+                  }
+                )}
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <Button
