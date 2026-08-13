@@ -1099,6 +1099,73 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
             'лежит в другой поставке на стороне WB. Стикер для него больше не '
             'печатается — проверьте заказ в кабинете WB'
         )
+    # 409 FailedToAddSupplyOrder: WB отказывается класть задание в НАШУ поставку.
+    #
+    # Самая частая причина — задание УЖЕ лежит в поставке на стороне WB (статус
+    # supplierStatus = 'confirm'). Так бывает, когда его добавили в кабинете вручную
+    # или прошлая попытка успела дойти до WB, но ответ до нас не вернулся.
+    #
+    # Для упаковщицы это не ошибка: задание в поставке, ярлык для него WB рисует.
+    # Раньше киоск показывал ей стену текста про «assembly task requirements», и
+    # стикеровка вставала — хотя печатать было можно. Проверяем у WB, в поставке ли
+    # задание, и если да — спокойно продолжаем.
+    if status_code == 409:
+        st_code, st_data = wb_request(
+            'POST', '/api/v3/orders/status', api_key, use_sandbox, {'orders': [wb_order_id]}
+        )
+        in_supply = False
+        if st_code == 200:
+            for o in (st_data or {}).get('orders') or []:
+                if int(o.get('id') or 0) == int(wb_order_id):
+                    # 'confirm' = задание собрано и лежит в поставке.
+                    in_supply = (o.get('supplierStatus') or '').strip() == 'confirm'
+        # В лог кладём фактический статус: без него причина 409 не видна, и каждая
+        # такая ошибка превращалась в ручное расследование.
+        wb_st = ''
+        if st_code == 200:
+            for o in (st_data or {}).get('orders') or []:
+                if int(o.get('id') or 0) == int(wb_order_id):
+                    wb_st = f"{(o.get('supplierStatus') or '').strip()}/{(o.get('wbStatus') or '').strip()}"
+        print(f'WB 409 для задания {wb_order_id}: статус на WB = {wb_st or "неизвестен"}')
+
+        # Покупатель отменил заказ, пока вещь шла по конвейеру. WB такое задание в
+        # поставку не примет никогда — и это НЕ поломка, а обычная ситуация.
+        #
+        # Упаковщице важно понять за секунду: шить и клеить больше не нужно, вещь
+        # уходит на склад. Поэтому закрываем заказ у себя и отвечаем понятной фразой
+        # вместо технического текста WB про «assembly task requirements».
+        cancelled_on_wb = wb_st.split('/')[0] == 'cancel' or wb_st.split('/')[-1] in (
+            'canceled', 'canceled_by_client', 'declined_by_client'
+        )
+        if cancelled_on_wb:
+            cur.execute("UPDATE orders SET status = 'Отменён' WHERE id = %s", (order_id,))
+            _drop_from_accumulator(cur, order_id)
+            conn.commit()
+            return (
+                'Покупатель отменил этот заказ на Wildberries — стикер не нужен. '
+                'Отложите вещь: она вернётся на склад как свободный остаток'
+            )
+
+        if in_supply:
+            # Отмечаем у себя, что заказ в поставке, и печатаем ярлык.
+            cur.execute(
+                "INSERT INTO wb_supply_orders (supply_id, order_id) VALUES (%s, %s) "
+                "ON CONFLICT DO NOTHING",
+                (supply_id, order_id),
+            )
+            cur.execute(
+                "UPDATE marketplace_supplies SET status = 'На сборке' "
+                "WHERE id = %s AND status = 'Открытая'",
+                (supply_id,),
+            )
+            conn.commit()
+            return None
+        return (
+            f'Wildberries не принял сборочное задание {wb_order_id} в поставку '
+            f'(статус на WB: {wb_st or "неизвестен"}). Проверьте заказ в кабинете WB: '
+            'он может быть отменён покупателем или уже отгружен в другой поставке'
+        )
+
     if status_code not in (200, 204):
         return f'WB не принял заказ в поставку ({status_code}): {wb_error_text(status_code, data)}'
 
