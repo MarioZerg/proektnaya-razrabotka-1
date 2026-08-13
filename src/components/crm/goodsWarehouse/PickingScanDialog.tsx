@@ -106,11 +106,16 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
       //   * стикер отправления уже наклеен: вещь собрана и ждёт короб;
       //   * вещь уже уехала в поставку или отгружена — её физически нет на полке.
       // Всё это для сканера подбора — «мимо»: за такой вещью на склад не приходили.
+      //
+      // Статус строго 'picking' — ровно то же условие, по которому строится список
+      // подбора на экране. Раньше сканер принимал ещё и 'in_stock': такие вещи
+      // зарезервированы, но в подбор ещё не заведены, и в списке их нет. Кладовщик
+      // слышал «нужная найдена» на вещь, которой в его задании не было.
       const inPicking =
         !!item.reservedOrderId &&
         !item.orderInProduction &&
         !item.shippingLabeledAt &&
-        (item.status === 'in_stock' || item.status === 'picking');
+        item.status === 'picking';
 
       if (inPicking) {
         playScanSound();
