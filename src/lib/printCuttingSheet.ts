@@ -22,14 +22,15 @@ import type { TakenOrder } from '@/lib/ordersApi';
 const A4_WIDTH_PX = 794; // A4 при 96dpi
 const A4_HEIGHT_PX = 1123;
 const COLS = 2;
-// Было 10 строк на лист: в ячейку помещалось 20 позиций, но номер заказа печатался
-// шрифтом 11px — швея не могла прочитать его на вешалке, не поднося лист к глазам.
-// Теперь 6 строк: позиций на листе меньше, зато размер и номер видно с расстояния.
-const ROWS_PER_PAGE = 6;
+const ROWS_PER_PAGE = 10;
 const ITEMS_PER_PAGE = COLS * ROWS_PER_PAGE;
-// Высота одной ячейки, чтобы позиции заполняли лист целиком, а не жались вверху.
-// Из высоты A4 вычитаем поля страницы и шапку с датой и закройщиком.
-const CELL_HEIGHT_PX = 148;
+// Высота ячейки подобрана так, чтобы 10 строк заполняли лист А4 целиком — с учётом
+// полей, шапки и отступов между группами материалов.
+//
+// Раньше шрифт номера был 11px: швея не могла прочитать его на вешалке, не поднося
+// лист к глазам. Кегли увеличены вдвое, но число позиций осталось прежним — 20 на
+// лист, иначе закройщик печатал бы вдвое больше бумаги.
+const CELL_HEIGHT_PX = 79;
 
 const formatToday = () => {
   const d = new Date();
@@ -62,9 +63,8 @@ const groupByMaterial = (orders: TakenOrder[]): TakenOrder[] => {
 /** Подпись связки в позиции листа: «СВЯЗКА 3/32 — одна вешалка». */
 const groupNote = (o: TakenOrder) =>
   o.groupSize && o.groupSize > 1
-    ? `<div style="margin-top:6px;font-size:16px;font-weight:800;">
-         СВЯЗКА ${o.groupPosition}/${o.groupSize} — НА ОДНУ ВЕШАЛКУ
-       </div>`
+    ? `<div style="margin-top:1px;font-size:10px;font-weight:800;white-space:nowrap;
+                    line-height:1;">СВЯЗКА ${o.groupPosition}/${o.groupSize} — ОДНА ВЕШАЛКА</div>`
     : '';
 
 const chunk = <T,>(arr: T[], size: number): T[][] => {
@@ -80,8 +80,8 @@ const sizeLabel = (o: TakenOrder) => `${o.material || '—'} ${o.width ?? '—'}
  * Подбираем размер так, чтобы строка всегда влезала в одну. */
 const sizeFont = (o: TakenOrder, max: number) => {
   const len = sizeLabel(o).length;
-  if (len > 19) return Math.round(max * 0.74);
-  if (len > 16) return Math.round(max * 0.85);
+  if (len > 19) return Math.round(max * 0.78);
+  if (len > 16) return Math.round(max * 0.88);
   return max;
 };
 
@@ -125,7 +125,7 @@ const groupedGrid = (pageOrders: TakenOrder[], renderInner: (o: TakenOrder) => s
     rows.push(cell(renderInner(o), !!(o.groupSize && o.groupSize > 1)));
   }
   flush();
-  return `<div style="display:flex;flex-direction:column;gap:6px;">${blocks.join('')}</div>`;
+  return `<div style="display:flex;flex-direction:column;gap:4px;">${blocks.join('')}</div>`;
 };
 
 const page = (inner: string) =>
@@ -158,13 +158,14 @@ const buildChecklistPageHtml = (pageOrders: TakenOrder[], cutterName: string, da
   const grid = groupedGrid(
     pageOrders,
     (o) => `
-      <div style="padding:10px 14px;text-align:center;display:flex;flex-direction:column;
+      <div style="padding:4px 10px;text-align:center;display:flex;flex-direction:column;
                   justify-content:center;height:100%;box-sizing:border-box;">
-        <div style="font-size:${sizeFont(o, 34)}px;font-weight:800;line-height:1.05;
+        <div style="font-size:${sizeFont(o, 23)}px;font-weight:800;line-height:1.05;
                     white-space:nowrap;">${sizeLabel(o)}</div>
-        <div style="font-size:${numberFont(o, 27)}px;font-weight:800;margin-top:8px;
-                    letter-spacing:0.5px;white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
-        <div style="font-size:15px;font-weight:700;color:#222;margin-top:5px;">${o.marketplace}</div>
+        <div style="font-size:${numberFont(o, 20)}px;font-weight:800;margin-top:2px;
+                    letter-spacing:0.3px;white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
+        <div style="font-size:${o.groupSize && o.groupSize > 1 ? 9 : 11}px;font-weight:700;
+                    color:#222;margin-top:1px;line-height:1;">${o.marketplace}</div>
         ${groupNote(o)}
       </div>`
   );
@@ -179,15 +180,15 @@ const buildQrPageHtml = (
   const grid = groupedGrid(
     pageOrders,
     (o) => `
-      <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;height:100%;
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 8px;height:100%;
                   box-sizing:border-box;">
-        <img src="${qrDataUrls[o.id]}" style="width:96px;height:96px;flex-shrink:0;" />
+        <img src="${qrDataUrls[o.id]}" style="width:74px;height:74px;flex-shrink:0;" />
         <div style="min-width:0;text-align:center;flex:1;">
-          <div style="font-size:${sizeFont(o, 27)}px;font-weight:800;line-height:1.05;
+          <div style="font-size:${sizeFont(o, 20)}px;font-weight:800;line-height:1.05;
                       white-space:nowrap;">${sizeLabel(o)}</div>
-          <div style="font-size:${numberFont(o, 22)}px;font-weight:800;margin-top:6px;
+          <div style="font-size:${numberFont(o, 17)}px;font-weight:800;margin-top:3px;
                       white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
-          <div style="font-size:14px;font-weight:700;color:#222;margin-top:4px;">
+          <div style="font-size:11px;font-weight:700;color:#222;margin-top:2px;">
             ${o.marketplace} [${o.orderType}]${cutterId != null ? ` · ID: ${cutterId}` : ''}
           </div>
           ${groupNote(o)}
