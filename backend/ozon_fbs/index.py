@@ -14,7 +14,15 @@ import psycopg2
 OZON_API_BASE = 'https://api-seller.ozon.ru'
 
 # Сколько отправлений просим у OZON за один запрос.
-OZON_SYNC_PAGE = 50
+#
+# Было 50 — и функция не укладывалась в свои 5 секунд: сам ответ OZON приходит 1-2
+# секунды, а на разбор и запись полусотни отправлений (в каждом бывает несколько
+# вещей) времени уже не оставалось. Загрузка обрывалась по таймауту, и заказы не
+# создавались вообще.
+#
+# 20 отправлений функция успевает обработать с запасом. Общая скорость не страдает:
+# место остановки запоминается, и следующий запуск продолжает со следующей порции.
+OZON_SYNC_PAGE = 20
 # Сколько страниц забираем за один запуск.
 #
 # У функции всего 5 секунд на всю работу: запрос к OZON, разбор отправлений и запись
@@ -120,6 +128,44 @@ def ozon_error_text(status_code, data):
     if isinstance(data, dict):
         return data.get('message') or data.get('error') or json.dumps(data, ensure_ascii=False)
     return str(data)
+
+
+def load_items_index(cur):
+    """Загружает справочник товаров в память одним запросом.
+
+    Раньше карточка искалась отдельным запросом на КАЖДЫЙ товар отправления (а то и
+    двумя: по sku и по артикулу). На странице в 50 отправлений это сотни обращений к
+    базе, и функция стабильно упиралась в таймаут 5 секунд — загрузка обрывалась,
+    заказы не создавались. Карточек меньше тысячи, поэтому дешевле забрать их разом.
+
+    Возвращает два указателя: по ozon_sku и по артикулу продавца.
+    """
+    cur.execute(
+        "SELECT material, width, height, name, id, ozon_sku, sku FROM marketplace_items"
+    )
+    by_ozon_sku = {}
+    by_sku = {}
+    for material, width, height, name, item_id, ozon_sku, sku in cur.fetchall():
+        row = (material, width, height, name, item_id)
+        if ozon_sku:
+            by_ozon_sku.setdefault(str(ozon_sku), row)
+        if sku:
+            by_sku.setdefault(str(sku), row)
+    return by_ozon_sku, by_sku
+
+
+def find_item_cached(items_index, ozon_sku, offer_id):
+    """Ищет товар в заранее загруженном справочнике: сначала по sku OZON, затем по артикулу."""
+    by_ozon_sku, by_sku = items_index
+    if ozon_sku:
+        row = by_ozon_sku.get(str(ozon_sku))
+        if row:
+            return row
+    if offer_id:
+        row = by_sku.get(str(offer_id))
+        if row:
+            return row
+    return None
 
 
 def find_marketplace_item(cur, ozon_sku, offer_id):
@@ -258,13 +304,15 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
             reached_end = True
             break
 
+    # ВАЖНО: место остановки запоминаем не здесь, а в самом конце — после того, как
+    # заказы этой страницы реально созданы.
+    #
+    # Раньше смещение сохранялось прямо тут, до обработки. У функции 5 секунд на всё,
+    # и на большой странице она регулярно обрывалась по таймауту уже ПОСЛЕ того, как
+    # сдвинула указатель. Заказы этой страницы не создавались, но следующий запуск
+    # начинал со следующих пятидесяти — пропущенные не забирались уже никогда.
+    # Так за сезон и накопились сотни FBS-заказов, о которых цех не знал.
     next_offset = 0 if reached_end else offset
-    cur.execute(
-        "INSERT INTO system_settings (key, value) VALUES ('ozon_sync_offset', %s) "
-        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
-        (str(next_offset),),
-    )
-    conn.commit()
 
     created = 0
     matched = 0
@@ -288,6 +336,9 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         )
         for pn, first_number in cur.fetchall():
             existing_format[pn] = (first_number == pn)
+
+    # Справочник товаров забираем ОДИН раз на всю страницу, а не по запросу на товар.
+    items_index = load_items_index(cur)
 
     for p in postings:
         posting_number = p.get('posting_number')
@@ -331,7 +382,7 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         resolved = []
         total_units = 0
         for pr in products:
-            found = find_marketplace_item(cur, pr.get('sku'), pr.get('offer_id'))
+            found = find_item_cached(items_index, pr.get('sku'), pr.get('offer_id'))
             resolved.append((pr, found))
             if found:
                 total_units += int(pr.get('quantity') or 1)
@@ -463,6 +514,16 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
             f'Загрузка заказов OZON FBS: создано {created}, пропущено (уже есть) {skipped_existing}, '
             f'без товара {skipped_no_item}',
         )
+
+    # Указатель сдвигаем ТОЛЬКО теперь, когда заказы страницы уже созданы. Если функция
+    # прервётся раньше, следующий запуск честно повторит эту же страницу — лучше
+    # обработать её дважды (повторы отсекаются проверкой на существующий заказ),
+    # чем потерять заказы навсегда.
+    cur.execute(
+        "INSERT INTO system_settings (key, value) VALUES ('ozon_sync_offset', %s) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        (str(next_offset),),
+    )
     conn.commit()
 
     return _resp(200, {
