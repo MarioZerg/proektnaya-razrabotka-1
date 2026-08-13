@@ -21,6 +21,30 @@ export const statusTabs: StatusTab[] = [
   { value: 'Со склада', label: 'Со склада' },
 ];
 
+/**
+ * Цвет статуса на конвейере — общий для таблицы (ПК) и карточек (телефон).
+ *
+ * Цвет читается быстрее текста: в таблице на 50 строк видно с одного взгляда, где
+ * работа стоит, а где идёт. Раньше в таблице все статусы были одинаково серыми, и
+ * мастеру приходилось вчитываться в каждую строку.
+ *
+ * Палитра взята из карточек, чтобы один и тот же статус не выглядел по-разному на
+ * телефоне и на компьютере. Добавлены недостающие «Со склада» и «Отменён»: они
+ * встречаются в таблице, но в карточках их не было — бейдж оставался бесцветным.
+ */
+export const statusBadgeClass: Record<string, string> = {
+  Новый: 'bg-slate-500 text-white hover:bg-slate-500',
+  'На раскрое': 'bg-amber-500 text-white hover:bg-amber-500',
+  'В работе': 'bg-sky-500 text-white hover:bg-sky-500',
+  Раскроено: 'bg-violet-500 text-white hover:bg-violet-500',
+  Стикеровка: 'bg-orange-500 text-white hover:bg-orange-500',
+  Готовые: 'bg-emerald-600 text-white hover:bg-emerald-600',
+  // Заказ закрыт готовой вещью со склада — работа цеха по нему не нужна.
+  'Со склада': 'bg-teal-600 text-white hover:bg-teal-600',
+  // Отменён покупателем: шить нечего, вещь уходит на хранение.
+  Отменён: 'bg-red-600 text-white hover:bg-red-600',
+};
+
 export const marketplaceLogo: Record<string, { label: string; className: string }> = {
   OZON: { label: 'OZON', className: 'text-[#005BFF] font-bold' },
   WB: { label: 'Wildberries', className: 'text-[#CB11AB] font-bold' },

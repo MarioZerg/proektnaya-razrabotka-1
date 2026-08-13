@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { statusBadgeClass } from '@/components/crm/sewingItems/sewingItemsShared';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { marketplaceLogo } from '@/components/crm/sewingItems/sewingItemsShared';
@@ -99,7 +100,11 @@ const SewingItemDetailDialog = ({
         <DialogHeader>
           <div className="flex flex-wrap items-center gap-2 pr-8">
             <DialogTitle>Товар #{selectedOrder?.id}</DialogTitle>
-            {selectedOrder && <Badge variant="secondary">{selectedOrder.sewingStatus}</Badge>}
+            {selectedOrder && (
+              <Badge className={statusBadgeClass[selectedOrder.sewingStatus] || ''}>
+                {selectedOrder.sewingStatus}
+              </Badge>
+            )}
           </div>
           {/* Маркетплейс, схема (FBO/FBS) и полный номер заказа — сразу в шапке: раньше их
               приходилось искать в таблице ниже, а на телефоне номер ещё и обрезался. */}

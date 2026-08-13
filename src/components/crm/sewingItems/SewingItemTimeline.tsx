@@ -2,7 +2,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
-import { formatDate, timeAgo } from '@/components/crm/sewingItems/sewingItemsShared';
+import {
+  formatDate,
+  timeAgo,
+  statusBadgeClass,
+} from '@/components/crm/sewingItems/sewingItemsShared';
 
 interface SewingItemTimelineProps {
   selectedOrder: Order;
@@ -26,7 +30,9 @@ const SewingItemTimeline = ({ selectedOrder }: SewingItemTimelineProps) => {
           <Badge variant="secondary">{timeAgo(selectedOrder.createdAt)}</Badge>
           <span className="flex items-center gap-1.5 text-sm">
             <Icon name="MapPin" size={14} className="text-muted-foreground" />
-            <Badge variant="secondary">{selectedOrder.sewingStatus}</Badge>
+            <Badge className={statusBadgeClass[selectedOrder.sewingStatus] || ''}>
+              {selectedOrder.sewingStatus}
+            </Badge>
           </span>
         </div>
       </CardContent>

@@ -4,7 +4,11 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
-import { marketplaceLogo, formatDate } from '@/components/crm/sewingItems/sewingItemsShared';
+import {
+  marketplaceLogo,
+  formatDate,
+  statusBadgeClass,
+} from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import { printFboSticker } from '@/lib/printFboSticker';
@@ -20,15 +24,6 @@ interface SewingItemsCardsProps {
   /** Печать стикера FBO доступна только кладовщику и админу. */
   canPrintSticker?: boolean;
 }
-
-const statusBadgeClass: Record<string, string> = {
-  Новый: 'bg-slate-500 text-white hover:bg-slate-500',
-  'На раскрое': 'bg-amber-500 text-white hover:bg-amber-500',
-  'В работе': 'bg-sky-500 text-white hover:bg-sky-500',
-  Раскроено: 'bg-violet-500 text-white hover:bg-violet-500',
-  Стикеровка: 'bg-orange-500 text-white hover:bg-orange-500',
-  Готовые: 'bg-emerald-600 text-white hover:bg-emerald-600',
-};
 
 const ribbonClass: Record<string, string> = {
   OZON: 'bg-[#005BFF]',

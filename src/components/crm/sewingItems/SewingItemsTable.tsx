@@ -19,7 +19,11 @@ import {
 import Icon from '@/components/ui/icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { Order } from '@/lib/ordersApi';
-import { marketplaceLogo, formatDate } from '@/components/crm/sewingItems/sewingItemsShared';
+import {
+  marketplaceLogo,
+  formatDate,
+  statusBadgeClass,
+} from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
@@ -122,7 +126,13 @@ const SewingItemsTable = ({
               >
                 <TableCell>{o.id}</TableCell>
                 <TableCell>
-                  <Badge variant="secondary">{o.sewingStatus}</Badge>
+                  {/* Цвет статуса — тот же, что в карточках на телефоне: один этап
+                      всегда выглядит одинаково, где бы мастер его ни смотрел. */}
+                  <Badge
+                    className={`${statusBadgeClass[o.sewingStatus] || ''} whitespace-nowrap`}
+                  >
+                    {o.sewingStatus}
+                  </Badge>
                 </TableCell>
                 <TableCell className="font-medium">
                   <span className="flex items-center gap-1.5">
