@@ -139,6 +139,17 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
 # Такой заказ подбирать со склада поздно — иначе работа цеха пропадёт впустую.
 NOT_STARTED_SEWING = 'Новый'
 
+# Статусы заказа, при которых бронь на вещь СЧИТАЕТСЯ ЖИВОЙ: заказ всё ещё ждёт
+# именно эту вещь с полки. Всё остальное — мёртвая бронь: заказ уже отгружен,
+# отменён, уехал к покупателю или ушёл на конвейер и будет закрыт новой вещью.
+# Мёртвая бронь не должна ни звать кладовщика в подбор, ни запрещать смену полки.
+RESERVE_ALIVE_SQL = (
+    "(COALESCE(ro.sewing_status, '') IN ('Новый', 'Со склада') "
+    " AND COALESCE(ro.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
+    " AND COALESCE(ro.ozon_status, '') NOT IN "
+    "     ('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup'))"
+)
+
 
 def try_match_orders_from_stock(cur, gw_id=None):
     """Ищет заказы, которые можно закрыть вещами со склада, и резервирует их.
@@ -573,13 +584,10 @@ def handler(event: dict, context) -> dict:
                     # больше не отдаёт, собрать такую вещь невозможно. Раньше она висела
                     # в подборе вечно: кладовщик шёл к стеллажу, а на печати получал
                     # «OZON готовит этикетку, нажмите ещё раз» — и так по кругу.
-                    "  AND COALESCE(o.ozon_status, '') NOT IN "
-                    "      ('delivering', 'delivered', 'cancelled', 'not_accepted', "
-                    "       'driver_pickup') "
-                    # Заказ забрали в цех — его кроят или шьют. Стикер отправления
-                    # уйдёт на то, что выйдет с конвейера, а не на эту вещь. Гонять
-                    # кладовщика к стеллажу за ней бессмысленно.
-                    "  AND COALESCE(o.sewing_status, '') IN ('Новый', 'Со склада') "
+                    # Бронь должна быть живой: заказ не отменён, не отгружен, не уехал
+                    # к покупателю и не ушёл на конвейер. Условие общее со сканером и
+                    # со сменой полки — иначе экраны опять разойдутся между собой.
+                    f"  AND {RESERVE_ALIVE_SQL.replace('ro.', 'o.')} "
                     "ORDER BY gw.matched_at ASC NULLS LAST, gw.id ASC"
                 )
                 orders_rows = cur.fetchall()
@@ -706,11 +714,7 @@ def handler(event: dict, context) -> dict:
                     #   * отменён или уже уехал к покупателю — ярлык маркетплейс не отдаст.
                     # Условие один в один повторяет фильтр списка подбора, чтобы сканер
                     # и экран кладовщика никогда не расходились.
-                    "(COALESCE(ro.sewing_status, '') NOT IN ('Новый', 'Со склада') "
-                    " OR COALESCE(ro.ozon_status, '') IN "
-                    "    ('delivering', 'delivered', 'cancelled', 'not_accepted', "
-                    "     'driver_pickup') "
-                    " OR COALESCE(ro.status, '') = 'Отменён') "
+                    f"NOT {RESERVE_ALIVE_SQL} "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -1790,14 +1794,23 @@ def handler(event: dict, context) -> dict:
                 codes_csv = ','.join(
                     "'" + str(b).replace("'", "''") + "'" for b in barcodes
                 )
-                # Бронь под FBS не двигаем даже пачкой: вещь ждёт сборщик по конкретной
+                # Живую бронь не двигаем даже пачкой: вещь ждёт сборщик по конкретной
                 # полке, и переезд сорвал бы отправление.
+                #
+                # А вот мёртвая бронь (заказ ушёл в цех, отменён или уже уехал) двигать
+                # можно: вещь свободна и лежит как обычный остаток. Раньше такие вещи
+                # молча выпадали из пачки, и кладовщик не понимал, почему переложилось
+                # меньше, чем он отсканировал.
                 cur.execute(
-                    f"UPDATE goods_warehouse SET shelf_id = {int(shelf_id)} "
-                    f"WHERE storage_barcode IN ({codes_csv}) "
-                    f"  AND reserved_order_id IS NULL "
-                    f"  AND status NOT IN ('picking', 'awaiting_supply', 'reserved', 'shipped') "
-                    f"RETURNING id"
+                    f"UPDATE goods_warehouse gw SET shelf_id = {int(shelf_id)} "
+                    f"FROM (SELECT 1) dummy "
+                    f"WHERE gw.storage_barcode IN ({codes_csv}) "
+                    f"  AND gw.status NOT IN ('picking', 'awaiting_supply', 'reserved', 'shipped') "
+                    f"  AND NOT EXISTS ("
+                    f"      SELECT 1 FROM orders ro WHERE ro.id = gw.reserved_order_id "
+                    f"        AND {RESERVE_ALIVE_SQL}"
+                    f"  ) "
+                    f"RETURNING gw.id"
                 )
                 moved = len(cur.fetchall())
                 cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
@@ -1829,7 +1842,10 @@ def handler(event: dict, context) -> dict:
                 # и откуда — так заметна случайная вещь из чужого ряда.
                 cur.execute(
                     "SELECT gw.id, o.product, s.name, gw.shelf_id, gw.status, "
-                    "       gw.reserved_order_id, ro.order_number "
+                    "       gw.reserved_order_id, ro.order_number, "
+                    # Заказ ещё ждёт эту вещь: не ушёл в цех, не отменён, не уехал.
+                    # Только в этом случае вещь реально стоит в подборе.
+                    f"       {RESERVE_ALIVE_SQL} "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -1840,15 +1856,20 @@ def handler(event: dict, context) -> dict:
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Товар со штрихкодом {barcode} не найден'})}
                 (gw_id, gw_product, old_shelf_name, old_shelf_id,
-                 gw_status, gw_reserved_id, gw_reserved_number) = row
+                 gw_status, gw_reserved_id, gw_reserved_number, reserve_alive) = row
 
-                # Вещь забронирована под заказ FBS — перекладывать её НЕЛЬЗЯ.
+                # Вещь забронирована под ЖИВОЙ заказ — перекладывать её НЕЛЬЗЯ.
                 #
                 # Кладовщик уже получил её в списке подбора и идёт за ней по конкретной
                 # полке. Если в этот момент вещь переедет на другой стеллаж, сборщик
                 # придёт на пустое место, отправление сорвётся, а маркетплейс оштрафует.
                 # Такую вещь надо собрать и отгрузить, а не двигать по складу.
-                if gw_reserved_id:
+                #
+                # Но если заказ уже ушёл на конвейер, отменён или уехал — бронь мёртвая.
+                # Раньше она всё равно держала вещь намертво: кладовщик не мог переложить
+                # мрамор на его законную полку и получал «забронирован» без объяснений.
+                # Такая вещь свободна, её можно двигать как обычный остаток.
+                if gw_reserved_id and reserve_alive:
                     return {
                         'statusCode': 409,
                         'headers': headers,
