@@ -400,6 +400,14 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             order_number_esc = order_number.replace("'", "''")
+            # Номер без последнего хвоста: «47971098-0677-1-1» -> «47971098-0677-1».
+            # Отсекаем ровно один сегмент и только если он короткий (1-2 цифры) —
+            # это наш внутренний порядковый номер вещи, а не часть номера OZON.
+            base_number = order_number
+            _parts = order_number.rsplit('-', 1)
+            if len(_parts) == 2 and _parts[1].isdigit() and len(_parts[1]) <= 2:
+                base_number = _parts[0]
+            base_number_esc = base_number.replace("'", "''")
             cur.execute(
                 "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.status, o.ozon_status, "
@@ -418,9 +426,19 @@ def handler(event: dict, context) -> dict:
                 #
                 # Если под номером отправления несколько вещей, берём ту, что дальше
                 # всех по конвейеру и ещё не закрыта: именно её сейчас стикеруют.
+                #
+                # Обратный случай: на QR-коде внутри упаковки напечатан СТАРЫЙ номер с
+                # хвостом (47971098-0677-1-1), а заказ в системе уже переименован в
+                # настоящий номер отправления OZON (47971098-0677-1). Так вышло, когда
+                # мы разделили накопившиеся отправления на стороне OZON: наклейки в
+                # цехе остались со старыми номерами. Поэтому пробуем ещё и номер без
+                # последнего хвоста — упаковщице не нужно знать про переименования.
                 f"WHERE o.order_number = '{order_number_esc}' "
                 f"   OR o.ozon_posting_number = '{order_number_esc}' "
+                f"   OR o.order_number = '{base_number_esc}' "
+                f"   OR o.ozon_posting_number = '{base_number_esc}' "
                 f"ORDER BY (o.order_number = '{order_number_esc}') DESC, "
+                f"  (o.ozon_posting_number = '{order_number_esc}') DESC, "
                 "  CASE o.sewing_status WHEN 'Стикеровка' THEN 1 WHEN 'В работе' THEN 2 "
                 "    WHEN 'Раскроено' THEN 3 WHEN 'На раскрое' THEN 4 WHEN 'Новый' THEN 5 "
                 "    ELSE 6 END, o.id "
