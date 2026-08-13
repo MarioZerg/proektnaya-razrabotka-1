@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -82,6 +82,24 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
       setShelvingId(null);
     }
   };
+
+  // Поставку на стороне WB создаём САМИ, как только кладовщик её открыл.
+  //
+  // Раньше он видел пустой экран с кнопкой «Создать поставку на WB» и только после
+  // нажатия получал сканер. Шаг был лишним: заявка на WB и есть поставка, отдельного
+  // решения тут не принимается. Теперь сканер доступен сразу.
+  useEffect(() => {
+    if (wbCreated || creatingSupply) return;
+    if (supply.status !== 'Открытая' && supply.status !== 'На сборке') return;
+    setCreatingSupply(true);
+    createWbSupply(supplyId)
+      .then(() => onReload())
+      .catch(() => {
+        // Молча не падаем: если WB недоступен, кладовщик нажмёт кнопку вручную.
+      })
+      .finally(() => setCreatingSupply(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wbCreated, supply.status]);
 
   const handleCreateSupply = async () => {
     setCreatingSupply(true);
@@ -186,10 +204,13 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-4 text-sm">
-          {/* Сколько вещей упаковщицы уже отстикеровали и сложили в контейнер:
-              по этому числу кладовщик решает, идти ли на производство. */}
+          {/* Сколько заказов лежит в резервной поставке на WB: туда упаковщицы
+              переносят всё, что застикеровали на конвейере. Это и есть объём работы —
+              столько кладовщику предстоит отсканировать в свою поставку.
+              Не успел забрать всё — остаток так и останется в резерве и попадёт
+              в счётчик следующей поставки, как только он её создаст. */}
           <span>
-            Готово к сборке: <b>{supply.wbReadyCount}</b>
+            Ожидают отгрузки: <b>{supply.wbReadyCount}</b>
           </span>
           <span>
             Отсканировано в поставку: <b>{supply.wbOrders.length}</b>
@@ -220,7 +241,9 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
         <Card className="border-primary/30 bg-primary/5 shadow-none">
           <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
             <div className="text-sm text-muted-foreground">
-              Создайте поставку на стороне WildBerries — после этого можно сканировать готовые заказы в неё.
+              {creatingSupply
+                ? 'Создаём поставку на WildBerries — сканер откроется автоматически'
+                : 'Не удалось создать поставку на WildBerries. Нажмите, чтобы повторить.'}
             </div>
             <Button onClick={handleCreateSupply} disabled={creatingSupply}>
               <Icon name={creatingSupply ? 'Loader2' : 'PackagePlus'} size={16} className={`mr-1.5 ${creatingSupply ? 'animate-spin' : ''}`} />
