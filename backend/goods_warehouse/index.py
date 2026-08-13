@@ -696,10 +696,14 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT gw.id, gw.order_id, o.order_number, o.product, o.material, o.width, o.height, "
                     "gw.shelf_id, s.name, gw.status, gw.received_at, gw.shipped_at, gw.storage_barcode, "
-                    "gw.lost_reason, gw.lost_at, gw.receive_reason, "
+                    "gw.lost_reason, gw.lost_at, gw.receive_reason, gw.shipping_labeled_at, "
                     # Резерв нужен сканеру подбора: по нему он отличает вещь, которую
                     # надо забрать в контейнер, от неликвида, просто лежащего на складе.
-                    "gw.reserved_order_id, ro.order_number "
+                    "gw.reserved_order_id, ro.order_number, "
+                    # Заказ уже забрали в цех — кроят или шьют. Отправление закроет то,
+                    # что выйдет с конвейера, а эта вещь остаётся на складе. Для сканера
+                    # подбора она «не найдена»: за ней на склад никто не приходил.
+                    "COALESCE(ro.sewing_status, '') NOT IN ('Новый', 'Со склада') "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -716,8 +720,11 @@ def handler(event: dict, context) -> dict:
                     'shippedAt': (row[11].isoformat() + 'Z') if row[11] else None, 'storageBarcode': row[12],
                     'lostReason': row[13], 'lostAt': (row[14].isoformat() + 'Z') if row[14] else None,
                     'receiveReason': row[15] or 'manual',
-                    'reservedOrderId': row[16],
-                    'reservedOrderNumber': row[17],
+                    # Стикер отправления уже наклеен — вещь собрана, в подбор не идёт.
+                    'shippingLabeledAt': (row[16].isoformat() + 'Z') if row[16] else None,
+                    'reservedOrderId': row[17],
+                    'reservedOrderNumber': row[18],
+                    'orderInProduction': bool(row[19]) if row[17] else False,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'item': item})}
 

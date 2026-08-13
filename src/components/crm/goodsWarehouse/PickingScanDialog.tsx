@@ -99,13 +99,20 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
     try {
       const item: GoodsWarehouseItem = await fetchGoodsByBarcode(code);
       scannedRef.current.add(code.toUpperCase());
-      // Нужная вещь — та, что подобрана под заказ И этот заказ ещё не ушёл в цех.
-      //
-      // Раньше хватало одного резерва, и кладовщик получал «нужная найдена» на вещь,
-      // заказ которой уже кроят на конвейере. Он нёс её к компьютеру, а на печати
-      // упирался в отказ: стикер отправления уйдёт на то, что выйдет из цеха.
-      // Такая вещь для подбора — не найдена: на склад за ней никто не приходил.
-      if (item.reservedOrderId && !item.orderInProduction) {
+      // Нужная вещь — ровно та, что сейчас лежит в складском подборе. Одного резерва
+      // мало: под условие попадали вещи, которые кладовщику брать не нужно —
+      //   * заказ уже забрали в цех: кроят или шьют, отправление закроет вещь
+      //     с конвейера, а эта останется на складе;
+      //   * стикер отправления уже наклеен: вещь собрана и ждёт короб;
+      //   * вещь уже уехала в поставку или отгружена — её физически нет на полке.
+      // Всё это для сканера подбора — «мимо»: за такой вещью на склад не приходили.
+      const inPicking =
+        !!item.reservedOrderId &&
+        !item.orderInProduction &&
+        !item.shippingLabeledAt &&
+        (item.status === 'in_stock' || item.status === 'picking');
+
+      if (inPicking) {
         playScanSound();
         setHit({
           goodsId: item.id,
