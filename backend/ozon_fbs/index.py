@@ -316,9 +316,21 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name):
         "  AND o.ozon_status = 'awaiting_packaging' "
         "  AND o.ozon_posting_number IS NOT NULL "
         "GROUP BY o.ozon_posting_number "
-        # Все вещи отправления — строго «Новый»: работа по ним ещё не начиналась.
+        # Делим, пока НИ НА ОДНУ вещь отправления не наклеен ярлык OZON.
+        #
+        # Раньше требовалось, чтобы все вещи были строго «Новыми» — то есть работа по
+        # ним ещё не начиналась. На практике отправление успевало уйти в цех раньше,
+        # чем до него доходило деление, и оставалось неделёным навсегда. Такие заказы
+        # мы дробили только у себя, придумывая номера с суффиксами (-1, -2), которых
+        # OZON не знает: собрать по ним поставку невозможно.
+        #
+        # До наклейки ярлыка OZON считает отправление несобранным, а в цехе меняются
+        # только наши внутренние статусы — раскрой и пошив делению не мешают.
         "HAVING count(*) > 1 "
-        "   AND count(*) FILTER (WHERE o.sewing_status = 'Новый') = count(*) "
+        "   AND count(*) FILTER (WHERE EXISTS ("
+        "         SELECT 1 FROM goods_warehouse g "
+        "         WHERE g.reserved_order_id = o.id "
+        "           AND g.shipping_labeled_at IS NOT NULL)) = 0 "
         "ORDER BY o.ozon_posting_number "
         f"LIMIT {OZON_SPLIT_PER_RUN}"
     )
@@ -369,7 +381,10 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name):
         cur.execute(
             "SELECT o.id, COALESCE(o.product_ozon_sku, mi.ozon_sku) "
             "FROM orders o LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
-            "WHERE o.ozon_posting_number = %s AND o.sewing_status = 'Новый' "
+            # Берём ВСЕ вещи отправления, а не только «Новые»: часть уже могла уйти
+            # в раскрой или пошив, и им новый номер нужен точно так же — именно по
+            # нему упаковщица получит ярлык, а кладовщик соберёт поставку.
+            "WHERE o.ozon_posting_number = %s "
             "ORDER BY o.id",
             (posting_number,),
         )
@@ -407,7 +422,10 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name):
         "    AND o.ozon_posting_number IS NOT NULL "
         "  GROUP BY o.ozon_posting_number "
         "  HAVING count(*) > 1 "
-        "     AND count(*) FILTER (WHERE o.sewing_status = 'Новый') = count(*)"
+        "     AND count(*) FILTER (WHERE EXISTS ("
+        "           SELECT 1 FROM goods_warehouse g "
+        "           WHERE g.reserved_order_id = o.id "
+        "             AND g.shipping_labeled_at IS NOT NULL)) = 0 "
         ") q"
     )
     pending = int(cur.fetchone()[0] or 0)
@@ -523,6 +541,9 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
     # Сколько отправлений уже разделили за этот запуск и сколько раз OZON отказал.
     split_done = 0
     split_failed = 0
+    # Отправления, отложенные до следующего запуска: их нужно сперва разделить на OZON,
+    # иначе в системе появятся номера, которых маркетплейс не знает.
+    postponed_split = []
 
     for p in postings:
         posting_number = p.get('posting_number')
@@ -577,6 +598,21 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
                     # заказы этой порцией: следующий запуск попробует снова, а если так
                     # и не выйдет — отправление уедет целиком, как раньше.
                     split_failed += 1
+                    continue
+
+        # Многовещевое отправление, до которого деление в этот раз не дошло (уперлись
+        # в лимит порции), НЕ заводим с придуманными номерами.
+        #
+        # Именно так в системе появлялись номера с суффиксами (-1, -2), которых OZON
+        # не знает. Дальше по такому номеру нельзя ни получить ярлык, ни собрать
+        # поставку: вещи «застревали» — числились в доставке, хотя лежали на складе.
+        # Пропускаем — следующий запуск синхронизации разделит их на стороне OZON
+        # и заведёт уже с настоящими номерами.
+        if split_map is None and posting_number not in existing_format:
+            total_qty_check = sum(int(pr.get('quantity') or 1) for pr in products)
+            if total_qty_check > 1:
+                postponed_split.append(posting_number)
+                continue
 
         if split_map:
             # Отправление разделено: дальше каждая вещь живёт под СВОИМ номером от OZON.
@@ -796,6 +832,9 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         # раз OZON отказал (такие уедут целиком, как раньше).
         'splitDone': split_done,
         'splitFailed': split_failed,
+        # Отправления, отложенные до следующего запуска: сперва их надо разделить
+        # на OZON, иначе в системе появятся номера, которых маркетплейс не знает.
+        'postponedSplit': len(postponed_split),
         'totalFromOzon': len(postings),
         'unmatched': unmatched[:50],
         'createdNumbers': created_numbers[:50],
