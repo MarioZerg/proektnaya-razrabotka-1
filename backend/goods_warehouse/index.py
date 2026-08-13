@@ -281,6 +281,19 @@ def try_match_orders_from_stock(cur, gw_id=None):
             "WHERE marketplace <> 'Yandex' AND group_key IS NULL "
             f"AND sewing_status = '{NOT_STARTED_SEWING}' AND fulfilled_from_stock_id IS NULL "
             "AND COALESCE(status, '') <> 'Отменён' "
+            # Подбирать со склада можно ТОЛЬКО отправления, которые маркетплейс ещё
+            # ждёт от нас: у OZON это «ожидает упаковки» (awaiting_packaging).
+            #
+            # Если отправление уже в «ожидает отгрузки» (awaiting_deliver) или уехало,
+            # маркетплейс считает его собранным: ярлык не выдаётся, в поставку вещь не
+            # отсканировать, по конвейеру она тоже не пройдёт — упаковщице нечего
+            # печатать. Раньше такие заказы падали в подбор, кладовщик шёл за товаром,
+            # а на стикеровке упирался в тупик.
+            #
+            # У WB и Яндекса поле ozon_status пустое — условие их не касается.
+            "AND COALESCE(ozon_status, '') NOT IN "
+            "    ('awaiting_deliver', 'delivering', 'delivered', 'cancelled', "
+            "     'not_accepted', 'driver_pickup') "
             f"AND marketplace_item_id IN ({item_ids_csv}) "
             "ORDER BY (order_type = 'FBS') DESC, created_at ASC, id ASC "
             "FOR UPDATE SKIP LOCKED"
