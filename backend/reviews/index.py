@@ -34,7 +34,7 @@ def _resp(status, body):
 
 
 def _iso(dt):
-    return dt.isoformat() if dt else None
+    return (dt.isoformat() + 'Z') if dt else None
 
 
 def _parse_dt(value):

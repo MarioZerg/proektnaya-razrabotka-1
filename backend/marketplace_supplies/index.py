@@ -586,7 +586,7 @@ def handler(event: dict, context) -> dict:
                         'shipToMarketplaceAt': (r[6].isoformat() + 'Z') if r[6] else None,
                         # Забирает газелька с нашего склада или везём до склада сами.
                         'gazelkaPickup': bool(r[7]),
-                        'supplyDate': r[8].isoformat() if r[8] else None,
+                        'supplyDate': (r[8].isoformat() + 'Z') if r[8] else None,
                         'timeslot': r[9],
                         'completedAt': (r[10].isoformat() + 'Z') if r[10] else None,
                         'ordersCount': r[11],
@@ -926,7 +926,7 @@ def handler(event: dict, context) -> dict:
                     'ozonDeliveryMethod': row[18],
                     'ozonApplicationNumber': row[19],
                     'ozonStatus': row[20],
-                    'supplyDate': row[21].isoformat() if row[21] else None,
+                    'supplyDate': (row[21].isoformat() + 'Z') if row[21] else None,
                     'timeslot': row[22],
                     'shipmentType': row[23],
                     'packagingType': row[24],

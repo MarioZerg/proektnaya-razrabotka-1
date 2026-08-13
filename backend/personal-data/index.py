@@ -62,7 +62,7 @@ def upload_scan(base64_data: str, mime: str) -> str:
 
 
 def iso(value):
-    return value.isoformat() if value else None
+    return (value.isoformat() + 'Z') if value else None
 
 
 def docs_status(row_map: dict, doc_types: set) -> dict:

@@ -5,6 +5,15 @@ import urllib.request
 import psycopg2
 
 
+# ВАЖНО о времени: база живёт по UTC, а цех — по Москве (разница 3 часа).
+#
+# Все отметки времени отдаются с суффиксом 'Z' — это метка «время в UTC». По ней
+# приложение само переводит момент в московский. Без 'Z' браузер считает время
+# местным и показывает его на 3 часа раньше: кладовщик принимал возврат в 14:00,
+# а в списке значилось 11:00, и найти свою же приёмку было невозможно.
+#
+# Если добавляете новое поле с датой — не забудьте про 'Z'.
+
 # Статусы OZON, при которых вещь ФИЗИЧЕСКИ ещё не у покупателя и не может быть возвратом.
 # Отсканировать такую вещь на приёмке возврата нельзя: она либо на нашем складе, либо
 # едет к покупателю. Кладовщик по ошибке принял бы её как возврат и потерял отправление.
@@ -437,7 +446,7 @@ def handler(event: dict, context) -> dict:
                                 'message': r[3],
                                 'actorName': r[4],
                                 'link': r[5],
-                                'createdAt': r[6].isoformat() if r[6] else None,
+                                'createdAt': (r[6].isoformat() + 'Z') if r[6] else None,
                                 'isRead': r[7],
                             }
                             for r in rows
@@ -517,9 +526,9 @@ def handler(event: dict, context) -> dict:
                             'id': r[0],
                             'storageBarcode': r[1],
                             'status': r[2],
-                            'receivedAt': r[3].isoformat() if r[3] else None,
-                            'inspectedAt': r[4].isoformat() if r[4] else None,
-                            'takenAt': r[5].isoformat() if r[5] else None,
+                            'receivedAt': (r[3].isoformat() + 'Z') if r[3] else None,
+                            'inspectedAt': (r[4].isoformat() + 'Z') if r[4] else None,
+                            'takenAt': (r[5].isoformat() + 'Z') if r[5] else None,
                             'disposeReason': r[6],
                             'lostReason': r[7],
                             'orderNumber': r[8],
@@ -581,7 +590,7 @@ def handler(event: dict, context) -> dict:
                             'material': r[3],
                             'width': r[4],
                             'height': r[5],
-                            'createdAt': r[6].isoformat() if r[6] else None,
+                            'createdAt': (r[6].isoformat() + 'Z') if r[6] else None,
                             'marketplace': r[7],
                             'storageBarcode': r[8],
                             'shelfName': r[9],
@@ -643,7 +652,7 @@ def handler(event: dict, context) -> dict:
                         'userName': h[0],
                         'action': h[1],
                         'description': h[2],
-                        'createdAt': h[3].isoformat() if h[3] else None,
+                        'createdAt': (h[3].isoformat() + 'Z') if h[3] else None,
                     }
                     for h in cur.fetchall()
                 ]
@@ -656,10 +665,10 @@ def handler(event: dict, context) -> dict:
                         'status': r[1],
                         'storageBarcode': r[2],
                         'receiveReason': r[3],
-                        'receivedAt': r[4].isoformat() if r[4] else None,
-                        'shippedAt': r[5].isoformat() if r[5] else None,
-                        'shippingLabeledAt': r[6].isoformat() if r[6] else None,
-                        'matchedAt': r[7].isoformat() if r[7] else None,
+                        'receivedAt': (r[4].isoformat() + 'Z') if r[4] else None,
+                        'shippedAt': (r[5].isoformat() + 'Z') if r[5] else None,
+                        'shippingLabeledAt': (r[6].isoformat() + 'Z') if r[6] else None,
+                        'matchedAt': (r[7].isoformat() + 'Z') if r[7] else None,
                         'shelfName': r[8],
                         'sourceOrderNumber': r[9],
                         'product': r[10],
@@ -1329,8 +1338,8 @@ def handler(event: dict, context) -> dict:
                         'marketplace': marketplace,
                         'ozonStatus': ozon_status,
                         'orderStatus': order_status,
-                        'createdAt': created_at.isoformat() if created_at else None,
-                        'cancelledAt': cancelled_at.isoformat() if cancelled_at else None,
+                        'createdAt': (created_at.isoformat() + 'Z') if created_at else None,
+                        'cancelledAt': (cancelled_at.isoformat() + 'Z') if cancelled_at else None,
                         'cutterName': cutter,
                         'sewerName': sewer,
                         'packerName': packer,

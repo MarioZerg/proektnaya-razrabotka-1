@@ -462,7 +462,7 @@ def handler(event: dict, context) -> dict:
                         'shortage': float(row[5]),
                         'shortagePercent': float(row[6]),
                         'closedBy': row[7],
-                        'completedAt': row[8].isoformat() if row[8] else None,
+                        'completedAt': (row[8].isoformat() + 'Z') if row[8] else None,
                         'cost': float(row[9]),
                     }
                     for row in cur.fetchall()

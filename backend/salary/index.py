@@ -380,8 +380,8 @@ def handler(event: dict, context) -> dict:
                     missed.append({
                         'userId': r[0], 'userName': r[1], 'stage': 'Раскрой',
                         'count': int(r[2]),
-                        'dateFrom': r[3].isoformat() if r[3] else None,
-                        'dateTo': r[4].isoformat() if r[4] else None,
+                        'dateFrom': (r[3].isoformat() + 'Z') if r[3] else None,
+                        'dateTo': (r[4].isoformat() + 'Z') if r[4] else None,
                     })
 
                 cur.execute(
@@ -396,8 +396,8 @@ def handler(event: dict, context) -> dict:
                     missed.append({
                         'userId': r[0], 'userName': r[1], 'stage': 'Пошив',
                         'count': int(r[2]),
-                        'dateFrom': r[3].isoformat() if r[3] else None,
-                        'dateTo': r[4].isoformat() if r[4] else None,
+                        'dateFrom': (r[3].isoformat() + 'Z') if r[3] else None,
+                        'dateTo': (r[4].isoformat() + 'Z') if r[4] else None,
                     })
 
                 cur.execute(
@@ -412,8 +412,8 @@ def handler(event: dict, context) -> dict:
                     missed.append({
                         'userId': r[0], 'userName': r[1], 'stage': 'Стикеровка',
                         'count': int(r[2]),
-                        'dateFrom': r[3].isoformat() if r[3] else None,
-                        'dateTo': r[4].isoformat() if r[4] else None,
+                        'dateFrom': (r[3].isoformat() + 'Z') if r[3] else None,
+                        'dateTo': (r[4].isoformat() + 'Z') if r[4] else None,
                     })
 
                 missed.sort(key=lambda x: x['count'], reverse=True)
@@ -464,8 +464,8 @@ def handler(event: dict, context) -> dict:
                         'userName': r[2],
                         'amount': float(r[3]),
                         'paidAt': r[4].isoformat() + 'Z',
-                        'periodFrom': r[5].isoformat() if r[5] else None,
-                        'periodTo': r[6].isoformat() if r[6] else None,
+                        'periodFrom': (r[5].isoformat() + 'Z') if r[5] else None,
+                        'periodTo': (r[6].isoformat() + 'Z') if r[6] else None,
                     }
                     for r in cur.fetchall()
                 ]
