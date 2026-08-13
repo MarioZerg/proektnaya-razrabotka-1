@@ -591,6 +591,33 @@ def handler(event: dict, context) -> dict:
                     "ORDER BY gw.matched_at ASC NULLS LAST, gw.id ASC"
                 )
                 orders_rows = cur.fetchall()
+
+                # Сколько ТАКИХ ЖЕ вещей свободно лежит на складе и на каких полках.
+                #
+                # Кладовщик подходит к стеллажу за конкретной вещью, а её там нет:
+                # ошиблись при инвентаризации, вещь переложили, забрали и не отметили.
+                # Раньше на этом работа вставала — он не знал, есть ли на складе такая
+                # же вещь и где её искать, и заказ уходил в цех шиться заново.
+                #
+                # Теперь рядом с каждой строкой показываем свободные остатки того же
+                # товара по полкам: «Лен 300x265 — ещё 2 шт: Нижняя (1), Средняя (1)».
+                cur.execute(
+                    "SELECT src.product, sh.name, count(*) "
+                    "FROM goods_warehouse gw "
+                    "JOIN orders src ON src.id = gw.order_id "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+                    "  AND src.product IS NOT NULL "
+                    "GROUP BY src.product, sh.name "
+                    "ORDER BY count(*) DESC"
+                )
+                stock_by_product = {}
+                for prod, shelf_name, cnt in cur.fetchall():
+                    stock_by_product.setdefault(prod, []).append({
+                        'shelfName': shelf_name or 'Полка не указана',
+                        'count': int(cnt),
+                    })
+
                 return {
                     'statusCode': 200,
                     'headers': headers,
@@ -608,6 +635,9 @@ def handler(event: dict, context) -> dict:
                             'shelfName': r[9],
                             'orderType': r[10],
                             'cluster': r[11],
+                            # Свободные такие же вещи на складе — запасной вариант,
+                            # если по своей полке вещи не оказалось.
+                            'alsoOnShelves': stock_by_product.get(r[2], []),
                         }
                         for r in orders_rows
                     ], ensure_ascii=False),

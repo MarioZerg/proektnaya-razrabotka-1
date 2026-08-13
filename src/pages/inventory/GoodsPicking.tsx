@@ -270,7 +270,23 @@ const GoodsPicking = () => {
                           </div>
                         )}
                       </TableCell>
-                      <TableCell>{o.shelfName || '—'}</TableCell>
+                      <TableCell>
+                        <div>{o.shelfName || '—'}</div>
+                        {/* Запасной вариант: такие же вещи, свободно лежащие на складе.
+                            Если по своей полке вещи не оказалось (переложили, забрали и
+                            не отметили, ошиблись при инвентаризации), кладовщик сразу
+                            видит, есть ли замена и с какой полки её взять — вместо того
+                            чтобы отправлять заказ в цех шиться заново. */}
+                        {!!o.alsoOnShelves?.length && (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Ещё{' '}
+                            {o.alsoOnShelves.reduce((sum, x) => sum + x.count, 0)} шт:{' '}
+                            {o.alsoOnShelves
+                              .map((x) => `${x.shelfName} (${x.count})`)
+                              .join(', ')}
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell className="whitespace-nowrap">
                         {formatDate(o.createdAt)}
                       </TableCell>
