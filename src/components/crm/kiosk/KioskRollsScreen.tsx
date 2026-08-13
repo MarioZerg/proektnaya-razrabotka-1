@@ -175,9 +175,25 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
             </p>
           </div>
 
+          {/* Остаток крупно и рядом с полем ввода: закройщик указывает недостачу,
+              глядя на то, сколько метров числится на рулоне. Раньше остаток был
+              мелкой строкой в шапке, и в поле улетали цифры вроде 90 м при остатке 5. */}
+          <div className="rounded-md border-2 border-border bg-muted/40 p-3 text-center">
+            <p className="text-sm text-muted-foreground">По системе на рулоне осталось</p>
+            <p className="font-mono-tech text-3xl font-bold">
+              {formatQuantity(selected.remainingQuantity)} {selected.unit}
+            </p>
+          </div>
+
           <div className="rounded-md border border-border p-3 text-center">
             <p className="text-sm text-muted-foreground">Недостача (если ткань закончилась раньше)</p>
             <p className="font-mono-tech text-3xl font-bold">{shortage || '0'}</p>
+            {/* Больше остатка списать нельзя — предупреждаем сразу, до нажатия кнопки. */}
+            {Number(shortage) > Number(selected.remainingQuantity || 0) && (
+              <p className="mt-1 text-sm font-semibold text-destructive">
+                Больше, чем осталось на рулоне — проверьте цифру
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-2">

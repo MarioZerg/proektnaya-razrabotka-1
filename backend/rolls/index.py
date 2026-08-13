@@ -9,6 +9,26 @@ import psycopg2
 ROLLS_LIST_LIMIT = 800
 
 
+def notify_admin(cur, kind, title, message, actor_id, actor_name, link=None,
+                 entity_type=None, entity_id=None):
+    """Кладёт событие на панель администратора.
+
+    Недостача сверх нормы стоит денег, поэтому администратор должен увидеть её сразу
+    после закрытия рулона, а не найти случайно через неделю.
+    """
+    cur.execute(
+        "INSERT INTO admin_notifications (kind, title, message, actor_id, actor_name, "
+        "link, entity_type, entity_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            kind, title, message,
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            link, entity_type,
+            int(entity_id) if entity_id not in (None, '') else None,
+        ),
+    )
+
+
 def calc_shortage_penalty(cur, roll_id):
     """Считает штраф по рулону, НИЧЕГО не начисляя — для предпросмотра на дашборде.
 
@@ -17,7 +37,10 @@ def calc_shortage_penalty(cur, roll_id):
     """
     cur.execute(
         "SELECT r.initial_quantity, r.shortage_quantity, r.shortage_norm_percent, "
-        "r.cost_per_unit, mt.name, r.barcode, m.name, m.unit, r.penalty_total "
+        "r.cost_per_unit, mt.name, r.barcode, m.name, m.unit, r.penalty_total, "
+        # Сколько метров числилось на рулоне, когда закройщик назвал недостачу.
+        # Без этой цифры администратор не может перепроверить заявленную недостачу.
+        "r.remaining_at_close, r.closed_by_name, r.completed_at "
         "FROM rolls r "
         "JOIN materials m ON m.id = r.material_id "
         "LEFT JOIN material_types mt ON mt.id = m.type_id "
@@ -44,6 +67,10 @@ def calc_shortage_penalty(cur, roll_id):
         'normPercent': norm_percent,
         'costPerUnit': cost_per_unit,
         'alreadyCharged': float(row[8]) if row[8] is not None else None,
+        # Факт на момент закрытия: остаток, кто закрыл и когда.
+        'remainingAtClose': float(row[9]) if row[9] is not None else None,
+        'closedByName': row[10],
+        'closedAt': (row[11].isoformat() + 'Z') if row[11] else None,
         'total': 0.0,
         'excess': 0.0,
         'users': [],
@@ -1055,11 +1082,31 @@ def handler(event: dict, context) -> dict:
                 # в разрезе закройщиков и тканей — она понадобится для будущих норм списания.
                 closed_by_id = body_data.get('userId')
                 closed_by_name = (body_data.get('userName') or '').strip()
+                # Недостача не может превышать остаток: закройщик списывает то, чего не
+                # хватило В САМОМ РУЛОНЕ, а не вообще. Если по системе на рулоне 5 м, а
+                # недостача заявлена 90 м — это опечатка (лишний ноль, метры вместо
+                # сантиметров). Раньше такие цифры проходили молча: в базе накопились
+                # рулоны с недостачей до 100 000 м, и вся статистика по недостачам врала.
+                if shortage > remaining_now:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Недостача {round(shortage, 2)} м больше остатка на рулоне '
+                                     f'({round(remaining_now, 2)} м). Проверьте цифру: списать '
+                                     f'можно только то, чего не хватило в самом рулоне.'
+                        }, ensure_ascii=False),
+                    }
+
                 cur.execute(
                     "UPDATE rolls SET remaining_quantity = 0, status = 'completed', completed_at = now(), "
-                    "shortage_quantity = %s, closed_by_user_id = %s, closed_by_name = %s WHERE id = %s",
+                    "shortage_quantity = %s, remaining_at_close = %s, "
+                    "closed_by_user_id = %s, closed_by_name = %s WHERE id = %s",
                     (
                         shortage,
+                        # Фиксируем, сколько метров числилось на рулоне В МОМЕНТ закрытия:
+                        # без этого числа недостачу нечем перепроверить.
+                        remaining_now,
                         int(closed_by_id) if closed_by_id else None,
                         closed_by_name or None,
                         int(item_id),
@@ -1069,11 +1116,36 @@ def handler(event: dict, context) -> dict:
                 # Штраф здесь НЕ начисляется. Недостача может быть и не виной сотрудника
                 # (поставщик недомотал, брак ткани), поэтому решение принимает администратор
                 # вручную на дашборде — там видно рулон, сумму и кого коснётся удержание.
+                #
+                # Но если недостача вышла за норму поставщика — сообщаем администратору
+                # сразу. Иначе рулон просто ложился в общий список, и разбор откладывался
+                # до случайного захода в раздел.
+                penalty = calc_shortage_penalty(cur, int(item_id))
+                over_norm = bool(penalty and penalty.get('total', 0) > 0)
+                if over_norm:
+                    notify_admin(
+                        cur, 'roll_shortage',
+                        f'Недостача сверх нормы: {penalty["materialName"]}',
+                        f'Рулон {penalty["barcode"]}: не хватило {round(shortage, 2)} '
+                        f'{penalty["unit"]} при норме {penalty["allowed"]} '
+                        f'({penalty["normPercent"]}%). Сверх нормы {penalty["excess"]} '
+                        f'{penalty["unit"]} на {penalty["total"]} ₽. '
+                        f'На рулоне оставалось {round(remaining_now, 2)} {penalty["unit"]}.',
+                        closed_by_id, closed_by_name,
+                        link='/crm/warehouse/rolls?tab=shortage',
+                        entity_type='roll', entity_id=int(item_id),
+                    )
+
                 conn.commit()
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'success': True, 'shortage': shortage}),
+                    'body': json.dumps({
+                        'success': True,
+                        'shortage': shortage,
+                        'remainingAtClose': remaining_now,
+                        'overNorm': over_norm,
+                    }),
                 }
 
             # Закройщик встретил брак в начале рулона (больше 10 пог.м): резать дальше
