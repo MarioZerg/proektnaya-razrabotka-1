@@ -93,23 +93,15 @@ const MoveShelfDialog = ({
     setLastError(null);
     try {
       const item = await fetchGoodsByBarcode(code);
-      // Бронь под заказ FBS не двигаем: за вещью уже идёт сборщик по конкретной полке.
-      if (item.reservedOrderId) {
-        playScanErrorSound();
-        setSkipped((n) => n + 1);
-        setLastError(
-          `${item.product || 'Товар'} забронирован под заказ ${
-            item.reservedOrderNumber || ''
-          } — его нужно собрать и отправить`.trim()
-        );
-        return;
-      }
-      if (['picking', 'awaiting_supply', 'reserved', 'shipped'].includes(item.status)) {
-        playScanErrorSound();
-        setSkipped((n) => n + 1);
-        setLastError(`${item.product || 'Товар'} уже собран для отправки`);
-        return;
-      }
+      // Это сканер ПЕРЕМЕЩЕНИЯ по складу, и он ничего не решает про подбор.
+      //
+      // Берём любую вещь: с бронью, в сборке, готовую к отправке. Меняется только
+      // полка — вещь не выходит из подбора и не меняет статус.
+      //
+      // Раньше здесь стояли запреты «забронирован» и «уже собран». Они не удерживали
+      // вещь на месте (кладовщик всё равно переставлял её физически), зато система
+      // продолжала считать её на старой полке — и сборщик шёл по неверному адресу.
+      //
       // Повторный скан той же вещи не должен раздувать счётчик.
       if (buffer.some((b) => b.barcode === code)) {
         playScanErrorSound();

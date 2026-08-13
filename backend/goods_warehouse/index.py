@@ -1794,23 +1794,14 @@ def handler(event: dict, context) -> dict:
                 codes_csv = ','.join(
                     "'" + str(b).replace("'", "''") + "'" for b in barcodes
                 )
-                # Живую бронь не двигаем даже пачкой: вещь ждёт сборщик по конкретной
-                # полке, и переезд сорвал бы отправление.
-                #
-                # А вот мёртвая бронь (заказ ушёл в цех, отменён или уже уехал) двигать
-                # можно: вещь свободна и лежит как обычный остаток. Раньше такие вещи
-                # молча выпадали из пачки, и кладовщик не понимал, почему переложилось
-                # меньше, чем он отсканировал.
+                # Перенос пачкой, как и поштучный, НИЧЕГО не фильтрует: меняется только
+                # полка. Раньше вещи с бронью или в сборке молча выпадали из переноса —
+                # кладовщик перекладывал полсотни вещей, а система записывала половину,
+                # и остальные числились на старых местах.
                 cur.execute(
-                    f"UPDATE goods_warehouse gw SET shelf_id = {int(shelf_id)} "
-                    f"FROM (SELECT 1) dummy "
-                    f"WHERE gw.storage_barcode IN ({codes_csv}) "
-                    f"  AND gw.status NOT IN ('picking', 'awaiting_supply', 'reserved', 'shipped') "
-                    f"  AND NOT EXISTS ("
-                    f"      SELECT 1 FROM orders ro WHERE ro.id = gw.reserved_order_id "
-                    f"        AND {RESERVE_ALIVE_SQL}"
-                    f"  ) "
-                    f"RETURNING gw.id"
+                    f"UPDATE goods_warehouse SET shelf_id = {int(shelf_id)} "
+                    f"WHERE storage_barcode IN ({codes_csv}) "
+                    f"RETURNING id"
                 )
                 moved = len(cur.fetchall())
                 cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
@@ -1842,10 +1833,7 @@ def handler(event: dict, context) -> dict:
                 # и откуда — так заметна случайная вещь из чужого ряда.
                 cur.execute(
                     "SELECT gw.id, o.product, s.name, gw.shelf_id, gw.status, "
-                    "       gw.reserved_order_id, ro.order_number, "
-                    # Заказ ещё ждёт эту вещь: не ушёл в цех, не отменён, не уехал.
-                    # Только в этом случае вещь реально стоит в подборе.
-                    f"       {RESERVE_ALIVE_SQL} "
+                    "       gw.reserved_order_id, ro.order_number "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -1856,41 +1844,20 @@ def handler(event: dict, context) -> dict:
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Товар со штрихкодом {barcode} не найден'})}
                 (gw_id, gw_product, old_shelf_name, old_shelf_id,
-                 gw_status, gw_reserved_id, gw_reserved_number, reserve_alive) = row
+                 gw_status, gw_reserved_id, gw_reserved_number) = row
 
-                # Вещь забронирована под ЖИВОЙ заказ — перекладывать её НЕЛЬЗЯ.
+                # Смена полки НИЧЕГО не проверяет и ничего не решает про подбор.
                 #
-                # Кладовщик уже получил её в списке подбора и идёт за ней по конкретной
-                # полке. Если в этот момент вещь переедет на другой стеллаж, сборщик
-                # придёт на пустое место, отправление сорвётся, а маркетплейс оштрафует.
-                # Такую вещь надо собрать и отгрузить, а не двигать по складу.
+                # Это чисто складская операция: вещь физически переехала с одного
+                # стеллажа на другой, и система просто записывает новое место. Бронь,
+                # статус, участие в подборе — всё остаётся как было: вещь не пропадает
+                # из подбора и не меняет статус, у неё меняется ТОЛЬКО полка.
                 #
-                # Но если заказ уже ушёл на конвейер, отменён или уехал — бронь мёртвая.
-                # Раньше она всё равно держала вещь намертво: кладовщик не мог переложить
-                # мрамор на его законную полку и получал «забронирован» без объяснений.
-                # Такая вещь свободна, её можно двигать как обычный остаток.
-                if gw_reserved_id and reserve_alive:
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps({
-                            'error': f'{gw_product or "Товар"} забронирован под заказ '
-                                     f'{gw_reserved_number or ""} — его нужно собрать и '
-                                     f'отправить, а не перекладывать'.replace('  ', ' ')
-                        }, ensure_ascii=False),
-                    }
-
-                # Уже в сборке или едет в поставку — тоже не трогаем: вещь снята с полки
-                # и живёт по своему маршруту.
-                if gw_status in ('picking', 'awaiting_supply', 'reserved', 'shipped'):
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps({
-                            'error': f'{gw_product or "Товар"} уже собран для отправки — '
-                                     f'перекладывать его нельзя'
-                        }, ensure_ascii=False),
-                    }
+                # Раньше здесь стояли запреты «забронирован» и «уже собран». На практике
+                # они мешали работе: кладовщик физически переставил вещь на другую полку,
+                # а система отказывалась это записать — и в ней оставалось старое место.
+                # Сборщик потом шёл по неверному адресу. Запрет не удерживал вещь на
+                # полке, он лишь ломал учёт.
 
                 # Вещь уже лежит на этой полке — второй раз её не двигаем и честно
                 # говорим об этом: иначе кладовщик думает, что переложил, а он повторился.
