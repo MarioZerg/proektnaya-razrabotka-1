@@ -37,6 +37,7 @@ import {
   statusZone,
   reasonLabels,
   canPrintMarketplaceLabel,
+  canPrintStorageSticker,
 } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
 
 interface GoodsWarehouseTableProps {
@@ -206,7 +207,7 @@ const GoodsWarehouseTable = ({
                 <TableCell>
                   <div className="flex items-center gap-1.5">
                     <span className="font-mono-tech text-xs">{i.storageBarcode}</span>
-                    {canPrintStickers && (
+                    {canPrintStickers && canPrintStorageSticker(i) && (
                     <Button
                       variant="ghost"
                       size="icon"

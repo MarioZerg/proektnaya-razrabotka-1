@@ -23,7 +23,23 @@ export { formatDateTime as formatDate } from '@/lib/dateUtils';
  * даже если за ней когда-то был закреплён заказ.
  */
 export const canPrintMarketplaceLabel = (item: GoodsWarehouseItem): boolean =>
-  Boolean(item.reservedOrderId) && item.status === 'awaiting_supply';
+  Boolean(item.reservedOrderId) &&
+  item.status === 'awaiting_supply' &&
+  // Вещь уехала на маркетплейс — печатать ярлык больше некуда и незачем.
+  // Как только поставку приняли на складе площадки (или каждую вещь там
+  // отсканировали), отправление закрыто: наш ярлык на него уже не наклеить.
+  !item.shippedAt;
+
+/**
+ * Можно ли печатать стикер хранения (наш складской штрихкод).
+ *
+ * Стикер хранения нужен, пока вещь физически лежит у нас: по нему её находят на
+ * полке и сканируют. Для отгруженных и утерянных вещей он бессмыслен — вещи на
+ * складе больше нет. Печать такой наклейки только плодит на складе штрихкоды,
+ * за которыми ничего не стоит: кладовщик потом ищет вещь, которой давно нет.
+ */
+export const canPrintStorageSticker = (item: GoodsWarehouseItem): boolean =>
+  item.status !== 'shipped' && item.status !== 'lost' && !item.shippedAt;
 
 export const statusLabels: Record<GoodsStatus, string> = {
   // Вещь висит на разборе у производства: упаковщица её ещё не перепаковала и

@@ -197,7 +197,12 @@ const GoodsCard = () => {
   // Вещь «На хранении» лежит свободной, даже если за ней когда-то закрепляли заказ, —
   // ярлык ей не нужен, а наклеенный по ошибке уводит чужой товар в поставку.
   const canPrintLabel =
-    !!card.reservedOrderId && (card.status === 'picking' || card.status === 'awaiting_supply');
+    !!card.reservedOrderId &&
+    (card.status === 'picking' || card.status === 'awaiting_supply') &&
+    // Вещь уехала на маркетплейс и там её приняли — отправление закрыто, ярлык
+    // печатать некуда. Статусы 'shipped' и 'lost' сюда и так не попадают, но
+    // дата отгрузки может проставиться раньше смены статуса.
+    !card.shippedAt;
 
   return (
     <CrmLayout>

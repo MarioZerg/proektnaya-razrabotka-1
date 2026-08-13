@@ -1012,6 +1012,15 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': 'Эта вещь не подобрана ни под один заказ — стикеровать её рано'}),
                     }
+                if gw_status in ('shipped', 'lost'):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Вещь уже уехала на маркетплейс (или числится утерянной) — '
+                                     'стикер отправления ей больше не нужен.'
+                        }, ensure_ascii=False),
+                    }
                 if gw_status not in ('in_stock', 'picking'):
                     return {
                         'statusCode': 409,

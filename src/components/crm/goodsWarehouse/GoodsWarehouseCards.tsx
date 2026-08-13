@@ -16,6 +16,7 @@ import {
   reasonIcons,
   reasonClass,
   canPrintMarketplaceLabel,
+  canPrintStorageSticker,
 } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
 
 interface GoodsWarehouseCardsProps {
@@ -70,7 +71,7 @@ const GoodsWarehouseCards = ({
               <Badge variant={statusVariant[i.status]}>{statusLabels[i.status]}</Badge>
             </div>
 
-            {canPrintStickers ? (
+            {canPrintStickers && canPrintStorageSticker(i) ? (
               <button
                 type="button"
                 onClick={() =>
