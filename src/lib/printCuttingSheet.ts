@@ -191,10 +191,11 @@ const buildChecklistPageHtml = (
     (o) => `
       <div style="padding:4px 10px;text-align:center;display:flex;flex-direction:column;
                   justify-content:center;height:100%;box-sizing:border-box;">
-        <div style="font-size:${sizeFont(o, 23)}px;font-weight:800;line-height:1.05;
-                    white-space:nowrap;">${sizeLabel(o)}</div>
-        <div style="font-size:${numberFont(o, 20)}px;font-weight:800;margin-top:2px;
-                    letter-spacing:0.3px;white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
+        <div style="font-size:${sizeFont(o, o.groupSize && o.groupSize > 1 ? 20 : 23)}px;
+                    font-weight:800;line-height:1.05;white-space:nowrap;">${sizeLabel(o)}</div>
+        <div style="font-size:${numberFont(o, o.groupSize && o.groupSize > 1 ? 20 : 23)}px;
+                    font-weight:800;margin-top:2px;letter-spacing:0.3px;white-space:nowrap;
+                    line-height:1.1;">${o.orderNumber}</div>
         <div style="font-size:${o.groupSize && o.groupSize > 1 ? 9 : 11}px;font-weight:700;
                     color:#222;margin-top:1px;line-height:1;">${o.marketplace}</div>
         ${groupNote(o)}
@@ -220,7 +221,7 @@ const buildQrPageHtml = (
                     width:${QR_SIZE_PX}px;height:${QR_SIZE_PX}px;" />
         <div style="font-size:${sizeFont(o, 20)}px;font-weight:800;line-height:1.05;
                     white-space:nowrap;">${sizeLabel(o)}</div>
-        <div style="font-size:${numberFont(o, 17)}px;font-weight:800;margin-top:2px;
+        <div style="font-size:${numberFont(o, 20)}px;font-weight:800;margin-top:2px;
                     white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
         <div style="font-size:10px;font-weight:700;color:#222;margin-top:1px;line-height:1;">
           ${o.marketplace} [${o.orderType}]
