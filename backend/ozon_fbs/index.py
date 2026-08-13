@@ -22,7 +22,15 @@ OZON_API_BASE = 'https://api-seller.ozon.ru'
 #
 # 20 отправлений функция успевает обработать с запасом. Общая скорость не страдает:
 # место остановки запоминается, и следующий запуск продолжает со следующей порции.
-OZON_SYNC_PAGE = 20
+OZON_SYNC_PAGE = 10
+
+# Сколько отправлений за один запуск разрешено делить на OZON.
+#
+# Деление — это отдельный запрос к OZON на каждое многотоварное отправление, а он
+# занимает секунду-полторы. У функции всего 5 секунд на всё, поэтому за раз делим
+# немного: остальные разделятся при следующих запусках. Заказы не теряются — они
+# просто попадут на конвейер чуть позже, уже разбитыми.
+OZON_SPLIT_PER_RUN = 2
 # Сколько страниц забираем за один запуск.
 #
 # У функции всего 5 секунд на всю работу: запрос к OZON, разбор отправлений и запись
@@ -128,6 +136,56 @@ def ozon_error_text(status_code, data):
     if isinstance(data, dict):
         return data.get('message') or data.get('error') or json.dumps(data, ensure_ascii=False)
     return str(data)
+
+
+def split_posting(client_id, api_key, posting_number, products):
+    """Делит отправление OZON на отдельные посылки — по одной вещи в каждой.
+
+    Зачем: покупатель заказал три разные шторы одним отправлением. Пока они едут одним
+    номером, OZON принимает сборку только целиком — стоит упаковщице застикеровать
+    первую вещь, как ВСЁ отправление уходит в «ожидает отгрузки», хотя две шторы ещё
+    не сшиты. Кладовщик видит в поставке товар, которого физически нет.
+
+    После деления каждая вещь — самостоятельное отправление со СВОИМ номером от OZON,
+    и она уезжает ровно тогда, когда её застикеровали.
+
+    Деление НЕОБРАТИМО и заметно покупателю: посылки придут по отдельности. Поэтому
+    делим только новые отправления, которых ещё нет в системе.
+
+    Возвращает список (posting_number, sku) — по одной записи на вещь, или None,
+    если OZON отказал (тогда работаем по-старому, одним отправлением).
+    """
+    plan = []
+    for pr in products:
+        sku = pr.get('sku')
+        if not sku:
+            return None
+        for _ in range(int(pr.get('quantity') or 1)):
+            plan.append({'products': [{'product_id': int(sku), 'quantity': 1}]})
+
+    # Делить нечего: в отправлении одна вещь.
+    if len(plan) < 2:
+        return None
+
+    status, data = ozon_post(
+        '/v1/posting/fbs/split', client_id, api_key,
+        {'posting_number': posting_number, 'postings': plan},
+    )
+    if status != 200 or not isinstance(data, dict):
+        return None
+
+    # OZON возвращает родительское отправление (в нём остаётся одна вещь) и список
+    # новых. Собираем всё вместе: каждая запись — одна вещь со своим номером.
+    result = []
+    parent = data.get('parent_posting') or {}
+    for block in [parent] + list(data.get('postings') or []):
+        number = block.get('posting_number')
+        if not number:
+            continue
+        for pr in block.get('products') or []:
+            for _ in range(int(pr.get('quantity') or 1)):
+                result.append((number, str(pr.get('product_id'))))
+    return result or None
 
 
 def load_items_index(cur):
@@ -340,6 +398,10 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
     # Справочник товаров забираем ОДИН раз на всю страницу, а не по запросу на товар.
     items_index = load_items_index(cur)
 
+    # Сколько отправлений уже разделили за этот запуск и сколько раз OZON отказал.
+    split_done = 0
+    split_failed = 0
+
     for p in postings:
         posting_number = p.get('posting_number')
         ozon_status = p.get('status')
@@ -367,6 +429,83 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         # с учётом количества.
         products = p.get('products', []) or []
         made_any = False
+
+        # Многотоварное отправление делим на стороне OZON — по посылке на вещь.
+        #
+        # Иначе OZON принимает сборку только целиком: упаковщица закрывает одну штору
+        # из трёх, а всё отправление уходит в «ожидает отгрузки», хотя две ещё не сшиты.
+        # Кладовщик видит в поставке товар, которого физически нет.
+        #
+        # Делим ТОЛЬКО отправления, которых ещё нет в системе: деление необратимо, и
+        # повторный проход не должен резать то, что уже разделено и, возможно, частично
+        # собрано. Если OZON отказал — работаем по-старому, одним отправлением: работа
+        # цеха важнее, чем идеальное деление.
+        split_map = None
+        if (
+            posting_number not in existing_format
+            and len(products) > 0
+            and split_done < OZON_SPLIT_PER_RUN
+        ):
+            total_qty = sum(int(pr.get('quantity') or 1) for pr in products)
+            if total_qty > 1:
+                split_map = split_posting(client_id, api_key, posting_number, products)
+                split_done += 1
+                if not split_map:
+                    # OZON отказал в делении (истёк срок, сменился статус). Не создаём
+                    # заказы этой порцией: следующий запуск попробует снова, а если так
+                    # и не выйдет — отправление уедет целиком, как раньше.
+                    split_failed += 1
+
+        if split_map:
+            # Отправление разделено: дальше каждая вещь живёт под СВОИМ номером от OZON.
+            # Свои номера не выдумываем — номер отправления и есть номер заказа.
+            by_sku = {}
+            for number, sku in split_map:
+                by_sku.setdefault(str(sku), []).append(number)
+
+            for pr in products:
+                item = find_item_cached(items_index, pr.get('sku'), pr.get('offer_id'))
+                qty = int(pr.get('quantity') or 1)
+                if not item:
+                    skipped_no_item += qty
+                    unmatched.append({
+                        'postingNumber': posting_number,
+                        'ozonSku': pr.get('sku'),
+                        'offerId': pr.get('offer_id'),
+                    })
+                    continue
+                material, width, height, item_name, item_id = item
+                product_name = (
+                    f"{material} {width}x{height}" if material and width and height else item_name
+                )
+                numbers = by_sku.get(str(pr.get('sku')), [])
+                for _n in range(qty):
+                    if not numbers:
+                        break
+                    unit_number = numbers.pop(0)
+                    cur.execute(
+                        "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
+                        "quantity, source, material, width, height, ozon_posting_number, ozon_status, "
+                        "marketplace_created_at, marketplace_item_id, "
+                        "is_legal_entity, legal_company_name, legal_inn) "
+                        "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, "
+                        "%s, %s, %s) "
+                        "ON CONFLICT (order_number) DO NOTHING RETURNING id",
+                        (
+                            unit_number, product_name, material, width, height,
+                            unit_number, ozon_status, mp_created_at, item_id,
+                            is_legal, legal_company or None, legal_inn or None,
+                        ),
+                    )
+                    if cur.fetchone():
+                        created += 1
+                        created_numbers.append(unit_number)
+                        made_any = True
+                    else:
+                        skipped_existing += 1
+            if made_any:
+                conn.commit()
+            continue
 
         # Сколько ВСЕГО вещей приедет в этом отправлении (по всем товарам, с учётом
         # количества). Считаем заранее, потому что от этого зависит формат номера:
@@ -531,6 +670,10 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         'matchedFromStock': matched,
         'skippedExisting': skipped_existing,
         'skippedNoItem': skipped_no_item,
+        # Сколько многотоварных отправлений разделили на OZON за этот запуск и сколько
+        # раз OZON отказал (такие уедут целиком, как раньше).
+        'splitDone': split_done,
+        'splitFailed': split_failed,
         'totalFromOzon': len(postings),
         'unmatched': unmatched[:50],
         'createdNumbers': created_numbers[:50],
