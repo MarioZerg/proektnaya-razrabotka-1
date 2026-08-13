@@ -236,7 +236,12 @@ const CrmDashboard = () => {
         o.orderType === 'FBS' &&
         ['Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка'].includes(
           o.sewingStatus
-        )
+        ) &&
+        // Вещи, которые уже не горят: покупатель отказался, либо отправление
+        // собрано и уехало. Шить там нечего, а в счётчике срочных они создавали
+        // ложную гору работы.
+        !['cancelled', 'delivering', 'delivered', 'not_accepted', 'driver_pickup',
+          'awaiting_deliver'].includes(o.ozonStatus || '')
     ).length;
     // На стикеровке швея видит то, что отшила сама: там она уже записана исполнителем
     // этапа (sewerUserId), а assignedUserId перешёл к упаковщице.
