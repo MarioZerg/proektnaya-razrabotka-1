@@ -1013,7 +1013,21 @@ def handler(event: dict, context) -> dict:
                 # Считаем строго «своё»: та же площадка и та же схема (FBS/FBO), а для
                 # FBO — ещё и свой кластер. Площадку берём у закреплённого заказа, а
                 # если его нет — у заказа, в котором вещь сшили.
-                f"(SELECT COUNT(*) FROM goods_warehouse gw "
+                #
+                # У WB СВОЙ учёт. Там застикерованный заказ уходит в резервную
+                # («накопительную») поставку на стороне маркетплейса, а не остаётся
+                # вещью на складе. Поэтому для WB FBS считаем заказы в накопителе —
+                # ровно то же число, что показано внутри поставки.
+                #
+                # Без этого список показывал «ждёт сканирования 82», а внутри поставки
+                # было 29: снаружи считались вещи склада, внутри — заказы накопителя.
+                f"(CASE WHEN s.marketplace = 'WB' AND s.type = 'FBS' THEN ("
+                f"   SELECT COUNT(*) FROM wb_supply_orders wso "
+                f"   JOIN marketplace_supplies acc ON acc.id = wso.supply_id "
+                f"   WHERE acc.is_accumulator = true "
+                f"     AND acc.status IN ('Открытая', 'На сборке')"
+                f" ) ELSE ("
+                f"SELECT COUNT(*) FROM goods_warehouse gw "
                 f" LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
                 f" LEFT JOIN orders so ON so.id = gw.order_id "
                 f" WHERE gw.status IN ('picking', 'awaiting_supply') "
@@ -1024,7 +1038,7 @@ def handler(event: dict, context) -> dict:
                 f"   AND (s.type <> 'FBO' OR s.cluster IS NULL "
                 f"        OR COALESCE(ro.cluster, so.cluster) = s.cluster) "
                 f"   AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
-                f"                   WHERE msi2.goods_warehouse_id = gw.id)) "
+                f"                   WHERE msi2.goods_warehouse_id = gw.id)) END) "
                 f"FROM marketplace_supplies s "
                 f"LEFT JOIN users u ON u.id = s.created_by "
                 f"LEFT JOIN users lu ON lu.id = s.locked_by "
