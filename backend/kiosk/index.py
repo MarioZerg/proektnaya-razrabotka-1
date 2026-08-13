@@ -408,7 +408,23 @@ def handler(event: dict, context) -> dict:
                 "FROM orders o LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                 "LEFT JOIN users su ON su.id = o.sewer_user_id "
-                f"WHERE o.order_number = '{order_number_esc}'"
+                # Ищем по номеру заказа ИЛИ по номеру отправления маркетплейса.
+                #
+                # На ярлыке OZON напечатан номер ОТПРАВЛЕНИЯ (0152210646-0165-1), а в
+                # системе у вещи может быть внутренний номер с хвостом (…-1-2) — так
+                # мы дробили многовещевые отправления до того, как научились делить их
+                # на стороне OZON. Упаковщица сканировала ярлык и получала «заказ не
+                # найден»: точного совпадения нет, хотя вещь лежит у неё в руках.
+                #
+                # Если под номером отправления несколько вещей, берём ту, что дальше
+                # всех по конвейеру и ещё не закрыта: именно её сейчас стикеруют.
+                f"WHERE o.order_number = '{order_number_esc}' "
+                f"   OR o.ozon_posting_number = '{order_number_esc}' "
+                f"ORDER BY (o.order_number = '{order_number_esc}') DESC, "
+                "  CASE o.sewing_status WHEN 'Стикеровка' THEN 1 WHEN 'В работе' THEN 2 "
+                "    WHEN 'Раскроено' THEN 3 WHEN 'На раскрое' THEN 4 WHEN 'Новый' THEN 5 "
+                "    ELSE 6 END, o.id "
+                "LIMIT 1"
             )
             row = cur.fetchone()
             if not row:
