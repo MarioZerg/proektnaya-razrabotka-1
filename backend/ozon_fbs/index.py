@@ -298,6 +298,128 @@ def match_from_stock(cur, order_id, item_id) -> bool:
     return True
 
 
+def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name):
+    """Делит на OZON отправления, которые попали в систему ДО появления деления.
+
+    Такие заказы лежат в «Новых» слипшимися: три шторы одного покупателя едут одним
+    номером, и стоит упаковщице застикеровать первую, как всё отправление уходит в
+    «ожидает отгрузки», хотя остальные ещё не сшиты.
+
+    Делим ТОЛЬКО те отправления, где НИ ОДНА вещь ещё не взята в работу. Если по
+    отправлению уже начали шить, трогать его нельзя: деление необратимо, а часть
+    вещей уже привязана к работе и оплате.
+    """
+    cur.execute(
+        "SELECT o.ozon_posting_number, count(*) "
+        "FROM orders o "
+        "WHERE o.marketplace = 'OZON' AND o.order_type = 'FBS' "
+        "  AND o.ozon_status = 'awaiting_packaging' "
+        "  AND o.ozon_posting_number IS NOT NULL "
+        "GROUP BY o.ozon_posting_number "
+        # Все вещи отправления — строго «Новый»: работа по ним ещё не начиналась.
+        "HAVING count(*) > 1 "
+        "   AND count(*) FILTER (WHERE o.sewing_status = 'Новый') = count(*) "
+        "ORDER BY o.ozon_posting_number "
+        f"LIMIT {OZON_SPLIT_PER_RUN}"
+    )
+    candidates = [row[0] for row in cur.fetchall()]
+
+    split_done = 0
+    split_failed = 0
+    renamed = 0
+
+    for posting_number in candidates:
+        # Состав берём у OZON: только он знает, какие товары и в каком количестве
+        # реально в отправлении.
+        status, data = ozon_post(
+            '/v3/posting/fbs/get', client_id, api_key,
+            {'posting_number': posting_number, 'with': {}},
+        )
+        if status != 200:
+            split_failed += 1
+            continue
+        result = (data or {}).get('result') or {}
+        if result.get('status') != 'awaiting_packaging':
+            # Отправление уже уехало дальше — делить поздно и не нужно.
+            continue
+
+        products = result.get('products') or []
+
+        # Отправление МОГЛИ уже разделить на стороне OZON (вручную в кабинете или
+        # прошлым запуском, оборвавшимся до переименования). Тогда у OZON в нём
+        # осталась одна вещь, а у нас всё ещё висит несколько записей под старым
+        # номером. Делить нечего — но и бросать нельзя: надо подтянуть новые номера.
+        total_qty = sum(int(pr.get('quantity') or 1) for pr in products)
+        if total_qty < 2:
+            split_failed += 1
+            continue
+
+        split_map = split_posting(client_id, api_key, posting_number, products)
+        if not split_map:
+            split_failed += 1
+            continue
+        split_done += 1
+
+        # Раздаём новые номера уже созданным заказам: по одному номеру на вещь,
+        # сопоставляя по коду товара OZON.
+        by_sku = {}
+        for number, sku in split_map:
+            by_sku.setdefault(str(sku), []).append(number)
+
+        cur.execute(
+            "SELECT o.id, COALESCE(o.product_ozon_sku, mi.ozon_sku) "
+            "FROM orders o LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+            "WHERE o.ozon_posting_number = %s AND o.sewing_status = 'Новый' "
+            "ORDER BY o.id",
+            (posting_number,),
+        )
+        rows = cur.fetchall()
+        for order_id, sku in rows:
+            numbers = by_sku.get(str(sku)) if sku else None
+            if not numbers:
+                continue
+            new_number = numbers.pop(0)
+            # Номер заказа = номер отправления OZON. Свои номера не выдумываем:
+            # сотрудник сверяет его с ярлыком один в один.
+            cur.execute(
+                "UPDATE orders SET order_number = %s, ozon_posting_number = %s "
+                "WHERE id = %s AND NOT EXISTS ("
+                "  SELECT 1 FROM orders x WHERE x.order_number = %s"
+                ")",
+                (new_number, new_number, order_id, new_number),
+            )
+            renamed += cur.rowcount
+        conn.commit()
+
+    if split_done:
+        log_action(
+            cur, actor_id, actor_name, 'ozon_split_pending',
+            f'Разделено отправлений OZON: {split_done}, вещам присвоены свои номера: {renamed}',
+        )
+        conn.commit()
+
+    # Сколько ещё осталось разделить — чтобы приложение знало, вызывать ли снова.
+    cur.execute(
+        "SELECT count(*) FROM ("
+        "  SELECT o.ozon_posting_number FROM orders o "
+        "  WHERE o.marketplace = 'OZON' AND o.order_type = 'FBS' "
+        "    AND o.ozon_status = 'awaiting_packaging' "
+        "    AND o.ozon_posting_number IS NOT NULL "
+        "  GROUP BY o.ozon_posting_number "
+        "  HAVING count(*) > 1 "
+        "     AND count(*) FILTER (WHERE o.sewing_status = 'Новый') = count(*)"
+        ") q"
+    )
+    pending = int(cur.fetchone()[0] or 0)
+
+    return _resp(200, {
+        'splitDone': split_done,
+        'splitFailed': split_failed,
+        'renamed': renamed,
+        'pending': pending,
+    })
+
+
 def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
     """Тянет новые FBS-заказы OZON (status=awaiting_packaging) и создаёт их в системе."""
     payload = {
@@ -1076,8 +1198,8 @@ def handler(event: dict, context) -> dict:
         # В журнале должно быть видно, что заказы подтянул планировщик, а не сотрудник.
         actor_id, actor_name = None, 'Планировщик'
 
-    if action not in ('sync_orders', 'refresh_status', 'refresh_all_statuses', 'label',
-                      'find_by_barcode'):
+    if action not in ('sync_orders', 'split_pending', 'refresh_status',
+                      'refresh_all_statuses', 'label', 'find_by_barcode'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -1093,6 +1215,8 @@ def handler(event: dict, context) -> dict:
 
         if action == 'sync_orders':
             return handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name)
+        if action == 'split_pending':
+            return handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name)
         if action == 'refresh_status':
             return handle_refresh_status(cur, conn, client_id, api_key, body_data)
         if action == 'refresh_all_statuses':
