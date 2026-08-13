@@ -1,8 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { recoverIfStaleBuild } from '@/lib/appUpdate';
 import {
@@ -22,7 +19,10 @@ import { fetchYandexLabel } from '@/lib/yandexMarketApi';
 import { printTraceSticker } from '@/lib/printTraceSticker';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import KioskManualSearch from '@/components/crm/kiosk/KioskManualSearch';
+import KioskScanPrompt from '@/components/crm/kiosk/KioskScanPrompt';
+import KioskOrderNotices from '@/components/crm/kiosk/KioskOrderNotices';
+import KioskOrderDetails from '@/components/crm/kiosk/KioskOrderDetails';
+import KioskOrderActions from '@/components/crm/kiosk/KioskOrderActions';
 
 interface KioskOrdersScreenProps {
   packerId: number;
@@ -234,252 +234,39 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   return (
     <div className="space-y-6">
       {!order ? (
-        <div className="flex flex-col items-center gap-6 py-10">
-          <Icon
-            name={searching ? 'Loader2' : 'ScanLine'}
-            size={72}
-            className={`text-muted-foreground ${searching ? 'animate-spin' : ''}`}
-          />
-          <p className="text-center text-2xl font-semibold">
-            {searching ? 'Ищем заказ…' : 'Отсканируйте QR-код с листка закройщика'}
-          </p>
-          <p className="text-center text-muted-foreground">
-            Сканируются только заказы на стикеровке
-          </p>
-          {/* Запасной путь, если сканер сломался или QR затёрт: найти заказ по размеру.
-              Включается настройкой цеха «Ручной поиск заказа на терминале». */}
-          {manualSearchAllowed && (
-            <div className="w-full max-w-md">
-              <KioskManualSearch
-                workshopId={workshopId}
-                role={role}
-                onSelect={(found) => {
-                  setOrder(found);
-                  setPrinted(false);
-                }}
-              />
-            </div>
-          )}
-        </div>
+        <KioskScanPrompt
+          searching={searching}
+          manualSearchAllowed={manualSearchAllowed}
+          workshopId={workshopId}
+          role={role}
+          onSelect={(found) => {
+            setOrder(found);
+            setPrinted(false);
+          }}
+        />
       ) : (
         <Card className="border-border shadow-none">
           <CardContent className="space-y-4 pt-6">
-            {/* Куда класть вещь после стикеровки. Контейнеры в цехе разделены:
-                FBS едут по отправлениям, FBO — по складам назначения.
-                Поставка FBO собирается по артикулу, а он одинаковый у одинаковых изделий
-                в разных кластерах: вуаль 200×250 для Хоругвино и для другого города —
-                один товар. Система подмену не заметит, город есть только на стикере,
-                поэтому пишем его крупно прямо на экране. */}
-            {order.orderType === 'FBO' ? (
-              <div className="flex items-start gap-3 rounded-md border border-sky-300 bg-sky-50 p-3 text-sky-900">
-                <Icon name="Container" size={22} className="mt-0.5 shrink-0" />
-                <div className="min-w-0">
-                  <p className="font-bold">
-                    Контейнер FBO
-                    {order.cluster ? ` · ${order.cluster}` : ''}
-                  </p>
-                  <p className="text-sm">
-                    {order.cluster
-                      ? `Положите вещь в контейнер склада ${order.cluster}. Сверьте город на стикере: у одинаковых изделий разных городов артикул совпадает, система подмену не заметит`
-                      : 'Склад назначения указан на стикере — прочитайте город и положите вещь в контейнер этого склада, отдельно от FBS'}
-                  </p>
-                </div>
-              </div>
-            ) : order.orderType === 'FBS' ? (
-              <div className="flex items-start gap-3 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-emerald-900">
-                <Icon name="Container" size={22} className="mt-0.5 shrink-0" />
-                <div className="min-w-0">
-                  <p className="font-bold">Контейнер FBS</p>
-                  <p className="text-sm">
-                    Положите вещь в контейнер FBS — отдельно от товара FBO
-                  </p>
-                </div>
-              </div>
-            ) : null}
-
-            {/* Вещь из связки Яндекса: ярлык у каждой вещи свой, но уезжают они вместе.
-                Предупреждаем прямо на терминале, иначе упаковщица может напечатать один
-                ярлык на всю связку — и остальные пакеты уедут без ярлыков. */}
-            {order.groupSize && order.groupSize > 1 && (
-              <div className="flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
-                <Icon name="Layers" size={22} className="mt-0.5 shrink-0" />
-                <div>
-                  <p className="font-bold">
-                    Связка: вещь {order.groupPosition} из {order.groupSize}
-                  </p>
-                  <p className="text-sm">
-                    Упакуйте вещи заказа вместе, но ярлык печатайте на каждую отдельно —
-                    у этой вещи свой ярлык «{order.groupPosition} из {order.groupSize}»
-                  </p>
-                </div>
-              </div>
-            )}
-            {/* Покупатель — компания. Шьётся и упаковывается как обычно, но
-                упаковщица должна видеть, кому уйдёт вещь. */}
-            {order.isLegalEntity && (
-              <div className="flex items-start gap-3 rounded-md border border-indigo-300 bg-indigo-50 p-3 text-indigo-900">
-                <Icon name="Building2" size={22} className="mt-0.5 shrink-0" />
-                <div>
-                  <p className="font-bold">Заказ юридического лица</p>
-                  <p className="text-sm">
-                    {order.legalCompanyName || 'Покупатель — компания'}. Собирается как обычный
-                    заказ, ярлык отправления печатается так же
-                  </p>
-                </div>
-              </div>
-            )}
-            {order.groupSize && order.groupSize > 1 && (
-              <div className="flex items-start gap-3 rounded-md border border-violet-300 bg-violet-50 p-3 text-violet-900">
-                <Icon name="Package" size={22} className="mt-0.5 shrink-0" />
-                <div>
-                  <p className="font-bold">
-                    Заказ из {order.groupSize} вещей — это {order.groupPosition}-я
-                  </p>
-                  <p className="text-sm">
-                    Каждая вещь едет своим пакетом со своим ярлыком. Отгружается заказ только
-                    целиком — все {order.groupSize} вещи должны попасть в одну поставку
-                  </p>
-                </div>
-              </div>
-            )}
-            <div className="space-y-2 text-lg">
-              <div className="flex items-center justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Заказ</span>
-                <span className="font-mono-tech font-bold">{order.orderNumber}</span>
-              </div>
-              <div className="flex items-center justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Товар</span>
-                <span className="font-semibold">{order.product}</span>
-              </div>
-              <div className="flex items-center justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Материал</span>
-                <span className="font-semibold">{order.material || '—'}</span>
-              </div>
-              <div className="flex items-center justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Размер</span>
-                <span className="font-semibold">
-                  {order.width && order.height ? `${order.width}×${order.height}` : '—'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Маркетплейс</span>
-                <span className="font-semibold">
-                  {order.marketplace || 'Индивидуальный'}
-                  {order.orderType && order.orderType !== 'Индивидуальный' && (
-                    <Badge variant="secondary" className="ml-2">
-                      {order.orderType}
-                    </Badge>
-                  )}
-                </span>
-              </div>
-              {/* Кластер FBO — город, куда уедет поставка. Нужен, чтобы не смешать
-                  вещи из разных поставок в одну коробку. */}
-              {order.orderType === 'FBO' && order.cluster && (
-                <div className="flex items-center justify-between border-b border-border pb-2">
-                  <span className="text-muted-foreground">Город назначения</span>
-                  <span className="font-semibold">{order.cluster}</span>
-                </div>
-              )}
-              {/* Вещь из связки: показываем, какая она по счёту в заказе покупателя. */}
-              {order.groupSize && order.groupSize > 1 && (
-                <div className="flex items-center justify-between border-b border-border pb-2">
-                  <span className="text-muted-foreground">Связка</span>
-                  <span className="font-semibold">
-                    {order.groupPosition} из {order.groupSize}
-                  </span>
-                </div>
-              )}
-              <div className="flex items-center justify-between border-b border-border pb-2">
-                <span className="text-muted-foreground">Закройщик</span>
-                <span className="font-semibold">{order.cutterName || '—'}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Швея</span>
-                <span className="font-semibold">
-                  {order.sewerName || order.assignedUserName || '—'}
-                </span>
-              </div>
-            </div>
-
-            {/* Стикер «кто шил» нужен только на FBO: там вещь уезжает на склад
-                маркетплейса обезличенной, и по возврату иначе не понять, чья работа.
-                У FBS в пакет кладётся ярлык отправления маркетплейса, заказ привязан
-                к конкретному покупателю — второй стикер только путает упаковщицу. */}
-            {order.orderType !== 'FBS' && (
-              <Button
-                size="lg"
-                variant={tracePrinted ? 'outline' : 'default'}
-                className="h-16 w-full text-lg"
-                onClick={() => {
-                  printTraceSticker(order);
-                  setTracePrinted(true);
-                }}
-              >
-                <Icon name={tracePrinted ? 'Check' : 'QrCode'} size={24} className="mr-2" />
-                {tracePrinted ? 'Стикер в пакет напечатан' : 'Стикер в пакет (кто шил)'}
-              </Button>
-            )}
-
-            {order.isCancelled || order.labelGone ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-center">
-                <p className="text-lg font-bold text-destructive">
-                  {order.labelGone && !order.isCancelled
-                    ? 'Отправление уже уехало к покупателю'
-                    : 'Клиент отменил заказ'}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {order.labelGone && !order.isCancelled
-                    ? 'Маркетплейс больше не выдаёт ярлык на это отправление. Нажмите «Закрыть заказ» — распечатается стикер хранения, наклейте его и оставьте вещь для кладовщика'
-                    : 'Стикер отправления не нужен. Нажмите «Закрыть заказ» — распечатается стикер хранения, наклейте его и оставьте вещь для кладовщика'}
-                </p>
-                {/* Связка Яндекса: у заказа один ярлык на несколько вещей, поэтому
-                    отмена касается всей связки. Упаковщица стикерует вещи по очереди,
-                    но должна знать общее число — чтобы не потерять часть. */}
-                {order.groupKey && (order.groupSize || 0) > 1 && (
-                  <p className="mt-2 rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-sm font-semibold">
-                    Это связка: всего вещей {order.groupSize}, эта —{' '}
-                    {order.groupPosition || 1}. Стикеруйте по очереди и держите их вместе
-                  </p>
-                )}
-              </div>
-            ) : (
-              <Button size="lg" className="h-16 w-full text-lg" onClick={handlePrint}>
-                <Icon name="Printer" size={24} className="mr-2" />
-                {order.orderType === 'FBS'
-                  ? 'Распечатать ярлык отправления'
-                  : 'Распечатать стикер'}
-              </Button>
-            )}
-
-            {(printed || order.isCancelled || order.labelGone) && (
-              <Button
-                size="lg"
-                className="h-16 w-full bg-emerald-600 text-lg text-white hover:bg-emerald-700"
-                onClick={handleClose}
-                disabled={closing}
-              >
-                <Icon
-                  name={closing ? 'Loader2' : 'Check'}
-                  size={24}
-                  className={`mr-2 ${closing ? 'animate-spin' : ''}`}
-                />
-                Закрыть заказ
-              </Button>
-            )}
-
-            <Button
-              variant="outline"
-              size="lg"
-              className="h-14 w-full"
-              onClick={() => {
+            <KioskOrderNotices order={order} />
+            <KioskOrderDetails order={order} />
+            <KioskOrderActions
+              order={order}
+              printed={printed}
+              tracePrinted={tracePrinted}
+              closing={closing}
+              onPrintTrace={() => {
+                printTraceSticker(order);
+                setTracePrinted(true);
+              }}
+              onPrint={handlePrint}
+              onClose={handleClose}
+              onCancel={() => {
                 setOrder(null);
                 setPrinted(false);
                 setTracePrinted(false);
                 setTimeout(() => inputRef.current?.focus(), 0);
               }}
-            >
-              Отмена
-            </Button>
+            />
           </CardContent>
         </Card>
       )}

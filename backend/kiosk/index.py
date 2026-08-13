@@ -408,6 +408,19 @@ def handler(event: dict, context) -> dict:
             if len(_parts) == 2 and _parts[1].isdigit() and len(_parts[1]) <= 2:
                 base_number = _parts[0]
             base_number_esc = base_number.replace("'", "''")
+
+            # Корень отправления: «47971098-0677-1-2» -> «47971098-0677».
+            #
+            # Когда OZON делит отправление, он выдаёт вещам СВОИ номера с разными
+            # хвостами: «-1» и «-3». Старая наклейка «-1-2» не совпадает ни с одним из
+            # них, а отсечение одного хвоста даёт «-1» — уже застикерованную вещь.
+            # Поэтому ищем ещё и по корню: все вещи одного отправления начинаются с
+            # него, и среди них найдётся та, что сейчас на стикеровке.
+            root_number = base_number
+            _rparts = base_number.rsplit('-', 1)
+            if len(_rparts) == 2 and _rparts[1].isdigit() and len(_rparts[1]) <= 2:
+                root_number = _rparts[0]
+            root_like_esc = root_number.replace("'", "''").replace('%', '') + '-%'
             cur.execute(
                 "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.status, o.ozon_status, "
@@ -437,11 +450,24 @@ def handler(event: dict, context) -> dict:
                 f"   OR o.ozon_posting_number = '{order_number_esc}' "
                 f"   OR o.order_number = '{base_number_esc}' "
                 f"   OR o.ozon_posting_number = '{base_number_esc}' "
-                f"ORDER BY (o.order_number = '{order_number_esc}') DESC, "
-                f"  (o.ozon_posting_number = '{order_number_esc}') DESC, "
-                "  CASE o.sewing_status WHEN 'Стикеровка' THEN 1 WHEN 'В работе' THEN 2 "
-                "    WHEN 'Раскроено' THEN 3 WHEN 'На раскрое' THEN 4 WHEN 'Новый' THEN 5 "
-                "    ELSE 6 END, o.id "
+                # Соседи по отправлению: OZON мог выдать вещам номера «-1» и «-3».
+                f"   OR o.ozon_posting_number LIKE '{root_like_esc}' "
+                #
+                # ПОРЯДОК ВАЖЕН: сначала берём вещь, которую сейчас реально стикеруют,
+                # и только потом смотрим на точность совпадения номера.
+                #
+                # Почему так: отправление 47971098-0677-1-1/-1-2 OZON разделил на два
+                # СВОИХ номера — «-1» и «-3». Первую вещь уже застикеровали (стала
+                # «Готовые»), вторая ждёт очереди под номером «-3». Упаковщица пикает
+                # старую наклейку «-1-2», а система по приоритету точности отдавала
+                # закрытую «-1» и отвечала «уже застикерован». Работа вставала, хотя
+                # незакрытая вещь того же отправления лежала рядом.
+                "ORDER BY CASE o.sewing_status "
+                "    WHEN 'Стикеровка' THEN 1 WHEN 'В работе' THEN 2 "
+                "    WHEN 'Раскроено' THEN 3 WHEN 'На раскрое' THEN 4 "
+                "    WHEN 'Новый' THEN 5 ELSE 6 END, "
+                f"  (o.order_number = '{order_number_esc}') DESC, "
+                f"  (o.ozon_posting_number = '{order_number_esc}') DESC, o.id "
                 "LIMIT 1"
             )
             row = cur.fetchone()
