@@ -183,6 +183,64 @@ def extract_phone_from_message(message: dict) -> tuple[str | None, str]:
     return None, name
 
 
+def issue_code(cur, max_user_id: str, phone_norm: str, sender_name: str, login_token: str | None) -> str:
+    """Создаёт код входа и, если вкладка сайта ждёт его по метке, кладёт код в метку.
+
+    Код по-прежнему уходит человеку сообщением: метка может протухнуть, а чат с ботом
+    остаётся под рукой. Но при обычном сценарии код заберёт сама вкладка, и вводить
+    его руками не придётся.
+    """
+    code = f'{random.randint(0, 999999):06d}'
+    expires_at = datetime.utcnow() + timedelta(minutes=CODE_TTL_MINUTES)
+    cur.execute(
+        'INSERT INTO max_auth_sessions (max_user_id, code, phone, full_name, expires_at) '
+        'VALUES (%s, %s, %s, %s, %s)',
+        (max_user_id, code, phone_norm, sender_name[:200], expires_at),
+    )
+    if login_token:
+        cur.execute(
+            "UPDATE max_login_tokens SET code = %s, max_user_id = %s, awaiting_contact = false "
+            "WHERE token = %s AND expires_at > now()",
+            (code, max_user_id, login_token),
+        )
+    return code
+
+
+def find_pending_token(cur, max_user_id: str) -> str | None:
+    """Метка вкладки, которая сейчас ждёт входа этого человека.
+
+    Нужна на втором шаге: человек пришёл по ссылке, бот попросил номер, и в ответном
+    сообщении с контактом метки уже нет — MAX передаёт payload только при старте.
+    Поэтому метку запоминаем за пользователем и достаём по нему.
+    """
+    cur.execute(
+        "SELECT token FROM max_login_tokens WHERE max_user_id = %s AND code IS NULL "
+        "AND expires_at > now() ORDER BY id DESC LIMIT 1",
+        (max_user_id,),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def extract_start_payload(body_data: dict) -> str | None:
+    """Метка входа из ссылки вида https://max.ru/bot?start=<метка>.
+
+    Ключ у MAX отличается между версиями API, поэтому проверяем известные варианты.
+    """
+    for key in ('payload', 'start_payload', 'startPayload'):
+        val = body_data.get(key)
+        if val:
+            return str(val).strip()[:64]
+    message = body_data.get('message') or {}
+    body = message.get('body') or {}
+    text = (body.get('text') or '').strip()
+    # Запасной путь: некоторые клиенты присылают payload как «/start <метка>».
+    m = re.match(r'^/start[ =]+(\S+)$', text)
+    if m:
+        return m.group(1)[:64]
+    return None
+
+
 def handler(event: dict, context) -> dict:
     """Webhook-приёмник обновлений от бота МЕГАТЮЛЬ в мессенджере MAX.
 
@@ -260,11 +318,55 @@ def handler(event: dict, context) -> dict:
     if update_type == 'bot_started':
         user = body_data.get('user') or {}
         max_user_id = str(user.get('user_id') or body_data.get('chat_id') or '').strip()
-        if max_user_id:
+        if not max_user_id:
+            return {'statusCode': 200, 'headers': headers, 'body': ''}
+
+        # Метка вкладки, с которой человек пришёл: она в ссылке на бота.
+        login_token = extract_start_payload(body_data)
+
+        # ТОТ, КТО УЖЕ ВХОДИЛ, номер second раз не присылает: его MAX-аккаунт давно
+        # привязан к сотруднику. Сразу выдаём код — вкладка на сайте заберёт его сама,
+        # и человеку остаётся только вернуться на неё.
+        dsn = os.environ['DATABASE_URL']
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                'SELECT id, full_name, phone FROM users WHERE max_user_id = %s AND is_active = true',
+                (max_user_id,),
+            )
+            known = cur.fetchone()
+
+            if login_token:
+                # Привязываем метку к человеку заранее: если он всё-таки новый и будет
+                # слать контакт, на втором шаге мы найдём его вкладку по этой записи.
+                cur.execute(
+                    "UPDATE max_login_tokens SET max_user_id = %s, awaiting_contact = %s "
+                    "WHERE token = %s AND expires_at > now()",
+                    (max_user_id, known is None, login_token),
+                )
+
+            if known:
+                code = issue_code(cur, max_user_id, known[2] or '', known[1] or 'Сотрудник', login_token)
+                conn.commit()
+            else:
+                conn.commit()
+                code = None
+        finally:
+            conn.close()
+
+        if code:
+            send_max_message(
+                max_user_id,
+                f'Код для входа в МЕГАТЮЛЬ: {code}\n'
+                'Можно просто вернуться на сайт — код подставится сам. '
+                f'Код действует {CODE_TTL_MINUTES} минут.',
+            )
+        else:
             send_max_message(
                 max_user_id,
                 'Здравствуйте! Это бот МЕГАТЮЛЬ. Нажмите кнопку ниже, чтобы поделиться '
-                'номером телефона и получить код для входа в систему.',
+                'номером телефона и войти в систему.',
                 with_contact_button=True,
             )
         return {'statusCode': 200, 'headers': headers, 'body': ''}
@@ -341,20 +443,22 @@ def handler(event: dict, context) -> dict:
                 )
                 user_id = cur.fetchone()[0]
 
-            code = f'{random.randint(0, 999999):06d}'
-            expires_at = datetime.utcnow() + timedelta(minutes=CODE_TTL_MINUTES)
-            cur.execute(
-                'INSERT INTO max_auth_sessions (max_user_id, code, phone, full_name, expires_at) '
-                'VALUES (%s, %s, %s, %s, %s)',
-                (max_user_id, code, phone_norm, sender_name[:200], expires_at),
-            )
+            # Вкладка, с которой человек ушёл в бота: код положим прямо в неё,
+            # чтобы не заставлять переписывать шесть цифр руками.
+            login_token = find_pending_token(cur, max_user_id)
+            code = issue_code(cur, max_user_id, phone_norm, sender_name, login_token)
             conn.commit()
         finally:
             conn.close()
 
+        hint = (
+            'Можно просто вернуться на сайт — код подставится сам.'
+            if login_token
+            else 'Введите его на сайте.'
+        )
         send_max_message(
             max_user_id,
-            f'Код для входа в МЕГАТЮЛЬ: {code}\nВведите его на сайте. Код действует {CODE_TTL_MINUTES} минут.',
+            f'Код для входа в МЕГАТЮЛЬ: {code}\n{hint} Код действует {CODE_TTL_MINUTES} минут.',
         )
         return {'statusCode': 200, 'headers': headers, 'body': ''}
 

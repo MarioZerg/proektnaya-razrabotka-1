@@ -49,7 +49,12 @@ const Index = () => {
     // должен открыться. Без перехвата ошибка всплывала наверх и оставляла страницу
     // в состоянии загрузки.
     fetchMaxBotUrl()
-      .then(setBotUrl)
+      .then(({ botUrl: url, loginToken }) => {
+        setBotUrl(url);
+        // Метку этой вкладки передаём странице ввода кода: по ней она заберёт
+        // готовый код у бота, и человеку не придётся переписывать шесть цифр.
+        if (loginToken) sessionStorage.setItem('maxLoginToken', loginToken);
+      })
       .catch(() => setBotUrl(null));
   }, []);
 

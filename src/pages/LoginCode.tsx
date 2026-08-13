@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import type { Role } from '@/lib/roles';
 import {
   fetchMaxBotUrl,
+  fetchMaxLoginStatus,
   verifyMaxCode,
   enterRole,
   type UserRoleEntry,
@@ -47,9 +48,76 @@ const LoginCode = () => {
     if (user) navigate('/crm', { replace: true });
   }, [user, navigate]);
 
+  // Метка вкладки: её положила главная страница перед уходом в мессенджер. Если
+  // страницу открыли напрямую, метки нет — запросим свою вместе со ссылкой на бота.
+  const [loginToken, setLoginToken] = useState<string | null>(() =>
+    sessionStorage.getItem('maxLoginToken'),
+  );
+  const [autoCode, setAutoCode] = useState(false);
+  // Бот ждёт номер: человек в системе ещё не зарегистрирован.
+  const [awaitingContact, setAwaitingContact] = useState(false);
+
   useEffect(() => {
-    fetchMaxBotUrl().then(setBotUrl);
+    fetchMaxBotUrl()
+      .then(({ botUrl: url, loginToken: fresh }) => {
+        setBotUrl(url);
+        if (!loginToken && fresh) {
+          sessionStorage.setItem('maxLoginToken', fresh);
+          setLoginToken(fresh);
+        }
+      })
+      .catch(() => setBotUrl(null));
+    // Ссылку тянем один раз: новая метка при каждом рендере обесценивала бы старую.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * АВТОПОДСТАНОВКА КОДА.
+   *
+   * Пока человек в мессенджере, вкладка раз в 2 секунды спрашивает сервер, не выдал ли
+   * бот код по её метке. Как только код появился — подставляем его в поле и сразу
+   * входим. Переписывать шесть цифр руками больше не нужно: достаточно вернуться
+   * на эту вкладку.
+   *
+   * Ручной ввод оставлен рабочим: человек мог открыть сайт на компьютере, а бота — на
+   * телефоне, и тогда вкладка с меткой ничего не дождётся.
+   */
+  useEffect(() => {
+    if (!loginToken || pendingUser || verifying) return;
+    let stop = false;
+
+    const tick = async () => {
+      if (stop) return;
+      try {
+        const status = await fetchMaxLoginStatus(loginToken);
+        if (stop) return;
+        setAwaitingContact(status.awaitingContact);
+        if (!status.code) return;
+        sessionStorage.removeItem('maxLoginToken');
+        setCode(status.code);
+        setAutoCode(true);
+        setVerifying(true);
+        try {
+          await applyAuthResult(await verifyMaxCode(status.code));
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Не удалось подтвердить код');
+          setAutoCode(false);
+        } finally {
+          setVerifying(false);
+        }
+      } catch {
+        // Молчим: сеть могла моргнуть, следующая попытка через пару секунд.
+      }
+    };
+
+    const timer = setInterval(tick, 2000);
+    tick();
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loginToken, pendingUser, verifying]);
 
   const finishLogin = (data: {
     id: number;
@@ -160,10 +228,18 @@ const LoginCode = () => {
 
         {!pendingUser && (
           <form onSubmit={handleVerifyCode} className="space-y-3">
-            <p className="text-center text-sm text-muted-foreground">
-              Поделитесь номером телефона в чате с ботом — код придёт сообщением. Затем
-              вернитесь сюда и введите его.
-            </p>
+            {autoCode ? (
+              <p className="flex items-center justify-center gap-2 text-center text-sm text-emerald-600">
+                <Icon name="Check" size={15} />
+                Код получен, входим…
+              </p>
+            ) : (
+              <p className="text-center text-sm text-muted-foreground">
+                {awaitingContact
+                  ? 'Нажмите в чате кнопку «Поделиться номером» — и возвращайтесь сюда, код подставится сам.'
+                  : 'Ожидаем код из чата с ботом — он подставится сам. Или введите его вручную.'}
+              </p>
+            )}
 
             <Input
               type="text"
@@ -175,6 +251,7 @@ const LoginCode = () => {
               maxLength={6}
               required
               autoFocus
+              disabled={autoCode}
             />
 
             {error && <p className="text-center text-sm text-destructive">{error}</p>}

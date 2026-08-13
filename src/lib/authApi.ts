@@ -44,14 +44,41 @@ export const fetchTestAccounts = async (): Promise<TestAccount[]> => {
 };
 
 /** Публичная ссылка на бота MAX для кнопки «Войти через MAX». */
-export const fetchMaxBotUrl = async (): Promise<string | null> => {
+export interface MaxBotLink {
+  /** Ссылка на бота с меткой этой вкладки: по ней бот узнаёт, куда вернуть код. */
+  botUrl: string | null;
+  loginToken: string | null;
+}
+
+export const fetchMaxBotUrl = async (): Promise<MaxBotLink> => {
   const res = await fetchWithTimeout(AUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'bot_info' }),
   });
   const data = await res.json();
-  return data.botUrl || null;
+  return { botUrl: data.botUrl || null, loginToken: data.loginToken || null };
+};
+
+export interface MaxLoginStatus {
+  code: string | null;
+  awaitingContact: boolean;
+  expired: boolean;
+}
+
+/** Готов ли код входа: вкладка спрашивает об этом, пока человек в мессенджере. */
+export const fetchMaxLoginStatus = async (loginToken: string): Promise<MaxLoginStatus> => {
+  const res = await fetchWithTimeout(AUTH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'max_login_status', loginToken }),
+  });
+  const data = await res.json();
+  return {
+    code: data.code || null,
+    awaitingContact: !!data.awaitingContact,
+    expired: !!data.expired,
+  };
 };
 
 export interface OnlineNow {

@@ -98,11 +98,65 @@ def handler(event: dict, context) -> dict:
     dsn = os.environ['DATABASE_URL']
 
     if action == 'bot_info':
+        # Ссылка на бота с ОДНОРАЗОВОЙ МЕТКОЙ этой вкладки (?start=...).
+        #
+        # Метка — это то, что избавляет человека от ручного ввода кода. MAX передаёт
+        # её боту при открытии чата, бот по ней понимает, какая вкладка ждёт входа,
+        # и кладёт готовый код обратно в метку. Вкладка забирает код сама.
         username = os.environ.get('MAX_BOT_USERNAME', '')
+        if not username:
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'botUrl': None})}
+
+        login_token = secrets.token_urlsafe(24)[:64]
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO max_login_tokens (token, expires_at) "
+                "VALUES (%s, now() + interval '15 minutes')",
+                (login_token,),
+            )
+            # Заодно подчищаем протухшие метки, чтобы таблица не росла бесконечно.
+            cur.execute("DELETE FROM max_login_tokens WHERE expires_at < now() - interval '1 day'")
+            conn.commit()
+        finally:
+            conn.close()
+
         return {
             'statusCode': 200,
             'headers': headers,
-            'body': json.dumps({'botUrl': f'https://max.ru/{username}' if username else None}),
+            'body': json.dumps({
+                'botUrl': f'https://max.ru/{username}?start={login_token}',
+                'loginToken': login_token,
+            }),
+        }
+
+    if action == 'max_login_status':
+        # Вкладка периодически спрашивает: «код уже готов?». Как только бот его
+        # выдал — возвращаем, и вход происходит без единого нажатия.
+        login_token = (body_data.get('loginToken') or '').strip()
+        if not login_token:
+            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет метки входа'})}
+
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                'SELECT code, awaiting_contact FROM max_login_tokens '
+                'WHERE token = %s AND expires_at > now()',
+                (login_token,),
+            )
+            row = cur.fetchone()
+        finally:
+            conn.close()
+
+        if not row:
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'expired': True})}
+
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': json.dumps({'code': row[0], 'awaitingContact': row[1], 'expired': False}),
         }
 
     if action == 'online_now':
