@@ -22,6 +22,11 @@ export interface Supply {
   shipToMarketplaceAt: string | null;
   completedAt: string | null;
   itemsCount: number;
+  /**
+   * Сколько застикерованных вещей уже готово уехать в эту поставку, но ещё не
+   * отсканировано. Считается по своей площадке и схеме (а для FBO — и кластеру).
+   */
+  readyToScanCount?: number;
   /** Сколько единиц обещали привезти по заявке. У FBO без этого поставку не выпустят. */
   plannedQuantity: number | null;
   createdByName: string | null;

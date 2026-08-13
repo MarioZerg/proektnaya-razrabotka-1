@@ -390,6 +390,16 @@ const ToMarketplace = () => {
                       ) : (
                         `${s.itemsCount} шт.`
                       )}
+                      {/* Сколько застикерованного товара уже ждёт этой поставки.
+                          Без этой строки только что созданная поставка выглядела
+                          пустой («0 шт.»), хотя контейнер стоял рядом собранный, —
+                          кладовщик не понимал, есть ли смысл заходить внутрь.
+                          У закрытых поставок не показываем: работа по ним окончена. */}
+                      {!!s.readyToScanCount && s.status !== 'Выполнена' && (
+                        <div className="mt-0.5 text-xs text-amber-700">
+                          ждёт сканирования: {s.readyToScanCount}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>
                       <SupplySewingProgress total={s.sewingTotal || 0} done={s.sewingDone || 0} />

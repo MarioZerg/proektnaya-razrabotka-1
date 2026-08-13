@@ -1028,7 +1028,29 @@ def handler(event: dict, context) -> dict:
                 f"s.locked_by, lu.full_name, "
                 # Сколько единиц обещали привезти по заявке: по нему видно недобор
                 # прямо в списке, ещё до попытки отгрузить поставку.
-                f"s.total_quantity_marketplace "
+                f"s.total_quantity_marketplace, "
+                # Сколько вещей УЖЕ готово уехать в эту поставку: застикеровано и
+                # лежит на складе, но ни в одну поставку ещё не отсканировано.
+                #
+                # Без этого числа только что созданная поставка выглядела пустой
+                # («0 из 0»), хотя контейнер застикерованного товара стоял рядом.
+                # Кладовщик не понимал, есть ли смысл заходить внутрь.
+                #
+                # Считаем строго «своё»: та же площадка и та же схема (FBS/FBO), а для
+                # FBO — ещё и свой кластер. Площадку берём у закреплённого заказа, а
+                # если его нет — у заказа, в котором вещь сшили.
+                f"(SELECT COUNT(*) FROM goods_warehouse gw "
+                f" LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                f" LEFT JOIN orders so ON so.id = gw.order_id "
+                f" WHERE gw.status IN ('picking', 'awaiting_supply') "
+                f"   AND gw.shipping_labeled_at IS NOT NULL "
+                f"   AND gw.shipped_at IS NULL "
+                f"   AND COALESCE(ro.marketplace, so.marketplace) = s.marketplace "
+                f"   AND COALESCE(ro.order_type, so.order_type) = s.type "
+                f"   AND (s.type <> 'FBO' OR s.cluster IS NULL "
+                f"        OR COALESCE(ro.cluster, so.cluster) = s.cluster) "
+                f"   AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
+                f"                   WHERE msi2.goods_warehouse_id = gw.id)) "
                 f"FROM marketplace_supplies s "
                 f"LEFT JOIN users u ON u.id = s.created_by "
                 f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -1057,6 +1079,8 @@ def handler(event: dict, context) -> dict:
                     'ozonDeliveryMethod': r[15],
                     'ozonApplicationNumber': r[16],
                     'ozonStatus': r[17],
+                    # Готово уехать в эту поставку: застикеровано, но ещё не сканировано.
+                    'readyToScanCount': r[24],
                     'wbOrdersCount': r[18],
                     # Пошив по поставке: сколько изделий всего и сколько уже сшито.
                     'sewingTotal': int(r[19] or 0),
