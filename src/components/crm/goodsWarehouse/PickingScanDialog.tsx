@@ -9,7 +9,8 @@ import {
 } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import { fetchGoodsByBarcode, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import { scanPickingByBarcode } from '@/lib/goodsWarehouseApi';
+import { useAuth } from '@/context/AuthContext';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 
 interface PickingScanDialogProps {
@@ -42,6 +43,7 @@ interface Hit {
  * Фокус из поля не уходит никогда, чтобы кладовщик пикал не притрагиваясь к мышке.
  */
 const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialogProps) => {
+  const { user } = useAuth();
   const [barcode, setBarcode] = useState('');
   const [busy, setBusy] = useState(false);
   /** Последняя нужная вещь — единственное, что занимает экран. */
@@ -61,6 +63,8 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
   const scannedRef = useRef<Set<string>>(new Set());
   /** Повторно отсканированный код — показываем предупреждение, но НЕ считаем. */
   const [duplicate, setDuplicate] = useState<string | null>(null);
+  /** Почему последняя вещь не подошла — кладовщик видит причину, а не просто «мимо». */
+  const [lastReason, setLastReason] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
@@ -75,6 +79,7 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
       setFoundCount(0);
       setBarcode('');
       setDuplicate(null);
+      setLastReason(null);
       scannedRef.current.clear();
       setTimeout(() => inputRef.current?.focus(), 80);
     }
@@ -97,39 +102,31 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
     setBusy(true);
     setDuplicate(null);
     try {
-      const item: GoodsWarehouseItem = await fetchGoodsByBarcode(code);
-      scannedRef.current.add(code.toUpperCase());
-      // Нужная вещь — ровно та, что сейчас лежит в складском подборе. Одного резерва
-      // мало: под условие попадали вещи, которые кладовщику брать не нужно —
-      //   * заказ уже забрали в цех: кроят или шьют, отправление закроет вещь
-      //     с конвейера, а эта останется на складе;
-      //   * стикер отправления уже наклеен: вещь собрана и ждёт короб;
-      //   * вещь уже уехала в поставку или отгружена — её физически нет на полке.
-      // Всё это для сканера подбора — «мимо»: за такой вещью на склад не приходили.
+      // Подбор ищется ПО РАЗМЕРУ товара, а не по номеру стикера.
       //
-      // Статус строго 'picking' — ровно то же условие, по которому строится список
-      // подбора на экране. Раньше сканер принимал ещё и 'in_stock': такие вещи
-      // зарезервированы, но в подбор ещё не заведены, и в списке их нет. Кладовщик
-      // слышал «нужная найдена» на вещь, которой в его задании не было.
-      const inPicking =
-        !!item.reservedOrderId &&
-        !item.orderInProduction &&
-        !item.shippingLabeledAt &&
-        item.status === 'picking';
+      // Вещи одного размера лежат на полке вперемешку и физически не отличаются.
+      // Кладовщик берёт любую подходящую — и система переносит подбор на неё, а
+      // «запасную» возвращает на полку свободной. Раньше сканер требовал именно тот
+      // стикер, который закрепила система: человек держал в руках нужную вещь, а в
+      // ответ слышал «мимо», и вещь с «правильным» стикером потом было не найти.
+      const res = await scanPickingByBarcode(code, user?.id, user?.name);
+      scannedRef.current.add(code.toUpperCase());
 
-      if (inPicking) {
+      if (res.matched) {
         playScanSound();
+        setLastReason(null);
         setHit({
-          goodsId: item.id,
+          goodsId: res.goodsId as number,
           barcode: code,
-          product: item.product,
-          shelfName: item.shelfName,
-          orderNumber: item.reservedOrderNumber || item.orderNumber,
+          product: res.product,
+          shelfName: res.shelfName,
+          orderNumber: res.orderNumber,
         });
         setFoundCount((n) => n + 1);
       } else {
         playScanErrorSound();
         setSkipped((n) => n + 1);
+        setLastReason(res.reason || null);
       }
     } catch {
       // Вещь не найдена или недоступна — для кладовщика это тот же неликвид.
@@ -184,6 +181,15 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
               <p className="text-sm text-muted-foreground">Мимо (не в подбор)</p>
             </div>
           </div>
+
+          {/* Почему вещь не подошла: «уже собрана», «не нужна в подбор». Кладовщик
+              видит причину сразу и не гадает, что не так с наклейкой. */}
+          {lastReason && !hit && (
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
+              <Icon name="Info" size={20} className="shrink-0 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">{lastReason}</p>
+            </div>
+          )}
 
           {/* Повтор: вещь уже пикали, счётчики не тронуты. */}
           {duplicate && (

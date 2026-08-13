@@ -2039,6 +2039,140 @@ def handler(event: dict, context) -> dict:
                     'body': json.dumps({'matched': len(rematched)}),
                 }
 
+            if action == 'scan_picking':
+                # Сканер подбора: ищем работу ПО РАЗМЕРУ ТОВАРА, а не по номеру стикера.
+                #
+                # Раньше сканер сверял именно тот GW-стикер, который система закрепила
+                # за заказом. На практике вещи одного размера лежат на полке вперемешку
+                # и физически ничем не отличаются: кладовщик берёт любую подходящую и
+                # клеит на неё ярлык отправления. Если это оказалась «не та» коробка,
+                # сканер отвечал «мимо» — при том что нужная вещь у человека в руках.
+                # Хуже того, вещь с «правильным» стикером потом было не найти вовсе.
+                #
+                # Теперь логика простая и совпадает с реальностью склада: отсканировали
+                # стикер хранения -> узнали, ЧТО это за товар -> ищем любой заказ в
+                # подборе на такой же товар. Совпало — вещь нужная, и подбор
+                # переключается на неё: ярлык уедет с той вещью, что реально в руках.
+                barcode = (body_data.get('barcode') or '').strip()
+                if not barcode:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Отсканируйте стикер хранения'},
+                                               ensure_ascii=False)}
+                bc_esc = barcode.replace("'", "''")
+
+                # 1. Что за вещь в руках: товар берём у заказа, в котором её сшили.
+                cur.execute(
+                    "SELECT gw.id, gw.status, gw.reserved_order_id, gw.shipping_labeled_at, "
+                    "       src.product, src.marketplace_item_id, sh.name "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders src ON src.id = gw.order_id "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    f"WHERE gw.storage_barcode = '{bc_esc}'"
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': f'Стикер {barcode} не найден'},
+                                               ensure_ascii=False)}
+                (gw_id, gw_status, gw_reserved, gw_labeled, gw_product,
+                 gw_item_id, gw_shelf) = row
+
+                # Вещь уже собрана или уехала — второй раз её не подбирают.
+                if gw_labeled or gw_status in ('shipped', 'awaiting_supply', 'lost'):
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'matched': False,
+                        'reason': 'Вещь уже собрана: на ней стикер отправления',
+                        'product': gw_product,
+                    }, ensure_ascii=False)}
+                if gw_status not in ('in_stock', 'picking'):
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'matched': False,
+                        'reason': 'Вещь не лежит на складе',
+                        'product': gw_product,
+                    }, ensure_ascii=False)}
+
+                # 2. Эта вещь уже закреплена за живым заказом — работа найдена сразу.
+                if gw_reserved:
+                    cur.execute(
+                        "SELECT ro.order_number FROM orders ro "
+                        f"WHERE ro.id = {int(gw_reserved)} AND {RESERVE_ALIVE_SQL}"
+                    )
+                    own = cur.fetchone()
+                    if own:
+                        return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                            'matched': True, 'goodsId': gw_id, 'product': gw_product,
+                            'shelfName': gw_shelf, 'orderNumber': own[0],
+                            'reassigned': False,
+                        }, ensure_ascii=False)}
+
+                # 3. Ищем любой заказ в подборе на ТАКОЙ ЖЕ товар, чью вещь ещё не
+                #    застикеровали.
+                #
+                #    Сравниваем по названию товара («Лен 300x265») — в нём и материал,
+                #    и ширина, и высота, то есть ровно то, что кладовщик называет
+                #    размером. По коду товара справочника сверять нельзя: у трети
+                #    складских вещей он не заполнен, и подбор бы молча не срабатывал.
+                #    Если код есть у обеих вещей — дополнительно проверяем и его.
+                if not gw_product:
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'matched': False,
+                        'reason': 'У вещи не указан размер — подобрать нельзя',
+                        'product': gw_product,
+                    }, ensure_ascii=False)}
+
+                prod_esc = gw_product.replace("'", "''")
+                item_sql = (
+                    f" AND (src2.marketplace_item_id IS NULL "
+                    f"      OR src2.marketplace_item_id = {int(gw_item_id)})"
+                    if gw_item_id else ""
+                )
+                cur.execute(
+                    "SELECT other.id, other.reserved_order_id, ro.order_number "
+                    "FROM goods_warehouse other "
+                    "JOIN orders src2 ON src2.id = other.order_id "
+                    "JOIN orders ro ON ro.id = other.reserved_order_id "
+                    "WHERE other.status = 'picking' "
+                    "  AND other.shipping_labeled_at IS NULL "
+                    f"  AND other.id <> {int(gw_id)} "
+                    f"  AND src2.product = '{prod_esc}' "
+                    + item_sql +
+                    f"  AND {RESERVE_ALIVE_SQL} "
+                    "ORDER BY other.matched_at ASC NULLS LAST, other.id ASC LIMIT 1"
+                )
+                target = cur.fetchone()
+                if not target:
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'matched': False,
+                        'reason': 'Такой товар сейчас не нужен в подбор',
+                        'product': gw_product,
+                    }, ensure_ascii=False)}
+
+                other_gw_id, order_id, order_number = target
+
+                # 4. Переносим подбор на вещь, которая РЕАЛЬНО в руках у кладовщика.
+                #    Прежняя вещь возвращается в свободный остаток на своей полке —
+                #    она никуда не делась и закроет собой следующий такой же заказ.
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'in_stock', reserved_order_id = NULL, "
+                    f"matched_at = NULL WHERE id = {int(other_gw_id)}"
+                )
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'picking', reserved_order_id = %s, "
+                    "matched_at = now() WHERE id = %s",
+                    (int(order_id), int(gw_id)),
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'scan_picking', 'goods_warehouse', gw_id,
+                    f'Подбор по размеру: заказ #{order_number} закрыт вещью {barcode} '
+                    f'(вместо неё на полку вернулась другая такая же)',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'matched': True, 'goodsId': gw_id, 'product': gw_product,
+                    'shelfName': gw_shelf, 'orderNumber': order_number,
+                    'reassigned': True,
+                }, ensure_ascii=False)}
+
             if action == 'start_picking':
                 barcode = (body_data.get('barcode') or '').strip()
                 if not barcode:

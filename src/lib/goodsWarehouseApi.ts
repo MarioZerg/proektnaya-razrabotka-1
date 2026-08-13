@@ -158,6 +158,26 @@ export const placeOnShelf = (barcode: string, shelfId: number) =>
   postAction({ action: 'place_on_shelf', barcode, shelfId });
 
 /** Кладовщик наклеил стикер отправления на вещь с полки, подобранную под новый заказ. */
+/**
+ * Сканер подбора: ищем работу по РАЗМЕРУ товара, а не по номеру стикера.
+ *
+ * Кладовщик берёт с полки любую подходящую вещь — они одного размера и физически
+ * не отличаются. Система сама переносит подбор на ту вещь, что реально в руках,
+ * а «запасную» возвращает на полку свободной.
+ */
+export const scanPickingByBarcode = (barcode: string, actorId?: number, actorName?: string) =>
+  postAction({ action: 'scan_picking', barcode, actorId, actorName }) as Promise<{
+    matched: boolean;
+    goodsId?: number;
+    product?: string | null;
+    shelfName?: string | null;
+    orderNumber?: string | null;
+    /** true — подбор перенесён на отсканированную вещь. */
+    reassigned?: boolean;
+    /** Почему вещь не подошла — показываем кладовщику. */
+    reason?: string;
+  }>;
+
 export const shipLabelGoods = (barcode: string, actorId?: number, actorName?: string) =>
   postAction({ action: 'ship_label', barcode, actorId, actorName }) as Promise<{
     id: number;
