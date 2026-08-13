@@ -64,9 +64,13 @@ const SupplyItemsSection = ({
       <div className="flex flex-wrap items-center justify-between gap-3">
         {supply.type === 'FBS' ? (
           <div className="flex flex-wrap items-center gap-4 text-sm">
-            {/* Сколько вещей для ЭТОЙ поставки собрано и отстикеровано на складе. */}
+            {/* Сколько товара ждёт отгрузки на маркетплейсе: прошло конвейер или
+                снято с полок, застикеровано, но ещё не отсканировано ни в одну
+                поставку. Это и есть объём работы кладовщика.
+                Не успел отсканировать всё — остаток сам попадёт в счётчик
+                следующей поставки, как только её создадут. */}
             <span>
-              Готово к сборке: <b>{readyGoods.length}</b>
+              Ожидают отгрузки: <b>{supply.awaitingShipCount ?? readyGoods.length}</b>
             </span>
             <span>
               Добавлено товаров: <b>{supply.items.length}</b>

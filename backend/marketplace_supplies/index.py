@@ -855,64 +855,38 @@ def handler(event: dict, context) -> dict:
                 # штук: OZON покажет одну строку, а швеи отшили семь и кладовщик ищет
                 # на складе семь. Поэтому показываем обе единицы сразу и раскладываем,
                 # где вещи находятся — тогда видно, чего именно не хватает до закрытия.
-                reconcile = None
-                if row[1] == 'OZON' and row[2] == 'FBS':
-                    cur.execute(
-                        "SELECT count(*) AS units, "
-                        "  count(DISTINCT o.ozon_posting_number) AS postings, "
-                        "  count(*) FILTER (WHERE gw.id IS NOT NULL "
-                        "    AND gw.status IN ('picking', 'awaiting_supply') "
-                        "    AND gw.shipping_labeled_at IS NOT NULL) AS ready, "
-                        "  count(*) FILTER (WHERE gw.id IS NOT NULL "
-                        "    AND gw.status IN ('picking', 'awaiting_supply') "
-                        "    AND gw.shipping_labeled_at IS NULL) AS no_label, "
-                        "  count(*) FILTER (WHERE gw.id IS NOT NULL "
-                        "    AND gw.status = 'reserved') AS in_supply, "
-                        "  count(*) FILTER (WHERE gw.id IS NULL) AS in_production, "
-                        # Вещь лежит на полке хранения, хотя заказ под неё уже ждёт
-                        # отгрузки: её не отобрали в сборку. Раньше такие вещи не
-                        # попадали НИ В ОДНУ строку разбивки — сумма не сходилась с
-                        # общим числом, и сверка теряла смысл.
-                        "  count(*) FILTER (WHERE gw.id IS NOT NULL "
-                        "    AND gw.status = 'in_stock') AS on_shelf "
-                        "FROM orders o "
-                        # Вещь связана с заказом ТРЕМЯ способами, и раньше учитывались
-                        # только два. Третий — gw.order_id — это вещь, сшитая в цехе
-                        # ПОД ЭТОТ ЖЕ заказ: у неё нет резерва, потому что резерв нужен
-                        # только для подбора со склада. Из-за пропуска этой связи 81 вещь
-                        # из 103 не попадала в сверку, и кладовщик видел «Готово: 0»,
-                        # хотя весь контейнер был застикерован и ждал сканирования.
-                        "LEFT JOIN goods_warehouse gw "
-                        "  ON gw.id = o.fulfilled_from_stock_id "
-                        "  OR gw.reserved_order_id = o.id "
-                        "  OR gw.order_id = o.id "
-                        "WHERE o.marketplace = 'OZON' AND o.order_type = 'FBS' "
-                        "  AND COALESCE(o.status, '') <> 'Отменён' "
-                        "  AND COALESCE(o.ozon_status, '') = 'awaiting_deliver'"
-                    )
-                    rc = cur.fetchone()
-                    units = int(rc[0] or 0)
-                    parts = {
-                        'ready': int(rc[2] or 0),
-                        'noLabel': int(rc[3] or 0),
-                        'inSupply': int(rc[4] or 0),
-                        'inProduction': int(rc[5] or 0),
-                        'onShelf': int(rc[6] or 0),
-                    }
-                    # Всё, что не подошло ни под одну строку (редкие статусы вроде
-                    # «отгружено» или «утеряно»). Считаем ОСТАТКОМ, а не отдельным
-                    # условием: тогда сумма строк равна общему числу ВСЕГДА, даже
-                    # если завтра появится новый статус. Иначе кладовщик снова
-                    # сложит столбик, недосчитается штуки и перестанет верить сверке.
-                    reconcile = {
-                        'units': units,
-                        'postings': int(rc[1] or 0),
-                        **parts,
-                        'other': max(0, units - sum(parts.values())),
-                    }
+                # Сколько вещей ждёт отгрузки на маркетплейсе — простое число вместо
+                # прежней сверки с кабинетом.
+                #
+                # Это товар, который прошёл конвейер (или снят с полок), застикерован
+                # ярлыком отправления и лежит на складе, но ещё не отсканирован ни в
+                # одну поставку. Кладовщик видит, сколько ему предстоит отсканировать
+                # именно сюда.
+                #
+                # Число «переносится» на следующую поставку само собой: то, что не
+                # успели отсканировать сегодня, останется несобранным и попадёт в
+                # счётчик новой поставки, как только её создадут.
+                cur.execute(
+                    "SELECT COUNT(*) FROM goods_warehouse gw "
+                    "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                    "LEFT JOIN orders so ON so.id = gw.order_id "
+                    "WHERE gw.status IN ('picking', 'awaiting_supply') "
+                    "  AND gw.shipping_labeled_at IS NOT NULL "
+                    "  AND gw.shipped_at IS NULL "
+                    "  AND COALESCE(ro.marketplace, so.marketplace) = %s "
+                    "  AND COALESCE(ro.order_type, so.order_type) = %s "
+                    "  AND (%s <> 'FBO' OR %s IS NULL "
+                    "       OR COALESCE(ro.cluster, so.cluster) = %s) "
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
+                    "                  WHERE msi2.goods_warehouse_id = gw.id)",
+                    (row[1], row[2], row[2], row[8], row[8]),
+                )
+                awaiting_ship = int(cur.fetchone()[0] or 0)
 
                 detail = {
-                    'reconcile': reconcile,
+                    # Ждёт отгрузки: застикеровано и лежит на складе, но ещё не
+                    # отсканировано ни в одну поставку.
+                    'awaitingShipCount': awaiting_ship,
                     'id': row[0],
                     'marketplace': row[1],
                     'type': row[2],

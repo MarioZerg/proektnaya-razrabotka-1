@@ -32,7 +32,6 @@ import AddSewingOrdersDialog from '@/components/crm/marketplaceSupplies/AddSewin
 import SupplyGroupsPanel from '@/components/crm/marketplaceSupplies/SupplyGroupsPanel';
 import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCard';
 import WbFboSupplyCard from '@/components/crm/marketplaceSupplies/WbFboSupplyCard';
-import OzonReconcileCard from '@/components/crm/marketplaceSupplies/OzonReconcileCard';
 
 const MarketplaceSupplyShow = () => {
   const { id } = useParams();
@@ -428,12 +427,6 @@ const MarketplaceSupplyShow = () => {
             canAdd={isManager && supply.status !== 'Отгрузка' && supply.status !== 'Выполнена'}
             onAdd={() => setAddOrdersOpen(true)}
           />
-        )}
-
-        {/* Сверка с кабинетом OZON. Ставим НАД составом поставки: кладовщик сверяет
-            числа до того, как начнёт собирать, а не после. */}
-        {supply.marketplace === 'OZON' && supply.type === 'FBS' && supply.reconcile && (
-          <OzonReconcileCard data={supply.reconcile} readyInSupply={readyGoods.length} />
         )}
 
         {/* Связки заказов Яндекса: показываем НАД списком товаров, чтобы кладовщик увидел
