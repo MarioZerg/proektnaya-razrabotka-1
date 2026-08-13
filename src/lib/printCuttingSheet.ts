@@ -33,6 +33,9 @@ const ITEMS_PER_PAGE = COLS * ROWS_PER_PAGE;
 const CELL_HEIGHT_PX = 79;
 // QR печатается ВНУТРИ рамки, поэтому он должен быть заметно меньше её высоты:
 // иначе картинка упирается в границы и вылезает за рамку соседней колонки.
+//
+// На эту же ширину слева отступает текст: без отступа он центрировался по всей
+// ячейке и наезжал на QR — казалось, что надпись сдвинута вправо и висит криво.
 const QR_SIZE_PX = 64;
 
 const formatToday = () => {
@@ -209,7 +212,8 @@ const buildQrPageHtml = (
   const grid = groupedGrid(
     pageOrders,
     (o) => `
-      <div style="position:relative;height:100%;box-sizing:border-box;padding:4px 6px;
+      <div style="position:relative;height:100%;box-sizing:border-box;
+                  padding:4px 6px 4px ${QR_SIZE_PX + 10}px;
                   display:flex;flex-direction:column;justify-content:center;text-align:center;">
         <img src="${qrDataUrls[o.id]}"
              style="position:absolute;left:5px;top:50%;transform:translateY(-50%);
