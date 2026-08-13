@@ -94,25 +94,32 @@ const SewingItemsTable = ({
         <Table>
           <TableHeader>
             <TableRow className="bg-primary hover:bg-primary">
+              {/* Колонок было 14, и таблица не помещалась на экран: чтобы открыть
+                  заказ, приходилось листать вправо до последней колонки.
+                  Родственные данные объединены в одну ячейку — ширина, высота и
+                  материал стали «Изделием», маркетплейс и схема — одной колонкой,
+                  даты — одной. Ничего не убрано, всё видно без прокрутки. */}
               <TableHead className="text-primary-foreground">#</TableHead>
               <TableHead className="text-primary-foreground">Статус</TableHead>
-              <TableHead className="text-primary-foreground">Номер заказа</TableHead>
-              <TableHead className="text-primary-foreground">Кластер</TableHead>
-              <TableHead className="text-primary-foreground">Название</TableHead>
-              <TableHead className="text-primary-foreground">Ширина</TableHead>
-              <TableHead className="text-primary-foreground">Высота</TableHead>
-              <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
-              <TableHead className="text-primary-foreground">Тип</TableHead>
+              <TableHead className="text-primary-foreground">Заказ</TableHead>
+              <TableHead className="text-primary-foreground">Изделие</TableHead>
+              <TableHead className="text-primary-foreground">Площадка</TableHead>
               <TableHead className="text-primary-foreground">Этапы</TableHead>
               <TableHead className="text-primary-foreground">Вешалка</TableHead>
-              <TableHead className="text-primary-foreground">Заказан</TableHead>
-              <TableHead className="text-primary-foreground">Выполнен</TableHead>
+              <TableHead className="text-primary-foreground">Даты</TableHead>
               <TableHead className="text-primary-foreground" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {pagedOrders.map((o) => (
-              <TableRow key={o.id}>
+              // Клик по любому месту строки открывает заказ: на широком экране
+              // целиться в кнопку в самом конце строки неудобно, а просмотр —
+              // самое частое действие в этой таблице.
+              <TableRow
+                key={o.id}
+                onClick={() => onOpenDetail(o)}
+                className="cursor-pointer hover:bg-muted/60"
+              >
                 <TableCell>{o.id}</TableCell>
                 <TableCell>
                   <Badge variant="secondary">{o.sewingStatus}</Badge>
@@ -140,40 +147,46 @@ const SewingItemsTable = ({
                     )}
                   </span>
                 </TableCell>
-                <TableCell>{o.cluster || '—'}</TableCell>
-                <TableCell>{o.material || '—'}</TableCell>
-                <TableCell>{o.width ?? '—'}</TableCell>
-                <TableCell>{o.height ?? '—'}</TableCell>
-                <TableCell>
+                {/* Изделие: материал и размер вместе — так их и называют в цехе
+                    («Вуаль 300×255»), а не тремя отдельными числами. */}
+                <TableCell className="whitespace-nowrap font-medium">
+                  {o.material || '—'}
+                  {o.width && o.height ? ` ${o.width}×${o.height}` : ''}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
                   <span className={marketplaceLogo[o.marketplace]?.className}>
                     {marketplaceLogo[o.marketplace]?.label || o.marketplace}
                   </span>
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-col items-start gap-1">
-                    <span>{o.orderType}</span>
-                    {/* Покупатель — компания: заказ шьётся так же, но пометка нужна,
-                        чтобы в цехе понимали, кому уйдёт вещь. */}
-                    {o.isLegalEntity && (
-                      <span className="whitespace-nowrap rounded-sm bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800">
-                        Юр. лицо
-                      </span>
-                    )}
-                  </div>
+                  <span className="ml-1.5 text-muted-foreground">{o.orderType}</span>
+                  {/* Кластер важен только для FBO: у FBS его нет. */}
+                  {o.cluster && (
+                    <div className="text-xs text-muted-foreground">{o.cluster}</div>
+                  )}
+                  {/* Покупатель — компания: заказ шьётся так же, но пометка нужна,
+                      чтобы в цехе понимали, кому уйдёт вещь. */}
+                  {o.isLegalEntity && (
+                    <div className="mt-0.5 inline-block whitespace-nowrap rounded-sm bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800">
+                      Юр. лицо
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell>
                   <OrderStagesDiagram order={o} />
                 </TableCell>
                 <TableCell>{o.hangerNumber > 0 ? `№ ${o.hangerNumber}` : '—'}</TableCell>
-                <TableCell>
+                <TableCell className="text-sm">
                   <div className="whitespace-nowrap">
                     {formatDate(o.marketplaceCreatedAt || o.createdAt)}
                   </div>
+                  {o.completedAt && (
+                    <div className="whitespace-nowrap text-muted-foreground">
+                      готов {formatDate(o.completedAt)}
+                    </div>
+                  )}
                   <div className="mt-1">
                     <OrderWaitTimer order={o} />
                   </div>
                 </TableCell>
-                <TableCell>{o.completedAt ? formatDate(o.completedAt) : ''}</TableCell>
                 <TableCell>
                   <Button
                     size="sm"
