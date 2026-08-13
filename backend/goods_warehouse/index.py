@@ -1816,7 +1816,16 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите номер заказа'})}
 
                 order_number_esc = order_number.replace("'", "''")
-                cur.execute(f"SELECT id FROM orders WHERE order_number = '{order_number_esc}'")
+                # Ищем и по номеру отправления маркетплейса: на ярлыке OZON напечатан
+                # именно он, а у вещи в системе может быть внутренний номер с хвостом
+                # (…-1-2) — наследство старого способа деления отправлений. Без этого
+                # кладовщик сканировал возврат и получал «заказ не найден».
+                cur.execute(
+                    f"SELECT id FROM orders "
+                    f"WHERE order_number = '{order_number_esc}' "
+                    f"   OR ozon_posting_number = '{order_number_esc}' "
+                    f"ORDER BY (order_number = '{order_number_esc}') DESC, id LIMIT 1"
+                )
                 order_row = cur.fetchone()
                 if not order_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Заказ {order_number} не найден'})}

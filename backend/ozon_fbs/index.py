@@ -1080,9 +1080,14 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
 
     Возвращает (ошибка, base64_pdf).
     """
+    # Ищем и по номеру заказа, и по номеру отправления: упаковщица может отсканировать
+    # ярлык OZON, где напечатан номер отправления, а у вещи в системе внутренний номер
+    # с хвостом (…-1-2) — наследство старого способа деления.
     cur.execute(
-        "SELECT ozon_posting_number FROM orders WHERE order_number = %s",
-        (order_number,),
+        "SELECT ozon_posting_number FROM orders "
+        "WHERE order_number = %s OR ozon_posting_number = %s "
+        "ORDER BY (order_number = %s) DESC, id LIMIT 1",
+        (order_number, order_number, order_number),
     )
     row = cur.fetchone()
     if not row or not row[0]:
