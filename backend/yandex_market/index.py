@@ -514,6 +514,80 @@ def handler(event: dict, context) -> dict:
                 ],
             })
 
+        if action == 'check_statuses':
+            # Ловим отмены покупателей ДО того, как вещь дойдёт до стикеровки.
+            #
+            # Без этой проверки отмена всплывала только в момент печати ярлыка:
+            # упаковщица доводила заказ до конца и упиралась в отказ Яндекса.
+            #
+            # Правило то же, что на OZON и WB:
+            #   * заказ ещё «Новый» — снимаем с конвейера, шить отменённое незачем;
+            #   * заказ уже в работе — доводим до конца, но вещь уедет не покупателю,
+            #     а на склад: упаковщица наклеит стикер ХРАНЕНИЯ вместо ярлыка.
+            #
+            # Особенность Яндекса — СВЯЗКИ. У заказа из нескольких вещей один ярлык на
+            # всех, поэтому отмена связки касается её целиком: если хоть одна вещь уже
+            # в работе, вся связка доходит до конца и целиком уходит на хранение.
+            # Иначе половина уехала бы, половина осталась — с одним ярлыком на двоих.
+            cur.execute(
+                "SELECT id, ym_order_id, order_number, sewing_status, group_key "
+                "FROM orders WHERE marketplace = 'Yandex' AND ym_order_id IS NOT NULL "
+                "  AND COALESCE(status, '') NOT IN ('Отменён', 'Отгружен') "
+                "  AND sewing_status IN ('Новый', 'На раскрое', 'Раскроено', 'В работе', "
+                "                        'Стикеровка', 'Готовые', 'Со склада')"
+            )
+            rows = cur.fetchall()
+            if not rows:
+                return _resp(200, {'checked': 0, 'cancelled': 0, 'removedFromLine': 0})
+
+            # Статусы тянем по каждому заказу Яндекса один раз, а не по каждой вещи:
+            # в связке из пяти штук это пять одинаковых запросов вместо одного.
+            ym_ids = sorted({int(r[1]) for r in rows})
+            cancelled_ym = set()
+            for ym_id in ym_ids:
+                st_code, st_data = ym_get(f'/campaigns/{campaign_id}/orders/{ym_id}', api_key)
+                if st_code != 200:
+                    continue
+                ym_status = ((st_data or {}).get('order') or {}).get('status') or ''
+                if ym_status.upper() in ('CANCELLED', 'CANCELED'):
+                    cancelled_ym.add(ym_id)
+
+            # Связки, где хоть одна вещь уже в работе: такие с конвейера не снимаем.
+            groups_in_work = set()
+            for _oid, ym_id, _num, sew, gkey in rows:
+                if int(ym_id) in cancelled_ym and gkey and sew != 'Новый':
+                    groups_in_work.add(gkey)
+
+            cancelled_count = 0
+            removed = 0
+            for order_id, ym_id, _num, sew, gkey in rows:
+                if int(ym_id) not in cancelled_ym:
+                    continue
+                cancelled_count += 1
+                # Снимаем с конвейера, только если работа не начиналась НИ ПО ОДНОЙ
+                # вещи связки. Одиночный заказ — просто по своему статусу.
+                can_drop = sew == 'Новый' and (not gkey or gkey not in groups_in_work)
+                if can_drop:
+                    cur.execute(
+                        "UPDATE orders SET status = 'Отменён', sewing_status = 'Отменён', "
+                        "  cancelled_at = COALESCE(cancelled_at, now()), assigned_user_id = NULL "
+                        "WHERE id = %s",
+                        (order_id,),
+                    )
+                    removed += 1
+                else:
+                    cur.execute(
+                        "UPDATE orders SET status = 'Отменён', "
+                        "  cancelled_at = COALESCE(cancelled_at, now()) WHERE id = %s",
+                        (order_id,),
+                    )
+            conn.commit()
+            return _resp(200, {
+                'checked': len(rows),
+                'cancelled': cancelled_count,
+                'removedFromLine': removed,
+            })
+
         if action == 'label':
             # Ярлык на вещь заказа — печатается на терминале упаковщика и клеится на пакет.
             order_number = (body_data.get('orderNumber') or params.get('orderNumber') or '').strip()

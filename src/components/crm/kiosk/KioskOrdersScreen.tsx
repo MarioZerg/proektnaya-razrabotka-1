@@ -143,16 +143,26 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
       // Заказ отменён клиентом — вещь едет не покупателю, а на склад хранения. Печатаем
       // стикер ХРАНЕНИЯ: по нему кладовщик заберёт вещь из цеха и положит на полку.
       if (res.isCancelled && res.storageBarcode) {
+        // Связка Яндекса: вещи заказа едут на склад по отдельности, но на полке их
+        // нужно держать вместе. Пишем прямо на наклейке, что вещь из связки и какая
+        // по счёту, — иначе одинаковые стикеры на полке не различить.
+        const groupLabel =
+          order.groupKey && (order.groupSize || 0) > 1
+            ? `Связка ${order.groupPosition || 1} из ${order.groupSize}`
+            : null;
         printStorageSticker({
           storageBarcode: res.storageBarcode,
           title: order.material && order.width
             ? `${order.material} ${order.width}×${order.height}`
             : order.product,
           orderNumber: order.orderNumber,
+          groupLabel,
         });
         toast({
           title: `Заказ ${order.orderNumber} отменён клиентом`,
-          description: 'Наклейте стикер хранения — вещь заберёт кладовщик на полку',
+          description: groupLabel
+            ? `${groupLabel}. Наклейте стикер хранения и держите вещи связки вместе`
+            : 'Наклейте стикер хранения — вещь заберёт кладовщик на полку',
         });
         setOrder(null);
         setPrinted(false);
@@ -422,6 +432,15 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
                     ? 'Маркетплейс больше не выдаёт ярлык на это отправление. Нажмите «Закрыть заказ» — распечатается стикер хранения, наклейте его и оставьте вещь для кладовщика'
                     : 'Стикер отправления не нужен. Нажмите «Закрыть заказ» — распечатается стикер хранения, наклейте его и оставьте вещь для кладовщика'}
                 </p>
+                {/* Связка Яндекса: у заказа один ярлык на несколько вещей, поэтому
+                    отмена касается всей связки. Упаковщица стикерует вещи по очереди,
+                    но должна знать общее число — чтобы не потерять часть. */}
+                {order.groupKey && (order.groupSize || 0) > 1 && (
+                  <p className="mt-2 rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-sm font-semibold">
+                    Это связка: всего вещей {order.groupSize}, эта —{' '}
+                    {order.groupPosition || 1}. Стикеруйте по очереди и держите их вместе
+                  </p>
+                )}
               </div>
             ) : (
               <Button size="lg" className="h-16 w-full text-lg" onClick={handlePrint}>

@@ -8,6 +8,15 @@ export interface StorageStickerData {
   title?: string | null;
   /** Номер заказа или отправления маркетплейса — у WB он очень длинный. */
   orderNumber?: string | null;
+  /**
+   * Пометка о связке Яндекса: «Связка 2 из 3».
+   *
+   * У заказа Яндекса из нескольких вещей один ярлык на всех. Если такой заказ
+   * отменили, вещи едут на склад по отдельности, и на полке их не собрать обратно:
+   * стикеры выглядят одинаково. Поэтому прямо на наклейке пишем, что вещь из связки
+   * и сколько в ней всего — кладовщик кладёт их рядом и видит, всё ли дошло.
+   */
+  groupLabel?: string | null;
 }
 
 const esc = (v: string | number | null | undefined) =>
@@ -66,6 +75,16 @@ export const printStorageSticker = (data: StorageStickerData) => {
       overflow: hidden;
     }
     .bc img { width: 53mm; height: auto; display: block; }
+    /* Пометка о связке — крупно и жирно: кладовщик должен увидеть её с полки. */
+    .group {
+      font-size: 7pt;
+      font-weight: bold;
+      text-align: center;
+      border: 0.3mm solid #000;
+      border-radius: 1mm;
+      padding: 0 1mm;
+      line-height: 1.3;
+    }
     .order {
       font-size: ${orderFont};
       color: #333;
@@ -80,6 +99,7 @@ export const printStorageSticker = (data: StorageStickerData) => {
 </head>
 <body>
   ${data.title ? `<div class="title">${esc(data.title)}</div>` : ''}
+  ${data.groupLabel ? `<div class="group">${esc(data.groupLabel)}</div>` : ''}
   <div class="bc"><img src="${barcode}" alt="${esc(data.storageBarcode)}" /></div>
   ${order ? `<div class="order">${esc(order)}</div>` : ''}
 </body>
