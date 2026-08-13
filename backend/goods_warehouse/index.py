@@ -636,11 +636,19 @@ def handler(event: dict, context) -> dict:
                 if not r:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
 
-                # Уже в поставке? Тогда кнопку «Отправить на поставку» показывать не надо.
+                # Лежит ли вещь в АКТИВНОЙ поставке? Тогда кнопку «Отправить на поставку»
+                # показывать не надо — она уже едет.
+                #
+                # Завершённые поставки в расчёт не берём: вещь могла вернуться к нам
+                # (возврат, отказ покупателя) и снова попасть в подбор под новый заказ.
+                # Из-за старой записи кладовщик видел «Вещь на поставке» и не мог
+                # напечатать стикер на вещь, которая прямо сейчас лежит у него в подборе.
                 cur.execute(
                     "SELECT s.id, s.status FROM marketplace_supply_items msi "
                     "JOIN marketplace_supplies s ON s.id = msi.supply_id "
-                    "WHERE msi.goods_warehouse_id = %s LIMIT 1",
+                    "WHERE msi.goods_warehouse_id = %s "
+                    "  AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена') "
+                    "ORDER BY msi.id DESC LIMIT 1",
                     (card_id,),
                 )
                 sup = cur.fetchone()
@@ -774,10 +782,15 @@ def handler(event: dict, context) -> dict:
                 f"COALESCE(ro.marketplace, o.marketplace), "
                 f"COALESCE(ro.order_type, o.order_type), "
                 f"COALESCE(ro.cluster, o.cluster), "
-                # Вещь, уже лежащая в какой-то поставке, второй раз никуда не поедет.
+                # Вещь, уже лежащая в АКТИВНОЙ поставке, второй раз никуда не поедет.
                 # Без этого она считалась «готовой к сборке» и в новой поставке тоже.
+                # Завершённые поставки не учитываем: вещь могла вернуться к нам и снова
+                # уйти в подбор — старая запись не должна её блокировать.
                 f"(SELECT msi.supply_id FROM marketplace_supply_items msi "
-                f" WHERE msi.goods_warehouse_id = gw.id LIMIT 1), "
+                f" JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                f" WHERE msi.goods_warehouse_id = gw.id "
+                f"   AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена') "
+                f" ORDER BY msi.id DESC LIMIT 1), "
                 # Заказ, под который вещь закреплена, уже забрали в цех: его кроят или
                 # шьют. Стикер отправления на такую вещь не напечатать — отправление
                 # закроет то, что выйдет с конвейера. Для склада вещь недоступна.
