@@ -136,7 +136,12 @@ const GoodsWarehouseCards = ({
             </div>
 
             {i.status === 'lost' && i.lostReason && (
-              <p className="mt-2 text-xs text-destructive">Причина: {i.lostReason}</p>
+              <p className="mt-2 text-xs text-destructive">
+                {i.lostReason.includes('пошив')
+                  ? `Отправлена в пошив: ${i.lostReason.replace(/^Брак, отправлен в пошив:\s*/, '')}`
+                  : `Причина: ${i.lostReason}`}
+                {i.lostByName ? ` · ${i.lostByName}` : ''}
+              </p>
             )}
 
             <div className="mt-2 text-xs text-muted-foreground">

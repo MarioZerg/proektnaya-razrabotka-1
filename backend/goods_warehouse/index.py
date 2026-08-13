@@ -812,6 +812,13 @@ def handler(event: dict, context) -> dict:
                 f"COALESCE(ro.marketplace, o.marketplace), "
                 f"COALESCE(ro.order_type, o.order_type), "
                 f"COALESCE(ro.cluster, o.cluster), "
+                # Кто списал вещь и отправил её в пошив. Админ во вкладке «Утерян»
+                # должен видеть не только факт, но и ответственного: за списанием
+                # стоят потраченная ткань и повторная работа цеха.
+                f"(SELECT a.user_name FROM audit_log a "
+                f" WHERE a.entity_type = 'goods_warehouse' AND a.entity_id = gw.id "
+                f"   AND a.action IN ('send_to_sewing', 'mark_lost') "
+                f" ORDER BY a.created_at DESC LIMIT 1), "
                 # Вещь, уже лежащая в АКТИВНОЙ поставке, второй раз никуда не поедет.
                 # Без этого она считалась «готовой к сборке» и в новой поставке тоже.
                 # Завершённые поставки не учитываем: вещь могла вернуться к нам и снова
@@ -857,9 +864,10 @@ def handler(event: dict, context) -> dict:
                     'marketplace': r[19],
                     'orderType': r[20],
                     'cluster': r[21],
-                    'supplyId': r[22],
+                    'lostByName': r[22],
+                    'supplyId': r[23],
                     # true — заказ ушёл на конвейер, вещь для подбора недоступна.
-                    'orderInProduction': r[23],
+                    'orderInProduction': r[24],
                 }
                 for r in cur.fetchall()
             ]
@@ -2078,7 +2086,15 @@ def handler(event: dict, context) -> dict:
                  gw_item_id, gw_shelf) = row
 
                 # Вещь уже собрана или уехала — второй раз её не подбирают.
-                if gw_labeled or gw_status in ('shipped', 'awaiting_supply', 'lost'):
+                # Вещь списали: не нашли на складе и отправили заказ в пошив заново.
+                # В подбор она больше не возвращается — её физически нет.
+                if gw_status == 'lost':
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'matched': False,
+                        'reason': 'Вещь списана и отправлена в пошив — в подбор не идёт',
+                        'product': gw_product,
+                    }, ensure_ascii=False)}
+                if gw_labeled or gw_status in ('shipped', 'awaiting_supply'):
                     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
                         'matched': False,
                         'reason': 'Вещь уже собрана: на ней стикер отправления',

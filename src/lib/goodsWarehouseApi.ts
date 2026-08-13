@@ -61,6 +61,8 @@ export interface GoodsWarehouseItem {
   orderType?: string | null;
   /** Кластер приёмки — важен для FBO: у каждого кластера своя поставка. */
   cluster?: string | null;
+  /** Кто списал вещь: отправил в пошив или отметил утерянной. */
+  lostByName?: string | null;
   /** Поставка, в которой вещь уже лежит. Заполнено — значит второй раз её не сканировать. */
   supplyId?: number | null;
   /**

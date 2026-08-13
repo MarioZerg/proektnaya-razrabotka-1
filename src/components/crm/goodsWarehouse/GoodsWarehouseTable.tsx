@@ -186,7 +186,15 @@ const GoodsWarehouseTable = ({
                   </div>
                   <div className="text-xs text-muted-foreground">{i.orderNumber || '—'}</div>
                   {i.status === 'lost' && i.lostReason && (
-                    <div className="text-xs text-destructive">Причина: {i.lostReason}</div>
+                    <div className="text-xs text-destructive">
+                      {/* Отправленную в пошив вещь называем своими словами: для админа
+                          это не «утеря», а решение кладовщика — за ним ткань и работа
+                          цеха заново. Рядом — кто именно отправил. */}
+                      {i.lostReason.includes('пошив')
+                        ? `Отправлена в пошив: ${i.lostReason.replace(/^Брак, отправлен в пошив:\s*/, '')}`
+                        : `Причина: ${i.lostReason}`}
+                      {i.lostByName ? ` · ${i.lostByName}` : ''}
+                    </div>
                   )}
                 </TableCell>
                 <TableCell>
