@@ -22,8 +22,14 @@ import type { TakenOrder } from '@/lib/ordersApi';
 const A4_WIDTH_PX = 794; // A4 при 96dpi
 const A4_HEIGHT_PX = 1123;
 const COLS = 2;
-const ROWS_PER_PAGE = 10;
+// Было 10 строк на лист: в ячейку помещалось 20 позиций, но номер заказа печатался
+// шрифтом 11px — швея не могла прочитать его на вешалке, не поднося лист к глазам.
+// Теперь 6 строк: позиций на листе меньше, зато размер и номер видно с расстояния.
+const ROWS_PER_PAGE = 6;
 const ITEMS_PER_PAGE = COLS * ROWS_PER_PAGE;
+// Высота одной ячейки, чтобы позиции заполняли лист целиком, а не жались вверху.
+// Из высоты A4 вычитаем поля страницы и шапку с датой и закройщиком.
+const CELL_HEIGHT_PX = 148;
 
 const formatToday = () => {
   const d = new Date();
@@ -56,7 +62,7 @@ const groupByMaterial = (orders: TakenOrder[]): TakenOrder[] => {
 /** Подпись связки в позиции листа: «СВЯЗКА 3/32 — одна вешалка». */
 const groupNote = (o: TakenOrder) =>
   o.groupSize && o.groupSize > 1
-    ? `<div style="margin-top:3px;font-size:11px;font-weight:700;">
+    ? `<div style="margin-top:6px;font-size:16px;font-weight:800;">
          СВЯЗКА ${o.groupPosition}/${o.groupSize} — НА ОДНУ ВЕШАЛКУ
        </div>`
     : '';
@@ -69,16 +75,36 @@ const chunk = <T,>(arr: T[], size: number): T[][] => {
 
 const sizeLabel = (o: TakenOrder) => `${o.material || '—'} ${o.width ?? '—'} × ${o.height ?? '—'}`;
 
+/** Размер шрифта под длину строки: «Мрамор 300 × 250» длиннее «Лен 200 × 245» и при
+ * одинаковом кегле переносится на вторую строку, съедая место у номера заказа.
+ * Подбираем размер так, чтобы строка всегда влезала в одну. */
+const sizeFont = (o: TakenOrder, max: number) => {
+  const len = sizeLabel(o).length;
+  if (len > 19) return Math.round(max * 0.74);
+  if (len > 16) return Math.round(max * 0.85);
+  return max;
+};
+
+/** То же для номера заказа: у WB он короткий, у OZON — длинный с дефисами. */
+const numberFont = (o: TakenOrder, max: number) => {
+  const len = (o.orderNumber || '').length;
+  if (len > 19) return Math.round(max * 0.78);
+  if (len > 15) return Math.round(max * 0.88);
+  return max;
+};
+
 // Ячейка одной позиции: слева крупно материал+размер и мелко маркетплейс+номер (+ID закройщика
 // на QR-листе), справа узкая колонка (пустая — под галочку/крепление бирки), как в образце.
 /** Ячейка одной позиции. Вещи связки выделяем жирной рамкой и серой заливкой: на листе
  * из 20 позиций закройщик должен видеть их с одного взгляда, а не вычитывать подписи. */
 const cell = (inner: string, isGroup = false) =>
-  `<div style="display:grid;grid-template-columns:1fr 44px;border:${
-    isGroup ? '3px solid #000' : '1px solid #000'
-  };box-sizing:border-box;${isGroup ? 'background:#e8e8e8;' : ''}">
+  `<div style="display:grid;grid-template-columns:1fr 56px;border:${
+    isGroup ? '4px solid #000' : '2px solid #000'
+  };box-sizing:border-box;height:${CELL_HEIGHT_PX}px;${
+    isGroup ? 'background:#e8e8e8;' : ''
+  }">
      ${inner}
-     <div style="border-left:1px solid #000;"></div>
+     <div style="border-left:2px solid #000;"></div>
    </div>`;
 
 /** Сетка позиций, сгруппированная по материалу: между группами материала — визуальный отступ. */
@@ -99,11 +125,11 @@ const groupedGrid = (pageOrders: TakenOrder[], renderInner: (o: TakenOrder) => s
     rows.push(cell(renderInner(o), !!(o.groupSize && o.groupSize > 1)));
   }
   flush();
-  return `<div style="display:flex;flex-direction:column;gap:10px;">${blocks.join('')}</div>`;
+  return `<div style="display:flex;flex-direction:column;gap:6px;">${blocks.join('')}</div>`;
 };
 
 const page = (inner: string) =>
-  `<div style="width:${A4_WIDTH_PX}px;height:${A4_HEIGHT_PX}px;box-sizing:border-box;padding:24px;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;">${inner}</div>`;
+  `<div style="width:${A4_WIDTH_PX}px;height:${A4_HEIGHT_PX}px;box-sizing:border-box;padding:12px;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;">${inner}</div>`;
 
 const buildChecklistPageHtml = (pageOrders: TakenOrder[], cutterName: string, date: string) => {
   // Сводка связок на странице: заказ покупателя из нескольких вещей вешается на ОДНУ вешалку
@@ -115,29 +141,30 @@ const buildChecklistPageHtml = (pageOrders: TakenOrder[], cutterName: string, da
     }
   }
   const groupsBanner = groupCounts.size
-    ? `<div style="border:3px solid #000;background:#e8e8e8;padding:8px 12px;margin-bottom:10px;font-size:13px;font-weight:700;">
-         <div style="font-size:15px;margin-bottom:3px;">НА ЛИСТЕ ЕСТЬ СВЯЗКИ — ВЕШАТЬ ВМЕСТЕ НА ОДНУ ВЕШАЛКУ</div>
-         <div style="font-size:12px;">
+    ? `<div style="border:3px solid #000;background:#e8e8e8;padding:5px 10px;margin-bottom:6px;font-weight:800;">
+         <div style="font-size:15px;">НА ЛИСТЕ ЕСТЬ СВЯЗКИ — ВЕШАТЬ ВМЕСТЕ НА ОДНУ ВЕШАЛКУ</div>
+         <div style="font-size:12px;margin-top:2px;">
            ${Array.from(groupCounts.entries())
              .map(([key, cnt]) => `${key} — ${cnt} шт.`)
              .join(' &nbsp;·&nbsp; ')}
          </div>
-         <div style="font-size:11px;font-weight:400;margin-top:3px;">
-           Позиции связок выделены жирной рамкой и серым фоном
-         </div>
        </div>`
     : '';
   const header = `
-    <div style="display:flex;justify-content:space-between;align-items:stretch;margin-bottom:14px;">
-      <div style="border:1px solid #000;padding:6px 14px;font-size:13px;font-weight:700;">${cutterName}</div>
-      <div style="border:1px solid #000;padding:6px 14px;font-size:13px;font-weight:700;">${date}</div>
+    <div style="display:flex;justify-content:space-between;align-items:stretch;margin-bottom:8px;">
+      <div style="border:2px solid #000;padding:4px 12px;font-size:16px;font-weight:800;">${cutterName}</div>
+      <div style="border:2px solid #000;padding:4px 12px;font-size:16px;font-weight:800;">${date}</div>
     </div>` + groupsBanner;
   const grid = groupedGrid(
     pageOrders,
     (o) => `
-      <div style="padding:8px 12px;text-align:center;">
-        <div style="font-size:18px;font-weight:700;line-height:1.15;">${sizeLabel(o)}</div>
-        <div style="font-size:11px;color:#222;margin-top:3px;">${o.marketplace} ${o.orderNumber}</div>
+      <div style="padding:10px 14px;text-align:center;display:flex;flex-direction:column;
+                  justify-content:center;height:100%;box-sizing:border-box;">
+        <div style="font-size:${sizeFont(o, 34)}px;font-weight:800;line-height:1.05;
+                    white-space:nowrap;">${sizeLabel(o)}</div>
+        <div style="font-size:${numberFont(o, 27)}px;font-weight:800;margin-top:8px;
+                    letter-spacing:0.5px;white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
+        <div style="font-size:15px;font-weight:700;color:#222;margin-top:5px;">${o.marketplace}</div>
         ${groupNote(o)}
       </div>`
   );
@@ -152,12 +179,16 @@ const buildQrPageHtml = (
   const grid = groupedGrid(
     pageOrders,
     (o) => `
-      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;">
-        <img src="${qrDataUrls[o.id]}" style="width:52px;height:52px;flex-shrink:0;" />
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;height:100%;
+                  box-sizing:border-box;">
+        <img src="${qrDataUrls[o.id]}" style="width:96px;height:96px;flex-shrink:0;" />
         <div style="min-width:0;text-align:center;flex:1;">
-          <div style="font-size:17px;font-weight:700;line-height:1.15;">${sizeLabel(o)}</div>
-          <div style="font-size:11px;color:#222;margin-top:3px;">
-            ${o.marketplace} ${o.orderNumber} [${o.orderType}]${cutterId != null ? ` ID: ${cutterId}` : ''}
+          <div style="font-size:${sizeFont(o, 27)}px;font-weight:800;line-height:1.05;
+                      white-space:nowrap;">${sizeLabel(o)}</div>
+          <div style="font-size:${numberFont(o, 22)}px;font-weight:800;margin-top:6px;
+                      white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
+          <div style="font-size:14px;font-weight:700;color:#222;margin-top:4px;">
+            ${o.marketplace} [${o.orderType}]${cutterId != null ? ` · ID: ${cutterId}` : ''}
           </div>
           ${groupNote(o)}
         </div>
