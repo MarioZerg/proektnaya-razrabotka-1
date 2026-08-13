@@ -100,17 +100,38 @@ const numberFont = (o: TakenOrder, max: number) => {
 // на QR-листе), справа узкая колонка (пустая — под галочку/крепление бирки), как в образце.
 /** Ячейка одной позиции. Вещи связки выделяем жирной рамкой и серой заливкой: на листе
  * из 20 позиций закройщик должен видеть их с одного взгляда, а не вычитывать подписи. */
-const cell = (inner: string, isGroup = false) =>
-  `<div style="border:${
+/** Табличка ID закройщика в правом углу ячейки.
+ *
+ * По этому номеру швея и бригадир понимают, кто раскроил вещь: на вешалке висит
+ * десяток бирок от разных закройщиков, и разобрать их иначе невозможно. Раньше ID
+ * печатался мелким шрифтом в общей строке с маркетплейсом — его не читали. */
+const idBadge = (cutterId: number | null) =>
+  cutterId == null
+    ? ''
+    : `<div style="border-left:2px solid #000;display:flex;flex-direction:column;
+                   align-items:center;justify-content:center;line-height:1;">
+         <div style="font-size:9px;font-weight:700;letter-spacing:0.5px;">ID</div>
+         <div style="font-size:26px;font-weight:800;">${cutterId}</div>
+       </div>`;
+
+const cell = (inner: string, isGroup = false, cutterId: number | null = null) =>
+  `<div style="display:grid;grid-template-columns:1fr${
+    cutterId != null ? ' 52px' : ''
+  };border:${
     isGroup ? '4px solid #000' : '2px solid #000'
   };box-sizing:border-box;height:${CELL_HEIGHT_PX}px;overflow:hidden;${
     isGroup ? 'background:#e8e8e8;' : ''
   }">
      ${inner}
+     ${idBadge(cutterId)}
    </div>`;
 
 /** Сетка позиций, сгруппированная по материалу: между группами материала — визуальный отступ. */
-const groupedGrid = (pageOrders: TakenOrder[], renderInner: (o: TakenOrder) => string) => {
+const groupedGrid = (
+  pageOrders: TakenOrder[],
+  renderInner: (o: TakenOrder) => string,
+  cutterId: number | null = null
+) => {
   const blocks: string[] = [];
   let current: string | null = null;
   let rows: string[] = [];
@@ -124,7 +145,7 @@ const groupedGrid = (pageOrders: TakenOrder[], renderInner: (o: TakenOrder) => s
     const key = o.material || '—';
     if (current !== null && key !== current) flush();
     current = key;
-    rows.push(cell(renderInner(o), !!(o.groupSize && o.groupSize > 1)));
+    rows.push(cell(renderInner(o), !!(o.groupSize && o.groupSize > 1), cutterId));
   }
   flush();
   return `<div style="display:flex;flex-direction:column;gap:4px;">${blocks.join('')}</div>`;
@@ -133,7 +154,12 @@ const groupedGrid = (pageOrders: TakenOrder[], renderInner: (o: TakenOrder) => s
 const page = (inner: string) =>
   `<div style="width:${A4_WIDTH_PX}px;height:${A4_HEIGHT_PX}px;box-sizing:border-box;padding:12px;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;">${inner}</div>`;
 
-const buildChecklistPageHtml = (pageOrders: TakenOrder[], cutterName: string, date: string) => {
+const buildChecklistPageHtml = (
+  pageOrders: TakenOrder[],
+  cutterName: string,
+  date: string,
+  cutterId: number | null = null
+) => {
   // Сводка связок на странице: заказ покупателя из нескольких вещей вешается на ОДНУ вешалку
   // целиком, иначе швея не сможет взять и отшить его одним куском.
   const groupCounts = new Map<string, number>();
@@ -169,7 +195,8 @@ const buildChecklistPageHtml = (pageOrders: TakenOrder[], cutterName: string, da
         <div style="font-size:${o.groupSize && o.groupSize > 1 ? 9 : 11}px;font-weight:700;
                     color:#222;margin-top:1px;line-height:1;">${o.marketplace}</div>
         ${groupNote(o)}
-      </div>`
+      </div>`,
+    cutterId
   );
   return page(header + grid);
 };
@@ -192,10 +219,11 @@ const buildQrPageHtml = (
         <div style="font-size:${numberFont(o, 17)}px;font-weight:800;margin-top:2px;
                     white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
         <div style="font-size:10px;font-weight:700;color:#222;margin-top:1px;line-height:1;">
-          ${o.marketplace} [${o.orderType}]${cutterId != null ? ` · ID: ${cutterId}` : ''}
+          ${o.marketplace} [${o.orderType}]
         </div>
         ${groupNote(o)}
-      </div>`
+      </div>`,
+    cutterId
   );
   return page(grid);
 };
@@ -245,7 +273,11 @@ export const printCuttingSheet = async (
 
   let isFirstPage = true;
   for (const pageOrders of checklistPages) {
-    await renderPageToPdf(pdf, buildChecklistPageHtml(pageOrders, cutterName, date), isFirstPage);
+    await renderPageToPdf(
+      pdf,
+      buildChecklistPageHtml(pageOrders, cutterName, date, cutterId),
+      isFirstPage
+    );
     isFirstPage = false;
   }
   for (const pageOrders of qrPages) {
