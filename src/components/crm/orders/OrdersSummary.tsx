@@ -6,12 +6,6 @@ interface OrdersSummaryProps {
   orders: Order[];
 }
 
-const marketplaces: Array<{ code: string; label: string }> = [
-  { code: 'OZON', label: 'OZON' },
-  { code: 'WB', label: 'WB' },
-  { code: 'Yandex', label: 'Яндекс' },
-];
-
 /** Метраж ткани по списку заказов. Берём реальный расход из карточки товара (в нём
  * учтён запас на подгибку) — именно столько уйдёт со склада. Если карточка не заведена,
  * падаем на чистую ширину, чтобы заказ не потерялся в подсчёте. */
@@ -38,14 +32,14 @@ const byMaterial = (list: Order[]) => {
 };
 
 /**
- * Сводка сверху страницы заказов: новые заказы (кол-во + пог.м.) и разбивка ТЕКУЩЕЙ
- * работы по типу поставки (FBO/FBS) и площадкам (OZON/WB/Яндекс).
+ * Сводка сверху страницы заказов: сколько новых заказов и сколько метров ткани под
+ * них нужно, с разбивкой по материалам.
  *
- * Считаем только заказы, которые ещё в работе. Раньше сюда попадала вся история за
- * всё время, и цифры не сходились ни с чем: например, «FBO WB — 4 шт.» — это четыре
- * заказа, отшитых ещё весной и давно отгруженных, хотя таких заказов в работе нет
- * вообще. Сводка должна отвечать на вопрос «сколько мне сейчас делать», а не
- * «сколько сделано за всё время» — для истории есть вкладка «Готовые».
+ * Плашки «FBO / FBS в работе» с разбивкой по площадкам отсюда убраны: они считались
+ * по загруженной на страницу выборке, а не по всей базе, и потому показывали не то
+ * количество, которое было на самом деле. Верные числа по схемам поставки видны в
+ * разделе поставок и на главной — дублировать их здесь неверными значениями хуже,
+ * чем не показывать вовсе.
  */
 const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
   const active = orders.filter(
@@ -60,36 +54,8 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
 
   const materialRows = byMaterial(newOrders);
 
-  const countBy = (type: string, code: string) =>
-    active.filter((o) => o.orderType === type && o.marketplace === code).length;
-
-  const TypeCard = ({ title, type, icon }: { title: string; type: string; icon: string }) => {
-    const total = active.filter((o) => o.orderType === type).length;
-    return (
-      <Card className="border-border shadow-none">
-        <CardContent className="space-y-2 pt-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="flex items-center gap-1.5 text-sm font-semibold">
-              <Icon name={icon} size={15} className="text-muted-foreground" />
-              {title} — в работе
-            </span>
-            <span className="text-lg font-bold">{total}</span>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {marketplaces.map((m) => (
-              <div key={m.code} className="rounded border border-border px-2 py-1 text-center">
-                <div className="text-xs text-muted-foreground">{m.label}</div>
-                <div className="text-base font-semibold">{countBy(type, m.code)}</div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  };
-
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4">
       <Card className="border-border shadow-none">
         <CardContent className="flex h-full flex-col gap-1 pt-5">
           <span className="flex items-center gap-1.5 text-sm font-semibold">
@@ -125,8 +91,6 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
         </CardContent>
       </Card>
 
-      <TypeCard title="FBO" type="FBO" icon="Warehouse" />
-      <TypeCard title="FBS" type="FBS" icon="Truck" />
     </div>
   );
 };
