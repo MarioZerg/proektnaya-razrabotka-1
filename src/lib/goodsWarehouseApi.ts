@@ -155,6 +155,21 @@ export const adminReceiveGoods = (
     actorName,
   }) as Promise<ReceivedGood & { created: ReceivedGood[]; count: number }>;
 
+/**
+ * Найти товар справочника по отсканированному FBO-стикеру.
+ *
+ * Ищет сервер: в стикере может быть код с префиксом OZN, без него, артикул продавца
+ * или SKU другой площадки — все варианты сверяются разом.
+ */
+export const findItemByCode = (code: string) =>
+  postAction({ action: 'find_item_by_code', code }) as Promise<{
+    id: number;
+    name: string;
+    material: string | null;
+    width: number | null;
+    height: number | null;
+  }>;
+
 /** Кладовщик сканирует стикер хранения вещи, отменённой клиентом, и кладёт её на полку. */
 export const placeOnShelf = (barcode: string, shelfId: number) =>
   postAction({ action: 'place_on_shelf', barcode, shelfId });

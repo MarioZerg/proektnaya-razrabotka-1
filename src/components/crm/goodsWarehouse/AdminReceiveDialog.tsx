@@ -21,7 +21,7 @@ import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { useAuth } from '@/context/AuthContext';
 import type { Shelf } from '@/lib/shelvesApi';
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
-import { adminReceiveGoods } from '@/lib/goodsWarehouseApi';
+import { adminReceiveGoods, findItemByCode } from '@/lib/goodsWarehouseApi';
 import { printStorageStickers } from '@/lib/printStorageSticker';
 
 interface AdminReceiveDialogProps {
@@ -60,6 +60,8 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
   const [saving, setSaving] = useState(false);
   /** Поле для пистолета: сюда пикают FBO-стикер с коробки/вещи. */
   const [scan, setScan] = useState('');
+  /** Идёт проверка кода на сервере — второй скан в этот момент не принимаем. */
+  const [scanning, setScanning] = useState(false);
   /** Печатать ленту стикеров сразу после приёмки — обычно это и нужно. */
   const [autoPrint, setAutoPrint] = useState(true);
 
@@ -107,35 +109,47 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
    * Найденный товар просто падает в корзину, как если бы его выбрали руками. Повторный
    * скан того же стикера — это ещё одна такая же вещь, поэтому счётчик растёт на единицу.
    */
-  const handleScan = () => {
+  const handleScan = async () => {
     const code = scan.trim();
-    if (!code) return;
-    const norm = (s: string | null | undefined) => (s || '').trim().toLowerCase();
-    const target = code.toLowerCase();
-    const item = items.find(
-      (i) =>
-        norm(i.barcode) === target ||
-        norm(i.article) === target ||
-        norm(i.ozonSku) === target ||
-        norm(i.wbSku) === target ||
-        norm(i.ymSku) === target,
-    );
-    if (!item) {
+    if (!code || scanning) return;
+    setScanning(true);
+    try {
+      // Ищем на сервере: он знает про префикс OZN, ведущие нули и все колонки кодов.
+      // Локальный поиск по загруженному списку этого не умел — стикер без префикса
+      // не совпадал со справочником, и скан «не работал».
+      const found = await findItemByCode(code);
+      const item =
+        items.find((i) => i.id === found.id) ||
+        ({
+          id: found.id,
+          name: found.name,
+          material: found.material,
+          width: found.width,
+          height: found.height,
+          article: null,
+          ozonSku: null,
+          wbSku: null,
+          ymSku: null,
+          barcode: null,
+          createdAt: '',
+          updatedAt: '',
+        } as MarketplaceItem);
+      addToCart(item);
+      toast({ title: 'Добавлено', description: item.name });
+    } catch (e) {
       toast({
         title: 'Стикер не распознан',
-        description: `Товар со штрихкодом ${code} не найден в справочнике маркетплейса`,
+        description: e instanceof Error ? e.message : undefined,
         variant: 'destructive',
       });
+    } finally {
       setScan('');
-      return;
+      setScanning(false);
     }
-    addToCart(item);
-    toast({ title: 'Добавлено', description: item.name });
-    setScan('');
   };
 
   // Пистолет вводит код мгновенно и без Enter — ловим конец ввода по паузе.
-  useScannerAutoSubmit(scan, handleScan, Boolean(shelfId) && !saving);
+  useScannerAutoSubmit(scan, handleScan, Boolean(shelfId) && !saving && !scanning);
 
   const setQty = (id: number, qty: number) =>
     setCart((prev) =>
@@ -279,11 +293,14 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
                 }
               }}
               disabled={!shelfId || saving}
+              className="font-mono-tech"
             />
             <p className="text-xs text-muted-foreground">
-              {shelfId
-                ? 'Товар определится по стикеру и добавится в список. Один скан — одна вещь'
-                : 'Сначала выберите полку'}
+              {!shelfId
+                ? 'Сначала выберите полку'
+                : scanning
+                  ? 'Определяем товар по стикеру…'
+                  : 'Подойдёт любой код с этикетки: с OZN и без него. Один скан — одна вещь'}
             </p>
           </div>
 

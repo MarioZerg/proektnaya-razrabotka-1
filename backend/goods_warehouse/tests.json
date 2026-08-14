@@ -92,6 +92,25 @@
         "action": "to_shelf_from_inspection"
       },
       "expectedStatus": 400
+    },
+    {
+      "name": "Find item by code without code fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "find_item_by_code"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Find item by unknown code returns 404",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "find_item_by_code",
+        "code": "NOPE-XXX-000"
+      },
+      "expectedStatus": 404
     }
   ]
 }

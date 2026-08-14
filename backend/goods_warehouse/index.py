@@ -1049,6 +1049,60 @@ def handler(event: dict, context) -> dict:
                     }, ensure_ascii=False),
                 }
 
+            if action == 'find_item_by_code':
+                # Поиск товара по отсканированному FBO-стикеру.
+                #
+                # Сложность в том, что стикеры печатаются по-разному, и в одном и том же
+                # штрихкоде может лежать что угодно: код с префиксом (OZN1579985267),
+                # тот же код без префикса (1579985267), артикул продавца или SKU WB /
+                # Яндекса. Кладовщик не должен в этом разбираться — сверяем со всеми
+                # колонками справочника сразу, а префикс OZN приписываем и отбрасываем
+                # сами. Именно из-за него скан не срабатывал: в баркоде стикера префикса
+                # нет, а в справочнике он есть.
+                raw = (body_data.get('code') or '').strip()
+                if not raw:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Пустой код'})}
+
+                # Сканер иногда добавляет невидимые символы и ведущие нули — чистим.
+                code = raw.strip().strip('\r\n\t ').upper()
+                bare = code[3:] if code.startswith('OZN') else code
+                variants = {code, bare, f'OZN{bare}', bare.lstrip('0')}
+                variants = {v for v in variants if v}
+                vals = ', '.join(
+                    "'" + v.replace("'", "''") + "'" for v in variants
+                )
+                cur.execute(
+                    "SELECT id, name, material, width, height, barcode, sku, ozon_sku, wb_sku, ym_sku "
+                    "FROM marketplace_items WHERE "
+                    f"upper(trim(coalesce(barcode, ''))) IN ({vals}) "
+                    f"OR upper(trim(coalesce(sku, ''))) IN ({vals}) "
+                    f"OR upper(trim(coalesce(ozon_sku, ''))) IN ({vals}) "
+                    f"OR upper(trim(coalesce(wb_sku, ''))) IN ({vals}) "
+                    f"OR upper(trim(coalesce(ym_sku, ''))) IN ({vals}) "
+                    "LIMIT 1"
+                )
+                found_row = cur.fetchone()
+                if not found_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Товар по коду {raw} не найден в справочнике'},
+                            ensure_ascii=False,
+                        ),
+                    }
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'id': found_row[0],
+                        'name': found_row[1],
+                        'material': found_row[2],
+                        'width': found_row[3],
+                        'height': found_row[4],
+                    }, ensure_ascii=False),
+                }
+
             if action == 'ship_label':
                 # Кладовщик забрал с полки вещь, зарезервированную под новый заказ FBS,
                 # наклеил на неё стикер отправления маркетплейса и сканирует стикер хранения
