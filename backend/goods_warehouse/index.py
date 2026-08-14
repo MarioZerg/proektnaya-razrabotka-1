@@ -177,9 +177,9 @@ def try_match_orders_from_stock(cur, gw_id=None):
     # FOR UPDATE OF gw SKIP LOCKED: вещь, которую параллельно резервирует другой процесс,
     # пропускаем — так одна вещь физически не может уйти в два заказа сразу.
     cur.execute(
-        "SELECT gw.id, src.marketplace_item_id FROM goods_warehouse gw "
+        "SELECT gw.id, src.marketplace_item_id, src.product FROM goods_warehouse gw "
         "JOIN orders src ON src.id = gw.order_id "
-        f"WHERE {where_gw} AND src.marketplace_item_id IS NOT NULL "
+        f"WHERE {where_gw} AND src.product IS NOT NULL "
         "ORDER BY gw.received_at ASC "
         "FOR UPDATE OF gw SKIP LOCKED"
     )
@@ -188,11 +188,19 @@ def try_match_orders_from_stock(cur, gw_id=None):
         return matched
 
     # Складываем свободные вещи по товару справочника: ключ — marketplace_item_id.
+    # Нужен для Яндекса, где заказ закрывается только целиком по составу.
     by_item = {}
-    for row_gw_id, item_id in free_stock:
-        by_item.setdefault(int(item_id), []).append(int(row_gw_id))
+    # И отдельно — по НАЗВАНИЮ товара («Лен 300x245»). В названии материал и размер:
+    # ровно то, чем вещи отличаются друг от друга на полке. Штучные заказы OZON и WB
+    # подбираются по нему, а не по коду справочника: код заполнен не у всех вещей
+    # (например, у возвратов и принятых вручную), и такие вещи автоподбор просто не
+    # видел — заказ уходил в пошив, хотя готовый товар лежал на складе.
+    by_product = {}
+    for row_gw_id, item_id, product in free_stock:
+        if item_id is not None:
+            by_item.setdefault(int(item_id), []).append(int(row_gw_id))
+        by_product.setdefault(product, []).append(int(row_gw_id))
 
-    item_ids_csv = ','.join(str(i) for i in by_item)
 
     # --- 1. Яндекс: заказ покупателя закрывается ТОЛЬКО целиком -------------------
     # У Яндекса на весь заказ один ярлык, вещи едут вместе. Закрыть часть заказа со
@@ -256,6 +264,11 @@ def try_match_orders_from_stock(cur, gw_id=None):
 
         for unit_id, unit_item in units:
             pick_id = by_item[int(unit_item)].pop(0)
+            # Вещь ушла в связку Яндекса — вычёркиваем её и из списка по названию,
+            # иначе тот же товар вторым проходом уйдёт ещё и в заказ OZON или WB.
+            for pool_by_name in by_product.values():
+                if pick_id in pool_by_name:
+                    pool_by_name.remove(pick_id)
             cur.execute(
                 # Подобранная вещь сразу переходит в «На сборке»: она больше не свободный
                 # остаток на полке, а конкретное отправление, за которым идёт кладовщик.
@@ -273,11 +286,12 @@ def try_match_orders_from_stock(cur, gw_id=None):
             matched.append({'gwId': pick_id, 'orderId': int(unit_id), 'groupKey': gkey})
 
     # --- 2. OZON и WB: вещи штучные, подбираем по одной ---------------------------
-    if item_ids_csv:
+    if by_product:
         # SKIP LOCKED: заказы, которые прямо сейчас забирает закройщик, пропускаем —
         # вещь со склада под них подберётся в следующий раз, если они вернутся в очередь.
+        names_csv = ','.join("'" + p.replace("'", "''") + "'" for p in by_product)
         cur.execute(
-            "SELECT id, marketplace_item_id FROM orders "
+            "SELECT id, product FROM orders "
             "WHERE marketplace <> 'Yandex' AND group_key IS NULL "
             f"AND sewing_status = '{NOT_STARTED_SEWING}' AND fulfilled_from_stock_id IS NULL "
             "AND COALESCE(status, '') <> 'Отменён' "
@@ -311,15 +325,23 @@ def try_match_orders_from_stock(cur, gw_id=None):
             "     AND sib.id <> orders.id "
             "     AND COALESCE(sib.status, '') <> 'Отменён' "
             f"     AND sib.sewing_status NOT IN ('{NOT_STARTED_SEWING}', 'Со склада')) "
-            f"AND marketplace_item_id IN ({item_ids_csv}) "
+            # Ключ подбора — НАЗВАНИЕ товара, в нём материал и размер. Кладовщик на полке
+            # различает вещи именно по ним, а не по коду справочника: код заполнен не у
+            # всех вещей, и раньше такой товар автоподбор не видел вовсе.
+            f"AND product IN ({names_csv}) "
             "ORDER BY (order_type = 'FBS') DESC, created_at ASC, id ASC "
             "FOR UPDATE SKIP LOCKED"
         )
-        for order_id, item_id in cur.fetchall():
-            pool = by_item.get(int(item_id))
+        for order_id, order_product in cur.fetchall():
+            pool = by_product.get(order_product)
             if not pool:
                 continue
             pick_id = pool.pop(0)
+            # Вещь занята — убираем её и из списка по коду справочника, чтобы связка
+            # Яндекса при следующем проходе не посчитала её свободной.
+            for pool_by_item in by_item.values():
+                if pick_id in pool_by_item:
+                    pool_by_item.remove(pick_id)
             cur.execute(
                 # Подобранная вещь сразу переходит в «На сборке»: она больше не свободный
                 # остаток на полке, а конкретное отправление, за которым идёт кладовщик.
@@ -2321,11 +2343,12 @@ def handler(event: dict, context) -> dict:
                 # 3. Ищем любой заказ в подборе на ТАКОЙ ЖЕ товар, чью вещь ещё не
                 #    застикеровали.
                 #
-                #    Сравниваем по названию товара («Лен 300x265») — в нём и материал,
-                #    и ширина, и высота, то есть ровно то, что кладовщик называет
-                #    размером. По коду товара справочника сверять нельзя: у трети
-                #    складских вещей он не заполнен, и подбор бы молча не срабатывал.
-                #    Если код есть у обеих вещей — дополнительно проверяем и его.
+                #    Сравниваем ТОЛЬКО по названию товара («Лен 300x265») — в нём и
+                #    материал, и ширина, и высота, то есть ровно то, чем вещи отличаются
+                #    друг от друга на полке. Код товара справочника не сверяем вовсе:
+                #    он заполнен не у всех вещей, и одинаковый товар с разными кодами
+                #    считался разным — кладовщик держал в руках нужный размер, а сканер
+                #    отвечал «не нужен в подбор».
                 if not gw_product:
                     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
                         'matched': False,
@@ -2334,11 +2357,6 @@ def handler(event: dict, context) -> dict:
                     }, ensure_ascii=False)}
 
                 prod_esc = gw_product.replace("'", "''")
-                item_sql = (
-                    f" AND (src2.marketplace_item_id IS NULL "
-                    f"      OR src2.marketplace_item_id = {int(gw_item_id)})"
-                    if gw_item_id else ""
-                )
                 cur.execute(
                     "SELECT other.id, other.reserved_order_id, ro.order_number "
                     "FROM goods_warehouse other "
@@ -2348,7 +2366,6 @@ def handler(event: dict, context) -> dict:
                     "  AND other.shipping_labeled_at IS NULL "
                     f"  AND other.id <> {int(gw_id)} "
                     f"  AND src2.product = '{prod_esc}' "
-                    + item_sql +
                     f"  AND {RESERVE_ALIVE_SQL} "
                     "ORDER BY other.matched_at ASC NULLS LAST, other.id ASC LIMIT 1"
                 )
