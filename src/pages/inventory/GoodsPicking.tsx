@@ -79,8 +79,16 @@ const GoodsPicking = () => {
             title: `Снято с подбора: ${res.total}`,
             description: 'Заказы отменены или уже уехали — вещи вернулись на полку хранения',
           });
-          load();
         }
+        // Вещи, которые числились на хранении, хотя за ними закреплён живой заказ:
+        // в списке их не было, а сканер на них ругался. Возвращаем в работу.
+        if (res.restored) {
+          toast({
+            title: `Возвращено в подбор: ${res.restored}`,
+            description: 'Эти вещи были заняты заказами, но не показывались в списке',
+          });
+        }
+        if (res.total > 0 || res.restored) load();
       })
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps

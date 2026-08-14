@@ -2460,7 +2460,14 @@ def handler(event: dict, context) -> dict:
                 )
                 goods_ids = [r[0] for r in cur.fetchall()]
                 for gid in goods_ids:
-                    cur.execute(f"UPDATE goods_warehouse SET status = 'in_stock' WHERE id = {gid}")
+                    # Вместе со статусом снимаем и резерв: вещь, вернувшаяся «На хранение»
+                    # с чужим заказом на борту, пропадает из подбора и мешает работе
+                    # сканера — он находит её, но застикеровать её нельзя.
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', "
+                        "reserved_order_id = NULL, matched_at = NULL, "
+                        f"shipping_labeled_at = NULL WHERE id = {gid}"
+                    )
 
                 # Вещи, зарезервированные с полок под заказы этой поставки, возвращаем в
                 # свободные — иначе они навсегда остались бы занятыми под удалённый заказ.

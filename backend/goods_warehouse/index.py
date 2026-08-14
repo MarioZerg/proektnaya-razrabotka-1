@@ -2115,6 +2115,35 @@ def handler(event: dict, context) -> dict:
                         else 'Отправление уже уехало к покупателю',
                     })
 
+                # Лечим рассинхрон: вещь закреплена за ЖИВЫМ заказом, но числится
+                # «На хранении».
+                #
+                # Такая вещь выпадает из работы целиком: в списке «Товар к подбору» её нет
+                # (туда попадают только «На сборке»), а на складе она выглядит свободной —
+                # и её же система предлагает как остаток под другой заказ. Кладовщик пикает
+                # её сканером, слышит «нужная», идёт клеить ярлык — и упирается в то, что
+                # вещь уже принадлежит чужому отправлению.
+                #
+                # Возвращаем такую вещь в подбор: заказ живой, вещь на месте — работа
+                # просто перестала быть видимой.
+                cur.execute(
+                    "UPDATE goods_warehouse gw SET status = 'picking' "
+                    "FROM orders ro WHERE ro.id = gw.reserved_order_id "
+                    "  AND gw.status = 'in_stock' "
+                    "  AND gw.shipping_labeled_at IS NULL "
+                    "  AND gw.shipped_at IS NULL "
+                    f"  AND {RESERVE_ALIVE_SQL} "
+                    + (f" AND gw.id = {int(gw_id)}" if gw_id else "") +
+                    " RETURNING gw.id, gw.storage_barcode, ro.order_number"
+                )
+                restored = cur.fetchall()
+                if restored:
+                    log_action(
+                        cur, actor_id, actor_name, 'verify_picking', 'goods_warehouse', None,
+                        f'Возвращено в подбор вещей: {len(restored)} '
+                        f'(числились на хранении, но закреплены за живыми заказами)',
+                    )
+
                 if released:
                     log_action(
                         cur, actor_id, actor_name, 'verify_picking', 'goods_warehouse', None,
@@ -2128,6 +2157,8 @@ def handler(event: dict, context) -> dict:
                     'body': json.dumps({
                         'released': released,
                         'total': len(released),
+                        # Сколько вещей вернулось в подбор из «зависшего» состояния.
+                        'restored': len(restored),
                     }, ensure_ascii=False),
                 }
 
@@ -2216,11 +2247,33 @@ def handler(event: dict, context) -> dict:
                     )
                     own = cur.fetchone()
                     if own:
+                        # Вещь закреплена за живым заказом, но числится «На хранении» —
+                        # значит, где-то её вернули на полку, забыв снять резерв. В подборе
+                        # такой вещи не видно, и кладовщик упирался в тупик: сканер её
+                        # находит, а застикеровать нельзя. Возвращаем в сборку прямо здесь.
+                        if gw_status == 'in_stock':
+                            cur.execute(
+                                f"UPDATE goods_warehouse SET status = 'picking' WHERE id = {int(gw_id)}"
+                            )
+                            log_action(
+                                cur, actor_id, actor_name, 'scan_picking', 'goods_warehouse',
+                                gw_id,
+                                f'Вернул в подбор: вещь числилась на хранении, но закреплена '
+                                f'за заказом #{own[0]}',
+                            )
+                            conn.commit()
                         return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
                             'matched': True, 'goodsId': gw_id, 'product': gw_product,
                             'shelfName': gw_shelf, 'orderNumber': own[0],
                             'reassigned': False,
                         }, ensure_ascii=False)}
+                    # Заказ мёртвый (отменён/уехал), а вещь всё ещё за ним закреплена —
+                    # освобождаем её, иначе она навсегда выпадет из оборота.
+                    cur.execute(
+                        "UPDATE goods_warehouse SET reserved_order_id = NULL, matched_at = NULL "
+                        f"WHERE id = {int(gw_id)}"
+                    )
+                    gw_reserved = None
 
                 # 3. Ищем любой заказ в подборе на ТАКОЙ ЖЕ товар, чью вещь ещё не
                 #    застикеровали.
@@ -2334,7 +2387,14 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Запись не найдена'})}
                 if row[0] != 'picking':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Товар не в статусе "На сборке"'})}
-                cur.execute(f"UPDATE goods_warehouse SET status = 'in_stock' WHERE id = {int(item_id)}")
+                # Снимаем И резерв, а не только статус. Раньше вещь возвращалась «На
+                # хранение», но оставалась закреплённой за заказом: в подборе её больше
+                # не видно, а на складе она выглядит свободной. Кладовщик пикал такую
+                # вещь сканером и упирался в «товар принадлежит другому заказу».
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'in_stock', reserved_order_id = NULL, "
+                    f"matched_at = NULL, shipping_labeled_at = NULL WHERE id = {int(item_id)}"
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 

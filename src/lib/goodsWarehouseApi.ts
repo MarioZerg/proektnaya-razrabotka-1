@@ -260,6 +260,8 @@ export const fetchPickingPending = async (): Promise<PickingPending> => {
 export const verifyPicking = (gwId?: number, actorId?: number, actorName?: string) =>
   postAction({ action: 'verify_picking', gwId, actorId, actorName }) as Promise<{
     total: number;
+    /** Вещи, вернувшиеся в подбор: числились на хранении, но заняты живым заказом. */
+    restored?: number;
     released: {
       id: number;
       storageBarcode: string;
