@@ -88,8 +88,6 @@ const SewingItemsCards = ({
                 </p>
               )}
               <div className="flex items-start justify-between gap-2">
-                {/* Номер заказа переносим целиком (break-all): у OZON он длинный и раньше
-                    обрезался многоточием — сотрудник не видел, какой это заказ. */}
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-1.5 text-xs">
                     <span
@@ -123,11 +121,6 @@ const SewingItemsCards = ({
                       </Badge>
                     )}
                   </p>
-                  {/* Номер заказа — главный опознавательный признак вещи, по нему её
-                      ищут и сверяют. Раньше он был самым мелким текстом на карточке. */}
-                  <p className="break-all font-mono-tech text-base font-bold leading-tight">
-                    {o.orderNumber}
-                  </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   {canPrintSticker && o.orderType === 'FBO' && o.sewingStatus === 'Готовые' && (
@@ -149,6 +142,15 @@ const SewingItemsCards = ({
                   </Badge>
                 </div>
               </div>
+
+              {/* Номер заказа — главный опознавательный признак вещи, по нему её ищут и
+                  сверяют. Стоит отдельной строкой во всю ширину карточки: в шапке он делил
+                  место со значками статуса и срока и разваливался на две строки. Номер
+                  длиной до 19 знаков, поэтому на узком экране слегка ужимаем буквы
+                  (text-sm) — зато он всегда читается одной строкой. */}
+              <p className="overflow-hidden text-ellipsis whitespace-nowrap font-mono-tech text-sm font-bold leading-tight tracking-tight sm:text-base">
+                {o.orderNumber}
+              </p>
 
               {/* Материал и размер — то, по чему швея берёт ткань в работу. Самый
                   крупный текст карточки: видно с вытянутой руки, не наклоняясь. */}
