@@ -298,9 +298,17 @@ def handler(event: dict, context) -> dict:
             if params.get('sewerDaily'):
                 # Прогресс по акции ТЕКУЩЕГО дня — для шкалы на главной.
                 today = date.today()
+                # Закрытую акцию не показываем, даже если её день по серверу ещё идёт.
+                # Сервер живёт по UTC, а цех — по Москве: с полуночи до 3 ночи по
+                # московскому времени вчерашний день на сервере ещё не кончился, и
+                # вчерашняя акция продолжала висеть на дашборде как активная. Отметка
+                # «день посчитан» ставится при начислении премий и вручную — она и
+                # закрывает акцию окончательно.
                 cur.execute(
                     "SELECT challenge_date, target_meters, amount, title "
-                    "FROM sewer_daily_challenges WHERE challenge_date = %s",
+                    "FROM sewer_daily_challenges WHERE challenge_date = %s "
+                    "  AND NOT EXISTS (SELECT 1 FROM sewer_daily_settled s "
+                    "                  WHERE s.challenge_date = sewer_daily_challenges.challenge_date)",
                     (today,),
                 )
                 ch = cur.fetchone()
