@@ -1,67 +1,12 @@
-import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
-import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/context/AuthContext';
-import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
-import { printStorageStickers } from '@/lib/printStorageSticker';
-import {
-  INSPECTION_STAGES,
-  toneClass,
-  toneIconClass,
-} from '@/components/crm/goodsWarehouse/inspectionStages';
-import { shortProductName } from '@/lib/shortProductName';
-import {
-  fetchInspection,
-  moveToWorkshop,
-  toShelfFromInspection,
-  sendToDispose,
-  clearDisposed,
-  type InspectionCounts,
-  type InspectionItem,
-  type InspectionStage,
-} from '@/lib/goodsWarehouseApi';
-
-const EMPTY_COUNTS: InspectionCounts = {
-  fromMarketplace: 0,
-  fromReturn: 0,
-  atPackers: 0,
-  inspected: 0,
-  taken: 0,
-  toDispose: 0,
-  disposed: 0,
-};
-
-const formatDate = (value: string | null) => {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
+import { INSPECTION_STAGES } from '@/components/crm/goodsWarehouse/inspectionStages';
+import ReturnsInspectionStages from '@/components/crm/goodsWarehouse/ReturnsInspectionStages';
+import ReturnsInspectionActions from '@/components/crm/goodsWarehouse/ReturnsInspectionActions';
+import ReturnsInspectionList from '@/components/crm/goodsWarehouse/ReturnsInspectionList';
+import { useReturnsInspection } from '@/components/crm/goodsWarehouse/useReturnsInspection';
 
 /**
  * Возвраты на осмотре — воронка из шести этапов.
@@ -74,190 +19,32 @@ const formatDate = (value: string | null) => {
  * кто-нибудь не находил её на столе.
  */
 const ReturnsInspection = () => {
-  const { toast } = useToast();
-  const { user } = useAuth();
   const navigate = useNavigate();
-
-  const [counts, setCounts] = useState<InspectionCounts>(EMPTY_COUNTS);
-  const [items, setItems] = useState<InspectionItem[]>([]);
-  const [stage, setStage] = useState<InspectionStage>('fromReturn');
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<number[]>([]);
-  const [acting, setActing] = useState(false);
-  const [disposeReason, setDisposeReason] = useState('');
-  // Полки для укладки прямо с разбора — грузим один раз при открытии страницы.
-  const [shelves, setShelves] = useState<Shelf[]>([]);
-  const [shelfId, setShelfId] = useState('');
-  /** Поиск по списку: сюда пикают стикер возврата с пакета. */
-  const [search, setSearch] = useState('');
-
-  const isAdmin = user?.role === 'admin';
-  // Раскладывать по полкам могут кладовщик и админ — это конец пути возврата.
-
-  const load = (nextStage: InspectionStage = stage) => {
-    setLoading(true);
-    fetchInspection(nextStage)
-      .then((data) => {
-        setCounts(data.counts);
-        setItems(data.items);
-      })
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    load(stage);
-    setSelected([]);
-    setSearch('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage]);
-
-  useEffect(() => {
-    fetchShelves().then(setShelves).catch(() => setShelves([]));
-  }, []);
-
-  const toggle = (id: number) =>
-    setSelected((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-
-  /**
-   * Отбор строк по поиску. Кладовщик держит в руках пакет с ПВЗ и пикает наклеенный на
-   * него стикер возврата — по нему вещь и находится. Ищем заодно по стикеру хранения,
-   * номеру заказа, товару и материалу: пригодится, когда стикер порван и приходится
-   * искать глазами по названию.
-   */
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-  const query = norm(search);
-  const visible = query
-    ? items.filter((i) =>
-        norm(
-          [
-            i.returnBarcode,
-            i.storageBarcode,
-            i.orderNumber,
-            i.product,
-            i.returnProductName,
-            i.material,
-            i.width && i.height ? `${i.width}x${i.height}` : '',
-          ]
-            .filter(Boolean)
-            .join(' '),
-        ).includes(query),
-      )
-    : items;
-
-  const toggleAll = () =>
-    setSelected((prev) => (prev.length === visible.length ? [] : visible.map((i) => i.id)));
-
-  const handleMoveToWorkshop = async () => {
-    setActing(true);
-    try {
-      const res = await moveToWorkshop(selected, user?.id, user?.name);
-      toast({
-        title: 'Передано в цех',
-        description: `Упаковщицы получили вещей: ${res.moved}`,
-      });
-      setSelected([]);
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось передать',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setActing(false);
-    }
-  };
-
-  // Вещь приехала в порядке — в цех её везти незачем, сразу в очередь на укладку.
-  // Кладём вещи на полку прямо здесь и сразу печатаем стикеры хранения.
-  //
-  // Раньше вещь уходила «ждать укладки» и второй раз всплывала в виджете «Разложить
-  // по полкам»: кладовщик заново её сканировал и выбирал полку. Двойная работа — вещь
-  // уже у него в руках, полку он знает.
-  const handleToShelf = async () => {
-    if (!shelfId) {
-      toast({ title: 'Выберите полку', variant: 'destructive' });
-      return;
-    }
-    setActing(true);
-    try {
-      const res = await toShelfFromInspection(selected, Number(shelfId), user?.id, user?.name);
-      // Печатаем ОДНОЙ лентой, а не по стикеру на вещь: при выборе нескольких товаров
-      // окна печати открывались стопкой друг на друга, и кладовщик закрывал их по одному.
-      // Рулонный принтер режет ленту сам по границе наклеек.
-      printStorageStickers(
-        res.items.map((i) => ({
-          storageBarcode: i.storageBarcode,
-          title:
-            i.material && i.width && i.height
-              ? `${i.material} ${i.width}x${i.height}`
-              : i.product || 'Возврат',
-          orderNumber: i.orderNumber,
-        }))
-      );
-      toast({
-        title: `Положено на «${res.shelfName}»: ${res.moved}`,
-        description:
-          res.moved > 1
-            ? `Лента из ${res.moved} стикеров отправлена на печать`
-            : 'Стикер хранения отправлен на печать',
-      });
-      setSelected([]);
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось положить на полку',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setActing(false);
-    }
-  };
-
-  const handleDispose = async () => {
-    if (!disposeReason.trim()) {
-      toast({ title: 'Укажите причину утилизации', variant: 'destructive' });
-      return;
-    }
-    setActing(true);
-    try {
-      const res = await sendToDispose(selected, disposeReason.trim(), user?.id, user?.name);
-      toast({ title: 'На утилизацию', description: `Отправлено вещей: ${res.moved}` });
-      setSelected([]);
-      setDisposeReason('');
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось отправить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setActing(false);
-    }
-  };
-
-  const handleClear = async () => {
-    setActing(true);
-    try {
-      const res = await clearDisposed(selected, user?.id, user?.name);
-      toast({ title: 'Утилизация очищена', description: `Списано вещей: ${res.cleared}` });
-      setSelected([]);
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось очистить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setActing(false);
-    }
-  };
+  const {
+    counts,
+    items,
+    stage,
+    setStage,
+    loading,
+    selected,
+    setSelected,
+    acting,
+    disposeReason,
+    setDisposeReason,
+    shelves,
+    shelfId,
+    setShelfId,
+    search,
+    setSearch,
+    isAdmin,
+    visible,
+    toggle,
+    toggleAll,
+    handleMoveToWorkshop,
+    handleToShelf,
+    handleDispose,
+    handleClear,
+  } = useReturnsInspection();
 
   const current = INSPECTION_STAGES.find((s) => s.key === stage);
 
@@ -289,132 +76,24 @@ const ReturnsInspection = () => {
               кладовщик делает в одном месте — на складе. */}
         </div>
 
-        {/* Виджеты движения: клик переключает список ниже. */}
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-          {INSPECTION_STAGES.map((s) => (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => setStage(s.key)}
-              className={`rounded-lg border p-3 text-left transition ${toneClass[s.tone]} ${
-                stage === s.key ? 'ring-2 ring-primary ring-offset-1' : ''
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Icon name={s.icon} size={16} className={toneIconClass[s.tone]} />
-                <span className="text-2xl font-bold">{counts[s.key]}</span>
-              </div>
-              <p className="mt-1 text-sm font-medium leading-tight">{s.title}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground leading-tight">{s.hint}</p>
-            </button>
-          ))}
-        </div>
+        <ReturnsInspectionStages counts={counts} stage={stage} onStageChange={setStage} />
 
-        {/* Действия по выбранным вещам — свои для каждого этапа. */}
-        {selected.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
-            <span className="text-sm font-medium">Выбрано: {selected.length}</span>
-
-            {/* Разбирая привезённое с ПВЗ и принятое ранее, кладовщик отправляет часть
-                вещей упаковщицам на осмотр — действие одинаковое для обоих этапов. */}
-            {(stage === 'fromReturn' || stage === 'fromMarketplace') && (
-              <>
-                <Button size="sm" onClick={handleMoveToWorkshop} disabled={acting}>
-                  <Icon name="Truck" size={16} className="mr-2" />
-                  Переместить в цех на осмотр
-                </Button>
-                {/* Вещь вернулась в порядке — везти её к упаковщицам незачем. Раньше
-                    с разбора был один путь, через цех, и годная вещь делала лишний круг
-                    по производству. Полку выбирают тут же: вещь в руках, и второй заход
-                    через «Разложить по полкам» не нужен. */}
-                <Select value={shelfId} onValueChange={setShelfId}>
-                  <SelectTrigger className="h-9 w-44">
-                    <SelectValue placeholder="Полка" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {shelves.map((sh) => (
-                      <SelectItem key={sh.id} value={String(sh.id)}>
-                        {sh.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleToShelf}
-                  disabled={acting || !shelfId}
-                >
-                  <Icon name="Boxes" size={16} className="mr-2" />
-                  На полку + стикер
-                </Button>
-              </>
-            )}
-
-            {/* Осмотрено: упаковщица уже проверила вещь и наклеила стикер. Кладовщику
-                здесь нужно ровно одно — положить на полку. Можно по одной вещи (один
-                стикер) или отметить сразу несколько: тогда печатается лента стикеров,
-                и рулонный принтер режет её сам. */}
-            {stage === 'inspected' && (
-              <>
-                <Select value={shelfId} onValueChange={setShelfId}>
-                  <SelectTrigger className="h-9 w-44">
-                    <SelectValue placeholder="Полка" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {shelves.map((sh) => (
-                      <SelectItem key={sh.id} value={String(sh.id)}>
-                        {sh.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button size="sm" onClick={handleToShelf} disabled={acting || !shelfId}>
-                  <Icon name="Boxes" size={16} className="mr-2" />
-                  {selected.length > 1
-                    ? `На полку + лента из ${selected.length} стикеров`
-                    : 'На полку + стикер'}
-                </Button>
-              </>
-            )}
-
-            {/* Утилизация — решение о судьбе товара, а не складская операция. Кладовщик
-                её не принимает: на осмотре брак определяет упаковщица в цехе (кнопкой
-                на терминале), а окончательно списывает администратор. Раньше кнопка
-                стояла на всех этапах, и вещь можно было отправить в утиль со склада
-                мимо осмотра — никто потом не мог сказать, кто и почему её забраковал. */}
-            {stage !== 'disposed' && stage !== 'toDispose' && isAdmin && (
-              <>
-                <Input
-                  value={disposeReason}
-                  onChange={(e) => setDisposeReason(e.target.value)}
-                  placeholder="Причина утилизации"
-                  className="h-9 w-56"
-                />
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={handleDispose}
-                  disabled={acting}
-                >
-                  <Icon name="TriangleAlert" size={16} className="mr-2" />
-                  На утилизацию
-                </Button>
-              </>
-            )}
-
-            {stage === 'toDispose' && isAdmin && (
-              <Button size="sm" variant="destructive" onClick={handleClear} disabled={acting}>
-                <Icon name="Trash2" size={16} className="mr-2" />
-                Списать окончательно
-              </Button>
-            )}
-
-            <Button size="sm" variant="ghost" onClick={() => setSelected([])}>
-              Снять выделение
-            </Button>
-          </div>
-        )}
+        <ReturnsInspectionActions
+          stage={stage}
+          selected={selected}
+          acting={acting}
+          isAdmin={isAdmin}
+          shelves={shelves}
+          shelfId={shelfId}
+          onShelfIdChange={setShelfId}
+          disposeReason={disposeReason}
+          onDisposeReasonChange={setDisposeReason}
+          onMoveToWorkshop={handleMoveToWorkshop}
+          onToShelf={handleToShelf}
+          onDispose={handleDispose}
+          onClear={handleClear}
+          onClearSelection={() => setSelected([])}
+        />
 
         {stage === 'atPackers' && !isAdmin && (
           <p className="text-sm text-muted-foreground">
@@ -430,108 +109,17 @@ const ReturnsInspection = () => {
           </p>
         )}
 
-        <div className="space-y-2">
-          <h2 className="font-semibold">{current?.title}</h2>
-
-          {/* Поиск нужен там, где вещей много и они физически в руках у кладовщика:
-              он пикает стикер с пакета и сразу видит нужную строку. */}
-          {!loading && items.length > 0 && (
-            <div className="relative max-w-xl">
-              <Icon
-                name="Search"
-                size={16}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-              />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Отсканируйте стикер возврата или введите товар, размер, заказ"
-                className="h-11 pl-9 pr-9"
-                autoComplete="off"
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => setSearch('')}
-                  title="Очистить поиск"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
-                >
-                  <Icon name="X" size={16} />
-                </button>
-              )}
-            </div>
-          )}
-
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Icon name="Loader2" size={16} className="animate-spin" />
-              Загрузка...
-            </div>
-          ) : items.length === 0 ? (
-            <p className="text-sm text-muted-foreground">На этом этапе пусто</p>
-          ) : visible.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              По запросу «{search}» ничего не нашлось. Возможно, вещь ещё не отмечена как
-              привезённая с пункта выдачи
-            </p>
-          ) : (
-            <div className="overflow-x-auto rounded-lg border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-primary hover:bg-primary">
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={selected.length === visible.length && visible.length > 0}
-                        onCheckedChange={toggleAll}
-                      />
-                    </TableHead>
-                    <TableHead className="text-primary-foreground">Товар</TableHead>
-                    <TableHead className="text-primary-foreground">Ткань</TableHead>
-                    <TableHead className="text-primary-foreground">Размер</TableHead>
-                    <TableHead className="text-primary-foreground">Кто осмотрел</TableHead>
-                    <TableHead className="text-primary-foreground">Дата</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visible.map((i) => (
-                    <TableRow key={i.id} className="hover:bg-muted/60">
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <Checkbox
-                          checked={selected.includes(i.id)}
-                          onCheckedChange={() => toggle(i.id)}
-                        />
-                      </TableCell>
-                      <TableCell
-                        className="cursor-pointer"
-                        onClick={() => navigate(`/crm/inventory/goods/${i.id}`)}
-                      >
-                        <div className="font-medium" title={i.product || ''}>
-                          {shortProductName(i)}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {i.orderNumber || '—'} · {i.storageBarcode}
-                        </div>
-                        {(i.disposeReason || i.lostReason) && (
-                          <div className="text-xs text-destructive">
-                            {i.disposeReason || i.lostReason}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>{i.material || '—'}</TableCell>
-                      <TableCell>
-                        {i.width && i.height ? `${i.width}×${i.height}` : '—'}
-                      </TableCell>
-                      <TableCell>{i.inspectedByName || i.takenByName || '—'}</TableCell>
-                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                        {formatDate(i.inspectedAt || i.takenAt || i.receivedAt)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </div>
+        <ReturnsInspectionList
+          title={current?.title}
+          loading={loading}
+          items={items}
+          visible={visible}
+          selected={selected}
+          search={search}
+          onSearchChange={setSearch}
+          onToggle={toggle}
+          onToggleAll={toggleAll}
+        />
 
       </div>
     </CrmLayout>
