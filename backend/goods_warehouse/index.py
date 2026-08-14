@@ -2368,6 +2368,14 @@ def handler(event: dict, context) -> dict:
                     "matched_at = now() WHERE id = %s",
                     (int(order_id), int(gw_id)),
                 )
+                # И заказ теперь тоже указывает на НОВУЮ вещь. Без этого связь оставалась
+                # односторонней: вещь помнила заказ, а заказ — старую вещь, вернувшуюся на
+                # полку. Стикеровка такую пару отвергала, и работа зависала в подборе —
+                # ярлык напечатан, а отправить товар нельзя.
+                cur.execute(
+                    "UPDATE orders SET fulfilled_from_stock_id = %s WHERE id = %s",
+                    (int(gw_id), int(order_id)),
+                )
                 log_action(
                     cur, actor_id, actor_name, 'scan_picking', 'goods_warehouse', gw_id,
                     f'Подбор по размеру: заказ #{order_number} закрыт вещью {barcode} '
