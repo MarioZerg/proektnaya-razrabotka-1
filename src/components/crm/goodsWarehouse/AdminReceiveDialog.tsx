@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { useAuth } from '@/context/AuthContext';
 import type { Shelf } from '@/lib/shelvesApi';
 import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
@@ -57,6 +58,8 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
   const [cart, setCart] = useState<CartRow[]>([]);
   const [shelfId, setShelfId] = useState('');
   const [saving, setSaving] = useState(false);
+  /** Поле для пистолета: сюда пикают FBO-стикер с коробки/вещи. */
+  const [scan, setScan] = useState('');
   /** Печатать ленту стикеров сразу после приёмки — обычно это и нужно. */
   const [autoPrint, setAutoPrint] = useState(true);
 
@@ -95,6 +98,45 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
     });
   };
 
+  /**
+   * Скан FBO-стикера. На стикере напечатан штрихкод товара — тот же, что лежит в карточке
+   * товара на маркетплейсе (barcode вида OZN1579985267), либо артикул продавца / SKU
+   * маркетплейса. Пикаем любой из них: кладовщику не нужно знать, что именно закодировано
+   * в конкретном стикере — сверяем со всеми колонками сразу.
+   *
+   * Найденный товар просто падает в корзину, как если бы его выбрали руками. Повторный
+   * скан того же стикера — это ещё одна такая же вещь, поэтому счётчик растёт на единицу.
+   */
+  const handleScan = () => {
+    const code = scan.trim();
+    if (!code) return;
+    const norm = (s: string | null | undefined) => (s || '').trim().toLowerCase();
+    const target = code.toLowerCase();
+    const item = items.find(
+      (i) =>
+        norm(i.barcode) === target ||
+        norm(i.article) === target ||
+        norm(i.ozonSku) === target ||
+        norm(i.wbSku) === target ||
+        norm(i.ymSku) === target,
+    );
+    if (!item) {
+      toast({
+        title: 'Стикер не распознан',
+        description: `Товар со штрихкодом ${code} не найден в справочнике маркетплейса`,
+        variant: 'destructive',
+      });
+      setScan('');
+      return;
+    }
+    addToCart(item);
+    toast({ title: 'Добавлено', description: item.name });
+    setScan('');
+  };
+
+  // Пистолет вводит код мгновенно и без Enter — ловим конец ввода по паузе.
+  useScannerAutoSubmit(scan, handleScan, Boolean(shelfId) && !saving);
+
   const setQty = (id: number, qty: number) =>
     setCart((prev) =>
       prev.map((r) => (r.item.id === id ? { ...r, qty: Math.max(1, Math.min(99, qty)) } : r))
@@ -106,6 +148,7 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
     setQuery('');
     setCart([]);
     setShelfId('');
+    setScan('');
   };
 
   const handleSave = async () => {
@@ -197,8 +240,8 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
             Для вещей без заказа с маркетплейса — излишек с производства или найденный товар.
-            Наберите позиции с количеством: система заведёт каждую вещь отдельно и напечатает
-            ленту стикеров хранения
+            Пикайте FBO-стикер каждой вещи: система сама определит товар, заведёт вещи на
+            выбранную полку и напечатает ленту стикеров хранения
           </p>
 
           {/* Полка выбирается ПЕРВОЙ и обязательна: вещь, принятая без полки, повисает
@@ -220,10 +263,33 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
             </Select>
           </div>
 
+          {/* Основной способ приёмки: кладовщик пикает FBO-стикер, товар определяется сам.
+              Поиск руками ниже остаётся запасным вариантом — на случай стёртого стикера. */}
           <div className="space-y-1.5">
-            <Label>Найти товар</Label>
+            <Label>Скан FBO-стикера</Label>
             <Input
               autoFocus
+              placeholder="Наведите сканер на стикер"
+              value={scan}
+              onChange={(e) => setScan(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleScan();
+                }
+              }}
+              disabled={!shelfId || saving}
+            />
+            <p className="text-xs text-muted-foreground">
+              {shelfId
+                ? 'Товар определится по стикеру и добавится в список. Один скан — одна вещь'
+                : 'Сначала выберите полку'}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Или найти товар вручную</Label>
+            <Input
               placeholder="Например: вуаль 300x250"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
