@@ -203,7 +203,11 @@ export const closeKioskOrder = async (
   orderId: number,
   packerId: number,
   actorId?: number,
-  actorName?: string
+  actorName?: string,
+  /** Ярлык отправления реально напечатан: вещь едет покупателю, а не на склад хранения.
+   * Нужен для многовещевых посылок OZON, где отправление уже помечено уехавшим, но
+   * ярлык на него всё ещё выдаётся — такую вещь докладывают в её же посылку. */
+  labelPrinted?: boolean
 ): Promise<{
   success: true;
   isCancelled: boolean;
@@ -225,7 +229,9 @@ export const closeKioskOrder = async (
   const res = await fetch(KIOSK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'close_order', orderId, packerId, actorId, actorName }),
+    body: JSON.stringify({
+      action: 'close_order', orderId, packerId, actorId, actorName, labelPrinted,
+    }),
   });
   const data = await res.json();
   if (!res.ok) {

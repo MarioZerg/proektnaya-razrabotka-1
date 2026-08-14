@@ -44,6 +44,11 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   // видно, кто шил именно эту штуку — на FBO маркетплейс такой информации не даёт.
   const [tracePrinted, setTracePrinted] = useState(false);
   const [closing, setClosing] = useState(false);
+  // Маркетплейс ТОЧНО отказал в ярлыке (а не просто «отправление помечено уехавшим»).
+  // Только после реальной попытки печати вещь уходит на хранение: раньше терминал решал
+  // это заранее по статусу, и вещи многовещевых посылок нельзя было доложить в свою же
+  // посылку, хотя ярлык на неё ещё выдавался.
+  const [labelRefused, setLabelRefused] = useState(false);
   // Ручной поиск заказа — обход сканера, поэтому показываем его только если цех
   // это разрешил в настройках. По умолчанию скрыт: стикеруем строго по QR-коду.
   const [manualSearchAllowed, setManualSearchAllowed] = useState(false);
@@ -68,6 +73,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     setOrder(null);
     setPrinted(false);
     setTracePrinted(false);
+    setLabelRefused(false);
     try {
       const found = await fetchKioskOrder(value);
       playScanSound();
@@ -123,6 +129,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
       const msg = e instanceof Error ? e.message : '';
       if (msg.includes('Ярлык не нужен')) {
         setOrder((prev) => (prev ? { ...prev, labelGone: true } : prev));
+        setLabelRefused(true);
         toast({ title: 'Ярлык не нужен', description: msg });
         return;
       }
@@ -138,7 +145,14 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     if (!order) return;
     setClosing(true);
     try {
-      const res = await closeKioskOrder(order.id, packerId, packerId, packerName);
+      const res = await closeKioskOrder(
+        order.id,
+        packerId,
+        packerId,
+        packerName,
+        // Ярлык напечатан и маркетплейс не отказал — вещь едет покупателю, а не на полку.
+        printed && !labelRefused,
+      );
       playScanSound();
       // Заказ отменён клиентом — вещь едет не покупателю, а на склад хранения. Печатаем
       // стикер ХРАНЕНИЯ: по нему кладовщик заберёт вещь из цеха и положит на полку.
@@ -252,6 +266,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
             <KioskOrderActions
               order={order}
               printed={printed}
+              labelRefused={labelRefused}
               tracePrinted={tracePrinted}
               closing={closing}
               onPrintTrace={() => {

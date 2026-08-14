@@ -1114,20 +1114,12 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
         'not_accepted': 'не принято складом OZON',
         'driver_pickup': 'передано водителю',
     }
+    # Статус у себя обновляем всегда: терминал должен знать, где отправление.
     if new_status in gone:
-        # Сохраняем статус у себя ДО выхода. Раньше выходили сразу, и в базе оставался
-        # старый «ожидает отгрузки»: терминал не знал, что отправление уже уехало, и
-        # упаковщица упиралась в эту ошибку при каждом сканировании — заказ было
-        # нечем закрыть. Теперь следующий скан сразу покажет, что делать с вещью.
         cur.execute(
             "UPDATE orders SET ozon_status = %s WHERE ozon_posting_number = %s",
             (new_status, posting_number),
         )
-        return (
-            f'Ярлык не нужен: отправление {gone[new_status]}. '
-            f'Эта вещь не поедет покупателю — закройте заказ, наклейте стикер '
-            f'хранения и оставьте вещь кладовщику'
-        ), None
     if new_status:
         cur.execute(
             "UPDATE orders SET ozon_status = %s, "
@@ -1163,6 +1155,20 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
         if debug is not None:
             debug['labelStatus'] = status
             debug['labelResponse'] = str(data)[:400]
+        # Отправление уже ушло от нас И этикетку OZON больше не отдаёт — только теперь
+        # отправляем вещь на хранение.
+        #
+        # Раньше на этом статусе мы выходили ЗАРАНЕЕ, не спросив этикетку вовсе. А в
+        # многовещевом отправлении ярлык ОДИН на всю посылку: стикеровка первой вещи
+        # переводила отправление в «едет к покупателю», и остальные вещи той же посылки
+        # навсегда лишались ярлыка — хотя он уже сгенерирован и OZON обычно его отдаёт.
+        # Такие вещи копились на терминале, и доложить их в свою же посылку было нечем.
+        if new_status in gone:
+            return (
+                f'Ярлык не нужен: отправление {gone[new_status]}, и OZON больше не отдаёт '
+                f'этикетку. Эта вещь не поедет покупателю — закройте заказ, наклейте '
+                f'стикер хранения и оставьте вещь кладовщику'
+            ), None
         if 'INVALID_ARGUMENT' in str(data):
             return (
                 'OZON пока не отдал этикетку: он готовит её несколько секунд после сборки. '
@@ -1179,6 +1185,12 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
         if pdf_bytes[:1] == b'{':
             try:
                 err_json = json.loads(pdf_bytes.decode('utf-8', 'replace'))
+                if new_status in gone:
+                    return (
+                        f'Ярлык не нужен: отправление {gone[new_status]}, и OZON больше не '
+                        f'отдаёт этикетку. Закройте заказ, наклейте стикер хранения и '
+                        f'оставьте вещь кладовщику'
+                    ), None
                 return f'OZON не отдал этикетку: {ozon_error_text(200, err_json)}', None
             except Exception:
                 pass

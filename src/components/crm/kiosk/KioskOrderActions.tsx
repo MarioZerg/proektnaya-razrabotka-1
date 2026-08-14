@@ -5,6 +5,8 @@ import type { KioskOrder } from '@/lib/kioskApi';
 interface KioskOrderActionsProps {
   order: KioskOrder;
   printed: boolean;
+  /** Маркетплейс реально отказал в ярлыке — вещь идёт на склад хранения. */
+  labelRefused?: boolean;
   tracePrinted: boolean;
   closing: boolean;
   onPrintTrace: () => void;
@@ -22,6 +24,7 @@ interface KioskOrderActionsProps {
 const KioskOrderActions = ({
   order,
   printed,
+  labelRefused = false,
   tracePrinted,
   closing,
   onPrintTrace,
@@ -46,17 +49,16 @@ const KioskOrderActions = ({
       </Button>
     )}
 
-    {order.isCancelled || order.labelGone ? (
+    {order.isCancelled || labelRefused ? (
       <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-center">
         <p className="text-lg font-bold text-destructive">
-          {order.labelGone && !order.isCancelled
-            ? 'Отправление уже уехало к покупателю'
+          {labelRefused && !order.isCancelled
+            ? 'Маркетплейс не выдал ярлык'
             : 'Клиент отменил заказ'}
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
-          {order.labelGone && !order.isCancelled
-            ? 'Маркетплейс больше не выдаёт ярлык на это отправление. Нажмите «Закрыть заказ» — распечатается стикер хранения, наклейте его и оставьте вещь для кладовщика'
-            : 'Стикер отправления не нужен. Нажмите «Закрыть заказ» — распечатается стикер хранения, наклейте его и оставьте вещь для кладовщика'}
+          Стикер отправления не нужен. Нажмите «Закрыть заказ» — распечатается стикер
+          хранения, наклейте его и оставьте вещь для кладовщика
         </p>
         {/* Связка Яндекса: у заказа один ярлык на несколько вещей, поэтому
             отмена касается всей связки. Упаковщица стикерует вещи по очереди,
@@ -69,15 +71,31 @@ const KioskOrderActions = ({
         )}
       </div>
     ) : (
-      <Button size="lg" className="h-16 w-full text-lg" onClick={onPrint}>
-        <Icon name="Printer" size={24} className="mr-2" />
-        {order.orderType === 'FBS'
-          ? 'Распечатать ярлык отправления'
-          : 'Распечатать стикер'}
-      </Button>
+      <>
+        {/* Отправление уже помечено как уехавшее, но ярлык на него один на всю посылку
+            и обычно ещё выдаётся. Раньше мы даже не пробовали его запросить и сразу
+            гнали вещь на хранение — из-за этого вещи многовещевых посылок застревали
+            на терминале. Теперь печать доступна: OZON либо отдаст ярлык (вещь доедет
+            к своему покупателю), либо откажет — и тогда предложим стикер хранения. */}
+        {order.labelGone && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-center text-amber-900">
+            <p className="font-bold">Отправление уже помечено как уехавшее</p>
+            <p className="mt-1 text-sm">
+              Ярлык один на всю посылку — попробуйте распечатать. Если маркетплейс
+              откажет, появится стикер хранения
+            </p>
+          </div>
+        )}
+        <Button size="lg" className="h-16 w-full text-lg" onClick={onPrint}>
+          <Icon name="Printer" size={24} className="mr-2" />
+          {order.orderType === 'FBS'
+            ? 'Распечатать ярлык отправления'
+            : 'Распечатать стикер'}
+        </Button>
+      </>
     )}
 
-    {(printed || order.isCancelled || order.labelGone) && (
+    {(printed || order.isCancelled || labelRefused) && (
       <Button
         size="lg"
         className="h-16 w-full bg-emerald-600 text-lg text-white hover:bg-emerald-700"
