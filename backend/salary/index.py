@@ -235,6 +235,105 @@ def handler(event: dict, context) -> dict:
                         )
                     conn.commit()
 
+            # --- Дневные акции швей -----------------------------------------------
+            # Разовый вызов на один день: сдал N пог.м. на стикеровку → фиксированная
+            # сумма на баланс. Условия лежат в sewer_daily_challenges, поэтому новую
+            # акцию можно объявить строкой в таблице, не трогая код.
+            #
+            # Начисляем за ЗАВЕРШЁННЫЕ дни: пока день идёт, метраж ещё растёт и платить
+            # рано. Как и месячная премия, расчёт цепляется к обращению за зарплатой —
+            # планировщика у платформы нет, а забыть начислить нельзя.
+            cur.execute(
+                "SELECT c.challenge_date, c.target_meters, c.amount FROM sewer_daily_challenges c "
+                "WHERE c.challenge_date < %s "
+                "  AND EXISTS (SELECT 1 FROM orders o WHERE o.sewn_at::date = c.challenge_date) "
+                "  AND NOT EXISTS (SELECT 1 FROM sewer_daily_settled s "
+                "                  WHERE s.challenge_date = c.challenge_date) "
+                "ORDER BY c.challenge_date",
+                (date.today(),),
+            )
+            for ch_date, ch_target, ch_amount in cur.fetchall():
+                cur.execute(
+                    "SELECT o.sewer_user_id, SUM(o.width) / 100.0 AS meters "
+                    "FROM orders o "
+                    "WHERE o.sewer_user_id IS NOT NULL AND o.sewn_at::date = %s "
+                    "  AND COALESCE(o.status, '') <> 'Отменён' "
+                    "GROUP BY o.sewer_user_id HAVING SUM(o.width) / 100.0 >= %s",
+                    (ch_date, ch_target),
+                )
+                for d_user_id, d_meters in cur.fetchall():
+                    cur.execute(
+                        "INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
+                        "VALUES (%s, 'bonus', %s, %s, %s) RETURNING id",
+                        (
+                            d_user_id,
+                            ch_amount,
+                            f'Акция дня {ch_date.strftime("%d.%m.%Y")}: '
+                            f'{round(float(d_meters))} пог.м. на стикеровку',
+                            ch_date,
+                        ),
+                    )
+                    d_accrual_id = cur.fetchone()[0]
+                    cur.execute(
+                        "INSERT INTO sewer_daily_bonus "
+                        "(user_id, challenge_date, meters, amount, accrual_id) "
+                        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id, challenge_date) DO NOTHING",
+                        (d_user_id, ch_date, round(float(d_meters), 2), ch_amount, d_accrual_id),
+                    )
+                # Помечаем день посчитанным — даже если цель не взял никто. Иначе этот
+                # же день пересчитывался бы при каждом обращении к зарплате.
+                cur.execute(
+                    "INSERT INTO sewer_daily_settled (challenge_date) VALUES (%s) "
+                    "ON CONFLICT (challenge_date) DO NOTHING",
+                    (ch_date,),
+                )
+                conn.commit()
+
+            if params.get('sewerDaily'):
+                # Прогресс по акции ТЕКУЩЕГО дня — для шкалы на главной.
+                today = date.today()
+                cur.execute(
+                    "SELECT challenge_date, target_meters, amount, title "
+                    "FROM sewer_daily_challenges WHERE challenge_date = %s",
+                    (today,),
+                )
+                ch = cur.fetchone()
+                if not ch:
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'active': False}),
+                    }
+
+                ch_date, ch_target, ch_amount, ch_title = ch
+                cur.execute(
+                    "SELECT u.id, u.full_name, COALESCE(SUM(o.width) / 100.0, 0) AS meters "
+                    "FROM users u "
+                    "LEFT JOIN orders o ON o.sewer_user_id = u.id "
+                    "  AND o.sewn_at::date = %s AND COALESCE(o.status, '') <> 'Отменён' "
+                    "WHERE u.is_active = true AND EXISTS ("
+                    "  SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role = 'sewer'"
+                    ") "
+                    "GROUP BY u.id, u.full_name ORDER BY meters DESC, u.full_name",
+                    (ch_date,),
+                )
+                daily_rows = [
+                    {'userId': r[0], 'userName': r[1], 'meters': round(float(r[2]), 1)}
+                    for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'active': True,
+                        'date': ch_date.isoformat(),
+                        'title': ch_title or 'Акция дня',
+                        'target': float(ch_target),
+                        'amount': float(ch_amount),
+                        'sewers': daily_rows,
+                    }, ensure_ascii=False),
+                }
+
             if params.get('sewerBonus'):
                 # Прогресс швей по бонусной программе — для виджета на главной.
                 bonus_from = date(2026, 9, 1)

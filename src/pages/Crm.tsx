@@ -32,6 +32,7 @@ import { isMetersUnit } from '@/lib/stockLevels';
 import { isStorekeeperRole } from '@/lib/roles';
 import { countDuplicateOrders } from '@/lib/findDuplicateOrders';
 import SewerBonusCard from '@/components/crm/dashboard/SewerBonusCard';
+import SewerDailyCard from '@/components/crm/dashboard/SewerDailyCard';
 
 const CrmDashboard = () => {
   const { user, setActiveShift } = useAuth();
@@ -384,7 +385,12 @@ const CrmDashboard = () => {
       {/* Бонусная программа: швея видит СВОЙ прогресс к премии, руководство — всех.
           Остальным ролям карточка не нужна: программа только для швей. */}
       {(isSewer || isAdmin) && (
-        <SewerBonusCard onlyUserId={isSewer ? user?.id : undefined} />
+        <>
+          {/* Акция дня — выше месячной премии: её цель нужно взять до конца смены,
+              поэтому она важнее для решений «здесь и сейчас». */}
+          <SewerDailyCard onlyUserId={isSewer ? user?.id : undefined} />
+          <SewerBonusCard onlyUserId={isSewer ? user?.id : undefined} />
+        </>
       )}
 
       {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}

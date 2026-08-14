@@ -277,3 +277,28 @@ export const fetchSewerBonus = async (): Promise<SewerBonusInfo | null> => {
   if (!data || !Array.isArray(data.sewers)) return null;
   return data as SewerBonusInfo;
 };
+
+export interface SewerDailyInfo {
+  /** На сегодня акции нет — карточку не показываем. */
+  active: boolean;
+  date: string;
+  title: string;
+  /** Сколько метров нужно сдать ЗА ДЕНЬ ради премии. */
+  target: number;
+  amount: number;
+  sewers: SewerBonusRow[];
+}
+
+/**
+ * Акция дня для швей: цель на сегодня и выработка каждой с начала дня.
+ *
+ * Отдельно от месячной премии: акции объявляются разово («сегодня 300 метров —
+ * плюс тысяча»), живут один день и не отменяют месячную цель.
+ */
+export const fetchSewerDaily = async (): Promise<SewerDailyInfo | null> => {
+  const res = await fetch(`${SALARY_URL}?sewerDaily=1`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!data || !data.active || !Array.isArray(data.sewers)) return null;
+  return data as SewerDailyInfo;
+};
