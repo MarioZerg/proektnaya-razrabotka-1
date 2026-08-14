@@ -66,6 +66,28 @@ export interface SupplyItem {
   marketplace?: string | null;
   storageBarcode?: string | null;
   shelfId?: number | null;
+  /** Кто наклеил ярлык отправления на эту вещь. */
+  labeledByName?: string | null;
+}
+
+/**
+ * Вещь, которая ждёт отгрузки: застикерована ярлыком отправления, лежит на складе,
+ * но ещё не отсканирована ни в одну поставку. Ровно те же вещи, что считает счётчик
+ * «Ожидают отгрузки» — кладовщик видит их списком и отмечает сканером по одной.
+ */
+export interface SupplyAwaitingItem {
+  id: number;
+  /** У WB вещь может ещё не иметь стикера хранения — там ключ это номер задания. */
+  storageBarcode?: string | null;
+  orderNumber: string | null;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  /** Кто наклеил ярлык отправления. */
+  labeledByName: string | null;
+  labeledAt: string | null;
+  shelfName: string | null;
 }
 
 /** Заказ на пошив, привязанный к поставке: по ним видно, что уже сшито, а что в работе. */
@@ -121,6 +143,11 @@ export interface WbSupplyOrder {
   scannedAt: string | null;
   /** Покупатель отказался, пока вещь шла в короб: везти нельзя, кладём на полку. */
   isCancelled?: boolean;
+  material?: string | null;
+  width?: number | null;
+  height?: number | null;
+  /** Кто наклеил ярлык отправления на эту вещь. */
+  labeledByName?: string | null;
 }
 
 
@@ -131,6 +158,8 @@ export interface SupplyDetail extends Supply {
    * автоматически попадёт в счётчик следующей поставки.
    */
   awaitingShipCount?: number;
+  /** Те же вещи, что в счётчике выше, но списком — что осталось отсканировать. */
+  awaitingItems?: SupplyAwaitingItem[];
   items: SupplyItem[];
   /** Связки заказов с общим ярлыком, попавшие в эту поставку. */
   groups?: SupplyGroup[];
@@ -152,6 +181,8 @@ export interface SupplyDetail extends Supply {
   wbSupplyId: string | null;
   wbOrders: WbSupplyOrder[];
   wbReadyCount: number;
+  /** Что лежит в резервной поставке WB и ждёт сканирования — тот же счётчик, но списком. */
+  wbAwaitingItems?: SupplyAwaitingItem[];
   /** id заявки OZON FBO на стороне OZON (для повторной загрузки товарного состава). */
   ozonSupplyOrderId: number | null;
   /** Тип грузоместа OZON FBO при закрытии коробов: 'BOX' (короб) или 'PALLET' (палета). */

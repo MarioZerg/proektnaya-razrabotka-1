@@ -345,7 +345,7 @@ def stock_picked_up_returns(cur, ids=None):
             cur.execute(
                 "UPDATE goods_warehouse SET status = 'mp_return', shelf_id = NULL, "
                 "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
-                "reserved_order_id = NULL, shipping_labeled_at = NULL, "
+                "reserved_order_id = NULL, shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
                 "receive_reason = 'return', received_at = now() WHERE id = %s",
                 (gw_id,),
             )

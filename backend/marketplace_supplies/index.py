@@ -683,7 +683,7 @@ def handler(event: dict, context) -> dict:
                     "COALESCE(ro.status, o.status), "
                     "COALESCE(ro.ozon_status, o.ozon_status), "
                     "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id, "
-                    "COALESCE(ro.marketplace, o.marketplace) "
+                    "COALESCE(ro.marketplace, o.marketplace), gw.shipping_labeled_by_name "
                     "FROM marketplace_supply_items msi "
                     "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
@@ -722,6 +722,8 @@ def handler(event: dict, context) -> dict:
                         # только наш внутренний статус и узнавал об отмене слишком поздно.
                         'marketplace': r[18],
                         'mpStatus': r[14] or r[15],
+                        # Кто наклеил ярлык отправления на эту вещь.
+                        'labeledByName': r[19],
                     }
                     for r in cur.fetchall()
                 ]
@@ -811,12 +813,16 @@ def handler(event: dict, context) -> dict:
 
                 wb_orders = []
                 wb_ready_count = 0
+                wb_awaiting = []
                 if row[1] == 'WB' and row[2] == 'FBS':
                     cur.execute(
                         "SELECT wso.id, wso.order_id, o.order_number, o.product, "
                         "wso.wb_trbx_id, wso.sticker_url, wso.sticker_name, wso.scanned_at, "
-                        "COALESCE(o.status, '') "
+                        "COALESCE(o.status, ''), o.material, o.width, o.height, "
+                        "gw.shipping_labeled_by_name "
                         "FROM wb_supply_orders wso JOIN orders o ON o.id = wso.order_id "
+                        "LEFT JOIN goods_warehouse gw ON gw.reserved_order_id = o.id "
+                        "     AND gw.shipped_at IS NULL "
                         "WHERE wso.supply_id = %s ORDER BY wso.scanned_at",
                         (int(supply_id),),
                     )
@@ -833,6 +839,11 @@ def handler(event: dict, context) -> dict:
                             # Покупатель отказался, пока вещь шла в короб: везти её
                             # нельзя — кладовщик убирает её из поставки на полку.
                             'isCancelled': r[8] == 'Отменён',
+                            'material': r[9],
+                            'width': r[10],
+                            'height': r[11],
+                            # Кто наклеил ярлык отправления на эту вещь.
+                            'labeledByName': r[12],
                         }
                         for r in cur.fetchall()
                     ]
@@ -846,6 +857,42 @@ def handler(event: dict, context) -> dict:
                         "AND acc.status IN ('Открытая', 'На сборке')"
                     )
                     wb_ready_count = cur.fetchone()[0]
+
+                    # Тот же буфер, но списком: материал, размер и кто застикеровал.
+                    # Кладовщик видит прямо в поставке, что ему предстоит принести, и
+                    # отмечает строки сканером — вместо голого числа «ожидают отгрузки».
+                    #
+                    # Берём только застикерованное: в резервную поставку вещь попадает
+                    # уже с ярлыком, незастикерованный товар сюда не доходит.
+                    cur.execute(
+                        "SELECT wso.id, o.order_number, o.product, o.material, "
+                        "       o.width, o.height, gw.shipping_labeled_by_name, "
+                        "       gw.storage_barcode, sh.name "
+                        "FROM wb_supply_orders wso "
+                        "JOIN marketplace_supplies acc ON acc.id = wso.supply_id "
+                        "JOIN orders o ON o.id = wso.order_id "
+                        "LEFT JOIN goods_warehouse gw ON gw.reserved_order_id = o.id "
+                        "     AND gw.shipped_at IS NULL "
+                        "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                        "WHERE acc.is_accumulator = true "
+                        "AND acc.status IN ('Открытая', 'На сборке') "
+                        "ORDER BY wso.scanned_at"
+                    )
+                    wb_awaiting = [
+                        {
+                            'id': r[0],
+                            'orderNumber': r[1],
+                            'product': r[2],
+                            'material': r[3],
+                            'width': r[4],
+                            'height': r[5],
+                            'labeledByName': r[6],
+                            'storageBarcode': r[7],
+                            'shelfName': r[8],
+                            'labeledAt': None,
+                        }
+                        for r in cur.fetchall()
+                    ]
 
                 # СВЕРКА С МАРКЕТПЛЕЙСОМ (только OZON FBS).
                 #
@@ -883,7 +930,57 @@ def handler(event: dict, context) -> dict:
                 )
                 awaiting_ship = int(cur.fetchone()[0] or 0)
 
+                # Тот же самый набор вещей, что дал счётчик выше, но списком: материал,
+                # размер и кто наклеил ярлык. Кладовщик видит перечень прямо в поставке
+                # и отмечает строки сканером, вместо того чтобы держать список в голове
+                # или сверяться со «Складом товара» в соседней вкладке.
+                #
+                # Незастикерованный товар сюда не попадает — ровно как в счётчике:
+                # без ярлыка отправления вещь в поставку не принимается.
+                cur.execute(
+                    "SELECT gw.id, gw.storage_barcode, "
+                    "       COALESCE(ro.order_number, so.order_number), "
+                    "       COALESCE(ro.product, so.product), "
+                    "       COALESCE(ro.material, so.material), "
+                    "       COALESCE(ro.width, so.width), "
+                    "       COALESCE(ro.height, so.height), "
+                    "       gw.shipping_labeled_by_name, gw.shipping_labeled_at, "
+                    "       sh.name "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                    "LEFT JOIN orders so ON so.id = gw.order_id "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "WHERE gw.status IN ('picking', 'awaiting_supply') "
+                    "  AND gw.shipping_labeled_at IS NOT NULL "
+                    "  AND gw.shipped_at IS NULL "
+                    "  AND COALESCE(ro.marketplace, so.marketplace) = %s "
+                    "  AND COALESCE(ro.order_type, so.order_type) = %s "
+                    "  AND (%s <> 'FBO' OR %s IS NULL "
+                    "       OR COALESCE(ro.cluster, so.cluster) = %s) "
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
+                    "                  WHERE msi2.goods_warehouse_id = gw.id) "
+                    "ORDER BY gw.shipping_labeled_at ASC",
+                    (row[1], row[2], row[2], row[8], row[8]),
+                )
+                awaiting_items = [
+                    {
+                        'id': r[0],
+                        'storageBarcode': r[1],
+                        'orderNumber': r[2],
+                        'product': r[3],
+                        'material': r[4],
+                        'width': r[5],
+                        'height': r[6],
+                        'labeledByName': r[7],
+                        'labeledAt': (r[8].isoformat() + 'Z') if r[8] else None,
+                        'shelfName': r[9],
+                    }
+                    for r in cur.fetchall()
+                ]
+
                 detail = {
+                    # Что ещё предстоит отсканировать в эту поставку — списком.
+                    'awaitingItems': awaiting_items,
                     # Ждёт отгрузки: застикеровано и лежит на складе, но ещё не
                     # отсканировано ни в одну поставку.
                     'awaitingShipCount': awaiting_ship,
@@ -924,6 +1021,8 @@ def handler(event: dict, context) -> dict:
                     'boxes': boxes,
                     'wbSupplyId': wb_supply_id,
                     'wbOrders': wb_orders,
+                    # Что лежит в резервной поставке и ждёт сканирования — списком.
+                    'wbAwaitingItems': wb_awaiting,
                     'wbReadyCount': wb_ready_count,
                     'ozonSupplyOrderId': row[27],
                     'ozonCargoType': row[28],
@@ -1602,7 +1701,7 @@ def handler(event: dict, context) -> dict:
                     # аннулируем: он выписан под конкретное отправление.
                     cur.execute(
                         "UPDATE goods_warehouse SET status = 'in_stock', "
-                        "shipping_labeled_at = NULL, reserved_order_id = NULL, matched_at = NULL "
+                        "shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, reserved_order_id = NULL, matched_at = NULL "
                         f"WHERE id = {int(goods_id)}"
                     )
                     # Заказ, под который вещь резервировали, снова ждёт подбора: система
@@ -1892,7 +1991,7 @@ def handler(event: dict, context) -> dict:
                 else:
                     cur.execute(
                         "UPDATE goods_warehouse SET status = 'in_stock', "
-                        "shipping_labeled_at = NULL, reserved_order_id = NULL, matched_at = NULL "
+                        "shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, reserved_order_id = NULL, matched_at = NULL "
                         f"WHERE id = {int(goods_id)}"
                     )
                     cur.execute(

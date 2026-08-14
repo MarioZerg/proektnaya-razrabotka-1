@@ -46,6 +46,13 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
   const wbCreated = !!supply.wbSupplyId;
   const canScan = wbCreated && (supply.status === 'Открытая' || supply.status === 'На сборке');
   const canDeliver = wbCreated && supply.wbOrders.length > 0 && supply.status === 'На сборке';
+
+  // Что ещё лежит в резервной поставке WB и ждёт сканирования. Список приходит с сервера
+  // тем же условием, что и счётчик «Ожидают отгрузки», поэтому числа сходятся.
+  const scannedOrders = new Set(supply.wbOrders.map((o) => o.orderNumber));
+  const wbAwaiting = (supply.wbAwaitingItems || []).filter(
+    (a) => !a.orderNumber || !scannedOrders.has(a.orderNumber),
+  );
   const canRemove = supply.status === 'Открытая' || supply.status === 'На сборке';
 
   const handleRemove = async (orderId: number, orderNumber: string) => {
@@ -284,16 +291,24 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
         </Card>
       )}
 
-      <h3 className="pt-2 text-sm font-semibold">В поставке ({supply.wbOrders.length})</h3>
-      {supply.wbOrders.length === 0 ? (
+      {/* Чек-лист сборки: сверху зелёным то, что уже отсканировано, ниже — что ещё
+          лежит в резерве и ждёт кладовщика. Пикнул ярлык — строка позеленела. */}
+      <h3 className="pt-2 text-sm font-semibold">
+        Собрано {supply.wbOrders.length} из {supply.wbOrders.length + wbAwaiting.length}
+      </h3>
+      {supply.wbOrders.length === 0 && wbAwaiting.length === 0 ? (
         <p className="text-sm text-muted-foreground">Заказов в поставке пока нет</p>
       ) : (
         <div className="rounded-md border border-border">
           <Table>
             <TableHeader>
               <TableRow className="bg-primary hover:bg-primary">
+                <TableHead className="w-10 text-primary-foreground"></TableHead>
                 <TableHead className="text-primary-foreground">Заказ</TableHead>
                 <TableHead className="text-primary-foreground">Товар</TableHead>
+                <TableHead className="text-primary-foreground">Материал</TableHead>
+                <TableHead className="text-primary-foreground">Размер</TableHead>
+                <TableHead className="text-primary-foreground">Стикеровал</TableHead>
                 <TableHead className="text-primary-foreground">Короб WB</TableHead>
                 <TableHead className="text-primary-foreground">Стикер короба</TableHead>
                 {canRemove && <TableHead className="text-primary-foreground"></TableHead>}
@@ -301,7 +316,17 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
             </TableHeader>
             <TableBody>
               {supply.wbOrders.map((o) => (
-                <TableRow key={o.id} className={o.isCancelled ? 'bg-destructive/5' : undefined}>
+                <TableRow
+                  key={o.id}
+                  className={o.isCancelled ? 'bg-destructive/5' : 'bg-emerald-50 hover:bg-emerald-100'}
+                >
+                  <TableCell>
+                    <Icon
+                      name="CircleCheck"
+                      size={18}
+                      className={o.isCancelled ? 'text-destructive' : 'text-emerald-600'}
+                    />
+                  </TableCell>
                   <TableCell className="font-medium">
                     {o.orderNumber}
                     {o.isCancelled && (
@@ -311,6 +336,11 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
                     )}
                   </TableCell>
                   <TableCell>{o.product || '—'}</TableCell>
+                  <TableCell>{o.material || '—'}</TableCell>
+                  <TableCell>
+                    {o.width && o.height ? `${o.width}×${o.height}` : '—'}
+                  </TableCell>
+                  <TableCell className="text-sm">{o.labeledByName || '—'}</TableCell>
                   <TableCell className="font-mono-tech">{o.wbTrbxId || '—'}</TableCell>
                   <TableCell>
                     {o.stickerUrl ? (
@@ -359,6 +389,33 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
                       </Button>
                     </TableCell>
                   )}
+                </TableRow>
+              ))}
+
+              {/* Ещё не отсканированные: лежат в резервной поставке WB и ждут, когда
+                  кладовщик принесёт их и пикнет ярлык. */}
+              {wbAwaiting.map((a) => (
+                <TableRow key={`wait-${a.id}`} className="hover:bg-muted/60">
+                  <TableCell>
+                    <Icon name="Circle" size={18} className="text-muted-foreground/40" />
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <span className="break-all">{a.orderNumber || '—'}</span>
+                    {a.shelfName && (
+                      <div className="text-xs text-muted-foreground">Полка «{a.shelfName}»</div>
+                    )}
+                  </TableCell>
+                  <TableCell>{a.product || '—'}</TableCell>
+                  <TableCell>{a.material || '—'}</TableCell>
+                  <TableCell>
+                    {a.width && a.height ? `${a.width}×${a.height}` : '—'}
+                  </TableCell>
+                  <TableCell className="text-sm">{a.labeledByName || '—'}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">—</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    Ждёт сканирования
+                  </TableCell>
+                  {canRemove && <TableCell />}
                 </TableRow>
               ))}
             </TableBody>

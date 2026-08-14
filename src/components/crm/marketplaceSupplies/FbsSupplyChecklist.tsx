@@ -1,0 +1,217 @@
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import Icon from '@/components/ui/icon';
+import type { SupplyDetail, SupplyItem } from '@/lib/marketplaceSuppliesApi';
+import { mpStatusInfo } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import CancelledItemShelfCell from './CancelledItemShelfCell';
+
+interface FbsSupplyChecklistProps {
+  supply: SupplyDetail;
+  canEditItems: boolean;
+  canRemoveItems: boolean;
+  onRemoveItem: (itemId: number) => void;
+  onReload: () => void;
+}
+
+/** Строка списка: либо уже отсканированная вещь, либо та, что ещё ждёт на складе. */
+interface Row {
+  key: string;
+  scanned: boolean;
+  orderNumber: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  labeledByName: string | null;
+  shelfName?: string | null;
+  item?: SupplyItem;
+}
+
+const sizeOf = (w: number | null, h: number | null) => (w && h ? `${w}×${h}` : '—');
+
+/**
+ * Чек-лист сборки FBS-поставки: один список вместо счётчика и отдельной таблицы.
+ *
+ * Сверху — то, что уже отсканировано (зелёные строки), ниже — что ещё нужно принести.
+ * Кладовщик пикает ярлык, строка зеленеет и уезжает вверх: видно, сколько осталось,
+ * и не нужно держать разницу в уме.
+ *
+ * В списке только застикерованный товар — незастикерованный в поставку и не пустят.
+ */
+const FbsSupplyChecklist = ({
+  supply,
+  canEditItems,
+  canRemoveItems,
+  onRemoveItem,
+  onReload,
+}: FbsSupplyChecklistProps) => {
+  const scannedRows: Row[] = supply.items.map((item) => ({
+    key: `in-${item.id}`,
+    scanned: true,
+    orderNumber: item.orderNumber,
+    material: item.material,
+    width: item.width,
+    height: item.height,
+    labeledByName: item.labeledByName ?? null,
+    item,
+  }));
+
+  const waitingRows: Row[] = (supply.awaitingItems || []).map((a) => ({
+    key: `wait-${a.id}`,
+    scanned: false,
+    orderNumber: a.orderNumber,
+    material: a.material,
+    width: a.width,
+    height: a.height,
+    labeledByName: a.labeledByName,
+    shelfName: a.shelfName,
+  }));
+
+  const rows = [...scannedRows, ...waitingRows];
+  const total = rows.length;
+
+  if (total === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Нет застикерованного товара. Найдите вещи на складе в разделе «Сборка товара
+        с полок», наклейте ярлык маркетплейса — и они появятся здесь
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <h3 className="pt-2 text-sm font-semibold">
+        Собрано {scannedRows.length} из {total}
+      </h3>
+      <div className="rounded-md border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-primary hover:bg-primary">
+              <TableHead className="w-10 text-primary-foreground"></TableHead>
+              <TableHead className="text-primary-foreground">Заказ</TableHead>
+              <TableHead className="text-primary-foreground">Материал</TableHead>
+              <TableHead className="text-primary-foreground">Размер</TableHead>
+              <TableHead className="text-primary-foreground">Кто стикеровал</TableHead>
+              <TableHead className="text-primary-foreground">Статус</TableHead>
+              {canEditItems && <TableHead className="text-primary-foreground"></TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row) => {
+              const item = row.item;
+              const group = item?.groupKey
+                ? supply.groups?.find((g) => g.groupKey === item.groupKey)
+                : undefined;
+              return (
+                <TableRow
+                  key={row.key}
+                  className={
+                    item?.isCancelled
+                      ? 'bg-destructive/10'
+                      : row.scanned
+                        ? group && !group.isComplete
+                          ? 'bg-amber-50'
+                          : 'bg-emerald-50'
+                        : undefined
+                  }
+                >
+                  <TableCell>
+                    {row.scanned ? (
+                      <Icon name="CircleCheck" size={18} className="text-emerald-600" />
+                    ) : (
+                      <Icon name="Circle" size={18} className="text-muted-foreground/40" />
+                    )}
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <span className="break-all">{row.orderNumber || '—'}</span>
+                    {group && (
+                      <Badge
+                        className={`ml-1.5 px-1.5 py-0 text-[10px] text-white ${
+                          group.isComplete
+                            ? 'bg-emerald-600 hover:bg-emerald-600'
+                            : 'bg-amber-600 hover:bg-amber-600'
+                        }`}
+                      >
+                        связка {group.inSupply}/{group.total}
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>{row.material || '—'}</TableCell>
+                  <TableCell>{sizeOf(row.width, row.height)}</TableCell>
+                  <TableCell className="text-sm">{row.labeledByName || '—'}</TableCell>
+                  <TableCell>
+                    {item?.isCancelled ? (
+                      <Badge variant="destructive">ЗАКАЗ ОТМЕНЁН</Badge>
+                    ) : row.scanned ? (
+                      <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                        В поставке
+                      </Badge>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        {row.shelfName ? `Полка «${row.shelfName}»` : 'Ждёт сканирования'}
+                      </span>
+                    )}
+                    {/* Статус НА ПЛОЩАДКЕ: показывает, куда движется отправление —
+                        в отгрузку или в отмену. Отмену видно сразу, а не при закрытии. */}
+                    {(() => {
+                      if (!item || item.isCancelled) return null;
+                      const mp = mpStatusInfo(item.mpStatus);
+                      if (!mp) return null;
+                      return (
+                        <div
+                          className={`mt-1 text-xs ${
+                            mp.tone === 'bad'
+                              ? 'font-semibold text-destructive'
+                              : mp.tone === 'ok'
+                                ? 'text-emerald-700'
+                                : 'text-amber-700'
+                          }`}
+                        >
+                          {item.marketplace || 'Площадка'}: {mp.label}
+                        </div>
+                      );
+                    })()}
+                  </TableCell>
+                  {canEditItems && (
+                    <TableCell>
+                      {/* Отменённый заказ отгружать нельзя — вместо удаления даём кладовщику
+                          выбрать полку и напечатать стикер хранения прямо отсюда. */}
+                      {item?.isCancelled ? (
+                        <CancelledItemShelfCell
+                          item={item}
+                          shelves={supply.shelves || []}
+                          onDone={onReload}
+                        />
+                      ) : (
+                        item &&
+                        canRemoveItems && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => onRemoveItem(item.id)}
+                          >
+                            <Icon name="Trash2" size={14} />
+                          </Button>
+                        )
+                      )}
+                    </TableCell>
+                  )}
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+};
+
+export default FbsSupplyChecklist;

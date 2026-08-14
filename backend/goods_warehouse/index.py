@@ -1214,8 +1214,12 @@ def handler(event: dict, context) -> dict:
                     }
 
                 # picking = отстикерована и готова к сканированию в поставку FBS.
+                # Запоминаем и КТО наклеил ярлык: в поставке кладовщик видит имя рядом с
+                # вещью, и при разборе «откуда взялась эта штука» есть кого спросить.
                 cur.execute(
-                    f"UPDATE goods_warehouse SET status = 'picking', shipping_labeled_at = now() WHERE id = {gw_id}"
+                    "UPDATE goods_warehouse SET status = 'picking', shipping_labeled_at = now(), "
+                    "shipping_labeled_by = %s, shipping_labeled_by_name = %s WHERE id = %s",
+                    (actor_id, actor_name, int(gw_id)),
                 )
                 log_action(
                     cur, actor_id, actor_name, 'ship_label', 'goods_warehouse', gw_id,
@@ -1609,7 +1613,7 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         f"UPDATE goods_warehouse SET status = '{new_status}', shelf_id = NULL, "
                         "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
-                        "reserved_order_id = NULL, shipping_labeled_at = NULL, "
+                        "reserved_order_id = NULL, shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
                         "receive_reason = 'return', received_at = now() "
                         f"WHERE id = {int(gw_id)}"
                     )
@@ -1961,7 +1965,7 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         f"UPDATE goods_warehouse SET status = 'mp_return', shelf_id = NULL, "
                         f"shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
-                        f"reserved_order_id = NULL, shipping_labeled_at = NULL, "
+                        f"reserved_order_id = NULL, shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
                         f"receive_reason = 'return' WHERE id = {gw_id}"
                     )
                     log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', gw_id, f'Принял возврат заказа #{order_number} повторно')
@@ -2513,7 +2517,7 @@ def handler(event: dict, context) -> dict:
                 # вещь сканером и упирался в «товар принадлежит другому заказу».
                 cur.execute(
                     "UPDATE goods_warehouse SET status = 'in_stock', reserved_order_id = NULL, "
-                    f"matched_at = NULL, shipping_labeled_at = NULL WHERE id = {int(item_id)}"
+                    f"matched_at = NULL, shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL WHERE id = {int(item_id)}"
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
@@ -2564,7 +2568,7 @@ def handler(event: dict, context) -> dict:
                 reason_esc = reason.replace("'", "''")
                 cur.execute(
                     f"UPDATE goods_warehouse SET status = 'lost', reserved_order_id = NULL, "
-                    f"matched_at = NULL, shipping_labeled_at = NULL, "
+                    f"matched_at = NULL, shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
                     f"lost_reason = 'Брак, отправлен в пошив: {reason_esc}', lost_at = now() "
                     f"WHERE id = {int(item_id)}"
                 )
@@ -2599,7 +2603,7 @@ def handler(event: dict, context) -> dict:
                                 # Освободилась — снова свободный остаток на полке.
                                 "UPDATE goods_warehouse SET reserved_order_id = NULL, "
                                 "status = 'in_stock', matched_at = NULL, "
-                                "shipping_labeled_at = NULL WHERE id = %s",
+                                "shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL WHERE id = %s",
                                 (sib,),
                             )
                         cur.execute(

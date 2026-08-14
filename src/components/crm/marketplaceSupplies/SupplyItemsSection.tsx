@@ -17,6 +17,7 @@ import { mpStatusInfo } from '@/components/crm/marketplaceSupplies/marketplaceSu
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import CancelledItemShelfCell from './CancelledItemShelfCell';
+import FbsSupplyChecklist from './FbsSupplyChecklist';
 
 interface SupplyItemsSectionProps {
   supply: SupplyDetail;
@@ -133,21 +134,19 @@ const SupplyItemsSection = ({
         </Card>
       )}
 
-      {/* Список товаров с полок здесь НЕ показываем: сборка ведётся на складе товара.
-          Кладовщик находит вещь на полке, сканирует и стикерует её там, и только потом
-          приходит сюда и сканирует в поставку. Дублирующий список сбивал порядок работы. */}
-      {supply.type === 'FBS' && readyGoods.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          Нет собранных товаров. Найдите и отстикеруйте их на складе в разделе
-          «Сборка товара с полок», потом отсканируйте сюда
-        </p>
-      )}
-
-      {supply.type === 'FBS' && (
-        <h3 className="pt-2 text-sm font-semibold">Добавлено в поставку ({supply.items.length})</h3>
-      )}
-
-      {supply.items.length === 0 ? (
+      {/* FBS собирают по чек-листу: одним списком и то, что уже отсканировано, и то,
+          что осталось принести со склада. Кладовщик пикает ярлык — строка зеленеет.
+          Раньше здесь было только число «осталось отсканировать», и перечень товара
+          приходилось держать в голове или искать в соседней вкладке. */}
+      {supply.type === 'FBS' ? (
+        <FbsSupplyChecklist
+          supply={supply}
+          canEditItems={canEditItems}
+          canRemoveItems={canRemoveItems}
+          onRemoveItem={onRemoveItem}
+          onReload={onReload}
+        />
+      ) : supply.items.length === 0 ? (
         <p className="text-sm text-muted-foreground">В поставке пока нет товаров</p>
       ) : (
         <div className="rounded-md border border-border">
