@@ -39,6 +39,7 @@ const DefectReceive = lazy(() => import("./pages/inventory/DefectReceive"));
 const ContractsGuide = lazy(() => import("./pages/inventory/ContractsGuide"));
 const FboFbsGuide = lazy(() => import("./pages/inventory/FboFbsGuide"));
 const PickingGuide = lazy(() => import("./pages/inventory/PickingGuide"));
+const StatusesGuide = lazy(() => import("./pages/inventory/StatusesGuide"));
 const PenaltiesGuide = lazy(() => import("./pages/inventory/PenaltiesGuide"));
 const TerminationGuide = lazy(() => import("./pages/inventory/TerminationGuide"));
 const CuttingGuide = lazy(() => import("./pages/inventory/CuttingGuide"));
@@ -139,6 +140,7 @@ const App = () => (
             <Route path="/crm/inventory/contracts-guide" element={<ContractsGuide />} />
             <Route path="/crm/inventory/fbo-fbs-guide" element={<FboFbsGuide />} />
             <Route path="/crm/inventory/picking-guide" element={<PickingGuide />} />
+            <Route path="/crm/inventory/statuses-guide" element={<StatusesGuide />} />
             <Route path="/crm/inventory/penalties-guide" element={<PenaltiesGuide />} />
             <Route path="/crm/inventory/termination-guide" element={<TerminationGuide />} />
             <Route path="/crm/inventory/cutting-guide" element={<CuttingGuide />} />
