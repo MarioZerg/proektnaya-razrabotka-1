@@ -19,6 +19,7 @@ import { fetchYandexLabel } from '@/lib/yandexMarketApi';
 import { printTraceSticker } from '@/lib/printTraceSticker';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
+import { useGlobalScanner } from '@/hooks/useGlobalScanner';
 import KioskScanPrompt from '@/components/crm/kiosk/KioskScanPrompt';
 import KioskOrderNotices from '@/components/crm/kiosk/KioskOrderNotices';
 import KioskOrderDetails from '@/components/crm/kiosk/KioskOrderDetails';
@@ -92,6 +93,18 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   };
 
   useScannerAutoSubmit(code, handleSearch, !searching && !order, 400);
+
+  // Подстраховка на случай, если скрытое поле потеряло фокус (всплывающее окно, касание
+  // экрана, возврат планшета из сна). Тогда сканер печатает «мимо» поля, и терминал
+  // молчит на скан. Здесь ловим ввод сканера на уровне страницы и ищем заказ так же,
+  // как при обычном сканировании.
+  useGlobalScanner(
+    (scanned) => {
+      if (inputRef.current) inputRef.current.value = scanned;
+      handleSearch();
+    },
+    !searching && !order,
+  );
 
   const handlePrint = async () => {
     if (!order) return;

@@ -17,6 +17,7 @@ import {
   playShiftCloseSound,
 } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
+import { useGlobalScanner } from '@/hooks/useGlobalScanner';
 import { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
 import KioskScanLogin from '@/components/crm/kiosk/KioskScanLogin';
 import KioskShiftGate from '@/components/crm/kiosk/KioskShiftGate';
@@ -184,6 +185,10 @@ const KioskTerminal = () => {
   // Пауза больше обычной: из QR приходит длинная ссылка, ей нужно чуть больше времени,
   // чтобы сканер успел ввести её целиком до автоотправки.
   useScannerAutoSubmit(code, handleLogin, !loading && !user, 400);
+
+  // Та же подстраховка, что и на стикеровке: если поле входа потеряло фокус, сканер
+  // печатает мимо него и терминал не реагирует на QR сотрудника.
+  useGlobalScanner((scanned) => loginWithCode(scanned), !loading && !user);
 
   useEffect(() => {
     inputRef.current?.focus();
