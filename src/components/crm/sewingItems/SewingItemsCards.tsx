@@ -8,6 +8,7 @@ import {
   marketplaceLogo,
   formatDate,
   statusBadgeClass,
+  shortFio,
 } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
@@ -172,10 +173,19 @@ const SewingItemsCards = ({
               </p>
 
               {(o.assignedUserName || o.hangerNumber > 0) && (
-                <p className="truncate text-xs text-muted-foreground">
-                  {o.assignedUserName || ''}
-                  {o.assignedUserName && o.hangerNumber > 0 ? ' · ' : ''}
-                  {o.hangerNumber > 0 ? `вешалка № ${o.hangerNumber}` : ''}
+                <p className="flex items-baseline gap-1.5 text-xs text-muted-foreground">
+                  {/* ФИО сокращаем до «Фамилия И.О.»: полное имя занимало всю строку и
+                      выдавливало номер вешалки за край — швея не видела, где искать крой.
+                      Само имя при нехватке места ужимается, а вешалка (shrink-0) остаётся
+                      на экране всегда: это то, зачем в эту строку смотрят. */}
+                  {o.assignedUserName && (
+                    <span className="truncate">{shortFio(o.assignedUserName)}</span>
+                  )}
+                  {o.hangerNumber > 0 && (
+                    <span className="shrink-0 whitespace-nowrap font-semibold text-foreground">
+                      вешалка № {o.hangerNumber}
+                    </span>
+                  )}
                 </p>
               )}
 
