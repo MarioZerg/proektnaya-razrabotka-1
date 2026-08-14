@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { usePolling } from '@/hooks/usePolling';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { fetchSewerDaily, type SewerDailyInfo } from '@/lib/salaryApi';
@@ -31,16 +32,16 @@ interface SewerDailyCardProps {
 const SewerDailyCard = ({ onlyUserId }: SewerDailyCardProps) => {
   const [info, setInfo] = useState<SewerDailyInfo | null>(null);
 
-  useEffect(() => {
-    const load = () => {
-      fetchSewerDaily()
-        .then(setInfo)
-        .catch(() => setInfo(null));
-    };
-    load();
-    const timer = setInterval(load, 60000);
-    return () => clearInterval(timer);
+  // Через usePolling, а не свой setInterval: тот продолжал опрашивать сервер и в
+  // свёрнутой вкладке, и ночью — дашборд у многих открыт весь день. Шкала акции
+  // раз в две минуты — этого достаточно, метраж растёт постепенно.
+  const load = useCallback(() => {
+    fetchSewerDaily()
+      .then(setInfo)
+      .catch(() => setInfo(null));
   }, []);
+
+  usePolling(load, 120000);
 
   if (!info) return null;
 

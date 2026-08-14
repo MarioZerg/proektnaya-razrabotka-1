@@ -21,7 +21,8 @@ export const useRepackPending = (enabled: boolean) => {
     }
   }, []);
 
-  usePolling(load, 60000, enabled);
+  // Раз в три минуты — как и счётчик подбора: это подсказка в меню.
+  usePolling(load, 180000, enabled);
 
   return pending;
 };
