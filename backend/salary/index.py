@@ -236,8 +236,10 @@ def handler(event: dict, context) -> dict:
                     conn.commit()
 
             # --- Дневные акции швей -----------------------------------------------
-            # Разовый вызов на один день: сдал N пог.м. на стикеровку → фиксированная
-            # сумма на баланс. Условия лежат в sewer_daily_challenges, поэтому новую
+            # Разовый вызов на один день: N пог.м. УПАКОВАНО за день → фиксированная
+            # сумма на баланс. Считаем именно по упаковке (packed_at), а не по сдаче на
+            # стикеровку: иначе метры засчитывались за факт сдачи, и вещь могла спокойно
+            # лежать неупакованной — мотивации закрыть день не возникало. Условия лежат в sewer_daily_challenges, поэтому новую
             # акцию можно объявить строкой в таблице, не трогая код.
             #
             # Начисляем за ЗАВЕРШЁННЫЕ дни: пока день идёт, метраж ещё растёт и платить
@@ -246,7 +248,7 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "SELECT c.challenge_date, c.target_meters, c.amount FROM sewer_daily_challenges c "
                 "WHERE c.challenge_date < %s "
-                "  AND EXISTS (SELECT 1 FROM orders o WHERE o.sewn_at::date = c.challenge_date) "
+                "  AND EXISTS (SELECT 1 FROM orders o WHERE o.packed_at::date = c.challenge_date) "
                 "  AND NOT EXISTS (SELECT 1 FROM sewer_daily_settled s "
                 "                  WHERE s.challenge_date = c.challenge_date) "
                 "ORDER BY c.challenge_date",
@@ -260,7 +262,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT o.sewer_user_id, SUM(o.width) / 100.0 AS meters "
                     "FROM orders o "
-                    "WHERE o.sewer_user_id IS NOT NULL AND o.sewn_at::date = %s "
+                    "WHERE o.sewer_user_id IS NOT NULL AND o.packed_at::date = %s "
                     "  AND COALESCE(o.status, '') <> 'Отменён' "
                     "GROUP BY o.sewer_user_id HAVING SUM(o.width) / 100.0 >= %s",
                     (ch_date, ch_target),
@@ -273,7 +275,7 @@ def handler(event: dict, context) -> dict:
                             d_user_id,
                             ch_amount,
                             f'Акция дня {ch_date.strftime("%d.%m.%Y")}: '
-                            f'{round(float(d_meters))} пог.м. на стикеровку',
+                            f'{round(float(d_meters))} пог.м. упаковано',
                             ch_date,
                         ),
                     )
@@ -319,7 +321,7 @@ def handler(event: dict, context) -> dict:
                     "SELECT u.id, u.full_name, COALESCE(SUM(o.width) / 100.0, 0) AS meters "
                     "FROM users u "
                     "LEFT JOIN orders o ON o.sewer_user_id = u.id "
-                    "  AND o.sewn_at::date = %s AND COALESCE(o.status, '') <> 'Отменён' "
+                    "  AND o.packed_at::date = %s AND COALESCE(o.status, '') <> 'Отменён' "
                     "WHERE u.is_active = true AND EXISTS ("
                     "  SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role = 'sewer'"
                     ") AND EXISTS ("

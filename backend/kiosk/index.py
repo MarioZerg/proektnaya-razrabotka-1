@@ -786,8 +786,12 @@ def handler(event: dict, context) -> dict:
                     conn.rollback()
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': pack_err})}
 
+                # packed_at — момент, когда вещь реально упакована. По нему считается
+                # акция дня: метры засчитываются за упакованное, а не за сданное на
+                # стикеровку, иначе вещь могла зачесться и пролежать неупакованной.
                 cur.execute(
-                    f"UPDATE orders SET sewing_status = 'Готовые', packer_user_id = {int(packer_id)} "
+                    f"UPDATE orders SET sewing_status = 'Готовые', packer_user_id = {int(packer_id)}, "
+                    f"packed_at = COALESCE(packed_at, now()) "
                     f"WHERE id = {int(order_id)}"
                 )
 

@@ -18,6 +18,10 @@ interface SewerDailyCardProps {
  * здесь важнее — человек должен в любой момент видеть, сколько метров осталось, пока
  * день ещё не кончился. К вечеру по остатку понятно, успевает он или нет.
  *
+ * Метры засчитываются за УПАКОВАННОЕ, а не за сданное на стикеровку: иначе вещь шла в
+ * зачёт сразу после пошива и могла до вечера пролежать в очереди неупакованной. Теперь
+ * шкала двигается только когда работа реально закрыта.
+ *
  * Карточка исчезает сама, когда акции на сегодня нет: держать пустую плашку с нулями
  * бессмысленно, а прошедшие акции уже посчитаны и лежат в балансе.
  *
@@ -54,9 +58,8 @@ const SewerDailyCard = ({ onlyUserId }: SewerDailyCardProps) => {
             {info.title} — только сегодня
           </p>
           <p className="mt-0.5 text-sm text-amber-900">
-            Сдайте <span className="font-bold">{info.target} пог.м.</span> на стикеровку за
-            сегодня и получите <span className="font-bold">{formatMoney(info.amount)}</span> на
-            баланс
+            Упакуйте <span className="font-bold">{info.target} пог.м.</span> за сегодня и
+            получите <span className="font-bold">{formatMoney(info.amount)}</span> на баланс
           </p>
         </div>
 
@@ -69,7 +72,7 @@ const SewerDailyCard = ({ onlyUserId }: SewerDailyCardProps) => {
               <div key={s.userId} className="rounded-md bg-white px-3 py-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-2">
                   <span className="text-sm font-medium">
-                    {onlyUserId ? 'Ваша выработка за сегодня' : s.userName}
+                    {onlyUserId ? 'Упаковано за сегодня' : s.userName}
                   </span>
                   <span className="text-sm">
                     <span className="font-bold">{s.meters}</span>
