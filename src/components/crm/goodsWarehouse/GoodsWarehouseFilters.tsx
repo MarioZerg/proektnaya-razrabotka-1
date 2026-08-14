@@ -143,6 +143,9 @@ const GoodsWarehouseFilters = ({
             <SelectItem value="taken">Забрано с производства</SelectItem>
             <SelectItem value="in_stock">На хранении</SelectItem>
             <SelectItem value="picking">На сборке</SelectItem>
+            {/* Вещи, закреплённые за отправлением. Кладовщику нужно их находить:
+                порвался пакет — перепечатать ярлык можно прямо из строки. */}
+            <SelectItem value="reserved">Зарезервирован</SelectItem>
             {/* Отстикерованные вещи, ждущие поставку: и FBS, и FBO. Кладовщику нужно
                 быстро найти такую вещь, чтобы перепечатать ярлык маркетплейса. */}
             <SelectItem value="awaiting_supply">На поставке</SelectItem>

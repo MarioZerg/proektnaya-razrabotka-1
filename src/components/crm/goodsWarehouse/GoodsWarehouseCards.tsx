@@ -5,6 +5,7 @@ import { zoneBarClass, zoneLabels } from '@/lib/workZone';
 import { shortProductName } from '@/lib/shortProductName';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useAuth } from '@/context/AuthContext';
+import { getAccessZone } from '@/lib/roles';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printIndividualSticker } from '@/lib/printIndividualSticker';
 import {
@@ -39,6 +40,9 @@ const GoodsWarehouseCards = ({
   // Печать наклеек из списка — только старшему кладовщику: см. пояснение в таблице.
   // Обычный кладовщик печатает стикер тогда, когда держит вещь в руках, — на сборке.
   const canPrintStickers = user?.role === 'senior_storekeeper' || user?.role === 'admin';
+  // Ярлык отправления — любому кладовщику: это перепечатка того же кода, когда
+  // порвался пакет и вещь перекладывают в новый.
+  const canPrintMpLabels = getAccessZone(user?.role) === 'warehouse' || user?.role === 'admin';
 
   return (
     <div className="space-y-3">
@@ -104,11 +108,9 @@ const GoodsWarehouseCards = ({
               </div>
             )}
 
-            {/* ПЕРЕпечатка ярлыка: только для вещей, уже отправленных на поставку.
-                Если наклейку порвали или потеряли при укладке в короб, кладовщик
-                печатает её прямо отсюда, с телефона у стеллажа. Вещи из подбора
-                стикеруются сканером, в руках, — оттуда и печатается их ярлык. */}
-            {canPrintStickers && canPrintMarketplaceLabel(i) && (
+            {/* ПЕРЕпечатка ярлыка для вещи, закреплённой за отправлением: порвался
+                пакет — кладовщик печатает тот же ярлык прямо с телефона у стеллажа. */}
+            {canPrintMpLabels && canPrintMarketplaceLabel(i) && (
               <button
                 type="button"
                 onClick={() => onPrintMpLabel?.(i)}

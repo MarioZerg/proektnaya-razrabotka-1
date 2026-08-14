@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import Icon from '@/components/ui/icon';
 import { zoneDotClass, zoneLabels } from '@/lib/workZone';
+import { getAccessZone } from '@/lib/roles';
 import { shortProductName } from '@/lib/shortProductName';
 import GoodsWarehouseCards from '@/components/crm/goodsWarehouse/GoodsWarehouseCards';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
@@ -81,13 +82,26 @@ const GoodsWarehouseTable = ({
    */
   const canPrintStickers = user?.role === 'senior_storekeeper' || user?.role === 'admin';
 
+  /**
+   * Ярлык отправления печатает ЛЮБОЙ кладовщик, а не только старший.
+   *
+   * Это не печать «вслепую», как со стикером хранения: ярлык намертво привязан к
+   * отправлению, и перепечатка выдаёт ровно тот же код. Реальный случай на складе —
+   * порвался пакет: кладовщик перекладывает вещь в новый и ему нужен тот же ярлык
+   * сюда и сейчас. Раньше за этим приходилось идти к старшему, и вещь ждала.
+   */
+  const canPrintMpLabels = getAccessZone(user?.role) === 'warehouse' || user?.role === 'admin';
+
   const handlePrintMpLabel = async (i: GoodsWarehouseItem) => {
-    if (!i.reservedOrderId) return;
+    // Вещь, подобранную с полки, печатаем по её новому заказу; вещь, сшитую сразу
+    // под заказ, — по собственному. Иначе ярлык уйдёт не на то отправление.
+    const orderId = i.reservedOrderId || i.orderId;
+    if (!orderId) return;
     setLabelBusyId(i.id);
     try {
       await printOrderMarketplaceLabel({
-        id: i.reservedOrderId,
-        orderNumber: i.reservedOrderNumber || '',
+        id: orderId,
+        orderNumber: i.reservedOrderNumber || i.orderNumber || '',
         marketplace: i.marketplace,
         orderType: i.orderType,
       });
@@ -244,18 +258,16 @@ const GoodsWarehouseTable = ({
                     </Button>
                     )}
 
-                    {/* ПЕРЕпечатка ярлыка маркетплейса — только для вещей, которые уже
-                        застикерованы и отправлены на поставку. Наклейку могли порвать
-                        при укладке в короб, и тогда её печатают отсюда.
-                        Вещи из подбора («На сборке») сюда не попадают: их стикеруют
-                        сканером, держа вещь в руках, и второй ярлык на то же
-                        отправление привёл бы к путанице на складе. */}
-                    {canPrintStickers && canPrintMarketplaceLabel(i) && (
+                    {/* ПЕРЕпечатка ярлыка маркетплейса для вещи, закреплённой за
+                        отправлением. Главный случай — порвался пакет: вещь перекладывают
+                        в новый, а ярлык остался на старом. Код при перепечатке тот же,
+                        так что «лишних» отправлений не появляется. */}
+                    {canPrintMpLabels && canPrintMarketplaceLabel(i) && (
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6"
-                        title={`Напечатать ярлык ${(i.marketplace || 'маркетплейса').toUpperCase()} по заказу ${i.reservedOrderNumber || ''}`}
+                        title={`Напечатать ярлык ${(i.marketplace || 'маркетплейса').toUpperCase()} по заказу ${i.reservedOrderNumber || i.orderNumber || ''}`}
                         disabled={labelBusyId === i.id}
                         onClick={() => handlePrintMpLabel(i)}
                       >
