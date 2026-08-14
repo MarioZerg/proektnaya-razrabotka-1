@@ -289,6 +289,12 @@ export interface PendingPenalty {
   users: Array<{ id: number; name: string; amount: number }>;
   /** Почему штраф начислить нельзя. Пусто — можно начислять. */
   reason: string | null;
+  /** Кто закрыл рулон в цехе. */
+  closedByName?: string | null;
+  /** Сколько метража числилось на рулоне в момент закрытия — им перепроверяют недостачу. */
+  remainingAtClose?: number | null;
+  /** Когда рулон закрыли. */
+  closedAt?: string | null;
 }
 
 /** Рулоны с недостачей, по которым решение ещё не принято. */
