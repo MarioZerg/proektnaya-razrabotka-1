@@ -2453,6 +2453,38 @@ def handler(event: dict, context) -> dict:
                             ensure_ascii=False,
                         ),
                     }
+                # Заказ, который ЗАКРЫЛИ этой вещью, тоже держит на неё ссылку
+                # (fulfilled_from_stock_id). Раньше её не проверяли: после удаления вещи
+                # заказ оставался в статусе «Со склада» и ждал товар, которого больше нет
+                # — в цех он не возвращался, кладовщику подбирать было нечего, а на
+                # терминале упаковщица упиралась в тупик. Так зависли 40 заказов.
+                #
+                # Теперь незакрытый заказ сначала возвращаем в производство, и только
+                # потом отпускаем вещь. Для уже отгруженных заказов просто снимаем
+                # ссылку: возвращать в цех нечего, товар уехал.
+                cur.execute(
+                    "SELECT id, order_number, status FROM orders "
+                    "WHERE fulfilled_from_stock_id = %s",
+                    (int(item_id),),
+                )
+                linked = cur.fetchall()
+                for lnk_id, lnk_number, lnk_status in linked:
+                    if (lnk_status or '') in ('Отгружен', 'Доставлен', 'Отменён'):
+                        cur.execute(
+                            "UPDATE orders SET fulfilled_from_stock_id = NULL WHERE id = %s",
+                            (int(lnk_id),),
+                        )
+                    else:
+                        cur.execute(
+                            "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                            "sewing_status = 'Новый' WHERE id = %s",
+                            (int(lnk_id),),
+                        )
+                        log_action(
+                            cur, actor_id, actor_name, 'return_to_sewing', 'orders', int(lnk_id),
+                            f'Заказ #{lnk_number} вернулся в производство: вещь со склада '
+                            f'#{int(item_id)} удалена',
+                        )
                 # В журнале сохраняем стикер и состояние: по одному номеру записи потом
                 # не понять, что за вещь исчезла со склада и откуда её удалили.
                 cur.execute(
