@@ -129,10 +129,18 @@ export const moveShiftToWorkshop = (
 ): Promise<{ success: boolean; moved: boolean; workshopId?: number; shiftNumber?: number }> =>
   postAction({ action: 'move_workshop', userId, workshopId });
 
-/** Закрывает смену. Швее и закройщику нельзя, пока за ними числятся заказы — придёт
- * ошибка с их количеством. Администратор закрывает принудительно (closedByAdmin). */
-export const closeShift = (userId: number, closedByAdmin = false) =>
-  postAction({ action: 'close', userId, ...(closedByAdmin ? { closedByAdmin: true } : {}) });
+/** Закрывает смену. Швее, закройщику и упаковщице нельзя, пока за ними числится
+ * незавершённая работа — придёт ошибка с её количеством.
+ *
+ * Принудительно закрыть может только администратор: сервер сам проверяет роль того,
+ * кто закрывает (actorId), а не верит флагу из браузера. */
+export const closeShift = (userId: number, closedByAdmin = false, actorId?: number) =>
+  postAction({
+    action: 'close',
+    userId,
+    ...(closedByAdmin ? { closedByAdmin: true } : {}),
+    ...(actorId ? { actorId } : {}),
+  });
 
 export interface AutoClosedShift {
   userId: number;

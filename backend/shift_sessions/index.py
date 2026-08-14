@@ -92,14 +92,32 @@ def shift_close_allowed_at(cur, user_id, opened_at):
     return base + duration
 
 
-def count_orders_in_work(cur, user_id, role):
-    """Сколько у сотрудника незавершённых заказов — тех, из-за которых нельзя закрыть смену.
+def count_orders_in_work(cur, user_id, role, session_workshop_id=None):
+    """Сколько незавершённой работы держит сотрудника — из-за неё нельзя закрыть смену.
 
     У каждой должности свой этап, и держать человека надо только на нём:
       - закройщик отвечает за раскрой, поэтому считаем заказы «На раскрое»;
       - швея отвечает за пошив, поэтому считаем только «В работе». Заказы, уже
-        отправленные на стикеровку, её не держат — там работает упаковщик.
+        отправленные на стикеровку, её не держат — там работает упаковщица;
+      - упаковщица отвечает за стикеровку. Её заказы ни за кем не закреплены лично:
+        «Стикеровка» — общая очередь цеха, любой заказ берёт та, кто свободна.
+        Поэтому считаем всё, что висит в стикеровке по её цеху: пока очередь не
+        разобрана, товар не уедет в поставку и зависнет до утра.
     Остальным должностям смену закрывать ничего не мешает."""
+    if role == 'packer':
+        # Цех берём тот, в котором открыта смена: в гостевом режиме упаковщица может
+        # работать не в своём штатном цехе, и держать её должна очередь того цеха,
+        # где она сегодня стоит. Цех не указан — держать не за что.
+        if not session_workshop_id:
+            return 0
+        cur.execute(
+            "SELECT COUNT(*) FROM orders "
+            "WHERE sewing_status = 'Стикеровка' AND workshop_id = %s "
+            "AND COALESCE(status, '') <> 'Отменён'",
+            (int(session_workshop_id),),
+        )
+        return int(cur.fetchone()[0])
+
     if role == 'cutter':
         status = 'На раскрое'
     elif role == 'sewer':
@@ -110,7 +128,8 @@ def count_orders_in_work(cur, user_id, role):
     cur.execute(
         "SELECT COUNT(*) FROM orders "
         "WHERE (assigned_user_id = %s OR sewer_user_id = %s OR cutter_user_id = %s) "
-        "AND sewing_status = %s",
+        "AND sewing_status = %s "
+        "AND COALESCE(status, '') <> 'Отменён'",
         (int(user_id), int(user_id), int(user_id), status),
     )
     return int(cur.fetchone()[0])
@@ -809,13 +828,33 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Открытой смены не найдено'})}
                 session_id, session_workshop_id, session_opened_at = row
 
+                # Принудительное закрытие — право администратора, и проверяем его по базе,
+                # а не по флагу из браузера: иначе любой сотрудник обошёл бы запрет,
+                # подставив closedByAdmin в запрос со своего телефона.
+                closed_by_admin = False
+                if body_data.get('closedByAdmin'):
+                    actor_id = body_data.get('actorId')
+                    if actor_id:
+                        cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                        actor_row = cur.fetchone()
+                        closed_by_admin = bool(actor_row) and actor_row[0] == 'admin'
+                    if not closed_by_admin:
+                        return {
+                            'statusCode': 403,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Принудительно закрыть смену может только администратор'},
+                                ensure_ascii=False,
+                            ),
+                        }
+
                 # Смену нельзя закрыть раньше, чем отработана её длительность по графику.
                 # Отсчёт идёт от фактического прихода: пришёл в 7:14 при графике 12 часов —
                 # закрыть сможет в 19:14. Так смена не закрывается раньше времени, а тот,
                 # кто опоздал, не уходит вместе со всеми. Администратор закрывает в любой
                 # момент — он разбирает нештатные ситуации вручную.
                 can_close_at = shift_close_allowed_at(cur, user_id, session_opened_at)
-                if can_close_at and not bool(body_data.get('closedByAdmin')):
+                if can_close_at and not closed_by_admin:
                     if datetime.now() < can_close_at:
                         return {
                             'statusCode': 409,
@@ -830,22 +869,36 @@ def handler(event: dict, context) -> dict:
                 # Швея и закройщик не закрывают смену, пока за ними числятся заказы на их
                 # этапе: иначе работа зависает до утра и её никто не подхватит. Администратор закрыть
                 # может (closedByAdmin) — он разбирается с зависшими заказами вручную.
-                closed_by_admin = bool(body_data.get('closedByAdmin'))
-                cur.execute("SELECT role FROM users WHERE id = %s", (int(user_id),))
-                role_row = cur.fetchone()
-                if not closed_by_admin and role_row:
-                    orders_left = count_orders_in_work(cur, user_id, role_row[0])
+                # Роль берём ту, в которой человек реально работал в этой смене: в гостевом
+                # режиме она может отличаться от штатной должности в профиле.
+                cur.execute("SELECT role FROM shift_sessions WHERE id = %s", (session_id,))
+                sess_role = (cur.fetchone() or [None])[0]
+                if not sess_role:
+                    cur.execute("SELECT role FROM users WHERE id = %s", (int(user_id),))
+                    sess_role = (cur.fetchone() or [None])[0]
+                if not closed_by_admin and sess_role:
+                    orders_left = count_orders_in_work(
+                        cur, user_id, sess_role, session_workshop_id,
+                    )
                     if orders_left > 0:
-                        stage = 'на раскрое' if role_row[0] == 'cutter' else 'в работе'
+                        stage = {
+                            'cutter': 'на раскрое',
+                            'sewer': 'в работе',
+                            'packer': 'в стикеровке',
+                        }.get(sess_role, 'в работе')
+                        who = (
+                            'В вашем цехе' if sess_role == 'packer' else 'У вас'
+                        )
                         return {
                             'statusCode': 409,
                             'headers': headers,
                             'body': json.dumps(
                                 {
-                                    'error': f'У вас {orders_left} заказов {stage} — '
+                                    'error': f'{who} {orders_left} заказов {stage} — '
                                              f'сначала завершите их, потом закрывайте смену',
                                     'ordersInWork': orders_left,
-                                }
+                                },
+                                ensure_ascii=False,
                             ),
                         }
 
@@ -943,6 +996,10 @@ def handler(event: dict, context) -> dict:
                     if not should_close:
                         continue
 
+                    # Для штрафа считаем только ЛИЧНУЮ незавершённую работу. Упаковщицу
+                    # держит общая очередь стикеровки по цеху — закрыть смену она с ней не
+                    # может, но штрафовать её повышенным штрафом за заказы, которые швеи
+                    # скинули в очередь под конец дня, несправедливо: это не её работа.
                     orders_left = count_orders_in_work(cur, s_user_id, s_role)
 
                     cur.execute(
