@@ -1162,9 +1162,24 @@ def handler(event: dict, context) -> dict:
                 # что выйдет из цеха, — печатать стикер на складскую вещь нельзя, иначе
                 # один и тот же заказ уедет дважды.
                 cur.execute(
-                    "SELECT sewing_status FROM orders WHERE id = %s", (int(reserved_order_id),)
+                    "SELECT sewing_status, fulfilled_from_stock_id FROM orders WHERE id = %s",
+                    (int(reserved_order_id),),
                 )
                 sew_row = cur.fetchone()
+                # Заказ считается закрытым складом, только если он сам указывает на ЭТУ
+                # вещь. Статус «Новый» здесь недопустим: такой заказ стоит в очереди на
+                # пошив, и цех сошьёт для него отдельный товар. Наклеив ярлык на складскую
+                # вещь, мы получили бы два товара на одно отправление.
+                if sew_row and (sew_row[0] != 'Со склада' or sew_row[1] != gw_id):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Заказ #{target_number} закрывается пошивом, а не этой '
+                                     f'вещью. Стикеровать её нельзя — иначе на отправление '
+                                     f'уедет два товара.'
+                        }, ensure_ascii=False),
+                    }
                 if sew_row and sew_row[0] not in ('Новый', 'Со склада'):
                     return {
                         'statusCode': 409,
@@ -2132,6 +2147,12 @@ def handler(event: dict, context) -> dict:
                     "  AND gw.status = 'in_stock' "
                     "  AND gw.shipping_labeled_at IS NULL "
                     "  AND gw.shipped_at IS NULL "
+                    # Связь должна быть ВЗАИМНОЙ: заказ тоже указывает на эту вещь.
+                    # Односторонней ссылки мало — она бывает и у заказа, который стоит
+                    # в очереди на пошив: тогда вещь вернулась бы в подбор, кладовщик
+                    # наклеил бы на неё ярлык, а цех параллельно сшил бы второй экземпляр.
+                    "  AND ro.fulfilled_from_stock_id = gw.id "
+                    "  AND ro.sewing_status = 'Со склада' "
                     f"  AND {RESERVE_ALIVE_SQL} "
                     + (f" AND gw.id = {int(gw_id)}" if gw_id else "") +
                     " RETURNING gw.id, gw.storage_barcode, ro.order_number"
@@ -2242,10 +2263,26 @@ def handler(event: dict, context) -> dict:
                 # 2. Эта вещь уже закреплена за живым заказом — работа найдена сразу.
                 if gw_reserved:
                     cur.execute(
-                        "SELECT ro.order_number FROM orders ro "
-                        f"WHERE ro.id = {int(gw_reserved)} AND {RESERVE_ALIVE_SQL}"
+                        "SELECT ro.order_number, ro.sewing_status, ro.fulfilled_from_stock_id "
+                        f"FROM orders ro WHERE ro.id = {int(gw_reserved)} AND {RESERVE_ALIVE_SQL}"
                     )
                     own = cur.fetchone()
+                    # Заказ жив, но вещь за ним не закреплена с его стороны — значит он
+                    # стоит в очереди на пошив, а не закрыт складом. Стикеровать такую
+                    # вещь нельзя: цех сошьёт вторую, и на одно отправление будет два
+                    # товара. Освобождаем вещь — она уйдёт в свободный остаток.
+                    if own and (own[1] != 'Со склада' or own[2] != gw_id):
+                        cur.execute(
+                            "UPDATE goods_warehouse SET reserved_order_id = NULL, "
+                            f"matched_at = NULL, status = 'in_stock' WHERE id = {int(gw_id)}"
+                        )
+                        conn.commit()
+                        return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                            'matched': False,
+                            'reason': f'Заказ #{own[0]} шьётся в цехе — эта вещь ему не '
+                                      f'принадлежит. Вещь освобождена и снова на хранении',
+                            'product': gw_product,
+                        }, ensure_ascii=False)}
                     if own:
                         # Вещь закреплена за живым заказом, но числится «На хранении» —
                         # значит, где-то её вернули на полку, забыв снять резерв. В подборе
