@@ -253,6 +253,10 @@ def handler(event: dict, context) -> dict:
                 (date.today(),),
             )
             for ch_date, ch_target, ch_amount in cur.fetchall():
+                # Платим ПО ФАКТУ метража, без оглядки на смену: если человек сдал норму,
+                # деньги его — даже если смену в тот день забыли открыть на терминале.
+                # Фильтр по смене есть только в показе шкалы, чтобы не выводить туда тех,
+                # кто сегодня не работает.
                 cur.execute(
                     "SELECT o.sewer_user_id, SUM(o.width) / 100.0 AS meters "
                     "FROM orders o "
@@ -306,6 +310,11 @@ def handler(event: dict, context) -> dict:
                     }
 
                 ch_date, ch_target, ch_amount, ch_title = ch
+                # В акции показываем ТОЛЬКО тех, кто сегодня работает — то есть открыл
+                # смену в этот день. Раньше в список попадали все швеи штата: человек в
+                # выходной или в отпуске висел с нулём и «ноль из 300» читалось как
+                # отставание, хотя он просто не работает. Заодно список стал короче и
+                # понятнее: видно реальных участниц забега.
                 cur.execute(
                     "SELECT u.id, u.full_name, COALESCE(SUM(o.width) / 100.0, 0) AS meters "
                     "FROM users u "
@@ -313,9 +322,12 @@ def handler(event: dict, context) -> dict:
                     "  AND o.sewn_at::date = %s AND COALESCE(o.status, '') <> 'Отменён' "
                     "WHERE u.is_active = true AND EXISTS ("
                     "  SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role = 'sewer'"
+                    ") AND EXISTS ("
+                    "  SELECT 1 FROM shift_sessions ss WHERE ss.user_id = u.id "
+                    "    AND ss.opened_at::date = %s"
                     ") "
                     "GROUP BY u.id, u.full_name ORDER BY meters DESC, u.full_name",
-                    (ch_date,),
+                    (ch_date, ch_date),
                 )
                 daily_rows = [
                     {'userId': r[0], 'userName': r[1], 'meters': round(float(r[2]), 1)}
