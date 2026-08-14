@@ -294,6 +294,23 @@ def try_match_orders_from_stock(cur, gw_id=None):
             "AND COALESCE(ozon_status, '') NOT IN "
             "    ('awaiting_deliver', 'delivering', 'delivered', 'cancelled', "
             "     'not_accepted', 'driver_pickup') "
+            # Соседи по ОТПРАВЛЕНИЮ уже в цехе — склад не трогаем.
+            #
+            # Многовещевое отправление OZON приходит к нам как несколько заданий с одним
+            # номером посылки, и ярлык на него ОДИН. Если одну вещь уже кроят или шьют, а
+            # вторую закрыть со склада, посылка разъезжается: часть уезжает с полки, часть
+            # доделывает цех — и дошитая вещь остаётся никому не нужной. Именно так вещь,
+            # уже взятая швеёй в работу, второй раз уходила в подбор, а потом висела на
+            # терминале: заказ закрыт подменой, а стикеровать нечего.
+            #
+            # Поэтому подбираем только те отправления, где НИ ОДНА вещь ещё не пошла в
+            # производство. Как только цех взялся за посылку — доделывает её целиком.
+            "AND NOT EXISTS (SELECT 1 FROM orders sib "
+            "   WHERE sib.ozon_posting_number IS NOT NULL "
+            "     AND sib.ozon_posting_number = orders.ozon_posting_number "
+            "     AND sib.id <> orders.id "
+            "     AND COALESCE(sib.status, '') <> 'Отменён' "
+            f"     AND sib.sewing_status NOT IN ('{NOT_STARTED_SEWING}', 'Со склада')) "
             f"AND marketplace_item_id IN ({item_ids_csv}) "
             "ORDER BY (order_type = 'FBS') DESC, created_at ASC, id ASC "
             "FOR UPDATE SKIP LOCKED"

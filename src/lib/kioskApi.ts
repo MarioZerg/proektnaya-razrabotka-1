@@ -35,13 +35,59 @@ export interface KioskOrder {
   sewerName?: string | null;
 }
 
+/** Заказ уже закрыт, но вещь физически осталась у упаковщицы: её можно сдать на склад
+ * как свободный остаток. Так бывает, когда заказ закрыли вещью с полки (подбор), а швея
+ * тем временем дошила свою — покупателю она уже не поедет. */
+export class SpareItemError extends Error {
+  order: Pick<
+    KioskOrder,
+    'id' | 'orderNumber' | 'product' | 'material' | 'width' | 'height' | 'sewingStatus'
+  >;
+
+  constructor(message: string, order: SpareItemError['order']) {
+    super(message);
+    this.name = 'SpareItemError';
+    this.order = order;
+  }
+}
+
 export const fetchKioskOrder = async (orderNumber: string): Promise<KioskOrder> => {
   const res = await fetch(`${KIOSK_URL}?orderNumber=${encodeURIComponent(orderNumber)}`);
   const data = await res.json();
   if (!res.ok) {
+    if (data.canStoreSpare && data.order) {
+      throw new SpareItemError(data.error || 'Заказ уже закрыт', data.order);
+    }
     throw new Error(data.error || 'Заказ не найден');
   }
   return data.order;
+};
+
+/** Сдать на склад вещь по уже закрытому заказу: заводит складской штрихкод, по которому
+ * кладовщик положит её на полку как свободный остаток. */
+export const storeSpareItem = async (
+  orderId: number,
+  actorId?: number,
+  actorName?: string
+): Promise<{
+  success: true;
+  storageBarcode: string;
+  orderNumber: string;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+}> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'store_spare', orderId, actorId, actorName }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Ошибка запроса');
+  }
+  return data;
 };
 
 /** Ручной поиск заказов на стикеровке, когда сканер не работает или штрихкод не читается.

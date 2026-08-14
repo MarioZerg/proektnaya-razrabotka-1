@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { recoverIfStaleBuild } from '@/lib/appUpdate';
 import {
+  SpareItemError,
+  storeSpareItem,
   fetchKioskOrder,
   closeKioskOrder,
   fetchTerminalSettings,
@@ -50,6 +54,11 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   // это заранее по статусу, и вещи многовещевых посылок нельзя было доложить в свою же
   // посылку, хотя ярлык на неё ещё выдавался.
   const [labelRefused, setLabelRefused] = useState(false);
+  // Вещь по УЖЕ ЗАКРЫТОМУ заказу, оставшаяся на руках у упаковщицы: заказ закрыли вещью
+  // с полки, а швея дошила свою. Покупателю она не поедет, но это готовый товар —
+  // предлагаем сдать его на склад как свободный остаток, а не бросать в цехе.
+  const [spare, setSpare] = useState<SpareItemError['order'] | null>(null);
+  const [storingSpare, setStoringSpare] = useState(false);
   // Ручной поиск заказа — обход сканера, поэтому показываем его только если цех
   // это разрешил в настройках. По умолчанию скрыт: стикеруем строго по QR-коду.
   const [manualSearchAllowed, setManualSearchAllowed] = useState(false);
@@ -75,12 +84,19 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     setPrinted(false);
     setTracePrinted(false);
     setLabelRefused(false);
+    setSpare(null);
     try {
       const found = await fetchKioskOrder(value);
       playScanSound();
       setOrder(found);
     } catch (e) {
       playScanErrorSound();
+      // Заказ закрыт, но вещь у упаковщицы в руках — показываем, как её сдать на склад.
+      if (e instanceof SpareItemError) {
+        setSpare(e.order);
+        toast({ title: 'Заказ уже закрыт', description: e.message });
+        return;
+      }
       toast({
         title: 'Заказ не найден',
         description: e instanceof Error ? e.message : undefined,
@@ -258,8 +274,77 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     }
   };
 
+  // Сдать лишнюю вещь на склад: печатаем стикер хранения и отдаём кладовщику.
+  const handleStoreSpare = async () => {
+    if (!spare) return;
+    setStoringSpare(true);
+    try {
+      const res = await storeSpareItem(spare.id, packerId, packerName);
+      printStorageSticker({
+        storageBarcode: res.storageBarcode,
+        title: [res.material, res.width && res.height ? `${res.width}x${res.height}` : null]
+          .filter(Boolean)
+          .join(' '),
+        orderNumber: res.orderNumber,
+      });
+      toast({
+        title: 'Вещь принята на склад',
+        description: 'Наклейте стикер хранения и передайте вещь кладовщику',
+      });
+      setSpare(null);
+      setTimeout(() => inputRef.current?.focus(), 0);
+    } catch (e) {
+      toast({
+        title: 'Не удалось сдать вещь',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setStoringSpare(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {spare && !order && (
+        <Card className="border-amber-300 bg-amber-50 shadow-none">
+          <CardContent className="space-y-3 pt-6 text-center">
+            <p className="text-lg font-bold text-amber-900">Заказ уже закрыт</p>
+            <p className="text-sm text-amber-900">
+              Заказ {spare.orderNumber} закрыли вещью со склада, покупателю эта вещь уже не
+              поедет. Сдайте её на склад — она пойдёт на следующий такой же заказ
+            </p>
+            <p className="text-sm font-semibold text-amber-900">
+              {spare.material} {spare.width}×{spare.height}
+            </p>
+            <Button
+              size="lg"
+              className="h-16 w-full bg-amber-600 text-lg text-white hover:bg-amber-700"
+              onClick={handleStoreSpare}
+              disabled={storingSpare}
+            >
+              <Icon
+                name={storingSpare ? 'Loader2' : 'PackagePlus'}
+                size={24}
+                className={`mr-2 ${storingSpare ? 'animate-spin' : ''}`}
+              />
+              Сдать на склад со стикером хранения
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              className="h-14 w-full"
+              onClick={() => {
+                setSpare(null);
+                setTimeout(() => inputRef.current?.focus(), 0);
+              }}
+            >
+              Отмена
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {!order ? (
         <KioskScanPrompt
           searching={searching}

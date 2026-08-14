@@ -476,6 +476,14 @@ def handler(event: dict, context) -> dict:
             if row[6] != 'Стикеровка':
                 # Уже застикерованный заказ на терминал не пускаем: иначе на вещь наклеят
                 # второй ярлык. Говорим прямо, что работа по нему закончена.
+                #
+                # Но у упаковщицы физически ОСТАЛАСЬ вещь, и деть её некуда. Так бывает,
+                # когда заказ закрыли вещью со склада (подбор), а швея тем временем дошила
+                # свою: заказ отгружен, а вещь лежит в цехе «ничья». Раньше терминал просто
+                # отвечал «уже закрыт», и вещь оставалась на столе.
+                #
+                # Поэтому вместе с отказом отдаём саму вещь: терминал предложит напечатать
+                # стикер хранения и сдать её кладовщику как свободный остаток.
                 msg = (
                     f'Заказ {order_number} уже застикерован и закрыт'
                     if row[6] == 'Готовые'
@@ -484,7 +492,19 @@ def handler(event: dict, context) -> dict:
                 return {
                     'statusCode': 409,
                     'headers': headers,
-                    'body': json.dumps({'error': msg}),
+                    'body': json.dumps({
+                        'error': msg,
+                        'canStoreSpare': True,
+                        'order': {
+                            'id': row[0],
+                            'orderNumber': row[1],
+                            'product': row[2],
+                            'material': row[3],
+                            'width': row[4],
+                            'height': row[5],
+                            'sewingStatus': row[6],
+                        },
+                    }, ensure_ascii=False),
                 }
 
             order = {
@@ -1346,6 +1366,61 @@ def handler(event: dict, context) -> dict:
                         'events': events,
                         'days': days,
                     }),
+                }
+
+            if action == 'store_spare':
+                # Вещь, оставшаяся у упаковщицы по УЖЕ ЗАКРЫТОМУ заказу: покупателю она
+                # не поедет (заказ закрыли вещью со склада), но выбрасывать её нельзя —
+                # это готовый товар. Заводим складской штрихкод и отдаём на полку как
+                # свободный остаток: дальше её подберут под следующий такой же заказ.
+                order_id = body_data.get('orderId')
+                if not order_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите orderId'})}
+
+                cur.execute(
+                    "SELECT order_number, product, material, width, height, sewing_status "
+                    "FROM orders WHERE id = %s",
+                    (int(order_id),),
+                )
+                sp = cur.fetchone()
+                if not sp:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
+                (sp_number, sp_product, sp_material, sp_width, sp_height, sp_sewing) = sp
+
+                # Вещь на этот заказ уже заводили — отдаём тот же штрихкод, чтобы на складе
+                # не появилось два товара на одну физическую вещь.
+                cur.execute(
+                    "SELECT storage_barcode FROM goods_warehouse WHERE order_id = %s",
+                    (int(order_id),),
+                )
+                sp_exist = cur.fetchone()
+                if sp_exist:
+                    sp_barcode = sp_exist[0]
+                else:
+                    sp_barcode = next_storage_barcode(cur)
+                    cur.execute(
+                        "INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason) "
+                        "VALUES (%s, 'awaiting_shelf', %s, 'spare_after_stock_match')",
+                        (int(order_id), sp_barcode),
+                    )
+                    log_action(
+                        cur, actor_id, actor_name, 'store_spare', 'orders', int(order_id),
+                        f'Сдал на склад лишнюю вещь по закрытому заказу #{sp_number} '
+                        f'(стикер хранения {sp_barcode})',
+                    )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'storageBarcode': sp_barcode,
+                        'orderNumber': sp_number,
+                        'product': sp_product,
+                        'material': sp_material,
+                        'width': sp_width,
+                        'height': sp_height,
+                    }, ensure_ascii=False),
                 }
 
             if action == 'reprint_label':
