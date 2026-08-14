@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
+import { hoursSince, getTone } from '@/components/crm/sewingItems/orderUrgency';
 
 interface OrderWaitTimerProps {
   order: Order;
@@ -8,16 +9,6 @@ interface OrderWaitTimerProps {
   compact?: boolean;
 }
 
-/** Сколько часов заказ уже ждёт с момента оформления покупателем на маркетплейсе. */
-const hoursSince = (iso: string) => (Date.now() - new Date(iso).getTime()) / 3600000;
-
-/** Порог «горит» зависит от типа: FBS отгружается день в день, FBO — дольше. */
-const getTone = (hours: number, orderType: string) => {
-  const limit = orderType === 'FBS' ? 24 : 72;
-  if (hours >= limit) return 'critical';
-  if (hours >= limit * 0.6) return 'warning';
-  return 'ok';
-};
 
 const toneClass: Record<string, string> = {
   critical: 'bg-red-100 text-red-700 hover:bg-red-100',

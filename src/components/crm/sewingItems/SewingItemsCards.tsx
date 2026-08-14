@@ -12,6 +12,7 @@ import {
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import { printFboSticker } from '@/lib/printFboSticker';
+import { isUrgent } from '@/components/crm/sewingItems/orderUrgency';
 
 interface SewingItemsCardsProps {
   loading: boolean;
@@ -59,10 +60,17 @@ const SewingItemsCards = ({
       <p className="text-sm text-muted-foreground">Всего заказов: {totalCount}</p>
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {pagedOrders.map((o) => (
+        {pagedOrders.map((o) => {
+          // Просроченный заказ: срок отгрузки вышел, шить надо вне очереди.
+          const urgent = isUrgent(o);
+          return (
           <Card
             key={o.id}
-            className="relative cursor-pointer overflow-hidden border-border shadow-none transition-colors hover:bg-muted/40"
+            className={`relative cursor-pointer overflow-hidden shadow-none transition-colors ${
+              urgent
+                ? 'border-2 border-red-500 bg-red-50 hover:bg-red-100'
+                : 'border-border hover:bg-muted/40'
+            }`}
             onClick={() => onOpenDetail(o)}
           >
             {/* Цветная полоса слева — маркетплейс заказа, не занимает места в контенте. */}
@@ -70,7 +78,15 @@ const SewingItemsCards = ({
               className={`absolute inset-y-0 left-0 w-1 ${ribbonClass[o.marketplace] || 'bg-muted-foreground'}`}
             />
 
-            <CardContent className="space-y-1.5 p-3 pl-4">
+            <CardContent className="space-y-2 p-3 pl-4">
+              {/* Срочность объявляем строкой во всю ширину, а не значком: маленький
+                  бейдж среди прочих терялся, и просроченная вещь лежала в общей куче. */}
+              {urgent && (
+                <p className="flex items-center gap-1.5 text-sm font-extrabold uppercase text-red-700">
+                  <Icon name="Zap" size={18} className="shrink-0 fill-red-600 text-red-600" />
+                  Срочно! Шить вне очереди
+                </p>
+              )}
               <div className="flex items-start justify-between gap-2">
                 {/* Номер заказа переносим целиком (break-all): у OZON он длинный и раньше
                     обрезался многоточием — сотрудник не видел, какой это заказ. */}
@@ -81,7 +97,15 @@ const SewingItemsCards = ({
                     >
                       {marketplaceLogo[o.marketplace]?.label || o.marketplace}
                     </span>
-                    <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                    {/* FBS/FBO определяет, куда вещь поедет и как срочно — выделяем. */}
+                    <Badge
+                      variant="outline"
+                      className={`px-2 py-0 text-xs font-bold ${
+                        o.orderType === 'FBS'
+                          ? 'border-emerald-500 text-emerald-700'
+                          : 'border-sky-500 text-sky-700'
+                      }`}
+                    >
                       {o.orderType}
                     </Badge>
                     {/* Заказ покупателя из нескольких вещей едет по одному общему ярлыку —
@@ -99,7 +123,9 @@ const SewingItemsCards = ({
                       </Badge>
                     )}
                   </p>
-                  <p className="break-all font-mono-tech text-[11px] text-muted-foreground">
+                  {/* Номер заказа — главный опознавательный признак вещи, по нему её
+                      ищут и сверяют. Раньше он был самым мелким текстом на карточке. */}
+                  <p className="break-all font-mono-tech text-base font-bold leading-tight">
                     {o.orderNumber}
                   </p>
                 </div>
@@ -124,22 +150,40 @@ const SewingItemsCards = ({
                 </div>
               </div>
 
-              <p className="truncate text-base font-bold leading-tight">
-                {o.material || '—'} {o.width && o.height ? `${o.width} x ${o.height}` : ''}
+              {/* Материал и размер — то, по чему швея берёт ткань в работу. Самый
+                  крупный текст карточки: видно с вытянутой руки, не наклоняясь. */}
+              <p className="text-lg font-extrabold leading-tight">
+                {o.material || '—'}
+                {o.width && o.height ? ` ${o.width} x ${o.height}` : ''}
               </p>
 
-              <p className="truncate text-xs text-muted-foreground">
+              {/* Кластер — город, куда поедет вещь. Есть только у FBO. */}
+              {o.cluster && (
+                <p className="flex items-center gap-1 text-sm font-bold text-sky-800">
+                  <Icon name="MapPin" size={14} className="shrink-0" />
+                  {o.cluster}
+                </p>
+              )}
+
+              <p className="text-sm font-semibold">
                 {formatDate(o.marketplaceCreatedAt || o.createdAt)}
-                {o.assignedUserName ? ` · ${o.assignedUserName}` : ''}
-                {o.hangerNumber > 0 ? ` · вешалка № ${o.hangerNumber}` : ''}
               </p>
+
+              {(o.assignedUserName || o.hangerNumber > 0) && (
+                <p className="truncate text-xs text-muted-foreground">
+                  {o.assignedUserName || ''}
+                  {o.assignedUserName && o.hangerNumber > 0 ? ' · ' : ''}
+                  {o.hangerNumber > 0 ? `вешалка № ${o.hangerNumber}` : ''}
+                </p>
+              )}
 
               {(o.cutterUserName || o.sewerUserName || o.packerUserName) && (
                 <OrderStagesDiagram order={o} />
               )}
             </CardContent>
           </Card>
-        ))}
+          );
+        })}
       </div>
 
       {totalPages > 1 && (

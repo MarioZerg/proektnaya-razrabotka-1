@@ -26,6 +26,7 @@ import {
 } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
+import { isUrgent } from '@/components/crm/sewingItems/orderUrgency';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import { printFboSticker } from '@/lib/printFboSticker';
 
@@ -115,14 +116,18 @@ const SewingItemsTable = ({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pagedOrders.map((o) => (
+            {pagedOrders.map((o) => {
+              const urgent = isUrgent(o);
+              return (
               // Клик по любому месту строки открывает заказ: на широком экране
               // целиться в кнопку в самом конце строки неудобно, а просмотр —
               // самое частое действие в этой таблице.
               <TableRow
                 key={o.id}
                 onClick={() => onOpenDetail(o)}
-                className="cursor-pointer hover:bg-muted/60"
+                className={`cursor-pointer ${
+                  urgent ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-muted/60'
+                }`}
               >
                 <TableCell>{o.id}</TableCell>
                 <TableCell>
@@ -134,8 +139,17 @@ const SewingItemsTable = ({
                     {o.sewingStatus}
                   </Badge>
                 </TableCell>
-                <TableCell className="font-medium">
-                  <span className="flex items-center gap-1.5">
+                <TableCell>
+                  <span className="flex items-center gap-1.5 text-base font-bold">
+                    {/* Молния у просроченного заказа: за компьютером мастер раздаёт
+                        работу и должен видеть срочные строки, не вчитываясь в даты. */}
+                    {urgent && (
+                      <Icon
+                        name="Zap"
+                        size={17}
+                        className="shrink-0 fill-red-600 text-red-600"
+                      />
+                    )}
                     {o.orderNumber}
                     {canPrintFboSticker(o, canPrintSticker) && (
                       <Tooltip>
@@ -159,7 +173,7 @@ const SewingItemsTable = ({
                 </TableCell>
                 {/* Изделие: материал и размер вместе — так их и называют в цехе
                     («Вуаль 300×255»), а не тремя отдельными числами. */}
-                <TableCell className="whitespace-nowrap font-medium">
+                <TableCell className="whitespace-nowrap text-base font-bold">
                   {o.material || '—'}
                   {o.width && o.height ? ` ${o.width}×${o.height}` : ''}
                 </TableCell>
@@ -167,10 +181,16 @@ const SewingItemsTable = ({
                   <span className={marketplaceLogo[o.marketplace]?.className}>
                     {marketplaceLogo[o.marketplace]?.label || o.marketplace}
                   </span>
-                  <span className="ml-1.5 text-muted-foreground">{o.orderType}</span>
+                  <span
+                    className={`ml-1.5 font-bold ${
+                      o.orderType === 'FBS' ? 'text-emerald-700' : 'text-sky-700'
+                    }`}
+                  >
+                    {o.orderType}
+                  </span>
                   {/* Кластер важен только для FBO: у FBS его нет. */}
                   {o.cluster && (
-                    <div className="text-xs text-muted-foreground">{o.cluster}</div>
+                    <div className="text-sm font-semibold text-sky-800">{o.cluster}</div>
                   )}
                   {/* Покупатель — компания: заказ шьётся так же, но пометка нужна,
                       чтобы в цехе понимали, кому уйдёт вещь. */}
@@ -185,7 +205,7 @@ const SewingItemsTable = ({
                 </TableCell>
                 <TableCell>{o.hangerNumber > 0 ? `№ ${o.hangerNumber}` : '—'}</TableCell>
                 <TableCell className="text-sm">
-                  <div className="whitespace-nowrap">
+                  <div className="whitespace-nowrap font-semibold">
                     {formatDate(o.marketplaceCreatedAt || o.createdAt)}
                   </div>
                   {o.completedAt && (
@@ -208,7 +228,8 @@ const SewingItemsTable = ({
                   </Button>
                 </TableCell>
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
         </Table>
       </div>
