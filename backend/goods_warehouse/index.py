@@ -467,20 +467,32 @@ def handler(event: dict, context) -> dict:
                 # полки, и возвраты с маркетплейса, ждущие разбора. Значок в меню
                 # показывает общий объём задач; куда именно идти, кладовщик видит
                 # на самой странице склада — там это две разные плитки.
+                #
+                # Третьим числом отдаём ТОЛЬКО отказы из цеха (awaiting_shelf), без
+                # возвратов с маркетплейса. По нему звучит сигнал «отменённый заказ
+                # из цеха»: вещь уже застикерована складским стикером и лежит у
+                # кладовщика на руках, её нужно унести на полку. Возвраты приезжают
+                # своим потоком и звучать не должны — иначе сигнал теряет смысл.
                 cur.execute(
                     "SELECT "
                     " count(*) FILTER (WHERE reserved_order_id IS NOT NULL "
                     "                  AND status = 'picking' AND shipping_labeled_at IS NULL), "
-                    " count(*) FILTER (WHERE status IN ('awaiting_shelf', 'mp_return')) "
+                    " count(*) FILTER (WHERE status IN ('awaiting_shelf', 'mp_return')), "
+                    " count(*) FILTER (WHERE status = 'awaiting_shelf') "
                     "FROM goods_warehouse "
                     "WHERE status IN ('picking', 'awaiting_shelf', 'mp_return')"
                 )
                 row = cur.fetchone()
-                pending, awaiting = int(row[0]), int(row[1])
+                pending, awaiting, from_workshop = int(row[0]), int(row[1]), int(row[2])
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'pendingLabel': pending, 'awaitingShelf': awaiting}),
+                    'body': json.dumps({
+                        'pendingLabel': pending,
+                        'awaitingShelf': awaiting,
+                        # Отказы из цеха, ждущие полки — только они дают звуковой сигнал.
+                        'cancelledFromWorkshop': from_workshop,
+                    }),
                 }
 
             # Заказы, пришедшие на подбор: их ещё не начали шить и под них не нашли

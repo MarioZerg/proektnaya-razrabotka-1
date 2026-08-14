@@ -244,12 +244,19 @@ export const returnGoodsToWorkshop = (id: number) => postAction({ action: 'retur
 export interface PickingPending {
   pendingLabel: number;
   awaitingShelf: number;
+  /** Только отказы из цеха, ждущие полки — без возвратов с маркетплейса.
+   *  По этому числу звучит голосовое уведомление кладовщику. */
+  cancelledFromWorkshop: number;
 }
 
 export const fetchPickingPending = async (): Promise<PickingPending> => {
   const res = await fetch(`${GOODS_WAREHOUSE_URL}?pending_count=1`);
   const data = await res.json();
-  return { pendingLabel: data.pendingLabel || 0, awaitingShelf: data.awaitingShelf || 0 };
+  return {
+    pendingLabel: data.pendingLabel || 0,
+    awaitingShelf: data.awaitingShelf || 0,
+    cancelledFromWorkshop: data.cancelledFromWorkshop || 0,
+  };
 };
 
 /** Проверка подбора: нужны ли ещё вещи, подобранные под заказы.
