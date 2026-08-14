@@ -27,7 +27,7 @@ import Icon from '@/components/ui/icon';
 import type { Shipment, ShipmentDetail } from '@/lib/shipmentsApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { AccessZone } from '@/lib/roles';
-import { formatDate, statusVariant, shiftLabel } from '@/components/crm/shipments/toWorkshopShared';
+import { formatDate, statusStyle, shiftLabel } from '@/components/crm/shipments/toWorkshopShared';
 import { formatQuantity } from '@/lib/formatQuantity';
 import ToWorkshopCards from '@/components/crm/shipments/ToWorkshopCards';
 
@@ -165,7 +165,9 @@ const ToWorkshopTable = ({
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge variant={statusVariant[s.status] || 'secondary'}>{s.status}</Badge>
+                        <Badge className={statusStyle(s.status, needsCorrection)}>
+                          {needsCorrection ? 'Нужна правка' : s.status}
+                        </Badge>
                         {s.isAutoOrder && (
                           <Badge variant="outline" className="text-xs text-muted-foreground">
                             Автозаказ
