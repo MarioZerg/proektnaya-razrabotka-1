@@ -2305,7 +2305,13 @@ def handler(event: dict, context) -> dict:
                             'reassigned': False,
                         }, ensure_ascii=False)}
                     # Заказ мёртвый (отменён/уехал), а вещь всё ещё за ним закреплена —
-                    # освобождаем её, иначе она навсегда выпадет из оборота.
+                    # освобождаем её, иначе она навсегда выпадет из оборота. Заодно
+                    # убираем обратную ссылку у заказа: иначе он остаётся «закрытым
+                    # складом» без вещи и просто исчезает из работы.
+                    cur.execute(
+                        "UPDATE orders SET fulfilled_from_stock_id = NULL "
+                        f"WHERE id = {int(gw_reserved)} AND fulfilled_from_stock_id = {int(gw_id)}"
+                    )
                     cur.execute(
                         "UPDATE goods_warehouse SET reserved_order_id = NULL, matched_at = NULL "
                         f"WHERE id = {int(gw_id)}"
@@ -2347,6 +2353,58 @@ def handler(event: dict, context) -> dict:
                     "ORDER BY other.matched_at ASC NULLS LAST, other.id ASC LIMIT 1"
                 )
                 target = cur.fetchone()
+
+                # 3б. Работы в подборе нет — ищем ОСИРОТЕВШИЙ заказ на такой же товар.
+                #
+                # Заказ считается закрытым складом и указывает на конкретную вещь, но та
+                # вещь его уже не держит: её освободили, переложили или отдали под другое
+                # отправление. Заказ при этом в цех не уходит (он «Со склада») и в подборе
+                # не показывается — вещи-то за ним нет. Работа исчезает с обеих сторон:
+                # на складе лежит подходящий товар, а система говорит «не нужен».
+                #
+                # Именно так вещь с нужным размером переставала сканироваться, хотя такой
+                # же товар числился к поставке.
+                if not target:
+                    cur.execute(
+                        "SELECT ro.id, ro.order_number FROM orders ro "
+                        "JOIN goods_warehouse lost ON lost.id = ro.fulfilled_from_stock_id "
+                        "WHERE ro.sewing_status = 'Со склада' "
+                        f"  AND ro.product = '{prod_esc}' "
+                        "  AND lost.reserved_order_id IS DISTINCT FROM ro.id "
+                        "  AND lost.shipped_at IS NULL "
+                        # Заказ действительно брошен, только если его не держит НИ ОДНА
+                        # вещь. Бывают «перекрёстные» пары: заказ ссылается на одну вещь,
+                        # а держит его другая — работа при этом на месте, и выдавать под
+                        # неё второй товар нельзя, иначе на отправление уедет две вещи.
+                        "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse held "
+                        "     WHERE held.reserved_order_id = ro.id AND held.shipped_at IS NULL) "
+                        f"  AND {RESERVE_ALIVE_SQL} "
+                        "ORDER BY ro.created_at ASC, ro.id ASC LIMIT 1"
+                    )
+                    orphan = cur.fetchone()
+                    if orphan:
+                        orphan_id, orphan_number = orphan
+                        cur.execute(
+                            "UPDATE goods_warehouse SET status = 'picking', "
+                            "reserved_order_id = %s, matched_at = now() WHERE id = %s",
+                            (int(orphan_id), int(gw_id)),
+                        )
+                        cur.execute(
+                            "UPDATE orders SET fulfilled_from_stock_id = %s WHERE id = %s",
+                            (int(gw_id), int(orphan_id)),
+                        )
+                        log_action(
+                            cur, actor_id, actor_name, 'scan_picking', 'goods_warehouse',
+                            gw_id,
+                            f'Заказ #{orphan_number} остался без вещи — закрыт вещью {barcode}',
+                        )
+                        conn.commit()
+                        return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                            'matched': True, 'goodsId': gw_id, 'product': gw_product,
+                            'shelfName': gw_shelf, 'orderNumber': orphan_number,
+                            'reassigned': True,
+                        }, ensure_ascii=False)}
+
                 if not target:
                     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
                         'matched': False,
