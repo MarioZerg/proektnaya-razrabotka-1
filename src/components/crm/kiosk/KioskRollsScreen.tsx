@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { useGlobalScanner } from '@/hooks/useGlobalScanner';
+import { playScanSound } from '@/lib/scanSound';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +30,16 @@ interface KioskRollsScreenProps {
   role: string;
 }
 
+/** «1 рулон», «22 рулона», «5 рулонов» — иначе на экране висит «21 рулонов». */
+const rollWord = (n: number) => {
+  const last2 = n % 100;
+  const last1 = n % 10;
+  if (last2 >= 11 && last2 <= 14) return 'рулонов';
+  if (last1 === 1) return 'рулон';
+  if (last1 >= 2 && last1 <= 4) return 'рулона';
+  return 'рулонов';
+};
+
 /** С какими типами материалов работает роль: закройщик — ткань (Тюль), швея — тесьма
  * (Аксессуары), упаковщица — пакеты и этикетки (Упаковка). */
 const allowedTypesByRole: Record<string, string[]> = {
@@ -47,6 +59,11 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Roll | null>(null);
+  // Отсканировали рулон, которого нет в смене — показываем номер прямо на экране,
+  // чтобы закройщик мог продиктовать его кладовщику, не переспрашивая.
+  const [notFound, setNotFound] = useState('');
+  // Список рулонов — запасной путь, когда стикер порван или сканер не берёт.
+  const [listOpen, setListOpen] = useState(false);
   const [shortage, setShortage] = useState('');
   const [saving, setSaving] = useState(false);
   // Окно «отставить рулон»: брак в начале полотна, резать дальше нельзя.
@@ -109,6 +126,56 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
       )
     : byType;
 
+  // Скан рулона — основной путь на терминале. Закройщик подносит сканер к стикеру на
+  // рулоне, и нужный рулон открывается сразу. Раньше он искал его глазами в списке из
+  // семи десятков рулонов смены: долго и легко ткнуть в соседний номер, а списание
+  // тогда уходит не с того рулона.
+  //
+  // Ищем среди рулонов СВОЕЙ смены: сервер уже отдал только их, поэтому чужой рулон
+  // сюда не попадёт даже случайным сканом.
+  const handleScan = (raw: string) => {
+    // Сканер может отдать код с префиксом из ссылки или лишними пробелами.
+    const code = raw.trim().replace(/^.*[=/]/, '');
+    if (!code) return;
+    const found =
+      roleRolls.find((r) => r.barcode.toLowerCase() === code.toLowerCase()) ||
+      roleRolls.find((r) => r.barcode.toLowerCase().endsWith(code.toLowerCase()));
+
+    if (!found) {
+      // Не молчим: рулон могли не отгрузить в цех или он из чужой смены.
+      setNotFound(code);
+      toast({
+        title: `Рулон #${code} не найден`,
+        description: 'Его нет в вашей смене. Проверьте стикер или спросите кладовщика',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (found.defectFlaggedAt) {
+      toast({
+        title: `Рулон #${found.barcode} отставлен как бракованный`,
+        description: 'Резать его нельзя — он ждёт кладовщика',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (found.pendingAcceptance) {
+      toast({
+        title: `Рулон #${found.barcode} ещё не принят`,
+        description: 'Подтвердите поставку в цех, потом работайте с рулоном',
+        variant: 'destructive',
+      });
+      return;
+    }
+    playScanSound();
+    setNotFound('');
+    setSelected(found);
+  };
+
+  // Ловим сканер на уровне всей страницы: поля с фокусом на этом экране нет, а на
+  // планшете фокус легко теряется от случайного касания.
+  useGlobalScanner(handleScan, !loading && !selected && !saving);
+
   const handleClose = async (withShortage: boolean) => {
     if (!selected) return;
     setSaving(true);
@@ -120,6 +187,8 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
       });
       setSelected(null);
       setShortage('');
+      // Возвращаем на экран сканирования: следующий рулон закройщик тоже сканирует.
+      setListOpen(false);
       load();
     } catch (e) {
       toast({
@@ -146,6 +215,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
       setDefectOpen(false);
       setDefectReason('');
       setSelected(null);
+      setListOpen(false);
       load();
     } catch (e) {
       toast({
@@ -226,6 +296,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
             onClick={() => {
               setSelected(null);
               setShortage('');
+              setNotFound('');
             }}
           >
             Отмена
@@ -290,8 +361,81 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
     );
   }
 
+  // Главный экран — приглашение отсканировать рулон. Список рулонов открывается
+  // отдельной кнопкой: он нужен редко (порван стикер, сканер не читает), а когда он
+  // был главным экраном, закройщик по привычке тыкал в номера и ошибался рулоном.
+  if (!listOpen) {
+    return (
+      <div className="space-y-4">
+        <Card className="border-2 border-dashed border-primary/40 shadow-none">
+          <CardContent className="flex flex-col items-center gap-4 py-12 text-center">
+            <div className="rounded-full bg-primary/10 p-6">
+              <Icon name="ScanLine" size={64} className="text-primary" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">Отсканируйте рулон</p>
+              <p className="mt-1 text-lg text-muted-foreground">
+                Поднесите сканер к стикеру на рулоне
+              </p>
+            </div>
+            {loading && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Icon name="Loader2" size={20} className="animate-spin" />
+                Загружаю рулоны смены…
+              </div>
+            )}
+            {!loading && (
+              <p className="text-base text-muted-foreground">
+                В вашей смене {roleRolls.length} {rollWord(roleRolls.length)}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Промах сканера показываем крупно: номер видно с расстояния вытянутой руки. */}
+        {notFound && (
+          <Card className="border-destructive bg-destructive/5 shadow-none">
+            <CardContent className="flex items-start gap-3 py-4">
+              <Icon name="TriangleAlert" size={24} className="mt-0.5 shrink-0 text-destructive" />
+              <div>
+                <p className="font-bold text-destructive">Рулон #{notFound} не найден</p>
+                <p className="text-base text-muted-foreground">
+                  Его нет в вашей смене. Проверьте стикер или назовите номер кладовщику
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Button
+          variant="outline"
+          size="lg"
+          className="h-14 w-full text-base"
+          onClick={() => setListOpen(true)}
+        >
+          <Icon name="List" size={22} className="mr-2" />
+          Стикер не читается — выбрать из списка
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
+      {/* Возврат к сканированию: основной режим работы. */}
+      <Button
+        variant="outline"
+        size="lg"
+        className="h-12 w-full text-base"
+        onClick={() => {
+          setListOpen(false);
+          setSearch('');
+        }}
+      >
+        <Icon name="ScanLine" size={20} className="mr-2" />
+        Вернуться к сканированию
+      </Button>
+
       {/* Фильтр по типу материала: Ткань (Тюль), Аксессуары, Упаковка */}
       <div className="flex flex-wrap gap-2">
         <Button
