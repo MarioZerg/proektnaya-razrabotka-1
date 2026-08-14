@@ -88,6 +88,8 @@ const ReturnsInspection = () => {
   // Полки для укладки прямо с разбора — грузим один раз при открытии страницы.
   const [shelves, setShelves] = useState<Shelf[]>([]);
   const [shelfId, setShelfId] = useState('');
+  /** Поиск по списку: сюда пикают стикер возврата с пакета. */
+  const [search, setSearch] = useState('');
 
   const isAdmin = user?.role === 'admin';
   // Раскладывать по полкам могут кладовщик и админ — это конец пути возврата.
@@ -106,6 +108,7 @@ const ReturnsInspection = () => {
   useEffect(() => {
     load(stage);
     setSelected([]);
+    setSearch('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage]);
 
@@ -118,8 +121,34 @@ const ReturnsInspection = () => {
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
 
+  /**
+   * Отбор строк по поиску. Кладовщик держит в руках пакет с ПВЗ и пикает наклеенный на
+   * него стикер возврата — по нему вещь и находится. Ищем заодно по стикеру хранения,
+   * номеру заказа, товару и материалу: пригодится, когда стикер порван и приходится
+   * искать глазами по названию.
+   */
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  const query = norm(search);
+  const visible = query
+    ? items.filter((i) =>
+        norm(
+          [
+            i.returnBarcode,
+            i.storageBarcode,
+            i.orderNumber,
+            i.product,
+            i.returnProductName,
+            i.material,
+            i.width && i.height ? `${i.width}x${i.height}` : '',
+          ]
+            .filter(Boolean)
+            .join(' '),
+        ).includes(query),
+      )
+    : items;
+
   const toggleAll = () =>
-    setSelected((prev) => (prev.length === items.length ? [] : items.map((i) => i.id)));
+    setSelected((prev) => (prev.length === visible.length ? [] : visible.map((i) => i.id)));
 
   const handleMoveToWorkshop = async () => {
     setActing(true);
@@ -403,6 +432,36 @@ const ReturnsInspection = () => {
 
         <div className="space-y-2">
           <h2 className="font-semibold">{current?.title}</h2>
+
+          {/* Поиск нужен там, где вещей много и они физически в руках у кладовщика:
+              он пикает стикер с пакета и сразу видит нужную строку. */}
+          {!loading && items.length > 0 && (
+            <div className="relative max-w-xl">
+              <Icon
+                name="Search"
+                size={16}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Отсканируйте стикер возврата или введите товар, размер, заказ"
+                className="h-11 pl-9 pr-9"
+                autoComplete="off"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  title="Очистить поиск"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                >
+                  <Icon name="X" size={16} />
+                </button>
+              )}
+            </div>
+          )}
+
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Icon name="Loader2" size={16} className="animate-spin" />
@@ -410,6 +469,11 @@ const ReturnsInspection = () => {
             </div>
           ) : items.length === 0 ? (
             <p className="text-sm text-muted-foreground">На этом этапе пусто</p>
+          ) : visible.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              По запросу «{search}» ничего не нашлось. Возможно, вещь ещё не отмечена как
+              привезённая с пункта выдачи
+            </p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
               <Table>
@@ -417,7 +481,7 @@ const ReturnsInspection = () => {
                   <TableRow className="bg-primary hover:bg-primary">
                     <TableHead className="w-10">
                       <Checkbox
-                        checked={selected.length === items.length && items.length > 0}
+                        checked={selected.length === visible.length && visible.length > 0}
                         onCheckedChange={toggleAll}
                       />
                     </TableHead>
@@ -429,7 +493,7 @@ const ReturnsInspection = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {items.map((i) => (
+                  {visible.map((i) => (
                     <TableRow key={i.id} className="hover:bg-muted/60">
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <Checkbox

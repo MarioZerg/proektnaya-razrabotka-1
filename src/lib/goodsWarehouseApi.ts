@@ -381,6 +381,10 @@ export interface InspectionItem {
   marketplace: string | null;
   inspectedByName: string | null;
   takenByName: string | null;
+  /** Штрихкод со стикера возврата маркетплейса — по нему кладовщик ищет вещь. */
+  returnBarcode?: string | null;
+  /** Название товара так, как его прислал маркетплейс в возврате. */
+  returnProductName?: string | null;
 }
 
 /** Счётчики виджетов и список выбранного этапа осмотра. */

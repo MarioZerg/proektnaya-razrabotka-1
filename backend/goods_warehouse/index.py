@@ -554,9 +554,15 @@ def handler(event: dict, context) -> dict:
                         "SELECT gw.id, gw.storage_barcode, gw.status, gw.received_at, "
                         "       gw.inspected_at, gw.taken_at, gw.dispose_reason, gw.lost_reason, "
                         "       o.order_number, o.product, o.material, o.width, o.height, "
-                        "       o.marketplace, ins.full_name, tk.full_name "
+                        "       o.marketplace, ins.full_name, tk.full_name, "
+                        # Стикер возврата маркетплейса — то, что физически наклеено на
+                        # пакете с ПВЗ. Кладовщик ищет вещь именно по нему: стикера
+                        # хранения на возврате ещё нет, а название товара длинное и
+                        # набирать его руками дольше, чем пикнуть код.
+                        "       mr.return_barcode, mr.product_name "
                         "FROM goods_warehouse gw "
                         "LEFT JOIN orders o ON o.id = gw.order_id "
+                        "LEFT JOIN marketplace_returns mr ON mr.goods_warehouse_id = gw.id "
                         "LEFT JOIN users ins ON ins.id = gw.inspected_by "
                         "LEFT JOIN users tk ON tk.id = gw.taken_by "
                         f"WHERE {where_stage} "
@@ -580,6 +586,8 @@ def handler(event: dict, context) -> dict:
                             'marketplace': r[13],
                             'inspectedByName': r[14],
                             'takenByName': r[15],
+                            'returnBarcode': r[16],
+                            'returnProductName': r[17],
                         }
                         for r in cur.fetchall()
                     ]
