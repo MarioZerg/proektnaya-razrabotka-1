@@ -31,19 +31,25 @@ const esc = (v: string | number | null | undefined) =>
  */
 export const printStorageSticker = (data: StorageStickerData) => {
   const canvas = document.createElement('canvas');
+  // Номер под штрихкодом не рисуем: мелкий и мылкий, кладовщик не мог его прочитать.
+  // Вместо него — крупная HTML-строка под картинкой, её видно с вытянутой руки.
   JsBarcode(canvas, data.storageBarcode, {
     format: 'CODE128',
     width: 2,
-    height: 42,
-    displayValue: true,
-    fontSize: 13,
-    margin: 2,
+    height: 44,
+    displayValue: false,
+    margin: 0,
   });
   const barcode = canvas.toDataURL('image/png');
 
   const order = (data.orderNumber || '').trim();
   // Чем длиннее номер, тем мельче шрифт — иначе он не влезает в 58 мм по ширине.
-  const orderFont = order.length > 34 ? '4.5pt' : order.length > 22 ? '5.5pt' : '6.5pt';
+  const orderFont = order.length > 34 ? '5.5pt' : order.length > 22 ? '6.5pt' : '7.5pt';
+  // Короткое «Мрамор 300x255» печатаем крупно, а длинное название с маркетплейса
+  // («Тюль для комнаты 200x270 см Молния белая...») ужимаем: иначе оно занимает
+  // три строки и выдавливает номер за край наклейки.
+  const title = (data.title || '').trim();
+  const titleFont = title.length > 40 ? '7pt' : title.length > 22 ? '10pt' : '15pt';
 
   const html = `<!DOCTYPE html>
 <html lang="ru">
@@ -66,15 +72,25 @@ export const printStorageSticker = (data: StorageStickerData) => {
       gap: 0.5mm;
       overflow: hidden;
     }
+    /* Материал и размер — самое крупное на наклейке: по ним вещь ищут на полке. */
     .title {
-      font-size: 8.5pt;
+      font-size: ${titleFont};
       font-weight: bold;
       text-align: center;
-      line-height: 1.1;
-      max-height: 7mm;
+      line-height: 1.05;
+      max-height: 8mm;
       overflow: hidden;
     }
-    .bc img { width: 53mm; height: auto; display: block; }
+    .bc img { width: 52mm; height: 11mm; display: block; }
+    /* Номер хранения крупно и вразрядку: его диктуют вслух и ищут глазами. */
+    .code {
+      font-size: 14pt;
+      font-weight: bold;
+      letter-spacing: 0.3mm;
+      text-align: center;
+      line-height: 1.05;
+      font-family: 'Courier New', monospace;
+    }
     /* Пометка о связке — крупно и жирно: кладовщик должен увидеть её с полки. */
     .group {
       font-size: 7pt;
@@ -89,10 +105,11 @@ export const printStorageSticker = (data: StorageStickerData) => {
       font-size: ${orderFont};
       color: #333;
       text-align: center;
-      line-height: 1.15;
+      line-height: 1.1;
       width: 100%;
       word-break: break-all;
-      max-height: 6mm;
+      /* Ровно две строки: третья уже вылезала за нижний край наклейки. */
+      max-height: 5mm;
       overflow: hidden;
     }
   </style>
@@ -101,6 +118,7 @@ export const printStorageSticker = (data: StorageStickerData) => {
   ${data.title ? `<div class="title">${esc(data.title)}</div>` : ''}
   ${data.groupLabel ? `<div class="group">${esc(data.groupLabel)}</div>` : ''}
   <div class="bc"><img src="${barcode}" alt="${esc(data.storageBarcode)}" /></div>
+  <div class="code">${esc(data.storageBarcode)}</div>
   ${order ? `<div class="order">${esc(order)}</div>` : ''}
 </body>
 </html>`;
@@ -121,22 +139,23 @@ export const printStorageStickers = (list: StorageStickerData[]) => {
   const pages = list
     .map((data) => {
       const canvas = document.createElement('canvas');
+      // Номер печатаем отдельной крупной строкой, а не подписью внутри картинки.
       JsBarcode(canvas, data.storageBarcode, {
         format: 'CODE128',
         width: 2,
-        height: 42,
-        displayValue: true,
-        fontSize: 13,
-        margin: 2,
+        height: 44,
+        displayValue: false,
+        margin: 0,
       });
       const barcode = canvas.toDataURL('image/png');
       const order = (data.orderNumber || '').trim();
       const orderFont =
-        order.length > 34 ? '4.5pt' : order.length > 22 ? '5.5pt' : '6.5pt';
+        order.length > 34 ? '5.5pt' : order.length > 22 ? '6.5pt' : '7.5pt';
 
       return `<div class="sticker">
   ${data.title ? `<div class="title">${esc(data.title)}</div>` : ''}
   <div class="bc"><img src="${barcode}" alt="${esc(data.storageBarcode)}" /></div>
+  <div class="code">${esc(data.storageBarcode)}</div>
   ${order ? `<div class="order" style="font-size:${orderFont}">${esc(order)}</div>` : ''}
 </div>`;
     })
@@ -167,14 +186,22 @@ export const printStorageStickers = (list: StorageStickerData[]) => {
     }
     .sticker:last-child { page-break-after: auto; break-after: auto; }
     .title {
-      font-size: 8.5pt;
+      font-size: 15pt;
       font-weight: bold;
       text-align: center;
-      line-height: 1.1;
-      max-height: 7mm;
+      line-height: 1.05;
+      max-height: 8mm;
       overflow: hidden;
     }
-    .bc img { width: 53mm; height: auto; display: block; }
+    .bc img { width: 52mm; height: 11mm; display: block; }
+    .code {
+      font-size: 14pt;
+      font-weight: bold;
+      letter-spacing: 0.3mm;
+      text-align: center;
+      line-height: 1.05;
+      font-family: 'Courier New', monospace;
+    }
     .order {
       color: #333;
       text-align: center;

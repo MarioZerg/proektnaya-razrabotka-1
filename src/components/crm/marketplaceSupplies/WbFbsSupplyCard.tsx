@@ -11,6 +11,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
+import printHtmlInIframe from '@/lib/printInIframe';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
@@ -175,34 +176,42 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
     ).values()
   );
 
+  /**
+   * Печать стикеров коробов WB на этикеточном принтере 58×40 мм.
+   *
+   * Раньше страница печати открывалась во всплывающем окне без указания размера листа:
+   * браузер брал A4 и книжную ориентацию, а в настройках принтера размер уже не менялся —
+   * кладовщик получал стикер на четверть листа. Теперь лист жёстко задан как 58×40, поля
+   * нулевые, а картинка растягивается на всю наклейку, и принтер печатает как надо.
+   *
+   * Печатаем через скрытый iframe, а не новым окном: всплывающие окна блокирует браузер,
+   * и на терминале склада кладовщик просто не видел диалога печати.
+   */
   const handlePrintStickers = () => {
-    const win = window.open('', '_blank');
-    if (!win) {
-      toast({ title: 'Разрешите всплывающие окна для печати', variant: 'destructive' });
-      return;
-    }
-    const title = `Стикеры коробов — поставка ${supply.wbSupplyId || supply.supplyNumber || supplyId}`;
+    if (!boxStickers.length) return;
     const pages = boxStickers
-      .map(
-        (s) => `<div class="page">
-          ${s.label ? `<div class="label">Короб ${s.label}</div>` : ''}
-          <img src="${s.url}" alt="Стикер короба" />
-        </div>`
-      )
+      .map((s) => `<div class="label"><img src="${s.url}" alt="Стикер короба" /></div>`)
       .join('');
-    win.document.write(
-      `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+    printHtmlInIframe(
+      `<!doctype html><html><head><meta charset="utf-8"><title>Стикеры коробов WB</title>
       <style>
+        @page { size: 58mm 40mm; margin: 0; }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: system-ui, sans-serif; }
-        .page { display: flex; flex-direction: column; align-items: center; justify-content: center;
-                min-height: 100vh; page-break-after: always; padding: 16px; }
-        .label { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
-        img { max-width: 100%; max-height: 90vh; object-fit: contain; }
-        @media print { .page { min-height: auto; height: 100vh; } }
-      </style></head><body onload="window.print()">${pages}</body></html>`
+        html, body { width: 58mm; }
+        body { font-family: Arial, Helvetica, sans-serif; }
+        .label {
+          width: 58mm; height: 40mm;
+          display: flex; align-items: center; justify-content: center;
+          overflow: hidden;
+          /* Каждый стикер — свой лист: рулонный принтер отрежет по границе наклейки. */
+          page-break-after: always;
+          break-after: page;
+        }
+        .label:last-child { page-break-after: auto; break-after: auto; }
+        /* Картинка от WB уже в пропорции наклейки — вписываем её целиком, без обрезки. */
+        .label img { max-width: 58mm; max-height: 40mm; width: auto; height: auto; }
+      </style></head><body>${pages}</body></html>`,
     );
-    win.document.close();
   };
 
   useScannerAutoSubmit(scanValue, handleScan, !scanning && canScan);
