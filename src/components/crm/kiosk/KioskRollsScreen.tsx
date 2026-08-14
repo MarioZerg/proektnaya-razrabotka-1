@@ -229,6 +229,22 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   };
 
 
+  // Сколько метров МОГЛО не хватить: всё, что было в рулоне, минус то, что уже ушло
+  // в сшитые вещи. Больше этого числа недостача физически невозможна — эти метры
+  // система видела в заказах. Сервер проверяет то же самое, здесь — чтобы человек
+  // увидел ошибку до нажатия кнопки, а не получил отказ после.
+  const maxPossibleShortage =
+    selected && selected.usedQuantity != null && selected.initialQuantity > 0
+      ? Math.max(0, selected.initialQuantity - selected.usedQuantity)
+      : null;
+
+  // Заявленная недостача невозможна — кнопку закрытия гасим. Иначе человек жмёт её,
+  // ждёт и получает отказ от сервера, не понимая, что исправлять.
+  const shortageTooBig =
+    !!selected &&
+    (Number(shortage) > Number(selected.remainingQuantity || 0) ||
+      (maxPossibleShortage != null && Number(shortage) > maxPossibleShortage));
+
   if (selected) {
     return (
       <Card className="border-border shadow-none">
@@ -252,8 +268,23 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
             </p>
           </div>
 
+          {/* Сколько уже ушло в сшитые вещи. Это твёрдый факт: система записала расход
+              по каждому заказу. Показываем рядом с остатком, чтобы человек видел всю
+              картину по рулону, а не только конечную цифру. */}
+          {selected.usedQuantity != null && selected.usedQuantity > 0 && (
+            <div className="rounded-md border border-border bg-muted/20 p-3 text-center">
+              <p className="text-sm text-muted-foreground">Уже израсходовано на заказы</p>
+              <p className="font-mono-tech text-2xl font-bold">
+                {formatQuantity(selected.usedQuantity)} {selected.unit}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                из {formatQuantity(selected.initialQuantity)} {selected.unit} в рулоне
+              </p>
+            </div>
+          )}
+
           <div className="rounded-md border border-border p-3 text-center">
-            <p className="text-sm text-muted-foreground">Недостача (если ткань закончилась раньше)</p>
+            <p className="text-sm text-muted-foreground">Недостача (если материал закончился раньше)</p>
             <p className="font-mono-tech text-3xl font-bold">{shortage || '0'}</p>
             {/* Больше остатка списать нельзя — предупреждаем сразу, до нажатия кнопки. */}
             {Number(shortage) > Number(selected.remainingQuantity || 0) && (
@@ -261,6 +292,16 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
                 Больше, чем осталось на рулоне — проверьте цифру
               </p>
             )}
+            {/* Проверка по фактическому расходу: столько метров физически не могло
+                не хватить, потому что они уже ушли в сшитые вещи. */}
+            {maxPossibleShortage != null &&
+              Number(shortage) > maxPossibleShortage &&
+              Number(shortage) <= Number(selected.remainingQuantity || 0) && (
+                <p className="mt-1 text-sm font-semibold text-destructive">
+                  Не хватать могло максимум {formatQuantity(maxPossibleShortage)} {selected.unit}:
+                  остальное уже ушло в заказы
+                </p>
+              )}
           </div>
 
           <KioskNumPad value={shortage} onChange={setShortage} />
@@ -269,7 +310,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
             size="lg"
             className="h-16 w-full bg-emerald-600 text-lg text-white hover:bg-emerald-700"
             onClick={() => handleClose(true)}
-            disabled={saving}
+            disabled={saving || shortageTooBig}
           >
             <Icon
               name={saving ? 'Loader2' : 'Check'}

@@ -780,7 +780,13 @@ def handler(event: dict, context) -> dict:
                 f"SELECT r.id, r.barcode, r.material_id, m.name, m.unit, r.workshop_id, w.name, "
                 f"r.shift_number, r.initial_quantity, r.remaining_quantity, r.status, "
                 f"r.created_at, r.completed_at, COALESCE(r.shortage_quantity, 0), r.accepted_at, "
-                f"r.defect_flagged_at, r.defect_flagged_by_name, r.defect_reason "
+                f"r.defect_flagged_at, r.defect_flagged_by_name, r.defect_reason, "
+                # Сколько материала РЕАЛЬНО ушло в заказы и в брак по этому рулону.
+                # Нужно закройщику и швее при закрытии: если система знает, что из
+                # рулона израсходовано 470 из 500 м, то заявленная недостача в 300 м
+                # физически невозможна — таких метров на рулоне уже не было.
+                f"COALESCE((SELECT SUM(omu.quantity) FROM order_material_usage omu "
+                f"          WHERE omu.roll_id = r.id), 0) "
                 f"FROM rolls r "
                 f"LEFT JOIN materials m ON m.id = r.material_id "
                 f"LEFT JOIN workshops w ON w.id = r.workshop_id "
@@ -823,6 +829,8 @@ def handler(event: dict, context) -> dict:
                     'defectFlaggedAt': (r[15].isoformat() + 'Z') if r[15] else None,
                     'defectFlaggedByName': r[16],
                     'defectReason': r[17],
+                    # Фактический расход по заказам — по нему терминал проверяет недостачу.
+                    'usedQuantity': float(r[18] or 0),
                 }
                 for r in cur.fetchall()
             ]
@@ -1033,7 +1041,11 @@ def handler(event: dict, context) -> dict:
                     shortage = 0.0
 
                 cur.execute(
-                    "SELECT r.remaining_quantity, r.status, r.workshop_id, mt.name "
+                    "SELECT r.remaining_quantity, r.status, r.workshop_id, mt.name, "
+                    "r.initial_quantity, "
+                    # Фактический расход по заказам — им перепроверяем недостачу.
+                    "COALESCE((SELECT SUM(omu.quantity) FROM order_material_usage omu "
+                    "          WHERE omu.roll_id = r.id), 0) "
                     "FROM rolls r "
                     "LEFT JOIN materials m ON m.id = r.material_id "
                     "LEFT JOIN material_types mt ON mt.id = m.type_id "
@@ -1097,6 +1109,32 @@ def handler(event: dict, context) -> dict:
                                      f'можно только то, чего не хватило в самом рулоне.'
                         }, ensure_ascii=False),
                     }
+
+                # Вторая проверка — по фактическому расходу. Остаток в рулоне система
+                # ведёт сама, но при переносе данных и ручных правках он мог разъехаться
+                # с реальностью. Расход по заказам — твёрдый факт: столько метров ушло
+                # в сшитые вещи. Больше, чем «начальный метраж минус израсходованное»,
+                # не хватать физически не может.
+                #
+                # Пример: коробка тесьмы 1500 м, в заказы ушло 1400 — заявить недостачу
+                # 300 м нельзя, таких метров в коробке не оставалось.
+                initial_qty = float(row[4] or 0)
+                used_qty = float(row[5] or 0)
+                if initial_qty > 0:
+                    max_possible = initial_qty - used_qty
+                    if shortage > max_possible + 0.001:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': (
+                                    f'Недостача {round(shortage, 2)} больше, чем могло остаться. '
+                                    f'В рулоне было {round(initial_qty, 2)}, из них уже ушло в заказы '
+                                    f'{round(used_qty, 2)} — не хватать могло максимум '
+                                    f'{round(max_possible, 2)}. Проверьте цифру.'
+                                )
+                            }, ensure_ascii=False),
+                        }
 
                 cur.execute(
                     "UPDATE rolls SET remaining_quantity = 0, status = 'completed', completed_at = now(), "
