@@ -31,6 +31,17 @@ interface KioskPreviewDialogProps {
 const KIOSK_ROLES: Role[] = ['sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper'];
 
 /**
+ * Под какими ролями админ может ОТКРЫТЬ терминал.
+ *
+ * Кроме рабочих должностей — он сам. Раньше своей роли в списке не было, и админ
+ * попадал в киоск всегда под чужой: терминал считал его швеёй или упаковщицей и прятал
+ * то, что положено руководителю, — в частности ручной поиск заказа на стикеровке.
+ * Админ подходит к терминалу как раз тогда, когда сканер не берёт вещь и надо
+ * разобраться на месте, поэтому он должен уметь войти самим собой.
+ */
+const OPEN_AS_ROLES: Role[] = ['admin', ...KIOSK_ROLES];
+
+/**
  * Вход администратора в терминал цеха для проверки: он выбирает цех и роль и попадает в киоск
  * так, как его видит сотрудник этой должности. Реальная смена при этом не открывается —
  * это режим просмотра, ничего в отчёты не пишется.
@@ -38,7 +49,9 @@ const KIOSK_ROLES: Role[] = ['sewer', 'cutter', 'packer', 'storekeeper', 'senior
 const KioskPreviewDialog = ({ open, onOpenChange, adminName }: KioskPreviewDialogProps) => {
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [workshopId, setWorkshopId] = useState('');
-  const [role, setRole] = useState<Role>('sewer');
+  // По умолчанию админ входит САМИМ СОБОЙ: чаще всего он идёт к терминалу работать
+  // руками (застикеровать зависшую вещь), а не смотреть чужими глазами.
+  const [role, setRole] = useState<Role>('admin');
   // Режим: 'role' — смотреть обезличенно глазами должности, 'employee' — глазами конкретного
   // сотрудника, с его настоящими заказами, рулонами и сменой.
   const [mode, setMode] = useState<'role' | 'employee'>('role');
@@ -145,9 +158,9 @@ const KioskPreviewDialog = ({ open, onOpenChange, adminName }: KioskPreviewDialo
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {KIOSK_ROLES.map((r) => (
+                  {OPEN_AS_ROLES.map((r) => (
                     <SelectItem key={r} value={r}>
-                      {roleLabels[r]}
+                      {r === 'admin' ? 'Администратор (я сам)' : roleLabels[r]}
                     </SelectItem>
                   ))}
                 </SelectContent>
