@@ -110,6 +110,61 @@ def ensure_ozon_assembled(cur, goods_id):
         return False
 
 
+def ozon_posting_status_live(cur, posting_number):
+    """Спрашивает у OZON НАСТОЯЩИЙ статус отправления прямо сейчас (только чтение).
+
+    Наш ozon_status обновляется синхронизацией и легко отстаёт: покупатель отменил
+    заказ полчаса назад, а у нас он ещё «ждёт отгрузки». Кладовщик в этот момент
+    кладёт вещь в короб и увозит — на приёмке отправление не принимают, вещь едет
+    обратно, а заказ считается просроченным.
+
+    Поэтому в момент сканирования в короб спрашиваем площадку напрямую. Возвращает
+    строку статуса или None, если узнать не удалось (нет ключей, сеть) — тогда
+    сканирование не блокируем: лучше собрать поставку, чем остановить склад.
+    """
+    if not posting_number:
+        return None
+    client_id, api_key = _ozon_creds(cur)
+    if not client_id or not api_key:
+        return None
+    try:
+        req = urllib.request.Request(
+            'https://api-seller.ozon.ru/v3/posting/fbs/get', method='POST',
+            data=json.dumps({'posting_number': posting_number, 'with': {}}).encode('utf-8'),
+        )
+        req.add_header('Client-Id', client_id)
+        req.add_header('Api-Key', api_key)
+        req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode('utf-8') or '{}')
+        status = ((data or {}).get('result') or {}).get('status')
+        if status:
+            # Раз уж спросили — сохраняем ответ у себя: следующий экран покажет
+            # актуальные данные без ещё одного обращения к площадке.
+            cur.execute(
+                "UPDATE orders SET ozon_status = %s, "
+                "  cancelled_at = CASE WHEN %s LIKE 'cancel%%' AND cancelled_at IS NULL "
+                "                      THEN now() ELSE cancelled_at END "
+                "WHERE ozon_posting_number = %s",
+                (status, status, posting_number),
+            )
+        return status
+    except Exception:
+        # Площадка не ответила — не мешаем кладовщику собирать короб.
+        return None
+
+
+# Статусы OZON, при которых вещь в короб класть НЕЛЬЗЯ: отправление отменено или
+# уже уехало. Понятный текст для кладовщика — чтобы он не гадал, что делать.
+OZON_DEAD_STATUSES = {
+    'cancelled': 'Заказ отменён покупателем — вещь в поставку не идёт',
+    'not_accepted': 'Отправление не принято на сортировке — в поставку не идёт',
+    'delivering': 'Отправление уже едет к покупателю — второй раз его везти нельзя',
+    'delivered': 'Отправление уже доставлено покупателю',
+    'driver_pickup': 'Отправление уже забрал водитель',
+}
+
+
 def ozon_ship_postings(cur, supply_id):
     """Передаёт отправления поставки в доставку на стороне OZON.
 
@@ -1524,6 +1579,41 @@ def handler(event: dict, context) -> dict:
                                      f'«Сборка товара с полок»'
                         }, ensure_ascii=False),
                     }
+
+                # СВЕРКА С МАРКЕТПЛЕЙСОМ в момент сканирования.
+                #
+                # Наш статус заказа обновляется синхронизацией и отстаёт: покупатель мог
+                # отменить отправление полчаса назад, а у нас оно ещё «ждёт отгрузки».
+                # Кладовщик кладёт такую вещь в короб и увозит — на приёмке её не берут,
+                # вещь едет обратно, а по заказу капает просрочка.
+                #
+                # Поэтому спрашиваем OZON напрямую прямо сейчас. Если площадка не
+                # ответила (нет ключей, сеть) — сканирование НЕ блокируем: остановить
+                # сборку поставки хуже, чем увезти одну спорную вещь.
+                cur.execute(
+                    "SELECT COALESCE(ro.ozon_posting_number, o.ozon_posting_number), "
+                    "       COALESCE(ro.marketplace, o.marketplace) "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                    "WHERE gw.id = %s",
+                    (goods_id,),
+                )
+                pn_row = cur.fetchone()
+                if pn_row and pn_row[0] and (pn_row[1] or '').upper() == 'OZON':
+                    live_status = ozon_posting_status_live(cur, pn_row[0])
+                    if live_status in OZON_DEAD_STATUSES:
+                        conn.commit()
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'{order_number}: {OZON_DEAD_STATUSES[live_status]}. '
+                                         f'Отложите вещь и передайте её кладовщику на разбор — '
+                                         f'в этот короб она не едет',
+                                'ozonStatus': live_status,
+                            }, ensure_ascii=False),
+                        }
 
                 # Сначала смотрим, не лежит ли товар УЖЕ в поставке. Добавленный товар
                 # становится 'reserved', и проверка статуса ниже принимала его за
