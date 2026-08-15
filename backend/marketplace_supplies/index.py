@@ -10,6 +10,23 @@ import boto3
 import psycopg2
 
 
+# Вещь реально ждёт поставки — то есть её ещё МОЖНО положить в короб и увезти.
+#
+# Одного «на вещи есть ярлык» мало. Отправление живёт своей жизнью: пока вещь лежала
+# у кладовщика, покупатель мог отменить заказ, а сам заказ — уехать другой поставкой
+# или уже ехать к клиенту. Такая вещь в короб не пойдёт никогда, но ярлык на ней
+# остаётся, и счётчик показывал её как работу: «к выдаче 32», а кладовщик выкладывал
+# на стол 4 штуки и не понимал, где ещё 28.
+#
+# Считаем только то, что действительно можно отгрузить: заказ не отменён, не отгружен,
+# не доставлен и не уехал к покупателю.
+GOODS_READY_FOR_SUPPLY_SQL = (
+    "COALESCE(ro.status, so.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
+    "AND COALESCE(ro.ozon_status, so.ozon_status, '') NOT IN "
+    "    ('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup')"
+)
+
+
 def _ozon_creds(cur):
     """Ключи OZON из настроек интеграции. Возвращает (client_id, api_key) или (None, None)."""
     cur.execute(
@@ -924,6 +941,8 @@ def handler(event: dict, context) -> dict:
                     "  AND COALESCE(ro.order_type, so.order_type) = %s "
                     "  AND (%s <> 'FBO' OR %s IS NULL "
                     "       OR COALESCE(ro.cluster, so.cluster) = %s) "
+                    # Заказ должен быть живым: отменённые и уже уехавшие в короб не идут.
+                    f"  AND {GOODS_READY_FOR_SUPPLY_SQL} "
                     # Учитываем только ЖИВЫЕ поставки. Запись о завершённой поездке
                     # не должна прятать вещь: она могла вернуться к нам и снова быть
                     # подобрана под новый заказ. Раньше такая вещь навсегда пропадала
@@ -963,6 +982,8 @@ def handler(event: dict, context) -> dict:
                     "  AND COALESCE(ro.order_type, so.order_type) = %s "
                     "  AND (%s <> 'FBO' OR %s IS NULL "
                     "       OR COALESCE(ro.cluster, so.cluster) = %s) "
+                    # Заказ должен быть живым: отменённые и уже уехавшие в короб не идут.
+                    f"  AND {GOODS_READY_FOR_SUPPLY_SQL} "
                     "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
                     "                  JOIN marketplace_supplies s2 ON s2.id = msi2.supply_id "
                     "                  WHERE msi2.goods_warehouse_id = gw.id "
@@ -1144,6 +1165,8 @@ def handler(event: dict, context) -> dict:
                 f"   AND COALESCE(ro.order_type, so.order_type) = s.type "
                 f"   AND (s.type <> 'FBO' OR s.cluster IS NULL "
                 f"        OR COALESCE(ro.cluster, so.cluster) = s.cluster) "
+                # Заказ должен быть живым: отменённые и уже уехавшие в короб не идут.
+                f"   AND {GOODS_READY_FOR_SUPPLY_SQL} "
                 # Только живые поставки: запись о завершённой поездке вещь не блокирует.
                 f"   AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
                 f"                   JOIN marketplace_supplies s2 ON s2.id = msi2.supply_id "
