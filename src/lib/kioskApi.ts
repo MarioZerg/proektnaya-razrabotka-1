@@ -446,6 +446,39 @@ export const fetchDefectRolls = async (
   return data.rolls || [];
 };
 
+/** Рулон, найденный сканером на экране брака. */
+export interface ScannedDefectRoll {
+  id: number;
+  barcode: string;
+  materialName: string;
+  materialType: string;
+  unit: string | null;
+  remaining: number;
+  shiftNumber: number | null;
+  reasons: Array<{ code: string; label: string }>;
+}
+
+/**
+ * Найти рулон по отсканированному штрихкоду для списания брака.
+ *
+ * Сервер сам проверяет правила: рулон должен лежать в цехе открытой смены сотрудника,
+ * быть из ЕГО смены и подходить его роли (закройщику — тюль, швее — тесьма,
+ * упаковщице — упаковка). Иначе вернётся понятная ошибка.
+ */
+export const scanDefectRoll = async (
+  barcode: string,
+  userId: number
+): Promise<ScannedDefectRoll> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_scan_roll', barcode, userId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Рулон не найден');
+  return data;
+};
+
 export interface DefectResult {
   defectId: number;
   /** Штрихкод стикера брака DF-000001 — печатается и клеится на бракованный кусок. */
@@ -460,7 +493,10 @@ export interface DefectResult {
 
 /** Оформить брак рулона на терминале. */
 export const createDefect = async (payload: {
-  code: string;
+  /** Штрихкод другого сотрудника — когда брак за гостя оформляет штатный работник цеха. */
+  code?: string;
+  /** Сотрудник, уже вошедший на терминале: свой штрихкод сканировать повторно не нужно. */
+  userId?: number;
   rollId: number;
   quantity: number;
   reasonCode: string;

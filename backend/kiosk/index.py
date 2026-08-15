@@ -252,6 +252,11 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'stickering_sewers', workshopId? }
         - швеи, у которых есть вещи на стикеровке (для выбора швеи в ручном поиске)
 
+    POST /  { action: 'defect_scan_roll', barcode, userId }
+        - закройщик/швея/упаковщица сканирует штрихкод рулона (коробки), чтобы списать
+          с него брак. Проверяет: рулон в цехе открытой смены сотрудника, из ЕГО смены,
+          материал подходит его роли. Возвращает рулон, остаток и причины брака
+
     POST /  { action: 'find_unlabeled', sewerId?, width?, height? }
         - кладовщик ищет вещь без стикера хранения (упаковщица не наклеила / стикер потерян)
           среди отменённых заказов, ожидающих укладки на полку — по швее и/или размеру
@@ -1757,6 +1762,116 @@ def handler(event: dict, context) -> dict:
                     'body': json.dumps({'rolls': rolls}, ensure_ascii=False),
                 }
 
+            if action == 'defect_scan_roll':
+                # Закройщик (швея, упаковщица) сканирует ШТРИХКОД РУЛОНА, чтобы списать
+                # с него брак.
+                #
+                # Раньше на экране висел общий список всех рулонов цеха: человек искал
+                # свой номер глазами среди десятков чужих и легко тыкал в соседний —
+                # брак уходил не с того рулона. Теперь рулон определяется сканером,
+                # ошибиться нельзя. Личный вход на терминале уже выполнен, поэтому
+                # штрихкод сотрудника повторно не спрашиваем.
+                #
+                # ПРАВИЛО СМЕНЫ: работать можно только с рулонами СВОЕЙ смены. Вышел в
+                # чужую смену (гостем) — работаешь с рулонами той смены, где стоишь, а
+                # свои родные становятся недоступны: иначе человек спишет брак с рулона,
+                # который лежит в другом помещении и до которого он не дотягивается.
+                barcode = (body_data.get('barcode') or '').strip()
+                user_id = body_data.get('userId')
+                if not barcode:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Отсканируйте штрихкод рулона'}, ensure_ascii=False)}
+                if not user_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Не определён сотрудник'}, ensure_ascii=False)}
+
+                # Сканер может отдать код со ссылкой или лишними пробелами.
+                if 'barcode=' in barcode:
+                    barcode = barcode.split('barcode=')[1].split('&')[0].strip()
+                barcode = barcode.rsplit('/', 1)[-1].rsplit('=', 1)[-1].strip()
+
+                cur.execute(
+                    "SELECT r.id, r.barcode, r.workshop_id, r.shift_number, r.remaining_quantity, "
+                    "r.status, m.name, m.unit, mt.name, w.name "
+                    "FROM rolls r "
+                    "LEFT JOIN materials m ON m.id = r.material_id "
+                    "LEFT JOIN material_types mt ON mt.id = m.type_id "
+                    "LEFT JOIN workshops w ON w.id = r.workshop_id "
+                    "WHERE upper(r.barcode) = upper(%s)",
+                    (barcode,),
+                )
+                roll = cur.fetchone()
+                if not roll:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': f'Рулон #{barcode} не найден'}, ensure_ascii=False)}
+
+                # Где сотрудник сейчас работает: цех и смена берутся из ОТКРЫТОЙ смены,
+                # а не из карточки — в гостевом режиме человек может стоять в чужом цехе.
+                cur.execute(
+                    "SELECT workshop_id, shift_number, role FROM shift_sessions "
+                    "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+                    (int(user_id),),
+                )
+                sess = cur.fetchone()
+                if not sess or not sess[0]:
+                    return {'statusCode': 403, 'headers': headers,
+                            'body': json.dumps({'error': 'Смена не открыта — сначала откройте смену'}, ensure_ascii=False)}
+
+                if roll[2] and roll[2] != sess[0]:
+                    return {'statusCode': 403, 'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Рулон #{roll[1]} лежит в цехе «{roll[9]}» — вы работаете в другом цехе'
+                            }, ensure_ascii=False)}
+                if roll[3] is not None and sess[1] is not None and roll[3] != sess[1]:
+                    return {'statusCode': 403, 'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Рулон #{roll[1]} из смены №{roll[3]}, а вы работаете в смене №{sess[1]}. '
+                                         f'Брак списывают только со своей смены'
+                            }, ensure_ascii=False)}
+
+                material_type = roll[8]
+                if material_type not in DEFECT_REASONS:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({
+                                'error': f'По материалу «{material_type}» брак не ведётся'
+                            }, ensure_ascii=False)}
+
+                # Роль работает со своим материалом: закройщик — тюль, швея — тесьма,
+                # упаковщица — упаковка. Роль берём из смены: гость может работать другой.
+                actual_role = sess[2]
+                if not actual_role:
+                    cur.execute("SELECT role FROM users WHERE id = %s", (int(user_id),))
+                    r_row = cur.fetchone()
+                    actual_role = r_row[0] if r_row else None
+                role_types = {'cutter': 'Тюль', 'sewer': 'Аксессуары', 'packer': 'Упаковка'}
+                need_type = role_types.get(actual_role)
+                if need_type and material_type != need_type:
+                    return {'statusCode': 403, 'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Это {material_type.lower()}, а вы работаете с материалом «{need_type}»'
+                            }, ensure_ascii=False)}
+
+                if float(roll[4] or 0) <= 0:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({
+                                'error': f'На рулоне #{roll[1]} не осталось материала'
+                            }, ensure_ascii=False)}
+
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'id': roll[0],
+                        'barcode': roll[1],
+                        'materialName': roll[6],
+                        'materialType': material_type,
+                        'unit': roll[7],
+                        'remaining': float(roll[4] or 0),
+                        'shiftNumber': roll[3],
+                        'reasons': DEFECT_REASONS[material_type],
+                    }, ensure_ascii=False),
+                }
+
             if action == 'defect_writeoff':
                 # Списание брака прямо на терминале: сотрудник сканирует СВОЙ штрихкод, и если
                 # он штатный работник цеха этого рулона — брак списывается (в том числе за
@@ -1766,19 +1881,31 @@ def handler(event: dict, context) -> dict:
                 quantity = body_data.get('quantity')
                 comment = (body_data.get('comment') or '').strip()
                 reason_code = (body_data.get('reasonCode') or '').strip()
-                if not code or not roll_id or quantity in (None, ''):
+                # Сотрудник, который уже вошёл на терминале под своим кодом. Тогда
+                # повторно сканировать свой штрихкод не нужно — он это только что сделал
+                # при входе, и лишний скан посреди работы у станка всех раздражал.
+                # Старый путь (скан чужого штрихкода) сохраняем: он нужен, когда брак за
+                # гостя оформляет штатный сотрудник цеха.
+                actor_user_id = body_data.get('userId')
+                if not roll_id or quantity in (None, ''):
                     return {'statusCode': 400, 'headers': headers,
-                            'body': json.dumps({'error': 'Отсканируйте штрихкод, выберите рулон и укажите метраж'})}
+                            'body': json.dumps({'error': 'Выберите рулон и укажите метраж'}, ensure_ascii=False)}
+                if not code and not actor_user_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Отсканируйте штрихкод сотрудника'}, ensure_ascii=False)}
                 if not reason_code:
                     return {'statusCode': 400, 'headers': headers,
                             'body': json.dumps({'error': 'Укажите причину брака'}, ensure_ascii=False)}
 
-                m = re.search(r'(\d{1,6}-\d{1,3}-\d{6,8})', code)
-                if m:
-                    code = m.group(1)
-                elif 'barcode=' in code:
-                    code = code.split('barcode=')[1].split('&')[0].strip()
-                actor_uid = code.split('-')[0]
+                if code:
+                    m = re.search(r'(\d{1,6}-\d{1,3}-\d{6,8})', code)
+                    if m:
+                        code = m.group(1)
+                    elif 'barcode=' in code:
+                        code = code.split('barcode=')[1].split('&')[0].strip()
+                    actor_uid = code.split('-')[0]
+                else:
+                    actor_uid = str(actor_user_id)
                 if not actor_uid.isdigit():
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректный штрихкод'})}
 
@@ -1824,7 +1951,33 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'Причина не подходит к этому материалу'}, ensure_ascii=False),
                     }
 
-                if au[1] not in ('admin', 'storekeeper', 'senior_storekeeper', 'manager') and rr[0] and rr[0] != au[2]:
+                # Сотрудник списывает брак САМ, под своим входом на терминале: проверяем
+                # его не по родному цеху из карточки, а по ОТКРЫТОЙ СМЕНЕ — где он
+                # физически стоит. Иначе гость, вышедший работать в чужой цех, не смог бы
+                # оформить брак с рулона, который держит в руках.
+                #
+                # Правило смены жёсткое: рулон должен быть из той же смены, в которой
+                # человек открылся. Списать с рулона соседней смены нельзя — он лежит не
+                # на его столе, и остаток уехал бы у чужих людей.
+                if actor_user_id and not code:
+                    cur.execute(
+                        "SELECT workshop_id, shift_number FROM shift_sessions "
+                        "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+                        (int(actor_uid),),
+                    )
+                    my = cur.fetchone()
+                    if not my or not my[0]:
+                        return {'statusCode': 403, 'headers': headers, 'body': json.dumps({
+                            'error': 'Смена не открыта — сначала откройте смену'}, ensure_ascii=False)}
+                    if rr[0] and rr[0] != my[0]:
+                        return {'statusCode': 403, 'headers': headers, 'body': json.dumps({
+                            'error': f'Рулон лежит в цехе «{rr[2]}» — вы работаете в другом цехе'},
+                            ensure_ascii=False)}
+                    if rr[6] is not None and my[1] is not None and rr[6] != my[1]:
+                        return {'statusCode': 403, 'headers': headers, 'body': json.dumps({
+                            'error': f'Рулон из смены №{rr[6]}, а вы работаете в смене №{my[1]}. '
+                                     f'Брак списывают только со своей смены'}, ensure_ascii=False)}
+                elif au[1] not in ('admin', 'storekeeper', 'senior_storekeeper', 'manager') and rr[0] and rr[0] != au[2]:
                     return {'statusCode': 403, 'headers': headers, 'body': json.dumps({
                         'error': f'{au[0]} не относится к цеху «{rr[2]}» — брак может списать только '
                                  f'штатный сотрудник этого цеха'})}

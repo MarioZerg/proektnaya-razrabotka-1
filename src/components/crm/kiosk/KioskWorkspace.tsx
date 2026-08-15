@@ -332,7 +332,9 @@ const KioskWorkspace = ({
               <KioskDefectWriteoffPanel
                 workshopId={currentWorkshopId || Number(workshopId) || 1}
                 isGuest={isGuestInWorkshop}
-                role={user.role}
+                role={shift?.role || user.role}
+                userId={user.id}
+                userName={user.name}
               />
             ) : (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
