@@ -44,11 +44,16 @@ export const printFboSticker = (order: Order): void => {
   // На стикере FBO OZON кодируется OZON SKU товара (по нему товар добавляется в поставку FBO),
   // а не его штрихкод. Для остальных маркетплейсов — штрихкод товара.
   const code = (isOzon ? order.productOzonSku : order.productBarcode) || '';
-  const barcodeSvg = code ? svgBarcode(code) : '';
+  // На стикере OZON приставка "OZN" — ЧАСТЬ САМОГО ШТРИХКОДА, а не подпись под ним.
+  //
+  // Раньше в полоски зашивались одни цифры, а "OZN" просто печаталось текстом рядом.
+  // Глазами разницы не видно, но сканер на приёмке OZON считывал голые цифры, не узнавал
+  // код и товар не вставал в поставку — приходилось вбивать руками.
+  // Кодируем ровно то, что напечатано: OZN + код товара.
+  const barcodeText = isOzon && code ? `OZN${code}` : code;
+  const barcodeSvg = barcodeText ? svgBarcode(barcodeText) : '';
   const productName = order.material || order.product || '—';
   const stickerNumber = shortOrderNumber(order.orderNumber);
-  // На стикере OZON под полосками печатается приставка "OZN" (OZN + ozon_sku).
-  const barcodeText = isOzon ? `OZN${code}` : code;
 
   const html = `<!doctype html><html><head><meta charset="utf-8">
     <title>Стикер FBO — ${esc(order.orderNumber)}</title>
