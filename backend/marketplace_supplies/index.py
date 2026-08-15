@@ -924,8 +924,14 @@ def handler(event: dict, context) -> dict:
                     "  AND COALESCE(ro.order_type, so.order_type) = %s "
                     "  AND (%s <> 'FBO' OR %s IS NULL "
                     "       OR COALESCE(ro.cluster, so.cluster) = %s) "
+                    # Учитываем только ЖИВЫЕ поставки. Запись о завершённой поездке
+                    # не должна прятать вещь: она могла вернуться к нам и снова быть
+                    # подобрана под новый заказ. Раньше такая вещь навсегда пропадала
+                    # из списка «ждут поставки» и ни в один короб не попадала.
                     "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
-                    "                  WHERE msi2.goods_warehouse_id = gw.id)",
+                    "                  JOIN marketplace_supplies s2 ON s2.id = msi2.supply_id "
+                    "                  WHERE msi2.goods_warehouse_id = gw.id "
+                    "                    AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена'))",
                     (row[1], row[2], row[2], row[8], row[8]),
                 )
                 awaiting_ship = int(cur.fetchone()[0] or 0)
@@ -958,7 +964,9 @@ def handler(event: dict, context) -> dict:
                     "  AND (%s <> 'FBO' OR %s IS NULL "
                     "       OR COALESCE(ro.cluster, so.cluster) = %s) "
                     "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
-                    "                  WHERE msi2.goods_warehouse_id = gw.id) "
+                    "                  JOIN marketplace_supplies s2 ON s2.id = msi2.supply_id "
+                    "                  WHERE msi2.goods_warehouse_id = gw.id "
+                    "                    AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена')) "
                     "ORDER BY gw.shipping_labeled_at ASC",
                     (row[1], row[2], row[2], row[8], row[8]),
                 )
@@ -1136,8 +1144,11 @@ def handler(event: dict, context) -> dict:
                 f"   AND COALESCE(ro.order_type, so.order_type) = s.type "
                 f"   AND (s.type <> 'FBO' OR s.cluster IS NULL "
                 f"        OR COALESCE(ro.cluster, so.cluster) = s.cluster) "
+                # Только живые поставки: запись о завершённой поездке вещь не блокирует.
                 f"   AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
-                f"                   WHERE msi2.goods_warehouse_id = gw.id)) END) "
+                f"                   JOIN marketplace_supplies s2 ON s2.id = msi2.supply_id "
+                f"                   WHERE msi2.goods_warehouse_id = gw.id "
+                f"                     AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена'))) END) "
                 f"FROM marketplace_supplies s "
                 f"LEFT JOIN users u ON u.id = s.created_by "
                 f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -1495,10 +1506,22 @@ def handler(event: dict, context) -> dict:
                 # становится 'reserved', и проверка статуса ниже принимала его за
                 # неотобранный — кладовщик видел «сначала отсканируйте на складе»,
                 # хотя вещь была у него в руках и давно в этой же поставке.
+                #
+                # Смотрим ТОЛЬКО живые поставки. Завершённые в расчёт не идут: вещь могла
+                # вернуться к нам (возврат, отказ покупателя, вынули из короба перед
+                # отправкой) и снова попасть в подбор под новый заказ.
+                #
+                # Из-за старой записи о поездке кладовщик упирался в тупик: вещь заново
+                # подобрана, ярлык напечатан, а сканер в короб отвечал «уже в поставке
+                # #1210 (Выполнена) — уберите её оттуда». Убрать было нельзя: из
+                # завершённой поставки товар не вынимается. Вещь с ярлыком оставалась
+                # лежать на складе и ни в одну новую поставку не попадала.
                 cur.execute(
                     "SELECT si.id, si.supply_id, s.status FROM marketplace_supply_items si "
                     "JOIN marketplace_supplies s ON s.id = si.supply_id "
-                    "WHERE si.goods_warehouse_id = %s",
+                    "WHERE si.goods_warehouse_id = %s "
+                    "  AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена') "
+                    "ORDER BY si.id DESC LIMIT 1",
                     (goods_id,),
                 )
                 exists = cur.fetchone()
