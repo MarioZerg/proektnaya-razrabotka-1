@@ -2356,8 +2356,11 @@ def handler(event: dict, context) -> dict:
                     )
                     gw_reserved = None
 
-                # 3. Ищем любой заказ в подборе на ТАКОЙ ЖЕ товар, чью вещь ещё не
-                #    застикеровали.
+                # 3. Ищем НЕЗАКРЫТЫЙ заказ на такой же товар.
+                #
+                #    Ключевое правило: успех даём только если товар реально НЕДОСТАЁТ.
+                #    Считаем не по совпадению размера, а по свободным заказам — сколько
+                #    штук ещё не закрыто вещью, столько раз сканер и ответит «нужная».
                 #
                 #    Сравниваем ТОЛЬКО по названию товара («Лен 300x265») — в нём и
                 #    материал, и ширина, и высота, то есть ровно то, чем вещи отличаются
@@ -2373,21 +2376,8 @@ def handler(event: dict, context) -> dict:
                     }, ensure_ascii=False)}
 
                 prod_esc = gw_product.replace("'", "''")
-                cur.execute(
-                    "SELECT other.id, other.reserved_order_id, ro.order_number "
-                    "FROM goods_warehouse other "
-                    "JOIN orders src2 ON src2.id = other.order_id "
-                    "JOIN orders ro ON ro.id = other.reserved_order_id "
-                    "WHERE other.status = 'picking' "
-                    "  AND other.shipping_labeled_at IS NULL "
-                    f"  AND other.id <> {int(gw_id)} "
-                    f"  AND src2.product = '{prod_esc}' "
-                    f"  AND {RESERVE_ALIVE_SQL} "
-                    "ORDER BY other.matched_at ASC NULLS LAST, other.id ASC LIMIT 1"
-                )
-                target = cur.fetchone()
 
-                # 3б. Работы в подборе нет — ищем ОСИРОТЕВШИЙ заказ на такой же товар.
+                # 3б. Ищем ОСИРОТЕВШИЙ заказ на такой же товар.
                 #
                 # Заказ считается закрытым складом и указывает на конкретную вещь, но та
                 # вещь его уже не держит: её освободили, переложили или отдали под другое
@@ -2397,86 +2387,67 @@ def handler(event: dict, context) -> dict:
                 #
                 # Именно так вещь с нужным размером переставала сканироваться, хотя такой
                 # же товар числился к поставке.
-                if not target:
+                #
+                # ВАЖНО: это ЕДИНСТВЕННЫЙ способ добавить в подбор новую вещь со склада.
+                # Свободный заказ — это реальная недостающая штука. Если свободных
+                # заказов на такой размер нет, значит все они уже закрыты вещами, и
+                # сканер обязан ответить «не нужен», сколько бы такого товара ни лежало
+                # на полке.
+                cur.execute(
+                    "SELECT ro.id, ro.order_number FROM orders ro "
+                    "LEFT JOIN goods_warehouse lost ON lost.id = ro.fulfilled_from_stock_id "
+                    "WHERE ro.sewing_status = 'Со склада' "
+                    f"  AND ro.product = '{prod_esc}' "
+                    "  AND (lost.id IS NULL OR (lost.reserved_order_id IS DISTINCT FROM ro.id "
+                    "       AND lost.shipped_at IS NULL)) "
+                    # Заказ действительно брошен, только если его не держит НИ ОДНА
+                    # вещь. Бывают «перекрёстные» пары: заказ ссылается на одну вещь,
+                    # а держит его другая — работа при этом на месте, и выдавать под
+                    # неё второй товар нельзя, иначе на отправление уедет две вещи.
+                    "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse held "
+                    "     WHERE held.reserved_order_id = ro.id AND held.shipped_at IS NULL) "
+                    f"  AND {RESERVE_ALIVE_SQL} "
+                    "ORDER BY ro.created_at ASC, ro.id ASC LIMIT 1"
+                )
+                orphan = cur.fetchone()
+                if orphan:
+                    orphan_id, orphan_number = orphan
                     cur.execute(
-                        "SELECT ro.id, ro.order_number FROM orders ro "
-                        "JOIN goods_warehouse lost ON lost.id = ro.fulfilled_from_stock_id "
-                        "WHERE ro.sewing_status = 'Со склада' "
-                        f"  AND ro.product = '{prod_esc}' "
-                        "  AND lost.reserved_order_id IS DISTINCT FROM ro.id "
-                        "  AND lost.shipped_at IS NULL "
-                        # Заказ действительно брошен, только если его не держит НИ ОДНА
-                        # вещь. Бывают «перекрёстные» пары: заказ ссылается на одну вещь,
-                        # а держит его другая — работа при этом на месте, и выдавать под
-                        # неё второй товар нельзя, иначе на отправление уедет две вещи.
-                        "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse held "
-                        "     WHERE held.reserved_order_id = ro.id AND held.shipped_at IS NULL) "
-                        f"  AND {RESERVE_ALIVE_SQL} "
-                        "ORDER BY ro.created_at ASC, ro.id ASC LIMIT 1"
+                        "UPDATE goods_warehouse SET status = 'picking', "
+                        "reserved_order_id = %s, matched_at = now() WHERE id = %s",
+                        (int(orphan_id), int(gw_id)),
                     )
-                    orphan = cur.fetchone()
-                    if orphan:
-                        orphan_id, orphan_number = orphan
-                        cur.execute(
-                            "UPDATE goods_warehouse SET status = 'picking', "
-                            "reserved_order_id = %s, matched_at = now() WHERE id = %s",
-                            (int(orphan_id), int(gw_id)),
-                        )
-                        cur.execute(
-                            "UPDATE orders SET fulfilled_from_stock_id = %s WHERE id = %s",
-                            (int(gw_id), int(orphan_id)),
-                        )
-                        log_action(
-                            cur, actor_id, actor_name, 'scan_picking', 'goods_warehouse',
-                            gw_id,
-                            f'Заказ #{orphan_number} остался без вещи — закрыт вещью {barcode}',
-                        )
-                        conn.commit()
-                        return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
-                            'matched': True, 'goodsId': gw_id, 'product': gw_product,
-                            'shelfName': gw_shelf, 'orderNumber': orphan_number,
-                            'reassigned': True,
-                        }, ensure_ascii=False)}
-
-                if not target:
+                    cur.execute(
+                        "UPDATE orders SET fulfilled_from_stock_id = %s WHERE id = %s",
+                        (int(gw_id), int(orphan_id)),
+                    )
+                    log_action(
+                        cur, actor_id, actor_name, 'scan_picking', 'goods_warehouse',
+                        gw_id,
+                        f'Заказ #{orphan_number} остался без вещи — закрыт вещью {barcode}',
+                    )
+                    conn.commit()
                     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
-                        'matched': False,
-                        'reason': 'Такой товар сейчас не нужен в подбор',
-                        'product': gw_product,
+                        'matched': True, 'goodsId': gw_id, 'product': gw_product,
+                        'shelfName': gw_shelf, 'orderNumber': orphan_number,
+                        'reassigned': True,
                     }, ensure_ascii=False)}
 
-                other_gw_id, order_id, order_number = target
-
-                # 4. Переносим подбор на вещь, которая РЕАЛЬНО в руках у кладовщика.
-                #    Прежняя вещь возвращается в свободный остаток на своей полке —
-                #    она никуда не делась и закроет собой следующий такой же заказ.
-                cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', reserved_order_id = NULL, "
-                    f"matched_at = NULL WHERE id = {int(other_gw_id)}"
-                )
-                cur.execute(
-                    "UPDATE goods_warehouse SET status = 'picking', reserved_order_id = %s, "
-                    "matched_at = now() WHERE id = %s",
-                    (int(order_id), int(gw_id)),
-                )
-                # И заказ теперь тоже указывает на НОВУЮ вещь. Без этого связь оставалась
-                # односторонней: вещь помнила заказ, а заказ — старую вещь, вернувшуюся на
-                # полку. Стикеровка такую пару отвергала, и работа зависала в подборе —
-                # ярлык напечатан, а отправить товар нельзя.
-                cur.execute(
-                    "UPDATE orders SET fulfilled_from_stock_id = %s WHERE id = %s",
-                    (int(gw_id), int(order_id)),
-                )
-                log_action(
-                    cur, actor_id, actor_name, 'scan_picking', 'goods_warehouse', gw_id,
-                    f'Подбор по размеру: заказ #{order_number} закрыт вещью {barcode} '
-                    f'(вместо неё на полку вернулась другая такая же)',
-                )
-                conn.commit()
+                # Свободных заказов на этот размер не осталось — потребность закрыта.
+                #
+                # Раньше здесь стоял перенос подбора с ДРУГОЙ такой же вещи на ту, что в
+                # руках: сканер отвечал «нужная», а на полку вместо неё возвращалась
+                # предыдущая. Количество в подборе при этом не менялось — работа просто
+                # переезжала с вещи на вещь. Кладовщик шёл вдоль стеллажа, пикал десятый
+                # «Лен 300x265» подряд и каждый раз слышал успех, хотя нужна была одна
+                # штука: он насканировал 77 вещей, а в подборе так и осталось 50.
+                #
+                # Теперь потребность считается по заказам, а не по совпадению размера:
+                # нет свободного заказа — «не нужен», даже если такой товар в подборе есть.
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
-                    'matched': True, 'goodsId': gw_id, 'product': gw_product,
-                    'shelfName': gw_shelf, 'orderNumber': order_number,
-                    'reassigned': True,
+                    'matched': False,
+                    'reason': 'Этот размер уже набран — больше не нужен',
+                    'product': gw_product,
                 }, ensure_ascii=False)}
 
             if action == 'start_picking':
