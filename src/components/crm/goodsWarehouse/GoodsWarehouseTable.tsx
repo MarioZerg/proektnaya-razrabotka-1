@@ -26,7 +26,8 @@ import { getAccessZone } from '@/lib/roles';
 import { shortProductName } from '@/lib/shortProductName';
 import GoodsWarehouseCards from '@/components/crm/goodsWarehouse/GoodsWarehouseCards';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
-import { printStorageSticker } from '@/lib/printStorageSticker';
+import { Checkbox } from '@/components/ui/checkbox';
+import { printStorageSticker, printStorageStickers } from '@/lib/printStorageSticker';
 import { printIndividualSticker } from '@/lib/printIndividualSticker';
 import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
 import { useToast } from '@/hooks/use-toast';
@@ -67,6 +68,16 @@ const GoodsWarehouseTable = ({
   const [deleting, setDeleting] = useState(false);
   /** Какой вещи сейчас тянем ярлык у маркетплейса: он приходит по сети, не мгновенно. */
   const [labelBusyId, setLabelBusyId] = useState<number | null>(null);
+  /**
+   * Отмеченные галочками вещи — их стикеры печатаются одной лентой.
+   *
+   * Зачем: раньше наклейки печатались строго по одной. Если после печати вспоминали,
+   * что нужна ещё пара вещей, их добавляли поштучно — и найти потом ошибку в пачке
+   * было нечем: приходилось выдёргивать стикеры со склада по одному. Теперь кладовщик
+   * сначала спокойно отмечает всё, что нужно, глазами проверяет список — и печатает
+   * одним заданием.
+   */
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const { toast } = useToast();
 
   /** Перепечатка ярлыка маркетплейса по вещи, собранной с полки. */
@@ -114,6 +125,57 @@ const GoodsWarehouseTable = ({
     } finally {
       setLabelBusyId(null);
     }
+  };
+
+  /** Вещи, которым вообще положен стикер хранения, — только их можно отметить. */
+  const printableItems = items.filter(canPrintStorageSticker);
+  const selectedItems = printableItems.filter((i) => selectedIds.includes(i.id));
+  const allSelected = printableItems.length > 0 && selectedItems.length === printableItems.length;
+
+  const toggleOne = (id: number) =>
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const toggleAll = () =>
+    setSelectedIds(allSelected ? [] : printableItems.map((i) => i.id));
+
+  /**
+   * Печать ленты выбранных стикеров одним заданием.
+   *
+   * Индивидуальный пошив печатаем его собственным стикером — на полке такие вещи
+   * опознают по ткани и размеру, а не по артикулу. Остальные идут общей лентой:
+   * рулонный принтер режет наклейки сам, диалог печати открывается один раз.
+   */
+  const handlePrintSelected = () => {
+    if (selectedItems.length === 0) return;
+
+    const individual = selectedItems.filter((i) => i.receiveReason === 'individual');
+    const regular = selectedItems.filter((i) => i.receiveReason !== 'individual');
+
+    if (regular.length > 0) {
+      printStorageStickers(
+        regular.map((i) => ({
+          storageBarcode: i.storageBarcode,
+          title: i.product,
+          orderNumber: i.orderNumber,
+        }))
+      );
+    }
+    individual.forEach((i) =>
+      printIndividualSticker({
+        orderNumber: i.orderNumber || '',
+        material: i.material,
+        width: i.width,
+        height: i.height,
+        storageBarcode: i.storageBarcode,
+        product: i.product,
+      })
+    );
+
+    toast({
+      title: `Отправлено на печать: ${selectedItems.length} шт.`,
+      description: 'Проверьте ленту перед тем, как наклеивать.',
+    });
+    setSelectedIds([]);
   };
 
   const handleConfirmDelete = async () => {
@@ -168,10 +230,38 @@ const GoodsWarehouseTable = ({
         />
       </div>
 
+      {/* Панель выбора: видна, как только отмечена хотя бы одна вещь. Кладовщик
+          набирает пачку, проверяет её глазами и печатает одним заданием — вместо
+          того чтобы допечатывать наклейки поштучно и потом искать в них ошибку. */}
+      {canPrintStickers && selectedItems.length > 0 && (
+        <div className="mb-3 hidden items-center justify-between gap-3 rounded-md border border-primary bg-primary/5 px-3 py-2 md:flex">
+          <div className="text-sm font-medium">Выбрано: {selectedItems.length} шт.</div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>
+              Снять выделение
+            </Button>
+            <Button size="sm" onClick={handlePrintSelected}>
+              <Icon name="Printer" size={14} className="mr-1.5" />
+              Напечатать ленту стикеров
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="hidden rounded-md border border-border md:block">
         <Table>
           <TableHeader>
             <TableRow className="bg-primary hover:bg-primary">
+              {canPrintStickers && (
+                <TableHead className="w-10 text-primary-foreground">
+                  <Checkbox
+                    checked={allSelected}
+                    onCheckedChange={toggleAll}
+                    aria-label="Выбрать все"
+                    className="border-primary-foreground data-[state=checked]:bg-primary-foreground data-[state=checked]:text-primary"
+                  />
+                </TableHead>
+              )}
               <TableHead className="text-primary-foreground">Товар</TableHead>
               <TableHead className="text-primary-foreground">Статус</TableHead>
               <TableHead className="text-primary-foreground">Стикеры</TableHead>
@@ -189,6 +279,19 @@ const GoodsWarehouseTable = ({
                 key={i.id}
                 className={i.receiveReason === 'admin' ? 'bg-amber-50 hover:bg-amber-100' : ''}
               >
+                {/* Галочка есть только у вещей, которым положен стикер: отгруженную
+                    или утерянную печатать некуда — её на складе уже нет. */}
+                {canPrintStickers && (
+                  <TableCell>
+                    {canPrintStorageSticker(i) && (
+                      <Checkbox
+                        checked={selectedIds.includes(i.id)}
+                        onCheckedChange={() => toggleOne(i.id)}
+                        aria-label={`Выбрать ${i.storageBarcode}`}
+                      />
+                    )}
+                  </TableCell>
+                )}
                 {/* Товар: что за вещь, её размеры и номер заказа — по ним кладовщик
                     опознаёт её на полке. */}
                 <TableCell>
