@@ -475,20 +475,45 @@ def handler(event: dict, context) -> dict:
                 # своим потоком и звучать не должны — иначе сигнал теряет смысл.
                 cur.execute(
                     "SELECT "
-                    " count(*) FILTER (WHERE reserved_order_id IS NOT NULL "
-                    "                  AND status = 'picking' AND shipping_labeled_at IS NULL), "
                     " count(*) FILTER (WHERE status IN ('awaiting_shelf', 'mp_return')), "
                     " count(*) FILTER (WHERE status = 'awaiting_shelf') "
                     "FROM goods_warehouse "
-                    "WHERE status IN ('picking', 'awaiting_shelf', 'mp_return')"
+                    "WHERE status IN ('awaiting_shelf', 'mp_return')"
                 )
                 row = cur.fetchone()
-                pending, awaiting, from_workshop = int(row[0]), int(row[1]), int(row[2])
+                awaiting, from_workshop = int(row[0]), int(row[1])
+
+                # Подбор считаем ТЕМ ЖЕ запросом, что и список на странице, иначе
+                # цифры расходятся. Раньше счётчик брал только вещи БЕЗ стикера и
+                # показывал «2», хотя в списке лежало 8 позиций: отстикерованные, но
+                # не отправленные на поставку, он не видел — а работа по ним не
+                # закончена.
+                #
+                # Заодно разбиваем по схеме: FBS собирают поштучно с ярлыком на
+                # каждую вещь, FBO складывают коробкой на склад площадки. Это разная
+                # работа, и кладовщик планирует день по двум числам, а не по одному.
+                cur.execute(
+                    "SELECT upper(coalesce(o.order_type, '')), count(*) "
+                    "FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.reserved_order_id "
+                    "WHERE gw.status = 'picking' "
+                    "  AND gw.reserved_order_id IS NOT NULL "
+                    "  AND gw.shipped_at IS NULL "
+                    f"  AND {RESERVE_ALIVE_SQL.replace('ro.', 'o.')} "
+                    "GROUP BY 1"
+                )
+                by_scheme = {r[0]: int(r[1]) for r in cur.fetchall()}
+                pending_fbo = by_scheme.get('FBO', 0)
+                pending_fbs = by_scheme.get('FBS', 0)
+                pending = sum(by_scheme.values())
                 return {
                     'statusCode': 200,
                     'headers': headers,
                     'body': json.dumps({
                         'pendingLabel': pending,
+                        # Раздельно по схемам поставки — работа у них разная.
+                        'pendingFbo': pending_fbo,
+                        'pendingFbs': pending_fbs,
                         'awaitingShelf': awaiting,
                         # Отказы из цеха, ждущие полки — только они дают звуковой сигнал.
                         'cancelledFromWorkshop': from_workshop,

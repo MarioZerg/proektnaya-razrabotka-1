@@ -32,6 +32,8 @@ const GoodsWarehouse = () => {
           pendingReturnsCount={s.pendingReturns.length}
           inspectedReady={s.inspectedReady}
           pickingPending={s.pickingPending}
+          pickingFbo={s.pickingFbo}
+          pickingFbs={s.pickingFbs}
           onPlace={() => s.setPlaceOpen(true)}
           onPickup={() => s.setPickupOpen(true)}
           onPlaceInspected={() => s.setPlaceInspectedOpen(true)}

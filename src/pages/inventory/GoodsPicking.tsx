@@ -127,6 +127,17 @@ const GoodsPicking = () => {
     return acc;
   }, [filtered]);
 
+  /** Главные числа дня: сколько собирать по FBS и сколько по FBO.
+   * Работа разная — FBS клеится поштучно, FBO уезжает коробкой. */
+  const fbsCount = useMemo(
+    () => filtered.filter((o) => (o.orderType || '').toUpperCase() === 'FBS').length,
+    [filtered]
+  );
+  const fboCount = useMemo(
+    () => filtered.filter((o) => (o.orderType || '').toUpperCase() === 'FBO').length,
+    [filtered]
+  );
+
   return (
     <CrmLayout>
       <div className="space-y-6">
@@ -193,6 +204,39 @@ const GoodsPicking = () => {
             </button>
           )}
         </div>
+
+        {/* Два главных числа дня. FBS собирают поштучно — на каждую вещь свой ярлык
+            маркетплейса; FBO складывают коробкой на склад площадки. Это разная работа
+            и разный маршрут по складу, поэтому общая сумма кладовщику ничего не даёт:
+            он планирует день по этим двум цифрам. Нажатие фильтрует список. */}
+        {orders.length > 0 && (
+          <div className="grid max-w-xl grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setSearch(search.toLowerCase() === 'fbs' ? '' : 'FBS')}
+              className={`rounded-lg border-2 p-3 text-left transition ${
+                search.toLowerCase() === 'fbs'
+                  ? 'border-sky-500 bg-sky-100'
+                  : 'border-sky-200 bg-sky-50 hover:bg-sky-100'
+              }`}
+            >
+              <p className="text-3xl font-bold text-sky-800">{fbsCount}</p>
+              <p className="text-sm font-medium text-sky-900">FBS — поштучно с ярлыком</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSearch(search.toLowerCase() === 'fbo' ? '' : 'FBO')}
+              className={`rounded-lg border-2 p-3 text-left transition ${
+                search.toLowerCase() === 'fbo'
+                  ? 'border-violet-500 bg-violet-100'
+                  : 'border-violet-200 bg-violet-50 hover:bg-violet-100'
+              }`}
+            >
+              <p className="text-3xl font-bold text-violet-800">{fboCount}</p>
+              <p className="text-sm font-medium text-violet-900">FBO — коробкой на склад</p>
+            </button>
+          </div>
+        )}
 
         <PickingScanDialog
           open={scanOpen}

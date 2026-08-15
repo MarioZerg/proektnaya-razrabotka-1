@@ -245,6 +245,10 @@ export const returnGoodsToWorkshop = (id: number) => postAction({ action: 'retur
 /** Сколько вещей уже подобрано под заказы и ждёт стикера отправления у кладовщика. */
 export interface PickingPending {
   pendingLabel: number;
+  /** Подбор под коробочную поставку FBO: вещи едут коробкой на склад площадки. */
+  pendingFbo: number;
+  /** Подбор под FBS: на каждую вещь клеится свой ярлык маркетплейса. */
+  pendingFbs: number;
   awaitingShelf: number;
   /** Только отказы из цеха, ждущие полки — без возвратов с маркетплейса.
    *  По этому числу звучит голосовое уведомление кладовщику. */
@@ -256,6 +260,8 @@ export const fetchPickingPending = async (): Promise<PickingPending> => {
   const data = await res.json();
   return {
     pendingLabel: data.pendingLabel || 0,
+    pendingFbo: data.pendingFbo || 0,
+    pendingFbs: data.pendingFbs || 0,
     awaitingShelf: data.awaitingShelf || 0,
     cancelledFromWorkshop: data.cancelledFromWorkshop || 0,
   };

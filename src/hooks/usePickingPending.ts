@@ -20,7 +20,13 @@ import { playWarehouseAlert, primeWarehouseAlerts } from '@/lib/warehouseAlerts'
 /** Общий ответ на всех: счётчик показан и в меню, и на странице склада одновременно.
  * Раньше каждый из них слал свой запрос, и кладовщик оплачивал одно и то же дважды.
  * Здесь ответ живёт 15 секунд — второй желающий получает готовые цифры. */
-type Pending = { pendingLabel: number; awaitingShelf: number; cancelledFromWorkshop: number };
+type Pending = {
+  pendingLabel: number;
+  pendingFbo: number;
+  pendingFbs: number;
+  awaitingShelf: number;
+  cancelledFromWorkshop: number;
+};
 
 let cache: { at: number; data: Pending } | null = null;
 let inFlight: Promise<Pending> | null = null;
@@ -42,6 +48,10 @@ const loadShared = () => {
 export const usePickingPending = (enabled: boolean) => {
   const [pending, setPending] = useState(0);
   const [awaitingShelf, setAwaitingShelf] = useState(0);
+  // Раздельно по схемам: FBS клеится поштучно, FBO уезжает коробкой — это разная
+  // работа, и кладовщик планирует день по двум числам, а не по общей сумме.
+  const [pendingFbo, setPendingFbo] = useState(0);
+  const [pendingFbs, setPendingFbs] = useState(0);
 
   // Числа с прошлого круга. Первый ответ после открытия страницы не озвучиваем: это
   // не новая работа, а то, что уже лежало на складе, — иначе система здоровалась бы
@@ -66,6 +76,8 @@ export const usePickingPending = (enabled: boolean) => {
     try {
       const data = await loadShared();
       setPending(data.pendingLabel);
+      setPendingFbo(data.pendingFbo);
+      setPendingFbs(data.pendingFbs);
       setAwaitingShelf(data.awaitingShelf);
 
       const before = prev.current;
@@ -95,5 +107,5 @@ export const usePickingPending = (enabled: boolean) => {
   // к серверу за смену, а подобранный товар не пропадает за две минуты.
   usePolling(load, 180000, enabled);
 
-  return { pending, awaitingShelf };
+  return { pending, pendingFbo, pendingFbs, awaitingShelf };
 };

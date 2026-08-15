@@ -10,6 +10,9 @@ interface GoodsWarehouseWorkTilesProps {
   inspectedReady: number;
   /** Вещи, подобранные под заказы и ждущие стикеровки. */
   pickingPending: number;
+  /** Та же работа в разбивке по схемам: FBS клеится поштучно, FBO едет коробкой. */
+  pickingFbo?: number;
+  pickingFbs?: number;
   onPlace: () => void;
   onPickup: () => void;
   onPlaceInspected: () => void;
@@ -26,6 +29,8 @@ const GoodsWarehouseWorkTiles = ({
   pendingReturnsCount,
   inspectedReady,
   pickingPending,
+  pickingFbo = 0,
+  pickingFbs = 0,
   onPlace,
   onPickup,
   onPlaceInspected,
@@ -88,7 +93,14 @@ const GoodsWarehouseWorkTiles = ({
         <WorkTile
           icon="Truck"
           title="Товар к подбору"
-          hint="Собрать с полок и наклеить стикеры"
+          // Разбивка прямо в подсказке: FBS собирают поштучно с ярлыком на каждую
+          // вещь, FBO складывают коробкой на склад площадки. Кладовщик по этим двум
+          // числам решает, с чего начать день, не открывая страницу.
+          hint={
+            pickingFbo + pickingFbs > 0
+              ? `FBS: ${pickingFbs} · FBO: ${pickingFbo}`
+              : 'Собрать с полок и наклеить стикеры'
+          }
           count={pickingPending}
           zone="warehouse"
           onClick={() => navigate('/crm/inventory/goods-picking')}

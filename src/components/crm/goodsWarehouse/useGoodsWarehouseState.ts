@@ -83,7 +83,11 @@ export const useGoodsWarehouseState = () => {
   // Голос при этом звучит ОДИН раз: повтор того же сигнала гасится минутной паузой
   // внутри playWarehouseAlert, а сами запросы к серверу не дублируются — ответ
   // общий на 15 секунд.
-  const { pending: pickingPending } = usePickingPending(true);
+  const {
+    pending: pickingPending,
+    pendingFbo: pickingFbo,
+    pendingFbs: pickingFbs,
+  } = usePickingPending(true);
 
   // Сколько вещей упаковщица уже осмотрела и подготовила к выдаче на склад.
   // Это третий шаг работы с возвратами, поэтому счётчик нужен прямо на плитке.
@@ -300,6 +304,8 @@ export const useGoodsWarehouseState = () => {
     loadInspectedReady,
     uncheckedReturns,
     pickingPending,
+    pickingFbo,
+    pickingFbs,
     pendingShelf,
     pendingReturns,
     materialsList,
