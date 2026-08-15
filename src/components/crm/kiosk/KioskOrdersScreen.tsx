@@ -7,6 +7,7 @@ import { recoverIfStaleBuild } from '@/lib/appUpdate';
 import {
   SpareItemError,
   storeSpareItem,
+  confirmStorageLabelPrinted,
   fetchKioskOrder,
   closeKioskOrder,
   fetchTerminalSettings,
@@ -236,6 +237,10 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
           orderNumber: order.orderNumber,
           groupLabel,
         });
+        // Стикер ушёл на принтер — только теперь вещь встаёт в очередь «Разложить
+        // по полкам». Пока стикера нет, звать кладовщика в цех не за чем: он придёт,
+        // а вещь ещё у упаковщицы.
+        void confirmStorageLabelPrinted(res.storageBarcode);
         toast({
           title: `Заказ ${order.orderNumber} отменён клиентом`,
           description: groupLabel
@@ -260,6 +265,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
           storageBarcode: res.storageBarcode,
           product: res.product ?? order.product,
         });
+        void confirmStorageLabelPrinted(res.storageBarcode);
         toast({
           title: `Заказ ${order.orderNumber} закрыт`,
           description: 'Наклейте стикер и передайте вещь на полку хранения',
@@ -325,6 +331,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
           .join(' '),
         orderNumber: res.orderNumber,
       });
+      void confirmStorageLabelPrinted(res.storageBarcode);
       toast({
         title: 'Вещь принята на склад',
         description: 'Наклейте стикер хранения и передайте вещь кладовщику',

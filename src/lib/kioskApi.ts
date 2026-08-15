@@ -65,6 +65,21 @@ export const fetchKioskOrder = async (orderNumber: string): Promise<KioskOrder> 
 
 /** Сдать на склад вещь по уже закрытому заказу: заводит складской штрихкод, по которому
  * кладовщик положит её на полку как свободный остаток. */
+/**
+ * Подтвердить, что стикер хранения напечатан и наклеен на вещь.
+ *
+ * Только после этого вещь встаёт в очередь «Разложить по полкам» у кладовщика. Раньше
+ * она попадала туда сразу при закрытии заказа — кладовщик видел счётчик, шёл в цех,
+ * а вещей там не было: печать могла не сработать и вещь оставалась у упаковщицы.
+ */
+export const confirmStorageLabelPrinted = async (storageBarcode: string): Promise<void> => {
+  await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'storage_label_printed', storageBarcode }),
+  });
+};
+
 export const storeSpareItem = async (
   orderId: number,
   actorId?: number,

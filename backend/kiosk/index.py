@@ -1384,6 +1384,35 @@ def handler(event: dict, context) -> dict:
                     }),
                 }
 
+            if action == 'storage_label_printed':
+                # Упаковщица подтверждает, что стикер хранения НАПЕЧАТАН и наклеен.
+                #
+                # Раньше вещь попадала в счётчик «Разложить по полкам» сразу при закрытии
+                # заказа — то есть до печати. Кладовщик видел «6 штук», шёл в цех, а вещей
+                # там не было: печать могла не сработать (кончилась бумага, принтер занят),
+                # упаковщица откладывала вещь и разбиралась, а счётчик уже звал за товаром.
+                #
+                # Теперь вещь встаёт в очередь на полку только после этого подтверждения:
+                # стикер на вещи есть, вещь в контейнере — можно смело идти забирать.
+                storage_barcode = (body_data.get('storageBarcode') or '').strip()
+                if not storage_barcode:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Не указан стикер хранения'},
+                                               ensure_ascii=False)}
+                cur.execute(
+                    "UPDATE goods_warehouse SET storage_labeled_at = COALESCE(storage_labeled_at, now()) "
+                    "WHERE storage_barcode = %s RETURNING id",
+                    (storage_barcode,),
+                )
+                upd = cur.fetchone()
+                if not upd:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': f'Вещь {storage_barcode} не найдена'},
+                                               ensure_ascii=False)}
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'id': upd[0]})}
+
             if action == 'store_spare':
                 # Вещь, оставшаяся у упаковщицы по УЖЕ ЗАКРЫТОМУ заказу: покупателю она
                 # не поедет (заказ закрыли вещью со склада), но выбрасывать её нельзя —

@@ -55,6 +55,9 @@ export interface GoodsWarehouseItem {
   reservedOrderNumber?: string | null;
   /** Когда кладовщик наклеил стикер отправления — после этого можно сканировать в поставку. */
   shippingLabeledAt?: string | null;
+  /** Когда упаковщица напечатала стикер ХРАНЕНИЯ. Пока пусто — вещь ещё у неё на руках,
+   * идти за ней в цех рано. */
+  storageLabeledAt?: string | null;
   /** Площадка, куда вещь поедет: OZON / WB / Yandex. */
   marketplace?: string | null;
   /** Схема поставки: FBS или FBO. */

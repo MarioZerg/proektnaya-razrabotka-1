@@ -473,10 +473,18 @@ def handler(event: dict, context) -> dict:
                 # из цеха»: вещь уже застикерована складским стикером и лежит у
                 # кладовщика на руках, её нужно унести на полку. Возвраты приезжают
                 # своим потоком и звучать не должны — иначе сигнал теряет смысл.
+                # Отказы из цеха считаем ТОЛЬКО застикерованные (storage_labeled_at).
+                #
+                # Раньше вещь попадала в счётчик в момент закрытия заказа на терминале —
+                # до того, как упаковщица напечатала стикер. Кладовщик видел «6 штук»,
+                # шёл в цех, а вещей там не было: печать могла не сработать, и вещь ещё
+                # лежала у упаковщицы. Возвраты с маркетплейса (mp_return) приезжают
+                # своим потоком, стикер на них уже есть — их условие не касается.
                 cur.execute(
                     "SELECT "
-                    " count(*) FILTER (WHERE status IN ('awaiting_shelf', 'mp_return')), "
-                    " count(*) FILTER (WHERE status = 'awaiting_shelf') "
+                    " count(*) FILTER (WHERE status = 'mp_return' "
+                    "                  OR (status = 'awaiting_shelf' AND storage_labeled_at IS NOT NULL)), "
+                    " count(*) FILTER (WHERE status = 'awaiting_shelf' AND storage_labeled_at IS NOT NULL) "
                     "FROM goods_warehouse "
                     "WHERE status IN ('awaiting_shelf', 'mp_return')"
                 )
@@ -936,7 +944,10 @@ def handler(event: dict, context) -> dict:
                 # Заказ, под который вещь закреплена, уже забрали в цех: его кроят или
                 # шьют. Стикер отправления на такую вещь не напечатать — отправление
                 # закроет то, что выйдет с конвейера. Для склада вещь недоступна.
-                f"COALESCE(ro.sewing_status, '') NOT IN ('Новый', 'Со склада') "
+                f"COALESCE(ro.sewing_status, '') NOT IN ('Новый', 'Со склада'), "
+                # Стикер хранения напечатан упаковщицей. Пока пусто — вещь ещё у неё
+                # на руках, идти за ней в цех рано.
+                f"gw.storage_labeled_at "
                 f"FROM goods_warehouse gw "
                 f"LEFT JOIN orders o ON o.id = gw.order_id "
                 f"LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -973,6 +984,8 @@ def handler(event: dict, context) -> dict:
                     'supplyId': r[23],
                     # true — заказ ушёл на конвейер, вещь для подбора недоступна.
                     'orderInProduction': r[24],
+                    # Стикер хранения напечатан — вещь готова к забору кладовщиком.
+                    'storageLabeledAt': (r[25].isoformat() + 'Z') if r[25] else None,
                 }
                 for r in cur.fetchall()
             ]
