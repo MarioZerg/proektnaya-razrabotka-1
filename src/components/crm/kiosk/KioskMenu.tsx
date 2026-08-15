@@ -97,16 +97,23 @@ const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
 
   const visibleTiles = tiles.filter((t) => !hidden.includes(t.screen));
 
+  // Плитки подстраиваются под ширину планшета сами: на узком экране идут в один
+  // столбец, на широком — в два-три. Раньше число колонок было жёстко привязано к
+  // брейкпоинтам, и на планшете в альбомной ориентации плитки получались узкими
+  // полосками, а подпись переносилась по слогам.
+  //
+  // Нажатие подсвечиваем уменьшением (active:scale): в перчатке не всегда понятно,
+  // сработало касание или нет, и сотрудник жал плитку по несколько раз.
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
       {visibleTiles.map((t) => (
         <button
           key={t.screen}
           onClick={() => onSelect(t.screen)}
-          className={`flex min-h-[180px] flex-col items-center justify-center gap-3 rounded-xl p-6 text-center transition ${t.className}`}
+          className={`flex min-h-[9rem] flex-col items-center justify-center gap-3 rounded-xl p-6 text-center transition active:scale-95 ${t.className}`}
         >
-          <Icon name={t.icon} size={48} />
-          <span className="text-xl font-bold">{t.label}</span>
+          <Icon name={t.icon} size={56} />
+          <span className="text-2xl font-bold leading-tight">{t.label}</span>
         </button>
       ))}
     </div>

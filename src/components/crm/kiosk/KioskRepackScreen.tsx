@@ -137,7 +137,7 @@ const KioskRepackScreen = ({ actorId, actorName }: KioskRepackScreenProps) => {
       {/* Новый пакет? Спрашиваем перед закрытием перепаковки — по этим ответам видно
           реальный расход упаковки на возвратах. Кнопки крупные: экран сенсорный. */}
       <Dialog open={!!bagAskItem} onOpenChange={(v) => !v && setBagAskItem(null)}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="kiosk-root sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="text-2xl">Вы взяли новый пакет?</DialogTitle>
           </DialogHeader>

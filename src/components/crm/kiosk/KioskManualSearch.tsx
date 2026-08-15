@@ -114,7 +114,7 @@ const KioskManualSearch = ({ onSelect, workshopId, role }: KioskManualSearchProp
             <SelectTrigger className="h-14 text-base">
               <SelectValue placeholder="Любая швея" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="kiosk-root">
               <SelectItem value={ANY}>Любая швея</SelectItem>
               {sewers.map((s) => (
                 <SelectItem key={s.id} value={String(s.id)}>
@@ -132,7 +132,7 @@ const KioskManualSearch = ({ onSelect, workshopId, role }: KioskManualSearchProp
               <SelectTrigger className="h-14 text-base">
                 <SelectValue placeholder="Любая" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="kiosk-root">
                 <SelectItem value={ANY}>Любая</SelectItem>
                 {widthOptions.map((w) => (
                   <SelectItem key={w} value={w}>
@@ -148,7 +148,7 @@ const KioskManualSearch = ({ onSelect, workshopId, role }: KioskManualSearchProp
               <SelectTrigger className="h-14 text-base">
                 <SelectValue placeholder="Любая" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="kiosk-root">
                 <SelectItem value={ANY}>Любая</SelectItem>
                 {heightOptions.map((h) => (
                   <SelectItem key={h} value={h}>

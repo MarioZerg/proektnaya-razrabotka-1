@@ -72,7 +72,7 @@ const KioskIdleTimer = ({ onTimeout, idleMs = 60000, countdownSec = 30 }: KioskI
 
   return (
     <Dialog open={warning} onOpenChange={(open) => !open && startIdle()}>
-      <DialogContent className="sm:max-w-md" confirmClose={false}>
+      <DialogContent className="kiosk-root sm:max-w-md" confirmClose={false}>
         <DialogTitle className="sr-only">Профиль скоро закроется</DialogTitle>
         <div className="flex flex-col items-center gap-4 py-4 text-center">
           <Icon name="TimerReset" size={56} className="text-amber-500" />

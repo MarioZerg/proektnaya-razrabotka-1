@@ -77,7 +77,7 @@ const KioskWorkspace = ({
   const canCloseNow = !closeAt || now >= closeAt.getTime();
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="kiosk-root min-h-screen bg-background">
       {/* Автовыход из профиля при бездействии: предупреждение через минуту, отсчёт 30 сек.
           В режиме проверки таймер не нужен — админ может спокойно изучать экраны. */}
       {!isPreview && <KioskIdleTimer onTimeout={onLogout} />}
@@ -191,10 +191,13 @@ const KioskWorkspace = ({
         ) : (
           <Badge variant="secondary">Смена закрыта</Badge>
         )}
-        <div className="ml-auto flex gap-2">
+        {/* Кнопки прижаты вправо, но на узком планшете переносятся вниз целой
+            группой, а не по одной — иначе «Выход» уезжал в другой ряд и попадал
+            под палец при попытке нажать «В меню». */}
+        <div className="ml-auto flex flex-wrap gap-2">
           {screen !== 'menu' && (
             <Button variant="outline" onClick={() => setScreen('menu')}>
-              <Icon name="ArrowLeft" size={16} className="mr-1.5" />
+              <Icon name="ArrowLeft" size={20} className="mr-1.5" />
               В меню
             </Button>
           )}

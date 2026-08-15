@@ -29,7 +29,7 @@ const KioskRollDefectDialog = ({
   onConfirm,
 }: KioskRollDefectDialogProps) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="sm:max-w-md">
+    <DialogContent className="kiosk-root sm:max-w-md">
       <DialogHeader>
         <DialogTitle>Отставить рулон #{barcode}</DialogTitle>
       </DialogHeader>

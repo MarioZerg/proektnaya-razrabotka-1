@@ -21,7 +21,7 @@ const KioskScanLogin = ({
   inputRef,
 }: KioskScanLoginProps) => {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-6">
+    <div className="kiosk-root flex min-h-screen flex-col items-center justify-center bg-background p-6">
       <div className="w-full max-w-xl space-y-6">
         <div className="text-center">
           <h1 className="text-4xl font-bold">Цех №{workshopId}</h1>
