@@ -82,9 +82,18 @@ const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
     cutter: ['unlabeled', 'repack'],
   };
 
-  const hidden = isStorekeeperRole(role)
-    ? hiddenByRole.storekeeper
-    : hiddenByRole[role] || ['unlabeled'];
+  // Администратору на терминале доступно ВСЁ, включая «Товар без стикера».
+  //
+  // Раньше его роли не было в списке, и он попадал под правило «по умолчанию» — плитка
+  // пряталась. На практике админ подходит к терминалу ровно тогда, когда у кладовщика
+  // что-то не сходится: вещь без стикера, и разобраться надо на месте, а не искать
+  // свободного кладовщика, чтобы тот открыл экран под своим входом.
+  const hidden =
+    role === 'admin'
+      ? []
+      : isStorekeeperRole(role)
+        ? hiddenByRole.storekeeper
+        : hiddenByRole[role] || ['unlabeled'];
 
   const visibleTiles = tiles.filter((t) => !hidden.includes(t.screen));
 
