@@ -68,11 +68,20 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     inputRef.current?.focus();
   }, [order]);
 
+  // Админу и старшему кладовщику ручной поиск доступен всегда, независимо от настройки
+  // цеха: они подходят к терминалу именно тогда, когда обычный путь не сработал —
+  // сканер не берёт стикер или вещь «зависла», и разобраться надо на месте.
+  const privilegedSearch = role === 'admin' || role === 'senior_storekeeper';
+
   useEffect(() => {
+    if (privilegedSearch) {
+      setManualSearchAllowed(true);
+      return;
+    }
     fetchTerminalSettings(workshopId)
       .then((s) => setManualSearchAllowed(s.manualStickering))
       .catch(() => setManualSearchAllowed(false));
-  }, [workshopId]);
+  }, [workshopId, privilegedSearch]);
 
   const handleSearch = async () => {
     const value = (inputRef.current?.value || code).trim();
