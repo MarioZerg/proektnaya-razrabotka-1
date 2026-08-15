@@ -192,6 +192,31 @@ const SupplyItemsSection = ({
                         связка {group.inSupply}/{group.total}
                       </Badge>
                     )}
+                    {/* Замена потерянному листку закройщика: печатаем бирку с QR
+                        заказа, несём в цех — и упаковщица стикерует вещь обычным
+                        путём, сканируя код. */}
+                    {item.orderNumber && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-1 h-7 px-1.5 text-xs text-muted-foreground"
+                        title="Напечатать QR-бирку заказа взамен листка закройщика"
+                        onClick={async () => {
+                          const { printOrderQrTag } = await import('@/lib/printOrderQrTag');
+                          await printOrderQrTag({
+                            orderNumber: item.orderNumber as string,
+                            material: item.material,
+                            width: item.width,
+                            height: item.height,
+                            marketplace: supply.marketplace,
+                            orderType: supply.type,
+                          });
+                        }}
+                      >
+                        <Icon name="QrCode" size={14} className="mr-1" />
+                        QR заказа
+                      </Button>
+                    )}
                   </TableCell>
                   <TableCell>{item.product || '—'}</TableCell>
                   <TableCell>{item.material || '—'}</TableCell>
