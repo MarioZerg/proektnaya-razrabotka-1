@@ -2329,8 +2329,11 @@ def handler(event: dict, context) -> dict:
                 #
                 # Теперь такой скан открывает карточку: там кнопка «Отправить на
                 # поставку» и возможность перепечатать ярлык.
-                if gw_status not in ('shipped',) and not gw_shipped_at and gw_reserved \
-                        and gw_labeled and gw_status != 'awaiting_supply':
+                # Статус 'awaiting_supply' тоже сюда входит: «отправлена на поставку» —
+                # это ещё НЕ отгружена. Вещь лежит на полке и ждёт, когда её положат в
+                # короб. Кладовщик пикает её стикер, чтобы найти вещь и посмотреть полку,
+                # а сканер отвечал «уже собрана» и прятал её — вещь выглядела пропавшей.
+                if gw_status != 'shipped' and not gw_shipped_at and gw_reserved and gw_labeled:
                     cur.execute(
                         f"SELECT order_number FROM orders WHERE id = {int(gw_reserved)}"
                     )
@@ -2342,7 +2345,14 @@ def handler(event: dict, context) -> dict:
                         # Экран покажет это отдельно: вещь уже с ярлыком, осталось
                         # нажать «Отправить на поставку».
                         'alreadyLabeled': True,
-                        'reason': 'Стикер уже наклеен — осталось отправить на поставку',
+                        # Два разных шага, и подсказка должна быть точной, иначе
+                        # кладовщик ищет кнопку, которой уже нет: вещь либо ещё надо
+                        # отправить на поставку, либо она уже ждёт короба на полке.
+                        'reason': (
+                            'Стикер наклеен, вещь ждёт короба — отнесите её в поставку'
+                            if gw_status == 'awaiting_supply'
+                            else 'Стикер уже наклеен — осталось отправить на поставку'
+                        ),
                     }, ensure_ascii=False)}
                 if gw_labeled or gw_status in ('shipped', 'awaiting_supply'):
                     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
