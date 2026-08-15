@@ -88,6 +88,12 @@ export interface SupplyAwaitingItem {
   labeledByName: string | null;
   labeledAt: string | null;
   shelfName: string | null;
+  /** Кто делал вещь — печатается в листе недостачи, чтобы искать пропажу по людям. */
+  cutterName?: string | null;
+  sewerName?: string | null;
+  packerName?: string | null;
+  /** Когда вещь упаковали. */
+  packedAt?: string | null;
 }
 
 /** Заказ на пошив, привязанный к поставке: по ним видно, что уже сшито, а что в работе. */

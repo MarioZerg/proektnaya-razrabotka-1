@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -52,6 +53,10 @@ const FbsSupplyChecklist = ({
   onRemoveItem,
   onReload,
 }: FbsSupplyChecklistProps) => {
+  // Хук объявлен до любых ранних выходов: ниже есть return для пустого списка, а
+  // порядок хуков в React должен совпадать при каждом рендере.
+  const [printing, setPrinting] = useState(false);
+
   const scannedRows: Row[] = supply.items.map((item) => ({
     key: `in-${item.id}`,
     scanned: true,
@@ -76,6 +81,27 @@ const FbsSupplyChecklist = ({
 
   const rows = [...scannedRows, ...waitingRows];
   const total = rows.length;
+  const awaiting = supply.awaitingItems || [];
+
+  // Печать листа недостачи: что не доехало до короба и с кого спрашивать.
+  //
+  // Кладовщик закрывает поставку, а несколько вещей так и не отсканированы — искать
+  // их приходится по всему цеху. В листе по каждой позиции сразу есть заказ, размер,
+  // полка и три фамилии: кто кроил, кто шил, кто упаковывал, и дата упаковки. С ним
+  // обход занимает минуты вместо опроса всей смены.
+  const handlePrintMissing = async () => {
+    if (awaiting.length === 0 || printing) return;
+    setPrinting(true);
+    try {
+      const { printSupplyMissingSheet } = await import('@/lib/printSupplyMissingSheet');
+      await printSupplyMissingSheet(
+        awaiting,
+        `Поставка №${supply.id} · ${supply.marketplace || ''} ${supply.type || ''}`.trim()
+      );
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   if (total === 0) {
     return (
@@ -88,9 +114,29 @@ const FbsSupplyChecklist = ({
 
   return (
     <div className="space-y-2">
-      <h3 className="pt-2 text-sm font-semibold">
-        Собрано {scannedRows.length} из {total}
-      </h3>
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+        <h3 className="text-sm font-semibold">
+          Собрано {scannedRows.length} из {total}
+          {awaiting.length > 0 && (
+            <span className="ml-2 font-normal text-muted-foreground">
+              · не отсканировано: {awaiting.length}
+            </span>
+          )}
+        </h3>
+        {/* Лист недостачи печатают перед закрытием поставки: по нему ищут вещи,
+            которые не доехали до короба. В нём заказ, размер, полка и фамилии —
+            кто кроил, шил, упаковывал и когда. */}
+        {awaiting.length > 0 && (
+          <Button variant="outline" size="sm" onClick={handlePrintMissing} disabled={printing}>
+            <Icon
+              name={printing ? 'Loader2' : 'Printer'}
+              size={14}
+              className={`mr-1.5 ${printing ? 'animate-spin' : ''}`}
+            />
+            Печать недостачи ({awaiting.length})
+          </Button>
+        )}
+      </div>
       <div className="rounded-md border border-border">
         <Table>
           <TableHeader>

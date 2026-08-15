@@ -1025,11 +1025,24 @@ def handler(event: dict, context) -> dict:
                     "       COALESCE(ro.width, so.width), "
                     "       COALESCE(ro.height, so.height), "
                     "       gw.shipping_labeled_by_name, gw.shipping_labeled_at, "
-                    "       sh.name "
+                    "       sh.name, "
+                    # Кто делал вещь и когда её упаковали. Нужно для печатного листа
+                    # недостачи: если вещь не нашли в коробе, по этому листу сразу видно,
+                    # с кого спрашивать — кто кроил, кто шил, кто упаковывал и в какой
+                    # день. Иначе поиск виноватого превращается в опрос всей смены.
+                    "       cu.full_name, su.full_name, pu.full_name, "
+                    "       COALESCE(ro.packed_at, so.packed_at) "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
                     "LEFT JOIN orders so ON so.id = gw.order_id "
                     "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    # Исполнителей берём у заказа, в котором вещь СШИЛИ (so): подобранная
+                    # с полки вещь физически сделана под свой первоначальный заказ, а не
+                    # под тот, который ею закрыли. Если вещь шили прямо под этот заказ —
+                    # so и ro совпадают, и разницы нет.
+                    "LEFT JOIN users cu ON cu.id = COALESCE(so.cutter_user_id, ro.cutter_user_id) "
+                    "LEFT JOIN users su ON su.id = COALESCE(so.sewer_user_id, ro.sewer_user_id) "
+                    "LEFT JOIN users pu ON pu.id = COALESCE(so.packer_user_id, ro.packer_user_id) "
                     "WHERE gw.status IN ('picking', 'awaiting_supply') "
                     "  AND gw.shipping_labeled_at IS NOT NULL "
                     "  AND gw.shipped_at IS NULL "
@@ -1058,6 +1071,11 @@ def handler(event: dict, context) -> dict:
                         'labeledByName': r[7],
                         'labeledAt': (r[8].isoformat() + 'Z') if r[8] else None,
                         'shelfName': r[9],
+                        # Кто делал вещь — для печатного листа недостачи.
+                        'cutterName': r[10],
+                        'sewerName': r[11],
+                        'packerName': r[12],
+                        'packedAt': (r[13].isoformat() + 'Z') if r[13] else None,
                     }
                     for r in cur.fetchall()
                 ]
