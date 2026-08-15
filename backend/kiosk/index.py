@@ -249,6 +249,8 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'find_stickering', sewerId?, width?, height?, material?, workshopId? }
         - поиск заказов на стикеровке вручную, когда сканер не работает: по размеру,
           швее, материалу. Возвращает список заказов для выбора
+    POST /  { action: 'stickering_sewers', workshopId? }
+        - швеи, у которых есть вещи на стикеровке (для выбора швеи в ручном поиске)
 
     POST /  { action: 'find_unlabeled', sewerId?, width?, height? }
         - кладовщик ищет вещь без стикера хранения (упаковщица не наклеила / стикер потерян)
@@ -1463,6 +1465,27 @@ def handler(event: dict, context) -> dict:
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'stickering_sewers':
+                # Швеи, у которых прямо сейчас есть вещи на стикеровке.
+                #
+                # Нужен для ручного поиска: упаковщица (или админ) знает, чью вещь держит
+                # в руках, а размер на глаз определить сложнее. Раньше искать можно было
+                # только по размеру, и вещь конкретной швеи приходилось выуживать из общего
+                # списка — а если размер совпадал у нескольких, легко закрыть чужой заказ.
+                #
+                # Показываем ТОЛЬКО тех, у кого реально есть работа на стикеровке: список
+                # всех сотрудников цеха здесь бесполезен.
+                ws_id = body_data.get('workshopId')
+                ws_cond = f" AND o.workshop_id = {int(ws_id)}" if ws_id not in (None, '') else ''
+                cur.execute(
+                    "SELECT u.id, u.full_name, count(*) FROM orders o "
+                    "JOIN users u ON u.id = COALESCE(o.sewer_user_id, o.assigned_user_id) "
+                    f"WHERE o.sewing_status = 'Стикеровка'{ws_cond} "
+                    "GROUP BY u.id, u.full_name ORDER BY u.full_name"
+                )
+                sewers = [{'id': r[0], 'name': r[1], 'count': r[2]} for r in cur.fetchall()]
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'sewers': sewers}, ensure_ascii=False)}
 
             if action == 'sewers_list':
                 # Список швей для выпадающего списка поиска: только те, у кого есть вещи,

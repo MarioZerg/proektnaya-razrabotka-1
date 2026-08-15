@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -13,7 +13,11 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { widthOptions, heightOptions } from '@/components/crm/sewingItems/sewingItemsShared';
-import { findStickeringOrders, type KioskOrder } from '@/lib/kioskApi';
+import {
+  findStickeringOrders,
+  fetchStickeringSewers,
+  type KioskOrder,
+} from '@/lib/kioskApi';
 
 const ANY = 'any';
 
@@ -33,11 +37,27 @@ const KioskManualSearch = ({ onSelect, workshopId, role }: KioskManualSearchProp
   const [height, setHeight] = useState(ANY);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<KioskOrder[] | null>(null);
+  // Швеи, у которых прямо сейчас есть вещи на стикеровке.
+  //
+  // Раньше искать можно было только по размеру: админ подходил застикеровать вещь
+  // конкретной швеи и выуживал её из общего списка, а при совпадении размеров легко
+  // было закрыть чужой заказ. Имя швеи известно наверняка — по нему и ищем.
+  const [sewerId, setSewerId] = useState(ANY);
+  const [sewers, setSewers] = useState<Array<{ id: number; name: string; count: number }>>([]);
+
+  // Список тянем при открытии поиска: за смену он меняется, держать его заранее незачем.
+  useEffect(() => {
+    if (!open) return;
+    fetchStickeringSewers(workshopId)
+      .then(setSewers)
+      .catch(() => setSewers([]));
+  }, [open, workshopId]);
 
   const handleSearch = async () => {
     setLoading(true);
     try {
       const found = await findStickeringOrders({
+        sewerId: sewerId !== ANY ? Number(sewerId) : null,
         width: width !== ANY ? Number(width) : null,
         height: height !== ANY ? Number(height) : null,
         workshopId,
@@ -71,7 +91,7 @@ const KioskManualSearch = ({ onSelect, workshopId, role }: KioskManualSearchProp
     <Card className="border-border shadow-none">
       <CardContent className="space-y-4 pt-6">
         <div className="flex items-center justify-between">
-          <p className="text-lg font-semibold">Поиск заказа по размеру</p>
+          <p className="text-lg font-semibold">Поиск заказа</p>
           <Button
             variant="ghost"
             size="icon"
@@ -83,6 +103,26 @@ const KioskManualSearch = ({ onSelect, workshopId, role }: KioskManualSearchProp
           >
             <Icon name="X" size={20} />
           </Button>
+        </div>
+
+        {/* Швея — первый и самый надёжный фильтр: кто сшил вещь, известно точно,
+            а размер на глаз определить сложнее. Рядом с именем — сколько у неё
+            вещей на стикеровке, чтобы сразу видеть, есть ли там работа. */}
+        <div className="space-y-1.5">
+          <Label className="text-base">Швея</Label>
+          <Select value={sewerId} onValueChange={setSewerId}>
+            <SelectTrigger className="h-14 text-base">
+              <SelectValue placeholder="Любая швея" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY}>Любая швея</SelectItem>
+              {sewers.map((s) => (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  {s.name} · {s.count}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="grid grid-cols-2 gap-3">

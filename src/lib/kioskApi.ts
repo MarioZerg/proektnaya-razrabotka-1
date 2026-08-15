@@ -318,6 +318,22 @@ export const findUnlabeledGoods = async (filters: {
   return data.candidates || [];
 };
 
+/** Швеи, у которых сейчас есть вещи на стикеровке — для выбора в ручном поиске. */
+export const fetchStickeringSewers = async (
+  workshopId?: number | null
+): Promise<Array<{ id: number; name: string; count: number }>> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'stickering_sewers', workshopId }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Ошибка запроса');
+  }
+  return data.sewers || [];
+};
+
 /** Швеи, у которых есть вещи, ожидающие укладки на полку. */
 export const fetchUnlabeledSewers = async (): Promise<Array<{ id: number; name: string }>> => {
   const res = await fetch(KIOSK_URL, {
