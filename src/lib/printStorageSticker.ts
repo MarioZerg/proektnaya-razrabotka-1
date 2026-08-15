@@ -23,6 +23,25 @@ const esc = (v: string | number | null | undefined) =>
   String(v ?? '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c] || c);
 
 /**
+ * Подбирает размер шрифта названия под ширину наклейки 58 мм.
+ *
+ * Крупным шрифтом в строку помещается всего около 14 символов. Названия вроде
+ * «Вуаль (без ут) 200x255» длиннее — размер переносился на вторую строку и налезал
+ * на штрихкод, кладовщик видел обрезанное «Вуаль (без ут)» без размера и путал вещи.
+ *
+ * Чем длиннее название, тем мельче шрифт: так оно остаётся в одну-две строки и не
+ * выдавливает штрихкод. Пороги подобраны по реальной ширине Arial bold на 58 мм.
+ */
+const titleFontSize = (title: string): string => {
+  const n = title.length;
+  if (n <= 14) return '15pt';
+  if (n <= 18) return '12pt';
+  if (n <= 24) return '10pt';
+  if (n <= 34) return '8.5pt';
+  return '7pt';
+};
+
+/**
  * Стикер хранения 58×40 мм.
  *
  * Раньше печатался общим шаблоном без заданного размера листа, и длинный номер отправления
@@ -45,11 +64,10 @@ export const printStorageSticker = (data: StorageStickerData) => {
   const order = (data.orderNumber || '').trim();
   // Чем длиннее номер, тем мельче шрифт — иначе он не влезает в 58 мм по ширине.
   const orderFont = order.length > 34 ? '5.5pt' : order.length > 22 ? '6.5pt' : '7.5pt';
-  // Короткое «Мрамор 300x255» печатаем крупно, а длинное название с маркетплейса
-  // («Тюль для комнаты 200x270 см Молния белая...») ужимаем: иначе оно занимает
-  // три строки и выдавливает номер за край наклейки.
+  // Короткое «Мрамор 300x255» печатаем крупно, а длинное название ужимаем: иначе оно
+  // занимает лишние строки и выдавливает штрихкод за край наклейки.
   const title = (data.title || '').trim();
-  const titleFont = title.length > 40 ? '7pt' : title.length > 22 ? '10pt' : '15pt';
+  const titleFont = titleFontSize(title);
 
   const html = `<!DOCTYPE html>
 <html lang="ru">
@@ -151,9 +169,13 @@ export const printStorageStickers = (list: StorageStickerData[]) => {
       const order = (data.orderNumber || '').trim();
       const orderFont =
         order.length > 34 ? '5.5pt' : order.length > 22 ? '6.5pt' : '7.5pt';
+      // В ленте размер шрифта раньше был жёстко зашит в 15pt для любого названия —
+      // именно поэтому «Вуаль (без ут) 200x255» уезжала под штрихкод. Подбираем так же,
+      // как для одиночной наклейки.
+      const titleFont = titleFontSize((data.title || '').trim());
 
       return `<div class="sticker">
-  ${data.title ? `<div class="title">${esc(data.title)}</div>` : ''}
+  ${data.title ? `<div class="title" style="font-size:${titleFont}">${esc(data.title)}</div>` : ''}
   <div class="bc"><img src="${barcode}" alt="${esc(data.storageBarcode)}" /></div>
   <div class="code">${esc(data.storageBarcode)}</div>
   ${order ? `<div class="order" style="font-size:${orderFont}">${esc(order)}</div>` : ''}
@@ -185,8 +207,8 @@ export const printStorageStickers = (list: StorageStickerData[]) => {
       break-after: page;
     }
     .sticker:last-child { page-break-after: auto; break-after: auto; }
+    /* Размер шрифта задаётся у каждой наклейки отдельно — под длину её названия. */
     .title {
-      font-size: 15pt;
       font-weight: bold;
       text-align: center;
       line-height: 1.05;
