@@ -1005,6 +1005,111 @@ def handle_refresh_all(cur, conn, client_id, api_key, body_data=None):
 
 
 
+def fill_exemplars(client_id, api_key, posting_number, products, debug=None):
+    """Заполняет «экземпляры» отправления — без этого заказ юрлица не собрать.
+
+    Зачем: покупателю-компании OZON выставляет счёт-фактуру, поэтому требует по каждой
+    единице товара данные о таможенной декларации (ГТД). Пока их нет, сборка отбивается
+    ошибкой EXEMPLAR_INFO_NOT_FILLED_COMPLETELY — и заказ висит на стикеровке, а
+    упаковщица видит только «ярлык не пришёл».
+
+    Шторы мы шьём сами, это не импорт — ГТД у товара нет. OZON такой ответ принимает:
+    отправляем признак «декларация отсутствует».
+
+    Возвращает текст ошибки или None, если всё в порядке. Отсутствие поддержки
+    экземпляров у продавца ошибкой НЕ считается: обычные розничные отправления
+    собираются и без них, и мешать им нельзя.
+    """
+    # Просим у OZON номера экземпляров: он сам заводит нужное количество по составу
+    # отправления и возвращает их идентификаторы.
+    #
+    # Версию метода перебираем: OZON регулярно выводит старые из строя (отвечает
+    # «obsolete method cannot be used»), и жёстко зашитая версия однажды перестаёт
+    # работать — ровно так стикеровка юрлиц и встала. Свежая версия идёт первой.
+    status, data = None, None
+    for version in ('v6', 'v5', 'v4'):
+        status, data = ozon_post(
+            f'/{version}/fbs/posting/product/exemplar/create-or-get', client_id, api_key,
+            {'posting_number': posting_number},
+        )
+        if debug is not None:
+            debug.setdefault('exemplarGet', []).append({
+                'version': version, 'status': status, 'response': str(data)[:300],
+            })
+        if status == 200:
+            break
+    if status != 200 or not isinstance(data, dict):
+        # Метод недоступен — не мешаем обычной сборке, пусть пробует как раньше.
+        return None
+
+    result = data.get('result') or data
+    api_products = result.get('products') or []
+    if not api_products:
+        return None
+
+    # По каждой единице товара говорим: маркировки нет, таможенной декларации нет.
+    filled = []
+    for pr in api_products:
+        exemplars = []
+        for ex in (pr.get('exemplars') or []):
+            exemplars.append({
+                'exemplar_id': ex.get('exemplar_id'),
+                # Обязательной маркировки («Честный знак») у штор нет.
+                'is_mandatory_mark_absent': True,
+                # Товар собственного производства — таможенной декларации нет.
+                'is_gtd_absent': True,
+                # Не прослеживаемый товар — РНПТ тоже нет.
+                'is_rnpt_absent': True,
+            })
+        if exemplars:
+            filled.append({
+                'product_id': pr.get('product_id'),
+                'exemplars': exemplars,
+            })
+
+    if not filled:
+        return None
+
+    set_status, set_data = None, None
+    for version in ('v6', 'v5', 'v4'):
+        set_status, set_data = ozon_post(
+            f'/{version}/fbs/posting/product/exemplar/set', client_id, api_key,
+            {'posting_number': posting_number, 'products': filled},
+        )
+        if debug is not None:
+            debug.setdefault('exemplarSet', []).append({
+                'version': version, 'status': set_status, 'response': str(set_data)[:300],
+            })
+        if set_status == 200:
+            break
+    if set_status != 200:
+        return (
+            f'OZON не принял данные по товару для заказа юрлица (код {set_status}): '
+            f'{ozon_error_text(set_status, set_data)}'
+        )
+
+    # OZON проверяет экземпляры не мгновенно: сразу после отправки сборка ещё
+    # отбивается. Ждём готовности, иначе упаковщице пришлось бы жать кнопку повторно.
+    for _ in range(4):
+        time.sleep(0.8)
+        st_status, st_data = None, None
+        for version in ('v6', 'v5', 'v4'):
+            st_status, st_data = ozon_post(
+                f'/{version}/fbs/posting/product/exemplar/status', client_id, api_key,
+                {'posting_number': posting_number},
+            )
+            if st_status == 200:
+                break
+        st_result = (st_data or {}).get('result') or st_data or {}
+        if str(st_result.get('status') or '') == 'ship_available':
+            if debug is not None:
+                debug['exemplarReady'] = True
+            return None
+    if debug is not None:
+        debug['exemplarReady'] = False
+    return None
+
+
 def assemble_posting(client_id, api_key, posting_number, debug=None):
     """Собирает отправление FBS на стороне OZON (/v4/posting/fbs/ship).
 
@@ -1047,6 +1152,20 @@ def assemble_posting(client_id, api_key, posting_number, debug=None):
     ]
     if not items:
         return 'У товаров отправления нет кода OZON — собрать не получится', None
+
+    # ЗАКАЗ ЮРЛИЦА: OZON не даёт собрать отправление, пока не заполнены «экземпляры».
+    #
+    # Для компаний OZON выставляет счёт-фактуру и потому требует по КАЖДОЙ единице
+    # товара данные о таможенной декларации (ГТД). Пока их нет, сборка отбивается
+    # ошибкой EXEMPLAR_INFO_NOT_FILLED_COMPLETELY, а упаковщица на терминале видит
+    # только «не удалось получить ярлык» — заказ намертво зависает на стикеровке.
+    #
+    # Товар нашего производства (шторы шьём сами), импорта нет — значит ГТД
+    # отсутствует, и это законный вариант ответа: отправляем признак «ГТД нет».
+    # Розничных заказов это не касается — там экземпляры не требуются.
+    exemplar_err = fill_exemplars(client_id, api_key, posting_number, products, debug)
+    if exemplar_err:
+        return exemplar_err, None
 
     # OZON принимает сборку в двух форматах, и какой именно — зависит от схемы работы
     # продавца. Пробуем оба: сначала с перечислением товаров (обычная схема), затем
