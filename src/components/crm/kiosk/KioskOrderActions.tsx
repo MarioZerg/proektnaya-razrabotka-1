@@ -13,6 +13,8 @@ interface KioskOrderActionsProps {
   onPrint: () => void;
   onClose: () => void;
   onCancel: () => void;
+  /** Ярлык уже напечатан — бросить заказ нельзя, его обязательно нужно закрыть. */
+  cancelBlocked?: boolean;
 }
 
 /**
@@ -31,6 +33,7 @@ const KioskOrderActions = ({
   onPrint,
   onClose,
   onCancel,
+  cancelBlocked = false,
 }: KioskOrderActionsProps) => (
   <>
     {/* Стикер «кто шил» нужен только на FBO: там вещь уезжает на склад
@@ -111,8 +114,17 @@ const KioskOrderActions = ({
       </Button>
     )}
 
-    <Button variant="outline" size="lg" className="h-14 w-full" onClick={onCancel}>
-      Отмена
+    {/* После печати ярлыка «Отмена» гаснет: вещь уже помечена и уехала в пакет,
+        бросать такой заказ нельзя — он зависнет в стикеровке без начисления
+        зарплаты, а на складе вещи уже не будет. */}
+    <Button
+      variant="outline"
+      size="lg"
+      className="h-14 w-full"
+      onClick={onCancel}
+      disabled={cancelBlocked}
+    >
+      {cancelBlocked ? 'Сначала закройте заказ' : 'Отмена'}
     </Button>
   </>
 );

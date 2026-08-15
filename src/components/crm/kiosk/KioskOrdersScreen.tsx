@@ -62,6 +62,9 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   // Ручной поиск заказа — обход сканера, поэтому показываем его только если цех
   // это разрешил в настройках. По умолчанию скрыт: стикеруем строго по QR-коду.
   const [manualSearchAllowed, setManualSearchAllowed] = useState(false);
+  // Попытка отсканировать новый заказ, не закрыв текущий: показываем крупное
+  // предупреждение прямо на экране, а не только всплывашкой — её легко не заметить.
+  const [blockedWarning, setBlockedWarning] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -94,6 +97,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     setTracePrinted(false);
     setLabelRefused(false);
     setSpare(null);
+    setBlockedWarning(false);
     try {
       const found = await fetchKioskOrder(value);
       playScanSound();
@@ -130,6 +134,28 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     },
     !searching && !order,
   );
+
+  // Стикер напечатан, но заказ НЕ закрыт — работа не доделана.
+  //
+  // Упаковщица наклеила ярлык, положила вещь в пакет и потянулась за следующей: скан
+  // нового кода при этом просто не срабатывал, терминал молчал. Она сканировала ещё
+  // раз, ещё — и в итоге уходила, бросив незакрытый заказ. Такой заказ навсегда висит
+  // в стикеровке: зарплата за него не начислена, вещь числится несобранной, а на
+  // складе её уже нет.
+  //
+  // Теперь на скан отвечаем громко: звук ошибки и большое предупреждение. Новый заказ
+  // не ищем, пока текущий не закрыт.
+  const unfinished = !!order && printed && !closing;
+
+  useGlobalScanner(() => {
+    playScanErrorSound();
+    setBlockedWarning(true);
+    toast({
+      title: 'Сначала закройте текущий заказ',
+      description: 'Стикер напечатан, но заказ не завершён — нажмите «Закрыть заказ»',
+      variant: 'destructive',
+    });
+  }, unfinished);
 
   const handlePrint = async () => {
     if (!order) return;
@@ -219,6 +245,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         setOrder(null);
         setPrinted(false);
         setTracePrinted(false);
+        setBlockedWarning(false);
         setTimeout(() => inputRef.current?.focus(), 0);
         return;
       }
@@ -240,6 +267,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         setOrder(null);
         setPrinted(false);
         setTracePrinted(false);
+        setBlockedWarning(false);
         setTimeout(() => inputRef.current?.focus(), 0);
         return;
       }
@@ -271,6 +299,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
       setOrder(null);
       setPrinted(false);
       setTracePrinted(false);
+      setBlockedWarning(false);
       setTimeout(() => inputRef.current?.focus(), 0);
     } catch (e) {
       toast({
@@ -368,6 +397,20 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
       ) : (
         <Card className="border-border shadow-none">
           <CardContent className="space-y-4 pt-6">
+            {/* Попытались взять новый заказ, не закрыв текущий. Пишем крупно и
+                красным: упаковщица смотрит на экран издалека и всплывашку внизу
+                не видит — она уже тянется за следующей вещью. */}
+            {blockedWarning && (
+              <div className="rounded-md border-2 border-destructive bg-destructive/10 p-4 text-center">
+                <p className="text-xl font-bold text-destructive">
+                  Завершите текущий заказ
+                </p>
+                <p className="mt-1 text-base text-muted-foreground">
+                  Стикер напечатан, но заказ не закрыт. Нажмите «Закрыть заказ» —
+                  и только потом сканируйте следующий
+                </p>
+              </div>
+            )}
             <KioskOrderNotices order={order} />
             <KioskOrderDetails order={order} />
             <KioskOrderActions
@@ -382,10 +425,20 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
               }}
               onPrint={handlePrint}
               onClose={handleClose}
+              // Бросить заказ можно, только пока ярлык НЕ напечатан. После печати
+              // вещь уже помечена и физически ушла в пакет — заказ обязан быть
+              // закрыт, иначе он навсегда зависнет в стикеровке без начисления.
+              cancelBlocked={unfinished}
               onCancel={() => {
+                if (unfinished) {
+                  playScanErrorSound();
+                  setBlockedWarning(true);
+                  return;
+                }
                 setOrder(null);
                 setPrinted(false);
                 setTracePrinted(false);
+                setBlockedWarning(false);
                 setTimeout(() => inputRef.current?.focus(), 0);
               }}
             />
@@ -399,7 +452,20 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         autoFocus
         value={code}
         onChange={(e) => setCode(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter') return;
+          // Скан пришёл в скрытое поле, а текущий заказ ещё не закрыт — новый
+          // не ищем. Это основной путь сканера, поэтому предупреждение должно
+          // сработать и здесь, а не только у глобального перехватчика.
+          if (unfinished) {
+            setCode('');
+            if (inputRef.current) inputRef.current.value = '';
+            playScanErrorSound();
+            setBlockedWarning(true);
+            return;
+          }
+          handleSearch();
+        }}
         onBlur={() => setTimeout(() => inputRef.current?.focus(), 50)}
         className="pointer-events-none absolute h-px w-px border-0 p-0 opacity-0"
         aria-hidden="true"
