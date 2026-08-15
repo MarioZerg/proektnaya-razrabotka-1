@@ -112,7 +112,17 @@ const Kiosk = () => {
           </CardContent>
         </Card>
 
-        {!order && <KioskManualSearch onSelect={setOrder} />}
+        {/* Ручной поиск заказа. Роль обязательно передаём на сервер: по ней он
+            понимает, что за терминалом админ, и пускает искать вручную без
+            настройки цеха. Без роли сервер отвечал «Ручной поиск отключён» —
+            админ видел форму, но она ничего не находила. */}
+        {!order && (
+          <KioskManualSearch
+            onSelect={setOrder}
+            workshopId={user?.workshopId ?? null}
+            role={user?.role ?? null}
+          />
+        )}
 
         {order && (
           <Card className="border-border shadow-none">
