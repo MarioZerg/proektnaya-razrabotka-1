@@ -27,6 +27,8 @@ interface Hit {
   product?: string | null;
   shelfName?: string | null;
   orderNumber?: string | null;
+  /** Ярлык уже наклеен — вещь нашлась, но забирать её не надо, надо дожать поставку. */
+  alreadyLabeled?: boolean;
 }
 
 /**
@@ -121,8 +123,11 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
           product: res.product,
           shelfName: res.shelfName,
           orderNumber: res.orderNumber,
+          alreadyLabeled: res.alreadyLabeled,
         });
-        setFoundCount((n) => n + 1);
+        // Вещь с уже наклеенным ярлыком в «найдено» не считаем: её посчитали, когда
+        // стикеровали. Иначе счётчик за смену задвоится на каждой возвращённой вещи.
+        if (!res.alreadyLabeled) setFoundCount((n) => n + 1);
       } else {
         playScanErrorSound();
         setSkipped((n) => n + 1);
@@ -209,25 +214,51 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
             <button
               type="button"
               onClick={() => onOpenCard(hit.goodsId)}
-              className="flex w-full items-start gap-3 rounded-lg border-2 border-emerald-400 bg-emerald-50 p-4 text-left hover:bg-emerald-100"
+              className={`flex w-full items-start gap-3 rounded-lg border-2 p-4 text-left ${
+                hit.alreadyLabeled
+                  ? 'border-amber-400 bg-amber-50 hover:bg-amber-100'
+                  : 'border-emerald-400 bg-emerald-50 hover:bg-emerald-100'
+              }`}
             >
               <Icon
-                name="PackageCheck"
+                name={hit.alreadyLabeled ? 'Printer' : 'PackageCheck'}
                 size={24}
-                className="mt-0.5 shrink-0 text-emerald-600"
+                className={`mt-0.5 shrink-0 ${
+                  hit.alreadyLabeled ? 'text-amber-600' : 'text-emerald-600'
+                }`}
               />
               <div className="min-w-0 flex-1">
-                <p className="text-lg font-bold text-emerald-900">
+                <p
+                  className={`text-lg font-bold ${
+                    hit.alreadyLabeled ? 'text-amber-900' : 'text-emerald-900'
+                  }`}
+                >
                   {hit.product || 'Товар'}
                 </p>
-                <p className="text-base font-semibold text-emerald-900">
-                  Полка {hit.shelfName || '—'}
-                </p>
-                <p className="text-sm text-emerald-900">
+                {/* Вещь уже с ярлыком: забирать с полки нечего, работа в другом —
+                    открыть карточку и нажать «Отправить на поставку». */}
+                {hit.alreadyLabeled ? (
+                  <p className="text-base font-semibold text-amber-900">
+                    Стикер наклеен — нажмите, чтобы отправить на поставку
+                  </p>
+                ) : (
+                  <p className="text-base font-semibold text-emerald-900">
+                    Полка {hit.shelfName || '—'}
+                  </p>
+                )}
+                <p
+                  className={`text-sm ${
+                    hit.alreadyLabeled ? 'text-amber-900' : 'text-emerald-900'
+                  }`}
+                >
                   Заказ {hit.orderNumber || '—'} · {hit.barcode}
                 </p>
               </div>
-              <Icon name="ChevronRight" size={20} className="mt-1 text-emerald-600" />
+              <Icon
+                name="ChevronRight"
+                size={20}
+                className={`mt-1 ${hit.alreadyLabeled ? 'text-amber-600' : 'text-emerald-600'}`}
+              />
             </button>
           ) : (
             <div className="rounded-lg border border-dashed border-border p-4 text-center">

@@ -642,6 +642,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT gw.id, o.order_number, o.product, o.material, o.width, o.height, "
                     "       gw.matched_at, o.marketplace, gw.storage_barcode, sh.name, "
+                    "       gw.shipping_labeled_at, "
                     # Схема поставки и кластер: по ним кладовщик сразу видит, куда поедет
                     # вещь. FBS клеится ярлык маркетплейса и едет отдельным пакетом,
                     # FBO уходит коробкой на склад площадки — работа разная.
@@ -651,7 +652,11 @@ def handler(event: dict, context) -> dict:
                     "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
                     "WHERE gw.status = 'picking' "
                     "  AND gw.reserved_order_id IS NOT NULL "
-                    "  AND gw.shipping_labeled_at IS NULL "
+                    # Отстикерованные вещи из списка НЕ убираем, пока их не отправили
+                    # на поставку. Раньше убирали — и вещь пропадала из работы: ярлык
+                    # напечатан, кладовщик нажал «Назад», а строки уже нет, и найти её
+                    # было нечем. Работа не закончена, пока не нажата «На поставку».
+                    "  AND gw.shipped_at IS NULL "
                     # Отправление уже уехало от нас или отменено — ярлык для него OZON
                     # больше не отдаёт, собрать такую вещь невозможно. Раньше она висела
                     # в подборе вечно: кладовщик шёл к стеллажу, а на печати получал
@@ -705,8 +710,11 @@ def handler(event: dict, context) -> dict:
                             'marketplace': r[7],
                             'storageBarcode': r[8],
                             'shelfName': r[9],
-                            'orderType': r[10],
-                            'cluster': r[11],
+                            # Ярлык уже наклеен, а вещь ещё не отправлена: в списке она
+                            # подсвечивается как «осталось отправить на поставку».
+                            'shippingLabeledAt': (r[10].isoformat() + 'Z') if r[10] else None,
+                            'orderType': r[11],
+                            'cluster': r[12],
                             # Свободные такие же вещи на складе — запасной вариант,
                             # если по своей полке вещи не оказалось.
                             'alsoOnShelves': stock_by_product.get(r[2], []),
@@ -2262,7 +2270,7 @@ def handler(event: dict, context) -> dict:
                 # 1. Что за вещь в руках: товар берём у заказа, в котором её сшили.
                 cur.execute(
                     "SELECT gw.id, gw.status, gw.reserved_order_id, gw.shipping_labeled_at, "
-                    "       src.product, src.marketplace_item_id, sh.name "
+                    "       src.product, src.marketplace_item_id, sh.name, gw.shipped_at "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders src ON src.id = gw.order_id "
                     "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
@@ -2274,7 +2282,7 @@ def handler(event: dict, context) -> dict:
                             'body': json.dumps({'error': f'Стикер {barcode} не найден'},
                                                ensure_ascii=False)}
                 (gw_id, gw_status, gw_reserved, gw_labeled, gw_product,
-                 gw_item_id, gw_shelf) = row
+                 gw_item_id, gw_shelf, gw_shipped_at) = row
 
                 # Вещь уже собрана или уехала — второй раз её не подбирают.
                 # Вещь списали: не нашли на складе и отправили заказ в пошив заново.
@@ -2284,6 +2292,32 @@ def handler(event: dict, context) -> dict:
                         'matched': False,
                         'reason': 'Вещь списана и отправлена в пошив — в подбор не идёт',
                         'product': gw_product,
+                    }, ensure_ascii=False)}
+                # Стикер уже наклеен, но вещь ещё НЕ отправлена на поставку — работа не
+                # закончена, и вещь надо вернуть кладовщику, а не прятать.
+                #
+                # Так терялся товар: напечатал ярлык, случайно нажал «Назад», а дальше
+                # вещь не найти ничем — из списка подбора она уже ушла (там только
+                # неотстикерованные), а сканер отвечал «уже собрана». Вещь с наклеенным
+                # ярлыком оставалась лежать в руках, и кнопку «На поставку» нажать было
+                # неоткуда.
+                #
+                # Теперь такой скан открывает карточку: там кнопка «Отправить на
+                # поставку» и возможность перепечатать ярлык.
+                if gw_status not in ('shipped',) and not gw_shipped_at and gw_reserved \
+                        and gw_labeled and gw_status != 'awaiting_supply':
+                    cur.execute(
+                        f"SELECT order_number FROM orders WHERE id = {int(gw_reserved)}"
+                    )
+                    lbl = cur.fetchone()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'matched': True, 'goodsId': gw_id, 'product': gw_product,
+                        'shelfName': gw_shelf,
+                        'orderNumber': lbl[0] if lbl else None,
+                        # Экран покажет это отдельно: вещь уже с ярлыком, осталось
+                        # нажать «Отправить на поставку».
+                        'alreadyLabeled': True,
+                        'reason': 'Стикер уже наклеен — осталось отправить на поставку',
                     }, ensure_ascii=False)}
                 if gw_labeled or gw_status in ('shipped', 'awaiting_supply'):
                     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({

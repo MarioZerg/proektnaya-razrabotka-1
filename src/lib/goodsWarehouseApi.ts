@@ -191,6 +191,8 @@ export const scanPickingByBarcode = (barcode: string, actorId?: number, actorNam
     orderNumber?: string | null;
     /** true — подбор перенесён на отсканированную вещь. */
     reassigned?: boolean;
+    /** Стикер на вещь уже наклеен — осталось только отправить её на поставку. */
+    alreadyLabeled?: boolean;
     /** Почему вещь не подошла — показываем кладовщику. */
     reason?: string;
   }>;
@@ -307,6 +309,8 @@ export interface PickingOrder {
   orderType?: string | null;
   /** Кластер приёмки — важен для FBO. */
   cluster?: string | null;
+  /** Ярлык уже напечатан, но вещь ещё не отправлена на поставку — работа не закончена. */
+  shippingLabeledAt?: string | null;
   /**
    * Такие же вещи, свободно лежащие на складе, с разбивкой по полкам.
    *

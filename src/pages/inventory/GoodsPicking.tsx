@@ -250,6 +250,16 @@ const GoodsPicking = () => {
                           {o.orderNumber || '—'}
                           {o.storageBarcode ? ` · ${o.storageBarcode}` : ''}
                         </div>
+                        {/* Ярлык напечатан, но вещь ещё не отправлена: работа брошена
+                            на полпути. Раньше такая строка вообще исчезала из списка,
+                            и вещь с наклейкой было не найти. Теперь она видна и
+                            подсвечена — осталось открыть и нажать «На поставку». */}
+                        {o.shippingLabeledAt && (
+                          <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900">
+                            <Icon name="Printer" size={12} />
+                            Стикер наклеен — отправьте на поставку
+                          </div>
+                        )}
                       </TableCell>
                       {/* Куда поедет вещь: площадка и схема. Работа у них разная —
                           на FBS клеится ярлык маркетплейса и вещь едет своим пакетом,
