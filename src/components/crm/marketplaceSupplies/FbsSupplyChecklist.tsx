@@ -83,12 +83,30 @@ const FbsSupplyChecklist = ({
   const total = rows.length;
   const awaiting = supply.awaitingItems || [];
 
+  // Печать QR-бирки заказа — замена потерянному листку закройщика.
+  //
+  // Кладовщик собирает поставку и не может найти вещь: она в цехе, но листок с QR
+  // потерян или затёрт, и упаковщица не может её застикеровать. Раньше это тупик —
+  // приходилось идти к админу и включать ручной поиск. Теперь кладовщик печатает
+  // бирку с тем же QR, несёт в цех, и вещь стикеруется обычным путём.
+  const handlePrintQr = async (row: Row) => {
+    if (!row.orderNumber) return;
+    const { printOrderQrTag } = await import('@/lib/printOrderQrTag');
+    await printOrderQrTag({
+      orderNumber: row.orderNumber,
+      material: row.material,
+      width: row.width,
+      height: row.height,
+      marketplace: supply.marketplace,
+      orderType: supply.type,
+    });
+  };
+
   // Печать листа недостачи: что не доехало до короба и с кого спрашивать.
   //
   // Кладовщик закрывает поставку, а несколько вещей так и не отсканированы — искать
   // их приходится по всему цеху. В листе по каждой позиции сразу есть заказ, размер,
-  // полка и три фамилии: кто кроил, кто шил, кто упаковывал, и дата упаковки. С ним
-  // обход занимает минуты вместо опроса всей смены.
+  // полка и три фамилии: кто кроил, кто шил, кто упаковывал, и дата упаковки.
   const handlePrintMissing = async () => {
     if (awaiting.length === 0 || printing) return;
     setPrinting(true);
@@ -188,6 +206,22 @@ const FbsSupplyChecklist = ({
                       >
                         связка {group.inSupply}/{group.total}
                       </Badge>
+                    )}
+                    {/* Вещь не нашли, а листок закройщика с QR потерян — упаковщице
+                        нечего сканировать на терминале. Кладовщик печатает бирку с тем
+                        же QR прямо отсюда, несёт в цех, и вещь стикеруется как обычно.
+                        Показываем только у несобранных: собранные искать не надо. */}
+                    {!row.scanned && row.orderNumber && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-1 h-7 px-1.5 text-xs text-muted-foreground"
+                        title="Напечатать QR-бирку заказа взамен листка закройщика"
+                        onClick={() => void handlePrintQr(row)}
+                      >
+                        <Icon name="QrCode" size={14} className="mr-1" />
+                        QR заказа
+                      </Button>
                     )}
                   </TableCell>
                   <TableCell>{row.material || '—'}</TableCell>
