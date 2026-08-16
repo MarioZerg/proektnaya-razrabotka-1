@@ -208,7 +208,11 @@ const KioskTerminal = () => {
   // По умолчанию подставлен цех этого терминала, поэтому в обычный день выбирать нечего.
   const handleOpenShift = async (
     chosenWorkshopId: number | null,
-    chosenShiftNumber: number | null
+    chosenShiftNumber: number | null,
+    // Должность на эту смену. Многие в цехе совмещают: числится закройщиком, а
+    // сегодня шьёт. От должности зависит, какой материал покажет терминал — ткань
+    // или тесьму, — поэтому она фиксируется в смене, а не берётся из карточки.
+    chosenRole?: string | null
   ) => {
     if (!user) return;
     // В режиме проверки смену не открываем: админ смотрит терминал, а не работает за него.
@@ -223,7 +227,9 @@ const KioskTerminal = () => {
         // Number('') даёт NaN, а не null: без явной проверки в смену уходил бы
         // битый номер цеха, и смена открывалась бы «в никуда».
         chosenWorkshopId ?? (Number.isFinite(Number(workshopId)) ? Number(workshopId) : null),
-        chosenShiftNumber ?? user.shiftFromCode ?? null
+        chosenShiftNumber ?? user.shiftFromCode ?? null,
+        false,
+        chosenRole ?? null
       );
       playShiftOpenSound();
       setShift({
@@ -233,6 +239,10 @@ const KioskTerminal = () => {
         shiftNumber: res.shiftNumber,
         // Время закрытия приходит сразу при открытии — сотрудник видит его на экране.
         canCloseAt: res.canCloseAt ?? null,
+        // Должность ЭТОЙ смены. По ней экраны рулонов и брака подбирают материал:
+        // закройщику ткань, швее тесьму. Без неё терминал до перезахода работал бы
+        // по должности из карточки, и швея снова не увидела бы тесьму.
+        role: chosenRole ?? user.role,
       });
       if (res.isLate && (res.lateMinutes ?? 0) > 0) {
         setLateInfo({

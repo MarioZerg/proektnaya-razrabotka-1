@@ -227,7 +227,8 @@ const KioskWorkspace = ({
             открытия смены. В режиме проверки админ смотрит терминал без ограничений. */}
         {screen === 'menu' &&
           (shift?.isOpen || isPreview ? (
-            <KioskMenu onSelect={setScreen} role={user.role as Role} />
+            /* Плитки меню — по должности СМЕНЫ: вышла швеёй, значит и разделы швеи. */
+            <KioskMenu onSelect={setScreen} role={(shift?.role || user.role) as Role} />
           ) : (
             <div className="mx-auto max-w-xl space-y-4 pt-8 text-center">
               <Icon name="Clock" size={56} className="mx-auto text-muted-foreground" />
@@ -306,7 +307,8 @@ const KioskWorkspace = ({
               packerId={user.id}
               packerName={user.name}
               workshopId={currentWorkshopId}
-              role={user.role}
+              // Должность берём из СМЕНЫ: сотрудник мог выйти сегодня другой ролью.
+              role={shift?.role || user.role}
             />
           </div>
         )}

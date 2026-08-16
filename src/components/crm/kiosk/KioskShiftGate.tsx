@@ -10,14 +10,26 @@ import {
   type OpenShiftWorkshop,
 } from '@/lib/kioskApi';
 
+/** Подписи и иконки должностей, в которых выходят в цех. Тексты простые: сотрудник
+ * должен узнать свою работу с одного взгляда, не вчитываясь. */
+const ROLE_LABELS: Record<string, { label: string; hint: string; icon: string }> = {
+  cutter: { label: 'Закройщик', hint: 'работаю с тканью', icon: 'Scissors' },
+  sewer: { label: 'Швея', hint: 'работаю с тесьмой', icon: 'Shirt' },
+  packer: { label: 'Упаковщик', hint: 'пакеты и этикетки', icon: 'Package' },
+};
+
 interface KioskShiftGateProps {
   user: KioskUser;
   shift: KioskShift | null;
   workshopId: string | undefined;
   shiftSaving: boolean;
   onEnterMenu: () => void;
-  /** Открыть смену в выбранном цехе и смене. */
-  onOpenShift: (workshopId: number | null, shiftNumber: number | null) => void;
+  /** Открыть смену в выбранном цехе, смене и должности. */
+  onOpenShift: (
+    workshopId: number | null,
+    shiftNumber: number | null,
+    role: string | null
+  ) => void;
   onLogout: () => void;
 }
 
@@ -42,6 +54,16 @@ const KioskShiftGate = ({
     Number(workshopId) || null
   );
   const [selectedShift, setSelectedShift] = useState<number | null>(null);
+  // Должность на сегодня. В цехе многие совмещают: Мария числится закройщиком, но
+  // часто шьёт. От должности зависит, какой материал покажет терминал — закройщику
+  // ткань, швее тесьму. Раньше смена всегда открывалась по должности из карточки,
+  // и швея не видела ни одного рулона тесьмы, из-за чего не могла закрыть заказ.
+  const [selectedRole, setSelectedRole] = useState<string>(user.role);
+
+  // Выбор показываем только тем, кому админ разрешил больше одной должности.
+  // Остальным лишняя кнопка на экране только мешает.
+  const roleChoices = (user.allowedRoles || []).filter((r) => ROLE_LABELS[r]);
+  const showRoleChoice = roleChoices.length > 1;
 
   useEffect(() => {
     if (shift?.isOpen) return;
@@ -151,6 +173,34 @@ const KioskShiftGate = ({
               </div>
             )}
 
+            {/* Кем работаю сегодня. Должность определяет материал, который терминал
+                покажет в рулонах и в браке: закройщику — ткань, швее — тесьму.
+                Ошибиться здесь дороже, чем в выборе цеха, поэтому кнопки крупные
+                и с пояснением, а выбор стоит ПЕРЕД сменой. */}
+            {showRoleChoice && (
+              <div className="space-y-2">
+                <p className="text-center text-base text-muted-foreground">
+                  Кем работаете сегодня?
+                </p>
+                <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
+                  {roleChoices.map((r) => (
+                    <Button
+                      key={r}
+                      variant={selectedRole === r ? 'default' : 'outline'}
+                      className="h-auto flex-col gap-1 py-3"
+                      onClick={() => setSelectedRole(r)}
+                    >
+                      <Icon name={ROLE_LABELS[r].icon} size={26} />
+                      <span className="text-lg font-semibold">{ROLE_LABELS[r].label}</span>
+                      <span className="text-xs font-normal opacity-80">
+                        {ROLE_LABELS[r].hint}
+                      </span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {availableShifts.length > 1 && (
               <div className="space-y-2">
                 <p className="text-center text-base text-muted-foreground">Смена</p>
@@ -182,7 +232,13 @@ const KioskShiftGate = ({
             <Button
               size="lg"
               className="h-20 w-full bg-emerald-600 text-xl text-white hover:bg-emerald-700"
-              onClick={() => onOpenShift(selectedWorkshop, selectedShift)}
+              onClick={() =>
+                onOpenShift(
+                  selectedWorkshop,
+                  selectedShift,
+                  showRoleChoice ? selectedRole : null
+                )
+              }
               disabled={shiftSaving}
             >
               <Icon

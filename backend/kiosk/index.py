@@ -602,6 +602,21 @@ def handler(event: dict, context) -> dict:
                 )
                 s_row = cur.fetchone()
 
+                # Должности, которые администратор разрешил этому сотруднику.
+                #
+                # Мария Ануфриева числится закройщиком, но по факту работает и швеёй.
+                # Смена всегда открывалась по должности из карточки, и терминал подбирал
+                # ей ткань вместо тесьмы — рулонов тесьмы она не видела совсем и не могла
+                # закрыть заказ. Теперь, если разрешённых должностей больше одной,
+                # терминал спрашивает при открытии смены, кем человек сегодня работает.
+                cur.execute(
+                    "SELECT role FROM user_roles WHERE user_id = %s AND is_approved = true",
+                    (user_id,),
+                )
+                allowed_roles = [r[0] for r in cur.fetchall()]
+                if u_row[2] and u_row[2] not in allowed_roles:
+                    allowed_roles.append(u_row[2])
+
                 # Во сколько сотрудник сможет закрыть смену: отсчёт от фактического
                 # прихода, длительность — по графику из профиля. Терминал показывает
                 # это время и до него держит кнопку закрытия неактивной.
@@ -630,6 +645,8 @@ def handler(event: dict, context) -> dict:
                             'role': u_row[2],
                             'shiftFromCode': shift_from_code,
                             'homeWorkshopId': u_row[4],
+                            # Из чего выбирать должность при открытии смены.
+                            'allowedRoles': allowed_roles,
                         },
                         'shift': {
                             'isOpen': bool(s_row),
