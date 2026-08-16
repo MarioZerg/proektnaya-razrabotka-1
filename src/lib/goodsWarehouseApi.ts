@@ -630,6 +630,28 @@ export const markGoodsNotFound = (
     returnedOrder: string | null;
   }>;
 
+/**
+ * Списанная вещь НАШЛАСЬ — возвращаем её на полку хранения.
+ *
+ * Списание не всегда значит утрату: вещь могли переложить, унести на осмотр или просто
+ * проглядеть. Возвращаем её свободным остатком (заказ за ней уже уехал в цех и сшит
+ * заново, бронь восстанавливать нельзя), после чего автоподбор закроет ею новый заказ.
+ * Только для администратора. shelfId не указан — вещь ложится на прежнюю полку.
+ */
+export const restoreLostGoods = (
+  id: number,
+  shelfId?: number | null,
+  note?: string,
+  actorId?: number,
+  actorName?: string,
+) =>
+  postAction({ action: 'restore_lost', id, shelfId, note, actorId, actorName }) as Promise<{
+    success: true;
+    shelfName: string | null;
+    /** Сколько заказов автоподбор сразу закрыл вернувшейся вещью. */
+    matched: number;
+  }>;
+
 /** Вещь испорчена: списываем её со склада, а заказ возвращаем в производство — сошьют заново. */
 export const sendGoodsToSewing = (
   id: number,

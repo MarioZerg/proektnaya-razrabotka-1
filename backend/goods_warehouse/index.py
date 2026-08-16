@@ -2860,6 +2860,126 @@ def handler(event: dict, context) -> dict:
                     ),
                 }
 
+            if action == 'restore_lost':
+                # «Нашёлся» — списанная вещь обнаружилась и физически цела.
+                #
+                # Списание не всегда означает утрату: вещь могли переложить на соседнюю
+                # полку, унести на осмотр и не отметить, или кладовщик просто не нашёл её
+                # в тот день. Раньше такая запись оставалась мёртвой навсегда — приходилось
+                # заводить вещь заново с новым стикером, и история движения обрывалась.
+                #
+                # Возвращаем вещь на полку хранения свободным остатком. Заказ, который
+                # когда-то за ней стоял, НЕ трогаем: он уже уехал в цех и, скорее всего,
+                # сшит заново — вернув бронь, мы отправили бы покупателю вторую вещь.
+                # Вместо этого вещь становится свободной, и автоподбор сам закроет ею
+                # ближайший подходящий заказ.
+                item_id = body_data.get('id')
+                shelf_id = body_data.get('shelfId')
+                note = (body_data.get('note') or '').strip()
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите id'})}
+
+                # Возврат в оборот меняет остатки склада — это работа администратора.
+                # Проверяем на сервере: спрятать кнопку в интерфейсе недостаточно.
+                if not is_admin(cur, actor_id):
+                    return {
+                        'statusCode': 403, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Вернуть списанный товар на склад может только администратор'},
+                            ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "SELECT gw.status, gw.storage_barcode, gw.lost_reason, "
+                    "       o.order_number, o.product, o.material, o.width, o.height "
+                    "FROM goods_warehouse gw LEFT JOIN orders o ON o.id = gw.order_id "
+                    "WHERE gw.id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Запись не найдена'})}
+                (rl_status, rl_barcode, rl_lost_reason, rl_order,
+                 rl_product, rl_material, rl_width, rl_height) = row
+
+                if rl_status != 'lost':
+                    return {
+                        'statusCode': 409, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Вернуть на полку можно только списанный товар'},
+                            ensure_ascii=False),
+                    }
+
+                # Полку выбирает админ. Если не указал — оставляем прежнюю: вещь часто
+                # находится ровно там, где и числилась, просто её проглядели.
+                shelf_name = None
+                if shelf_id:
+                    cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+                    sh_row = cur.fetchone()
+                    if not sh_row:
+                        return {'statusCode': 404, 'headers': headers,
+                                'body': json.dumps({'error': 'Полка не найдена'},
+                                                   ensure_ascii=False)}
+                    shelf_name = sh_row[0]
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', shelf_id = %s, "
+                        "lost_reason = NULL, lost_at = NULL, shipped_at = NULL, "
+                        "reserved_order_id = NULL, matched_at = NULL, "
+                        "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                        "shipping_labeled_by_name = NULL "
+                        "WHERE id = %s",
+                        (int(shelf_id), int(item_id)),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', "
+                        "lost_reason = NULL, lost_at = NULL, shipped_at = NULL, "
+                        "reserved_order_id = NULL, matched_at = NULL, "
+                        "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                        "shipping_labeled_by_name = NULL "
+                        "WHERE id = %s",
+                        (int(item_id),),
+                    )
+                    cur.execute(
+                        "SELECT s.name FROM goods_warehouse gw "
+                        "LEFT JOIN shelves s ON s.id = gw.shelf_id WHERE gw.id = %s",
+                        (int(item_id),),
+                    )
+                    sh_row = cur.fetchone()
+                    shelf_name = sh_row[0] if sh_row else None
+
+                item_txt = ' '.join(str(x) for x in [
+                    rl_material,
+                    f'{rl_width}×{rl_height}' if rl_width and rl_height else None,
+                ] if x) or (rl_product or rl_order or 'Товар')
+
+                log_action(
+                    cur, actor_id, actor_name, 'restore_lost', 'goods_warehouse', item_id,
+                    f'Товар {rl_barcode} ({item_txt}) НАШЁЛСЯ и возвращён на хранение'
+                    + (f', полка «{shelf_name}»' if shelf_name else '')
+                    + (f'. {note}' if note else '')
+                    + (f'. Было списано: {rl_lost_reason}' if rl_lost_reason else ''),
+                )
+                conn.commit()
+
+                # Вещь снова свободна — сразу пробуем закрыть ею подходящий заказ,
+                # чтобы она не пролежала на полке до следующего пересчёта подбора.
+                matched = 0
+                try:
+                    matched = len(try_match_orders_from_stock(cur) or [])
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+
+                return {
+                    'statusCode': 200, 'headers': headers,
+                    'body': json.dumps(
+                        {'success': True, 'shelfName': shelf_name, 'matched': matched},
+                        ensure_ascii=False),
+                }
+
             if action == 'delete_goods':
                 # Удаление записи со склада. Доступно ТОЛЬКО администратору.
                 #

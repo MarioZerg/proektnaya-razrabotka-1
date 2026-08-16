@@ -131,6 +131,26 @@
         "actorId": 0
       },
       "expectedStatus": 403
+    },
+    {
+      "name": "Restore lost without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "restore_lost"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Restore lost without admin fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "restore_lost",
+        "id": 999999,
+        "actorId": 0
+      },
+      "expectedStatus": 403
     }
   ]
 }

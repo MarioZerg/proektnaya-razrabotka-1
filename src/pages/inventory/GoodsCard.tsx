@@ -16,6 +16,7 @@ import {
 } from '@/lib/goodsWarehouseApi';
 import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
 import SendToSewingDialog from '@/components/crm/goodsWarehouse/SendToSewingDialog';
+import RestoreLostDialog from '@/components/crm/goodsWarehouse/RestoreLostDialog';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import {
   statusLabels,
@@ -67,6 +68,12 @@ const GoodsCard = () => {
   const [justPrinted, setJustPrinted] = useState(false);
   /** Открыт диалог отправки в пошив (нужна причина). */
   const [sewingItem, setSewingItem] = useState<GoodsWarehouseItem | null>(null);
+  /** Открыт диалог возврата списанной вещи, которая нашлась. */
+  const [restoreOpen, setRestoreOpen] = useState(false);
+
+  // Возврат списанной вещи в оборот меняет остатки склада — это решение админа.
+  // Сервер проверяет право ещё раз: спрятанной кнопки для защиты мало.
+  const isAdmin = user?.role === 'admin';
 
   const load = () => {
     if (!id) return;
@@ -233,8 +240,40 @@ const GoodsCard = () => {
           </div>
         </div>
 
+        {/* Вещь была списана (не нашли на складе или брак), но потом нашлась.
+            Раньше это был тупик: запись оставалась мёртвой навсегда, вещь заводили
+            заново с новым стикером, а история движения обрывалась. Теперь админ
+            возвращает её на полку одной кнопкой — со всей прежней историей. */}
+        {card.status === 'lost' && (
+          <Card className="border-emerald-300 bg-emerald-50 shadow-none">
+            <CardContent className="space-y-3 pt-6">
+              <div className="flex items-start gap-2.5">
+                <Icon name="PackageSearch" size={20} className="mt-0.5 text-emerald-700" />
+                <div>
+                  <p className="font-semibold text-emerald-900">Товар списан со склада</p>
+                  <p className="text-sm text-emerald-800">
+                    {card.lostReason || 'Причина не указана'}
+                  </p>
+                </div>
+              </div>
+              {isAdmin ? (
+                <Button onClick={() => setRestoreOpen(true)}>
+                  <Icon name="PackageCheck" size={18} className="mr-2" />
+                  Товар нашёлся — вернуть на полку
+                </Button>
+              ) : (
+                <p className="text-sm text-emerald-800">
+                  Если вещь нашлась, вернуть её на склад может администратор.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Действия по порядку: сначала стикер (FBS или FBO — по схеме заказа),
-            потом отправка на поставку. */}
+            потом отправка на поставку. Для списанной вещи этот блок не нужен:
+            её сначала возвращают на полку. */}
+        {card.status !== 'lost' && (
         <Card className="border-primary/30 bg-primary/5 shadow-none">
           <CardContent className="space-y-3 pt-6">
             {alreadyInSupply ? (
@@ -324,6 +363,7 @@ const GoodsCard = () => {
             )}
           </CardContent>
         </Card>
+        )}
 
         <div className="grid gap-6 md:grid-cols-2">
           <Card className="shadow-none">
@@ -358,6 +398,16 @@ const GoodsCard = () => {
             </CardContent>
           </Card>
         </div>
+
+        <RestoreLostDialog
+          open={restoreOpen}
+          onOpenChange={setRestoreOpen}
+          goodsId={card.id}
+          title={card.product || card.material || 'Товар'}
+          storageBarcode={card.storageBarcode}
+          currentShelfName={card.shelfName}
+          onDone={load}
+        />
 
         <SendToSewingDialog
           item={sewingItem}
