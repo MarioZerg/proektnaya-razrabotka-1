@@ -177,7 +177,7 @@ def try_match_orders_from_stock(cur, gw_id=None):
       * берём только заказы, к которым ЕЩЁ НЕ ПРИСТУПИЛИ (sewing_status='Новый'):
         если закройщик уже взял заказ в раскрой, вещь со склада ему не подсунуть;
       * одна вещь — один заказ (reserved_order_id), двойного резерва не бывает;
-      * OZON и WB подбираются поштучно, а заказ Яндекса — только целиком (см. ниже);
+      * подбираются только OZON и WB; заказы Яндекса всегда идут в пошив (см. ниже);
       * FIFO: сначала уходят вещи, дольше всех лежащие на полке.
 
     Возвращает список подобранных пар для журнала и уведомления кладовщику.
@@ -201,112 +201,30 @@ def try_match_orders_from_stock(cur, gw_id=None):
     if not free_stock:
         return matched
 
-    # Складываем свободные вещи по товару справочника: ключ — marketplace_item_id.
-    # Нужен для Яндекса, где заказ закрывается только целиком по составу.
-    by_item = {}
-    # И отдельно — по НАЗВАНИЮ товара («Лен 300x245»). В названии материал и размер:
+    # Складываем свободные вещи по НАЗВАНИЮ товара («Лен 300x245»). В названии материал и размер:
     # ровно то, чем вещи отличаются друг от друга на полке. Штучные заказы OZON и WB
     # подбираются по нему, а не по коду справочника: код заполнен не у всех вещей
     # (например, у возвратов и принятых вручную), и такие вещи автоподбор просто не
     # видел — заказ уходил в пошив, хотя готовый товар лежал на складе.
     by_product = {}
-    for row_gw_id, item_id, product in free_stock:
-        if item_id is not None:
-            by_item.setdefault(int(item_id), []).append(int(row_gw_id))
+    for row_gw_id, _item_id, product in free_stock:
         by_product.setdefault(product, []).append(int(row_gw_id))
 
 
-    # --- 1. Яндекс: заказ покупателя закрывается ТОЛЬКО целиком -------------------
-    # У Яндекса на весь заказ один ярлык, вещи едут вместе. Закрыть часть заказа со
-    # склада нельзя: половина уедет, половина будет шиться, а ярлык один. Поэтому
-    # берём связку только если на складе есть ВСЕ её вещи; иначе не трогаем склад —
-    # заказ шьётся целиком, а вещи остаются свободны для других заказов.
-    cur.execute(
-        "SELECT group_key FROM orders "
-        "WHERE marketplace = 'Yandex' AND group_key IS NOT NULL "
-        f"AND sewing_status = '{NOT_STARTED_SEWING}' AND fulfilled_from_stock_id IS NULL "
-        "AND COALESCE(status, '') <> 'Отменён' "
-        "GROUP BY group_key ORDER BY min(created_at) ASC"
-    )
-    group_keys = [r[0] for r in cur.fetchall()]
-
-    for gkey in group_keys:
-        # SKIP LOCKED: строки, которые прямо сейчас забирает закройщик, не попадут в выборку.
-        # Тогда связка окажется неполной и мы её просто пропустим — работу из цеха не отбираем.
-        cur.execute(
-            "SELECT id, marketplace_item_id FROM orders "
-            "WHERE group_key = %s AND fulfilled_from_stock_id IS NULL "
-            f"AND sewing_status = '{NOT_STARTED_SEWING}' "
-            "AND COALESCE(status, '') <> 'Отменён' ORDER BY group_position, id "
-            "FOR UPDATE SKIP LOCKED",
-            (gkey,),
-        )
-        units = cur.fetchall()
-        if not units:
-            continue
-
-        # Все вещи связки должны быть доступны: если часть заблокирована цехом или уже
-        # закрыта, размер выборки не совпадёт с реальным размером заказа — не трогаем.
-        cur.execute(
-            "SELECT count(*) FROM orders WHERE group_key = %s "
-            "AND COALESCE(status, '') <> 'Отменён'",
-            (gkey,),
-        )
-        if len(units) != int(cur.fetchone()[0]):
-            continue
-        # Вся связка должна быть ещё не начата: если хоть одну вещь уже кроят, заказ
-        # доделывает цех целиком.
-        cur.execute(
-            "SELECT count(*) FROM orders WHERE group_key = %s "
-            f"AND sewing_status <> '{NOT_STARTED_SEWING}' AND COALESCE(status, '') <> 'Отменён'",
-            (gkey,),
-        )
-        if int(cur.fetchone()[0]) > 0:
-            continue
-
-        # Хватит ли склада на ВСЮ связку: считаем потребность по каждому товару.
-        need = {}
-        for _, unit_item in units:
-            if not unit_item:
-                need = None
-                break
-            need[int(unit_item)] = need.get(int(unit_item), 0) + 1
-        if not need:
-            continue
-        if any(len(by_item.get(k, [])) < n for k, n in need.items()):
-            continue  # склад не покрывает заказ целиком — шьём всё, склад не трогаем
-
-        for unit_id, unit_item in units:
-            pick_id = by_item[int(unit_item)].pop(0)
-            # Вещь ушла в связку Яндекса — вычёркиваем её и из списка по названию,
-            # иначе тот же товар вторым проходом уйдёт ещё и в заказ OZON или WB.
-            for pool_by_name in by_product.values():
-                if pick_id in pool_by_name:
-                    pool_by_name.remove(pick_id)
-            cur.execute(
-                # Подобранная вещь сразу переходит в «На сборке»: она больше не свободный
-                # остаток на полке, а конкретное отправление, за которым идёт кладовщик.
-                # Пока она числилась «На хранении», её было видно как доступный товар —
-                # и её же могли переложить или посчитать свободной.
-                # Ярлык предыдущего отправления с вещи СНИМАЕМ.
-                #
-                # Вещь могла быть уже отстикерована под другой заказ, который потом
-                # отменили на маркетплейсе. Ярлык при этом оставался в системе, и вещь
-                # выглядела «уже собранной»: сканер подбора говорил «стикер наклеен,
-                # неси в короб», хотя на пакете висела наклейка ОТМЕНЁННОГО заказа —
-                # на приёмке такую вещь не берут. Новый заказ — новый ярлык.
-                "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now(), "
-                "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
-                "shipping_labeled_by_name = NULL, "
-                "status = 'picking' WHERE id = %s",
-                (int(unit_id), pick_id),
-            )
-            cur.execute(
-                "UPDATE orders SET fulfilled_from_stock_id = %s, sewing_status = 'Со склада' "
-                "WHERE id = %s",
-                (pick_id, int(unit_id)),
-            )
-            matched.append({'gwId': pick_id, 'orderId': int(unit_id), 'groupKey': gkey})
+    # --- 1. Яндекс: со склада НЕ подбираем вовсе ----------------------------------
+    #
+    # Заказы Яндекса всегда уходят в пошив, даже если точно такой товар лежит на полке.
+    #
+    # Причина в устройстве самого Яндекса: на весь заказ покупателя выдаётся ОДИН ярлык,
+    # и вещи обязаны уехать вместе. Любая попытка закрыть такой заказ складом упирается
+    # в это: закрыть часть нельзя (половина уедет, половина будет шиться, а ярлык один),
+    # а закрывать целиком — значит держать на полке готовыми сразу все позиции заказа и
+    # выдёргивать их из свободного остатка, откуда их ждут штучные заказы OZON и WB.
+    # На практике это чаще путало склад, чем экономило пошив.
+    #
+    # Поэтому подбор для Яндекса отключён полностью: заказ целиком идёт в цех, а вещи
+    # на полке остаются свободны для OZON и WB. Ниже, в штучном подборе, заказы Яндекса
+    # тоже исключены (marketplace <> 'Yandex').
 
     # --- 2. OZON и WB: вещи штучные, подбираем по одной ---------------------------
     if by_product:
@@ -360,11 +278,6 @@ def try_match_orders_from_stock(cur, gw_id=None):
             if not pool:
                 continue
             pick_id = pool.pop(0)
-            # Вещь занята — убираем её и из списка по коду справочника, чтобы связка
-            # Яндекса при следующем проходе не посчитала её свободной.
-            for pool_by_item in by_item.values():
-                if pick_id in pool_by_item:
-                    pool_by_item.remove(pick_id)
             cur.execute(
                 # Подобранная вещь сразу переходит в «На сборке»: она больше не свободный
                 # остаток на полке, а конкретное отправление, за которым идёт кладовщик.
@@ -2538,6 +2451,10 @@ def handler(event: dict, context) -> dict:
                     "SELECT ro.id, ro.order_number FROM orders ro "
                     "LEFT JOIN goods_warehouse lost ON lost.id = ro.fulfilled_from_stock_id "
                     "WHERE ro.sewing_status = 'Со склада' "
+                    # Заказы Яндекса складом не закрываются: у них один ярлык на весь
+                    # заказ, и подбор для них отключён. Сюда они попасть не должны даже
+                    # случайно — иначе вещь уедет под заказ, который шьётся в цехе.
+                    "  AND ro.marketplace <> 'Yandex' "
                     f"  AND ro.product = '{prod_esc}' "
                     "  AND (lost.id IS NULL OR (lost.reserved_order_id IS DISTINCT FROM ro.id "
                     "       AND lost.shipped_at IS NULL)) "

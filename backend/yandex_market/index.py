@@ -129,75 +129,6 @@ def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None):
     return None
 
 
-def match_group_from_stock(cur, group_key) -> int:
-    """Закрывает связку Яндекса вещами со склада — ТОЛЬКО ЦЕЛИКОМ.
-
-    У Яндекса на весь заказ покупателя один ярлык, и вещи едут вместе. Закрыть часть
-    заказа со склада нельзя: половина уехала бы готовой, половина ушла бы в пошив, а
-    ярлык на них общий — к отгрузке заказ не собрать.
-
-    Раньше подбор шёл поштучно, сразу при создании каждой вещи: первая вещь заказа
-    находила себе пару на полке и уходила в «Со склада», а на вторую готовой не
-    хватало, и она уезжала в цех. Связка разрывалась в момент загрузки заказа — ровно
-    та беда, от которой на складе стоит отдельная защита.
-
-    Теперь смотрим на заказ целиком: если на складе лежат вещи под ВСЕ позиции связки —
-    закрываем её со склада; не хватает хоть одной — не трогаем склад вовсе, заказ
-    целиком уходит в пошив, а вещи остаются свободны для других заказов.
-
-    Возвращает число закрытых со склада вещей (0, если связку закрыть не удалось).
-    """
-    cur.execute(
-        "SELECT id, marketplace_item_id FROM orders "
-        "WHERE group_key = %s AND fulfilled_from_stock_id IS NULL "
-        "  AND sewing_status = 'Новый' AND COALESCE(status, '') <> 'Отменён' "
-        "ORDER BY group_position, id",
-        (group_key,),
-    )
-    units = cur.fetchall()
-    if not units:
-        return 0
-
-    # Сначала ПОДБИРАЕМ вещи под все позиции, ничего не занимая. Одна и та же вещь не
-    # должна закрыть две позиции, поэтому уже выбранные исключаем из следующего поиска.
-    picked = []
-    taken = set()
-    for order_id, item_id in units:
-        if not item_id:
-            return 0
-        exclude = ''
-        if taken:
-            exclude = ' AND gw.id NOT IN (' + ','.join(str(int(t)) for t in taken) + ')'
-        cur.execute(
-            "SELECT gw.id FROM goods_warehouse gw "
-            "JOIN orders src ON src.id = gw.order_id "
-            "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
-            "AND src.marketplace_item_id = %s" + exclude + " "
-            "ORDER BY gw.received_at ASC LIMIT 1",
-            (int(item_id),),
-        )
-        row = cur.fetchone()
-        if not row:
-            # Хоть на одну позицию готовой вещи нет — связку со склада не закрываем.
-            return 0
-        picked.append((order_id, row[0]))
-        taken.add(row[0])
-
-    # Вещи нашлись на ВСЕ позиции — только теперь занимаем их.
-    for order_id, gw_id in picked:
-        cur.execute(
-            "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() "
-            "WHERE id = %s",
-            (int(order_id), int(gw_id)),
-        )
-        cur.execute(
-            "UPDATE orders SET fulfilled_from_stock_id = %s, sewing_status = 'Со склада' "
-            "WHERE id = %s",
-            (int(gw_id), int(order_id)),
-        )
-    return len(picked)
-
-
 def log_action(cur, actor_id, actor_name, action, description):
     cur.execute(
         "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, entity_id, description) "
@@ -260,7 +191,6 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
         page_token = next_token
 
     created = 0
-    matched = 0
     skipped_existing = 0
     skipped_no_item = 0
     unmatched = []
@@ -347,15 +277,13 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
             made_any = True
             created += 1
 
-        # Подбор со склада — ПОСЛЕ того, как заведена вся связка, и только целиком.
+        # Со склада заказы Яндекса НЕ закрываются: всегда идут в пошив целиком.
         #
-        # Раньше подбор стоял внутри цикла: первая вещь заказа сразу забирала себе
-        # готовую с полки, а на вторую готовой не хватало — и она уходила в пошив.
-        # Заказ разрывался пополам, хотя ярлык на него один и вещи обязаны ехать
-        # вместе. Теперь решение принимается по заказу целиком.
+        # На весь заказ Яндекса один ярлык, вещи обязаны уехать вместе. Закрыть часть
+        # заказа складом нельзя, а закрывать целиком — значит выдёргивать с полки сразу
+        # все позиции, отбирая их у штучных заказов OZON и WB. Проще и надёжнее шить.
         if made_any:
             created_orders.append(group_key)
-            matched += match_group_from_stock(cur, group_key)
 
     if created:
         log_action(
@@ -364,7 +292,9 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
         )
     return {
         'created': created,
-        'matchedFromStock': matched,
+        # Заказы Яндекса со склада не подбираются вовсе — всегда идут в пошив.
+        # Поле оставлено для совместимости с экраном, всегда 0.
+        'matchedFromStock': 0,
         'skippedExisting': skipped_existing,
         'skippedNoItem': skipped_no_item,
         'unmatched': unmatched[:20],
