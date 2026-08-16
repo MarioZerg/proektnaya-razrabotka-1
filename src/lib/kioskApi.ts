@@ -157,18 +157,60 @@ export interface RepackItem {
   height: number | null;
   returnReason: string | null;
   marketplace: string | null;
+  /** true — вещь уже закреплена за этим цехом (её здесь отсканировали). */
+  mine?: boolean;
 }
 
-/** Список вещей, ожидающих перепаковки упаковщиком в цехе. */
-export const fetchRepackItems = async (): Promise<RepackItem[]> => {
+/**
+ * Список вещей, ожидающих перепаковки в ЭТОМ цехе.
+ *
+ * workshopId обязателен по смыслу: без него киоск покажет вещи всех цехов, и две
+ * упаковщицы возьмут в работу одну и ту же вещь.
+ */
+export const fetchRepackItems = async (workshopId?: number | null): Promise<RepackItem[]> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'repack_list' }),
+    body: JSON.stringify({ action: 'repack_list', workshopId }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось загрузить список');
   return data.items || [];
+};
+
+/** Сколько вещей ждёт перепаковки в цехе — число для плитки в меню киоска. */
+export const fetchRepackCount = async (
+  workshopId?: number | null,
+): Promise<{ mineCount: number; freeCount: number }> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'repack_count', workshopId }),
+  });
+  const data = await res.json();
+  if (!res.ok) return { mineCount: 0, freeCount: 0 };
+  return { mineCount: data.mineCount || 0, freeCount: data.freeCount || 0 };
+};
+
+/**
+ * Скан вещи на перепаковку по стикеру хранения.
+ *
+ * Сканировать быстрее и надёжнее, чем искать строку глазами в списке из сотни
+ * позиций. Скан заодно закрепляет вещь за цехом: у соседнего киоска она из списка
+ * пропадает, и одну вещь не переупакуют дважды.
+ */
+export const scanRepackItem = async (
+  barcode: string,
+  workshopId?: number | null,
+): Promise<RepackItem> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'repack_scan', barcode, workshopId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось отсканировать вещь');
+  return data.item;
 };
 
 /** Решение упаковщика по вещи на перепаковке:
@@ -182,6 +224,8 @@ export const finishRepack = async (payload: {
   note?: string;
   actorId?: number;
   actorName?: string;
+  /** Цех киоска — чтобы нельзя было закрыть вещь, которую взял соседний цех. */
+  workshopId?: number | null;
 }): Promise<{
   outcome: string;
   storageBarcode: string | null;

@@ -30,7 +30,14 @@ const PackerRepack = () => {
         </div>
 
         {user ? (
-          <KioskRepackScreen actorId={user.id} actorName={user.name} />
+          <KioskRepackScreen
+            actorId={user.id}
+            actorName={user.name}
+            // Цех берём из открытой смены, иначе из профиля: список перепаковки у
+            // каждого цеха свой, и с компьютера должно быть видно ровно то же, что
+            // на планшете в этом цехе.
+            workshopId={user.activeWorkshopId || user.workshopId || null}
+          />
         ) : (
           <div className="flex items-center gap-2 text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />

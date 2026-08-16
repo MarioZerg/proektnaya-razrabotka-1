@@ -1003,13 +1003,32 @@ def handler(event: dict, context) -> dict:
             if action == 'repack_list':
                 # Вещи, вернувшиеся от покупателя годными, но с помятой упаковкой: кладовщик
                 # отправил их в цех, упаковщик переупаковывает и возвращает на склад.
+                #
+                # СПИСОК РАЗДЕЛЁН ПО ЦЕХАМ, иначе работа дублируется.
+                #
+                # Раньше показывались все вещи разом: киоск цеха №1 и киоск цеха №2 видели
+                # один и тот же список. Обе упаковщицы шли искать вещь, которая физически
+                # лежит только в одном цехе, и обе могли по ней отчитаться. Теперь вещь
+                # закрепляется за цехом в момент скана (repack_workshop_id), и чужие
+                # вещи в списке не появляются.
+                #
+                # Нераспределённые (repack_workshop_id IS NULL) видны всем: их ещё никто
+                # не взял в работу, и любой цех может отсканировать такую вещь первым.
+                repack_ws = body_data.get('workshopId')
+                ws_filter = ""
+                if repack_ws:
+                    ws_filter = (
+                        f" AND (gw.repack_workshop_id = {int(repack_ws)} "
+                        f"      OR gw.repack_workshop_id IS NULL)"
+                    )
                 cur.execute(
                     "SELECT gw.id, gw.storage_barcode, o.order_number, o.product, o.material, "
-                    "o.width, o.height, mr.return_reason, mr.marketplace "
+                    "o.width, o.height, mr.return_reason, mr.marketplace, gw.repack_workshop_id "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN marketplace_returns mr ON mr.id = gw.repack_return_id "
-                    "WHERE gw.status = 'repacking' ORDER BY gw.received_at ASC LIMIT 100"
+                    "WHERE gw.status = 'repacking'" + ws_filter +
+                    " ORDER BY gw.received_at ASC LIMIT 100"
                 )
                 items = [
                     {
@@ -1022,10 +1041,107 @@ def handler(event: dict, context) -> dict:
                         'height': r[6],
                         'returnReason': r[7],
                         'marketplace': r[8],
+                        # true — вещь уже закреплена за этим цехом (её отсканировали здесь),
+                        # false — свободная, лежит в общей куче и ждёт, когда её возьмут.
+                        'mine': bool(r[9]),
                     }
                     for r in cur.fetchall()
                 ]
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'items': items})}
+                # Счётчик для плитки на киоске: сколько вещей ждёт перепаковки именно
+                # в этом цехе. Считаем закреплённые за цехом отдельно от свободных,
+                # чтобы упаковщица видела свою работу, а не общую кучу по всем цехам.
+                mine_count = sum(1 for i in items if i['mine'])
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'items': items,
+                    'mineCount': mine_count,
+                    'freeCount': len(items) - mine_count,
+                })}
+
+            if action == 'repack_count':
+                # Лёгкий запрос только ради числа на плитке меню: возить ради счётчика
+                # весь список вещей незачем — киоск дёргает его при каждом входе.
+                count_ws = body_data.get('workshopId')
+                ws_cond = ""
+                if count_ws:
+                    ws_cond = (
+                        f" AND (repack_workshop_id = {int(count_ws)} "
+                        f"      OR repack_workshop_id IS NULL)"
+                    )
+                cur.execute(
+                    "SELECT COUNT(*) FILTER (WHERE repack_workshop_id IS NOT NULL), "
+                    "       COUNT(*) FILTER (WHERE repack_workshop_id IS NULL) "
+                    "FROM goods_warehouse WHERE status = 'repacking'" + ws_cond
+                )
+                cnt = cur.fetchone()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'mineCount': int(cnt[0] or 0),
+                    'freeCount': int(cnt[1] or 0),
+                })}
+
+            if action == 'repack_scan':
+                # Скан вещи на перепаковку: упаковщица подносит стикер хранения вместо
+                # того, чтобы искать строку глазами в списке из сотни позиций.
+                #
+                # Скан ЗАКРЕПЛЯЕТ вещь за цехом киоска: с этого момента она пропадает из
+                # списка соседнего цеха, и одну и ту же вещь не переупакуют дважды.
+                scan_code = (body_data.get('barcode') or '').strip()
+                scan_ws = body_data.get('workshopId')
+                if not scan_code:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Отсканируйте стикер'})}
+
+                code_esc = scan_code.replace("'", "''")
+                cur.execute(
+                    "SELECT gw.id, gw.status, gw.storage_barcode, o.order_number, o.product, "
+                    "o.material, o.width, o.height, mr.return_reason, mr.marketplace, "
+                    "gw.repack_workshop_id, w.name "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN marketplace_returns mr ON mr.id = gw.repack_return_id "
+                    "LEFT JOIN workshops w ON w.id = gw.repack_workshop_id "
+                    f"WHERE gw.storage_barcode = '{code_esc}' LIMIT 1"
+                )
+                sc = cur.fetchone()
+                if not sc:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps(
+                        {'error': f'Стикер {scan_code} не найден'}, ensure_ascii=False)}
+
+                (sc_id, sc_status, sc_bc, sc_order, sc_product, sc_material,
+                 sc_w, sc_h, sc_reason, sc_mp, sc_ws, sc_ws_name) = sc
+
+                if sc_status != 'repacking':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Эта вещь не на перепаковке — сканируйте вещи из тележки '
+                                  'возвратов'}, ensure_ascii=False)}
+
+                # Вещь уже взял ДРУГОЙ цех — не отдаём: там её держат в руках.
+                if sc_ws and scan_ws and int(sc_ws) != int(scan_ws):
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': f'Эту вещь уже взяли в работу: {sc_ws_name or "другой цех"}'},
+                        ensure_ascii=False)}
+
+                # Свободная вещь — закрепляем за цехом киоска.
+                if not sc_ws and scan_ws:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET repack_workshop_id = %s WHERE id = %s",
+                        (int(scan_ws), int(sc_id)),
+                    )
+                    conn.commit()
+
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'item': {
+                        'id': sc_id,
+                        'storageBarcode': sc_bc,
+                        'orderNumber': sc_order,
+                        'product': sc_product,
+                        'material': sc_material,
+                        'width': sc_w,
+                        'height': sc_h,
+                        'returnReason': sc_reason,
+                        'marketplace': sc_mp,
+                        'mine': True,
+                    },
+                }, ensure_ascii=False)}
 
             if action == 'repack_done':
                 # Упаковщик осмотрел вещь и решил её судьбу:
@@ -1060,7 +1176,11 @@ def handler(event: dict, context) -> dict:
                     }
 
                 cur.execute(
-                    "SELECT storage_barcode, status, repack_return_id FROM goods_warehouse WHERE id = %s",
+                    "SELECT gw.storage_barcode, gw.status, gw.repack_return_id, "
+                    "       gw.repack_workshop_id, w.name "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN workshops w ON w.id = gw.repack_workshop_id "
+                    "WHERE gw.id = %s",
                     (int(gw_id),),
                 )
                 row = cur.fetchone()
@@ -1069,14 +1189,26 @@ def handler(event: dict, context) -> dict:
                 if row[1] != 'repacking':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Эта вещь не на перепаковке'})}
 
+                # Последний рубеж против двойной работы: вещь закреплена за ДРУГИМ цехом.
+                # Список её уже не показывает, но экран мог быть открыт со вчера, и по
+                # старой строке упаковщица нажала бы «Переупаковано» — вторая оплата за
+                # ту же вещь и путаница, где она физически лежит.
+                done_ws = body_data.get('workshopId')
+                if row[3] and done_ws and int(row[3]) != int(done_ws):
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': f'Эту вещь уже взяли в работу: {row[4] or "другой цех"}'},
+                        ensure_ascii=False)}
+
                 if outcome == 'utilized':
                     # Упаковщица нашла брак. Вещь НЕ списываем сразу: кладовщик всё равно
                     # физически забирает её из цеха и несёт старшему кладовщику. Ставим
                     # «На утилизацию» — оттуда кладку чистит только админ.
                     cur.execute(
+                        # repack_workshop_id снимаем: перепаковка окончена, вещь больше
+                        # не числится работой цеха и не занимает место в его списке.
                         "UPDATE goods_warehouse SET status = 'to_dispose', "
                         "dispose_reason = %s, inspected_at = now(), inspected_by = %s, "
-                        "repack_return_id = NULL WHERE id = %s",
+                        "repack_return_id = NULL, repack_workshop_id = NULL WHERE id = %s",
                         (f'Брак при перепаковке: {note}',
                          int(actor_id) if actor_id else None, int(gw_id)),
                     )
@@ -1110,7 +1242,10 @@ def handler(event: dict, context) -> dict:
                 # Вещь осмотрена и годна: упаковщица наклеила стикер хранения. Теперь она
                 # ждёт, пока кладовщик заберёт её из цеха — это виджет «Уже осмотрено».
                 cur.execute(
+                    # repack_workshop_id снимаем: работа сделана, вещь уходит на склад
+                    # и в списке перепаковки цеха её быть не должно.
                     "UPDATE goods_warehouse SET status = 'inspected', repack_return_id = NULL, "
+                    "repack_workshop_id = NULL, "
                     "inspected_at = now(), inspected_by = %s, repack_new_bag = %s WHERE id = %s",
                     (int(actor_id) if actor_id else None, bool(new_bag), int(gw_id)),
                 )

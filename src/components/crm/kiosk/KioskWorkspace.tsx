@@ -13,7 +13,7 @@ import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
 import KioskIdleTimer from '@/components/crm/kiosk/KioskIdleTimer';
 import KioskDefectCheckDialog from '@/components/crm/kiosk/KioskDefectCheckDialog';
 import { roleLabels, type Role } from '@/lib/roles';
-import type { KioskUser, KioskShift } from '@/lib/kioskApi';
+import { fetchRepackCount, type KioskUser, type KioskShift } from '@/lib/kioskApi';
 import type { DefectCheck } from '@/lib/shiftSessionsApi';
 
 interface KioskWorkspaceProps {
@@ -75,6 +75,24 @@ const KioskWorkspace = ({
 
   const closeAt = shift?.canCloseAt ? new Date(shift.canCloseAt) : null;
   const canCloseNow = !closeAt || now >= closeAt.getTime();
+
+  // Сколько вещей ждёт перепаковки в этом цехе — число на плитке меню.
+  //
+  // Обновляем при каждом возврате в меню: упаковщица закрыла вещь и вернулась —
+  // счётчик уже новый. Считаем только СВОЙ цех, иначе киоски цехов №1 и №2 покажут
+  // одно и то же число и обе упаковщицы пойдут за одними вещами.
+  const [repackCount, setRepackCount] = useState(0);
+  const repackWorkshop = currentWorkshopId || Number(workshopId) || null;
+  useEffect(() => {
+    if (screen !== 'menu') return;
+    let alive = true;
+    fetchRepackCount(repackWorkshop).then((r) => {
+      if (alive) setRepackCount(r.mineCount + r.freeCount);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [screen, repackWorkshop]);
 
   return (
     <div className="kiosk-root min-h-screen bg-background">
@@ -228,7 +246,11 @@ const KioskWorkspace = ({
         {screen === 'menu' &&
           (shift?.isOpen || isPreview ? (
             /* Плитки меню — по должности СМЕНЫ: вышла швеёй, значит и разделы швеи. */
-            <KioskMenu onSelect={setScreen} role={(shift?.role || user.role) as Role} />
+            <KioskMenu
+              onSelect={setScreen}
+              role={(shift?.role || user.role) as Role}
+              repackCount={repackCount}
+            />
           ) : (
             <div className="mx-auto max-w-xl space-y-4 pt-8 text-center">
               <Icon name="Clock" size={56} className="mx-auto text-muted-foreground" />
@@ -321,7 +343,13 @@ const KioskWorkspace = ({
 
         {screen === 'repack' && (
           <div className="mx-auto max-w-3xl">
-            <KioskRepackScreen actorId={user.id} actorName={user.name} />
+            <KioskRepackScreen
+              actorId={user.id}
+              actorName={user.name}
+              // Цех киоска: список перепаковки у каждого цеха свой, иначе две
+              // упаковщицы возьмут в работу одну и ту же вещь.
+              workshopId={currentWorkshopId || Number(workshopId) || null}
+            />
           </div>
         )}
 

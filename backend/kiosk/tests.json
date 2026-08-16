@@ -48,6 +48,25 @@
         "outcome": "utilized"
       },
       "expectedStatus": 400
+    },
+    {
+      "name": "Repack scan without barcode fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "repack_scan"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Repack count works",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "repack_count",
+        "workshopId": 1
+      },
+      "expectedStatus": 200
     }
   ]
 }

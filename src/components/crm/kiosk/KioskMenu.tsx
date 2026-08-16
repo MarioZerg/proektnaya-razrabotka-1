@@ -15,6 +15,14 @@ interface KioskMenuProps {
   onSelect: (screen: KioskScreen) => void;
   /** Роль сотрудника — кладовщику на терминале доступны смена и поиск вещей без стикера. */
   role: Role;
+  /**
+   * Сколько вещей ждёт перепаковки в ЭТОМ цехе.
+   *
+   * Число прямо на плитке: упаковщица видит объём работы, не заходя внутрь. Раньше,
+   * чтобы понять, есть ли вообще перепаковка, приходилось открывать экран и ждать
+   * загрузки списка.
+   */
+  repackCount?: number;
 }
 
 const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className: string }> = [
@@ -63,7 +71,7 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
 ];
 
 /** Главное меню терминала — крупные плитки под сенсорный экран. */
-const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
+const KioskMenu = ({ onSelect, role, repackCount = 0 }: KioskMenuProps) => {
   // Кто что видит на терминале:
   //
   // «Товар без стикера» — зона кладовщика: он ищет вещи, оставшиеся без стикера хранения.
@@ -110,8 +118,15 @@ const KioskMenu = ({ onSelect, role }: KioskMenuProps) => {
         <button
           key={t.screen}
           onClick={() => onSelect(t.screen)}
-          className={`flex min-h-[9rem] flex-col items-center justify-center gap-3 rounded-xl p-6 text-center transition active:scale-95 ${t.className}`}
+          className={`relative flex min-h-[9rem] flex-col items-center justify-center gap-3 rounded-xl p-6 text-center transition active:scale-95 ${t.className}`}
         >
+          {/* Счётчик работы прямо на плитке. Показываем только когда есть что делать:
+              нулевой бейдж на каждой плитке превращается в шум. */}
+          {t.screen === 'repack' && repackCount > 0 && (
+            <span className="absolute right-3 top-3 min-w-[2.75rem] rounded-full bg-white px-3 py-1 text-2xl font-bold text-violet-700 shadow">
+              {repackCount}
+            </span>
+          )}
           <Icon name={t.icon} size={56} />
           <span className="text-2xl font-bold leading-tight">{t.label}</span>
         </button>
