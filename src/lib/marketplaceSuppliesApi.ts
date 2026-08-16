@@ -308,6 +308,14 @@ export interface ScanOrderResult {
     total: number;
     remaining: number;
   } | null;
+  /**
+   * Готовая строка таблицы для дорисовки без перезагрузки карточки.
+   *
+   * Кладовщик пикает вещи одну за другой, и перезагружать всю поставку (250 позиций,
+   * ожидающие отгрузки, группы, сверка с OZON) после каждого скана — это секунды
+   * ожидания и прыгающий под руками список. Строку добавляем в таблицу сами.
+   */
+  item?: SupplyItem | null;
 }
 
 export const scanOrderToSupply = (supplyId: number, orderNumber: string): Promise<ScanOrderResult> =>

@@ -69,8 +69,16 @@ const MarketplaceSupplyShow = () => {
     return () => clearInterval(timer);
   }, []);
 
-  const load = () => {
-    setLoading(true);
+  /**
+   * Перезагрузка карточки.
+   *
+   * silent=true — обновляем данные, НЕ показывая экран «Загрузка...» вместо страницы.
+   * Полноэкранный спиннер уместен только при первом открытии: если показывать его на
+   * каждом фоновом обновлении, у кладовщика посреди сборки исчезает вся таблица и
+   * теряется место в прокрутке.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     // «Готово к сборке» — это вещи, застикерованные и ждущие отгрузки: сшитые в цехе
     // (awaiting_supply, лежат в контейнере) и снятые с полок (picking).
     Promise.all([
@@ -113,6 +121,7 @@ const MarketplaceSupplyShow = () => {
   };
 
   useEffect(() => {
+    // Первое открытие карточки — здесь спиннер уместен: показывать пока нечего.
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplyId]);
@@ -137,7 +146,7 @@ const MarketplaceSupplyShow = () => {
           : 'Всё отправлено в пошив — на складе готовых нет',
       });
       setAddOrdersOpen(false);
-      load();
+      load(true);
     } catch (e) {
       toast({
         title: 'Не удалось догрузить',
@@ -169,7 +178,44 @@ const MarketplaceSupplyShow = () => {
       } else {
         toast({ title: `Заказ ${orderNumber} добавлен` });
       }
-      load();
+
+      // СТРОКУ ДОРИСОВЫВАЕМ САМИ, БЕЗ ПЕРЕЗАГРУЗКИ КАРТОЧКИ.
+      //
+      // Раньше здесь стоял load(): после каждого пика заново тянулась вся поставка —
+      // 250 позиций, список ожидающих отгрузки, группы, заказы на пошив, сверка с OZON.
+      // Кладовщик пикает быстрее, чем это грузится: таблица моргала и перерисовывалась
+      // целиком, место в прокрутке терялось, а на большой поставке каждый скан стоил
+      // несколько секунд ожидания.
+      //
+      // Теперь сервер возвращает готовую строку, и мы просто добавляем её в таблицу.
+      // Заодно убираем вещь из «ожидают отгрузки» и уменьшаем счётчик — ровно то, что
+      // сделала бы перезагрузка, но мгновенно и без единого лишнего запроса.
+      if (res.item) {
+        const added = res.item;
+        setSupply((prev) => {
+          if (!prev) return prev;
+          // Защита от гонки: тот же товар мог прилететь дважды (двойной пик сканера,
+          // повтор запроса). Строка с этим goodsWarehouseId должна быть одна.
+          if (prev.items.some((i) => i.goodsWarehouseId === added.goodsWarehouseId)) {
+            return prev;
+          }
+          return {
+            ...prev,
+            items: [...prev.items, added],
+            awaitingItems: (prev.awaitingItems || []).filter(
+              (a) => a.id !== added.goodsWarehouseId,
+            ),
+            awaitingShipCount: Math.max(0, (prev.awaitingShipCount ?? 1) - 1),
+          };
+        });
+        // Счётчик «осталось отсканировать» считается по этому списку — вещь из него
+        // уходит, иначе кладовщик видел бы её в остатке уже после скана.
+        setReadyGoods((prev) => prev.filter((g) => g.id !== added.goodsWarehouseId));
+      } else {
+        // Сервер не прислал строку (старая версия или нештатный случай) — падаем
+        // на прежнее поведение, чтобы таблица не разошлась с реальностью.
+        load(true);
+      }
     } catch (e) {
       playScanErrorSound();
       toast({ title: 'Ошибка сканирования', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
@@ -191,7 +237,7 @@ const MarketplaceSupplyShow = () => {
           title: 'Товар убран из поставки',
           description: 'Вернулся в «На поставку» — можно отсканировать в следующую',
         });
-        load();
+        load(true);
         return;
       }
       // Вещь брали с полки — она едет обратно, а ярлык маркетплейса аннулируется.
@@ -209,7 +255,7 @@ const MarketplaceSupplyShow = () => {
       } else {
         toast({ title: 'Товар убран из поставки' });
       }
-      load();
+      load(true);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
@@ -226,7 +272,7 @@ const MarketplaceSupplyShow = () => {
         comment,
       });
       toast({ title: 'Данные поставки сохранены' });
-      load();
+      load(true);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
@@ -243,7 +289,7 @@ const MarketplaceSupplyShow = () => {
     try {
       await moveSupplyStatus(supplyId, next);
       toast({ title: `Статус изменён на «${next}»` });
-      load();
+      load(true);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
@@ -257,7 +303,7 @@ const MarketplaceSupplyShow = () => {
     setLoadingQr(true);
     try {
       await fetchWbSupplyQr(supplyId);
-      load();
+      load(true);
       toast({ title: 'Стикер загружен' });
     } catch (e) {
       toast({
@@ -275,7 +321,7 @@ const MarketplaceSupplyShow = () => {
     try {
       await forceCompleteSupply(supplyId);
       toast({ title: 'Поставка закрыта принудительно' });
-      load();
+      load(true);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
@@ -296,7 +342,7 @@ const MarketplaceSupplyShow = () => {
         title: 'Товарный состав загружен',
         description: `Товаров в заявке: ${res.totalItems}. ${parts.join(', ')}.`,
       });
-      load();
+      load(true);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {

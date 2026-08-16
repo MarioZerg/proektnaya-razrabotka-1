@@ -1728,6 +1728,70 @@ def handler(event: dict, context) -> dict:
                     }
 
                 conn.commit()
+
+                # ВОЗВРАЩАЕМ ГОТОВУЮ СТРОКУ ТАБЛИЦЫ.
+                #
+                # Раньше после каждого скана фронт перезагружал ВСЮ карточку поставки:
+                # позиции, ожидающие отгрузки, группы, заказы на пошив, сверку с OZON.
+                # На поставке в 250 вещей это секунды ожидания и полная перерисовка
+                # таблицы после каждого пика — кладовщик пикал быстрее, чем страница
+                # успевала обновиться, список прыгал под руками, а место в прокрутке
+                # терялось.
+                #
+                # Теперь отдаём ровно ту строку, которую нужно дорисовать: фронт
+                # добавляет её в конец таблицы и ничего не перезагружает. Поля — те же,
+                # что в списке items у get_detail, иначе новая строка отличалась бы от
+                # соседних (пустой размер, нет фамилии стикеровщика).
+                cur.execute(
+                    "SELECT msi.id, msi.goods_warehouse_id, "
+                    "COALESCE(ro.order_number, o.order_number), "
+                    "COALESCE(ro.product, o.product), COALESCE(ro.material, o.material), "
+                    "COALESCE(ro.width, o.width), COALESCE(ro.height, o.height), "
+                    "gw.status, gw.shipped_at, msi.box_id, "
+                    "COALESCE(ro.group_key, o.group_key), "
+                    "COALESCE(ro.group_size, o.group_size), "
+                    "COALESCE(ro.group_position, o.group_position), "
+                    "COALESCE(ro.status, o.status), "
+                    "COALESCE(ro.ozon_status, o.ozon_status), "
+                    "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id, "
+                    "COALESCE(ro.marketplace, o.marketplace), gw.shipping_labeled_by_name "
+                    "FROM marketplace_supply_items msi "
+                    "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                    "WHERE msi.supply_id = %s AND msi.goods_warehouse_id = %s "
+                    "ORDER BY msi.id DESC LIMIT 1",
+                    (int(supply_id), goods_id),
+                )
+                nr = cur.fetchone()
+                new_item = None
+                if nr:
+                    new_item = {
+                        'id': nr[0],
+                        'goodsWarehouseId': nr[1],
+                        'orderNumber': nr[2],
+                        'product': nr[3],
+                        'material': nr[4],
+                        'width': nr[5],
+                        'height': nr[6],
+                        'goodsStatus': nr[7],
+                        'shippedAt': (nr[8].isoformat() + 'Z') if nr[8] else None,
+                        'boxId': nr[9],
+                        'groupKey': nr[10],
+                        'groupSize': nr[11],
+                        'groupPosition': nr[12],
+                        'isCancelled': (
+                            nr[13] == 'Отменён'
+                            or 'cancel' in (nr[14] or '').lower()
+                            or 'cancel' in (nr[15] or '').lower()
+                        ),
+                        'storageBarcode': nr[16],
+                        'shelfId': nr[17],
+                        'marketplace': nr[18],
+                        'mpStatus': nr[14] or nr[15],
+                        'labeledByName': nr[19],
+                    }
+
                 return {
                     'statusCode': 200,
                     'headers': headers,
@@ -1736,6 +1800,8 @@ def handler(event: dict, context) -> dict:
                         'goodsWarehouseId': goods_id,
                         'orderNumber': order_number,
                         'group': group_hint,
+                        # Готовая строка для дорисовки в таблице без перезагрузки.
+                        'item': new_item,
                     }, ensure_ascii=False),
                 }
 
