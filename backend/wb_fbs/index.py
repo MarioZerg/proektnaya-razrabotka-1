@@ -466,7 +466,7 @@ def handle_remove_order(cur, conn, body_data, api_key, use_sandbox):
     return _resp(200, {'success': True, 'orderNumber': order_number})
 
 
-def handle_check_statuses(cur, conn, api_key, use_sandbox):
+def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_name=None):
     """Сверяет статусы наших готовых FBS-заказов с WB.
 
     В счётчике копились заказы, которые на стороне WB давно уехали или отменены —
@@ -561,6 +561,14 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox):
             _drop_from_accumulator(cur, order_id)
             closed += 1
 
+    # Отмечаем запуск в журнале: по нему страница «Планировщик» показывает админу,
+    # когда задание отработало последний раз и что нашло. Без этой записи молчащий
+    # планировщик неотличим от работающего.
+    log_action(
+        cur, actor_id, actor_name, 'wb_check_statuses', None,
+        f'Проверка статусов WB FBS: проверено {len(rows)}, '
+        f'отменено {cancelled}, закрыто отгруженных {closed}',
+    )
     conn.commit()
     return _resp(200, {
         'checked': len(rows), 'closed': closed, 'cancelled': cancelled, 'statuses': stats,
@@ -1359,7 +1367,7 @@ def handler(event: dict, context) -> dict:
         if action == 'shelf_cancelled_order':
             return handle_shelf_cancelled(cur, conn, body_data, api_key, use_sandbox)
         if action == 'check_statuses':
-            return handle_check_statuses(cur, conn, api_key, use_sandbox)
+            return handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id, actor_name)
         if action == 'list_pending_orders':
             return handle_list_pending(cur, body_data)
         if action == 'move_orders_to_supply':

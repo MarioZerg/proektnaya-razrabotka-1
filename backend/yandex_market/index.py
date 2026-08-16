@@ -567,6 +567,14 @@ def handler(event: dict, context) -> dict:
             )
             rows = cur.fetchall()
             if not rows:
+                # Проверять нечего — но запуск всё равно отмечаем. Иначе страница
+                # «Планировщик» показывала бы «никогда не запускалось» у исправного
+                # задания просто потому, что в работе сейчас нет заказов Яндекса.
+                log_action(
+                    cur, actor_id, actor_name, 'ym_check_statuses',
+                    'Проверка статусов Яндекс Маркета: заказов в работе нет',
+                )
+                conn.commit()
                 return _resp(200, {'checked': 0, 'cancelled': 0, 'removedFromLine': 0})
 
             # СПРАШИВАЕМ ЯНДЕКС ОДНИМ СПИСКОМ, А НЕ ПО ЗАКАЗУ ЗА РАЗ.
@@ -625,6 +633,14 @@ def handler(event: dict, context) -> dict:
                         "  cancelled_at = COALESCE(cancelled_at, now()) WHERE id = %s",
                         (order_id,),
                     )
+            # Отмечаем запуск в журнале: по нему страница «Планировщик» показывает
+            # админу, когда задание отработало последний раз и что нашло. Без этой
+            # записи молчащий планировщик неотличим от работающего.
+            log_action(
+                cur, actor_id, actor_name, 'ym_check_statuses',
+                f'Проверка статусов Яндекс Маркета: проверено {len(rows)}, '
+                f'отменено {cancelled_count}, снято с конвейера {removed}',
+            )
             conn.commit()
             return _resp(200, {
                 'checked': len(rows),

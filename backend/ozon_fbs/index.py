@@ -897,7 +897,7 @@ def handle_refresh_status(cur, conn, client_id, api_key, body_data):
     return _resp(200, {'postingNumber': posting_number, 'ozonStatus': ozon_status})
 
 
-def handle_refresh_all(cur, conn, client_id, api_key, body_data=None):
+def handle_refresh_all(cur, conn, client_id, api_key, body_data=None, actor_id=None, actor_name=None):
     """Разом обновляет статусы всех OZON FBS-заказов в системе. Проходит по списку
     отправлений OZON (/v3/posting/fbs/list, ТОЛЬКО чтение) постранично и для каждого
     отправления, которое есть у нас, сохраняет актуальный ozon_status. Заказы на стороне
@@ -993,6 +993,14 @@ def handle_refresh_all(cur, conn, client_id, api_key, body_data=None):
         )
         updated = len(cur.fetchall())
 
+    # Отмечаем запуск в журнале: по нему страница «Планировщик» показывает админу,
+    # когда задание отработало последний раз и что нашло. Без этой записи молчащий
+    # планировщик неотличим от работающего.
+    log_action(
+        cur, actor_id, actor_name, 'ozon_refresh_statuses',
+        f'Обновление статусов OZON FBS: сверено {len(found)}, '
+        f'обновлено {updated} (окно {window_index + 1} из 3)',
+    )
     conn.commit()
     return _resp(200, {
         'updated': updated, 'checked': len(found), 'known': len(known),
@@ -1422,7 +1430,7 @@ def handler(event: dict, context) -> dict:
         if action == 'refresh_status':
             return handle_refresh_status(cur, conn, client_id, api_key, body_data)
         if action == 'refresh_all_statuses':
-            return handle_refresh_all(cur, conn, client_id, api_key, body_data)
+            return handle_refresh_all(cur, conn, client_id, api_key, body_data, actor_id, actor_name)
         if action == 'find_by_barcode':
             # Кладовщик отсканировал штрихкод с ярлыка OZON — возвращаем номер
             # отправления, по которому вещь ищется в нашей системе.

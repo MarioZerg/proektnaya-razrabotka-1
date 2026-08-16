@@ -1,0 +1,7 @@
+{
+  "tests": [
+    {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
+    {"name": "Scheduler status list", "method": "GET", "path": "/", "expectedStatus": 200},
+    {"name": "POST not allowed", "method": "POST", "path": "/", "body": {}, "expectedStatus": 405}
+  ]
+}
