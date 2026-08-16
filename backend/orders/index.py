@@ -1316,10 +1316,25 @@ def handler(event: dict, context) -> dict:
                 # Раскраивать и списывать материал может только закройщик (и администратор).
                 # Остальные роли — швея, упаковщица, кладовщик, менеджер — к материалам
                 # заказа отношения не имеют, иначе списание ушло бы мимо реального этапа.
+                #
+                # Должность берём из ОТКРЫТОЙ СМЕНЫ, как и на стикеровке: в цехе
+                # совмещают, и человек, оформленный швеёй, может выйти сегодня
+                # закройщиком. Карточка говорит, кем он оформлен, смена — кем
+                # работает прямо сейчас; для допуска к работе верна вторая.
                 if actor_id:
-                    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
-                    cut_role_row = cur.fetchone()
-                    cut_actor_role = cut_role_row[0] if cut_role_row else None
+                    cur.execute(
+                        "SELECT role FROM shift_sessions WHERE user_id = %s "
+                        "AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+                        (int(actor_id),),
+                    )
+                    cut_sh_row = cur.fetchone()
+                    cut_actor_role = cut_sh_row[0] if cut_sh_row and cut_sh_row[0] else None
+                    # Смена не открыта или должность в ней не зафиксирована (старые
+                    # смены) — падаем обратно на карточку, чтобы никого не заблокировать.
+                    if not cut_actor_role:
+                        cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                        cut_role_row = cur.fetchone()
+                        cut_actor_role = cut_role_row[0] if cut_role_row else None
                     if cut_actor_role not in ('cutter', 'admin'):
                         return {
                             'statusCode': 403,
@@ -2071,10 +2086,27 @@ def handler(event: dict, context) -> dict:
                     }
 
                 # Тесьму списывает только швея (и администратор): это её этап работы.
+                #
+                # Должность берём из ОТКРЫТОЙ СМЕНЫ, а не из карточки сотрудника.
+                # В цехе совмещают: Мария Ануфриева числится закройщиком, но сегодня
+                # вышла швеёй и выбрала эту должность при открытии смены. По карточке
+                # ей отказывали — «выбирать материал может только швея», — хотя она
+                # весь день шьёт. Карточка говорит, кем человек оформлен, смена —
+                # кем он работает прямо сейчас; для допуска к работе верна вторая.
                 if actor_id:
-                    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
-                    st_role_row = cur.fetchone()
-                    st_actor_role = st_role_row[0] if st_role_row else None
+                    cur.execute(
+                        "SELECT role FROM shift_sessions WHERE user_id = %s "
+                        "AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+                        (int(actor_id),),
+                    )
+                    sh_role_row = cur.fetchone()
+                    st_actor_role = sh_role_row[0] if sh_role_row and sh_role_row[0] else None
+                    # Смена не открыта или должность в ней не зафиксирована (старые
+                    # смены) — падаем обратно на карточку, чтобы никого не заблокировать.
+                    if not st_actor_role:
+                        cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                        st_role_row = cur.fetchone()
+                        st_actor_role = st_role_row[0] if st_role_row else None
                     if st_actor_role not in ('sewer', 'admin'):
                         return {
                             'statusCode': 403,
