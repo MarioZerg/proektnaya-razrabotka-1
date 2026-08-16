@@ -402,6 +402,67 @@ def handler(event: dict, context) -> dict:
 
             # Счётчик для кладовщика: сколько вещей на полках уже подобрано под заказы и
             # ждёт, чтобы он наклеил стикер отправления. По нему в меню горит значок.
+            if params.get('stuck_cancelled'):
+                # ВЕЩИ, ЗАВИСШИЕ ПОСЛЕ ОТМЕНЫ ЗАКАЗА.
+                #
+                # Заказ отменили на маркетплейсе уже после того, как вещь сшили и
+                # застикеровали ярлыком отправления. Сам заказ мы с конвейера не
+                # снимаем — он доводится до конца, это рабочее правило. А вот вещь
+                # повисает: в поставку она не уедет (на приёмке ярлык отменённого
+                # заказа не примут), но и свободным остатком не считается — числится
+                # «в сборке». В итоге товар выпадает из оборота и находится только
+                # выборочной проверкой.
+                #
+                # Признак зависания — вещь числится в сборке под ОТМЕНЁННЫЙ заказ и
+                # при этом её не держит ни один живой заказ.
+                #
+                # Исключаем:
+                #   * вещи, перезакреплённые за ЖИВЫМ заказом — они уже едут новому
+                #     покупателю, это нормальная ситуация, а не зависание;
+                #   * лежащие в живой поставке — короб уже собран;
+                #   * отгруженные — они физически уехали.
+                cur.execute(
+                    "SELECT gw.id, gw.storage_barcode, gw.status, sh.name, "
+                    "       so.order_number, so.product, so.material, so.width, so.height, "
+                    "       so.cancelled_at, so.marketplace "
+                    "FROM goods_warehouse gw "
+                    "JOIN orders so ON so.id = gw.order_id "
+                    "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "WHERE gw.status IN ('picking', 'awaiting_supply', 'reserved') "
+                    "  AND gw.shipped_at IS NULL "
+                    "  AND (COALESCE(so.ozon_status, '') LIKE 'cancel%' "
+                    "       OR COALESCE(so.ym_status, '') ILIKE 'cancel%' "
+                    "       OR COALESCE(so.status, '') = 'Отменён') "
+                    "  AND (gw.reserved_order_id IS NULL "
+                    "       OR COALESCE(ro.ozon_status, '') LIKE 'cancel%' "
+                    "       OR COALESCE(ro.ym_status, '') ILIKE 'cancel%' "
+                    "       OR COALESCE(ro.status, '') = 'Отменён') "
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                    "        JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                    "        WHERE msi.goods_warehouse_id = gw.id "
+                    "          AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                    "ORDER BY so.cancelled_at ASC NULLS LAST, gw.id"
+                )
+                stuck = [
+                    {
+                        'id': r[0],
+                        'storageBarcode': r[1],
+                        'status': r[2],
+                        'shelfName': r[3],
+                        'orderNumber': r[4],
+                        'product': r[5],
+                        'material': r[6],
+                        'width': r[7],
+                        'height': r[8],
+                        'cancelledAt': (r[9].isoformat() + 'Z') if r[9] else None,
+                        'marketplace': r[10],
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps(
+                    {'items': stuck, 'count': len(stuck)}, ensure_ascii=False)}
+
             if params.get('pending_count'):
                 # Этот счётчик висит в меню у каждого кладовщика весь день — самый
                 # частый запрос во всей системе. Считаем оба числа ОДНИМ проходом по
@@ -2825,6 +2886,92 @@ def handler(event: dict, context) -> dict:
                         ensure_ascii=False,
                     ),
                 }
+
+            if action == 'release_stuck_cancelled':
+                # Вернуть в оборот вещи, зависшие под отменёнными заказами.
+                #
+                # Заказ НЕ трогаем: он остаётся на конвейере и доводится до конца —
+                # это рабочее правило. Работаем только с физической вещью: снимаем
+                # ярлык недействительного отправления и возвращаем её в свободный
+                # остаток, чтобы её подобрали под нового покупателя.
+                #
+                # Вещь с известной полкой сразу становится «На хранении». Если полка
+                # неизвестна — отправляем на раскладку («Осмотрено»): ставить «На
+                # хранении» без полки нельзя, иначе вещь числится на складе «нигде»
+                # и кладовщик её не найдёт.
+                ids = body_data.get('ids') or []
+                if not ids:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Выберите вещи'})}
+                ids_csv = ','.join(str(int(i)) for i in ids)
+
+                # Ещё раз проверяем условие зависания на стороне сервера: список на
+                # экране мог устареть, а вещь за это время уехать под живой заказ.
+                # Отдать её тогда в свободный остаток — сорвать чужое отправление.
+                cur.execute(
+                    "SELECT gw.id, gw.shelf_id FROM goods_warehouse gw "
+                    "JOIN orders so ON so.id = gw.order_id "
+                    "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                    f"WHERE gw.id IN ({ids_csv}) "
+                    "  AND gw.status IN ('picking', 'awaiting_supply', 'reserved') "
+                    "  AND gw.shipped_at IS NULL "
+                    "  AND (COALESCE(so.ozon_status, '') LIKE 'cancel%' "
+                    "       OR COALESCE(so.ym_status, '') ILIKE 'cancel%' "
+                    "       OR COALESCE(so.status, '') = 'Отменён') "
+                    "  AND (gw.reserved_order_id IS NULL "
+                    "       OR COALESCE(ro.ozon_status, '') LIKE 'cancel%' "
+                    "       OR COALESCE(ro.ym_status, '') ILIKE 'cancel%' "
+                    "       OR COALESCE(ro.status, '') = 'Отменён') "
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                    "        JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                    "        WHERE msi.goods_warehouse_id = gw.id "
+                    "          AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена'))"
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps(
+                        {'released': 0, 'toShelf': 0, 'toSorting': 0}, ensure_ascii=False)}
+
+                with_shelf = [str(int(r[0])) for r in rows if r[1] is not None]
+                no_shelf = [str(int(r[0])) for r in rows if r[1] is None]
+
+                if with_shelf:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', "
+                        "  reserved_order_id = NULL, matched_at = NULL, "
+                        "  shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                        "  shipping_labeled_by_name = NULL "
+                        f"WHERE id IN ({','.join(with_shelf)})"
+                    )
+                if no_shelf:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'inspected', "
+                        "  reserved_order_id = NULL, matched_at = NULL, "
+                        "  shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                        "  shipping_labeled_by_name = NULL "
+                        f"WHERE id IN ({','.join(no_shelf)})"
+                    )
+
+                # Обратная ссылка у отменённого заказа больше не действительна: вещь
+                # его не закрывает. Сам заказ при этом остаётся на конвейере.
+                all_ids = ','.join(str(int(r[0])) for r in rows)
+                cur.execute(
+                    f"UPDATE orders SET fulfilled_from_stock_id = NULL "
+                    f"WHERE fulfilled_from_stock_id IN ({all_ids})"
+                )
+
+                for r in rows:
+                    log_action(
+                        cur, actor_id, actor_name, 'release_stuck', 'goods_warehouse', r[0],
+                        'Возвращена в оборот: заказ отменён на маркетплейсе, '
+                        'ярлык отправления снят',
+                    )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'released': len(rows),
+                    'toShelf': len(with_shelf),
+                    'toSorting': len(no_shelf),
+                }, ensure_ascii=False)}
 
             if action == 'restore_lost':
                 # «Нашёлся» — списанная вещь обнаружилась и физически цела.

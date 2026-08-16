@@ -6,6 +6,7 @@ import GoodsWarehouseTable from '@/components/crm/goodsWarehouse/GoodsWarehouseT
 import GoodsWarehouseHeader from '@/components/crm/goodsWarehouse/GoodsWarehouseHeader';
 import GoodsWarehouseWorkTiles from '@/components/crm/goodsWarehouse/GoodsWarehouseWorkTiles';
 import GoodsWarehouseDialogs from '@/components/crm/goodsWarehouse/GoodsWarehouseDialogs';
+import StuckCancelledPanel from '@/components/crm/goodsWarehouse/StuckCancelledPanel';
 import { useGoodsWarehouseState } from '@/components/crm/goodsWarehouse/useGoodsWarehouseState';
 import TablePager from '@/components/crm/finance/TablePager';
 
@@ -58,6 +59,19 @@ const GoodsWarehouse = () => {
           setReprintOpen={s.setReprintOpen}
           load={s.load}
           loadInspectedReady={s.loadInspectedReady}
+        />
+
+        {/* Зависли после отмены: заказ отменили уже после стикеровки. В поставку такие
+            вещи не уедут, но и свободным остатком не считаются — товар выпадает из
+            оборота молча. Показываем СРАЗУ, до непроверенных возвратов: это потеря
+            готового товара, а не рядовая работа. */}
+        <StuckCancelledPanel
+          items={s.stuckCancelled}
+          onReload={() => {
+            s.loadStuckCancelled();
+            s.load();
+            s.loadInspectedReady();
+          }}
         />
 
         {/* Привезли с ПВЗ, но ещё не осмотрели. Такой товар нельзя продавать:

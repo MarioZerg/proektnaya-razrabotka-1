@@ -151,6 +151,21 @@
         "actorId": 0
       },
       "expectedStatus": 403
+    },
+    {
+      "name": "Stuck cancelled list works",
+      "method": "GET",
+      "path": "/?stuck_cancelled=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Release stuck without ids fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "release_stuck_cancelled"
+      },
+      "expectedStatus": 400
     }
   ]
 }

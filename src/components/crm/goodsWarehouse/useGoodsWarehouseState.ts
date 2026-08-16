@@ -7,7 +7,9 @@ import {
   returnGoodsToWorkshop,
   markGoodsLost,
   deleteGoods,
+  fetchStuckCancelled,
   type GoodsWarehouseItem,
+  type StuckCancelledItem,
 } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { fetchMarketplaceReturns } from '@/lib/marketplaceReturnsApi';
@@ -106,6 +108,21 @@ export const useGoodsWarehouseState = () => {
     fetchMarketplaceReturns({ status: 'picked_up' })
       .then((d) => setUncheckedReturns(d.counts.picked_up || 0))
       .catch(() => setUncheckedReturns(0));
+  }, []);
+
+  // Вещи, зависшие после отмены заказа на маркетплейсе: заказ отменили уже после
+  // стикеровки, вещь в поставку не уедет, но и свободным остатком не считается.
+  // Раньше такое находили только выборочной проверкой — теперь видно на складе сразу.
+  const [stuckCancelled, setStuckCancelled] = useState<StuckCancelledItem[]>([]);
+
+  const loadStuckCancelled = () => {
+    fetchStuckCancelled()
+      .then((d) => setStuckCancelled(d.items))
+      .catch(() => setStuckCancelled([]));
+  };
+
+  useEffect(() => {
+    loadStuckCancelled();
   }, []);
 
   // Вещи, отменённые клиентом: упаковщик наклеил стикер хранения, кладовщик ещё не положил
@@ -308,6 +325,8 @@ export const useGoodsWarehouseState = () => {
     load,
     loadInspectedReady,
     uncheckedReturns,
+    stuckCancelled,
+    loadStuckCancelled,
     pickingPending,
     pickingFbo,
     pickingFbs,

@@ -670,3 +670,49 @@ export const sendGoodsToSewing = (
     success: true;
     returnedOrder: string | null;
   }>;
+/**
+ * Вещь, зависшая после отмены заказа на маркетплейсе.
+ *
+ * Заказ отменили уже после того, как вещь сшили и застикеровали. Сам заказ с конвейера
+ * не снимается — он доводится до конца. А вещь повисает: в поставку не уедет (ярлык
+ * отменённого заказа на приёмке не примут), но и свободным остатком не считается.
+ */
+export interface StuckCancelledItem {
+  id: number;
+  storageBarcode: string;
+  status: string;
+  shelfName: string | null;
+  orderNumber: string | null;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  cancelledAt: string | null;
+  marketplace: string | null;
+}
+
+/** Список вещей, зависших после отмены заказа. */
+export const fetchStuckCancelled = async (): Promise<{
+  items: StuckCancelledItem[];
+  count: number;
+}> => {
+  const res = await fetch(`${GOODS_WAREHOUSE_URL}?stuck_cancelled=1`);
+  if (!res.ok) return { items: [], count: 0 };
+  const data = await res.json();
+  return { items: data.items || [], count: data.count || 0 };
+};
+
+/**
+ * Вернуть зависшие вещи в оборот: снять ярлык отменённого отправления и отдать
+ * в свободный остаток. Заказы при этом НЕ трогаются — они остаются на конвейере.
+ */
+export const releaseStuckCancelled = (
+  ids: number[],
+  actorId?: number,
+  actorName?: string,
+): Promise<{ released: number; toShelf: number; toSorting: number }> =>
+  postAction({ action: 'release_stuck_cancelled', ids, actorId, actorName }) as Promise<{
+    released: number;
+    toShelf: number;
+    toSorting: number;
+  }>;
