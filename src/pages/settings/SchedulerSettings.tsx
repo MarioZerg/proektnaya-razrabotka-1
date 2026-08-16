@@ -39,7 +39,8 @@ const SchedulerSettings = () => {
 
   const load = () => {
     setLoading(true);
-    fetchSchedulerStatus()
+    // Передаём себя: ссылки с ключом запуска сервер отдаёт только администратору.
+    fetchSchedulerStatus(user?.id)
       .then((d) => {
         setJobs(d.items);
         setGroups(d.groups);
@@ -61,7 +62,7 @@ const SchedulerSettings = () => {
     const timer = setInterval(load, 60000);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user?.id]);
 
   if (!isAdmin) {
     return (

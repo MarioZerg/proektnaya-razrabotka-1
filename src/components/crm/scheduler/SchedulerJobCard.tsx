@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
+import { useToast } from '@/hooks/use-toast';
 import type { SchedulerJob } from '@/lib/schedulerStatusApi';
 
 /** Когда задание отработало — понятным языком, без дат и секунд. */
@@ -34,7 +37,24 @@ const STATE_STYLE: Record<
 
 /** Одно фоновое задание: что делает, когда отработало и что нашло. */
 const SchedulerJobCard = ({ job }: { job: SchedulerJob }) => {
+  const { toast } = useToast();
   const st = STATE_STYLE[job.state];
+  const [showUrl, setShowUrl] = useState(false);
+
+  const copy = async (text: string, what: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: `${what} скопирован` });
+    } catch {
+      // Копирование в буфер работает не везде (старый браузер, доступ по http) —
+      // тогда просто оставляем адрес на экране, его можно выделить руками.
+      toast({
+        title: 'Не удалось скопировать',
+        description: 'Выделите адрес и скопируйте вручную',
+        variant: 'destructive',
+      });
+    }
+  };
 
   return (
     <Card className={`shadow-none ${st.border}`}>
@@ -73,6 +93,55 @@ const SchedulerJobCard = ({ job }: { job: SchedulerJob }) => {
             </p>
           )}
         </div>
+
+        {/* Готовый адрес для планировщика. Прячем под кнопку: внутри ключ запуска,
+            и держать его постоянно на экране незачем — подсмотрят через плечо. */}
+        {job.url && (
+          <div className="space-y-2 pl-7">
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowUrl((v) => !v)}>
+                <Icon name={showUrl ? 'EyeOff' : 'Link'} size={14} className="mr-1" />
+                {showUrl ? 'Скрыть адрес' : 'Показать адрес'}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => copy(job.url!, 'Адрес')}>
+                <Icon name="Copy" size={14} className="mr-1" />
+                Копировать
+              </Button>
+            </div>
+
+            {showUrl && (
+              <div className="space-y-2">
+                {/* Метод важен: задание со штрафами работает только через POST,
+                    обычной ссылкой его не запустить. */}
+                {job.method === 'POST' && (
+                  <p className="text-sm font-medium text-amber-700">
+                    Задание запускается методом POST — в планировщике выберите POST и
+                    вставьте тело запроса
+                  </p>
+                )}
+                <p className="break-all rounded border bg-background px-2 py-1 font-mono-tech text-xs">
+                  {job.url}
+                </p>
+                {job.body && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Тело запроса:</p>
+                    <p className="break-all rounded border bg-background px-2 py-1 font-mono-tech text-xs">
+                      {job.body}
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => copy(job.body!, 'Тело запроса')}
+                    >
+                      <Icon name="Copy" size={14} className="mr-1" />
+                      Копировать тело
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

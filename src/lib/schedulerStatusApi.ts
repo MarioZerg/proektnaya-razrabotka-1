@@ -27,6 +27,12 @@ export interface SchedulerJob {
    * unknown — ночное задание, может законно молчать (тревогой не считается).
    */
   state: 'ok' | 'late' | 'never' | 'unknown';
+  /** Готовая ссылка для планировщика. Приходит ТОЛЬКО админу: внутри ключ запуска. */
+  url: string | null;
+  /** GET — обычная ссылка. POST — нужен метод POST и тело запроса. */
+  method: 'GET' | 'POST';
+  /** Тело запроса для POST-задания. Для обычных ссылок — null. */
+  body: string | null;
 }
 
 /** Раздел страницы: задания сгруппированы по смыслу работы. */
@@ -37,12 +43,18 @@ export interface SchedulerGroup {
   hint: string;
 }
 
-export const fetchSchedulerStatus = async (): Promise<{
+export const fetchSchedulerStatus = async (
+  actorId?: number,
+): Promise<{
   items: SchedulerJob[];
   groups: SchedulerGroup[];
   problems: number;
+  /** Видны ли ссылки запуска: только администратору. */
+  canSeeUrls: boolean;
 }> => {
-  const res = await fetch(SCHEDULER_STATUS_URL);
+  const res = await fetch(
+    actorId ? `${SCHEDULER_STATUS_URL}?actorId=${actorId}` : SCHEDULER_STATUS_URL,
+  );
   if (!res.ok) throw new Error('Не удалось загрузить состояние заданий');
   return res.json();
 };

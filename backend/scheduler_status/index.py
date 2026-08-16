@@ -36,6 +36,8 @@ JOBS = [
     {
         'key': 'ozon_sync_orders',
         'title': 'OZON — новые заказы',
+        'func': 'ozon_fbs',
+        'urlAction': 'sync_orders',
         'purpose': 'Забирает с OZON новые заказы и ставит их на конвейер',
         'group': 'orders',
         'everyMin': 15,
@@ -44,6 +46,8 @@ JOBS = [
     {
         'key': 'wb_sync_orders',
         'title': 'WildBerries — новые заказы',
+        'func': 'wb_fbs',
+        'urlAction': 'sync_orders',
         'purpose': 'Забирает с WB новые заказы и ставит их на конвейер',
         'group': 'orders',
         'everyMin': 15,
@@ -52,6 +56,8 @@ JOBS = [
     {
         'key': 'ym_sync',
         'title': 'Яндекс Маркет — новые заказы',
+        'func': 'yandex_market',
+        'urlAction': 'sync',
         'purpose': 'Забирает с Яндекса новые заказы и ставит их на конвейер',
         'group': 'orders',
         'everyMin': 15,
@@ -61,6 +67,8 @@ JOBS = [
     {
         'key': 'ozon_refresh_statuses',
         'title': 'OZON — отмены и статусы',
+        'func': 'ozon_fbs',
+        'urlAction': 'refresh_all_statuses',
         'purpose': 'Ловит отказы покупателей и снимает уехавшие заказы с очереди',
         'group': 'cancels',
         'everyMin': 60,
@@ -69,6 +77,8 @@ JOBS = [
     {
         'key': 'wb_check_statuses',
         'title': 'WildBerries — отмены и статусы',
+        'func': 'wb_fbs',
+        'urlAction': 'check_statuses',
         'purpose': 'Ловит отказы покупателей и закрывает уже отгруженные заказы',
         'group': 'cancels',
         'everyMin': 60,
@@ -77,6 +87,8 @@ JOBS = [
     {
         'key': 'ym_check_statuses',
         'title': 'Яндекс Маркет — отмены и статусы',
+        'func': 'yandex_market',
+        'urlAction': 'check_statuses',
         'purpose': 'Ловит отказы покупателей до того, как вещь дойдёт до стикеровки',
         'group': 'cancels',
         'everyMin': 60,
@@ -86,6 +98,8 @@ JOBS = [
     {
         'key': 'sync',
         'title': 'Возвраты с маркетплейсов',
+        'func': 'marketplace_returns',
+        'urlAction': 'sync',
         'purpose': 'Тянет заявки на возврат, чтобы кладовщик забрал вещи с пункта выдачи',
         'group': 'service',
         'everyMin': 60,
@@ -94,6 +108,8 @@ JOBS = [
     {
         'key': 'ozon_split_pending',
         'title': 'OZON — разделение заказов',
+        'func': 'ozon_fbs',
+        'urlAction': 'split_pending',
         'purpose': 'Разбивает заказ из нескольких штор на отдельные задания для цеха',
         'group': 'service',
         'everyMin': 60,
@@ -102,6 +118,11 @@ JOBS = [
     {
         'key': 'shifts_auto_close',
         'title': 'Автозакрытие смен',
+        'func': 'shift_sessions',
+        'urlAction': 'auto_close',
+        # Автозакрытие начисляет штрафы, поэтому работает только через POST —
+        # простой ссылкой его не дёрнуть, в планировщике нужен метод POST и тело.
+        'method': 'POST',
         'purpose': 'Закрывает смены, которые сотрудники забыли закрыть, и ставит штрафы',
         'group': 'service',
         'everyMin': 1440,
@@ -110,6 +131,17 @@ JOBS = [
         'optional': True,
     },
 ]
+
+# Адреса функций, которые дёргает планировщик. Держим здесь, потому что функция
+# собирает готовые ссылки для копирования в cron-job.org — админ не должен искать
+# их по разным экранам и склеивать руками.
+FUNC_IDS = {
+    'ozon_fbs': 'c1ec58fb-3291-4827-a469-11a1e7019684',
+    'wb_fbs': '142096e2-0171-412b-b6df-1631cb52574a',
+    'yandex_market': '27689c0a-e080-4c26-b433-8e0979079d19',
+    'marketplace_returns': '015dbb02-13c9-49de-8718-8fe37c329b30',
+    'shift_sessions': '6143d29d-094c-4dc6-a520-eb0eeb10d8a0',
+}
 
 # Разделы страницы: заголовок и пояснение, чем грозит молчание.
 GROUPS = [
@@ -148,9 +180,26 @@ def handler(event: dict, context) -> dict:
     if method != 'GET':
         return _resp(405, {'error': 'Method not allowed'})
 
+    params = event.get('queryStringParameters') or {}
+    actor_id = params.get('actorId')
+
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
     try:
         cur = conn.cursor()
+
+        # ГОТОВЫЕ ССЫЛКИ ОТДАЁМ ТОЛЬКО АДМИНИСТРАТОРУ.
+        #
+        # В ссылке зашит ключ планировщика: кто его знает, тот может запускать загрузки
+        # и автозакрытие смен со штрафами со стороны. Роль берём из базы, а не из
+        # запроса — в запросе её можно подменить, в базе нет.
+        is_admin = False
+        if actor_id:
+            cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+            row = cur.fetchone()
+            is_admin = bool(row and row[0] == 'admin')
+
+        cron_secret = os.environ.get('CRON_SECRET', '')
+        base = os.environ.get('FUNCTIONS_BASE_URL', 'https://functions.poehali.dev')
 
         keys = "', '".join(j['key'] for j in JOBS)
         # Категорию НЕ фильтруем: загрузка возвратов пишется в журнал под 'returns',
@@ -206,11 +255,34 @@ def handler(event: dict, context) -> dict:
                 'runsPerDay': a.get('perDay', 0),
                 'lastResult': last_desc.get(job['key']),
                 'state': state,
+                # Готовая ссылка для планировщика — с ключом внутри, поэтому только
+                # администратору. Остальным отдаём null: карточка покажет состояние,
+                # но не выдаст ключ запуска.
+                'url': (
+                    # POST-задание запускается телом запроса, а не адресом: ключ в
+                    # адрес не подставляем, иначе админ скопирует ссылку, вставит
+                    # в планировщик как обычную — и она молча не сработает.
+                    f"{base}/{FUNC_IDS[job['func']]}"
+                    if job.get('method') == 'POST'
+                    else f"{base}/{FUNC_IDS[job['func']]}"
+                         f"?action={job['urlAction']}&cronSecret={cron_secret}"
+                ) if (is_admin and cron_secret) else None,
+                # Автозакрытие смен трогает деньги и работает только через POST:
+                # в планировщике для него нужен метод POST и тело запроса.
+                'method': job.get('method', 'GET'),
+                'body': (
+                    json.dumps({'action': job['urlAction'], 'cronSecret': cron_secret},
+                               ensure_ascii=False)
+                    if (is_admin and cron_secret and job.get('method') == 'POST') else None
+                ),
             })
 
         return _resp(200, {
             'items': items,
             'groups': GROUPS,
+            # Ссылки показываем только админу — фронт по этому флагу решает,
+            # рисовать ли блок с адресами.
+            'canSeeUrls': bool(is_admin and cron_secret),
             # В тревогу считаем только реальные поломки. Задания со статусом unknown
             # (ночные, могут законно молчать) в счётчик не идут — иначе на странице
             # вечно висела бы «проблема», к которой все привыкнут и перестанут читать.
