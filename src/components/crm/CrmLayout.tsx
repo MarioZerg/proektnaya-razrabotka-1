@@ -57,7 +57,11 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   );
 
   // Счётчик работы у упаковщицы: возвраты, переданные кладовщиком в цех на осмотр.
-  const repackPending = useRepackPending(user?.role === 'packer' || user?.role === 'admin');
+  // Цех берём из открытой смены, иначе из профиля: у каждого цеха своя перепаковка.
+  const repackPending = useRepackPending(
+    user?.role === 'packer' || user?.role === 'admin',
+    user?.activeWorkshopId || user?.workshopId || null,
+  );
 
   const navigate = useNavigate();
   const location = useLocation();

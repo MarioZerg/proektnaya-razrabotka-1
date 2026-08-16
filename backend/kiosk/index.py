@@ -1091,28 +1091,66 @@ def handler(event: dict, context) -> dict:
                             'body': json.dumps({'error': 'Отсканируйте стикер'})}
 
                 code_esc = scan_code.replace("'", "''")
+
+                # ЧТО ИМЕННО СКАНИРУЕТ УПАКОВЩИЦА.
+                #
+                # На вернувшемся пакете наш стикер хранения (GW-xxxxxx) часто содран или
+                # заклеен: пакет ездил к покупателю и обратно. Живым остаётся ярлык
+                # маркетплейса — длинный числовой код вроде 451308586611000. Упаковщица
+                # пикала именно его и получала «стикер не найден», потому что искали
+                # только по нашему складскому штрихкоду.
+                #
+                # Теперь принимаем любой код, которым вещь реально помечена:
+                #   * наш стикер хранения (storage_barcode);
+                #   * ярлык возврата маркетплейса (marketplace_returns.return_barcode);
+                #   * номер отправления, по которому вещь уехала (posting_number).
+                #
+                # ЖЁСТКОЕ ОГРАНИЧЕНИЕ: ищем ТОЛЬКО среди вещей со статусом 'repacking' —
+                # тех, что кладовщик перевёл в цех на перепаковку. Это и есть защита от
+                # актуальных FBS-заказов: живая вещь, которая вот-вот уедет покупателю,
+                # в перепаковку не переведена, и по её ярлыку сканер ответит «не найдена».
+                # Случайно списать или переупаковать товар из активного отправления
+                # физически невозможно — он не входит в область поиска.
                 cur.execute(
                     "SELECT gw.id, gw.status, gw.storage_barcode, o.order_number, o.product, "
                     "o.material, o.width, o.height, mr.return_reason, mr.marketplace, "
                     "gw.repack_workshop_id, w.name "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
-                    "LEFT JOIN marketplace_returns mr ON mr.id = gw.repack_return_id "
+                    "LEFT JOIN marketplace_returns mr ON mr.goods_warehouse_id = gw.id "
                     "LEFT JOIN workshops w ON w.id = gw.repack_workshop_id "
-                    f"WHERE gw.storage_barcode = '{code_esc}' LIMIT 1"
+                    "WHERE gw.status = 'repacking' AND ("
+                    f"      gw.storage_barcode = '{code_esc}' "
+                    f"   OR mr.return_barcode = '{code_esc}' "
+                    f"   OR mr.posting_number = '{code_esc}' "
+                    f"   OR o.order_number = '{code_esc}') "
+                    "LIMIT 1"
                 )
                 sc = cur.fetchone()
                 if not sc:
+                    # Вещи с таким кодом на перепаковке нет. Разбираемся, что это было,
+                    # чтобы упаковщица не гадала: чужой товар с полки или живой заказ.
+                    cur.execute(
+                        "SELECT gw.status FROM goods_warehouse gw "
+                        "LEFT JOIN marketplace_returns mr ON mr.goods_warehouse_id = gw.id "
+                        "LEFT JOIN orders o ON o.id = gw.order_id "
+                        f"WHERE gw.storage_barcode = '{code_esc}' "
+                        f"   OR mr.return_barcode = '{code_esc}' "
+                        f"   OR mr.posting_number = '{code_esc}' "
+                        f"   OR o.order_number = '{code_esc}' LIMIT 1"
+                    )
+                    other = cur.fetchone()
+                    if other:
+                        return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                            {'error': 'Эта вещь не на перепаковке — её не переводили в цех. '
+                                      'Сканируйте только вещи из тележки возвратов'},
+                            ensure_ascii=False)}
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps(
-                        {'error': f'Стикер {scan_code} не найден'}, ensure_ascii=False)}
+                        {'error': f'Вещь {scan_code} не найдена среди отправленных на '
+                                  f'перепаковку'}, ensure_ascii=False)}
 
                 (sc_id, sc_status, sc_bc, sc_order, sc_product, sc_material,
                  sc_w, sc_h, sc_reason, sc_mp, sc_ws, sc_ws_name) = sc
-
-                if sc_status != 'repacking':
-                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
-                        {'error': 'Эта вещь не на перепаковке — сканируйте вещи из тележки '
-                                  'возвратов'}, ensure_ascii=False)}
 
                 # Вещь уже взял ДРУГОЙ цех — не отдаём: там её держат в руках.
                 if sc_ws and scan_ws and int(sc_ws) != int(scan_ws):

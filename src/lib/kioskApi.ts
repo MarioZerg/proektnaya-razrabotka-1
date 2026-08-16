@@ -161,23 +161,6 @@ export interface RepackItem {
   mine?: boolean;
 }
 
-/**
- * Список вещей, ожидающих перепаковки в ЭТОМ цехе.
- *
- * workshopId обязателен по смыслу: без него киоск покажет вещи всех цехов, и две
- * упаковщицы возьмут в работу одну и ту же вещь.
- */
-export const fetchRepackItems = async (workshopId?: number | null): Promise<RepackItem[]> => {
-  const res = await fetch(KIOSK_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'repack_list', workshopId }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить список');
-  return data.items || [];
-};
-
 /** Сколько вещей ждёт перепаковки в цехе — число для плитки в меню киоска. */
 export const fetchRepackCount = async (
   workshopId?: number | null,

@@ -11,7 +11,7 @@ import { printDisposeSticker } from '@/lib/printDisposeSticker';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import {
-  fetchRepackItems,
+  fetchRepackCount,
   scanRepackItem,
   finishRepack,
   type RepackItem,
@@ -20,43 +20,54 @@ import {
 interface KioskRepackScreenProps {
   actorId: number;
   actorName: string;
-  /** Цех этого киоска: список перепаковки у каждого цеха свой. */
+  /** Цех этого киоска: перепаковка у каждого цеха своя. */
   workshopId: number | null;
 }
 
-/** Перепаковка: вещи вернулись от покупателя. Упаковщик вскрывает пакет, осматривает вещь
- * и решает — переупаковать (печатает стикер хранения, вещь едет на склад) или списать,
- * если внутри обнаружился брак. */
+/**
+ * Перепаковка возвратов — работа строго через сканер.
+ *
+ * Список всех вещей на экране НЕ показываем. Раньше он выводился целиком: две
+ * упаковщицы видели одни и те же два десятка карточек, листали их, искали свою
+ * вещь глазами и могли нажать кнопку не на той строке. Вещь физически лежит одна,
+ * а решение по ней принимали двое.
+ *
+ * Теперь на экране только поле сканера и ОДНА вещь — та, что упаковщица держит в
+ * руках. Отсканировала — увидела, что это, и приняла решение. Ошибиться строкой
+ * невозможно, потому что строка одна.
+ *
+ * Сканировать можно любой код, которым помечен пакет: наш стикер хранения, ярлык
+ * возврата маркетплейса или номер отправления. Ищется вещь ТОЛЬКО среди переведённых
+ * кладовщиком на перепаковку — активный заказ, который вот-вот уедет покупателю, сюда
+ * не попадёт даже случайным сканом.
+ */
 const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreenProps) => {
   const { toast } = useToast();
-  const [items, setItems] = useState<RepackItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [processingId, setProcessingId] = useState<number | null>(null);
-  const [notes, setNotes] = useState<Record<number, string>>({});
-  // Вещь, по которой упаковщица нажала «Переупаковано»: спрашиваем про новый пакет,
-  // прежде чем закрыть перепаковку и напечатать стикер.
-  const [bagAskItem, setBagAskItem] = useState<RepackItem | null>(null);
-  /** Поле сканера: упаковщица подносит стикер хранения вместо поиска глазами. */
+  /** Единственная вещь на экране — только что отсканированная. */
+  const [item, setItem] = useState<RepackItem | null>(null);
+  const [processing, setProcessing] = useState(false);
+  const [note, setNote] = useState('');
+  /** Спрашиваем про новый пакет перед закрытием перепаковки. */
+  const [bagAsk, setBagAsk] = useState(false);
   const [barcode, setBarcode] = useState('');
   const [scanning, setScanning] = useState(false);
-  /** Отсканированная вещь — показываем её первой и крупно. */
-  const [scannedId, setScannedId] = useState<number | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  /** Сколько вещей ждёт перепаковки в цехе — объём работы без вывода списка. */
+  const [waiting, setWaiting] = useState(0);
+  /** Сколько вещей упаковщица закрыла за эту смену на экране. */
+  const [doneCount, setDoneCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
 
-  const load = () => {
-    setLoading(true);
-    fetchRepackItems(workshopId)
-      .then(setItems)
-      .finally(() => setLoading(false));
+  const loadCount = () => {
+    fetchRepackCount(workshopId).then((r) => setWaiting(r.mineCount + r.freeCount));
   };
 
   useEffect(() => {
     // Греем звук заранее: первый скан должен прозвучать сразу.
     primeScanSounds();
-    load();
+    loadCount();
     focusInput();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workshopId]);
@@ -70,29 +81,28 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
     try {
       const found = await scanRepackItem(code, workshopId);
       playScanSound();
-      // Вещь могла быть свободной и только что закрепилась за нашим цехом — в списке
-      // её ещё нет либо она без отметки. Ставим наверх и помечаем как свою.
-      setItems((prev) => [found, ...prev.filter((i) => i.id !== found.id)]);
-      setScannedId(found.id);
+      setItem(found);
+      // Отметки дефектов от предыдущей вещи не переносим: это другая вещь.
+      setNote('');
     } catch (e) {
       playScanErrorSound();
       setScanError(e instanceof Error ? e.message : 'Не удалось отсканировать');
-      setScannedId(null);
+      setItem(null);
     } finally {
       setScanning(false);
       focusInput();
     }
   };
 
-  useScannerAutoSubmit(barcode, handleScan, !scanning);
+  // Сканер работает, только пока на экране нет вещи: сначала закончи с той, что в
+  // руках, потом бери следующую. Иначе упаковщица пикает пакеты подряд, а решения
+  // по ним теряются.
+  useScannerAutoSubmit(barcode, handleScan, !scanning && !item);
 
-  const handleFinish = async (
-    item: RepackItem,
-    outcome: 'repacked' | 'utilized',
-    newBag?: boolean,
-  ) => {
-    const note = (notes[item.id] || '').trim();
-    if (outcome === 'utilized' && !note) {
+  const handleFinish = async (outcome: 'repacked' | 'utilized', newBag?: boolean) => {
+    if (!item) return;
+    const text = note.trim();
+    if (outcome === 'utilized' && !text) {
       toast({
         title: 'Опишите брак',
         description: 'Администратор должен видеть, за что списан товар',
@@ -100,48 +110,44 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
       });
       return;
     }
-    setProcessingId(item.id);
-    setBagAskItem(null);
+    setProcessing(true);
+    setBagAsk(false);
     try {
       const res = await finishRepack({
         id: item.id,
         outcome,
         newBag,
-        note,
+        note: text,
         actorId,
         actorName,
         workshopId,
       });
 
+      const title =
+        item.material && item.width
+          ? `${item.material} ${item.width}×${item.height}`
+          : item.product;
+
       if (outcome === 'repacked' && res.storageBarcode) {
         // Печатаем стикер хранения сразу: кладовщик по нему положит вещь на полку.
         printStorageSticker({
           storageBarcode: res.storageBarcode,
-          title:
-            item.material && item.width
-              ? `${item.material} ${item.width}×${item.height}`
-              : item.product,
+          title,
           orderNumber: item.orderNumber,
         });
         toast({
-          title: res.accrued
-            ? `Вещь переупакована · +${res.accrued} ₽`
-            : 'Вещь переупакована',
+          title: res.accrued ? `Вещь переупакована · +${res.accrued} ₽` : 'Вещь переупакована',
           description: 'Наклейте стикер хранения — кладовщик заберёт вещь на полку',
         });
       } else {
         // Бракованную вещь тоже стикеруем: без наклейки она уезжает из цеха безымянной,
-        // и на складе никто не знает, что это и за что списано. Стикер брака заметно
-        // отличается от обычного — вещь не положат на полку по ошибке.
+        // и на складе никто не знает, что это и за что списано.
         if (res.storageBarcode) {
           printDisposeSticker({
             storageBarcode: res.storageBarcode,
-            title:
-              item.material && item.width
-                ? `${item.material} ${item.width}×${item.height}`
-                : item.product,
+            title,
             orderNumber: item.orderNumber,
-            reason: res.disposeReason || note,
+            reason: res.disposeReason || text,
           });
         }
         toast({
@@ -149,8 +155,13 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
           description: 'Наклейте стикер брака — кладовщик передаст вещь администратору',
         });
       }
-      setNotes((prev) => ({ ...prev, [item.id]: '' }));
-      load();
+
+      // Экран очищаем полностью: следующая вещь начинается с чистого скана.
+      setItem(null);
+      setNote('');
+      setDoneCount((n) => n + 1);
+      loadCount();
+      focusInput();
     } catch (e) {
       toast({
         title: 'Ошибка',
@@ -158,112 +169,94 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
         variant: 'destructive',
       });
     } finally {
-      setProcessingId(null);
+      setProcessing(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center gap-3 py-16 text-xl text-muted-foreground">
-        <Icon name="Loader2" size={32} className="animate-spin" />
-        Загрузка...
-      </div>
-    );
-  }
-
-  // Счётчик работы цеха: сколько вещей ждёт перепаковки здесь. Свободные (ещё не
-  // закреплённые ни за одним цехом) показываем отдельно — их может забрать любой цех,
-  // и записывать их в свою работу заранее нельзя.
-  const mineCount = items.filter((i) => i.mine).length;
-  const freeCount = items.length - mineCount;
-
-  // Поле сканера — единый блок для обоих состояний экрана (есть вещи или нет).
-  // Сканировать можно всегда: вещь могла приехать в цех только что и в загруженном
-  // списке её ещё нет.
-  const scannerBlock = (
-    <div className="space-y-3 rounded-xl border-2 border-violet-300 bg-violet-50 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xl font-bold text-violet-900">Отсканируйте стикер вещи</p>
-        <div className="flex gap-2">
-          <span className="rounded-lg bg-violet-600 px-4 py-2 text-xl font-bold text-white">
-            {mineCount} шт. в работе
-          </span>
-          {freeCount > 0 && (
-            <span className="rounded-lg border border-violet-400 bg-white px-4 py-2 text-xl font-bold text-violet-800">
-              +{freeCount} свободных
-            </span>
-          )}
-        </div>
-      </div>
-
-      <Input
-        ref={inputRef}
-        autoFocus
-        value={barcode}
-        onChange={(e) => setBarcode(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-        onBlur={focusInput}
-        placeholder="Поднесите стикер хранения к сканеру"
-        className="h-16 font-mono-tech text-2xl"
-        autoComplete="off"
-        disabled={scanning}
-      />
-
-      {scanError && (
-        <div className="flex items-center gap-3 rounded-lg border border-destructive bg-destructive/10 p-3">
-          <Icon name="TriangleAlert" size={24} className="shrink-0 text-destructive" />
-          <p className="text-lg font-medium text-destructive">{scanError}</p>
-        </div>
-      )}
-    </div>
-  );
-
-  if (items.length === 0) {
-    return (
-      <div className="space-y-4">
-        {scannerBlock}
-        <div className="flex flex-col items-center gap-4 py-12">
-          <Icon name="PackageCheck" size={72} className="text-muted-foreground" />
-          <p className="text-center text-2xl font-semibold">Вещей на перепаковку нет</p>
-          <p className="text-center text-muted-foreground">
-            Сюда попадают возвраты, которые кладовщик отправил переупаковать
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const defects = [
+    'Дырка',
+    'Затяжка',
+    'Пятно',
+    'Брак шва',
+    'Не тот размер',
+    'Мятая',
+    'Грязная',
+    'Без дефектов',
+  ];
 
   return (
     <div className="space-y-4">
-      {scannerBlock}
+      {/* Сканер и счётчики. Пока вещь на экране — поле заблокировано: сначала
+          закончи с ней, потом бери следующую. */}
+      <div className="space-y-3 rounded-xl border-2 border-violet-300 bg-violet-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xl font-bold text-violet-900">
+            {item ? 'Закончите с этой вещью' : 'Отсканируйте вещь'}
+          </p>
+          <div className="flex gap-2">
+            <span className="rounded-lg bg-violet-600 px-4 py-2 text-xl font-bold text-white">
+              {waiting} шт. ждёт
+            </span>
+            {doneCount > 0 && (
+              <span className="rounded-lg border border-emerald-400 bg-white px-4 py-2 text-xl font-bold text-emerald-700">
+                {doneCount} готово
+              </span>
+            )}
+          </div>
+        </div>
 
-      <p className="text-lg text-muted-foreground">
-        Осмотрите вещь: годная — переупакуйте и наклейте стикер хранения, бракованная —
-        спишите с указанием причины
-      </p>
+        <Input
+          ref={inputRef}
+          autoFocus
+          value={barcode}
+          onChange={(e) => setBarcode(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleScan()}
+          onBlur={focusInput}
+          placeholder={
+            item ? 'Сначала завершите текущую вещь' : 'Поднесите стикер или ярлык к сканеру'
+          }
+          className="h-16 font-mono-tech text-2xl"
+          autoComplete="off"
+          disabled={scanning || !!item}
+        />
+
+        {!item && (
+          <p className="text-base text-violet-800">
+            Подойдёт любой код на пакете: наш стикер хранения, ярлык возврата или номер
+            отправления
+          </p>
+        )}
+
+        {scanError && (
+          <div className="flex items-start gap-3 rounded-lg border border-destructive bg-destructive/10 p-3">
+            <Icon name="TriangleAlert" size={24} className="mt-0.5 shrink-0 text-destructive" />
+            <p className="text-lg font-medium text-destructive">{scanError}</p>
+          </div>
+        )}
+      </div>
 
       {/* Новый пакет? Спрашиваем перед закрытием перепаковки — по этим ответам видно
           реальный расход упаковки на возвратах. Кнопки крупные: экран сенсорный. */}
-      <Dialog open={!!bagAskItem} onOpenChange={(v) => !v && setBagAskItem(null)}>
+      <Dialog open={bagAsk} onOpenChange={(v) => !v && setBagAsk(false)}>
         <DialogContent className="kiosk-root sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="text-2xl">Вы взяли новый пакет?</DialogTitle>
           </DialogHeader>
 
-          {bagAskItem && (
+          {item && (
             <div className="space-y-4">
               <p className="text-lg text-muted-foreground">
-                {bagAskItem.material && bagAskItem.width
-                  ? `${bagAskItem.material} ${bagAskItem.width}×${bagAskItem.height}`
-                  : bagAskItem.product || 'Товар'}
+                {item.material && item.width
+                  ? `${item.material} ${item.width}×${item.height}`
+                  : item.product || 'Товар'}
               </p>
 
               <div className="grid grid-cols-2 gap-3">
                 <Button
                   size="lg"
                   className="h-24 bg-emerald-600 text-xl text-white hover:bg-emerald-700"
-                  onClick={() => handleFinish(bagAskItem, 'repacked', true)}
-                  disabled={processingId === bagAskItem.id}
+                  onClick={() => handleFinish('repacked', true)}
+                  disabled={processing}
                 >
                   <Icon name="PackagePlus" size={28} className="mr-2" />
                   Да, новый
@@ -272,8 +265,8 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
                   size="lg"
                   variant="outline"
                   className="h-24 text-xl"
-                  onClick={() => handleFinish(bagAskItem, 'repacked', false)}
-                  disabled={processingId === bagAskItem.id}
+                  onClick={() => handleFinish('repacked', false)}
+                  disabled={processing}
                 >
                   <Icon name="Package" size={28} className="mr-2" />
                   Нет, прежний
@@ -284,22 +277,24 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
         </DialogContent>
       </Dialog>
 
-      {items.map((item) => (
-        <Card
-          key={item.id}
-          // Отсканированную вещь выделяем рамкой: упаковщица держит её в руках и
-          // должна сразу видеть, к какой карточке относятся кнопки. Раньше после
-          // скана взгляд приходилось искать нужную строку среди сотни одинаковых.
-          className={
-            item.id === scannedId
-              ? 'border-2 border-violet-500 shadow-none ring-4 ring-violet-200'
-              : 'border-border shadow-none'
-          }
-        >
+      {/* Ничего не отсканировано — экран пустой. Список вещей намеренно не выводим:
+          упаковщица работает с той вещью, что держит в руках. */}
+      {!item ? (
+        <div className="flex flex-col items-center gap-3 py-12">
+          <Icon name="ScanLine" size={72} className="text-muted-foreground" />
+          <p className="text-center text-2xl font-semibold">Отсканируйте вещь из тележки</p>
+          <p className="max-w-md text-center text-muted-foreground">
+            {waiting > 0
+              ? `В цехе ждёт перепаковки ${waiting} шт. Берите вещь и подносите к сканеру`
+              : 'Сюда попадают возвраты, которые кладовщик отправил переупаковать'}
+          </p>
+        </div>
+      ) : (
+        <Card className="border-2 border-violet-500 shadow-none ring-4 ring-violet-200">
           <CardContent className="space-y-3 pt-6">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <p className="text-xl font-bold">
+                <p className="text-2xl font-bold">
                   {item.material && item.width
                     ? `${item.material} ${item.width}×${item.height}`
                     : item.product || 'Товар'}
@@ -320,39 +315,32 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
 
             {/* Что с вещью — кнопками: на сенсорном киоске текст не набрать.
                 Можно отметить несколько дефектов сразу (дырка + пятно), повторное
-                нажатие снимает отметку. Выбранное собирается в ту же строку, что
-                раньше писали руками, — дальше по системе ничего не меняется. */}
+                нажатие снимает отметку. */}
             <div className="space-y-1.5">
               <p className="text-sm font-medium">Что с вещью (обязательно при списании)</p>
               <div className="grid grid-cols-2 gap-2">
-                {['Дырка', 'Затяжка', 'Пятно', 'Брак шва', 'Не тот размер', 'Мятая', 'Грязная', 'Без дефектов'].map(
-                  (label) => {
-                    const chosen = (notes[item.id] || '')
-                      .split(', ')
-                      .filter(Boolean);
-                    const active = chosen.includes(label);
-                    return (
-                      <Button
-                        key={label}
-                        type="button"
-                        variant={active ? 'default' : 'outline'}
-                        className="h-14 text-base"
-                        onClick={() =>
-                          setNotes((prev) => {
-                            const cur = (prev[item.id] || '').split(', ').filter(Boolean);
-                            const next = active
-                              ? cur.filter((c) => c !== label)
-                              : [...cur, label];
-                            return { ...prev, [item.id]: next.join(', ') };
-                          })
-                        }
-                      >
-                        {active && <Icon name="Check" size={18} className="mr-1.5" />}
-                        {label}
-                      </Button>
-                    );
-                  }
-                )}
+                {defects.map((label) => {
+                  const chosen = note.split(', ').filter(Boolean);
+                  const active = chosen.includes(label);
+                  return (
+                    <Button
+                      key={label}
+                      type="button"
+                      variant={active ? 'default' : 'outline'}
+                      className="h-14 text-base"
+                      onClick={() =>
+                        setNote(
+                          (active ? chosen.filter((c) => c !== label) : [...chosen, label]).join(
+                            ', ',
+                          ),
+                        )
+                      }
+                    >
+                      {active && <Icon name="Check" size={18} className="mr-1.5" />}
+                      {label}
+                    </Button>
+                  );
+                })}
               </div>
             </div>
 
@@ -360,13 +348,13 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
               <Button
                 size="lg"
                 className="h-16 bg-emerald-600 text-lg text-white hover:bg-emerald-700"
-                onClick={() => setBagAskItem(item)}
-                disabled={processingId === item.id}
+                onClick={() => setBagAsk(true)}
+                disabled={processing}
               >
                 <Icon
-                  name={processingId === item.id ? 'Loader2' : 'Check'}
+                  name={processing ? 'Loader2' : 'Check'}
                   size={24}
-                  className={`mr-2 ${processingId === item.id ? 'animate-spin' : ''}`}
+                  className={`mr-2 ${processing ? 'animate-spin' : ''}`}
                 />
                 Переупаковано — печать стикера
               </Button>
@@ -374,16 +362,30 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
                 size="lg"
                 variant="outline"
                 className="h-16 text-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => handleFinish(item, 'utilized')}
-                disabled={processingId === item.id}
+                onClick={() => handleFinish('utilized')}
+                disabled={processing}
               >
                 <Icon name="Trash2" size={24} className="mr-2" />
                 Брак — печать стикера
               </Button>
             </div>
+
+            {/* Ошиблась вещью — можно вернуть экран к сканеру, ничего не закрывая. */}
+            <Button
+              variant="ghost"
+              className="h-12 w-full text-base"
+              onClick={() => {
+                setItem(null);
+                setNote('');
+                focusInput();
+              }}
+              disabled={processing}
+            >
+              Это не та вещь — отсканировать другую
+            </Button>
           </CardContent>
         </Card>
-      ))}
+      )}
     </div>
   );
 };
