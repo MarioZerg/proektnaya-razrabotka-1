@@ -129,30 +129,73 @@ def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None):
     return None
 
 
-def match_from_stock(cur, order_id, item_id) -> bool:
-    """Пробует закрыть заказ вещью, уже лежащей на полке (FIFO), — шить заново не нужно."""
-    if not item_id:
-        return False
+def match_group_from_stock(cur, group_key) -> int:
+    """Закрывает связку Яндекса вещами со склада — ТОЛЬКО ЦЕЛИКОМ.
+
+    У Яндекса на весь заказ покупателя один ярлык, и вещи едут вместе. Закрыть часть
+    заказа со склада нельзя: половина уехала бы готовой, половина ушла бы в пошив, а
+    ярлык на них общий — к отгрузке заказ не собрать.
+
+    Раньше подбор шёл поштучно, сразу при создании каждой вещи: первая вещь заказа
+    находила себе пару на полке и уходила в «Со склада», а на вторую готовой не
+    хватало, и она уезжала в цех. Связка разрывалась в момент загрузки заказа — ровно
+    та беда, от которой на складе стоит отдельная защита.
+
+    Теперь смотрим на заказ целиком: если на складе лежат вещи под ВСЕ позиции связки —
+    закрываем её со склада; не хватает хоть одной — не трогаем склад вовсе, заказ
+    целиком уходит в пошив, а вещи остаются свободны для других заказов.
+
+    Возвращает число закрытых со склада вещей (0, если связку закрыть не удалось).
+    """
     cur.execute(
-        "SELECT gw.id FROM goods_warehouse gw "
-        "JOIN orders src ON src.id = gw.order_id "
-        "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
-        "AND src.marketplace_item_id = %s "
-        "ORDER BY gw.received_at ASC LIMIT 1",
-        (int(item_id),),
+        "SELECT id, marketplace_item_id FROM orders "
+        "WHERE group_key = %s AND fulfilled_from_stock_id IS NULL "
+        "  AND sewing_status = 'Новый' AND COALESCE(status, '') <> 'Отменён' "
+        "ORDER BY group_position, id",
+        (group_key,),
     )
-    row = cur.fetchone()
-    if not row:
-        return False
-    cur.execute(
-        "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
-        (int(order_id), row[0]),
-    )
-    cur.execute(
-        "UPDATE orders SET fulfilled_from_stock_id = %s, sewing_status = 'Со склада' WHERE id = %s",
-        (row[0], int(order_id)),
-    )
-    return True
+    units = cur.fetchall()
+    if not units:
+        return 0
+
+    # Сначала ПОДБИРАЕМ вещи под все позиции, ничего не занимая. Одна и та же вещь не
+    # должна закрыть две позиции, поэтому уже выбранные исключаем из следующего поиска.
+    picked = []
+    taken = set()
+    for order_id, item_id in units:
+        if not item_id:
+            return 0
+        exclude = ''
+        if taken:
+            exclude = ' AND gw.id NOT IN (' + ','.join(str(int(t)) for t in taken) + ')'
+        cur.execute(
+            "SELECT gw.id FROM goods_warehouse gw "
+            "JOIN orders src ON src.id = gw.order_id "
+            "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+            "AND src.marketplace_item_id = %s" + exclude + " "
+            "ORDER BY gw.received_at ASC LIMIT 1",
+            (int(item_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            # Хоть на одну позицию готовой вещи нет — связку со склада не закрываем.
+            return 0
+        picked.append((order_id, row[0]))
+        taken.add(row[0])
+
+    # Вещи нашлись на ВСЕ позиции — только теперь занимаем их.
+    for order_id, gw_id in picked:
+        cur.execute(
+            "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() "
+            "WHERE id = %s",
+            (int(order_id), int(gw_id)),
+        )
+        cur.execute(
+            "UPDATE orders SET fulfilled_from_stock_id = %s, sewing_status = 'Со склада' "
+            "WHERE id = %s",
+            (int(gw_id), int(order_id)),
+        )
+    return len(picked)
 
 
 def log_action(cur, actor_id, actor_name, action, description):
@@ -182,11 +225,39 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
     Поэтому все вещи одного заказа получают общий group_key: в цеху они идут одной пачкой,
     закройщик берёт заказ целиком, и шьёт его одна швея.
     """
-    status_code, data = ym_get(
-        f'/campaigns/{campaign_id}/orders?status={YM_NEW_STATUS}&pageSize=50', api_key
-    )
-    if status_code != 200 or 'orders' not in data:
-        return {'error': 'Яндекс Маркет вернул ошибку', 'status': status_code, 'details': data}
+    # ЗАБИРАЕМ ВСЕ СТРАНИЦЫ, А НЕ ПЕРВЫЕ 50.
+    #
+    # Яндекс отдаёт заказы порциями и кладёт ссылку на следующую порцию в paging.
+    # Раньше запрашивалась ровно одна страница: пока заказов было мало, всё сходилось,
+    # но в первый же день распродажи 51-й и дальше заказы просто не попадали на
+    # конвейер — их никто не шил, а на маркетплейсе капала просрочка. Ровно на этом
+    # мы обожглись с OZON, там пришлось доделывать постраничную загрузку задним числом.
+    #
+    # Идём по страницам, пока Яндекс отдаёт токен следующей. Ограничитель в 40 страниц
+    # (до 2000 заказов) — страховка от бесконечного цикла, если API вернёт тот же токен.
+    all_orders = []
+    page_token = None
+    for _ in range(40):
+        q = f'/campaigns/{campaign_id}/orders?status={YM_NEW_STATUS}&pageSize=50'
+        if page_token:
+            q += f'&page_token={page_token}'
+        status_code, data = ym_get(q, api_key)
+        if status_code != 200 or 'orders' not in data:
+            # Первая страница не пришла — это ошибка настройки или связи, сообщаем.
+            # Оборвалась середина — работаем с тем, что успели забрать: лучше поставить
+            # в цех часть заказов, чем не поставить ни одного.
+            if not all_orders:
+                return {
+                    'error': 'Яндекс Маркет вернул ошибку',
+                    'status': status_code,
+                    'details': data,
+                }
+            break
+        all_orders.extend(data.get('orders', []) or [])
+        next_token = (data.get('paging') or {}).get('nextPageToken')
+        if not next_token or next_token == page_token:
+            break
+        page_token = next_token
 
     created = 0
     matched = 0
@@ -195,7 +266,7 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
     unmatched = []
     created_orders = []
 
-    for o in data.get('orders', []) or []:
+    for o in all_orders:
         ym_id = o.get('id')
         if not ym_id:
             continue
@@ -205,6 +276,7 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
         # Сначала разворачиваем позиции в плоский список вещей: товар с count=3 — это три
         # отдельные вещи на конвейере, но все они из одного заказа покупателя.
         units = []
+        has_unknown = False
         for it in o.get('items', []) or []:
             offer_id = it.get('offerId')
             shop_sku = it.get('shopSku')
@@ -213,6 +285,7 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
             barcodes = it.get('barcodes') or []
             item = find_marketplace_item(cur, offer_id, shop_sku, barcodes)
             if not item:
+                has_unknown = True
                 skipped_no_item += 1
                 unmatched.append({
                     'orderId': ym_id,
@@ -226,7 +299,17 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
             for _ in range(int(it.get('count') or 1)):
                 units.append(item)
 
-        if not units:
+        # ЗАКАЗ ЗАВОДИМ ТОЛЬКО ЦЕЛИКОМ.
+        #
+        # Если хоть одна позиция не опознана (товара нет в справочнике), заказ не
+        # ставим на конвейер вовсе. Иначе получалось так: в заказе три вещи, одна не
+        # опозналась — заводились две, связка считала себя полной из двух, цех шил две,
+        # и поставка уезжала недоукомплектованной. А ярлык у Яндекса один на весь заказ:
+        # покупателю приходила неполная посылка, маркетплейс засчитывал недовоз.
+        #
+        # Такой заказ попадает в список «не опознано» — менеджер заводит товар в
+        # справочник, и следующая синхронизация ставит заказ в цех целиком и правильно.
+        if has_unknown or not units:
             continue
 
         group_size = len(units)
@@ -261,12 +344,18 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
             if not inserted:
                 skipped_existing += 1
                 continue
-            if match_from_stock(cur, inserted[0], item_id):
-                matched += 1
             made_any = True
             created += 1
+
+        # Подбор со склада — ПОСЛЕ того, как заведена вся связка, и только целиком.
+        #
+        # Раньше подбор стоял внутри цикла: первая вещь заказа сразу забирала себе
+        # готовую с полки, а на вторую готовой не хватало — и она уходила в пошив.
+        # Заказ разрывался пополам, хотя ярлык на него один и вещи обязаны ехать
+        # вместе. Теперь решение принимается по заказу целиком.
         if made_any:
             created_orders.append(group_key)
+            matched += match_group_from_stock(cur, group_key)
 
     if created:
         log_action(
@@ -371,6 +460,16 @@ def handler(event: dict, context) -> dict:
             return _resp(403, {'error': 'Неверный ключ планировщика'})
         # В журнале должно быть видно, что заказы подтянул планировщик, а не сотрудник.
         actor_id, actor_name = None, 'Планировщик'
+
+    # Действия, которые МЕНЯЮТ данные, по обычной ссылке недоступны.
+    #
+    # Раньше загрузку заказов можно было запустить простым переходом по адресу
+    # функции — без ключа и без входа в систему. Любой, кто увидел ссылку (а её
+    # знает браузер, история, закладки), дёргал за нас API маркетплейса и заводил
+    # заказы в производство. Из интерфейса вызовы идут методом POST, планировщик
+    # ходит по ссылке с ключом — обоим ничего не мешает.
+    if method == 'GET' and action not in ('check', 'campaigns') and not cron_key:
+        return _resp(403, {'error': 'Действие требует ключ планировщика'})
 
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
     try:
@@ -540,17 +639,32 @@ def handler(event: dict, context) -> dict:
             if not rows:
                 return _resp(200, {'checked': 0, 'cancelled': 0, 'removedFromLine': 0})
 
-            # Статусы тянем по каждому заказу Яндекса один раз, а не по каждой вещи:
-            # в связке из пяти штук это пять одинаковых запросов вместо одного.
-            ym_ids = sorted({int(r[1]) for r in rows})
+            # СПРАШИВАЕМ ЯНДЕКС ОДНИМ СПИСКОМ, А НЕ ПО ЗАКАЗУ ЗА РАЗ.
+            #
+            # Раньше на каждый заказ уходил отдельный запрос к API. При сотне заказов
+            # в работе это сотня обращений подряд: функция упиралась в таймаут и
+            # обрывалась, отмены не долавливались вовсе — а узнавали мы о них только
+            # когда упаковщица не могла напечатать ярлык.
+            #
+            # Забираем отменённые одним списком (постранично) и сверяем с нашими.
+            ym_ids = {int(r[1]) for r in rows}
             cancelled_ym = set()
-            for ym_id in ym_ids:
-                st_code, st_data = ym_get(f'/campaigns/{campaign_id}/orders/{ym_id}', api_key)
-                if st_code != 200:
-                    continue
-                ym_status = ((st_data or {}).get('order') or {}).get('status') or ''
-                if ym_status.upper() in ('CANCELLED', 'CANCELED'):
-                    cancelled_ym.add(ym_id)
+            page_token = None
+            for _ in range(40):
+                q = f'/campaigns/{campaign_id}/orders?status=CANCELLED&pageSize=50'
+                if page_token:
+                    q += f'&page_token={page_token}'
+                st_code, st_data = ym_get(q, api_key)
+                if st_code != 200 or not isinstance(st_data, dict):
+                    break
+                for co in (st_data.get('orders') or []):
+                    cid = co.get('id')
+                    if cid and int(cid) in ym_ids:
+                        cancelled_ym.add(int(cid))
+                next_token = (st_data.get('paging') or {}).get('nextPageToken')
+                if not next_token or next_token == page_token:
+                    break
+                page_token = next_token
 
             # Связки, где хоть одна вещь уже в работе: такие с конвейера не снимаем.
             groups_in_work = set()
