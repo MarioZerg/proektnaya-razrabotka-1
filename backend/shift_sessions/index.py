@@ -1033,6 +1033,22 @@ def handler(event: dict, context) -> dict:
                         }
                     )
 
+                # Отмечаем запуск в журнале: по нему страница «Планировщик» показывает
+                # админу, когда задание отработало последний раз. Автозакрытие трогает
+                # деньги (начисляет штрафы), поэтому молчащее задание особенно опасно:
+                # смены остаются открытыми, а разобраться постфактум уже не по чему.
+                cur.execute(
+                    "INSERT INTO audit_log (user_id, user_name, category, action, "
+                    "  entity_type, description) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (
+                        int(body_data.get('actorId')) if body_data.get('actorId') else None,
+                        'Планировщик' if from_cron else 'Администратор',
+                        'integration',
+                        'shifts_auto_close',
+                        'shift_session',
+                        f'Автозакрытие смен: закрыто {len(closed)}',
+                    ),
+                )
                 conn.commit()
                 return {
                     'statusCode': 200,

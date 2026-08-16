@@ -285,11 +285,13 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
         if made_any:
             created_orders.append(group_key)
 
-    if created:
-        log_action(
-            cur, actor_id, actor_name, 'ym_sync',
-            f'Загружено с Яндекс Маркета: {created} вещей в {len(created_orders)} заказах',
-        )
+    # Пишем в журнал КАЖДЫЙ запуск, даже когда новых заказов нет: иначе исправное
+    # задание в спокойный час выглядит на странице «Планировщик» как отвалившееся.
+    log_action(
+        cur, actor_id, actor_name, 'ym_sync',
+        f'Загружено с Яндекс Маркета: {created} вещей в {len(created_orders)} заказах'
+        if created else 'Загрузка с Яндекс Маркета: новых заказов нет',
+    )
     return {
         'created': created,
         # Заказы Яндекса со склада не подбираются вовсе — всегда идут в пошив.

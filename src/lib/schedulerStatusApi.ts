@@ -12,7 +12,8 @@ export interface SchedulerJob {
   title: string;
   /** Зачем это задание нужно — понятным языком. */
   purpose: string;
-  marketplace: string;
+  /** Раздел страницы: orders — приём заказов, cancels — отмены, service — склад и цех. */
+  group: string;
   /** Как часто задание должно запускаться, минут. */
   everyMin: number;
   lastRunAt: string | null;
@@ -21,12 +22,24 @@ export interface SchedulerJob {
   runsPerDay: number;
   /** Что задание нашло в последний раз. */
   lastResult: string | null;
-  /** ok — работает, late — молчит слишком долго, never — не запускалось ни разу. */
-  state: 'ok' | 'late' | 'never';
+  /**
+   * ok — работает, late — молчит слишком долго, never — не запускалось ни разу,
+   * unknown — ночное задание, может законно молчать (тревогой не считается).
+   */
+  state: 'ok' | 'late' | 'never' | 'unknown';
+}
+
+/** Раздел страницы: задания сгруппированы по смыслу работы. */
+export interface SchedulerGroup {
+  key: string;
+  title: string;
+  /** Чем грозит, если задания раздела перестанут работать. */
+  hint: string;
 }
 
 export const fetchSchedulerStatus = async (): Promise<{
   items: SchedulerJob[];
+  groups: SchedulerGroup[];
   problems: number;
 }> => {
   const res = await fetch(SCHEDULER_STATUS_URL);

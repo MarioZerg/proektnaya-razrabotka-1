@@ -635,12 +635,14 @@ def handler(event: dict, context) -> dict:
                 wb = sync_wb(cur, days)
                 yandex = sync_yandex(cur, days)
                 total_created = ozon['created'] + wb['created'] + yandex['created']
-                if total_created:
-                    log_action(
-                        cur, None, 'Планировщик', 'sync',
-                        f'Загрузка возвратов: новых {total_created}',
-                        {'ozon': ozon, 'wb': wb, 'yandex': yandex},
-                    )
+                # Пишем в журнал КАЖДЫЙ запуск, даже когда новых заявок нет: иначе
+                # исправное задание в спокойный час выглядит на странице «Планировщик»
+                # как отвалившееся.
+                log_action(
+                    cur, None, 'Планировщик', 'sync',
+                    f'Загрузка возвратов: новых {total_created}',
+                    {'ozon': ozon, 'wb': wb, 'yandex': yandex},
+                )
                 conn.commit()
                 return _resp(200, {
                     'ozon': ozon,

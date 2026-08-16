@@ -5,27 +5,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import { fetchSchedulerStatus, type SchedulerJob } from '@/lib/schedulerStatusApi';
-
-/** Когда задание отработало — понятным языком, без дат и секунд. */
-const agoText = (minutes: number | null) => {
-  if (minutes === null) return 'ни разу';
-  if (minutes < 2) return 'только что';
-  if (minutes < 60) return `${minutes} мин назад`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} ч назад`;
-  const days = Math.floor(hours / 24);
-  return days === 1 ? 'вчера' : `${days} дн назад`;
-};
-
-/** Как часто задание должно запускаться. */
-const everyText = (min: number) => (min < 60 ? `каждые ${min} мин` : 'каждый час');
-
-const STATE_STYLE: Record<SchedulerJob['state'], { border: string; icon: string; color: string }> = {
-  ok: { border: 'border-emerald-300 bg-emerald-50', icon: 'CircleCheck', color: 'text-emerald-600' },
-  late: { border: 'border-amber-300 bg-amber-50', icon: 'TriangleAlert', color: 'text-amber-600' },
-  never: { border: 'border-rose-300 bg-rose-50', icon: 'CircleX', color: 'text-rose-600' },
-};
+import SchedulerJobCard from '@/components/crm/scheduler/SchedulerJobCard';
+import {
+  fetchSchedulerStatus,
+  type SchedulerGroup,
+  type SchedulerJob,
+} from '@/lib/schedulerStatusApi';
 
 /**
  * Планировщик — состояние фоновых заданий.
@@ -37,6 +22,10 @@ const STATE_STYLE: Record<SchedulerJob['state'], { border: string; icon: string;
  *
  * Поэтому страница показывает не «настроено / не настроено», а факт: когда каждое
  * задание отработало в последний раз и что нашло.
+ *
+ * Задания сгруппированы по смыслу работы, а не по маркетплейсам: админ открывает
+ * страницу с вопросом «что сломалось», и ему важно сразу видеть ЧТО именно —
+ * приём заказов, ловля отмен или служебная работа склада.
  */
 const SchedulerSettings = () => {
   const { toast } = useToast();
@@ -44,6 +33,7 @@ const SchedulerSettings = () => {
   const isAdmin = user?.role === 'admin';
 
   const [jobs, setJobs] = useState<SchedulerJob[]>([]);
+  const [groups, setGroups] = useState<SchedulerGroup[]>([]);
   const [problems, setProblems] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -52,6 +42,7 @@ const SchedulerSettings = () => {
     fetchSchedulerStatus()
       .then((d) => {
         setJobs(d.items);
+        setGroups(d.groups);
         setProblems(d.problems);
       })
       .catch((e) =>
@@ -87,8 +78,8 @@ const SchedulerSettings = () => {
           <div>
             <h1 className="text-xl font-bold">Планировщик</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Фоновые задания забирают заказы с маркетплейсов и ловят отказы покупателей.
-              Работают сами, без открытой системы
+              Фоновые задания забирают заказы с маркетплейсов, ловят отказы покупателей и
+              ведут склад. Работают сами, без открытой системы
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={load} disabled={loading}>
@@ -113,11 +104,9 @@ const SchedulerSettings = () => {
               size={24}
               className={`shrink-0 ${problems === 0 ? 'text-emerald-600' : 'text-amber-600'}`}
             />
-            <p
-              className={`font-bold ${problems === 0 ? 'text-emerald-900' : 'text-amber-900'}`}
-            >
+            <p className={`font-bold ${problems === 0 ? 'text-emerald-900' : 'text-amber-900'}`}>
               {problems === 0
-                ? 'Все задания работают'
+                ? `Все задания работают: ${jobs.length}`
                 : `Не работает заданий: ${problems} — заказы и отмены могут не приходить`}
             </p>
           </div>
@@ -129,45 +118,33 @@ const SchedulerSettings = () => {
             Загрузка...
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {jobs.map((j) => {
-              const st = STATE_STYLE[j.state];
-              return (
-                <Card key={j.key} className={`shadow-none ${st.border}`}>
-                  <CardContent className="space-y-2 py-4">
-                    <div className="flex items-start gap-2">
-                      <Icon name={st.icon} size={20} className={`mt-0.5 shrink-0 ${st.color}`} />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-bold leading-tight">{j.title}</p>
-                        <p className="mt-0.5 text-sm text-muted-foreground">{j.purpose}</p>
-                      </div>
-                    </div>
+          groups.map((g) => {
+            const groupJobs = jobs.filter((j) => j.group === g.key);
+            if (groupJobs.length === 0) return null;
+            // Сломанные задания внутри раздела — сразу видно, сколько именно.
+            const broken = groupJobs.filter(
+              (j) => j.state === 'late' || j.state === 'never',
+            ).length;
 
-                    <div className="space-y-1 pl-7 text-sm">
-                      <p>
-                        <span className="text-muted-foreground">Отработало: </span>
-                        <span className="font-medium">{agoText(j.minutesAgo)}</span>
-                        {/* Задание, которое молчит дольше положенного, — это не мелочь:
-                            заказы в это время не приходят, а отмены копятся. */}
-                        {j.state === 'late' && (
-                          <span className="font-medium text-amber-700"> — слишком давно</span>
-                        )}
-                        {j.state === 'never' && (
-                          <span className="font-medium text-rose-700"> — задание не подключено</span>
-                        )}
-                      </p>
-                      <p className="text-muted-foreground">
-                        Должно запускаться {everyText(j.everyMin)} · за сутки: {j.runsPerDay}
-                      </p>
-                      {j.lastResult && (
-                        <p className="text-muted-foreground">{j.lastResult}</p>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+            return (
+              <div key={g.key} className="space-y-2">
+                <div className="flex flex-wrap items-baseline gap-x-3">
+                  <h2 className="font-bold">{g.title}</h2>
+                  <p className="text-sm text-muted-foreground">{g.hint}</p>
+                  {broken > 0 && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-900">
+                      не работает: {broken}
+                    </span>
+                  )}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {groupJobs.map((j) => (
+                    <SchedulerJobCard key={j.key} job={j} />
+                  ))}
+                </div>
+              </div>
+            );
+          })
         )}
 
         {/* Куда идти, если задание перестало работать. Ссылки на задания живут во

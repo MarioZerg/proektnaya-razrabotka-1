@@ -1525,12 +1525,17 @@ def handler(event: dict, context) -> dict:
             created += 1
             created_numbers.append(order_number)
 
-        if created > 0:
-            log_action(
-                cur, actor_id, actor_name, 'wb_sync_orders', None,
-                f'Загрузка заказов WB FBS: создано {created}, пропущено (уже есть) {skipped_existing}, '
-                f'без товара {skipped_no_item}',
-            )
+        # Пишем в журнал КАЖДЫЙ запуск, даже когда новых заказов нет.
+        #
+        # Раньше запись появлялась только при created > 0. В спокойный час новых
+        # заказов не бывает, задание отрабатывало молча — и на странице «Планировщик»
+        # исправное задание выглядело как отвалившееся. Отличить «не запускается»
+        # от «запускается, но нечего брать» было невозможно.
+        log_action(
+            cur, actor_id, actor_name, 'wb_sync_orders', None,
+            f'Загрузка заказов WB FBS: создано {created}, пропущено (уже есть) {skipped_existing}, '
+            f'без товара {skipped_no_item}',
+        )
         conn.commit()
 
         return _resp(200, {

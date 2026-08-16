@@ -408,12 +408,14 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name):
             renamed += cur.rowcount
         conn.commit()
 
-    if split_done:
-        log_action(
-            cur, actor_id, actor_name, 'ozon_split_pending',
-            f'Разделено отправлений OZON: {split_done}, вещам присвоены свои номера: {renamed}',
-        )
-        conn.commit()
+    # Пишем в журнал КАЖДЫЙ запуск, даже когда делить нечего: иначе исправное
+    # задание в спокойный час выглядит на странице «Планировщик» как отвалившееся.
+    log_action(
+        cur, actor_id, actor_name, 'ozon_split_pending',
+        f'Разделено отправлений OZON: {split_done}, вещам присвоены свои номера: {renamed}'
+        if split_done else 'Разделение заказов OZON: делить нечего',
+    )
+    conn.commit()
 
     # Сколько ещё осталось разделить — чтобы приложение знало, вызывать ли снова.
     cur.execute(
@@ -832,12 +834,13 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
             ),
         )
 
-    if created > 0:
-        log_action(
-            cur, actor_id, actor_name, 'ozon_sync_orders',
-            f'Загрузка заказов OZON FBS: создано {created}, пропущено (уже есть) {skipped_existing}, '
-            f'без товара {skipped_no_item}',
-        )
+    # Пишем в журнал КАЖДЫЙ запуск, даже когда новых заказов нет: иначе исправное
+    # задание в спокойный час выглядит на странице «Планировщик» как отвалившееся.
+    log_action(
+        cur, actor_id, actor_name, 'ozon_sync_orders',
+        f'Загрузка заказов OZON FBS: создано {created}, пропущено (уже есть) {skipped_existing}, '
+        f'без товара {skipped_no_item}',
+    )
 
     # Указатель сдвигаем ТОЛЬКО теперь, когда заказы страницы уже созданы. Если функция
     # прервётся раньше, следующий запуск честно повторит эту же страницу — лучше
