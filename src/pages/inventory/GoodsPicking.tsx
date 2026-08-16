@@ -313,11 +313,24 @@ const GoodsPicking = () => {
                             на полпути. Раньше такая строка вообще исчезала из списка,
                             и вещь с наклейкой было не найти. Теперь она видна и
                             подсвечена — осталось открыть и нажать «На поставку». */}
-                        {o.shippingLabeledAt && (
-                          <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900">
-                            <Icon name="Printer" size={12} />
-                            Стикер наклеен — отправьте на поставку
+                        {/* Стикер напечатан и нажато «На поставку», но в короб вещь
+                            ещё не отсканирована. Раньше такая строка исчезала из
+                            списка совсем: кладовщик по ошибке печатал стикер, не держа
+                            вещь в руках, и терял её — номер полки с экрана пропадал,
+                            а на стеллаже сотни одинаковых пакетов. Теперь вещь остаётся
+                            в списке до попадания в короб. */}
+                        {o.status === 'awaiting_supply' ? (
+                          <div className="mt-1 inline-flex items-center gap-1 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-900">
+                            <Icon name="PackageCheck" size={12} />
+                            Стикер наклеен — отсканируйте вещь в короб поставки
                           </div>
+                        ) : (
+                          o.shippingLabeledAt && (
+                            <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900">
+                              <Icon name="Printer" size={12} />
+                              Стикер наклеен — отправьте на поставку
+                            </div>
+                          )
                         )}
                       </TableCell>
                       {/* Куда поедет вещь: площадка и схема. Работа у них разная —

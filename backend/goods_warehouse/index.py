@@ -518,9 +518,15 @@ def handler(event: dict, context) -> dict:
                     "SELECT upper(coalesce(o.order_type, '')), count(*) "
                     "FROM goods_warehouse gw "
                     "JOIN orders o ON o.id = gw.reserved_order_id "
-                    "WHERE gw.status = 'picking' "
+                    # Те же статусы, что и в списке подбора: вещь с напечатанным ярлыком,
+                    # но ещё не уложенная в короб, остаётся работой кладовщика.
+                    "WHERE gw.status IN ('picking', 'awaiting_supply') "
                     "  AND gw.reserved_order_id IS NOT NULL "
                     "  AND gw.shipped_at IS NULL "
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                    "                  JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                    "                  WHERE msi.goods_warehouse_id = gw.id "
+                    "                    AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
                     f"  AND {RESERVE_ALIVE_SQL.replace('ro.', 'o.')} "
                     "GROUP BY 1"
                 )
@@ -689,7 +695,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT gw.id, o.order_number, o.product, o.material, o.width, o.height, "
                     "       gw.matched_at, o.marketplace, gw.storage_barcode, sh.name, "
-                    "       gw.shipping_labeled_at, "
+                    "       gw.shipping_labeled_at, gw.status, "
                     # Схема поставки и кластер: по ним кладовщик сразу видит, куда поедет
                     # вещь. FBS клеится ярлык маркетплейса и едет отдельным пакетом,
                     # FBO уходит коробкой на склад площадки — работа разная.
@@ -697,13 +703,30 @@ def handler(event: dict, context) -> dict:
                     "FROM goods_warehouse gw "
                     "JOIN orders o ON o.id = gw.reserved_order_id "
                     "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
-                    "WHERE gw.status = 'picking' "
+                    # Вещь остаётся в подборе, пока её физически не положили в короб.
+                    #
+                    # 'picking'         — отобрана под заказ, лежит на полке;
+                    # 'awaiting_supply' — ярлык напечатан и нажато «На поставку», но в
+                    #                     короб вещь ещё не отсканирована.
+                    #
+                    # Второй статус раньше из списка выпадал, и это был тупик: кладовщик
+                    # открыл карточку, не держа вещь в руках, случайно напечатал стикер и
+                    # отправил на поставку — строка тут же исчезла из подбора. Вещь лежит
+                    # на полке среди сотен других, номера её полки на экране больше нет,
+                    # и найти её без сканера почти невозможно.
+                    #
+                    # Пока вещь не в коробе — работа не закончена, и строка нужна.
+                    # Из списка она уходит при сканировании в поставку (статус reserved).
+                    "WHERE gw.status IN ('picking', 'awaiting_supply') "
                     "  AND gw.reserved_order_id IS NOT NULL "
-                    # Отстикерованные вещи из списка НЕ убираем, пока их не отправили
-                    # на поставку. Раньше убирали — и вещь пропадала из работы: ярлык
-                    # напечатан, кладовщик нажал «Назад», а строки уже нет, и найти её
-                    # было нечем. Работа не закончена, пока не нажата «На поставку».
                     "  AND gw.shipped_at IS NULL "
+                    # Вещь уже лежит в живой поставке — она в коробе, искать её не надо.
+                    # Завершённые поставки не считаем: вещь могла вернуться и снова уйти
+                    # в подбор под новый заказ.
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                    "                  JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                    "                  WHERE msi.goods_warehouse_id = gw.id "
+                    "                    AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
                     # Отправление уже уехало от нас или отменено — ярлык для него OZON
                     # больше не отдаёт, собрать такую вещь невозможно. Раньше она висела
                     # в подборе вечно: кладовщик шёл к стеллажу, а на печати получал
@@ -760,8 +783,12 @@ def handler(event: dict, context) -> dict:
                             # Ярлык уже наклеен, а вещь ещё не отправлена: в списке она
                             # подсвечивается как «осталось отправить на поставку».
                             'shippingLabeledAt': (r[10].isoformat() + 'Z') if r[10] else None,
-                            'orderType': r[11],
-                            'cluster': r[12],
+                            # Состояние работы по вещи: 'picking' — лежит на полке и
+                            # ждёт стикера; 'awaiting_supply' — стикер наклеен, осталось
+                            # отсканировать её в короб поставки.
+                            'status': r[11],
+                            'orderType': r[12],
+                            'cluster': r[13],
                             # Свободные такие же вещи на складе — запасной вариант,
                             # если по своей полке вещи не оказалось.
                             'alsoOnShelves': stock_by_product.get(r[2], []),
