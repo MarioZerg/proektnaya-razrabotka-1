@@ -288,7 +288,16 @@ def try_match_orders_from_stock(cur, gw_id=None):
                 # остаток на полке, а конкретное отправление, за которым идёт кладовщик.
                 # Пока она числилась «На хранении», её было видно как доступный товар —
                 # и её же могли переложить или посчитать свободной.
+                # Ярлык предыдущего отправления с вещи СНИМАЕМ.
+                #
+                # Вещь могла быть уже отстикерована под другой заказ, который потом
+                # отменили на маркетплейсе. Ярлык при этом оставался в системе, и вещь
+                # выглядела «уже собранной»: сканер подбора говорил «стикер наклеен,
+                # неси в короб», хотя на пакете висела наклейка ОТМЕНЁННОГО заказа —
+                # на приёмке такую вещь не берут. Новый заказ — новый ярлык.
                 "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now(), "
+                "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                "shipping_labeled_by_name = NULL, "
                 "status = 'picking' WHERE id = %s",
                 (int(unit_id), pick_id),
             )
@@ -361,7 +370,16 @@ def try_match_orders_from_stock(cur, gw_id=None):
                 # остаток на полке, а конкретное отправление, за которым идёт кладовщик.
                 # Пока она числилась «На хранении», её было видно как доступный товар —
                 # и её же могли переложить или посчитать свободной.
+                # Ярлык предыдущего отправления с вещи СНИМАЕМ.
+                #
+                # Вещь могла быть уже отстикерована под другой заказ, который потом
+                # отменили на маркетплейсе. Ярлык при этом оставался в системе, и вещь
+                # выглядела «уже собранной»: сканер подбора говорил «стикер наклеен,
+                # неси в короб», хотя на пакете висела наклейка ОТМЕНЁННОГО заказа —
+                # на приёмке такую вещь не берут. Новый заказ — новый ярлык.
                 "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now(), "
+                "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                "shipping_labeled_by_name = NULL, "
                 "status = 'picking' WHERE id = %s",
                 (int(order_id), pick_id),
             )
@@ -2536,8 +2554,12 @@ def handler(event: dict, context) -> dict:
                 if orphan:
                     orphan_id, orphan_number = orphan
                     cur.execute(
+                        # Снимаем ярлык прошлого отправления: вещь уходит под НОВЫЙ
+                        # заказ, и старая наклейка на ней недействительна.
                         "UPDATE goods_warehouse SET status = 'picking', "
-                        "reserved_order_id = %s, matched_at = now() WHERE id = %s",
+                        "reserved_order_id = %s, matched_at = now(), "
+                        "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                        "shipping_labeled_by_name = NULL WHERE id = %s",
                         (int(orphan_id), int(gw_id)),
                     )
                     cur.execute(

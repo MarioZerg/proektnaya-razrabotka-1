@@ -55,6 +55,16 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
   /** Сколько нужных найдено за сессию — прогресс сборки контейнера. */
   const [foundCount, setFoundCount] = useState(0);
   /**
+   * Сколько из найденных были уже с наклеенным ярлыком.
+   *
+   * Такие вещи раньше в счётчик вообще не попадали: экран отвечал «нужная», вещь
+   * летела в контейнер, а число не менялось. Кладовщик пикнул 15 штук и увидел 11 —
+   * и не мог понять, потерял он четыре вещи или сканер врёт. Теперь общий счётчик
+   * считает ВСЕ вещи, реально уехавшие в контейнер, а этой строкой поясняем, сколько
+   * из них уже были со стикером.
+   */
+  const [labeledCount, setLabeledCount] = useState(0);
+  /**
    * Штрихкоды, уже посчитанные в этой сессии.
    *
    * Вещь физически одна, поэтому и считаться она должна один раз. Сканер часто
@@ -79,6 +89,7 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
       setHit(null);
       setSkipped(0);
       setFoundCount(0);
+      setLabeledCount(0);
       setBarcode('');
       setDuplicate(null);
       setLastReason(null);
@@ -125,9 +136,13 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
           orderNumber: res.orderNumber,
           alreadyLabeled: res.alreadyLabeled,
         });
-        // Вещь с уже наклеенным ярлыком в «найдено» не считаем: её посчитали, когда
-        // стикеровали. Иначе счётчик за смену задвоится на каждой возвращённой вещи.
-        if (!res.alreadyLabeled) setFoundCount((n) => n + 1);
+        // Считаем КАЖДУЮ вещь, которую сканер признал нужной, — в том числе уже
+        // отстикерованную. Счётчик показывает, сколько вещей кладовщик реально
+        // сложил в контейнер, а не сколько из них система застикеровала прямо
+        // сейчас. Двойного счёта нет: повторный пик по той же наклейке отсекается
+        // выше по scannedRef.
+        setFoundCount((n) => n + 1);
+        if (res.alreadyLabeled) setLabeledCount((n) => n + 1);
       } else {
         playScanErrorSound();
         setSkipped((n) => n + 1);
@@ -180,6 +195,13 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
             <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3">
               <p className="text-3xl font-bold text-emerald-700">{foundCount}</p>
               <p className="text-sm text-emerald-900">Нужных найдено</p>
+              {/* Поясняем расхождение: часть вещей уже была со стикером, их система
+                  не стикеровала заново — но в контейнер они едут наравне. */}
+              {labeledCount > 0 && (
+                <p className="mt-0.5 text-xs text-emerald-800">
+                  из них со стикером: {labeledCount}
+                </p>
+              )}
             </div>
             <div className="rounded-lg border border-border bg-muted/40 p-3">
               <p className="text-3xl font-bold text-muted-foreground">{skipped}</p>
