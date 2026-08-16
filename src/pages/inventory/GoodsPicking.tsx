@@ -109,10 +109,36 @@ const GoodsPicking = () => {
   }, []);
 
   // Ищем по названию товара и номеру заказа: сканер «пикает» номер — строка находится сразу.
+  // Две разные работы, которые раньше лежали в одном списке и мешали друг другу:
+  //
+  //  «Собрать»  — вещь спокойно лежит на полке, к ней ещё не подходили;
+  //  «В короб»  — стикер уже наклеен, осталось донести вещь до короба поставки.
+  //
+  // Смешивать их нельзя: во втором случае работа почти доделана и её нужно закрыть
+  // в первую очередь, иначе вещь с ярлыком лежит на полке и теряется. В общем списке
+  // из тридцати строк такие позиции просто тонули.
+  const [tab, setTab] = useState<'pick' | 'labeled'>('pick');
+
+  const byTab = useMemo(
+    () =>
+      orders.filter((o) =>
+        tab === 'labeled'
+          ? o.status === 'awaiting_supply'
+          : o.status !== 'awaiting_supply'
+      ),
+    [orders, tab]
+  );
+
+  const labeledCount = useMemo(
+    () => orders.filter((o) => o.status === 'awaiting_supply').length,
+    [orders]
+  );
+  const pickCount = orders.length - labeledCount;
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter(
+    if (!q) return byTab;
+    return byTab.filter(
       (o) =>
         o.product?.toLowerCase().includes(q) ||
         o.orderNumber?.toLowerCase().includes(q) ||
@@ -124,7 +150,7 @@ const GoodsPicking = () => {
         o.marketplace?.toLowerCase().includes(q) ||
         o.orderType?.toLowerCase().includes(q)
     );
-  }, [orders, search]);
+  }, [byTab, search]);
 
   /** Разбивка отобранного по площадке и схеме: «OZON FBS: 9», «OZON FBO: 19». */
   const byScheme = useMemo(() => {
@@ -259,6 +285,56 @@ const GoodsPicking = () => {
           onDone={load}
         />
 
+        {/* Две вкладки — две разные работы. «Собрать с полок» — вещи, к которым ещё не
+            подходили. «Донести в короб» — стикер уже наклеен, вещь ждёт на полке; такие
+            позиции раньше терялись среди нетронутых, а закрывать их надо в первую
+            очередь: вещь с ярлыком лежит и не едет. */}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant={tab === 'pick' ? 'default' : 'outline'}
+            onClick={() => setTab('pick')}
+          >
+            <Icon name="PackageSearch" size={16} className="mr-1.5" />
+            Собрать с полок
+            <Badge
+              variant="secondary"
+              className={`ml-2 ${tab === 'pick' ? 'bg-white/20 text-white' : ''}`}
+            >
+              {pickCount}
+            </Badge>
+          </Button>
+          <Button
+            variant={tab === 'labeled' ? 'default' : 'outline'}
+            onClick={() => setTab('labeled')}
+            className={
+              // Подсвечиваем, только когда работа реально есть: пустая вкладка не
+              // должна мигать и тянуть внимание на себя.
+              tab !== 'labeled' && labeledCount > 0
+                ? 'border-sky-400 bg-sky-50 text-sky-900 hover:bg-sky-100'
+                : ''
+            }
+          >
+            <Icon name="PackageCheck" size={16} className="mr-1.5" />
+            Донести в короб
+            <Badge
+              variant="secondary"
+              className={`ml-2 ${tab === 'labeled' ? 'bg-white/20 text-white' : ''}`}
+            >
+              {labeledCount}
+            </Badge>
+          </Button>
+        </div>
+
+        {tab === 'labeled' && labeledCount > 0 && (
+          <div className="flex gap-2 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-900">
+            <Icon name="Info" size={18} className="mt-0.5 shrink-0" />
+            <div>
+              На эти вещи стикер уже наклеен — осталось найти их на полке и отсканировать
+              в короб поставки. До этого момента они никуда не едут.
+            </div>
+          </div>
+        )}
+
         {loading && orders.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -266,15 +342,21 @@ const GoodsPicking = () => {
           </div>
         ) : filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {search ? 'По запросу ничего не найдено' : 'Заказов к подбору нет'}
+            {search
+              ? 'По запросу ничего не найдено'
+              : tab === 'labeled'
+                ? 'Все отстикерованные вещи уже в коробах'
+                : 'Заказов к подбору нет'}
           </p>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-3">
               <p className="text-sm text-muted-foreground">
                 {search
-                  ? `Найдено: ${filtered.length} из ${orders.length}`
-                  : `Заказов к подбору: ${orders.length}`}
+                  ? `Найдено: ${filtered.length} из ${byTab.length}`
+                  : tab === 'labeled'
+                    ? `Ждут короба: ${byTab.length}`
+                    : `Заказов к подбору: ${byTab.length}`}
               </p>
               {/* Сколько работы какого вида: FBS собирают поштучно с ярлыками,
                   FBO складывают коробкой. Кладовщик планирует день по этим числам. */}
@@ -319,12 +401,7 @@ const GoodsPicking = () => {
                             вещь в руках, и терял её — номер полки с экрана пропадал,
                             а на стеллаже сотни одинаковых пакетов. Теперь вещь остаётся
                             в списке до попадания в короб. */}
-                        {o.status === 'awaiting_supply' ? (
-                          <div className="mt-1 inline-flex items-center gap-1 rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-900">
-                            <Icon name="PackageCheck" size={12} />
-                            Стикер наклеен — отсканируйте вещь в короб поставки
-                          </div>
-                        ) : (
+                        {o.status === 'awaiting_supply' ? null : (
                           o.shippingLabeledAt && (
                             <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900">
                               <Icon name="Printer" size={12} />
