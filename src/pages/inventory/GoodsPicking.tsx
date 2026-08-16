@@ -15,6 +15,9 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import PickingScanDialog from '@/components/crm/goodsWarehouse/PickingScanDialog';
+import NotFoundDialog, {
+  type NotFoundTarget,
+} from '@/components/crm/goodsWarehouse/NotFoundDialog';
 import {
   fetchPickingOrders,
   verifyPicking,
@@ -53,6 +56,12 @@ const GoodsPicking = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [scanOpen, setScanOpen] = useState(false);
+  const [notFound, setNotFound] = useState<NotFoundTarget | null>(null);
+
+  // Списать ненайденную вещь может только старший кладовщик и админ: за этим стоят
+  // потраченная ткань и повторная работа цеха. Обычный кладовщик зовёт старшего.
+  // Сервер проверяет право ещё раз — спрятанной кнопки для защиты мало.
+  const canWriteOff = user?.role === 'senior_storekeeper' || user?.role === 'admin';
   const searchRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
@@ -244,6 +253,12 @@ const GoodsPicking = () => {
           onOpenCard={(goodsId) => navigate(`/crm/inventory/goods/${goodsId}`)}
         />
 
+        <NotFoundDialog
+          item={notFound}
+          onOpenChange={(v) => !v && setNotFound(null)}
+          onDone={load}
+        />
+
         {loading && orders.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -351,6 +366,33 @@ const GoodsPicking = () => {
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         {formatDate(o.createdAt)}
+                        {/* «Не нашёл»: вещи нет на полке, хотя система считает иначе.
+                            Без этой кнопки вещь висела в подборе бесконечно — кладовщик
+                            искал её каждый день заново, а заказ покупателя стоял.
+                            Нажатие списывает вещь и отправляет заказ в цех.
+                            stopPropagation — иначе клик открыл бы карточку товара. */}
+                        {canWriteOff && (
+                          <div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="mt-1 h-7 px-1.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setNotFound({
+                                  id: o.id,
+                                  title: shortProductName(o),
+                                  orderNumber: o.orderNumber,
+                                  storageBarcode: o.storageBarcode,
+                                  shelfName: o.shelfName,
+                                });
+                              }}
+                            >
+                              <Icon name="SearchX" size={14} className="mr-1" />
+                              Не нашёл
+                            </Button>
+                          </div>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

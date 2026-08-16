@@ -14,6 +14,8 @@ import { formatDateTime } from '@/lib/dateUtils';
 /** Иконка события по типу — чтобы админ узнавал уведомление с одного взгляда. */
 const kindIcons: Record<string, string> = {
   send_to_sewing: 'Shirt',
+  // Товар числился на полке, а физически его нет — расхождение остатков.
+  not_found: 'SearchX',
 };
 
 /**

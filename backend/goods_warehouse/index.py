@@ -97,6 +97,20 @@ def is_admin(cur, actor_id) -> bool:
     return bool(row and row[0] == 'admin')
 
 
+def is_admin_or_senior(cur, actor_id) -> bool:
+    """Админ или СТАРШИЙ кладовщик.
+
+    Списание вещи со склада — решение с ценой: вещь уходит в утиль, а заказ едет шиться
+    заново, то есть ткань и работа цеха тратятся второй раз. Обычный кладовщик такое
+    решение принимать не должен: не нашёл — зовёт старшего.
+    """
+    if not actor_id:
+        return False
+    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+    row = cur.fetchone()
+    return bool(row and row[0] in ('admin', 'senior_storekeeper'))
+
+
 def notify_admin(cur, kind, title, message, actor_id, actor_name, link=None,
                  entity_type=None, entity_id=None):
     """Кладёт событие на панель администратора.
@@ -2586,6 +2600,147 @@ def handler(event: dict, context) -> dict:
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'not_found':
+                # «Не нашёл» — вещи нет на полке, хотя система считает, что она там лежит.
+                #
+                # Без этой кнопки вещь висела в подборе вечно: кладовщик сканировал
+                # 230 товаров, не находил её, уходил — а назавтра автоподбор предлагал
+                # её снова. Так накопились 23 «мёртвых» позиции, две из которых искали
+                # больше месяца, а заказы покупателей всё это время стояли.
+                #
+                # Списываем вещь со склада и возвращаем заказ в цех: его сошьют заново.
+                # Логика та же, что у брака, но причина другая — вещь не испорчена, её
+                # физически нет, и это сигнал о расхождении остатков.
+                item_id = body_data.get('id')
+                note = (body_data.get('note') or '').strip()
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите id'})}
+
+                # Право решать есть только у админа и старшего кладовщика: за списанием
+                # стоят потраченная ткань и повторная работа цеха. Проверяем на СЕРВЕРЕ —
+                # спрятать кнопку в интерфейсе мало, запрос можно послать и мимо неё.
+                if not is_admin_or_senior(cur, actor_id):
+                    return {
+                        'statusCode': 403, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Списать ненайденный товар может только старший '
+                                      'кладовщик или администратор'},
+                            ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "SELECT gw.status, gw.reserved_order_id, gw.storage_barcode, "
+                    "       o.order_number, o.product, o.material, o.width, o.height, "
+                    "       sh.name, gw.received_at "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "WHERE gw.id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Запись не найдена'})}
+                (nf_status, nf_reserved, nf_barcode, nf_order, nf_product,
+                 nf_material, nf_width, nf_height, nf_shelf, nf_received) = row
+
+                if nf_status in ('shipped', 'lost'):
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Вещь уже отгружена или списана'},
+                                               ensure_ascii=False)}
+                if nf_status == 'reserved':
+                    return {
+                        'statusCode': 409, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Вещь лежит в собранной поставке — сначала уберите её оттуда'},
+                            ensure_ascii=False),
+                    }
+
+                # Сколько дней вещь числилась на складе. Чем дольше — тем серьёзнее
+                # расхождение: месячный «висяк» админ должен увидеть отдельно.
+                cur.execute(
+                    "SELECT GREATEST(0, (CURRENT_DATE - %s::date))", (nf_received,)
+                )
+                days_row = cur.fetchone()
+                days_on_shelf = int(days_row[0]) if days_row and days_row[0] is not None else 0
+
+                shelf_txt = f'полка «{nf_shelf}»' if nf_shelf else 'полка не указана'
+                note_esc = (f'{note}. ' if note else '')
+                lost_reason = (
+                    f'Не найден на складе ({shelf_txt}, числился {days_on_shelf} дн.). '
+                    f'{note_esc}Заказ отправлен в пошив'
+                ).replace("'", "''")
+
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'lost', reserved_order_id = NULL, "
+                    f"matched_at = NULL, shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                    f"shipping_labeled_by_name = NULL, "
+                    f"lost_reason = '{lost_reason}', lost_at = now() "
+                    f"WHERE id = {int(item_id)}"
+                )
+
+                # Заказ покупателя не должен зависнуть: снимаем его с подбора и
+                # возвращаем в цех — иначе он будет ждать вещь, которой нет.
+                returned_order = None
+                if nf_reserved:
+                    cur.execute(
+                        "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый', "
+                        "assigned_user_id = NULL, workshop_id = NULL WHERE id = %s "
+                        "RETURNING order_number, group_key",
+                        (int(nf_reserved),),
+                    )
+                    ret = cur.fetchone()
+                    returned_order = ret[0] if ret else None
+
+                    # Заказ Яндекса едет одним ярлыком: раз одной вещи связки нет,
+                    # остальные её части освобождаем обратно в свободный остаток,
+                    # иначе они застрянут в подборе под заказ, который уехал в цех.
+                    group_key = ret[1] if ret else None
+                    if group_key:
+                        cur.execute(
+                            "UPDATE goods_warehouse gw SET reserved_order_id = NULL, "
+                            "matched_at = NULL, status = 'in_stock' "
+                            "FROM orders o "
+                            "WHERE o.id = gw.reserved_order_id AND o.group_key = %s "
+                            "  AND gw.status = 'picking' AND gw.id <> %s",
+                            (group_key, int(item_id)),
+                        )
+
+                item_txt = ' '.join(str(x) for x in [
+                    nf_material,
+                    f'{nf_width}×{nf_height}' if nf_width and nf_height else None,
+                ] if x) or (nf_product or nf_order or 'Товар')
+
+                log_action(
+                    cur, actor_id, actor_name, 'not_found', 'goods_warehouse', item_id,
+                    f'Товар {nf_barcode} ({item_txt}) не найден на складе, {shelf_txt}, '
+                    f'числился {days_on_shelf} дн. Списан со склада'
+                    + (f'. Заказ {returned_order} вернулся в производство' if returned_order else ''),
+                )
+
+                # Ненайденный товар — сигнал о расхождении остатков: где-то вещь ушла
+                # мимо системы. Админ должен увидеть это на панели сразу, потому что
+                # каждый такой случай стоит ткани и повторной работы цеха.
+                notify_admin(
+                    cur, 'not_found',
+                    'Товар не найден на складе',
+                    f'{item_txt} ({nf_barcode}), {shelf_txt}, числился {days_on_shelf} дн. '
+                    + (f'{note}. ' if note else '')
+                    + (f'Заказ {returned_order} вернулся на конвейер' if returned_order
+                       else 'Заказ за вещью не закреплён'),
+                    actor_id, actor_name,
+                    link=f'/crm/inventory/goods/{int(item_id)}',
+                    entity_type='goods_warehouse', entity_id=item_id,
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({'success': True, 'returnedOrder': returned_order},
+                                       ensure_ascii=False),
+                }
 
             if action == 'send_to_sewing':
                 # Вещь с полки испорчена (порвана, пятно, брак) — отгружать её нельзя.

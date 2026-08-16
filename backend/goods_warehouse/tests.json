@@ -111,6 +111,26 @@
         "code": "NOPE-XXX-000"
       },
       "expectedStatus": 404
+    },
+    {
+      "name": "Not found without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "not_found"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Not found without rights fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "not_found",
+        "id": 999999,
+        "actorId": 0
+      },
+      "expectedStatus": 403
     }
   ]
 }

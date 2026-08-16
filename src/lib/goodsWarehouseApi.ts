@@ -612,6 +612,24 @@ export const sendGoodsToSupply = (id: number, actorId?: number, actorName?: stri
 export const deleteGoods = (id: number, actorId?: number, actorName?: string) =>
   postAction({ action: 'delete_goods', id, actorId, actorName });
 
+/**
+ * Товара нет на полке, хотя система считает, что он там лежит.
+ *
+ * Списываем вещь со склада и возвращаем заказ в цех — иначе он ждёт вещь, которой нет,
+ * а вещь назавтра снова попадает в подбор, и кладовщик ищет её по кругу.
+ * Доступно только админу и старшему кладовщику; админу уходит уведомление на панель.
+ */
+export const markGoodsNotFound = (
+  id: number,
+  note: string,
+  actorId?: number,
+  actorName?: string,
+) =>
+  postAction({ action: 'not_found', id, note, actorId, actorName }) as Promise<{
+    success: true;
+    returnedOrder: string | null;
+  }>;
+
 /** Вещь испорчена: списываем её со склада, а заказ возвращаем в производство — сошьют заново. */
 export const sendGoodsToSewing = (
   id: number,
