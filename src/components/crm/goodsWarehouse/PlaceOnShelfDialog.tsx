@@ -52,7 +52,7 @@ const PlaceOnShelfDialog = ({
   onDone,
   inspectedReady = 0,
   onInspectedDone,
-  initialTab = 'cancelled',
+  initialTab = 'inspected',
 }: PlaceOnShelfDialogProps) => {
   const pendingCount = pendingItems.length;
   const { toast } = useToast();
@@ -126,18 +126,20 @@ const PlaceOnShelfDialog = ({
     >
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Разложить по полкам</DialogTitle>
+          <DialogTitle>Принять осмотренные из цеха</DialogTitle>
         </DialogHeader>
 
         <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+          {/* Осмотренные из цеха — первыми: это основная ежедневная работа
+              кладовщика у стеллажа. Отменённые клиентом приходят реже. */}
           <TabsList className="w-full">
-            <TabsTrigger value="cancelled" className="flex-1">
-              Отменённые клиентом
-              {pendingCount > 0 && ` (${pendingCount})`}
-            </TabsTrigger>
             <TabsTrigger value="inspected" className="flex-1">
-              Осмотренные из цеха
+              Принять осмотренные из цеха
               {inspectedReady > 0 && ` (${inspectedReady})`}
+            </TabsTrigger>
+            <TabsTrigger value="cancelled" className="flex-1">
+              Разложить по полкам
+              {pendingCount > 0 && ` (${pendingCount})`}
             </TabsTrigger>
           </TabsList>
 

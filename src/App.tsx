@@ -74,6 +74,7 @@ const PersonalDataConsent = lazy(() => import("./pages/legal/PersonalDataConsent
 const RollShortageAnalysis = lazy(() => import("./pages/analytics/RollShortageAnalysis"));
 const ReturnsAnalysis = lazy(() => import("./pages/analytics/ReturnsAnalysis"));
 const DefectAnalysis = lazy(() => import("./pages/analytics/DefectAnalysis"));
+const ProductCost = lazy(() => import("./pages/analytics/ProductCost"));
 import Index from "./pages/Index";
 
 import NotFoundRedirect from "./pages/NotFoundRedirect";
@@ -116,6 +117,7 @@ const App = () => (
             <Route path="/crm/analytics/roll-shortage" element={<RollShortageAnalysis />} />
             <Route path="/crm/analytics/returns" element={<ReturnsAnalysis />} />
             <Route path="/crm/analytics/defects" element={<DefectAnalysis />} />
+            <Route path="/crm/analytics/product-cost" element={<ProductCost />} />
             <Route path="/crm/inventory/workshop-materials" element={<WorkshopMaterials />} />
             <Route path="/crm/inventory/rolls" element={<Rolls />} />
             <Route path="/crm/inventory/rolls/:id" element={<RollShow />} />

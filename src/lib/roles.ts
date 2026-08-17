@@ -353,7 +353,16 @@ const adminNav: NavItem[] = [
     ],
   },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
-  { label: 'Финансы', icon: 'Wallet', path: '/crm/finance' },
+  {
+    label: 'Финансы',
+    icon: 'Wallet',
+    children: [
+      { label: 'Зарплаты и касса', path: '/crm/finance' },
+      // Себестоимость — деньги, а не склад: сколько стоит одна вещь и из чего
+      // складывается её цена. Смотрит только владелец.
+      { label: 'Себестоимость товаров', path: '/crm/analytics/product-cost' },
+    ],
+  },
   {
     label: 'Смены',
     icon: 'CalendarClock',

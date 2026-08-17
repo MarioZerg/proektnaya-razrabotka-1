@@ -105,36 +105,26 @@ const GoodsPicking = () => {
   }, []);
 
   // Ищем по названию товара и номеру заказа: сканер «пикает» номер — строка находится сразу.
-  // Две разные работы, которые раньше лежали в одном списке и мешали друг другу:
+  // ОДИН СПИСОК, БЕЗ ВКЛАДОК.
   //
-  //  «Собрать»  — вещь спокойно лежит на полке, к ней ещё не подходили;
-  //  «В короб»  — стикер уже наклеен, осталось донести вещь до короба поставки.
+  // Раньше здесь были две вкладки — «Собрать с полок» и «Донести в короб»: вещь
+  // с напечатанным стикером уезжала из первого списка во второй. Кладовщики от этого
+  // путались: вещь пропадала из списка, по которому они шли вдоль стеллажа, и
+  // приходилось искать её на другой вкладке.
   //
-  // Смешивать их нельзя: во втором случае работа почти доделана и её нужно закрыть
-  // в первую очередь, иначе вещь с ярлыком лежит на полке и теряется. В общем списке
-  // из тридцати строк такие позиции просто тонули.
-  const [tab, setTab] = useState<'pick' | 'labeled'>('pick');
-
-  const byTab = useMemo(
-    () =>
-      orders.filter((o) =>
-        tab === 'labeled'
-          ? o.status === 'awaiting_supply'
-          : o.status !== 'awaiting_supply'
-      ),
-    [orders, tab]
-  );
-
+  // На деле разделение не нужно — они и так понимают: стикер наклеен, значит вещь
+  // надо отсканировать в поставку. Поэтому вещь остаётся в общем списке до тех пор,
+  // пока её не отправят на поставку кнопкой в карточке. Печать стикера сама по себе
+  // из списка ничего не убирает.
   const labeledCount = useMemo(
     () => orders.filter((o) => o.status === 'awaiting_supply').length,
     [orders]
   );
-  const pickCount = orders.length - labeledCount;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return byTab;
-    return byTab.filter(
+    if (!q) return orders;
+    return orders.filter(
       (o) =>
         o.product?.toLowerCase().includes(q) ||
         o.orderNumber?.toLowerCase().includes(q) ||
@@ -146,7 +136,7 @@ const GoodsPicking = () => {
         o.marketplace?.toLowerCase().includes(q) ||
         o.orderType?.toLowerCase().includes(q)
     );
-  }, [byTab, search]);
+  }, [orders, search]);
 
   /** Разбивка отобранного по площадке и схеме: «OZON FBS: 9», «OZON FBO: 19». */
   const byScheme = useMemo(() => {
@@ -275,56 +265,20 @@ const GoodsPicking = () => {
           onOpenCard={(goodsId) => navigate(`/crm/inventory/goods/${goodsId}`)}
         />
 
-        {/* Две вкладки — две разные работы. «Собрать с полок» — вещи, к которым ещё не
-            подходили. «Донести в короб» — стикер уже наклеен, вещь ждёт на полке; такие
-            позиции раньше терялись среди нетронутых, а закрывать их надо в первую
-            очередь: вещь с ярлыком лежит и не едет. */}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant={tab === 'pick' ? 'default' : 'outline'}
-            onClick={() => setTab('pick')}
-          >
-            <Icon name="PackageSearch" size={16} className="mr-1.5" />
-            Собрать с полок
-            <Badge
-              variant="secondary"
-              className={`ml-2 ${tab === 'pick' ? 'bg-white/20 text-white' : ''}`}
-            >
-              {pickCount}
-            </Badge>
-          </Button>
-          <Button
-            variant={tab === 'labeled' ? 'default' : 'outline'}
-            onClick={() => setTab('labeled')}
-            className={
-              // Подсвечиваем, только когда работа реально есть: пустая вкладка не
-              // должна мигать и тянуть внимание на себя.
-              tab !== 'labeled' && labeledCount > 0
-                ? 'border-sky-400 bg-sky-50 text-sky-900 hover:bg-sky-100'
-                : ''
-            }
-          >
-            <Icon name="PackageCheck" size={16} className="mr-1.5" />
-            Донести в короб
-            <Badge
-              variant="secondary"
-              className={`ml-2 ${tab === 'labeled' ? 'bg-white/20 text-white' : ''}`}
-            >
-              {labeledCount}
-            </Badge>
-          </Button>
-        </div>
-
         {/* Позиции, которые уже уехали к клиентам: их закрывает администратор,
-            иначе они висят в «Донести в короб» вечно. */}
-        {tab === 'labeled' && <ShippedStuckPanel onReload={load} />}
+            иначе они висят в подборе вечно. */}
+        <ShippedStuckPanel onReload={load} />
 
-        {tab === 'labeled' && labeledCount > 0 && (
+        {/* Сколько вещей уже со стикером. Это не отдельный список, а подсказка:
+            такие строки помечены в таблице, и по ним осталось одно действие —
+            отправить на поставку из карточки. */}
+        {labeledCount > 0 && (
           <div className="flex gap-2 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-900">
             <Icon name="Info" size={18} className="mt-0.5 shrink-0" />
             <div>
-              На эти вещи стикер уже наклеен — осталось найти их на полке и отсканировать
-              в короб поставки. До этого момента они никуда не едут.
+              Со стикером: {labeledCount}. Такие вещи помечены в списке — найдите их на
+              полке и отправьте на поставку кнопкой в карточке. До этого они никуда
+              не едут и из списка не пропадают.
             </div>
           </div>
         )}
@@ -336,21 +290,15 @@ const GoodsPicking = () => {
           </div>
         ) : filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {search
-              ? 'По запросу ничего не найдено'
-              : tab === 'labeled'
-                ? 'Все отстикерованные вещи уже в коробах'
-                : 'Заказов к подбору нет'}
+            {search ? 'По запросу ничего не найдено' : 'Заказов к подбору нет'}
           </p>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-3">
               <p className="text-sm text-muted-foreground">
                 {search
-                  ? `Найдено: ${filtered.length} из ${byTab.length}`
-                  : tab === 'labeled'
-                    ? `Ждут короба: ${byTab.length}`
-                    : `Заказов к подбору: ${byTab.length}`}
+                  ? `Найдено: ${filtered.length} из ${orders.length}`
+                  : `Заказов к подбору: ${orders.length}`}
               </p>
               {/* Сколько работы какого вида: FBS собирают поштучно с ярлыками,
                   FBO складывают коробкой. Кладовщик планирует день по этим числам. */}
@@ -385,23 +333,19 @@ const GoodsPicking = () => {
                           {o.orderNumber || '—'}
                           {o.storageBarcode ? ` · ${o.storageBarcode}` : ''}
                         </div>
-                        {/* Ярлык напечатан, но вещь ещё не отправлена: работа брошена
-                            на полпути. Раньше такая строка вообще исчезала из списка,
-                            и вещь с наклейкой было не найти. Теперь она видна и
-                            подсвечена — осталось открыть и нажать «На поставку». */}
-                        {/* Стикер напечатан и нажато «На поставку», но в короб вещь
-                            ещё не отсканирована. Раньше такая строка исчезала из
-                            списка совсем: кладовщик по ошибке печатал стикер, не держа
-                            вещь в руках, и терял её — номер полки с экрана пропадал,
-                            а на стеллаже сотни одинаковых пакетов. Теперь вещь остаётся
-                            в списке до попадания в короб. */}
-                        {o.status === 'awaiting_supply' ? null : (
-                          o.shippingLabeledAt && (
-                            <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900">
-                              <Icon name="Printer" size={12} />
-                              Стикер наклеен — отправьте на поставку
-                            </div>
-                          )
+                        {/* Стикер напечатан — вещь ОСТАЁТСЯ в общем списке и просто
+                            помечается. Раньше она уезжала на отдельную вкладку или
+                            вовсе исчезала: кладовщик шёл вдоль стеллажа по списку,
+                            строка пропадала, а на полке сотни одинаковых пакетов —
+                            найти вещь без номера полки на экране почти невозможно.
+                            Из списка вещь уходит только после отправки на поставку. */}
+                        {o.shippingLabeledAt && (
+                          <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900">
+                            <Icon name="Printer" size={12} />
+                            {o.status === 'awaiting_supply'
+                              ? 'Стикер наклеен — отсканируйте в короб'
+                              : 'Стикер наклеен — отправьте на поставку'}
+                          </div>
                         )}
                       </TableCell>
                       {/* Куда поедет вещь: площадка и схема. Работа у них разная —
