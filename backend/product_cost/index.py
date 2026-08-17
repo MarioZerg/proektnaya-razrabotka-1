@@ -19,6 +19,20 @@ def _resp(status, body):
     }
 
 
+def _is_admin(cur, actor_id):
+    """Менять параметры расчёта может только администратор.
+
+    Менеджер видит себестоимость — ему важно знать нижнюю границу цены при торге
+    с площадками. Но налог, комиссия и статьи расходов — деньги владельца: сдвинув
+    их, менеджер сдвинул бы себе и границу торга.
+    """
+    if not actor_id:
+        return False
+    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+    row = cur.fetchone()
+    return bool(row and row[0] == 'admin')
+
+
 def _settings(cur):
     """Настройки расчёта: налог, комиссия площадки, прочие расходы, цех для тарифов."""
     cur.execute(
@@ -302,6 +316,11 @@ def handler(event: dict, context) -> dict:
         if method == 'POST':
             body_data = json.loads(event.get('body') or '{}')
             action = body_data.get('action')
+
+            # Любое изменение параметров — только админ. Проверяем на сервере:
+            # спрятанной кнопки недостаточно, запрос можно послать и мимо интерфейса.
+            if not _is_admin(cur, body_data.get('actorId')):
+                return _resp(403, {'error': 'Менять расчёт может только администратор'})
 
             # СТАТЬИ ДОПОЛНИТЕЛЬНЫХ РАСХОДОВ.
             # Владелец сам решает, что и на сколько штук делить: коробку на 30

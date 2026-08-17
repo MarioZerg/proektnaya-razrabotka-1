@@ -94,6 +94,7 @@ export const addExtraExpense = (payload: {
   amount: number;
   perItems: number;
   note?: string;
+  actorId?: number;
 }) => post({ action: 'add_expense', ...payload });
 
 export const updateExtraExpense = (payload: {
@@ -103,6 +104,8 @@ export const updateExtraExpense = (payload: {
   perItems: number;
   note?: string | null;
   isActive: boolean;
+  actorId?: number;
 }) => post({ action: 'update_expense', ...payload });
 
-export const deleteExtraExpense = (id: number) => post({ action: 'delete_expense', id });
+export const deleteExtraExpense = (id: number, actorId?: number) =>
+  post({ action: 'delete_expense', id, actorId });

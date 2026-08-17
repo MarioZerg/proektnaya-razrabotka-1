@@ -13,18 +13,25 @@
       "expectedStatus": 200
     },
     {
-      "name": "Unknown action fails",
+      "name": "Save settings without admin forbidden",
       "method": "POST",
       "path": "/",
-      "body": {"action": "nope"},
-      "expectedStatus": 400
+      "body": {"action": "save_settings", "taxPercent": 6},
+      "expectedStatus": 403
     },
     {
-      "name": "Bad tax percent fails",
+      "name": "Add expense without admin forbidden",
       "method": "POST",
       "path": "/",
-      "body": {"action": "save_settings", "taxPercent": 150},
-      "expectedStatus": 400
+      "body": {"action": "add_expense", "name": "Test", "amount": 10, "perItems": 5},
+      "expectedStatus": 403
+    },
+    {
+      "name": "Delete expense without admin forbidden",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "delete_expense", "id": 999999},
+      "expectedStatus": 403
     }
   ]
 }

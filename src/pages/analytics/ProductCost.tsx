@@ -3,6 +3,7 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import FabricCostCard from '@/components/crm/cost/FabricCostCard';
 import CostSettingsPanel from '@/components/crm/cost/CostSettingsPanel';
 import ExtraExpensesPanel from '@/components/crm/cost/ExtraExpensesPanel';
@@ -25,6 +26,10 @@ const money = (v: number) =>
  */
 const ProductCost = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
+  // Менеджер читает, но не правит: он торгуется с площадками и должен знать нижнюю
+  // границу цены. А налог, тарифы и статьи расходов — деньги владельца.
+  const canEdit = user?.role === 'admin';
   const [data, setData] = useState<CostResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -77,6 +82,9 @@ const ProductCost = () => {
     ? complete.reduce((s, g) => s + g.total, 0) / complete.length
     : 0;
   const productsTotal = groups.reduce((s, g) => s + g.productsCount, 0);
+  const extrasPerUnit = (data?.extras || [])
+    .filter((e) => e.isActive)
+    .reduce((s, e) => s + e.perUnit, 0);
 
   return (
     <CrmLayout>
@@ -89,7 +97,7 @@ const ProductCost = () => {
           </p>
         </div>
 
-        {data && (
+        {data && canEdit && (
           <CostSettingsPanel
             settings={data.settings}
             workshops={data.workshops}
@@ -97,7 +105,32 @@ const ProductCost = () => {
           />
         )}
 
-        {data && <ExtraExpensesPanel expenses={data.extras} onChanged={load} />}
+        {data && canEdit && (
+          <ExtraExpensesPanel expenses={data.extras} onChanged={load} />
+        )}
+
+        {/* Менеджеру те же параметры показываем справкой: он должен понимать,
+            почему цифра именно такая, но менять её не может. */}
+        {data && !canEdit && (
+          <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
+            <p className="font-medium">Что входит в расчёт</p>
+            <p className="mt-1 text-muted-foreground">
+              Налог {data.settings.taxPercent}%
+              {data.settings.marketplacePercent > 0 &&
+                ` · комиссия площадки ${data.settings.marketplacePercent}%`}
+              {extrasPerUnit > 0 &&
+                ` · прочие расходы ${money(extrasPerUnit)} ₽ на вещь`}
+            </p>
+            {data.extras.filter((e) => e.isActive).length > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {data.extras
+                  .filter((e) => e.isActive)
+                  .map((e) => `${e.name} — ${money(e.perUnit)} ₽`)
+                  .join(' · ')}
+              </p>
+            )}
+          </div>
+        )}
 
         {!loading && groups.length > 0 && (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

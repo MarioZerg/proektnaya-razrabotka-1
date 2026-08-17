@@ -307,6 +307,14 @@ const managerNav: NavItem[] = [
     ],
   },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },
+  // Менеджер видит себестоимость, но не правит: он торгуется с площадками и
+  // должен знать, ниже какой цены продавать нельзя. Менять налог, тарифы и
+  // статьи расходов — решение владельца.
+  {
+    label: 'Себестоимость товаров',
+    icon: 'Calculator',
+    path: '/crm/analytics/product-cost',
+  },
 ];
 
 const adminNav: NavItem[] = [

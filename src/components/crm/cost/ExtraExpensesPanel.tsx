@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import {
   addExtraExpense,
   updateExtraExpense,
@@ -37,6 +38,7 @@ interface ExtraExpensesPanelProps {
  */
 const ExtraExpensesPanel = ({ expenses, onChanged }: ExtraExpensesPanelProps) => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [perItems, setPerItems] = useState('');
@@ -66,6 +68,7 @@ const ExtraExpensesPanel = ({ expenses, onChanged }: ExtraExpensesPanelProps) =>
         amount: Number(amount) || 0,
         perItems: Number(perItems) || 1,
         note: note.trim(),
+        actorId: user?.id,
       });
       setName('');
       setAmount('');
@@ -88,6 +91,7 @@ const ExtraExpensesPanel = ({ expenses, onChanged }: ExtraExpensesPanelProps) =>
         perItems: x.perItems,
         note: x.note,
         isActive: !x.isActive,
+        actorId: user?.id,
       });
       onChanged();
     } catch (e) {
@@ -97,7 +101,7 @@ const ExtraExpensesPanel = ({ expenses, onChanged }: ExtraExpensesPanelProps) =>
 
   const remove = async (id: number) => {
     try {
-      await deleteExtraExpense(id);
+      await deleteExtraExpense(id, user?.id);
       onChanged();
     } catch (e) {
       fail(e, 'Не удалось удалить');
