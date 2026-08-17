@@ -360,11 +360,15 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
     # Вещь могла уже лежать в накопительном буфере (упаковщица отстикеровала). Тогда
     # сканирование — это перенос в сборку кладовщика, а не ошибка. Из чужой РУЧНОЙ
     # сборки заказ забирать нельзя: там его собирает другой человек.
+    # Смотрим только на ЖИВЫЕ поставки. Привязка к уже закрытой (отгруженной) поставке
+    # — это хвост, из-за которого кладовщик получал «уже добавлен в другую поставку»
+    # на вещь, лежащую у него в руках, и собрать её было нельзя.
     cur.execute(
         "SELECT wso.supply_id, COALESCE(s.is_accumulator, false) "
         "FROM wb_supply_orders wso "
         "JOIN marketplace_supplies s ON s.id = wso.supply_id "
-        "WHERE wso.order_id = %s",
+        "WHERE wso.order_id = %s "
+        "  AND s.status IN ('Открытая', 'На сборке', 'Отгрузка')",
         (order_id,),
     )
     ex = cur.fetchone()
@@ -375,6 +379,14 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
         if not ex[1]:
             return _resp(409, {'error': f'Заказ {order_number} уже добавлен в другую поставку'})
         move_from_accumulator = True
+    else:
+        # Хвост от закрытой поставки убираем, иначе он не даст создать новую связь.
+        cur.execute(
+            "DELETE FROM wb_supply_orders w USING marketplace_supplies s "
+            "WHERE s.id = w.supply_id AND w.order_id = %s "
+            "  AND s.status NOT IN ('Открытая', 'На сборке', 'Отгрузка')",
+            (order_id,),
+        )
 
     status_code, data = wb_add_orders_to_supply(
         api_key, use_sandbox, wb_supply_id, [wb_order_id]
@@ -578,17 +590,28 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_
         # В итоге вещи, которые физически уже уехали на WB, годами висели в счётчике
         # «Готово к сборке»: кладовщик видел 27 штук, а на полках их не было.
         # Заказы в РЕАЛЬНОЙ поставке кладовщика не трогаем: он их сейчас собирает.
+        #
+        # ВАЖНО — только пока поставка ЖИВА. Раньше условие смотрело на любую поставку,
+        # и заказ, привязанный к уже ЗАКРЫТОЙ поставке, выпадал из проверки навсегда:
+        # статус у WB никто не спрашивал, в новую поставку он не добавлялся, в счётчике
+        # не показывался. Так 117 заказов зависли в статусе «Новый» — они и есть та
+        # самая «поставка не пополняется».
         "AND NOT EXISTS ("
         "  SELECT 1 FROM wb_supply_orders w "
         "  JOIN marketplace_supplies s ON s.id = w.supply_id "
-        "  WHERE w.order_id = orders.id AND COALESCE(s.is_accumulator, false) = false"
+        "  WHERE w.order_id = orders.id AND COALESCE(s.is_accumulator, false) = false "
+        "    AND s.status IN ('Открытая', 'На сборке', 'Отгрузка')"
         ")"
     )
-    # Сначала закрываем поставки, которые уже уехали по данным WB: их заказы должны
+    # ВАЖНО: список забираем СРАЗУ. Ниже вызывается _close_finished_supplies, который
+    # делает свои запросы тем же курсором и затирает результат этого. Раньше строки
+    # читались после него — и сверка всегда получала пустой список: сколько бы заказов
+    # ни зависло, в ответе стояло «проверено 0», и проблема оставалась невидимой.
+    rows = cur.fetchall()
+
+    # Затем закрываем поставки, которые уже уехали по данным WB: их заказы должны
     # стать отгруженными, а не висеть в системе непонятно где.
     released_stuck = _close_finished_supplies(cur, conn, api_key, use_sandbox)
-
-    rows = cur.fetchall()
     if not rows:
         conn.commit()
         return _resp(200, {'checked': 0, 'closed': 0, 'cancelled': 0,
@@ -612,6 +635,8 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_
 
     stats = {}
     closed, cancelled = 0, 0
+    # Сколько заказов освободили от привязки к закрытым поставкам.
+    released_links = 0
     for order_id, wb_order_id, number in rows:
         st = by_id.get(int(wb_order_id))
         if not st:
@@ -641,6 +666,19 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_
             )
             _drop_from_accumulator(cur, order_id)
             cancelled += 1
+        # Заказ ЖИВ и ждёт отправки, а привязка к закрытой поставке за ним осталась —
+        # именно она мешала положить его в новую поставку. Снимаем хвост, чтобы вещь
+        # вернулась в работу: при следующей стикеровке она попадёт в актуальную поставку.
+        elif st['supplier'] in ('new', 'confirm') and st['wb'] not in (
+            'sold', 'sorted', 'ready_for_pickup', 'received'
+        ):
+            cur.execute(
+                "DELETE FROM wb_supply_orders w USING marketplace_supplies s "
+                "WHERE s.id = w.supply_id AND w.order_id = %s "
+                "  AND s.status NOT IN ('Открытая', 'На сборке', 'Отгрузка')",
+                (order_id,),
+            )
+            released_links += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
         # Уже уехал: на WB отправление собрано и передано — у нас тоже закрываем.
         elif st['wb'] in ('sold', 'sorted', 'ready_for_pickup', 'received') or st['supplier'] == 'complete':
             cur.execute(
@@ -660,12 +698,14 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_
         cur, actor_id, actor_name, 'wb_check_statuses', None,
         f'Проверка статусов WB FBS: проверено {len(rows)}, '
         f'отменено {cancelled}, закрыто отгруженных {closed}, '
-        f'закрыто отгруженных поставок: заказов {released_stuck}',
+        f'закрыто отгруженных поставок: заказов {released_stuck}, '
+        f'освобождено из закрытых поставок {released_links}',
     )
     conn.commit()
     return _resp(200, {
         'checked': len(rows), 'closed': closed, 'cancelled': cancelled,
-        'closedShipped': released_stuck, 'statuses': stats,
+        'closedShipped': released_stuck, 'releasedLinks': released_links,
+        'statuses': stats,
     })
 
 
@@ -1167,10 +1207,31 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
     # Реальная защита от «вещи нет в коробе» стоит на сканировании заказа в поставку
     # (handle_scan_order) — там вещь уже должна быть отстикерована.
 
-    # Заказ уже лежит в какой-то поставке — второй раз не добавляем.
-    cur.execute("SELECT supply_id FROM wb_supply_orders WHERE order_id = %s", (order_id,))
+    # Заказ уже лежит в ЖИВОЙ поставке — второй раз не добавляем.
+    #
+    # Раньше проверка была «лежит в любой поставке», и этого хватало, чтобы заказ
+    # застрял навсегда: поставку закрыли и отгрузили, а привязка осталась. При печати
+    # стикера мы видели связь, считали работу сделанной и выходили — заказ не попадал
+    # ни в новую поставку, ни в счётчик кладовщика. Смотрим только на поставки,
+    # в которые ещё можно докладывать.
+    cur.execute(
+        "SELECT w.supply_id FROM wb_supply_orders w "
+        "JOIN marketplace_supplies s ON s.id = w.supply_id "
+        "WHERE w.order_id = %s AND s.status IN ('Открытая', 'На сборке', 'Отгрузка')",
+        (order_id,),
+    )
     if cur.fetchone():
         return None
+
+    # Привязка к уже закрытой поставке осталась «хвостом»: она мешает добавить заказ
+    # заново (в таблице стоит уникальность по заказу). Убираем — сам заказ при этом
+    # не трогаем, ниже он ляжет в актуальную поставку.
+    cur.execute(
+        "DELETE FROM wb_supply_orders w USING marketplace_supplies s "
+        "WHERE s.id = w.supply_id AND w.order_id = %s "
+        "  AND s.status NOT IN ('Открытая', 'На сборке', 'Отгрузка')",
+        (order_id,),
+    )
 
     err, supply_id, wb_supply_id = ensure_open_supply(cur, conn, api_key, use_sandbox)
     if err:
