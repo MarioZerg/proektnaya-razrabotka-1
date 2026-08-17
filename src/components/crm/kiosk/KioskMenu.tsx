@@ -9,7 +9,8 @@ export type KioskScreen =
   | 'rolls'
   | 'unlabeled'
   | 'defect'
-  | 'repack';
+  | 'repack'
+  | 'flyer';
 
 interface KioskMenuProps {
   onSelect: (screen: KioskScreen) => void;
@@ -68,6 +69,12 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
     icon: 'PackageOpen',
     className: 'bg-violet-500 hover:bg-violet-600 text-white',
   },
+  {
+    screen: 'flyer',
+    label: 'Стикер на листовку',
+    icon: 'Tag',
+    className: 'bg-cyan-600 hover:bg-cyan-700 text-white',
+  },
 ];
 
 /** Главное меню терминала — крупные плитки под сенсорный экран. */
@@ -83,11 +90,14 @@ const KioskMenu = ({ onSelect, role, repackCount = 0 }: KioskMenuProps) => {
   //   занимаются — им плитка только мешает.
   // «Брак из рулона» — видят все, кто работает с материалом, но каждый по своему:
   //   закройщик режет ткань, швея шьёт тесьмой, упаковщица портит пакеты и этикетки.
+  // «Стикер на листовку» — работа упаковщицы: она клеит наклейку с составом на
+  //   рекламную листовку, которая идёт в посылку. Кладовщик, швея и закройщик
+  //   листовки не собирают.
   // «Отзывы» — доступны всем ролям на терминале.
   const hiddenByRole: Record<string, KioskScreen[]> = {
-    storekeeper: ['orders', 'rolls', 'defect'],
-    sewer: ['unlabeled', 'repack'],
-    cutter: ['unlabeled', 'repack'],
+    storekeeper: ['orders', 'rolls', 'defect', 'flyer'],
+    sewer: ['unlabeled', 'repack', 'flyer'],
+    cutter: ['unlabeled', 'repack', 'flyer'],
   };
 
   // Администратору на терминале доступно ВСЁ, включая «Товар без стикера».

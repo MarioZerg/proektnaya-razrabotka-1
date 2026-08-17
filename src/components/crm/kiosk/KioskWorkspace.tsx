@@ -7,6 +7,7 @@ import KioskMenu, { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
 import KioskDefectWriteoffPanel from '@/components/crm/kiosk/KioskDefectWriteoffPanel';
 import KioskOrdersScreen from '@/components/crm/kiosk/KioskOrdersScreen';
 import KioskRepackScreen from '@/components/crm/kiosk/KioskRepackScreen';
+import KioskFlyerStickersScreen from '@/components/crm/kiosk/KioskFlyerStickersScreen';
 import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
 import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
@@ -353,6 +354,12 @@ const KioskWorkspace = ({
               // упаковщицы возьмут в работу одну и ту же вещь.
               workshopId={currentWorkshopId || Number(workshopId) || null}
             />
+          </div>
+        )}
+
+        {screen === 'flyer' && (
+          <div className="mx-auto max-w-4xl">
+            <KioskFlyerStickersScreen onBack={() => setScreen('menu')} />
           </div>
         )}
 
