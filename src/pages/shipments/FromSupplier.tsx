@@ -3,6 +3,7 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
+import { isStorekeeperRole } from '@/lib/roles';
 import {
   fetchShipments,
   fetchShipmentDetail,
@@ -29,6 +30,9 @@ const FromSupplier = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  // Кладовщик правит состав приёмки, пока её не принял администратор: свою опечатку
+  // он замечает сразу при разгрузке, а раньше ждал админа — машина уже уехала.
+  const canEditPending = isStorekeeperRole(user?.role);
 
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -109,12 +113,15 @@ const FromSupplier = () => {
           r.materialId && Number(r.quantity) > 0 && Number(r.numberRolls) >= 1
       )
       .map((r) => ({
+        id: r.id,
         materialId: Number(r.materialId),
         quantity: Number(r.quantity) * Number(r.numberRolls),
         numberRolls: Number(r.numberRolls),
         // Цена за единицу в валюте поставщика. Пусто — подставится прайс поставщика.
         price: r.price && r.price.trim() !== '' ? Number(r.price.replace(',', '.')) : null,
         currency: r.currency || null,
+        // Поставщик строки. Пусто — берётся основной поставщик приёмки.
+        supplierId: r.supplierId ? Number(r.supplierId) : null,
       }));
 
   const handleSave = async () => {
@@ -174,14 +181,37 @@ const FromSupplier = () => {
     }
     // На наклейку рулона кроме штрихкода кладём поставщика и дату приёмки: на складе по ним
     // видно, чей это материал и сколько он лежит (старые рулоны пускают в работу первыми).
-    const items = detail.items
-      .filter((i) => i.barcode)
-      .map((i) => ({
-        code: i.barcode as string,
-        label: `${i.materialName} — ${formatQuantity(i.quantity)} ${i.unit || ''}`,
-        supplier: detail.supplierName,
-        receivedAt: detail.completedAt || detail.createdAt,
-      }));
+    // Поставщика берём у самой позиции — в одной машине их может быть несколько.
+    const items: Array<{ code: string; label: string; supplier: string | null; receivedAt: string }> = [];
+    for (const i of detail.items) {
+      const supplier = i.supplierName || detail.supplierName;
+      const receivedAt = detail.completedAt || detail.createdAt;
+      if (i.barcode) {
+        // Поставка уже подтверждена — печатаем коды созданных рулонов.
+        items.push({
+          code: i.barcode,
+          label: `${i.materialName} — ${formatQuantity(i.quantity)} ${i.unit || ''}`,
+          supplier,
+          receivedAt,
+        });
+        continue;
+      }
+      // Поставка ещё не подтверждена: печатаем забронированные коды, чтобы кладовщик
+      // наклеил стикеры прямо при разгрузке. После подтверждения рулоны получат их же.
+      const perRoll = i.quantity && i.numberRolls ? Number(i.quantity) / Number(i.numberRolls) : i.quantity;
+      for (const code of i.reservedBarcodes || []) {
+        items.push({
+          code,
+          label: `${i.materialName} — ${formatQuantity(perRoll)} ${i.unit || ''}`,
+          supplier,
+          receivedAt,
+        });
+      }
+    }
+    if (items.length === 0) {
+      toast({ title: 'Штрихкодов пока нет', variant: 'destructive' });
+      return;
+    }
     printBarcodes(items, `Приёмка #${shipmentId}`);
   };
 
@@ -191,6 +221,9 @@ const FromSupplier = () => {
     setReviewSupplierId(detail.supplierId ? String(detail.supplierId) : '');
     setReviewRows(
       detail.items.map((i) => ({
+        // id позиции обязателен: по нему за строкой закрепляются уже напечатанные
+        // штрихкоды, иначе после правки наклеенные стикеры перестали бы совпадать.
+        id: i.id,
         materialId: String(i.materialId),
         // В базе лежит ОБЩИЙ метраж позиции, а в форме показываем метраж одного рулона —
         // так же, как он написан на самом рулоне. Делим обратно на число рулонов.
@@ -199,9 +232,21 @@ const FromSupplier = () => {
             ? String(Number(i.quantity) / Number(i.numberRolls))
             : String(i.quantity ?? ''),
         numberRolls: String(i.numberRolls ?? ''),
-        // Цена: что уже указана, иначе подставляем прайс поставщика.
-        price: i.price != null ? String(i.price) : i.supplierPrice != null ? String(i.supplierPrice) : '',
+        // Цена: что уже указана, иначе подставляем прайс поставщика — но только админу.
+        // Кладовщик цен не видит, и подставлять ему прайс нельзя: сохранив правку состава,
+        // он молча зафиксировал бы сегодняшнюю цену как цену поставки.
+        price: isAdmin
+          ? i.price != null
+            ? String(i.price)
+            : i.supplierPrice != null
+              ? String(i.supplierPrice)
+              : ''
+          : i.price != null
+            ? String(i.price)
+            : '',
         currency: i.currency || i.supplierCurrency || '',
+        supplierId: i.supplierId ? String(i.supplierId) : '',
+        reservedBarcodes: i.reservedBarcodes,
       }))
     );
     // Курс подставляем из карточки поставщика — администратор поправит при необходимости.
@@ -349,6 +394,7 @@ const FromSupplier = () => {
           loading={loading}
           shipments={shipments}
           isAdmin={isAdmin}
+          canEditPending={canEditPending}
           expandedRolls={expandedRolls}
           loadingRolls={loadingRolls}
           onToggleRolls={toggleRolls}
@@ -380,6 +426,7 @@ const FromSupplier = () => {
         setExchangeRate={setExchangeRate}
         logisticsCost={logisticsCost}
         setLogisticsCost={setLogisticsCost}
+        canApprove={isAdmin}
       />
     </CrmLayout>
   );

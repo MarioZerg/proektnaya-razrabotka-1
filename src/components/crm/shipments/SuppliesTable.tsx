@@ -33,6 +33,8 @@ interface SuppliesTableProps {
   loading: boolean;
   shipments: Shipment[];
   isAdmin: boolean;
+  /** Кладовщик: правит и печатает стикеры, но не подтверждает приёмку. */
+  canEditPending: boolean;
   expandedRolls: Record<number, ShipmentDetail | null>;
   loadingRolls: number | null;
   onToggleRolls: (shipmentId: number) => void;
@@ -48,6 +50,7 @@ const SuppliesTable = ({
   loading,
   shipments,
   isAdmin,
+  canEditPending,
   expandedRolls,
   loadingRolls,
   onToggleRolls,
@@ -164,23 +167,40 @@ const SuppliesTable = ({
                       </Badge>
                     </TableCell>
                     <TableCell>{s.createdByName || '—'}</TableCell>
-                    <TableCell>{s.supplierName || '—'}</TableCell>
+                    <TableCell>
+                      {s.itemSuppliers || s.supplierName || '—'}
+                    </TableCell>
                     <TableCell>{s.comment || '—'}</TableCell>
                     <TableCell>{formatDate(s.createdAt)}</TableCell>
                     <TableCell>{s.completedAt ? formatDate(s.completedAt) : '—'}</TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-2">
-                        {isPending && isAdmin && (
-                          <Button size="sm" onClick={() => onOpenReview(s.id)}>
-                            <Icon name="ClipboardCheck" size={14} className="mr-1" />
-                            Проверить
+                        {/* Админ проверяет и подтверждает, кладовщик — правит свой же
+                            состав, пока приёмку не приняли. */}
+                        {isPending && (isAdmin || canEditPending) && (
+                          <Button
+                            size="sm"
+                            variant={isAdmin ? 'default' : 'outline'}
+                            onClick={() => onOpenReview(s.id)}
+                          >
+                            <Icon
+                              name={isAdmin ? 'ClipboardCheck' : 'Pencil'}
+                              size={14}
+                              className="mr-1"
+                            />
+                            {isAdmin ? 'Проверить' : 'Изменить'}
                           </Button>
                         )}
-                        {!isPending && (
-                          <Button variant="outline" size="icon" onClick={() => onPrintShipmentBarcodes(s.id)}>
-                            <Icon name="Barcode" size={14} />
-                          </Button>
-                        )}
+                        {/* Печать стикеров доступна сразу: коды выдаются при оформлении,
+                            и кладовщик клеит их прямо при разгрузке машины. */}
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          title="Печать штрихкодов"
+                          onClick={() => onPrintShipmentBarcodes(s.id)}
+                        >
+                          <Icon name="Barcode" size={14} />
+                        </Button>
                         {isAdmin && (
                           <Button variant="ghost" size="icon" onClick={() => onSetDeleteId(s.id)}>
                             <Icon name="Trash2" size={14} />

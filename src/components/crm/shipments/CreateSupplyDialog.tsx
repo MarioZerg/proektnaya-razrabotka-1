@@ -65,9 +65,9 @@ const CreateSupplyDialog = ({
       <div>
         <h1 className="text-xl font-bold">Отгрузка от поставщика</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Приехала машина — указали материал, общий метраж/кол-во и сколько рулонов/пачек
-          привезли. Поставка уходит администратору на проверку — материал появится на
-          складе только после подтверждения
+          Приехала машина — указали материал, метраж и сколько рулонов привезли. Штрихкоды
+          выдаются сразу: стикеры можно печатать и клеить при разгрузке. Материал появится
+          на складе после проверки администратором
         </p>
       </div>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -83,7 +83,7 @@ const CreateSupplyDialog = ({
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label>Поставщик *</Label>
+              <Label>Основной поставщик *</Label>
               <Select value={supplierId} onValueChange={setSupplierId}>
                 <SelectTrigger>
                   <SelectValue placeholder="Выберите поставщика" />
@@ -96,6 +96,11 @@ const CreateSupplyDialog = ({
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                Если машина привезла материал от нескольких поставщиков — укажите своего
+                у каждой строки ниже. Стоимость поездки разделится между ними
+                пропорционально привезённому объёму.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -107,7 +112,7 @@ const CreateSupplyDialog = ({
                 </Button>
               </div>
               {rows.map((row, idx) => (
-                <div key={idx} className="grid grid-cols-[1fr_100px_100px_auto] gap-2">
+                <div key={idx} className="grid grid-cols-[1fr_140px_100px_100px_auto] gap-2">
                   <Select value={row.materialId} onValueChange={(v) => updateRow(idx, 'materialId', v)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Материал" />
@@ -116,6 +121,23 @@ const CreateSupplyDialog = ({
                       {materials.map((m) => (
                         <SelectItem key={m.id} value={String(m.id)}>
                           {m.name} ({m.unit})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {/* Поставщик строки. Пусто — берётся основной поставщик приёмки. */}
+                  <Select
+                    value={row.supplierId || '__main'}
+                    onValueChange={(v) => updateRow(idx, 'supplierId', v === '__main' ? '' : v)}
+                  >
+                    <SelectTrigger title="От кого приехал этот материал">
+                      <SelectValue placeholder="Поставщик" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__main">Основной</SelectItem>
+                      {suppliers.map((s) => (
+                        <SelectItem key={s.id} value={String(s.id)}>
+                          {s.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -153,8 +175,8 @@ const CreateSupplyDialog = ({
               <p className="text-xs text-muted-foreground">
                 Количество указывается <b>на один рулон или пачку</b>. Пришло 10 рулонов по
                 100 пог.м. — пишем 100 и 10 рулонов. Пришло 3 пачки пакетов по 1000 шт —
-                пишем 1000 и 3. Штрихкоды система присвоит сама после подтверждения
-                администратором.
+                пишем 1000 и 3. Штрихкоды система присвоит сразу — их можно распечатать и
+                наклеить на рулоны, не дожидаясь администратора.
               </p>
             </div>
 

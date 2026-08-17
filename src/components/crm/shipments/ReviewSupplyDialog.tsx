@@ -51,6 +51,12 @@ interface ReviewSupplyDialogProps {
   /** Стоимость логистики поставки, делится поровну на все метры и штуки. */
   logisticsCost: string;
   setLogisticsCost: (value: string) => void;
+  /**
+   * Админ видит полное окно проверки: цены, курс, логистику и кнопку подтверждения.
+   * Кладовщик — только состав приёмки, чтобы поправить свою же опечатку, пока
+   * поставку не приняли. Деньги и подтверждение остаются за администратором.
+   */
+  canApprove: boolean;
 }
 
 const ReviewSupplyDialog = ({
@@ -72,6 +78,7 @@ const ReviewSupplyDialog = ({
   setExchangeRate,
   logisticsCost,
   setLogisticsCost,
+  canApprove,
 }: ReviewSupplyDialogProps) => {
   const updateReviewRow = (idx: number, field: keyof ItemRow, value: string) =>
     setReviewRows((r) => r.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
@@ -131,12 +138,14 @@ const ReviewSupplyDialog = ({
       <Dialog open={!!reviewShipment} onOpenChange={(open) => !open && onOpenChange(false)}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Проверка поставки #{reviewShipment?.id}</DialogTitle>
+            <DialogTitle>
+              {canApprove ? 'Проверка' : 'Редактирование'} поставки #{reviewShipment?.id}
+            </DialogTitle>
           </DialogHeader>
           {reviewShipment && (
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <Label>Поставщик</Label>
+                <Label>Основной поставщик</Label>
                 <Select value={reviewSupplierId} onValueChange={setReviewSupplierId}>
                   <SelectTrigger>
                     <SelectValue placeholder="Выберите поставщика" />
@@ -161,7 +170,13 @@ const ReviewSupplyDialog = ({
                 </div>
                 {reviewRows.map((row, idx) => (
                   <div key={idx} className="space-y-1">
-                  <div className="grid grid-cols-[1fr_90px_80px_90px_90px_auto] gap-2">
+                  <div
+                    className={`grid gap-2 ${
+                      canApprove
+                        ? 'grid-cols-[1fr_120px_90px_80px_90px_90px_auto]'
+                        : 'grid-cols-[1fr_140px_90px_80px_auto]'
+                    }`}
+                  >
                     <Select value={row.materialId} onValueChange={(v) => updateReviewRow(idx, 'materialId', v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Материал" />
@@ -170,6 +185,26 @@ const ReviewSupplyDialog = ({
                         {materials.map((m) => (
                           <SelectItem key={m.id} value={String(m.id)}>
                             {m.name} ({m.unit})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {/* Поставщик строки: одна машина может привезти материал от разных
+                        поставщиков, и логистика делится между ними пропорционально. */}
+                    <Select
+                      value={row.supplierId || '__main'}
+                      onValueChange={(v) =>
+                        updateReviewRow(idx, 'supplierId', v === '__main' ? '' : v)
+                      }
+                    >
+                      <SelectTrigger title="От кого приехал этот материал">
+                        <SelectValue placeholder="Поставщик" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__main">Основной</SelectItem>
+                        {suppliers.map((sup) => (
+                          <SelectItem key={sup.id} value={String(sup.id)}>
+                            {sup.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -193,7 +228,9 @@ const ReviewSupplyDialog = ({
                       onChange={(e) => updateReviewRow(idx, 'numberRolls', e.target.value)}
                     />
                     {/* Цена за единицу у этого поставщика. Пусто — подставится прайс.
-                        Значок валюты в поле: иначе «1.4» читается как рубли. */}
+                        Значок валюты в поле: иначе «1.4» читается как рубли.
+                        Кладовщик денег не видит — это зона администратора. */}
+                    {canApprove && (
                     <div className="relative">
                       <Input
                         inputMode="decimal"
@@ -206,6 +243,8 @@ const ReviewSupplyDialog = ({
                         {currencySymbols[row.currency || supplierCurrency] || ''}
                       </span>
                     </div>
+                    )}
+                    {canApprove && (
                     <Select
                       value={row.currency || supplierCurrency}
                       onValueChange={(v) => updateReviewRow(idx, 'currency', v)}
@@ -221,6 +260,7 @@ const ReviewSupplyDialog = ({
                         ))}
                       </SelectContent>
                     </Select>
+                    )}
                     <Button
                       type="button"
                       size="icon"
@@ -231,6 +271,16 @@ const ReviewSupplyDialog = ({
                       <Icon name="Trash2" size={16} />
                     </Button>
                   </div>
+                  {/* Уже выданные штрихкоды: если стикеры наклеены, менять число рулонов
+                      нужно осознанно — лишние коды отвалятся, новым потребуются наклейки. */}
+                  {(row.reservedBarcodes?.length ?? 0) > 0 && (
+                    <p className="pl-1 text-xs text-muted-foreground">
+                      Штрихкоды:{' '}
+                      <span className="font-mono-tech">
+                        {(row.reservedBarcodes || []).join(', ')}
+                      </span>
+                    </p>
+                  )}
                   {/* Показываем общий метраж позиции: по нему считается склад и логистика. */}
                   {Number(row.quantity) > 0 && Number(row.numberRolls) >= 1 && (
                     <p className="pl-1 text-xs text-muted-foreground">
@@ -247,12 +297,16 @@ const ReviewSupplyDialog = ({
                 ))}
                 <p className="text-xs text-muted-foreground">
                   Метраж указывается <b>на один рулон</b> — как написано на самом рулоне:
-                  100 пог.м. и 10 рулонов = 1000 пог.м. на складе. Пустая цена подставится из
-                  прайса поставщика. Штрихкоды рулонов система присвоит после подтверждения.
+                  100 пог.м. и 10 рулонов = 1000 пог.м. на складе.
+                  {canApprove && ' Пустая цена подставится из прайса поставщика.'} Уже
+                  выданные штрихкоды за позицией сохраняются — наклеенные стикеры
+                  остаются действительными.
                 </p>
               </div>
 
-              {/* Курс и логистика — из них складывается итоговая себестоимость метра. */}
+              {/* Курс и логистика — из них складывается итоговая себестоимость метра.
+                  Кладовщику этот блок не показываем: деньгами занимается администратор. */}
+              {canApprove && (
               <div className="grid grid-cols-2 gap-3 rounded-md border border-border p-3">
                 <div className="space-y-1.5">
                   {/* Пишем формулой: «Курс USD к рублю» не объясняет, что именно вводить. */}
@@ -297,9 +351,10 @@ const ReviewSupplyDialog = ({
                   </p>
                 </div>
               </div>
+              )}
 
               {/* Предпросчёт: сколько будет стоить 1 метр или штука после приёмки. */}
-              {preview.length > 0 && (
+              {canApprove && preview.length > 0 && (
                 <div className="rounded-md border border-border p-3">
                   <p className="text-sm font-medium">Себестоимость после подтверждения</p>
                   <div className="mt-2 space-y-1">
@@ -320,21 +375,38 @@ const ReviewSupplyDialog = ({
               )}
 
               <div className="flex gap-2">
-                <Button variant="outline" className="flex-1" onClick={onSaveReview} disabled={reviewSaving}>
-                  {reviewSaving ? 'Сохранение...' : 'Сохранить правки'}
-                </Button>
                 <Button
-                  variant="destructive"
+                  variant={canApprove ? 'outline' : 'default'}
                   className="flex-1"
-                  onClick={() => setRejectId(reviewShipment.id)}
+                  onClick={onSaveReview}
                   disabled={reviewSaving}
                 >
-                  Отклонить
+                  {reviewSaving ? 'Сохранение...' : 'Сохранить правки'}
                 </Button>
-                <Button className="flex-1" onClick={onApprove} disabled={reviewSaving}>
-                  {reviewSaving ? 'Подтверждение...' : 'Подтвердить'}
-                </Button>
+                {/* Отклонить и подтвердить может только администратор: с подтверждением
+                    материал встаёт на склад и считается себестоимость. */}
+                {canApprove && (
+                  <>
+                    <Button
+                      variant="destructive"
+                      className="flex-1"
+                      onClick={() => setRejectId(reviewShipment.id)}
+                      disabled={reviewSaving}
+                    >
+                      Отклонить
+                    </Button>
+                    <Button className="flex-1" onClick={onApprove} disabled={reviewSaving}>
+                      {reviewSaving ? 'Подтверждение...' : 'Подтвердить'}
+                    </Button>
+                  </>
+                )}
               </div>
+              {!canApprove && (
+                <p className="text-xs text-muted-foreground">
+                  Поправить состав можно, пока приёмку не принял администратор. После
+                  подтверждения материал встаёт на склад, и правки закрываются.
+                </p>
+              )}
             </div>
           )}
         </DialogContent>

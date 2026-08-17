@@ -30,6 +30,8 @@ export interface Shipment {
   materialId: number | null;
   /** Причина отказа сотрудника цеха в приёме — заявка при этом остаётся в статусе "Отправлено". */
   rejectReason: string | null;
+  /** Все поставщики приёмки через запятую: их может быть несколько в одной машине. */
+  itemSuppliers?: string | null;
 }
 
 export interface ShipmentItem {
@@ -51,6 +53,15 @@ export interface ShipmentItem {
   /** Цена из прайса поставщика — подставляется в форму по умолчанию. */
   supplierPrice?: number | null;
   supplierCurrency?: string | null;
+  /** Поставщик именно этой позиции — в одной приёмке их может быть несколько. */
+  supplierId?: number | null;
+  supplierName?: string | null;
+  /**
+   * Штрихкоды, забронированные системой ещё при оформлении приёмки. Кладовщик печатает
+   * и клеит их сразу при разгрузке, не дожидаясь администратора — после подтверждения
+   * рулоны получают ровно эти же коды.
+   */
+  reservedBarcodes?: string[];
 }
 
 export interface ShipmentDetail extends Shipment {
@@ -110,7 +121,13 @@ export const createShipmentFromSupplier = (payload: {
   supplierId: number;
   comment?: string;
   createdBy?: number;
-  items: Array<{ materialId: number; quantity: number; numberRolls: number }>;
+  items: Array<{
+    materialId: number;
+    quantity: number;
+    numberRolls: number;
+    /** Поставщик этой позиции — если у машины их несколько. */
+    supplierId?: number | null;
+  }>;
 }): Promise<CreateFromSupplierResult> => postAction({ action: 'create', type: 'from_supplier', ...payload });
 
 // Правка позиций неподтверждённой поставки (например, кладовщик ошибся в метраже)
@@ -119,12 +136,15 @@ export const updatePendingSupply = (
   payload: {
     supplierId?: number;
     items: Array<{
+      /** id существующей позиции — по нему сохраняются уже напечатанные штрихкоды. */
+      id?: number;
       materialId: number;
       quantity: number;
       numberRolls: number;
       /** Цена за единицу в валюте поставщика. Пусто — подставится прайс поставщика. */
       price?: number | null;
       currency?: string | null;
+      supplierId?: number | null;
     }>;
   }
 ) => postAction({ action: 'update_pending_supply', id, ...payload });

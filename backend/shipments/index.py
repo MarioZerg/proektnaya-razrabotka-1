@@ -25,6 +25,35 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
+def reserve_barcodes(cur, type_id, count):
+    """Выдаёт `count` новых штрихкодов для типа материала и сразу занимает номера.
+
+    Зачем счётчик. Раньше номер брался как «максимум среди уже созданных рулонов», и это
+    работало, пока стикеры печатались только после подтверждения. Теперь кладовщик получает
+    коды сразу при разгрузке машины — рулона с таким номером ещё нет, и «максимум» выдал бы
+    двум кладовщикам одинаковые номера на разные рулоны.
+
+    Строка счётчика блокируется до конца транзакции (UPDATE), поэтому две одновременные
+    приёмки получат разные диапазоны номеров.
+    """
+    cur.execute(
+        "INSERT INTO barcode_counters (type_id, last_seq) VALUES (%s, 0) "
+        "ON CONFLICT (type_id) DO NOTHING",
+        (int(type_id),),
+    )
+    # Подстраховка на случай рулонов, созданных до появления счётчика.
+    cur.execute(
+        "UPDATE barcode_counters SET last_seq = GREATEST(last_seq, COALESCE("
+        "  (SELECT MAX(split_part(barcode, '-', 2)::int) FROM rolls "
+        "   WHERE barcode ~ ('^' || %s || '-[0-9]+$')), 0)) + %s "
+        "WHERE type_id = %s RETURNING last_seq",
+        (str(int(type_id)), int(count), int(type_id)),
+    )
+    last_seq = cur.fetchone()[0]
+    first_seq = last_seq - int(count) + 1
+    return [f"{int(type_id)}-{seq:06d}" for seq in range(first_seq, last_seq + 1)]
+
+
 def handler(event: dict, context) -> dict:
     """Управляет складским документооборотом: отгрузки от поставщика, в цех,
     возврат поставщику и списание брака. Каждый документ (shipment) содержит список
@@ -169,14 +198,19 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Документ не найден'})}
 
                 cur.execute(
+                    # Прайс подтягиваем по поставщику САМОЙ ПОЗИЦИИ (а если у неё своего нет —
+                    # по поставщику документа): в одной приёмке материал может быть от разных
+                    # поставщиков, и цена у каждого своя.
                     "SELECT si.id, si.material_id, m.name, m.unit, si.barcode, si.roll_id, r.barcode, "
                     "si.quantity, si.requested_quantity, si.number_rolls, si.price, si.currency, "
-                    "r.cost_per_unit, sp.price, sp.currency "
+                    "r.cost_per_unit, sp.price, sp.currency, si.supplier_id, isup.name, "
+                    "si.reserved_barcodes "
                     "FROM shipment_items si "
                     "LEFT JOIN materials m ON m.id = si.material_id "
                     "LEFT JOIN rolls r ON r.id = si.roll_id "
                     "LEFT JOIN shipments sh ON sh.id = si.shipment_id "
-                    "LEFT JOIN supplier_prices sp ON sp.supplier_id = sh.supplier_id "
+                    "LEFT JOIN suppliers isup ON isup.id = si.supplier_id "
+                    "LEFT JOIN supplier_prices sp ON sp.supplier_id = COALESCE(si.supplier_id, sh.supplier_id) "
                     "AND sp.material_id = si.material_id "
                     "WHERE si.shipment_id = %s ORDER BY si.id",
                     (int(shipment_id),),
@@ -201,6 +235,12 @@ def handler(event: dict, context) -> dict:
                         # Цена из прайса поставщика — подставляется в форму по умолчанию.
                         'supplierPrice': float(r[13]) if r[13] is not None else None,
                         'supplierCurrency': r[14],
+                        # Поставщик именно этой позиции: в одной машине их может быть несколько.
+                        'supplierId': r[15],
+                        'supplierName': r[16],
+                        # Штрихкоды, забронированные до подтверждения, — их печатает кладовщик
+                        # сразу при разгрузке.
+                        'reservedBarcodes': [c for c in (r[17] or '').split(',') if c],
                     }
                     for r in cur.fetchall()
                 ]
@@ -259,7 +299,11 @@ def handler(event: dict, context) -> dict:
                 f"(SELECT STRING_AGG(DISTINCT m.name, ', ') FROM shipment_items si "
                 f"JOIN materials m ON m.id = si.material_id WHERE si.shipment_id = s.id) as material_names, "
                 f"(SELECT MIN(si.material_id) FROM shipment_items si WHERE si.shipment_id = s.id) as material_id, "
-                f"s.reject_reason "
+                f"s.reject_reason, "
+                # Все поставщики документа: приёмка может быть общей на несколько поставщиков,
+                # и в списке нужно видеть их всех, а не только основного.
+                f"(SELECT STRING_AGG(DISTINCT isup.name, ', ') FROM shipment_items si "
+                f"JOIN suppliers isup ON isup.id = si.supplier_id WHERE si.shipment_id = s.id) as item_suppliers "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                 f"LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -289,6 +333,8 @@ def handler(event: dict, context) -> dict:
                     'materialNames': r[16],
                     'materialId': r[17],
                     'rejectReason': r[18],
+                    # Перечень поставщиков приёмки — если он один, совпадает с supplierName.
+                    'itemSuppliers': r[19],
                 }
                 for r in cur.fetchall()
             ]
@@ -317,8 +363,16 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректный тип документа'})}
                 if not items:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Добавьте хотя бы одну позицию'})}
-                if doc_type == 'from_supplier' and supplier_id in (None, ''):
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите поставщика — без него приёмку оформить нельзя'})}
+                # У приёмки поставщик может быть указан на КАЖДОЙ позиции: одна машина
+                # часто везёт материал сразу от нескольких поставщиков. Общий поставщик
+                # документа остаётся как «основной» — если он не задан, берём его из первой
+                # позиции, чтобы старые отчёты и фильтры продолжали работать.
+                if doc_type == 'from_supplier':
+                    item_suppliers = [i.get('supplierId') for i in items if i.get('supplierId') not in (None, '')]
+                    if supplier_id in (None, '') and item_suppliers:
+                        supplier_id = item_suppliers[0]
+                    if supplier_id in (None, ''):
+                        return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите поставщика — без него приёмку оформить нельзя'})}
 
                 supplier_sql = int(supplier_id) if supplier_id not in (None, '') else 'NULL'
                 comment_esc = comment.replace("'", "''")
@@ -361,13 +415,28 @@ def handler(event: dict, context) -> dict:
                                 ),
                             }
 
-                        cur.execute("SELECT id FROM materials WHERE id = %s", (material_id,))
-                        if not cur.fetchone():
+                        cur.execute("SELECT id, type_id FROM materials WHERE id = %s", (material_id,))
+                        mat_row = cur.fetchone()
+                        if not mat_row:
                             return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Материал #{material_id} не найден'})}
 
+                        # Поставщик позиции: свой, либо общий поставщик приёмки.
+                        item_supplier = item.get('supplierId')
+                        item_supplier_sql = (
+                            int(item_supplier) if item_supplier not in (None, '') else supplier_sql
+                        )
+
+                        # Штрихкоды бронируем СРАЗУ, до подтверждения администратором:
+                        # кладовщик клеит стикеры прямо при разгрузке, иначе рулоны пришлось бы
+                        # разбирать заново после проверки. Номера уже заняты, повторов не будет.
+                        codes = reserve_barcodes(cur, mat_row[1], number_rolls)
+                        codes_sql = "'" + ','.join(codes).replace("'", "''") + "'"
+
                         cur.execute(
-                            f"INSERT INTO shipment_items (shipment_id, material_id, quantity, number_rolls) "
-                            f"VALUES ({shipment_id}, {material_id}, {quantity}, {number_rolls})"
+                            f"INSERT INTO shipment_items (shipment_id, material_id, quantity, number_rolls, "
+                            f"supplier_id, reserved_barcodes) "
+                            f"VALUES ({shipment_id}, {material_id}, {quantity}, {number_rolls}, "
+                            f"{item_supplier_sql}, {codes_sql})"
                         )
 
                     log_action(
@@ -457,8 +526,12 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}
 
             if action == 'update_pending_supply':
-                # Админ правит метраж/кол-во позиций поставки от поставщика ДО подтверждения
-                # (например кладовщик указал "001" на конце по ошибке) — рулоны ещё не созданы.
+                # Правка позиций приёмки ДО подтверждения — рулоны ещё не созданы.
+                #
+                # Раньше редактировать мог только администратор, и кладовщик, заметивший свою
+                # же опечатку сразу после отправки, ждал его — а машина уже уехала. Теперь
+                # правит и кладовщик, но ТОЛЬКО пока приёмка не принята: после подтверждения
+                # материал уже на складе, и менять его задним числом нельзя.
                 shipment_id = body_data.get('id')
                 items = body_data.get('items') or []
                 if not shipment_id:
@@ -472,6 +545,21 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
                 if sh_row[0] != 'from_supplier' or sh_row[1] != 'Новый':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Редактировать можно только неподтверждённую поставку'})}
+
+                # Уже забронированные штрихкоды сохраняем: стикеры на рулонах, скорее всего,
+                # уже наклеены. Позиции пересоздаются, поэтому коды переносим по id позиции,
+                # а если позицию добавили заново — по материалу.
+                cur.execute(
+                    "SELECT id, material_id, reserved_barcodes FROM shipment_items "
+                    "WHERE shipment_id = %s",
+                    (int(shipment_id),),
+                )
+                old_codes_by_id = {}
+                old_codes_by_material = {}
+                for old_id, old_mat, old_codes in cur.fetchall():
+                    codes_list = [c for c in (old_codes or '').split(',') if c]
+                    old_codes_by_id[old_id] = codes_list
+                    old_codes_by_material.setdefault(old_mat, []).append(codes_list)
 
                 cur.execute("DELETE FROM shipment_items WHERE shipment_id = %s", (int(shipment_id),))
                 for item in items:
@@ -512,11 +600,31 @@ def handler(event: dict, context) -> dict:
                             'headers': headers,
                             'body': json.dumps({'error': 'Цена не может быть отрицательной'}, ensure_ascii=False),
                         }
+                    # Поставщик позиции — в одной приёмке их может быть несколько.
+                    item_supplier = item.get('supplierId')
+                    item_supplier_sql = 'NULL' if item_supplier in (None, '') else str(int(item_supplier))
+
+                    # Штрихкоды: берём ранее выданные этой же позиции (по id, иначе по материалу),
+                    # чтобы наклеенные стикеры остались действительными. Если рулонов стало
+                    # больше — добронируем недостающие, если меньше — лишние коды отбрасываем.
+                    prev = old_codes_by_id.get(item.get('id'))
+                    if prev is None:
+                        bucket = old_codes_by_material.get(int(material_id))
+                        prev = bucket.pop(0) if bucket else []
+                    need = int(number_rolls)
+                    codes = list(prev[:need])
+                    if len(codes) < need:
+                        cur.execute("SELECT type_id FROM materials WHERE id = %s", (int(material_id),))
+                        type_row = cur.fetchone()
+                        if type_row:
+                            codes += reserve_barcodes(cur, type_row[0], need - len(codes))
+                    codes_sql = "'" + ','.join(codes).replace("'", "''") + "'" if codes else 'NULL'
+
                     cur.execute(
                         f"INSERT INTO shipment_items (shipment_id, material_id, quantity, number_rolls, "
-                        f"price, currency) "
+                        f"price, currency, supplier_id, reserved_barcodes) "
                         f"VALUES ({int(shipment_id)}, {int(material_id)}, {float(quantity)}, {int(number_rolls)}, "
-                        f"{price_sql}, {currency_sql})"
+                        f"{price_sql}, {currency_sql}, {item_supplier_sql}, {codes_sql})"
                     )
 
                 if 'supplierId' in body_data:
@@ -551,7 +659,8 @@ def handler(event: dict, context) -> dict:
                 supplier_id = sh_row[2]
 
                 cur.execute(
-                    "SELECT id, material_id, quantity, number_rolls, price, currency "
+                    "SELECT id, material_id, quantity, number_rolls, price, currency, "
+                    "supplier_id, reserved_barcodes "
                     "FROM shipment_items WHERE shipment_id = %s",
                     (int(shipment_id),),
                 )
@@ -565,33 +674,48 @@ def handler(event: dict, context) -> dict:
                 req_rate = body_data.get('exchangeRate')
                 logistics_cost = float(body_data.get('logisticsCost') or 0)
 
-                supplier_currency = 'RUB'
-                supplier_rate = None
-                # Норму недостачи фиксируем на рулоне в момент приёмки: если поставщику
-                # потом поменяют норму, уже закрытые рулоны пересчитываться не должны.
-                supplier_norm = None
+                # В одной приёмке позиции могут быть от РАЗНЫХ поставщиков, а у каждого своя
+                # валюта, свой курс, свой прайс и своя норма недостачи. Поэтому карточки
+                # читаем сразу для всех поставщиков документа, а не одну общую.
+                item_supplier_ids = {it[6] for it in pending_items if it[6]}
                 if supplier_id:
+                    item_supplier_ids.add(int(supplier_id))
+                sup_info = {}
+                if item_supplier_ids:
+                    ids_sql = ','.join(str(int(i)) for i in item_supplier_ids)
                     cur.execute(
-                        "SELECT currency, exchange_rate, shortage_norm_percent FROM suppliers WHERE id = %s",
-                        (int(supplier_id),),
+                        f"SELECT id, currency, exchange_rate, shortage_norm_percent "
+                        f"FROM suppliers WHERE id IN ({ids_sql})"
                     )
-                    sup = cur.fetchone()
-                    if sup:
-                        supplier_currency = sup[0] or 'RUB'
-                        supplier_rate = float(sup[1]) if sup[1] is not None else None
-                        supplier_norm = float(sup[2]) if sup[2] is not None else None
-                shipment_rate = float(req_rate) if req_rate not in (None, '') else supplier_rate
+                    for sid, scur, srate, snorm in cur.fetchall():
+                        sup_info[sid] = {
+                            'currency': scur or 'RUB',
+                            'rate': float(srate) if srate is not None else None,
+                            'norm': float(snorm) if snorm is not None else None,
+                        }
 
-                # Прайс поставщика — подставляем цену тем позициям, где её не указали руками.
+                main_info = sup_info.get(int(supplier_id)) if supplier_id else None
+                # Курс, введённый администратором, — общий для документа: он вводит его
+                # руками именно для этой машины.
+                shipment_rate = (
+                    float(req_rate) if req_rate not in (None, '')
+                    else (main_info['rate'] if main_info else None)
+                )
+
+                # Прайсы всех поставщиков документа: (поставщик, материал) -> цена.
                 supplier_price_map = {}
-                if supplier_id:
+                if item_supplier_ids:
+                    ids_sql = ','.join(str(int(i)) for i in item_supplier_ids)
                     cur.execute(
-                        "SELECT material_id, price, currency FROM supplier_prices WHERE supplier_id = %s",
-                        (int(supplier_id),),
+                        f"SELECT supplier_id, material_id, price, currency "
+                        f"FROM supplier_prices WHERE supplier_id IN ({ids_sql})"
                     )
-                    supplier_price_map = {r[0]: (float(r[1]), r[2] or 'RUB') for r in cur.fetchall()}
+                    for sid, mid, pr, cr in cur.fetchall():
+                        supplier_price_map[(sid, mid)] = (float(pr), cr or 'RUB')
 
-                # Логистика делится ПОРОВНУ на каждый метр и штуку поставки.
+                # Логистика делится ПОРОВНУ на каждый метр и штуку поставки — это и есть
+                # смысл общей приёмки: одна поездка честно раскидывается по всем поставщикам,
+                # пропорционально привезённому объёму.
                 total_units = sum(float(it[2]) for it in pending_items)
                 logistics_per_unit = (logistics_cost / total_units) if total_units > 0 else 0.0
 
@@ -601,30 +725,46 @@ def handler(event: dict, context) -> dict:
                 )
 
                 created_rolls = []
-                for item_id, material_id, quantity, number_rolls, item_price, item_currency in pending_items:
+                for (item_id, material_id, quantity, number_rolls, item_price, item_currency,
+                     item_supplier, reserved) in pending_items:
                     quantity = float(quantity)
                     number_rolls = int(number_rolls)
 
-                    # Цена позиции: что указал администратор, иначе прайс поставщика.
+                    # Поставщик именно этой позиции (иначе — основной поставщик документа).
+                    row_supplier = item_supplier or supplier_id
+                    row_info = sup_info.get(int(row_supplier)) if row_supplier else None
+                    row_currency_default = row_info['currency'] if row_info else 'RUB'
+                    # Норму недостачи фиксируем на рулоне в момент приёмки: если поставщику
+                    # потом поменяют норму, уже закрытые рулоны пересчитываться не должны.
+                    row_norm = row_info['norm'] if row_info else None
+
+                    # Цена позиции: что указал администратор, иначе прайс ЕГО поставщика.
                     price = float(item_price) if item_price is not None else None
                     currency = item_currency
-                    if price is None and material_id in supplier_price_map:
-                        price, currency = supplier_price_map[material_id]
-                    currency = (currency or supplier_currency or 'RUB').upper()
+                    if price is None and row_supplier:
+                        found = supplier_price_map.get((int(row_supplier), material_id))
+                        if found:
+                            price, currency = found
+                    currency = (currency or row_currency_default or 'RUB').upper()
 
                     # Себестоимость 1 единицы в рублях. Цена в валюте умножается на курс;
                     # у рублёвых позиций (тесьма, пакеты) курс не нужен — он равен 1.
+                    # Курс берём общий по документу, но если у поставщика позиции свой —
+                    # используем его: у разных поставщиков курсы отличаются.
                     unit_rate = 1.0
                     if currency != 'RUB':
-                        unit_rate = shipment_rate if shipment_rate else 1.0
+                        row_rate = shipment_rate
+                        if row_info and row_info['rate'] and int(row_supplier or 0) != int(supplier_id or 0):
+                            row_rate = row_info['rate']
+                        unit_rate = row_rate if row_rate else 1.0
                     cost_per_unit = None
                     if price is not None:
                         cost_per_unit = round(price * unit_rate + logistics_per_unit, 4)
 
                     price_sql = 'NULL' if price is None else str(price)
-                    norm_sql = 'NULL' if supplier_norm is None else str(supplier_norm)
+                    norm_sql = 'NULL' if row_norm is None else str(row_norm)
                     cost_sql = 'NULL' if cost_per_unit is None else str(cost_per_unit)
-                    supplier_sql = 'NULL' if not supplier_id else str(int(supplier_id))
+                    supplier_sql = 'NULL' if not row_supplier else str(int(row_supplier))
                     # Последняя проверка перед созданием реальных рулонов на складе.
                     if quantity <= 0 or number_rolls < 1:
                         conn.rollback()
@@ -640,19 +780,16 @@ def handler(event: dict, context) -> dict:
                     cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
                     type_id = cur.fetchone()[0]
 
-                    cur.execute("SELECT barcode FROM rolls WHERE barcode LIKE %s", (f'{type_id}-%',))
-                    existing_barcodes = [r[0] for r in cur.fetchall()]
-                    max_seq = 0
-                    for bc in existing_barcodes:
-                        suffix = bc.split('-', 1)[1] if '-' in bc else ''
-                        if suffix.isdigit():
-                            max_seq = max(max_seq, int(suffix))
+                    # КЛЮЧЕВОЕ: берём штрихкоды, забронированные при оформлении приёмки, —
+                    # именно они уже наклеены на рулоны. Сгенерировать новые здесь значило бы
+                    # обесценить все распечатанные стикеры.
+                    codes = [c for c in (reserved or '').split(',') if c]
+                    if len(codes) < number_rolls:
+                        codes += reserve_barcodes(cur, type_id, number_rolls - len(codes))
 
                     per_roll_qty = round(quantity / number_rolls, 3)
                     new_rolls = []
-                    for _ in range(number_rolls):
-                        max_seq += 1
-                        barcode = f"{type_id}-{max_seq:06d}"
+                    for barcode in codes[:number_rolls]:
                         cur.execute(
                             f"INSERT INTO rolls (barcode, material_id, initial_quantity, remaining_quantity, status, "
                             f"supplier_id, shipment_id, purchase_price, purchase_currency, purchase_rate, "
@@ -676,9 +813,9 @@ def handler(event: dict, context) -> dict:
                     for extra_roll_id, extra_barcode in new_rolls[1:]:
                         cur.execute(
                             f"INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity, "
-                            f"price, currency) "
+                            f"price, currency, supplier_id) "
                             f"VALUES ({int(shipment_id)}, {material_id}, '{extra_barcode}', {extra_roll_id}, "
-                            f"{per_roll_qty}, {price_sql}, '{currency}')"
+                            f"{per_roll_qty}, {price_sql}, '{currency}', {supplier_sql})"
                         )
 
                 cur.execute(f"UPDATE shipments SET status = 'Завершено', completed_at = now() WHERE id = {int(shipment_id)}")
