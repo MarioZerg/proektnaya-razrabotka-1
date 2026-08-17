@@ -45,7 +45,10 @@ const ShortagePenaltyCard = () => {
       await chargePenalty(item.rollId);
       toast({
         title: 'Штраф начислен',
-        description: `Рулон ${item.barcode}: ${money(item.total)} ₽ — удержано с ${item.users.length} чел.`,
+        description:
+          item.users.length === 1
+            ? `Рулон ${item.barcode}: ${money(item.total)} ₽ удержано с ${item.users[0].name}`
+            : `Рулон ${item.barcode}: ${money(item.total)} ₽ поделено между ${item.users.length} — по ${money(item.perUser || 0)} ₽`,
       });
       load();
     } catch (e) {
@@ -211,23 +214,33 @@ const ShortagePenaltyCard = () => {
                     {/* Поимённо, с суммой на каждого: администратор удерживает деньги
                         у живых людей и должен видеть, у кого именно и сколько, до
                         нажатия кнопки, а не после. */}
+                    {/* Формулировка зависит от числа причастных.
+                        Раньше подпись всегда гласила «по X ₽ с КАЖДОЙ», и когда
+                        рулон кроил один человек, это читалось как «с каждой снимут
+                        по 1494 ₽» — то есть будто сумма умножается на количество.
+                        На деле сумма всегда делится, но текст пугал. */}
                     <div className="rounded-md bg-muted/40 p-2">
                       <p className="mb-1 text-xs font-medium">
-                        {item.role} — по {money(item.perUser || 0)} ₽ с каждой:
+                        {item.users.length === 1
+                          ? `${item.role}: работала одна — вся сумма ${money(item.total)} ₽ на неё`
+                          : `${item.role}: работали ${item.users.length} — сумма делится поровну, по ${money(item.perUser || 0)} ₽`}
                       </p>
                       {/* Рядом с фамилией — сколько метража этот человек списал с
-                          рулона. По коробке тесьмы работают семь швей, и без этой
-                          цифры непонятно, кого удержание касается всерьёз, а кто
-                          взял с неё пару метров в конце смены. */}
+                          рулона и сколько с него удержат. По коробке тесьмы работают
+                          семь швей, и без этих цифр непонятно, кого удержание
+                          касается всерьёз, а кто взял пару метров в конце смены. */}
                       <div className="flex flex-wrap gap-1">
                         {item.users.map((u) => (
                           <Badge key={u.id} variant="outline" className="font-normal">
                             {u.name}
                             {u.usedQuantity != null && u.usedQuantity > 0 && (
                               <span className="ml-1 text-muted-foreground">
-                                · {u.usedQuantity} {item.unit}
+                                · отшила {u.usedQuantity} {item.unit}
                               </span>
                             )}
+                            <span className="ml-1 font-medium text-destructive">
+                              −{money(u.amount)} ₽
+                            </span>
                           </Badge>
                         ))}
                       </div>
