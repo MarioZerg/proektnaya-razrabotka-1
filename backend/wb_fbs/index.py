@@ -491,18 +491,21 @@ def handle_remove_order(cur, conn, body_data, api_key, use_sandbox):
     return _resp(200, {'success': True, 'orderNumber': order_number})
 
 
-def _release_closed_supplies(cur, conn, api_key, use_sandbox):
-    """Возвращает в очередь заказы из поставок, закрытых на стороне WB.
+def _close_finished_supplies(cur, conn, api_key, use_sandbox):
+    """Закрывает у нас поставки, которые уже закрыты (отгружены) на стороне WB.
 
-    Кладовщик закрывает поставку в кабинете WB (или WB закрывает её сам), и WB
-    выкидывает из неё все сборочные задания. У нас же заказы остаются привязанными
-    к этой поставке: они не в очереди и не в новой поставке — просто нигде. Вещи
-    стоят на складе застикерованные, а счётчик кладовщика показывает ноль.
+    Кладовщик закрывает поставку — короб уезжает на маркетплейс. WB переводит её
+    заказы в «выполнено» и больше НЕ ПОЗВОЛЯЕТ класть их в другую поставку: на
+    попытку отвечает отказом 409. Это правильно — вещь уже уехала.
 
-    Проверяем живые поставки: если WB говорит «поставка закрыта», а вещи по её
-    заказам всё ещё у нас на складе — возвращаем заказы в очередь на отгрузку.
+    Раньше такие заказы у нас навсегда оставались в статусе «Новый», привязанные к
+    закрытой поставке: счётчик кладовщика показывал ноль, и было непонятно, где они.
+    Теперь помечаем их отгруженными, а поставку — выполненной, как и на WB.
 
-    Возвращает количество возвращённых заказов.
+    ВАЖНО: возвращать эти заказы в очередь нельзя. Пробовали — WB отвечает отказом
+    на каждое сканирование, потому что для него заказ уже отгружен.
+
+    Возвращает количество закрытых заказов.
     """
     cur.execute(
         "SELECT s.id, s.wb_supply_id FROM marketplace_supplies s "
@@ -512,45 +515,41 @@ def _release_closed_supplies(cur, conn, api_key, use_sandbox):
         "  AND s.wb_supply_id IS NOT NULL "
         "  AND EXISTS (SELECT 1 FROM wb_supply_orders w WHERE w.supply_id = s.id)"
     )
-    supplies = cur.fetchall()
-    released = 0
+    closed_orders = 0
 
-    for supply_id, wb_supply_id in supplies:
+    for supply_id, wb_supply_id in cur.fetchall():
         sc, data = wb_request('GET', f'/api/v3/supplies/{wb_supply_id}', api_key, use_sandbox)
-        if sc != 200 or not isinstance(data, dict):
-            continue
-        # done=true — поставка на стороне WB закрыта и заданий в ней больше нет.
-        if not data.get('done'):
+        if sc != 200 or not isinstance(data, dict) or not data.get('done'):
             continue
 
         cur.execute(
-            "SELECT o.id, o.wb_order_id FROM wb_supply_orders w "
-            "JOIN orders o ON o.id = w.order_id "
-            "WHERE w.supply_id = %s "
-            "  AND o.status NOT IN ('Отгружен', 'Отменён') "
-            "  AND o.sewing_status IN ('Готовые', 'Со склада')",
+            "UPDATE orders SET status = 'Отгружен', "
+            "  completed_at = COALESCE(completed_at, now()) "
+            "WHERE id IN (SELECT order_id FROM wb_supply_orders WHERE supply_id = %s) "
+            "  AND status NOT IN ('Отгружен', 'Отменён') "
+            "RETURNING id",
             (int(supply_id),),
         )
-        rows = cur.fetchall()
-        if not rows:
-            continue
+        ids = [r[0] for r in cur.fetchall()]
+        closed_orders += len(ids)
 
-        err, acc_id, acc_wb_id = ensure_open_supply(cur, conn, api_key, use_sandbox)
-        if err or not acc_id:
-            continue
+        # Вещи уехали — со склада их снимаем, иначе кладовщик ищет на полках то,
+        # чего там уже нет.
+        if ids:
+            ids_csv = ','.join(str(int(i)) for i in ids)
+            cur.execute(
+                f"UPDATE goods_warehouse SET status = 'shipped', shipped_at = now() "
+                f"WHERE status <> 'shipped' "
+                f"  AND (reserved_order_id IN ({ids_csv}) OR order_id IN ({ids_csv}))"
+            )
 
-        wb_ids = [int(r[1]) for r in rows if r[1]]
-        if acc_wb_id and wb_ids:
-            wb_add_orders_to_supply(api_key, use_sandbox, acc_wb_id, wb_ids)
-
-        ids_csv = ','.join(str(int(r[0])) for r in rows)
         cur.execute(
-            f"UPDATE wb_supply_orders SET supply_id = {int(acc_id)} "
-            f"WHERE supply_id = {int(supply_id)} AND order_id IN ({ids_csv})"
+            "UPDATE marketplace_supplies SET status = 'Выполнена', "
+            "  completed_at = COALESCE(completed_at, now()) WHERE id = %s",
+            (int(supply_id),),
         )
-        released += len(rows)
 
-    return released
+    return closed_orders
 
 
 def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_name=None):
@@ -585,15 +584,15 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_
         "  WHERE w.order_id = orders.id AND COALESCE(s.is_accumulator, false) = false"
         ")"
     )
-    # Сначала вытаскиваем заказы из поставок, закрытых на стороне WB: без этого они
-    # остаются привязанными к мёртвой поставке и не видны кладовщику нигде.
-    released_stuck = _release_closed_supplies(cur, conn, api_key, use_sandbox)
+    # Сначала закрываем поставки, которые уже уехали по данным WB: их заказы должны
+    # стать отгруженными, а не висеть в системе непонятно где.
+    released_stuck = _close_finished_supplies(cur, conn, api_key, use_sandbox)
 
     rows = cur.fetchall()
     if not rows:
         conn.commit()
         return _resp(200, {'checked': 0, 'closed': 0, 'cancelled': 0,
-                           'releasedStuck': released_stuck, 'statuses': {}})
+                           'closedShipped': released_stuck, 'statuses': {}})
 
     ids = [int(r[1]) for r in rows]
     status_code, data = wb_request(
@@ -661,12 +660,12 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_
         cur, actor_id, actor_name, 'wb_check_statuses', None,
         f'Проверка статусов WB FBS: проверено {len(rows)}, '
         f'отменено {cancelled}, закрыто отгруженных {closed}, '
-        f'возвращено из закрытых поставок {released_stuck}',
+        f'закрыто отгруженных поставок: заказов {released_stuck}',
     )
     conn.commit()
     return _resp(200, {
         'checked': len(rows), 'closed': closed, 'cancelled': cancelled,
-        'releasedStuck': released_stuck, 'statuses': stats,
+        'closedShipped': released_stuck, 'statuses': stats,
     })
 
 
@@ -1437,7 +1436,7 @@ def handler(event: dict, context) -> dict:
                       'remove_order_from_supply', 'deliver_supply', 'list_warehouses',
                       'label', 'list_pending_orders', 'move_orders_to_supply',
                       'check_statuses', 'shelf_cancelled_order', 'supply_qr',
-                      'supply_state', 'release_stuck_supply'):
+                      'supply_state'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -1461,62 +1460,6 @@ def handler(event: dict, context) -> dict:
             return handle_remove_order(cur, conn, body_data, api_key, use_sandbox)
         if action == 'shelf_cancelled_order':
             return handle_shelf_cancelled(cur, conn, body_data, api_key, use_sandbox)
-        if action == 'release_stuck_supply':
-            # ВЕРНУТЬ ЗАКАЗЫ ИЗ ЗАСТРЯВШЕЙ ПОСТАВКИ В ОЧЕРЕДЬ НА ОТГРУЗКУ.
-            #
-            # Поставку закрыли на стороне WB (сам кладовщик или сам маркетплейс), и WB
-            # выкинул из неё сборочные задания: у него в поставке ноль заказов. А у нас
-            # они так и числятся привязанными к этой закрытой поставке — то есть не
-            # лежат ни в очереди, ни в новой поставке. Вещи стоят на складе
-            # застикерованные, счётчик кладовщика показывает ноль, и в новой поставке
-            # ничего не видно.
-            #
-            # Возвращаем такие заказы в накопитель — очередь на отгрузку, откуда
-            # кладовщик заберёт их сканированием в новую поставку.
-            #
-            # Трогаем ТОЛЬКО заказы, которые физически у нас: не отгруженные и не
-            # отменённые. Уехавшие возвращать нельзя — их на складе уже нет.
-            supply_id = body_data.get('supplyId')
-            if not supply_id:
-                return _resp(400, {'error': 'Укажите поставку'})
-
-            cur.execute(
-                "SELECT o.id, o.wb_order_id, o.order_number FROM wb_supply_orders w "
-                "JOIN orders o ON o.id = w.order_id "
-                "WHERE w.supply_id = %s "
-                "  AND o.status NOT IN ('Отгружен', 'Отменён') "
-                "  AND o.sewing_status IN ('Готовые', 'Со склада')",
-                (int(supply_id),),
-            )
-            rows = cur.fetchall()
-            if not rows:
-                return _resp(200, {'released': 0})
-
-            err, acc_id, acc_wb_id = ensure_open_supply(cur, conn, api_key, use_sandbox)
-            if err or not acc_id:
-                return _resp(502, {'error': err or 'Не удалось открыть очередь на отгрузку'})
-
-            # На стороне WB задания тоже кладём в накопительную поставку: иначе при
-            # сканировании WB ответит отказом — у нас связь есть, а у него задание ничьё.
-            wb_ids = [int(r[1]) for r in rows if r[1]]
-            if acc_wb_id and wb_ids:
-                wb_add_orders_to_supply(api_key, use_sandbox, acc_wb_id, wb_ids)
-
-            ids_csv = ','.join(str(int(r[0])) for r in rows)
-            cur.execute(
-                f"UPDATE wb_supply_orders SET supply_id = {int(acc_id)} "
-                f"WHERE supply_id = {int(supply_id)} AND order_id IN ({ids_csv})"
-            )
-            log_action(
-                cur, actor_id, actor_name, 'wb_release_stuck', None,
-                f'Возвращено в очередь на отгрузку из поставки {supply_id}: {len(rows)} заказов',
-            )
-            conn.commit()
-            return _resp(200, {
-                'released': len(rows),
-                'orderNumbers': [r[2] for r in rows],
-            })
-
         if action == 'check_statuses':
             return handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id, actor_name)
         if action == 'list_pending_orders':
