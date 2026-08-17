@@ -349,6 +349,7 @@ const adminNav: NavItem[] = [
       { label: 'Заказы с маркетплейса', path: '/crm/marketplace/orders' },
       { label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' },
       { label: 'Отзывы', path: '/crm/marketplace/reviews' },
+      { label: 'Анализ отмен', path: '/crm/marketplace/cancellations' },
     ],
   },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },

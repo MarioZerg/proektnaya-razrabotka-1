@@ -1,0 +1,8 @@
+{
+  "tests": [
+    {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
+    {"name": "Report default", "method": "GET", "path": "/?action=report&days=30", "expectedStatus": 200},
+    {"name": "Excel export", "method": "GET", "path": "/?action=export&days=30", "expectedStatus": 200},
+    {"name": "Non-admin forbidden", "method": "GET", "path": "/?action=report&actorRole=sewer", "expectedStatus": 403}
+  ]
+}

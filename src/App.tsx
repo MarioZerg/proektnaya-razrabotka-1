@@ -56,6 +56,7 @@ const LoginCode = lazy(() => import("./pages/LoginCode"));
 const SewingItems = lazy(() => import("./pages/marketplace/SewingItems"));
 const FboStickers = lazy(() => import("./pages/marketplace/FboStickers"));
 const Reviews = lazy(() => import("./pages/marketplace/Reviews"));
+const CancellationAnalytics = lazy(() => import("./pages/marketplace/CancellationAnalytics"));
 const Finance = lazy(() => import("./pages/Finance"));
 const Workshops = lazy(() => import("./pages/shifts/Workshops"));
 const WorkshopEdit = lazy(() => import("./pages/shifts/WorkshopEdit"));
@@ -159,6 +160,7 @@ const App = () => (
                 со склада. Маршрут оставлен рабочим по прямой ссылке. */}
             <Route path="/crm/marketplace/fbo-stickers" element={<FboStickers />} />
             <Route path="/crm/marketplace/reviews" element={<Reviews />} />
+            <Route path="/crm/marketplace/cancellations" element={<CancellationAnalytics />} />
             <Route path="/crm/finance" element={<Finance />} />
             <Route path="/crm/shifts/workshops" element={<Workshops />} />
             <Route path="/crm/shifts/workshops/:id/edit" element={<WorkshopEdit />} />
