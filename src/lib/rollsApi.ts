@@ -385,3 +385,57 @@ export const declineDefectRoll = async (id: number, reason: string, actorId?: nu
   if (!res.ok) throw new Error(data.error || 'Не удалось отклонить');
   return data;
 };
+/** Строка анализа: одна закройщица на одной смене. */
+export interface CutterAnalysisRow {
+  userId: number;
+  name: string;
+  shiftNumber: number | null;
+  /** Рулонов, которые она вела одна от начала до конца. */
+  rollsTotal: number;
+  /** Сколько метража с них не ушло в изделия. */
+  lostQuantity: number;
+  initialQuantity: number;
+  /** Из них рулонов с превышением нормы поставщика. */
+  overNormRolls: number;
+  /** Деньги сверх нормы — включая рулоны, прощённые администратором. */
+  overNormMoney: number;
+  /** Сколько рулонов админ списал на поставщика. */
+  forgivenRolls: number;
+  /** Доля рулонов с превышением нормы, %. */
+  overNormShare: number;
+}
+
+/** Рулон в детализации по закройщице. */
+export interface CutterRollRow {
+  rollId: number;
+  barcode: string;
+  materialName: string;
+  shiftNumber: number | null;
+  initialQuantity: number;
+  lostQuantity: number;
+  declaredShortage: number;
+  normPercent: number | null;
+  allowed: number | null;
+  excess: number;
+  money: number;
+  penaltyTotal: number | null;
+  closedAt: string | null;
+  unit: string;
+  supplierName: string | null;
+}
+
+/** Анализ недостач по закройщицам: только рулоны, которые вели в одиночку. */
+export const fetchCutterAnalysis = async (): Promise<CutterAnalysisRow[]> => {
+  const res = await fetch(`${ROLLS_URL}?cutter_analysis=1`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить анализ');
+  return data.items || [];
+};
+
+/** Рулоны конкретной закройщицы — раскрытие строки анализа. */
+export const fetchCutterRolls = async (userId: number): Promise<CutterRollRow[]> => {
+  const res = await fetch(`${ROLLS_URL}?cutter_rolls=${userId}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить рулоны');
+  return data.items || [];
+};

@@ -30,6 +30,8 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import RollsCards from '@/components/crm/rolls/RollsCards';
 import StockValueCard from '@/components/crm/rolls/StockValueCard';
+import CutterAnalysisTab from '@/components/crm/rolls/CutterAnalysisTab';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { fetchRolls, createRoll, type Roll, type RollStatus } from '@/lib/rollsApi';
@@ -325,6 +327,17 @@ const Rolls = () => {
         {/* Сколько денег лежит в остатках — коммерческая информация, только админу. */}
         {isAdmin && <StockValueCard />}
 
+        {/* Анализ по закройщицам — инструмент разбора, а не ежедневной работы,
+            поэтому он на отдельной вкладке и только у администратора. */}
+        <Tabs defaultValue="list" className="space-y-4">
+          {isAdmin && (
+            <TabsList>
+              <TabsTrigger value="list">Список рулонов</TabsTrigger>
+              <TabsTrigger value="cutters">Анализ закройщиков</TabsTrigger>
+            </TabsList>
+          )}
+
+          <TabsContent value="list" className="space-y-6">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger>
@@ -487,6 +500,14 @@ const Rolls = () => {
           )}
           </>
         )}
+          </TabsContent>
+
+          {isAdmin && (
+            <TabsContent value="cutters">
+              <CutterAnalysisTab />
+            </TabsContent>
+          )}
+        </Tabs>
       </div>
     </CrmLayout>
   );

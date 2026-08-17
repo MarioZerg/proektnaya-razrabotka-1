@@ -362,6 +362,162 @@ def handler(event: dict, context) -> dict:
                 'body': json.dumps({'items': pending}, ensure_ascii=False, default=str),
             }
 
+        # АНАЛИЗ ПО ЗАКРОЙЩИЦАМ.
+        #
+        # Показывает, кто чаще закрывает рулоны с недостачей. Берём ТОЛЬКО те рулоны,
+        # где человек работал в одиночку от начала и до конца: если ткань кроили двое,
+        # понять, чей именно метраж ушёл в никуда, невозможно — такой рулон никого не
+        # характеризует и в личную статистику не идёт.
+        #
+        # Учитываем ВСЕ рулоны с недостачей, включая списанные администратором на
+        # поставщика. Решение «виноват поставщик» снимает деньги, но не отменяет факт:
+        # если у одной закройщицы такие рулоны идут раз за разом, дело не в поставщике.
+        if params.get('cutter_analysis'):
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT "
+                    # Кто работал с рулоном: одна закройщица на весь рулон.
+                    "  cu.id, cu.full_name, r.shift_number, "
+                    "  COUNT(*) AS rolls_total, "
+                    # Метраж, не ушедший в изделия, и допуск по норме поставщика.
+                    "  COALESCE(SUM(r.remaining_at_close), 0) AS lost_total, "
+                    "  COALESCE(SUM(r.initial_quantity), 0) AS initial_total, "
+                    "  COUNT(*) FILTER (WHERE r.shortage_norm_percent IS NOT NULL "
+                    "     AND r.remaining_at_close > r.initial_quantity * r.shortage_norm_percent / 100) "
+                    "     AS over_norm_rolls, "
+                    # Деньги: сверх нормы × себестоимость. Считаем и по тем рулонам,
+                    # что администратор простил, — иначе картина по человеку неполная.
+                    "  COALESCE(SUM(GREATEST(r.remaining_at_close - "
+                    "     r.initial_quantity * r.shortage_norm_percent / 100, 0) * r.cost_per_unit), 0) "
+                    "     AS over_norm_money, "
+                    # Сколько из них администратор списал на поставщика.
+                    "  COUNT(*) FILTER (WHERE r.penalty_total = 0) AS forgiven_rolls "
+                    "FROM rolls r "
+                    "JOIN LATERAL ("
+                    # Кому засчитываем рулон.
+                    #
+                    # Обычно это закройщица, отмеченная на заказах. Но часть рулонов
+                    # закрывается вообще без записей раскроя — например, остаток ушёл
+                    # в брак или рулон вели до появления учёта. Такие рулоны нельзя
+                    # терять: именно среди них попадаются самые крупные недостачи.
+                    # Для них считаем ответственной ту, кто закрыла рулон в цехе.
+                    "  SELECT DISTINCT o.cutter_user_id AS uid FROM order_material_usage omu "
+                    "  JOIN orders o ON o.id = omu.order_id "
+                    "  WHERE omu.roll_id = r.id AND o.cutter_user_id IS NOT NULL "
+                    "  UNION "
+                    "  SELECT r.closed_by_user_id WHERE r.closed_by_user_id IS NOT NULL "
+                    "    AND NOT EXISTS (SELECT 1 FROM order_material_usage omu3 "
+                    "      JOIN orders o3 ON o3.id = omu3.order_id "
+                    "      WHERE omu3.roll_id = r.id AND o3.cutter_user_id IS NOT NULL)"
+                    ") w ON TRUE "
+                    "JOIN users cu ON cu.id = w.uid "
+                    "WHERE r.status = 'completed' "
+                    "  AND r.remaining_at_close IS NOT NULL "
+                    # Только рулоны, которые вёл ОДИН человек: если ткань кроили двое,
+                    # чей метраж пропал — установить нельзя, и вина не персональна.
+                    "  AND (SELECT COUNT(DISTINCT o2.cutter_user_id) FROM order_material_usage omu2 "
+                    "       JOIN orders o2 ON o2.id = omu2.order_id "
+                    "       WHERE omu2.roll_id = r.id AND o2.cutter_user_id IS NOT NULL) <= 1 "
+                    "GROUP BY cu.id, cu.full_name, r.shift_number "
+                    "ORDER BY over_norm_money DESC, rolls_total DESC"
+                )
+                rows = cur.fetchall()
+                items = []
+                for r in rows:
+                    rolls_total = int(r[3] or 0)
+                    over_norm = int(r[6] or 0)
+                    items.append({
+                        'userId': r[0],
+                        'name': r[1] or 'Без имени',
+                        'shiftNumber': r[2],
+                        'rollsTotal': rolls_total,
+                        'lostQuantity': round(float(r[4] or 0), 2),
+                        'initialQuantity': round(float(r[5] or 0), 2),
+                        'overNormRolls': over_norm,
+                        'overNormMoney': round(float(r[7] or 0), 2),
+                        'forgivenRolls': int(r[8] or 0),
+                        # Доля рулонов с превышением нормы — главный показатель: у кого
+                        # недостача системная, а у кого разовая.
+                        'overNormShare': round(over_norm * 100.0 / rolls_total, 1) if rolls_total else 0.0,
+                    })
+            finally:
+                conn.close()
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'items': items}, ensure_ascii=False, default=str),
+            }
+
+        # Рулоны конкретной закройщицы — раскрытие строки в анализе. Те же правила:
+        # только рулоны, где она работала одна.
+        if params.get('cutter_rolls'):
+            try:
+                cutter_id = int(params.get('cutter_rolls'))
+            except (TypeError, ValueError):
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Неверный сотрудник'}, ensure_ascii=False)}
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT r.id, r.barcode, m.name, r.shift_number, r.initial_quantity, "
+                    "  r.remaining_at_close, r.shortage_quantity, r.shortage_norm_percent, "
+                    "  r.cost_per_unit, r.penalty_total, r.completed_at, m.unit, s.name "
+                    "FROM rolls r "
+                    "JOIN materials m ON m.id = r.material_id "
+                    "LEFT JOIN suppliers s ON s.id = r.supplier_id "
+                    "WHERE r.status = 'completed' AND r.remaining_at_close IS NOT NULL "
+                    "  AND (SELECT COUNT(DISTINCT o.cutter_user_id) FROM order_material_usage omu "
+                    "       JOIN orders o ON o.id = omu.order_id "
+                    "       WHERE omu.roll_id = r.id AND o.cutter_user_id IS NOT NULL) <= 1 "
+                    # Либо она кроила по этому рулону, либо (когда раскрой не записан)
+                    # она его закрывала — те же правила, что и в сводной таблице.
+                    "  AND (EXISTS (SELECT 1 FROM order_material_usage omu2 "
+                    "       JOIN orders o2 ON o2.id = omu2.order_id "
+                    "       WHERE omu2.roll_id = r.id AND o2.cutter_user_id = %s) "
+                    "   OR (r.closed_by_user_id = %s AND NOT EXISTS ("
+                    "       SELECT 1 FROM order_material_usage omu3 "
+                    "       JOIN orders o3 ON o3.id = omu3.order_id "
+                    "       WHERE omu3.roll_id = r.id AND o3.cutter_user_id IS NOT NULL))) "
+                    "ORDER BY r.completed_at DESC LIMIT 200",
+                    (cutter_id, cutter_id),
+                )
+                items = []
+                for r in cur.fetchall():
+                    initial = float(r[4] or 0)
+                    lost = float(r[5] or 0)
+                    norm = float(r[7]) if r[7] is not None else None
+                    cost = float(r[8] or 0)
+                    allowed = initial * norm / 100 if norm is not None else None
+                    excess = max(lost - allowed, 0) if allowed is not None else 0
+                    items.append({
+                        'rollId': r[0],
+                        'barcode': r[1],
+                        'materialName': r[2],
+                        'shiftNumber': r[3],
+                        'initialQuantity': round(initial, 2),
+                        'lostQuantity': round(lost, 2),
+                        'declaredShortage': round(float(r[6] or 0), 2),
+                        'normPercent': norm,
+                        'allowed': round(allowed, 2) if allowed is not None else None,
+                        'excess': round(excess, 2),
+                        'money': round(excess * cost, 2),
+                        # Решение администратора: 0 — простил, число — удержал, null — не смотрел.
+                        'penaltyTotal': float(r[9]) if r[9] is not None else None,
+                        'closedAt': (r[10].isoformat() + 'Z') if r[10] else None,
+                        'unit': r[11],
+                        'supplierName': r[12],
+                    })
+            finally:
+                conn.close()
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'items': items}, ensure_ascii=False, default=str),
+            }
+
         if params.get('stock_value'):
             # Сколько денег лежит в остатках материалов. Считаем по себестоимости КАЖДОГО
             # рулона: один материал у разных поставщиков стоит по-разному, плюс в цену
