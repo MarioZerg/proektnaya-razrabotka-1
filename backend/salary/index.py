@@ -169,14 +169,18 @@ def handler(event: dict, context) -> dict:
                     admin_rows.append((float(rate_row[0]), admin_user_id))
             for rate, admin_user_id in admin_rows:
                 cur.execute(
-                    "SELECT id FROM salary_accruals WHERE user_id = %s AND type = 'admin_daily' AND accrued_for = CURRENT_DATE",
+                    # «Сегодня» считаем по Москве: база живёт в UTC, и после 21:00 МСК
+                    # там уже следующие сутки — оклад начислялся бы дважды за один день.
+                    "SELECT id FROM salary_accruals WHERE user_id = %s AND type = 'admin_daily' "
+                    "AND accrued_for = (now() + interval '3 hours')::date",
                     (admin_user_id,),
                 )
                 if cur.fetchone():
                     continue
                 cur.execute(
                     f"INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
-                    f"VALUES ({admin_user_id}, 'admin_daily', {float(rate)}, 'Оклад администратора за день', CURRENT_DATE)"
+                    f"VALUES ({admin_user_id}, 'admin_daily', {float(rate)}, "
+                    f"        'Оклад администратора за день', (now() + interval '3 hours')::date)"
                 )
             if admin_rows:
                 conn.commit()

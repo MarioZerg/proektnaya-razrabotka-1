@@ -280,9 +280,12 @@ const KioskWorkspace = ({
                   <div className="rounded-md border border-border p-4 text-center">
                     <p className="text-muted-foreground">Смену можно закрыть в</p>
                     <p className="font-mono-tech text-4xl font-bold">
+                      {/* Строго по Москве: это время сотрудник сверяет со стенными
+                          часами в цехе, и расхождение он замечает сразу. */}
                       {closeAt.toLocaleTimeString('ru-RU', {
                         hour: '2-digit',
                         minute: '2-digit',
+                        timeZone: 'Europe/Moscow',
                       })}
                     </p>
                     <p className="mt-1 text-sm text-muted-foreground">

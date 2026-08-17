@@ -154,7 +154,7 @@ const ShiftCycleSetup = ({
       {cycle && !workWeekdays && (
         <p className="text-sm text-muted-foreground">
           Сейчас: работает {cycle.workDays} дн., отдыхает {cycle.offDays} дн. Первый выход —{' '}
-          {new Date(cycle.startDate).toLocaleDateString('ru-RU')}.
+          {new Date(cycle.startDate).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })}.
         </p>
       )}
 

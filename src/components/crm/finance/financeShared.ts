@@ -1,4 +1,5 @@
 export { formatDate, formatDateTime } from '@/lib/dateUtils';
+import { formatTime } from '@/lib/dateUtils';
 
 export const formatMoney = (n: number) =>
   n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -34,12 +35,10 @@ export const formatAccrualShift = (a: {
   const parts = [a.shiftWorkshopName];
   if (a.shiftNumber != null) parts.push(`смена №${a.shiftNumber}`);
   if (a.shiftOpenedAt) {
-    parts.push(
-      `с ${new Date(a.shiftOpenedAt).toLocaleTimeString('ru-RU', {
-        hour: '2-digit',
-        minute: '2-digit',
-      })}`
-    );
+    // Время смены показываем по Москве, как и везде в системе: без указания зоны
+    // браузер брал бы часы устройства, и у сотрудника в другом регионе начисление
+    // выглядело бы привязанным к чужой смене.
+    parts.push(`с ${formatTime(a.shiftOpenedAt)}`);
   }
   return parts.join(', ');
 };

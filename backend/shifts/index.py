@@ -177,14 +177,14 @@ def handler(event: dict, context) -> dict:
                     "WHERE s.is_active = true AND w.is_active = true "
                     "AND NOT EXISTS (SELECT 1 FROM shift_calendar sc "
                     "  WHERE sc.workshop_id = s.workshop_id AND sc.shift_number = s.shift_number "
-                    "  AND sc.calendar_date = CURRENT_DATE) "
+                    "  AND sc.calendar_date = (now() + interval '3 hours')::date) "
                     "AND NOT (s.cycle_work_days IS NOT NULL AND s.cycle_off_days IS NOT NULL "
                     "  AND s.cycle_start_date IS NOT NULL "
-                    "  AND (CURRENT_DATE < s.cycle_start_date "
-                    "    OR MOD((CURRENT_DATE - s.cycle_start_date), "
+                    "  AND ((now() + interval '3 hours')::date < s.cycle_start_date "
+                    "    OR MOD(((now() + interval '3 hours')::date - s.cycle_start_date), "
                     "           (s.cycle_work_days + s.cycle_off_days)) >= s.cycle_work_days)) "
                     "AND NOT (s.work_weekdays IS NOT NULL "
-                    "  AND NOT (EXTRACT(ISODOW FROM CURRENT_DATE)::int = ANY(s.work_weekdays))) "
+                    "  AND NOT (EXTRACT(ISODOW FROM (now() + interval '3 hours')::date)::int = ANY(s.work_weekdays))) "
                     "ORDER BY w.id, s.shift_number"
                 )
                 working = [

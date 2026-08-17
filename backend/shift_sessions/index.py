@@ -1,8 +1,50 @@
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
+
+# ЕДИНОЕ ВРЕМЯ СИСТЕМЫ — МОСКОВСКОЕ (UTC+3).
+#
+# База и облако живут в UTC: now() и datetime.now() дают время по Гринвичу. А график
+# работы задан «стенным» временем цеха: рабочий день 08:00–20:00 — это московские часы,
+# те самые, что на часах у сотрудника.
+#
+# Раньше эти две шкалы сравнивались напрямую, и всё, что связано со временем смены,
+# уезжало на 3 часа: смена, открытая в 07:04 по Москве, попадала в базу как 04:04, а
+# автозакрытие ставило конец дня «20:00» уже как UTC — сотрудник видел закрытие в 23:00.
+# Отсюда и жалоба: пришли утром, а смена закрылась «вообще в другое время».
+#
+# Правило теперь такое: ХРАНИМ в UTC (так уже устроены все данные и отчёты), а СЧИТАЕМ
+# и СРАВНИВАЕМ по Москве. Ниже — единственные две точки перевода.
+MSK = timezone(timedelta(hours=3))
+
+# Московское «сейчас» и «сегодня» для SQL: к времени UTC прибавляем 3 часа.
+SQL_MSK_NOW = "(now() + interval '3 hours')"
+SQL_MSK_TODAY = "(now() + interval '3 hours')::date"
+
+
+def msk_now() -> datetime:
+    """Текущее московское время без часового пояса — в одной шкале с графиком работы.
+
+    Именно с ним сравниваем начало и конец рабочего дня: в настройках цеха стоит
+    «08:00», и это 08:00 по Москве, а не по Гринвичу.
+    """
+    return datetime.now(timezone.utc).astimezone(MSK).replace(tzinfo=None)
+
+
+def utc_from_msk(dt_msk: datetime) -> datetime:
+    """Московское время → UTC, для записи в базу.
+
+    Все метки времени в базе хранятся в UTC, и фронтенд читает их как UTC. Если
+    записать сюда московские часы, на экране они сдвинутся ещё на 3 часа вперёд.
+    """
+    return dt_msk - timedelta(hours=3)
+
+
+def msk_from_utc(dt_utc: datetime) -> datetime:
+    """UTC из базы → московское время, для расчётов по графику."""
+    return dt_utc + timedelta(hours=3)
 
 
 def is_day_off_today(cur, workshop_id, shift_number) -> bool:
@@ -12,7 +54,7 @@ def is_day_off_today(cur, workshop_id, shift_number) -> bool:
         return False
     cur.execute(
         "SELECT 1 FROM shift_calendar WHERE workshop_id = %s AND shift_number = %s "
-        "AND calendar_date = CURRENT_DATE",
+        f"AND calendar_date = {SQL_MSK_TODAY}",
         (int(workshop_id), int(shift_number)),
     )
     if cur.fetchone():
@@ -29,14 +71,14 @@ def is_day_off_today(cur, workshop_id, shift_number) -> bool:
 
     # Недельный график (5/2): сегодня выходной, если дня недели нет в списке рабочих.
     if weekdays:
-        cur.execute("SELECT EXTRACT(ISODOW FROM CURRENT_DATE)::int")
+        cur.execute(f"SELECT EXTRACT(ISODOW FROM {SQL_MSK_TODAY})::int")
         return int(cur.fetchone()[0]) not in weekdays
 
     # Цикличный график (2/2, 3/3): считаем от даты первого выхода смены.
     if cycle_work and cycle_off and cycle_start:
         cur.execute(
-            "SELECT CURRENT_DATE < %s "
-            "OR MOD((CURRENT_DATE - %s), %s) >= %s",
+            f"SELECT {SQL_MSK_TODAY} < %s "
+            f"OR MOD(({SQL_MSK_TODAY} - %s), %s) >= %s",
             (cycle_start, cycle_start, int(cycle_work) + int(cycle_off), int(cycle_work)),
         )
         return bool(cur.fetchone()[0])
@@ -79,8 +121,12 @@ def shift_close_allowed_at(cur, user_id, opened_at):
         return None
 
     start, end = row[0], row[1]
-    start_dt = datetime.combine(opened_at.date(), start)
-    end_dt = datetime.combine(opened_at.date(), end)
+    # opened_at лежит в базе в UTC, а график (07:00-19:00) задан московским временем.
+    # Сравнивать их напрямую нельзя — сначала переводим приход в московскую шкалу,
+    # иначе смена, открытая в 07:14 по Москве, считалась бы открытой в 04:14.
+    opened_msk = msk_from_utc(opened_at)
+    start_dt = datetime.combine(opened_msk.date(), start)
+    end_dt = datetime.combine(opened_msk.date(), end)
     # Ночная смена (например с 19:00 до 07:00) заканчивается на следующий день.
     if end_dt <= start_dt:
         end_dt += timedelta(days=1)
@@ -88,8 +134,9 @@ def shift_close_allowed_at(cur, user_id, opened_at):
     duration = end_dt - start_dt
     # Пришёл раньше начала смены — отсчёт всё равно ведём от её начала по графику,
     # иначе ранний приход сокращал бы рабочий день.
-    base = opened_at if opened_at > start_dt else start_dt
-    return base + duration
+    base = opened_msk if opened_msk > start_dt else start_dt
+    # Возвращаем UTC: это время уходит в базу и на фронтенд, где читается как UTC.
+    return utc_from_msk(base + duration)
 
 
 def count_orders_in_work(cur, user_id, role, session_workshop_id=None):
@@ -270,10 +317,14 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите month=YYYY-MM'})}
                 month_esc = month.replace("'", "''")
                 cur.execute(
-                    f"SELECT ss.opened_at::date, u.full_name, ss.shift_number "
+                    # Дату смены берём по Москве: смена, открытая 1-го числа в 02:00 МСК,
+                    # в UTC приходится ещё на 31-е и попадала бы в прошлый месяц.
+                    f"SELECT (ss.opened_at + interval '3 hours')::date, u.full_name, "
+                    f"       ss.shift_number "
                     f"FROM shift_sessions ss "
                     f"JOIN users u ON u.id = ss.user_id "
-                    f"WHERE to_char(ss.opened_at, 'YYYY-MM') = '{month_esc}' "
+                    f"WHERE to_char(ss.opened_at + interval '3 hours', 'YYYY-MM') "
+                    f"      = '{month_esc}' "
                     f"ORDER BY ss.opened_at"
                 )
                 days: dict = {}
@@ -340,15 +391,15 @@ def handler(event: dict, context) -> dict:
                     # выпадает на отдых по цикличному графику (2/2 и т.п.).
                     "AND NOT EXISTS ("
                     "  SELECT 1 FROM shift_calendar sc WHERE sc.workshop_id = s.workshop_id "
-                    "  AND sc.shift_number = s.shift_number AND sc.calendar_date = CURRENT_DATE"
+                    f"  AND sc.shift_number = s.shift_number AND sc.calendar_date = {SQL_MSK_TODAY}"
                     ") "
                     "AND NOT (s.cycle_work_days IS NOT NULL AND s.cycle_off_days IS NOT NULL "
                     "  AND s.cycle_start_date IS NOT NULL "
-                    "  AND (CURRENT_DATE < s.cycle_start_date "
-                    "    OR MOD((CURRENT_DATE - s.cycle_start_date), "
+                    f"  AND ({SQL_MSK_TODAY} < s.cycle_start_date "
+                    f"    OR MOD(({SQL_MSK_TODAY} - s.cycle_start_date), "
                     "           (s.cycle_work_days + s.cycle_off_days)) >= s.cycle_work_days)) "
                     "AND NOT (s.work_weekdays IS NOT NULL "
-                    "  AND NOT (EXTRACT(ISODOW FROM CURRENT_DATE)::int = ANY(s.work_weekdays))) "
+                    f"  AND NOT (EXTRACT(ISODOW FROM {SQL_MSK_TODAY})::int = ANY(s.work_weekdays))) "
                     "ORDER BY w.id, s.shift_number"
                 )
                 available = [
@@ -462,8 +513,10 @@ def handler(event: dict, context) -> dict:
                 if user_role in ('storekeeper', 'senior_storekeeper'):
                     is_late = False
                     if shift_from:
+                        # График кладовщика (shift_from) задан московским временем —
+                        # сравниваем с московскими часами, а не с гринвичскими.
                         cur.execute(
-                            "SELECT (now()::time > %s::time)",
+                            f"SELECT ({SQL_MSK_NOW}::time > %s::time)",
                             (str(shift_from),),
                         )
                         lr = cur.fetchone()
@@ -471,7 +524,8 @@ def handler(event: dict, context) -> dict:
                     if is_late:
                         cur.execute(
                             "SELECT 1 FROM shift_sessions WHERE user_id = %s "
-                            "AND opened_at::date = CURRENT_DATE AND is_late = false LIMIT 1",
+                            f"AND (opened_at + interval '3 hours')::date = {SQL_MSK_TODAY} "
+                            "AND is_late = false LIMIT 1",
                             (int(user_id),),
                         )
                         if cur.fetchone():
@@ -583,7 +637,7 @@ def handler(event: dict, context) -> dict:
                     if end_time_str:
                         try:
                             end_time = datetime.strptime(str(end_time_str)[:5], '%H:%M').time()
-                            if datetime.now().time() > end_time:
+                            if msk_now().time() > end_time:
                                 return {
                                     'statusCode': 409,
                                     'headers': headers,
@@ -603,7 +657,10 @@ def handler(event: dict, context) -> dict:
                 if start_time_str:
                     try:
                         start_time = datetime.strptime(str(start_time_str)[:5], '%H:%M').time()
-                        now_dt = datetime.now()
+                        # Опоздание считаем по московским часам: «начало в 08:00» —
+                        # это 08:00 у сотрудника, а не по Гринвичу. Иначе пришедший
+                        # вовремя в 07:50 МСК числился бы опоздавшим.
+                        now_dt = msk_now()
                         start_dt = datetime.combine(now_dt.date(), start_time)
                         # Небольшая задержка опозданием не считается: пробки, очередь
                         # к терминалу. Допуск берём из профиля сотрудника (по умолчанию
@@ -624,7 +681,8 @@ def handler(event: dict, context) -> dict:
                 if is_late:
                     cur.execute(
                         "SELECT 1 FROM shift_sessions WHERE user_id = %s "
-                        "AND opened_at::date = CURRENT_DATE AND is_late = false LIMIT 1",
+                        f"AND (opened_at + interval '3 hours')::date = {SQL_MSK_TODAY} "
+                        "AND is_late = false LIMIT 1",
                         (int(user_id),),
                     )
                     if cur.fetchone():
@@ -663,8 +721,10 @@ def handler(event: dict, context) -> dict:
                 if is_late and start_time_str:
                     try:
                         st = datetime.strptime(str(start_time_str)[:5], '%H:%M').time()
-                        st_dt = datetime.combine(opened_at.date(), st)
-                        late_minutes = max(0, int((opened_at - st_dt).total_seconds() // 60))
+                        # opened_at в UTC, график в МСК — приводим к одной шкале.
+                        opened_msk = msk_from_utc(opened_at)
+                        st_dt = datetime.combine(opened_msk.date(), st)
+                        late_minutes = max(0, int((opened_msk - st_dt).total_seconds() // 60))
                     except ValueError:
                         late_minutes = 0
 
@@ -855,12 +915,15 @@ def handler(event: dict, context) -> dict:
                 # момент — он разбирает нештатные ситуации вручную.
                 can_close_at = shift_close_allowed_at(cur, user_id, session_opened_at)
                 if can_close_at and not closed_by_admin:
-                    if datetime.now() < can_close_at:
+                    if datetime.now(timezone.utc).replace(tzinfo=None) < can_close_at:
                         return {
                             'statusCode': 409,
                             'headers': headers,
                             'body': json.dumps({
-                                'error': f'Смену можно закрыть в {can_close_at.strftime("%H:%M")} — '
+                                # can_close_at хранится в UTC — сотруднику показываем
+                                # московские часы, те самые, что у него на телефоне.
+                                'error': f'Смену можно закрыть в '
+                                         f'{msk_from_utc(can_close_at).strftime("%H:%M")} — '
                                          f'рабочее время ещё не вышло',
                                 'canCloseAt': can_close_at.isoformat() + 'Z',
                             }, ensure_ascii=False),
@@ -942,7 +1005,7 @@ def handler(event: dict, context) -> dict:
                             accrual_type = f'{shift_role}_shift'
                             cur.execute(
                                 "SELECT 1 FROM salary_accruals WHERE user_id = %s "
-                                "AND type = %s AND accrued_for = CURRENT_DATE",
+                                f"AND type = %s AND accrued_for = {SQL_MSK_TODAY}",
                                 (int(user_id), accrual_type),
                             )
                             if not cur.fetchone():
@@ -988,8 +1051,14 @@ def handler(event: dict, context) -> dict:
                     # Рабочий день кончился, если с момента конца дня уже прошло время.
                     # Смены, открытые ПОСЛЕ конца дня (ночная работа), не трогаем в тот же
                     # день — они закроются на следующем обходе, когда день кончится снова.
+                    # Конец рабочего дня (working_day_end) задан московским временем,
+                    # а opened_at и now() — в UTC. Поэтому обе части переводим в МСК:
+                    # иначе «20:00» сравнивалось бы с гринвичским временем, и смены
+                    # закрывались на 3 часа позже — сотрудник видел закрытие в 23:00.
                     cur.execute(
-                        "SELECT now() > (%s::date + %s::time) AND %s < (%s::date + %s::time)",
+                        f"SELECT {SQL_MSK_NOW} > ((%s + interval '3 hours')::date + %s::time) "
+                        f"AND (%s + interval '3 hours') "
+                        f"    < ((%s + interval '3 hours')::date + %s::time)",
                         (opened_at, end_str, opened_at, opened_at, end_str),
                     )
                     should_close = bool(cur.fetchone()[0])
@@ -1002,8 +1071,13 @@ def handler(event: dict, context) -> dict:
                     # скинули в очередь под конец дня, несправедливо: это не её работа.
                     orders_left = count_orders_in_work(cur, s_user_id, s_role)
 
+                    # Пишем UTC: конец дня «20:00» — московский, поэтому вычитаем 3 часа.
+                    # Раньше сюда попадало «20:00» как есть, и на экране сотрудника смена
+                    # закрывалась в 23:00 — та самая жалоба про «другое время».
                     cur.execute(
-                        "UPDATE shift_sessions SET closed_at = (%s::date + %s::time) WHERE id = %s",
+                        "UPDATE shift_sessions SET closed_at = "
+                        "  (((%s + interval '3 hours')::date + %s::time) - interval '3 hours') "
+                        "WHERE id = %s",
                         (opened_at, end_str, session_id),
                     )
 

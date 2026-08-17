@@ -16,10 +16,13 @@ const WorkingTodayCard = () => {
       .finally(() => setLoading(false));
   }, []);
 
+  // «Сегодня» — по Москве: в цехе на Урале или в Сибири дата не должна убегать вперёд
+  // относительно рабочего дня предприятия.
   const today = new Date().toLocaleDateString('ru-RU', {
     day: 'numeric',
     month: 'long',
     weekday: 'long',
+    timeZone: 'Europe/Moscow',
   });
 
   return (

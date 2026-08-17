@@ -7,7 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useChat } from '@/components/crm/chat/useChat';
 import ChatAvatar from '@/components/crm/chat/ChatAvatar';
-import { formatDateTime } from '@/lib/dateUtils';
+import { formatDateTime, formatTime } from '@/lib/dateUtils';
 
 /** Отбивка «Сегодня / Вчера / дата» между сообщениями разных дней. */
 const dayLabel = (iso: string) => {
@@ -18,11 +18,12 @@ const dayLabel = (iso: string) => {
   const same = (a: Date, b: Date) => a.toDateString() === b.toDateString();
   if (same(d, today)) return 'Сегодня';
   if (same(d, yesterday)) return 'Вчера';
-  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long' });
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', timeZone: 'Europe/Moscow' });
 };
 
-const timeOnly = (iso: string) =>
-  new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+// Время сообщений — московское, единое для всей системы: цех, склад и офис должны
+// видеть одни и те же часы независимо от настроек своего устройства.
+const timeOnly = (iso: string) => formatTime(iso);
 
 const Chat = () => {
   const { user } = useAuth();

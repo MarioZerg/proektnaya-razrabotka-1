@@ -934,7 +934,11 @@ def handler(event: dict, context) -> dict:
                 # старых записей, среди которых сегодняшние 25 коробок терялись.
                 # Захочет посмотреть старое — найдёт поиском по номеру или стикеру.
                 if status == 'mp_return':
-                    conditions.append("gw.received_at >= CURRENT_DATE - interval '1 day'")
+                    # Сутки считаем от московской даты — иначе «за сегодня» смещается на 3 часа.
+                    conditions.append(
+                        "gw.received_at >= (now() + interval '3 hours')::date "
+                        "                  - interval '1 day'"
+                    )
             if material:
                 material_esc = material.replace("'", "''")
                 conditions.append(f"o.material = '{material_esc}'")
@@ -2689,7 +2693,8 @@ def handler(event: dict, context) -> dict:
                 # Сколько дней вещь числилась на складе. Чем дольше — тем серьёзнее
                 # расхождение: месячный «висяк» админ должен увидеть отдельно.
                 cur.execute(
-                    "SELECT GREATEST(0, (CURRENT_DATE - %s::date))", (nf_received,)
+                    "SELECT GREATEST(0, ((now() + interval '3 hours')::date - %s::date))",
+                    (nf_received,)
                 )
                 days_row = cur.fetchone()
                 days_on_shelf = int(days_row[0]) if days_row and days_row[0] is not None else 0

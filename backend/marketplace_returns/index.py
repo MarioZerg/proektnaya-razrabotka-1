@@ -1228,7 +1228,7 @@ def handler(event: dict, context) -> dict:
                     ids_csv = ','.join(str(int(i)) for i in ids)
                     where = f"r.id IN ({ids_csv})"
                 else:
-                    where = "r.picked_up_at::date = CURRENT_DATE"
+                    where = "(r.picked_up_at + interval '3 hours')::date = (now() + interval '3 hours')::date"
 
                 # Какие складские записи создала приёмка: возврат с маркетплейса,
                 # ещё не разобранный и не положенный на полку. Разобранные вещи и всё

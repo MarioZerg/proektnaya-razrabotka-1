@@ -17,11 +17,13 @@ const formatDate = (value: string | null) => {
   if (!value) return '—';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '—';
+  // Московское время — единое для всей системы, независимо от часов устройства.
   return d.toLocaleString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Europe/Moscow',
   });
 };
 

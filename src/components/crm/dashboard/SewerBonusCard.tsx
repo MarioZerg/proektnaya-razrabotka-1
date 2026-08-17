@@ -7,7 +7,7 @@ const formatMoney = (value: number) =>
   new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value) + ' ₽';
 
 const formatDay = (iso: string) =>
-  new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: 'long' });
+  new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', timeZone: 'Europe/Moscow' });
 
 interface SewerBonusCardProps {
   /** Показывать только свою строку: швея не должна видеть выработку коллег. */

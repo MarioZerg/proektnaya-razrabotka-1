@@ -18,7 +18,7 @@ import {
 const VACATION_ROLES = ['sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner'];
 
 const fmt = (d: string | null) =>
-  d ? new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+  d ? new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Moscow' }) : '—';
 
 interface VacationSectionProps {
   userId: number;

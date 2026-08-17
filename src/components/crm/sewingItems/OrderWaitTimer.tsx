@@ -40,8 +40,8 @@ const OrderWaitTimer = ({ order, compact = false }: OrderWaitTimerProps) => {
       className={`${toneClass[tone]} shrink-0 gap-1 font-normal`}
       title={
         fromMarketplace
-          ? `Заказ оформлен на ${order.marketplace} ${new Date(source).toLocaleString('ru-RU')}`
-          : `Загружен в систему ${new Date(source).toLocaleString('ru-RU')}`
+          ? `Заказ оформлен на ${order.marketplace} ${new Date(source).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`
+          : `Загружен в систему ${new Date(source).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`
       }
     >
       <Icon name={tone === 'critical' ? 'AlarmClock' : 'Clock'} size={12} />

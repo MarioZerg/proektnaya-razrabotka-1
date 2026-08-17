@@ -2575,7 +2575,7 @@ def handler(event: dict, context) -> dict:
                                         cur.execute(
                                             "SELECT 1 FROM salary_accruals WHERE user_id = %s "
                                             "AND type = 'storekeeper_shift' "
-                                            "AND accrued_for = CURRENT_DATE",
+                                            "AND accrued_for = (now() + interval '3 hours')::date",
                                             (int(creator_id),),
                                         )
                                         if not cur.fetchone():

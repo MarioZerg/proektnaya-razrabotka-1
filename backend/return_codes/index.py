@@ -420,7 +420,7 @@ def handler(event: dict, context) -> dict:
                 "SELECT marketplace_code, title, code, code_type, COALESCE(comment, ''), updated_at, "
                 "COALESCE(code_image, ''), daily_refresh, "
                 # Свежесть кода: у площадок с ежедневным обновлением вчерашний уже не примут.
-                "(updated_at::date = CURRENT_DATE) "
+                "((updated_at + interval '3 hours')::date = (now() + interval '3 hours')::date) "
                 "FROM return_pickup_codes ORDER BY title"
             )
             # Забираем строки СРАЗУ. Ниже идёт поход в OZON, который использует этот же

@@ -22,11 +22,13 @@ import {
 const fmtDateTime = (iso: string | null) => {
   if (!iso) return '—';
   const d = new Date(iso);
+  // Московское время — единое для всей системы, независимо от часов устройства.
   return d.toLocaleString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Europe/Moscow',
   });
 };
 
