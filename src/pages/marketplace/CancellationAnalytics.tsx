@@ -51,6 +51,7 @@ const CancellationAnalytics = () => {
 
   const [days, setDays] = useState(30);
   const [minItems, setMinItems] = useState(2);
+  const [onlyNever, setOnlyNever] = useState(false);
   const [data, setData] = useState<CancellationReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -58,7 +59,7 @@ const CancellationAnalytics = () => {
   useEffect(() => {
     if (!isAdmin) return;
     setLoading(true);
-    fetchCancellationReport(days, minItems)
+    fetchCancellationReport(days, minItems, onlyNever)
       .then(setData)
       .catch((e) =>
         toast({
@@ -68,12 +69,12 @@ const CancellationAnalytics = () => {
         }),
       )
       .finally(() => setLoading(false));
-  }, [days, minItems, isAdmin, toast]);
+  }, [days, minItems, onlyNever, isAdmin, toast]);
 
   const exportExcel = async () => {
     setExporting(true);
     try {
-      await downloadCancellationExcel(days, minItems);
+      await downloadCancellationExcel(days, minItems, onlyNever);
       toast({ title: 'Файл скачан', description: 'Приложите его к обращению в поддержку' });
     } catch (e) {
       toast({
@@ -127,6 +128,15 @@ const CancellationAnalytics = () => {
           >
             От 3 отмен
           </Button>
+          <div className="mx-2 h-5 w-px bg-border" />
+          <Button
+            size="sm"
+            variant={onlyNever ? 'default' : 'outline'}
+            onClick={() => setOnlyNever((v) => !v)}
+          >
+            <Icon name="UserX" size={14} className="mr-1" />
+            Только без выкупа
+          </Button>
           <div className="ml-auto">
             <Button onClick={exportExcel} disabled={exporting || !data?.orders.length}>
               <Icon
@@ -156,18 +166,25 @@ const CancellationAnalytics = () => {
                   <p className="text-2xl font-bold">{s.cancelledItems}</p>
                 </CardContent>
               </Card>
-              <Card className="border-amber-300 bg-amber-50 shadow-none">
-                <CardContent className="py-4">
-                  <p className="text-sm text-amber-900">Массовые отмены</p>
-                  <p className="text-2xl font-bold text-amber-900">{s.massCancels}</p>
-                  <p className="text-xs text-amber-800">3+ вещи в одном заказе</p>
-                </CardContent>
-              </Card>
               <Card className="border-rose-300 bg-rose-50 shadow-none">
                 <CardContent className="py-4">
-                  <p className="text-sm text-rose-900">Отмены сразу</p>
-                  <p className="text-2xl font-bold text-rose-900">{s.instantCancels}</p>
-                  <p className="text-xs text-rose-800">в течение часа после заказа</p>
+                  <p className="text-sm text-rose-900">Ни одного выкупа</p>
+                  <p className="text-2xl font-bold text-rose-900">{s.neverBought}</p>
+                  <p className="text-xs text-rose-800">заказывали 2+ вещи и не забрали</p>
+                </CardContent>
+              </Card>
+              <Card className="border-amber-300 bg-amber-50 shadow-none">
+                <CardContent className="py-4">
+                  <p className="text-sm text-amber-900">Заказывали повторно</p>
+                  <p className="text-2xl font-bold text-amber-900">{s.repeatBuyers}</p>
+                  <p className="text-xs text-amber-800">2+ заказа за период</p>
+                </CardContent>
+              </Card>
+              <Card className="border-amber-300 bg-amber-50 shadow-none">
+                <CardContent className="py-4">
+                  <p className="text-sm text-amber-900">Отмены сразу</p>
+                  <p className="text-2xl font-bold text-amber-900">{s.instantCancels}</p>
+                  <p className="text-xs text-amber-800">в течение часа после заказа</p>
                 </CardContent>
               </Card>
             </div>
@@ -175,11 +192,18 @@ const CancellationAnalytics = () => {
             {/* Прямо говорим админу, что этот отчёт НЕ доказывает и почему.
                 Иначе цифры легко принять за приговор покупателю. */}
             <Card className="border-sky-200 bg-sky-50 shadow-none">
-              <CardContent className="py-3 text-sm text-sky-900">
-                Маркетплейсы не передают продавцу данные покупателей, поэтому связать
-                заказы одним человеком мы не можем. Отчёт показывает закономерности и
-                номера отправлений — по ним поддержка площадки находит покупателя сама.
-                Отмена не всегда означает недобросовестность: выводы делает маркетплейс.
+              <CardContent className="space-y-1 py-3 text-sm text-sky-900">
+                <p>
+                  Имя и город OZON по API не отдаёт, но заказы одного человека связать
+                  удаётся: первая часть номера отправления одинакова во всех его покупках,
+                  включая сделанные в разные дни. По ней и считаем отмены и выкупы.
+                </p>
+                <p>
+                  Это рабочая зацепка, а не доказательство: OZON официально не подтверждает,
+                  что номер принадлежит покупателю. Отмена сама по себе не означает
+                  недобросовестность — выводы делает маркетплейс, у которого есть сам
+                  покупатель. Прикладывайте выгрузку с номерами отправлений.
+                </p>
               </CardContent>
             </Card>
 
@@ -196,8 +220,41 @@ const CancellationAnalytics = () => {
               </div>
             ) : null}
 
+            {/* Отмены по дням: всплеск в один день — признак организованной скупки,
+                а не случайных отказов разных людей. */}
+            {data?.daily.length ? (
+              <div className="space-y-2">
+                <h2 className="font-bold">Отмены по дням</h2>
+                <div className="flex items-end gap-1 overflow-x-auto rounded-md border p-3">
+                  {data.daily.map((d) => {
+                    const max = Math.max(...data.daily.map((x) => x.cancelled), 1);
+                    return (
+                      <div key={d.date} className="flex min-w-[26px] flex-col items-center gap-1">
+                        <span className="text-[10px] text-muted-foreground">
+                          {d.cancelled || ''}
+                        </span>
+                        <div
+                          className={`w-full rounded-sm ${
+                            d.share >= 10 ? 'bg-rose-400' : 'bg-slate-300'
+                          }`}
+                          style={{ height: `${Math.max(4, (d.cancelled / max) * 90)}px` }}
+                          title={`${d.cancelled} из ${d.total} (${d.share}%)`}
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(d.date).getDate()}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Красным — дни, где отменили больше 10% заказов
+                </p>
+              </div>
+            ) : null}
+
             <div className="space-y-2">
-              <h2 className="font-bold">Заказы с отменами</h2>
+              <h2 className="font-bold">Покупатели с отменами</h2>
               {!data?.orders.length ? (
                 <p className="text-muted-foreground">
                   За выбранный период таких заказов нет
@@ -207,29 +264,51 @@ const CancellationAnalytics = () => {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Заказ OZON</TableHead>
-                        <TableHead className="text-center">Отменено</TableHead>
-                        <TableHead>Товары</TableHead>
-                        <TableHead className="text-center">Заказан</TableHead>
-                        <TableHead className="text-center">Отменён</TableHead>
+                        <TableHead>Покупатель</TableHead>
+                        <TableHead className="text-center">Риск</TableHead>
+                        <TableHead className="text-center">Заказов</TableHead>
+                        <TableHead className="text-center">Отменил</TableHead>
+                        <TableHead className="text-center">Выкупил</TableHead>
+                        <TableHead className="text-center">Период</TableHead>
                         <TableHead>На что обратить внимание</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {data.orders.map((o) => (
-                        <TableRow key={o.orderKey}>
-                          <TableCell className="font-medium">{o.orderKey}</TableCell>
+                        <TableRow key={o.orderKey} className={o.risk >= 60 ? 'bg-rose-50' : ''}>
+                          <TableCell>
+                            <p className="font-medium">{o.orderKey}</p>
+                            <p className="max-w-[220px] truncate text-xs text-muted-foreground">
+                              {o.products}
+                            </p>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <span
+                              className={`font-bold ${
+                                o.risk >= 60
+                                  ? 'text-rose-700'
+                                  : o.risk >= 40
+                                    ? 'text-amber-700'
+                                    : 'text-muted-foreground'
+                              }`}
+                            >
+                              {o.risk}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-center">{o.ordersCount}</TableCell>
                           <TableCell className="text-center font-bold">
                             {o.cancelledItems}
                           </TableCell>
-                          <TableCell className="max-w-[280px] text-sm text-muted-foreground">
-                            {o.products}
+                          <TableCell
+                            className={`text-center font-bold ${
+                              o.aliveItems === 0 ? 'text-rose-700' : 'text-emerald-700'
+                            }`}
+                          >
+                            {o.aliveItems}
                           </TableCell>
-                          <TableCell className="text-center text-sm">
+                          <TableCell className="text-center text-xs">
                             {fmtDate(o.firstCreated)}
-                          </TableCell>
-                          <TableCell className="text-center text-sm">
-                            {fmtDate(o.lastCancelled)}
+                            {o.activeDays > 1 && <> — {fmtDate(o.lastCreated)}</>}
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-wrap gap-1">
@@ -238,8 +317,8 @@ const CancellationAnalytics = () => {
                                   key={f}
                                   variant="outline"
                                   className={
-                                    f.startsWith('Отмена сразу')
-                                      ? 'border-rose-300 bg-rose-50 text-rose-900'
+                                    f.startsWith('Ни одного выкупа')
+                                      ? 'border-rose-400 bg-rose-100 font-medium text-rose-900'
                                       : 'border-amber-300 bg-amber-50 text-amber-900'
                                   }
                                 >
