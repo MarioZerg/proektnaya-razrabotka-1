@@ -29,6 +29,7 @@ import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
 import { isUrgent } from '@/components/crm/sewingItems/orderUrgency';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import { printFboSticker } from '@/lib/printFboSticker';
+import { orderHangerLabel } from '@/lib/hangersApi';
 
 /** Стикер FBO можно печатать для готового FBO-товара — прямо у номера заказа.
  * Доступно только кладовщику и админу (передаётся флагом canPrint). */
@@ -203,7 +204,7 @@ const SewingItemsTable = ({
                 <TableCell>
                   <OrderStagesDiagram order={o} />
                 </TableCell>
-                <TableCell>{o.hangerNumber > 0 ? `№ ${o.hangerNumber}` : '—'}</TableCell>
+                <TableCell>{orderHangerLabel(o)}</TableCell>
                 <TableCell className="text-sm">
                   <div className="whitespace-nowrap font-semibold">
                     {formatDate(o.marketplaceCreatedAt || o.createdAt)}

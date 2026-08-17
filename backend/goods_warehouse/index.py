@@ -463,6 +463,60 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps(
                     {'items': stuck, 'count': len(stuck)}, ensure_ascii=False)}
 
+            if params.get('shipped_stuck'):
+                # ВЕЩИ, КОТОРЫЕ УЖЕ УЕХАЛИ К КЛИЕНТУ, НО ВИСЯТ В ПОДБОРЕ.
+                #
+                # Отправление ушло с нашего склада: курьер забрал, оно едет или уже
+                # доставлено покупателю. А у нас вещь так и числится «донести в короб» —
+                # значит, кто-то забыл отсканировать её в поставку, а маркетплейс
+                # тем временем увёз заказ.
+                #
+                # Для кладовщика это тупик: он идёт к стеллажу, вещи там нет и быть не
+                # может — она уехала. Строка висит вечно и мешает видеть реальную работу.
+                # Такие позиции закрывает администратор: физически вещь уже у клиента.
+                cur.execute(
+                    "SELECT gw.id, gw.storage_barcode, gw.status, sh.name, "
+                    "       o.order_number, o.product, o.material, o.width, o.height, "
+                    "       o.marketplace, o.ozon_status, o.status, "
+                    "       gw.shipping_labeled_at "
+                    "FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.reserved_order_id "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "WHERE gw.status IN ('picking', 'awaiting_supply') "
+                    "  AND gw.shipped_at IS NULL "
+                    # Заказ уехал от нас: доставляется, доставлен или забран курьером.
+                    "  AND (COALESCE(o.ozon_status, '') IN "
+                    "         ('delivering', 'delivered', 'driver_pickup') "
+                    "       OR COALESCE(o.status, '') IN ('Отгружен', 'Доставлен')) "
+                    # В живой поставке — значит короб ещё собирается, не трогаем.
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                    "        JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                    "        WHERE msi.goods_warehouse_id = gw.id "
+                    "          AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                    "ORDER BY gw.shipping_labeled_at ASC NULLS LAST, gw.id"
+                )
+                rows = cur.fetchall()
+                items = [
+                    {
+                        'id': r[0],
+                        'storageBarcode': r[1],
+                        'status': r[2],
+                        'shelfName': r[3],
+                        'orderNumber': r[4],
+                        'product': r[5],
+                        'material': r[6],
+                        'width': r[7],
+                        'height': r[8],
+                        'marketplace': r[9],
+                        'ozonStatus': r[10],
+                        'orderStatus': r[11],
+                        'labeledAt': (r[12].isoformat() + 'Z') if r[12] else None,
+                    }
+                    for r in rows
+                ]
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps(
+                    {'items': items, 'count': len(items)}, ensure_ascii=False)}
+
             if params.get('pending_count'):
                 # Этот счётчик висит в меню у каждого кладовщика весь день — самый
                 # частый запрос во всей системе. Считаем оба числа ОДНИМ проходом по
@@ -2977,6 +3031,66 @@ def handler(event: dict, context) -> dict:
                     'toShelf': len(with_shelf),
                     'toSorting': len(no_shelf),
                 }, ensure_ascii=False)}
+
+            if action == 'close_shipped_stuck':
+                # ЗАКРЫТЬ ВЕЩИ, КОТОРЫЕ УЖЕ УЕХАЛИ К КЛИЕНТУ.
+                #
+                # Отправление ушло со склада (курьер забрал, едет или доставлено), а у нас
+                # вещь так и висит в подборе: её забыли отсканировать в короб. Искать её
+                # на полке бессмысленно — физически она у покупателя.
+                #
+                # Помечаем вещь отгруженной: работа по ней закончена, из подбора она
+                # уходит. Заказ не трогаем — он уже закрыт маркетплейсом.
+                #
+                # Решение принимает администратор или старший кладовщик: обычный
+                # кладовщик не должен закрывать позиции, не подержав вещь в руках.
+                if not is_admin_or_senior(cur, actor_id):
+                    return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Закрывать уехавшие вещи может администратор '
+                                  'или старший кладовщик'}, ensure_ascii=False)}
+
+                ids = body_data.get('ids') or []
+                if not ids:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Выберите вещи'}, ensure_ascii=False)}
+                ids_csv = ','.join(str(int(i)) for i in ids)
+
+                # Проверяем условие ещё раз на сервере: список на экране мог устареть,
+                # а вещь за это время вернуться в работу. Закрыть живую позицию —
+                # значит потерять вещь со склада.
+                cur.execute(
+                    "SELECT gw.id FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.reserved_order_id "
+                    f"WHERE gw.id IN ({ids_csv}) "
+                    "  AND gw.status IN ('picking', 'awaiting_supply') "
+                    "  AND gw.shipped_at IS NULL "
+                    "  AND (COALESCE(o.ozon_status, '') IN "
+                    "         ('delivering', 'delivered', 'driver_pickup') "
+                    "       OR COALESCE(o.status, '') IN ('Отгружен', 'Доставлен')) "
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                    "        JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                    "        WHERE msi.goods_warehouse_id = gw.id "
+                    "          AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена'))"
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    return {'statusCode': 200, 'headers': headers,
+                            'body': json.dumps({'closed': 0}, ensure_ascii=False)}
+
+                ok_ids = ','.join(str(int(r[0])) for r in rows)
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'shipped', shipped_at = now() "
+                    f"WHERE id IN ({ok_ids})"
+                )
+                for r in rows:
+                    log_action(
+                        cur, actor_id, actor_name, 'close_shipped', 'goods_warehouse', r[0],
+                        'Закрыта вручную: отправление уже уехало к клиенту, '
+                        'вещь не отсканирована в короб',
+                    )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'closed': len(rows)}, ensure_ascii=False)}
 
             if action == 'restore_lost':
                 # «Нашёлся» — списанная вещь обнаружилась и физически цела.

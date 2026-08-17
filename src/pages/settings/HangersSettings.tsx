@@ -17,15 +17,25 @@ import {
 } from '@/components/ui/alert-dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { fetchHangers, createHanger, deleteHanger, type Hanger } from '@/lib/hangersApi';
+import {
+  fetchHangers,
+  createHanger,
+  deleteHanger,
+  renameHanger,
+  hangerLabel,
+  type Hanger,
+} from '@/lib/hangersApi';
 
 const HangersSettings = () => {
   const { toast } = useToast();
   const [hangers, setHangers] = useState<Hanger[]>([]);
   const [loading, setLoading] = useState(true);
-  const [number, setNumber] = useState('');
+  const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  // Какую вешалку сейчас переименовываем и на что.
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editName, setEditName] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -39,16 +49,16 @@ const HangersSettings = () => {
   }, []);
 
   const handleCreate = async () => {
-    const n = Number(number);
-    if (!n || n <= 0) {
-      toast({ title: 'Укажите номер вешалки', variant: 'destructive' });
+    const value = name.trim();
+    if (!value) {
+      toast({ title: 'Укажите название вешалки', variant: 'destructive' });
       return;
     }
     setSaving(true);
     try {
-      await createHanger(n);
-      setNumber('');
-      toast({ title: `Вешалка № ${n} добавлена` });
+      await createHanger(value);
+      setName('');
+      toast({ title: `Вешалка «${value}» добавлена` });
       load();
     } catch (err) {
       toast({
@@ -58,6 +68,23 @@ const HangersSettings = () => {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRename = async (id: number) => {
+    const value = editName.trim();
+    setEditId(null);
+    const current = hangers.find((h) => h.id === id);
+    if (!current || value === (current.name || '')) return;
+    try {
+      await renameHanger(id, value);
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось переименовать',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      });
     }
   };
 
@@ -94,14 +121,15 @@ const HangersSettings = () => {
             <CardTitle className="text-sm">Добавить вешалку</CardTitle>
           </CardHeader>
           <CardContent className="flex items-end gap-3">
-            <div className="w-40 space-y-1.5">
-              <Label>Номер вешалки</Label>
+            {/* Вешалку называют так, как её зовут в цехе: «Синяя у окна», «Стойка А».
+                Номер система подбирает сама — он нужен только внутри, чтобы связать
+                вешалку с раскроенными заказами. */}
+            <div className="w-64 space-y-1.5">
+              <Label>Название вешалки</Label>
               <Input
-                type="number"
-                min={1}
-                placeholder="Например: 12"
-                value={number}
-                onChange={(e) => setNumber(e.target.value)}
+                placeholder="Например: Синяя у окна"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleCreate();
                 }}
@@ -125,7 +153,9 @@ const HangersSettings = () => {
                 Загрузка...
               </div>
             ) : hangers.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Вешалок пока нет — добавьте первую.</p>
+              <p className="text-sm text-muted-foreground">
+                Вешалок пока нет — добавьте первую. Название можно менять: нажмите на него.
+              </p>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {hangers.map((h) => (
@@ -133,7 +163,32 @@ const HangersSettings = () => {
                     key={h.id}
                     className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5"
                   >
-                    <span className="font-semibold">№ {h.number}</span>
+                    {/* Название правится прямо в списке: щёлкнул — исправил. */}
+                    {editId === h.id ? (
+                      <Input
+                        autoFocus
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        onBlur={() => handleRename(h.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleRename(h.id);
+                          if (e.key === 'Escape') setEditId(null);
+                        }}
+                        className="h-7 w-44"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditId(h.id);
+                          setEditName(h.name || '');
+                        }}
+                        className="font-semibold hover:underline"
+                        title="Переименовать"
+                      >
+                        {hangerLabel(h)}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setDeleteId(h.id)}
@@ -156,7 +211,7 @@ const HangersSettings = () => {
             <AlertDialogTitle>Удалить вешалку?</AlertDialogTitle>
             <AlertDialogDescription>
               Вешалка исчезнет из списка выбора при раскрое. Уже раскроенные заказы сохранят
-              свой номер вешалки.
+              свою вешалку.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

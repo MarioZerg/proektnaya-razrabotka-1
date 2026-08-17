@@ -14,6 +14,7 @@ import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram'
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import { printFboSticker } from '@/lib/printFboSticker';
 import { isUrgent } from '@/components/crm/sewingItems/orderUrgency';
+import { orderHangerLabel } from '@/lib/hangersApi';
 
 interface SewingItemsCardsProps {
   loading: boolean;
@@ -183,7 +184,7 @@ const SewingItemsCards = ({
                   )}
                   {o.hangerNumber > 0 && (
                     <span className="shrink-0 whitespace-nowrap font-semibold text-foreground">
-                      вешалка № {o.hangerNumber}
+                      вешалка {orderHangerLabel(o)}
                     </span>
                   )}
                 </p>

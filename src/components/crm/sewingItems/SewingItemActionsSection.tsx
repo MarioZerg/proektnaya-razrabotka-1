@@ -14,7 +14,7 @@ import type { Order, OrderDetail } from '@/lib/ordersApi';
 import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { Roll } from '@/lib/rollsApi';
-import { fetchHangers, type Hanger } from '@/lib/hangersApi';
+import { fetchHangers, hangerLabel, type Hanger } from '@/lib/hangersApi';
 import { statusOptions } from '@/components/crm/sewingItems/sewingItemsShared';
 import { formatQuantity } from '@/lib/formatQuantity';
 
@@ -149,7 +149,7 @@ const SewingItemActionsSection = ({
                 ) : (
                   hangers.map((h) => (
                     <SelectItem key={h.id} value={String(h.number)}>
-                      № {h.number}
+                      {hangerLabel(h)}
                     </SelectItem>
                   ))
                 )}

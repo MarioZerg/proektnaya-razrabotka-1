@@ -435,7 +435,8 @@ def handler(event: dict, context) -> dict:
                     "COALESCE(o.product_barcode, mi.barcode), "
                     "o.marketplace_item_id, COALESCE(o.product_ozon_sku, mi.ozon_sku), "
                     "u.last_hanger_number, "
-                    "o.group_key, o.group_size, o.group_position "
+                    "o.group_key, o.group_size, o.group_position, "
+                    "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number), " 
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
                     "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -523,6 +524,9 @@ def handler(event: dict, context) -> dict:
                     'cutterUserId': row[19],
                     'cutterUserName': row[20],
                     'hangerNumber': row[21],
+                    # Название вешалки («Синяя у окна»). Пустое — в интерфейсе
+                    # покажется номер, как было раньше.
+                    'hangerName': row[-1],
                     'sewerUserId': row[22],
                     'sewerUserName': row[23],
                     'packerUserId': row[24],
@@ -584,7 +588,10 @@ def handler(event: dict, context) -> dict:
                 # Когда вещь реально раскроили и отшили. По этим датам закройщик и швея
                 # сверяют свою выработку за смену или неделю: дата заказа покупателя для
                 # этого не годится — заказ мог пролежать в очереди неделю.
-                "o.cut_at, o.sewn_at "
+                "o.cut_at, o.sewn_at, "
+                # Название вешалки — последним полем, чтобы не сдвигать индексы
+                # остальных колонок (их читают по номерам).
+                "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number) "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -656,6 +663,7 @@ def handler(event: dict, context) -> dict:
                     'cutterUserId': r[19],
                     'cutterUserName': r[20],
                     'hangerNumber': r[21],
+                    'hangerName': r[-1],
                     'sewerUserId': r[22],
                     'sewerUserName': r[23],
                     'packerUserId': r[24],

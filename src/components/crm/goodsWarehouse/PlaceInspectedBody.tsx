@@ -3,12 +3,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -24,9 +18,11 @@ import { fetchInspection, placeInspectedBatch } from '@/lib/goodsWarehouseApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import { shortProductName } from '@/lib/shortProductName';
 
-interface PlaceInspectedDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+interface PlaceInspectedBodyProps {
+  /** Вкладка открыта: по этому признаку перезагружаем список и ставим фокус. */
+  active: boolean;
+  /** Закрыть окно целиком — после успешной укладки. */
+  onClose: () => void;
   onDone: () => void;
 }
 
@@ -50,8 +46,11 @@ interface ScannedRow {
  * Почему так: раньше на каждую вещь уходил отдельный запрос и отдельное окно, а смена
  * полки означала закрыть и открыть всё заново. Здесь список собирается в браузере,
  * ошибку видно сразу («это не осмотренная вещь»), а на сервер уходит одно обращение.
+ *
+ * Это внутренняя часть окна «Разложить по полкам» — вторая вкладка. Оба дела кладовщик
+ * делает у одного стеллажа с одним сканером, поэтому и живут они в одном окне.
  */
-const PlaceInspectedDialog = ({ open, onOpenChange, onDone }: PlaceInspectedDialogProps) => {
+const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -70,7 +69,7 @@ const PlaceInspectedDialog = ({ open, onOpenChange, onDone }: PlaceInspectedDial
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
 
   useEffect(() => {
-    if (!open) return;
+    if (!active) return;
     primeScanSounds();
     setRows([]);
     setBarcode('');
@@ -90,7 +89,7 @@ const PlaceInspectedDialog = ({ open, onOpenChange, onDone }: PlaceInspectedDial
       )
       .catch(() => setReady([]));
     setTimeout(() => inputRef.current?.focus(), 80);
-  }, [open]);
+  }, [active]);
 
   const shelfName = shelves.find((s) => String(s.id) === shelfId)?.name || '';
 
@@ -169,7 +168,7 @@ const PlaceInspectedDialog = ({ open, onOpenChange, onDone }: PlaceInspectedDial
       });
       setRows([]);
       onDone();
-      onOpenChange(false);
+      onClose();
     } catch (e) {
       toast({
         title: 'Не удалось положить на полки',
@@ -182,130 +181,122 @@ const PlaceInspectedDialog = ({ open, onOpenChange, onDone }: PlaceInspectedDial
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Принять осмотренные возвраты на производстве</DialogTitle>
-        </DialogHeader>
+    <div
+      className="space-y-4"
+      onClick={(e) => {
+        if (!(e.target as HTMLElement).closest('input, button, a, [role="combobox"]')) {
+          focusInput();
+        }
+      }}
+    >
+      <div className="rounded-md border border-border bg-muted/40 p-3">
+        <p className="text-sm text-muted-foreground">
+          Выберите полку и сканируйте стикеры хранения. Перешли к другой полке —
+          просто смените её здесь же и продолжайте. В конце нажмите «Положить на
+          полки хранения»
+        </p>
+        <p className="mt-1 text-sm">
+          Готово к укладке: <span className="font-semibold">{ready.length}</span>
+        </p>
+      </div>
 
-        <div
-          className="space-y-4"
-          onClick={(e) => {
-            if (!(e.target as HTMLElement).closest('input, button, a, [role="combobox"]')) {
-              focusInput();
-            }
-          }}
-        >
-          <div className="rounded-md border border-border bg-muted/40 p-3">
-            <p className="text-sm text-muted-foreground">
-              Выберите полку и сканируйте стикеры хранения. Перешли к другой полке —
-              просто смените её здесь же и продолжайте. В конце нажмите «Положить на
-              полки хранения»
-            </p>
-            <p className="mt-1 text-sm">
-              Готово к укладке: <span className="font-semibold">{ready.length}</span>
-            </p>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Полка</Label>
-              <Select value={shelfId} onValueChange={setShelfId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Выберите полку" />
-                </SelectTrigger>
-                <SelectContent>
-                  {shelves.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Стикер хранения</Label>
-              <Input
-                ref={inputRef}
-                autoFocus
-                disabled={!shelfId}
-                value={barcode}
-                onChange={(e) => setBarcode(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-                onBlur={focusInput}
-                placeholder={shelfId ? 'Наведите сканер' : 'Сначала выберите полку'}
-                className="h-11 font-mono-tech"
-                autoComplete="off"
-              />
-            </div>
-          </div>
-
-          {error && (
-            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
-              <Icon name="CircleAlert" size={18} className="mt-0.5 shrink-0 text-destructive" />
-              <p className="text-sm">{error}</p>
-            </div>
-          )}
-
-          {rows.length > 0 && (
-            <div className="space-y-3">
-              {/* Итог по полкам — кладовщик сверяет с тем, что лежит перед ним. */}
-              <div className="flex flex-wrap gap-2">
-                {groups.map((g) => (
-                  <span
-                    key={g.shelfId}
-                    className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-900"
-                  >
-                    {g.shelfName} — {g.barcodes.length} шт.
-                  </span>
-                ))}
-              </div>
-
-              <div className="max-h-64 space-y-1.5 overflow-y-auto">
-                {rows.map((r) => (
-                  <div
-                    key={r.barcode}
-                    className="flex items-start justify-between gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-2.5"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium" title={r.product || ''}>
-                        {shortProductName(r)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {r.orderNumber || '—'} · {r.barcode} · полка {r.shelfName}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => removeRow(r.barcode)}
-                      className="shrink-0 text-muted-foreground hover:text-destructive"
-                      title="Убрать из списка"
-                    >
-                      <Icon name="X" size={16} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <Button
-            size="lg"
-            className="w-full"
-            onClick={handleSave}
-            disabled={rows.length === 0 || saving}
-          >
-            <Icon
-              name={saving ? 'Loader2' : 'Warehouse'}
-              size={18}
-              className={`mr-2 ${saving ? 'animate-spin' : ''}`}
-            />
-            Положить товар на полки хранения{rows.length > 0 ? ` (${rows.length})` : ''}
-          </Button>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label>Полка</Label>
+          <Select value={shelfId} onValueChange={setShelfId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Выберите полку" />
+            </SelectTrigger>
+            <SelectContent>
+              {shelves.map((s) => (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  {s.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      </DialogContent>
-    </Dialog>
+        <div className="space-y-1.5">
+          <Label>Стикер хранения</Label>
+          <Input
+            ref={inputRef}
+            autoFocus
+            disabled={!shelfId}
+            value={barcode}
+            onChange={(e) => setBarcode(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleScan()}
+            onBlur={focusInput}
+            placeholder={shelfId ? 'Наведите сканер' : 'Сначала выберите полку'}
+            className="h-11 font-mono-tech"
+            autoComplete="off"
+          />
+        </div>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+          <Icon name="CircleAlert" size={18} className="mt-0.5 shrink-0 text-destructive" />
+          <p className="text-sm">{error}</p>
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="space-y-3">
+          {/* Итог по полкам — кладовщик сверяет с тем, что лежит перед ним. */}
+          <div className="flex flex-wrap gap-2">
+            {groups.map((g) => (
+              <span
+                key={g.shelfId}
+                className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-900"
+              >
+                {g.shelfName} — {g.barcodes.length} шт.
+              </span>
+            ))}
+          </div>
+
+          <div className="max-h-64 space-y-1.5 overflow-y-auto">
+            {rows.map((r) => (
+              <div
+                key={r.barcode}
+                className="flex items-start justify-between gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium" title={r.product || ''}>
+                    {shortProductName(r)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {r.orderNumber || '—'} · {r.barcode} · полка {r.shelfName}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeRow(r.barcode)}
+                  className="shrink-0 text-muted-foreground hover:text-destructive"
+                  title="Убрать из списка"
+                >
+                  <Icon name="X" size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Button
+        size="lg"
+        className="w-full"
+        onClick={handleSave}
+        disabled={rows.length === 0 || saving}
+      >
+        <Icon
+          name={saving ? 'Loader2' : 'Warehouse'}
+          size={18}
+          className={`mr-2 ${saving ? 'animate-spin' : ''}`}
+        />
+        Положить товар на полки хранения{rows.length > 0 ? ` (${rows.length})` : ''}
+      </Button>
+    </div>
   );
 };
 
-export default PlaceInspectedDialog;
+export default PlaceInspectedBody;

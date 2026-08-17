@@ -716,3 +716,46 @@ export const releaseStuckCancelled = (
     toShelf: number;
     toSorting: number;
   }>;
+
+/** Вещь, которая уже уехала к клиенту, но осталась висеть в подборе. */
+export interface ShippedStuckItem {
+  id: number;
+  storageBarcode: string | null;
+  status: string;
+  shelfName: string | null;
+  orderNumber: string | null;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  marketplace: string | null;
+  ozonStatus: string | null;
+  orderStatus: string | null;
+  /** Когда наклеили ярлык отправления. */
+  labeledAt: string | null;
+}
+
+/** Список вещей, уехавших к клиентам, но не закрытых в подборе. */
+export const fetchShippedStuck = async (): Promise<{
+  items: ShippedStuckItem[];
+  count: number;
+}> => {
+  const res = await fetch(`${GOODS_WAREHOUSE_URL}?shipped_stuck=1`);
+  if (!res.ok) return { items: [], count: 0 };
+  const data = await res.json();
+  return { items: data.items || [], count: data.count || 0 };
+};
+
+/**
+ * Закрыть вещи, которые уже уехали к клиенту. Помечаем отгруженными: искать их
+ * на складе бессмысленно, работа по ним закончена. Доступно администратору
+ * и старшему кладовщику.
+ */
+export const closeShippedStuck = (
+  ids: number[],
+  actorId?: number,
+  actorName?: string,
+): Promise<{ closed: number }> =>
+  postAction({ action: 'close_shipped_stuck', ids, actorId, actorName }) as Promise<{
+    closed: number;
+  }>;

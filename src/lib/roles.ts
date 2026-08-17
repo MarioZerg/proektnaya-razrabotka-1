@@ -370,7 +370,6 @@ const adminNav: NavItem[] = [
     children: [
       { label: 'Пользователи', path: '/crm/settings/users' },
       { label: 'Реквизиты ИП', path: '/crm/settings/company' },
-      { label: 'Очистка системы', path: '/crm/settings/cleanup' },
       { label: 'Новые сотрудники', path: '/crm/settings/pending-employees' },
       { label: 'Материалы', path: '/crm/settings/materials' },
       { label: 'Поставщики', path: '/crm/settings/suppliers' },

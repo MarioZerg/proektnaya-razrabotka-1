@@ -1,7 +1,6 @@
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
 import PickupReturnsDialog from '@/components/crm/returns/PickupReturnsDialog';
-import PlaceInspectedDialog from '@/components/crm/goodsWarehouse/PlaceInspectedDialog';
 import ReprintReportDialog from '@/components/crm/goodsWarehouse/ReprintReportDialog';
 import AdminReceiveDialog from '@/components/crm/goodsWarehouse/AdminReceiveDialog';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
@@ -17,8 +16,11 @@ interface GoodsWarehouseDialogsProps {
   setPlaceOpen: (open: boolean) => void;
   pickupOpen: boolean;
   setPickupOpen: (open: boolean) => void;
+  /** Осмотренные из цеха — вторая вкладка внутри «Разложить по полкам». */
   placeInspectedOpen: boolean;
   setPlaceInspectedOpen: (open: boolean) => void;
+  /** Сколько осмотренных вещей ждут укладки. */
+  inspectedReady?: number;
   moveOpen: boolean;
   setMoveOpen: (open: boolean) => void;
   adminReceiveOpen: boolean;
@@ -49,32 +51,30 @@ const GoodsWarehouseDialogs = ({
   setAdminReceiveOpen,
   reprintOpen,
   setReprintOpen,
+  inspectedReady = 0,
   load,
   loadInspectedReady,
 }: GoodsWarehouseDialogsProps) => (
   <>
+    {/* Одно окно на оба дела кладовщика у стеллажа: отменённые клиентом вещи и
+        осмотренные, вернувшиеся из цеха. Вторые — вкладкой внутри. */}
     <PlaceOnShelfDialog
-      open={placeOpen}
-      onOpenChange={setPlaceOpen}
+      open={placeOpen || placeInspectedOpen}
+      onOpenChange={(v) => {
+        setPlaceOpen(v);
+        if (!v) setPlaceInspectedOpen(false);
+      }}
       shelves={shelves}
       pendingItems={pendingShelf}
       onDone={load}
+      inspectedReady={inspectedReady}
+      onInspectedDone={loadInspectedReady}
+      initialTab={placeInspectedOpen ? 'inspected' : 'cancelled'}
     />
     <PickupReturnsDialog
       open={pickupOpen}
       onOpenChange={setPickupOpen}
       onDone={load}
-    />
-    {/* Третий шаг цепочки возвратов: вещи, которые уехали в цех на осмотр,
-        вернулись проверенными — кладовщик сканирует их и кладёт на полки,
-        не уходя со склада товара. */}
-    <PlaceInspectedDialog
-      open={placeInspectedOpen}
-      onOpenChange={setPlaceInspectedOpen}
-      onDone={() => {
-        load();
-        loadInspectedReady();
-      }}
     />
     <MoveShelfDialog
       open={moveOpen}

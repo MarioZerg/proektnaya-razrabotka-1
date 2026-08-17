@@ -20,12 +20,17 @@ def _resp(status, body):
 
 
 def handler(event: dict, context) -> dict:
-    """Справочник вешалок. Админ заводит номера вешалок; закройщик при раскрое выбирает
+    """Справочник вешалок. Админ заводит вешалки; закройщик при раскрое выбирает
     вешалку из этого списка.
 
-    GET  /                         - список вешалок
-    POST /  { action: 'create', number }  - добавить вешалку
-    POST /  { action: 'delete', id }      - удалить вешалку
+    Вешалку можно назвать по-человечески («Синяя у окна»), а можно оставить просто
+    номер. Номер при этом есть всегда: на него ссылаются заказы, поэтому если админ
+    имя не указал — номер подбирается сам, следующий свободный.
+
+    GET  /                                        - список вешалок
+    POST /  { action: 'create', name, number }    - добавить вешалку
+    POST /  { action: 'rename', id, name }        - переименовать
+    POST /  { action: 'delete', id }              - удалить вешалку
     """
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
@@ -36,8 +41,8 @@ def handler(event: dict, context) -> dict:
         cur = conn.cursor()
 
         if method == 'GET':
-            cur.execute("SELECT id, number FROM hangers ORDER BY number")
-            hangers = [{'id': r[0], 'number': r[1]} for r in cur.fetchall()]
+            cur.execute("SELECT id, number, COALESCE(name, '') FROM hangers ORDER BY number")
+            hangers = [{'id': r[0], 'number': r[1], 'name': r[2]} for r in cur.fetchall()]
             return _resp(200, {'hangers': hangers})
 
         if method == 'POST':
@@ -45,20 +50,58 @@ def handler(event: dict, context) -> dict:
             action = body_data.get('action')
 
             if action == 'create':
-                number = body_data.get('number')
-                try:
-                    number = int(number)
-                except (TypeError, ValueError):
-                    return _resp(400, {'error': 'Укажите номер вешалки'})
-                if number <= 0:
-                    return _resp(400, {'error': 'Номер вешалки должен быть больше нуля'})
-                cur.execute("SELECT id FROM hangers WHERE number = %s", (number,))
-                if cur.fetchone():
-                    return _resp(409, {'error': f'Вешалка № {number} уже есть'})
-                cur.execute("INSERT INTO hangers (number) VALUES (%s) RETURNING id", (number,))
+                name = (body_data.get('name') or '').strip()
+                raw_number = body_data.get('number')
+                # Номер указывать необязательно: обычно админ просто пишет название.
+                # Но номер нужен внутри системы — на него ссылаются заказы, поэтому
+                # берём следующий свободный.
+                if raw_number in (None, ''):
+                    if not name:
+                        return _resp(400, {'error': 'Укажите название вешалки'})
+                    cur.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM hangers")
+                    number = cur.fetchone()[0]
+                else:
+                    try:
+                        number = int(raw_number)
+                    except (TypeError, ValueError):
+                        return _resp(400, {'error': 'Номер вешалки должен быть числом'})
+                    if number <= 0:
+                        return _resp(400, {'error': 'Номер вешалки должен быть больше нуля'})
+                    cur.execute("SELECT id FROM hangers WHERE number = %s", (number,))
+                    if cur.fetchone():
+                        return _resp(409, {'error': f'Вешалка № {number} уже есть'})
+
+                if name:
+                    cur.execute("SELECT id FROM hangers WHERE lower(name) = lower(%s)", (name,))
+                    if cur.fetchone():
+                        return _resp(409, {'error': f'Вешалка «{name}» уже есть'})
+
+                cur.execute(
+                    "INSERT INTO hangers (number, name) VALUES (%s, %s) RETURNING id",
+                    (number, name or None),
+                )
                 new_id = cur.fetchone()[0]
                 conn.commit()
-                return _resp(200, {'id': new_id, 'number': number})
+                return _resp(200, {'id': new_id, 'number': number, 'name': name})
+
+            if action == 'rename':
+                hanger_id = body_data.get('id')
+                name = (body_data.get('name') or '').strip()
+                if not hanger_id:
+                    return _resp(400, {'error': 'Укажите id'})
+                if name:
+                    cur.execute(
+                        "SELECT id FROM hangers WHERE lower(name) = lower(%s) AND id <> %s",
+                        (name, int(hanger_id)),
+                    )
+                    if cur.fetchone():
+                        return _resp(409, {'error': f'Вешалка «{name}» уже есть'})
+                cur.execute(
+                    "UPDATE hangers SET name = %s WHERE id = %s",
+                    (name or None, int(hanger_id)),
+                )
+                conn.commit()
+                return _resp(200, {'ok': True, 'name': name})
 
             if action == 'delete':
                 hanger_id = body_data.get('id')

@@ -9,6 +9,7 @@ import Icon from '@/components/ui/icon';
 import type { Order, OrderDetail } from '@/lib/ordersApi';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import { formatQuantity } from '@/lib/formatQuantity';
+import { orderHangerLabel } from '@/lib/hangersApi';
 
 interface SewingItemInfoCardsProps {
   selectedOrder: Order;
@@ -106,7 +107,7 @@ const SewingItemInfoCards = ({
               </TableRow>
               <TableRow>
                 <TableCell className="font-medium text-muted-foreground">Вешалка</TableCell>
-                <TableCell>{selectedOrder.hangerNumber > 0 ? `№ ${selectedOrder.hangerNumber}` : '—'}</TableCell>
+                <TableCell>{orderHangerLabel(selectedOrder)}</TableCell>
               </TableRow>
             </TableBody>
           </Table>

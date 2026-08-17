@@ -16,6 +16,15 @@ import {
 } from '@/lib/goodsWarehouseApi';
 import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
 import SendToSewingDialog from '@/components/crm/goodsWarehouse/SendToSewingDialog';
+import NotFoundDialog, {
+  type NotFoundTarget,
+} from '@/components/crm/goodsWarehouse/NotFoundDialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import RestoreLostDialog from '@/components/crm/goodsWarehouse/RestoreLostDialog';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import {
@@ -68,6 +77,9 @@ const GoodsCard = () => {
   const [justPrinted, setJustPrinted] = useState(false);
   /** Открыт диалог отправки в пошив (нужна причина). */
   const [sewingItem, setSewingItem] = useState<GoodsWarehouseItem | null>(null);
+  // «Товар не найден» — второй пункт меню действий. Раньше эта кнопка жила
+  // отдельно в строке списка подбора.
+  const [notFoundItem, setNotFoundItem] = useState<NotFoundTarget | null>(null);
   /** Открыт диалог возврата списанной вещи, которая нашлась. */
   const [restoreOpen, setRestoreOpen] = useState(false);
 
@@ -338,25 +350,52 @@ const GoodsCard = () => {
                   </p>
                 )}
 
-                {/* Вещь испорчена и отгружать её нельзя: списываем со склада, а заказ
-                    возвращаем на конвейер. Админ получит уведомление на панель. */}
+                {/* Оба «плохих» исхода по вещи — в одном меню.
+                    Раньше «Отправить в пошив» жила здесь, а «Не нашёл» дублировалась
+                    в строке списка: две кнопки в разных местах про одно и то же
+                    решение — вещь со склада уходит, заказ едет шиться заново.
+                    Теперь выбор делается один раз и в одном месте. */}
                 <div className="border-t border-border pt-3">
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      setSewingItem({
-                        id: card.id,
-                        product: card.product,
-                        orderNumber: card.reservedOrderNumber || card.sourceOrderNumber,
-                        storageBarcode: card.storageBarcode,
-                      } as GoodsWarehouseItem)
-                    }
-                  >
-                    <Icon name="Shirt" size={18} className="mr-2" />
-                    Отправить на пошив
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline">
+                        <Icon name="Settings2" size={18} className="mr-2" />
+                        Действия с товаром
+                        <Icon name="ChevronDown" size={16} className="ml-2" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-64">
+                      <DropdownMenuItem
+                        onClick={() =>
+                          setSewingItem({
+                            id: card.id,
+                            product: card.product,
+                            orderNumber: card.reservedOrderNumber || card.sourceOrderNumber,
+                            storageBarcode: card.storageBarcode,
+                          } as GoodsWarehouseItem)
+                        }
+                      >
+                        <Icon name="Shirt" size={16} className="mr-2" />
+                        Отправить в пошив
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() =>
+                          setNotFoundItem({
+                            id: card.id,
+                            title: card.product || 'Товар',
+                            orderNumber: card.reservedOrderNumber || card.sourceOrderNumber,
+                            storageBarcode: card.storageBarcode,
+                            shelfName: card.shelfName,
+                          })
+                        }
+                      >
+                        <Icon name="SearchX" size={16} className="mr-2" />
+                        Товар не найден
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <p className="mt-1.5 text-xs text-muted-foreground">
-                    Вещь спишется со склада, а заказ вернётся на конвейер в статус «Новый»
+                    В обоих случаях вещь спишется со склада, а заказ вернётся на конвейер
                   </p>
                 </div>
               </>
@@ -414,6 +453,15 @@ const GoodsCard = () => {
           onOpenChange={(v) => !v && setSewingItem(null)}
           onDone={() => {
             setSewingItem(null);
+            load();
+          }}
+        />
+
+        <NotFoundDialog
+          item={notFoundItem}
+          onOpenChange={(v) => !v && setNotFoundItem(null)}
+          onDone={() => {
+            setNotFoundItem(null);
             load();
           }}
         />

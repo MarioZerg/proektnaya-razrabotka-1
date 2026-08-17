@@ -15,7 +15,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
+import PlaceInspectedBody from '@/components/crm/goodsWarehouse/PlaceInspectedBody';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import type { Shelf } from '@/lib/shelvesApi';
@@ -32,6 +34,12 @@ interface PlaceOnShelfDialogProps {
    * Найти нужное среди похожих вещей по одному числу невозможно. */
   pendingItems: GoodsWarehouseItem[];
   onDone: () => void;
+  /** Сколько осмотренных вещей ждут укладки — цифра на второй вкладке. */
+  inspectedReady?: number;
+  /** Пересчитать счётчик осмотренных после укладки. */
+  onInspectedDone?: () => void;
+  /** С какой вкладки открыть окно: кладовщик жмёт разные кнопки. */
+  initialTab?: 'cancelled' | 'inspected';
 }
 
 /** Кладовщик забрал из цеха вещи, отменённые клиентом (упаковщик наклеил стикер хранения),
@@ -42,9 +50,20 @@ const PlaceOnShelfDialog = ({
   shelves,
   pendingItems,
   onDone,
+  inspectedReady = 0,
+  onInspectedDone,
+  initialTab = 'cancelled',
 }: PlaceOnShelfDialogProps) => {
   const pendingCount = pendingItems.length;
   const { toast } = useToast();
+  // Какая вкладка открыта. Осмотренные из цеха — вторым уровнем здесь же:
+  // кладовщик стоит у одного стеллажа с одним сканером и делает оба дела подряд.
+  const [tab, setTab] = useState<string>(initialTab);
+
+  // Открыли окно — показываем ту вкладку, кнопку которой нажали.
+  useEffect(() => {
+    if (open) setTab(initialTab);
+  }, [open, initialTab]);
   const [barcode, setBarcode] = useState('');
   const [shelfId, setShelfId] = useState('');
   const [saving, setSaving] = useState(false);
@@ -105,11 +124,24 @@ const PlaceOnShelfDialog = ({
         }
       }}
     >
-      <DialogContent>
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Разложить отменённые товары по полкам</DialogTitle>
+          <DialogTitle>Разложить по полкам</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+
+        <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+          <TabsList className="w-full">
+            <TabsTrigger value="cancelled" className="flex-1">
+              Отменённые клиентом
+              {pendingCount > 0 && ` (${pendingCount})`}
+            </TabsTrigger>
+            <TabsTrigger value="inspected" className="flex-1">
+              Осмотренные из цеха
+              {inspectedReady > 0 && ` (${inspectedReady})`}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="cancelled" className="space-y-4">
           <p className="text-sm text-muted-foreground">
             Ждут укладки: <span className="font-semibold text-foreground">{pendingCount}</span>.
             Выберите полку и сканируйте стикеры хранения один за другим.
@@ -190,7 +222,20 @@ const PlaceOnShelfDialog = ({
               Все отменённые товары разложены
             </Badge>
           )}
-        </div>
+          </TabsContent>
+
+          {/* Вещи, которые ездили в цех на осмотр и вернулись проверенными. */}
+          <TabsContent value="inspected">
+            <PlaceInspectedBody
+              active={open && tab === 'inspected'}
+              onClose={() => onOpenChange(false)}
+              onDone={() => {
+                onDone();
+                onInspectedDone?.();
+              }}
+            />
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );
