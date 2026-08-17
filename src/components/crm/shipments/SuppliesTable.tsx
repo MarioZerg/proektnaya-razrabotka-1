@@ -134,6 +134,7 @@ const SuppliesTable = ({
                                       variant="outline"
                                       size="icon"
                                       className="h-5 w-5"
+                                      title="Печать стикера рулона (75×120 мм)"
                                       onClick={() =>
                                         printBarcodes(
                                           [
@@ -196,7 +197,7 @@ const SuppliesTable = ({
                         <Button
                           variant="outline"
                           size="icon"
-                          title="Печать штрихкодов"
+                          title="Печать стикеров рулонов (75×120 мм)"
                           onClick={() => onPrintShipmentBarcodes(s.id)}
                         >
                           <Icon name="Barcode" size={14} />
