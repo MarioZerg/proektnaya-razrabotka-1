@@ -2812,6 +2812,44 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE supply_id = {int(item_id)}")
                 cur.execute(f"DELETE FROM marketplace_supply_boxes WHERE supply_id = {int(item_id)}")
+
+                # ЗАКАЗЫ WB ВОЗВРАЩАЕМ В НАКОПИТЕЛЬ, А НЕ ТЕРЯЕМ ВМЕСТЕ С ПОСТАВКОЙ.
+                #
+                # У WB застикерованный заказ живёт не вещью на складе, а строкой в
+                # поставке. Раньше связь удалялась вместе с поставкой — и заказ пропадал
+                # изо всех списков разом: в счётчик кладовщика он не попадал (там считают
+                # накопитель), в новой поставке не показывался. Вещь при этом лежала
+                # застикерованная на складе, и найти её можно было только руками.
+                #
+                # Переставляем такие заказы в накопительный буфер — очередь на отгрузку.
+                # Если живого буфера нет, заводим его прямо здесь: обращаться к WB не
+                # нужно, номер поставки на его стороне подставится при сканировании.
+                cur.execute(
+                    "SELECT id FROM marketplace_supplies "
+                    "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
+                    "AND status IN ('Открытая', 'На сборке') ORDER BY id DESC LIMIT 1"
+                )
+                acc_row = cur.fetchone()
+                cur.execute(
+                    f"SELECT COUNT(*) FROM wb_supply_orders WHERE supply_id = {int(item_id)}"
+                )
+                wb_orders_left = int(cur.fetchone()[0] or 0)
+
+                if wb_orders_left:
+                    acc_id = acc_row[0] if acc_row else None
+                    if not acc_id:
+                        cur.execute(
+                            "INSERT INTO marketplace_supplies "
+                            "(marketplace, type, status, comment, is_accumulator) "
+                            "VALUES ('WB', 'FBS', 'Открытая', %s, true) RETURNING id",
+                            ('Накопительная поставка: заказы добавляются при стикеровке',),
+                        )
+                        acc_id = cur.fetchone()[0]
+                    cur.execute(
+                        f"UPDATE wb_supply_orders SET supply_id = {int(acc_id)} "
+                        f"WHERE supply_id = {int(item_id)}"
+                    )
+
                 cur.execute(f"DELETE FROM wb_supply_orders WHERE supply_id = {int(item_id)}")
                 cur.execute(f"DELETE FROM marketplace_supplies WHERE id = {int(item_id)}")
                 conn.commit()
