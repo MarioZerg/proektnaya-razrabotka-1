@@ -52,10 +52,28 @@ def calc_shortage_penalty(cur, roll_id):
         return None
 
     initial_qty = float(row[0] or 0)
-    shortage = float(row[1] or 0)
+    declared_shortage = float(row[1] or 0)
     norm_percent = float(row[2]) if row[2] is not None else None
     cost_per_unit = float(row[3]) if row[3] is not None else 0.0
     type_name = row[4] or ''
+    remaining_at_close = float(row[9]) if row[9] is not None else None
+
+    # ЧТО СЧИТАЕТСЯ НЕДОСТАЧЕЙ.
+    #
+    # Недостача — это метраж, который числился на рулоне, но в изделия не ушёл.
+    # То есть ВЕСЬ остаток на момент закрытия, а не та цифра, которую сотрудница
+    # вписала в поле «недостача» на терминале.
+    #
+    # Почему так. Раньше считали строго по введённому числу, и рулон закрывали с
+    # недостачей «0.53», когда по системе на нём висело ещё 15.85 п.м. Эти 15 метров
+    # просто исчезали: штраф считался от полуметра, укладывался в норму, и рулон
+    # уходил из очереди как чистый. Проверить это администратор не мог — на дашборд
+    # выводилась заявленная цифра, а не фактический остаток.
+    #
+    # Теперь база для штрафа — фактический остаток при закрытии. Введённое число
+    # оставляем как пояснение сотрудницы (сколько, по её мнению, недомотал
+    # поставщик), но деньги считаем по факту.
+    shortage = remaining_at_close if remaining_at_close is not None else declared_shortage
 
     info = {
         'rollId': roll_id,
@@ -63,7 +81,9 @@ def calc_shortage_penalty(cur, roll_id):
         'materialName': row[6],
         'unit': row[7],
         'initialQuantity': initial_qty,
-        'shortage': shortage,
+        'shortage': round(shortage, 3),
+        # Что сотрудница вписала руками — для сверки с фактом.
+        'declaredShortage': round(declared_shortage, 3),
         'normPercent': norm_percent,
         'costPerUnit': cost_per_unit,
         'alreadyCharged': float(row[8]) if row[8] is not None else None,
@@ -101,14 +121,28 @@ def calc_shortage_penalty(cur, roll_id):
     is_trim = type_name in ('Аксессуары', 'Упаковка')
     role_column = 'sewer_user_id' if is_trim else 'cutter_user_id'
 
+    # Сразу считаем, сколько метража списал на себя каждый: по коробке тесьмы в 1500 м
+    # работают семь швей, и администратору перед удержанием нужно видеть не просто
+    # список фамилий, а кто сколько с неё отшил.
     cur.execute(
-        f"SELECT DISTINCT o.{role_column}, u.full_name FROM order_material_usage omu "
+        f"SELECT o.{role_column}, u.full_name, COALESCE(SUM(omu.quantity), 0), COUNT(*) "
+        f"FROM order_material_usage omu "
         f"JOIN orders o ON o.id = omu.order_id "
         f"LEFT JOIN users u ON u.id = o.{role_column} "
-        f"WHERE omu.roll_id = %s AND o.{role_column} IS NOT NULL",
+        f"WHERE omu.roll_id = %s AND o.{role_column} IS NOT NULL "
+        f"GROUP BY o.{role_column}, u.full_name "
+        f"ORDER BY 3 DESC",
         (roll_id,),
     )
-    users = [{'id': r[0], 'name': r[1] or 'Без имени'} for r in cur.fetchall()]
+    users = [
+        {
+            'id': r[0],
+            'name': r[1] or 'Без имени',
+            'usedQuantity': round(float(r[2] or 0), 2),
+            'ordersCount': int(r[3] or 0),
+        }
+        for r in cur.fetchall()
+    ]
 
     if not users:
         cur.execute(
@@ -308,10 +342,14 @@ def handler(event: dict, context) -> dict:
             conn = psycopg2.connect(dsn)
             try:
                 cur = conn.cursor()
+                # Берём рулоны, где ЧТО-ТО осталось: либо сотрудница заявила недостачу,
+                # либо на рулоне при закрытии числился остаток. Второе условие раньше
+                # отсутствовало — и рулон, закрытый с 15 неизрасходованными метрами и
+                # недостачей «0», в очередь к администратору не попадал вообще.
                 cur.execute(
                     "SELECT r.id FROM rolls r "
-                    "WHERE r.status = 'completed' AND r.shortage_quantity > 0 "
-                    "AND r.penalty_total IS NULL "
+                    "WHERE r.status = 'completed' AND r.penalty_total IS NULL "
+                    "AND (r.shortage_quantity > 0 OR r.remaining_at_close > 0) "
                     "ORDER BY r.completed_at DESC LIMIT 100"
                 )
                 pending = [calc_shortage_penalty(cur, r[0]) for r in cur.fetchall()]
@@ -1164,11 +1202,12 @@ def handler(event: dict, context) -> dict:
                     notify_admin(
                         cur, 'roll_shortage',
                         f'Недостача сверх нормы: {penalty["materialName"]}',
-                        f'Рулон {penalty["barcode"]}: не хватило {round(shortage, 2)} '
-                        f'{penalty["unit"]} при норме {penalty["allowed"]} '
-                        f'({penalty["normPercent"]}%). Сверх нормы {penalty["excess"]} '
+                        f'Рулон {penalty["barcode"]}: в изделия не ушло '
+                        f'{round(remaining_now, 2)} {penalty["unit"]} при норме '
+                        f'{penalty["allowed"]} {penalty["unit"]} ({penalty["normPercent"]}% '
+                        f'от {round(initial_qty, 2)}). Сверх нормы {penalty["excess"]} '
                         f'{penalty["unit"]} на {penalty["total"]} ₽. '
-                        f'На рулоне оставалось {round(remaining_now, 2)} {penalty["unit"]}.',
+                        f'Сотрудница заявила недостачу {round(shortage, 2)} {penalty["unit"]}.',
                         closed_by_id, closed_by_name,
                         link='/crm/warehouse/rolls?tab=shortage',
                         entity_type='roll', entity_id=int(item_id),
@@ -1311,14 +1350,23 @@ def handler(event: dict, context) -> dict:
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
-                cur.execute("SELECT shortage_quantity, penalty_total FROM rolls WHERE id = %s", (int(item_id),))
+                cur.execute(
+                    "SELECT shortage_quantity, penalty_total, remaining_at_close "
+                    "FROM rolls WHERE id = %s",
+                    (int(item_id),),
+                )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
                 if row[1] is not None:
                     return {'statusCode': 409, 'headers': headers,
                             'body': json.dumps({'error': 'Штраф по этому рулону уже начислен'}, ensure_ascii=False)}
-                penalty = charge_shortage_penalty(cur, int(item_id), float(row[0] or 0))
+                # Удерживаем по ФАКТИЧЕСКОМУ остатку на момент закрытия — ровно по той
+                # сумме, которую администратор видел на дашборде перед нажатием кнопки.
+                # Раньше здесь бралось введённое сотрудницей число, и удержание
+                # расходилось с показанным расчётом.
+                base_shortage = float(row[2]) if row[2] is not None else float(row[0] or 0)
+                penalty = charge_shortage_penalty(cur, int(item_id), base_shortage)
                 if not penalty:
                     return {'statusCode': 409, 'headers': headers,
                             'body': json.dumps({'error': 'Начислять нечего: недостача в пределах нормы '

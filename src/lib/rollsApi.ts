@@ -273,7 +273,10 @@ export interface PendingPenalty {
   materialName: string;
   unit: string;
   initialQuantity: number;
+  /** Недостача, по которой считаются деньги: весь метраж, не ушедший в изделия. */
   shortage: number;
+  /** Что сотрудница вписала руками при закрытии — для сверки с фактом. */
+  declaredShortage?: number;
   normPercent: number | null;
   costPerUnit: number;
   /** Допустимая недостача в единицах — сколько прощается по норме поставщика. */
@@ -286,7 +289,15 @@ export interface PendingPenalty {
   perUser?: number;
   /** Кого коснётся: «Швеи» для тесьмы, «Закройщицы» для ткани. */
   role?: string;
-  users: Array<{ id: number; name: string; amount: number }>;
+  users: Array<{
+    id: number;
+    name: string;
+    amount: number;
+    /** Сколько метража с этого рулона ушло в изделия этого сотрудника. */
+    usedQuantity?: number;
+    /** По скольким заказам он брал материал с рулона. */
+    ordersCount?: number;
+  }>;
   /** Почему штраф начислить нельзя. Пусто — можно начислять. */
   reason: string | null;
   /** Кто закрыл рулон в цехе. */

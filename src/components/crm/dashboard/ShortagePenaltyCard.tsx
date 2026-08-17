@@ -171,22 +171,26 @@ const ShortagePenaltyCard = () => {
                         #{item.barcode}
                       </span>
                     </p>
+                    {/* Весь расчёт в одну строку: было — не ушло в изделия — норма.
+                        Администратор удерживает деньги у людей и должен видеть, из
+                        чего сложилась сумма, не открывая карточку рулона. */}
                     <p className="text-xs text-muted-foreground">
-                      В рулоне было {item.initialQuantity} {item.unit} · не хватило{' '}
-                      <b>
+                      В рулоне было {item.initialQuantity} {item.unit} · в изделия не ушло{' '}
+                      <b className="text-foreground">
                         {item.shortage} {item.unit}
                       </b>
                       {item.normPercent != null && (
-                        <> · норма {item.normPercent}% ({item.allowed} {item.unit})</>
+                        <> · норма {item.normPercent}% = {item.allowed} {item.unit}</>
                       )}
                     </p>
-                    {/* Кто закрыл рулон и сколько на нём числилось в тот момент —
-                        по этим двум цифрам недостачу можно перепроверить. */}
+                    {/* Кто закрыл рулон — и что сама написала в графе недостачи.
+                        Расхождение с фактом здесь самое важное: рулон закрывали
+                        с «недостачей 0.5», когда на нём висело 15 метров. */}
                     {item.closedByName && (
                       <p className="text-xs text-muted-foreground">
                         Закрыла: {item.closedByName}
-                        {item.remainingAtClose != null && (
-                          <> · на рулоне числилось {item.remainingAtClose} {item.unit}</>
+                        {item.declaredShortage != null && (
+                          <> · заявила недостачу {item.declaredShortage} {item.unit}</>
                         )}
                       </p>
                     )}
@@ -211,10 +215,19 @@ const ShortagePenaltyCard = () => {
                       <p className="mb-1 text-xs font-medium">
                         {item.role} — по {money(item.perUser || 0)} ₽ с каждой:
                       </p>
+                      {/* Рядом с фамилией — сколько метража этот человек списал с
+                          рулона. По коробке тесьмы работают семь швей, и без этой
+                          цифры непонятно, кого удержание касается всерьёз, а кто
+                          взял с неё пару метров в конце смены. */}
                       <div className="flex flex-wrap gap-1">
                         {item.users.map((u) => (
                           <Badge key={u.id} variant="outline" className="font-normal">
                             {u.name}
+                            {u.usedQuantity != null && u.usedQuantity > 0 && (
+                              <span className="ml-1 text-muted-foreground">
+                                · {u.usedQuantity} {item.unit}
+                              </span>
+                            )}
                           </Badge>
                         ))}
                       </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
@@ -29,6 +29,7 @@ import OperationsTable from '@/components/crm/finance/OperationsTable';
 import SalaryPayoutsTable from '@/components/crm/finance/SalaryPayoutsTable';
 import SalaryRatesCard from '@/components/crm/finance/SalaryRatesCard';
 import MyAccrualsTable from '@/components/crm/finance/MyAccrualsTable';
+import MyAccrualsFilter from '@/components/crm/finance/MyAccrualsFilter';
 import MyPayoutsCard from '@/components/crm/finance/MyPayoutsCard';
 import CashBoxCard from '@/components/crm/finance/CashBoxCard';
 import MissedAccrualsAlert from '@/components/crm/finance/MissedAccrualsAlert';
@@ -70,6 +71,34 @@ const Finance = () => {
   // Новичкам зарплата открывается через 2 недели после регистрации — считает сервер.
   const [myLocked, setMyLocked] = useState(false);
   const [myDaysLeft, setMyDaysLeft] = useState(0);
+  // Период в личных финансах. Фильтруем на клиенте: сервер и так отдаёт сотруднику
+  // последние 200 его начислений — лишний запрос на каждое нажатие «Сегодня» не нужен.
+  const [myDateFrom, setMyDateFrom] = useState('');
+  const [myDateTo, setMyDateTo] = useState('');
+
+  const myFiltered = useMemo(() => {
+    if (!myDateFrom && !myDateTo) return myAccruals;
+    return myAccruals.filter((a) => {
+      // Считаем по дате, ЗА которую начислено: работу нередко проводят задним
+      // числом, и по дате создания записи день выглядел бы пустым.
+      const d = (a.accruedFor || '').slice(0, 10);
+      if (!d) return false;
+      if (myDateFrom && d < myDateFrom) return false;
+      if (myDateTo && d > myDateTo) return false;
+      return true;
+    });
+  }, [myAccruals, myDateFrom, myDateTo]);
+
+  // Заработок и удержания за период показываем порознь: сотруднику важно видеть,
+  // что штраф — это отдельная строка, а не «мне меньше начислили за работу».
+  const myEarned = useMemo(
+    () => myFiltered.reduce((s, a) => (a.amount > 0 ? s + a.amount : s), 0),
+    [myFiltered],
+  );
+  const myPenalties = useMemo(
+    () => myFiltered.reduce((s, a) => (a.amount < 0 ? s + a.amount : s), 0),
+    [myFiltered],
+  );
 
   useEffect(() => {
     fetchEmployees().then(setEmployees);
@@ -288,7 +317,16 @@ const Finance = () => {
           ) : (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
             <div className="space-y-4 lg:col-span-3">
-              <MyAccrualsTable accruals={myAccruals} loading={myLoading} />
+              <MyAccrualsFilter
+                dateFrom={myDateFrom}
+                dateTo={myDateTo}
+                setDateFrom={setMyDateFrom}
+                setDateTo={setMyDateTo}
+                earned={myEarned}
+                penalties={myPenalties}
+                count={myFiltered.length}
+              />
+              <MyAccrualsTable accruals={myFiltered} loading={myLoading} />
             </div>
             <div className="space-y-6 lg:col-span-1">
               <div className="rounded-md border border-border p-4">
