@@ -7,6 +7,8 @@ export interface ReconcileRow {
   inSystem: number;
   /** Сколько заказов есть на площадке, но нет у нас. Больше нуля — заказы теряются. */
   missing: number;
+  /** Номера недостающих отправлений — по ним работает точечная догрузка. */
+  missingNumbers?: string[];
 }
 
 export interface ReconcileMarketplace {
@@ -31,4 +33,25 @@ export const fetchReconcile = async (
   if (!res.ok) throw new Error('Не удалось сверить с площадкой');
   const data = await res.json();
   return data.marketplaces?.[0];
+};
+
+const OZON_FBS_URL = 'https://functions.poehali.dev/c1ec58fb-3291-4827-a469-11a1e7019684';
+
+/**
+ * Догрузить конкретные отправления OZON по номерам.
+ *
+ * Последний рубеж: даже если заказ по какой-то причине проскочил мимо обычной
+ * загрузки, его возвращают одним действием, не дожидаясь планировщика.
+ */
+export const pullMissingOzon = async (
+  postingNumbers: string[],
+): Promise<{ created: number }> => {
+  const res = await fetch(OZON_FBS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'sync_orders', postingNumbers }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось догрузить заказы');
+  return data;
 };

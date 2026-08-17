@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
+import { useToast } from '@/hooks/use-toast';
 import {
   fetchReconcile,
+  pullMissingOzon,
   type ReconcileMarketplace,
 } from '@/lib/marketplaceReconcileApi';
 
@@ -29,8 +31,10 @@ const SOURCES: { key: 'ozon' | 'wb' | 'ym'; title: string }[] = [
  * фоном незачем.
  */
 const MarketplaceReconcile = () => {
+  const { toast } = useToast();
   const [data, setData] = useState<Record<string, ReconcileMarketplace>>({});
   const [loading, setLoading] = useState<string | null>(null);
+  const [pulling, setPulling] = useState(false);
 
   const check = async (key: 'ozon' | 'wb' | 'ym') => {
     setLoading(key);
@@ -129,10 +133,49 @@ const MarketplaceReconcile = () => {
                 ))}
 
                 {d && !d.error && d.enabled && missing > 0 && (
-                  <p className="text-sm text-rose-900">
-                    Загрузка заказов подтянет их сама в ближайшие запуски. Если число не
-                    падает — задание сверху не работает
-                  </p>
+                  <div className="space-y-2">
+                    <p className="text-sm text-rose-900">
+                      Загрузка подтянет их сама в ближайшие запуски. Не хотите ждать —
+                      заберите сейчас
+                    </p>
+                    {/* Догрузка есть только у OZON: там заказы идут сплошным потоком и
+                        ждать четверть часа дороже всего. У WB и Яндекса поток меньше,
+                        плановой загрузки хватает. */}
+                    {s.key === 'ozon' && (
+                      <Button
+                        size="sm"
+                        disabled={pulling}
+                        onClick={async () => {
+                          const numbers = d.rows.flatMap((r) => r.missingNumbers ?? []);
+                          if (!numbers.length) return;
+                          setPulling(true);
+                          try {
+                            const res = await pullMissingOzon(numbers);
+                            toast({
+                              title: `Догружено заказов: ${res.created}`,
+                              description: 'Они уже на конвейере',
+                            });
+                            await check('ozon');
+                          } catch (err) {
+                            toast({
+                              title: 'Не удалось догрузить',
+                              description: err instanceof Error ? err.message : undefined,
+                              variant: 'destructive',
+                            });
+                          } finally {
+                            setPulling(false);
+                          }
+                        }}
+                      >
+                        <Icon
+                          name={pulling ? 'Loader2' : 'Download'}
+                          size={14}
+                          className={`mr-1 ${pulling ? 'animate-spin' : ''}`}
+                        />
+                        Догрузить сейчас
+                      </Button>
+                    )}
+                  </div>
                 )}
               </CardContent>
             </Card>

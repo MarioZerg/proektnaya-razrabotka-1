@@ -55,6 +55,30 @@ OZON_SYNC_MAX_PAGES = 1
 # даже в сезон, когда там под тысячу отправлений.
 OZON_SCAN_PAGES = 10
 
+# Сколько НОВЫХ отправлений создаём за один запуск.
+#
+# Планировщик дёргает загрузку раз в 15 минут, а в сезон на OZON приходит под 300
+# заказов в час — то есть около 70 за интервал. Если брать меньше, очередь растёт
+# быстрее, чем разбирается, и заказы копятся неделями (именно так их и потерялось
+# 117 штук). Берём с запасом: 80 отправлений за запуск покрывают пиковый поток.
+#
+# Само создание заказа — быстрая вставка в базу. Тяжёлая часть, деление многотоварных
+# отправлений, ограничена отдельно (OZON_SPLIT_PER_RUN) и в этот лимит не упирается.
+OZON_CREATE_PER_RUN = 80
+
+# Сколько секунд отводим на создание заказов, прежде чем остановиться и сохранить.
+#
+# Платформа обрывает функцию по таймауту без предупреждения, и всё несохранённое
+# пропадает. Останавливаемся заранее и записываем то, что успели: недобранное
+# заберёт следующий запуск через 15 минут, а потерянное не вернулось бы никогда.
+OZON_TIME_BUDGET_SEC = 3.0
+
+# Сколько секунд отводим на поиск новых отправлений в ленте OZON.
+#
+# Листание дешёвое, но если OZON отвечает медленно, оно способно занять весь запуск —
+# и на сохранение заказов времени не останется. Ограничиваем отдельно.
+OZON_SCAN_BUDGET_SEC = 2.5
+
 # Только заказы, требующие сборки, попадают на конвейер производства.
 # Заказы, которые ждут сборки с нашей стороны.
 #
@@ -455,8 +479,14 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name):
     })
 
 
-def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
-    """Тянет новые FBS-заказы OZON (status=awaiting_packaging) и создаёт их в системе."""
+def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
+                       only_numbers=None):
+    """Тянет новые FBS-заказы OZON (status=awaiting_packaging) и создаёт их в системе.
+
+    only_numbers — точечная догрузка: забрать конкретные отправления по номерам,
+    не перебирая ленту. Так сверка закрывает найденное расхождение сразу, а не ждёт
+    планировщика. Обычный запуск (only_numbers=None) работает как раньше.
+    """
     payload = {
         # СВЕЖИЕ ЗАКАЗЫ ИДУТ ПЕРВЫМИ.
         #
@@ -519,9 +549,30 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
     #
     # Так очередь разбирается с любого места, а не только с начала, и при этом
     # каждый запуск укладывается в отведённое время.
+    # ТОЧЕЧНАЯ ДОГРУЗКА ПО НОМЕРАМ.
+    #
+    # Сверка нашла конкретные отправления, которых у нас нет, — забираем именно их,
+    # не листая ленту. Это последний рубеж: даже если заказ по какой-то причине
+    # проскочил мимо обычной загрузки, его можно вернуть одним действием.
+    if only_numbers:
+        for number in only_numbers[:OZON_CREATE_PER_RUN]:
+            sc, d = ozon_post('/v3/posting/fbs/get', client_id, api_key,
+                              {'posting_number': number,
+                               'with': {'legal_info': True}})
+            if sc != 200:
+                continue
+            res = (d.get('result') or {}) if isinstance(d, dict) else {}
+            if res and (res.get('status') or '') in OZON_WORK_STATUSES:
+                postings.append(res)
+
     offset = 0
     reached_end = False
-    for _ in range(OZON_SCAN_PAGES):
+    # Листание тоже под часами: каждая страница — это запрос к OZON, и на медленном
+    # ответе десять страниц съедят всё время, не оставив его на сохранение заказов.
+    scan_started = time.monotonic()
+    for _ in range(0 if only_numbers else OZON_SCAN_PAGES):
+        if time.monotonic() - scan_started > OZON_SCAN_BUDGET_SEC:
+            break
         payload['offset'] = offset
         status_code, data = ozon_post(
             '/v3/posting/fbs/unfulfilled/list', client_id, api_key, payload
@@ -542,22 +593,34 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
         if len(page) < OZON_SYNC_PAGE:
             reached_end = True
 
+        # С каждой страницы берём ТОЛЬКО НОВЫЕ отправления и идём дальше, пока не
+        # наберём порцию на создание.
+        #
+        # Раньше страница бралась целиком и цикл сразу обрывался, если на ней нашёлся
+        # хоть один новый заказ. На практике это значило: из 98 отправлений страницы
+        # новым был один — его и создавали, а на этом запуск заканчивался. При потоке
+        # 270 заказов в час загрузка успевала брать единицы, и очередь непрерывно
+        # росла, сколько бы раз планировщик её ни дёргал.
+        #
+        # Теперь пропускаем уже загруженное (проверка по номерам стоит миллисекунды)
+        # и копим именно новые отправления — до OZON_CREATE_PER_RUN за запуск.
         page_numbers = [p.get('posting_number') for p in work if p.get('posting_number')]
-        new_on_page = 0
+        known_on_page = set()
         if page_numbers:
             cur.execute(
-                "SELECT COUNT(DISTINCT ozon_posting_number) FROM orders "
+                "SELECT ozon_posting_number FROM orders "
                 "WHERE ozon_posting_number = ANY(%s)", (page_numbers,)
             )
-            new_on_page = len(set(page_numbers)) - int(cur.fetchone()[0] or 0)
+            known_on_page = {r[0] for r in cur.fetchall()}
 
-        if new_on_page:
-            postings.extend(work)
+        for p in work:
+            if p.get('posting_number') not in known_on_page:
+                postings.append(p)
+
+        if len(postings) >= OZON_CREATE_PER_RUN or reached_end:
             break
 
         offset += OZON_SYNC_PAGE
-        if reached_end:
-            break
 
 
     created = 0
@@ -593,7 +656,21 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name):
     # иначе в системе появятся номера, которых маркетплейс не знает.
     postponed_split = []
 
+    # СТРАХОВКА ПО ВРЕМЕНИ: успеть сохранить созданное до обрыва.
+    #
+    # У функции жёсткий лимит времени. Если он истечёт посреди цикла, платформа
+    # обрывает работу и НЕЗАПИСАННЫЕ заказы теряются — при следующем запуске список
+    # уже другой, и до них может не дойти очередь. Именно так заказы и пропадали.
+    #
+    # Поэтому следим за часами сами: как только время подходит к концу, прекращаем
+    # брать новые отправления и сохраняем то, что успели. Остальное спокойно заберёт
+    # следующий запуск — они никуда не денутся, а вот незаписанные пропали бы.
+    started_at = time.monotonic()
+
     for p in postings:
+        if time.monotonic() - started_at > OZON_TIME_BUDGET_SEC:
+            break
+
         posting_number = p.get('posting_number')
         ozon_status = p.get('status')
         if not posting_number:
@@ -1437,7 +1514,13 @@ def handler(event: dict, context) -> dict:
             return _resp(400, {'error': 'Не указаны Client ID или API-ключ OZON. Добавьте их в разделе «Интеграции маркетплейсов».'})
 
         if action == 'sync_orders':
-            return handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name)
+            # postingNumbers — точечная догрузка из сверки: забрать именно те
+            # отправления, которых у нас не хватает.
+            only = body_data.get('postingNumbers') or None
+            if isinstance(only, str):
+                only = [n.strip() for n in only.split(',') if n.strip()]
+            return handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
+                                      only_numbers=only)
         if action == 'split_pending':
             return handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name)
         if action == 'refresh_status':

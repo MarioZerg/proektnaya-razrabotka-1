@@ -88,15 +88,20 @@ def _ozon(cur, creds):
                 offset += 1000
 
         nums = list(found)
-        have = 0
+        have_set = set()
         if nums:
             cur.execute(
-                "SELECT COUNT(DISTINCT ozon_posting_number) FROM orders "
+                "SELECT DISTINCT ozon_posting_number FROM orders "
                 "WHERE ozon_posting_number = ANY(%s)", (nums,)
             )
-            have = int(cur.fetchone()[0] or 0)
-        out.append({'title': title, 'onMarketplace': len(nums), 'inSystem': have,
-                    'missing': len(nums) - have})
+            have_set = {r[0] for r in cur.fetchall()}
+        # Отдаём и САМИ НОМЕРА недостающих отправлений, а не только их количество:
+        # по ним кнопка «Догрузить» забирает заказы точечно, не перебирая всю ленту.
+        # Больше двадцати в подсказке не нужно — остальное доберёт планировщик.
+        missing_numbers = [n for n in nums if n not in have_set]
+        out.append({'title': title, 'onMarketplace': len(nums), 'inSystem': len(have_set),
+                    'missing': len(missing_numbers),
+                    'missingNumbers': missing_numbers[:20]})
     return out
 
 
