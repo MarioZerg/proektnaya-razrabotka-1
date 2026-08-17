@@ -54,6 +54,42 @@ def reserve_barcodes(cur, type_id, count):
     return [f"{int(type_id)}-{seq:06d}" for seq in range(first_seq, last_seq + 1)]
 
 
+def recalc_shipment_costs(cur, shipment_id):
+    """Пересчитывает логистику на единицу и себестоимость рулонов приёмки.
+
+    Логистика делится ПОРОВНУ на все метры и штуки приёмки. Значит стоит поменять
+    метраж одного рулона или дозаполнить сумму перевозки — и доля логистики меняется
+    у ВСЕХ рулонов этой машины, а вместе с ней и себестоимость метра.
+
+    Пересчитываем только целые рулоны, лежащие на складе. Тронутый рулон не трогаем:
+    по его себестоимости уже могли посчитать списания и недостачи, и менять её задним
+    числом означало бы переписать закрытые расчёты.
+    """
+    cur.execute("SELECT COALESCE(logistics_cost, 0) FROM shipments WHERE id = %s", (int(shipment_id),))
+    row = cur.fetchone()
+    if not row:
+        return
+    logistics_cost = float(row[0])
+
+    # Общий объём приёмки — по всем рулонам, включая уже отгруженные: логистика была
+    # заплачена за всю машину, и делить её надо на весь привезённый объём.
+    cur.execute(
+        "SELECT COALESCE(SUM(initial_quantity), 0) FROM rolls WHERE shipment_id = %s",
+        (int(shipment_id),),
+    )
+    total_units = float(cur.fetchone()[0] or 0)
+    per_unit = round(logistics_cost / total_units, 4) if total_units > 0 else 0.0
+
+    cur.execute(
+        "UPDATE rolls SET logistics_per_unit = %s, "
+        "  cost_per_unit = CASE WHEN purchase_price IS NULL THEN NULL "
+        "                      ELSE ROUND(purchase_price * COALESCE(purchase_rate, 1) + %s, 4) END "
+        "WHERE shipment_id = %s AND status = 'in_storage' "
+        "  AND initial_quantity = remaining_quantity",
+        (per_unit, per_unit, int(shipment_id)),
+    )
+
+
 def handler(event: dict, context) -> dict:
     """Управляет складским документооборотом: отгрузки от поставщика, в цех,
     возврат поставщику и списание брака. Каждый документ (shipment) содержит список
@@ -184,7 +220,8 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT s.id, s.type, s.status, s.supplier_id, sup.name, s.workshop_id, w.name, "
                     "s.shift_number, s.comment, s.created_at, s.completed_at, s.requested_by, u.full_name, "
-                    "s.created_by, cu.full_name, s.is_auto_order, s.reject_reason "
+                    "s.created_by, cu.full_name, s.is_auto_order, s.reject_reason, "
+                    "s.logistics_cost, s.exchange_rate "
                     "FROM shipments s "
                     "LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                     "LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -204,7 +241,7 @@ def handler(event: dict, context) -> dict:
                     "SELECT si.id, si.material_id, m.name, m.unit, si.barcode, si.roll_id, r.barcode, "
                     "si.quantity, si.requested_quantity, si.number_rolls, si.price, si.currency, "
                     "r.cost_per_unit, sp.price, sp.currency, si.supplier_id, isup.name, "
-                    "si.reserved_barcodes "
+                    "si.reserved_barcodes, r.status, r.initial_quantity, r.remaining_quantity "
                     "FROM shipment_items si "
                     "LEFT JOIN materials m ON m.id = si.material_id "
                     "LEFT JOIN rolls r ON r.id = si.roll_id "
@@ -241,6 +278,18 @@ def handler(event: dict, context) -> dict:
                         # Штрихкоды, забронированные до подтверждения, — их печатает кладовщик
                         # сразу при разгрузке.
                         'reservedBarcodes': [c for c in (r[17] or '').split(',') if c],
+                        # Состояние рулона на складе. Метраж можно править только пока
+                        # рулон целый и лежит на складе: если его начали кроить или он
+                        # уехал в цех, менять цифру задним числом уже нельзя.
+                        'rollStatus': r[18],
+                        'rollInitialQuantity': float(r[19]) if r[19] is not None else None,
+                        'rollRemainingQuantity': float(r[20]) if r[20] is not None else None,
+                        'canEditQuantity': (
+                            r[18] == 'in_storage'
+                            and r[19] is not None
+                            and r[20] is not None
+                            and float(r[19]) == float(r[20])
+                        ),
                     }
                     for r in cur.fetchall()
                 ]
@@ -263,6 +312,10 @@ def handler(event: dict, context) -> dict:
                     'createdByName': row[14],
                     'isAutoOrder': row[15],
                     'rejectReason': row[16],
+                    # Логистика приёмки: если её забыли указать при подтверждении,
+                    # администратор дозаполняет её позже — себестоимость пересчитается.
+                    'logisticsCost': float(row[17]) if row[17] is not None else 0.0,
+                    'exchangeRate': float(row[18]) if row[18] is not None else None,
                     'items': items,
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'shipment': detail})}
@@ -651,6 +704,168 @@ def handler(event: dict, context) -> dict:
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'update_roll_quantity':
+                """Правка метража одного рулона в уже принятой приёмке (только админ).
+
+                ЗАЧЕМ. Кладовщик пишет метраж с бирки поставщика, а бирки врут: на рулоне
+                «50 м», по факту 47. Или просто опечатка при вводе сотни позиций. Пока
+                рулон целый лежит на складе, цифру нужно поправить — иначе весь учёт
+                материала и себестоимость метра считаются от неверного числа.
+
+                ГРАНИЦА. Править можно ТОЛЬКО целый рулон на складе. Если из него уже
+                кроили или он уехал в цех — цифра стала частью чужой работы: за ней стоят
+                списания, остатки и зарплата за раскрой. Такой рулон не трогаем.
+                """
+                item_id = body_data.get('itemId')
+                new_qty = body_data.get('quantity')
+                if not item_id or new_qty in (None, ''):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите позицию и метраж'}, ensure_ascii=False)}
+                try:
+                    new_qty = float(new_qty)
+                except (TypeError, ValueError):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Метраж указан неверно'}, ensure_ascii=False)}
+                if new_qty <= 0:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Метраж должен быть больше нуля'}, ensure_ascii=False)}
+
+                # Права проверяем по базе, а не по флагу из браузера: правка метража меняет
+                # остатки склада и себестоимость.
+                actor_id_req = body_data.get('actorId')
+                if actor_id_req:
+                    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id_req),))
+                    actor_row = cur.fetchone()
+                    if not actor_row or actor_row[0] != 'admin':
+                        return {'statusCode': 403, 'headers': headers,
+                                'body': json.dumps({'error': 'Менять метраж рулона может только администратор'},
+                                                   ensure_ascii=False)}
+                else:
+                    return {'statusCode': 403, 'headers': headers,
+                            'body': json.dumps({'error': 'Менять метраж рулона может только администратор'},
+                                               ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT si.shipment_id, si.roll_id, r.status, r.initial_quantity, "
+                    "       r.remaining_quantity, r.barcode, m.name, s.logistics_cost "
+                    "FROM shipment_items si "
+                    "JOIN shipments s ON s.id = si.shipment_id "
+                    "LEFT JOIN rolls r ON r.id = si.roll_id "
+                    "LEFT JOIN materials m ON m.id = si.material_id "
+                    "WHERE si.id = %s",
+                    (int(item_id),),
+                )
+                it = cur.fetchone()
+                if not it:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Позиция не найдена'}, ensure_ascii=False)}
+                sh_id, roll_id, r_status, r_init, r_remain, r_barcode, mat_name, log_cost = it
+                if not roll_id:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Приёмка ещё не подтверждена — правьте её обычным способом'},
+                                               ensure_ascii=False)}
+                if r_status != 'in_storage' or float(r_init) != float(r_remain):
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': f'Рулон {r_barcode} уже в работе — метраж изменить нельзя'},
+                                ensure_ascii=False)}
+
+                # Метраж рулона и позиции документа держим одинаковыми: по позиции считается
+                # объём приёмки, по рулону — склад. Разойдутся — отчёты перестанут сходиться.
+                cur.execute(
+                    "UPDATE rolls SET initial_quantity = %s, remaining_quantity = %s WHERE id = %s",
+                    (new_qty, new_qty, int(roll_id)),
+                )
+                cur.execute(
+                    "UPDATE shipment_items SET quantity = %s WHERE id = %s",
+                    (new_qty, int(item_id)),
+                )
+
+                # Метраж изменился — логистика на метр «поехала»: она делится на весь объём
+                # приёмки. Пересчитываем её и себестоимость по всем целым рулонам приёмки.
+                recalc_shipment_costs(cur, sh_id)
+
+                log_action(
+                    cur, actor_id, actor_name, 'update_roll_quantity', 'roll', roll_id,
+                    f'Изменил метраж рулона {r_barcode} ({mat_name}) на {new_qty}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'barcode': r_barcode,
+                                            'quantity': new_qty}, ensure_ascii=False)}
+
+            if action == 'update_logistics':
+                """Дозаполнение логистики в принятой приёмке (только админ).
+
+                ЗАЧЕМ. Счёт за перевозку часто приходит позже машины: приёмку уже приняли
+                с нулевой логистикой, а через день стала известна сумма. Без неё
+                себестоимость метра занижена — а по ней считаются недостачи и цены.
+
+                Менять указанную логистику не даём: если по ней уже посчитали недостачи и
+                зарплаты, задним числом трогать нельзя. Дозаполнить можно только ноль.
+                """
+                shipment_id = body_data.get('id')
+                cost = body_data.get('logisticsCost')
+                if not shipment_id or cost in (None, ''):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите приёмку и стоимость логистики'},
+                                               ensure_ascii=False)}
+                try:
+                    cost = float(cost)
+                except (TypeError, ValueError):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Стоимость указана неверно'}, ensure_ascii=False)}
+                if cost <= 0:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Стоимость должна быть больше нуля'},
+                                               ensure_ascii=False)}
+
+                actor_id_req = body_data.get('actorId')
+                if actor_id_req:
+                    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id_req),))
+                    actor_row = cur.fetchone()
+                    if not actor_row or actor_row[0] != 'admin':
+                        return {'statusCode': 403, 'headers': headers,
+                                'body': json.dumps({'error': 'Указать логистику может только администратор'},
+                                                   ensure_ascii=False)}
+                else:
+                    return {'statusCode': 403, 'headers': headers,
+                            'body': json.dumps({'error': 'Указать логистику может только администратор'},
+                                               ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT type, status, COALESCE(logistics_cost, 0) FROM shipments WHERE id = %s",
+                    (int(shipment_id),),
+                )
+                sh = cur.fetchone()
+                if not sh:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Приёмка не найдена'}, ensure_ascii=False)}
+                if sh[0] != 'from_supplier':
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Действие только для приёмок от поставщика'},
+                                               ensure_ascii=False)}
+                if float(sh[2]) > 0:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': f'Логистика уже указана ({float(sh[2]):.0f} ₽) — '
+                                          f'изменить её нельзя'},
+                                ensure_ascii=False)}
+
+                cur.execute(
+                    "UPDATE shipments SET logistics_cost = %s WHERE id = %s",
+                    (cost, int(shipment_id)),
+                )
+                recalc_shipment_costs(cur, shipment_id)
+
+                log_action(
+                    cur, actor_id, actor_name, 'update_logistics', 'shipment', shipment_id,
+                    f'Указал логистику приёмки #{shipment_id}: {cost}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'logisticsCost': cost}, ensure_ascii=False)}
 
             if action == 'approve_supply':
                 # Подтверждение поставки от поставщика: только теперь создаются реальные

@@ -17,6 +17,7 @@ const WorkshopMaterials = lazy(() => import("./pages/inventory/WorkshopMaterials
 const Rolls = lazy(() => import("./pages/inventory/Rolls"));
 const RollShow = lazy(() => import("./pages/inventory/RollShow"));
 const FromSupplier = lazy(() => import("./pages/shipments/FromSupplier"));
+const SupplyShow = lazy(() => import("./pages/shipments/SupplyShow"));
 const ToWorkshop = lazy(() => import("./pages/shipments/ToWorkshop"));
 const ReturnToSupplier = lazy(() => import("./pages/shipments/ReturnToSupplier"));
 const DefectWriteoff = lazy(() => import("./pages/shipments/DefectWriteoff"));
@@ -120,6 +121,7 @@ const App = () => (
             <Route path="/crm/inventory/rolls" element={<Rolls />} />
             <Route path="/crm/inventory/rolls/:id" element={<RollShow />} />
             <Route path="/crm/shipments/from-supplier" element={<FromSupplier />} />
+            <Route path="/crm/shipments/from-supplier/:id" element={<SupplyShow />} />
             <Route path="/crm/shipments/to-workshop" element={<ToWorkshop />} />
             <Route path="/crm/shipments/return-to-supplier" element={<ReturnToSupplier />} />
             <Route path="/crm/shipments/defect-writeoff" element={<DefectWriteoff />} />

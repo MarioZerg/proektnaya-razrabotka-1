@@ -50,8 +50,6 @@ const FromSupplier = () => {
   const [comment, setComment] = useState('');
   const [rows, setRows] = useState<ItemRow[]>([{ ...emptyRow }]);
 
-  const [expandedRolls, setExpandedRolls] = useState<Record<number, ShipmentDetail | null>>({});
-  const [loadingRolls, setLoadingRolls] = useState<number | null>(null);
 
   // Карточка подтверждения неподтверждённой поставки (только для админа)
   const [reviewShipment, setReviewShipment] = useState<ShipmentDetail | null>(null);
@@ -156,29 +154,8 @@ const FromSupplier = () => {
     }
   };
 
-  const toggleRolls = async (shipmentId: number) => {
-    if (shipmentId in expandedRolls) {
-      setExpandedRolls((prev) => {
-        const next = { ...prev };
-        delete next[shipmentId];
-        return next;
-      });
-      return;
-    }
-    setLoadingRolls(shipmentId);
-    try {
-      const detail = await fetchShipmentDetail(shipmentId);
-      setExpandedRolls((prev) => ({ ...prev, [shipmentId]: detail }));
-    } finally {
-      setLoadingRolls(null);
-    }
-  };
-
   const printShipmentBarcodes = async (shipmentId: number) => {
-    let detail = expandedRolls[shipmentId];
-    if (!detail) {
-      detail = await fetchShipmentDetail(shipmentId);
-    }
+    const detail = await fetchShipmentDetail(shipmentId);
     // На наклейку рулона кроме штрихкода кладём поставщика и дату приёмки: на складе по ним
     // видно, чей это материал и сколько он лежит (старые рулоны пускают в работу первыми).
     // Поставщика берём у самой позиции — в одной машине их может быть несколько.
@@ -395,9 +372,6 @@ const FromSupplier = () => {
           shipments={shipments}
           isAdmin={isAdmin}
           canEditPending={canEditPending}
-          expandedRolls={expandedRolls}
-          loadingRolls={loadingRolls}
-          onToggleRolls={toggleRolls}
           onOpenReview={openReview}
           onPrintShipmentBarcodes={printShipmentBarcodes}
           deleteId={deleteId}

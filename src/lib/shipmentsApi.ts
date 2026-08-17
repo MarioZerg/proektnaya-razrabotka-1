@@ -62,12 +62,21 @@ export interface ShipmentItem {
    * рулоны получают ровно эти же коды.
    */
   reservedBarcodes?: string[];
+  /** Состояние рулона на складе: in_storage / in_workshop / completed. */
+  rollStatus?: string | null;
+  rollInitialQuantity?: number | null;
+  rollRemainingQuantity?: number | null;
+  /** Метраж можно править: рулон целый и лежит на складе. */
+  canEditQuantity?: boolean;
 }
 
 export interface ShipmentDetail extends Shipment {
   items: ShipmentItem[];
   requestedBy: number | null;
   createdBy: number | null;
+  /** Стоимость логистики приёмки. Ноль — её ещё не указали. */
+  logisticsCost?: number;
+  exchangeRate?: number | null;
 }
 
 export interface ShipmentFilters {
@@ -164,6 +173,32 @@ export const approveSupply = (
   postAction({ action: 'approve_supply', id, ...(payload || {}) });
 
 export const rejectSupply = (id: number) => postAction({ action: 'reject_supply', id });
+
+/**
+ * Правка метража одного рулона в уже принятой приёмке (только администратор).
+ *
+ * Бирки поставщика врут: на рулоне «50 м», по факту 47. Пока рулон целый лежит на
+ * складе, цифру нужно поправить — иначе учёт материала и себестоимость метра считаются
+ * от неверного числа. Тронутый рулон править нельзя: за ним уже стоят чужие раскрои.
+ */
+export const updateRollQuantity = (itemId: number, quantity: number) =>
+  postAction({ action: 'update_roll_quantity', itemId, quantity }) as Promise<{
+    success: true;
+    barcode: string;
+    quantity: number;
+  }>;
+
+/**
+ * Дозаполнение логистики в принятой приёмке (только администратор).
+ *
+ * Счёт за перевозку часто приходит позже машины. Указать сумму можно, только если её
+ * ещё нет: по уже проставленной логистике могли посчитать недостачи и себестоимость.
+ */
+export const updateShipmentLogistics = (id: number, logisticsCost: number) =>
+  postAction({ action: 'update_logistics', id, logisticsCost }) as Promise<{
+    success: true;
+    logisticsCost: number;
+  }>;
 
 export const createShipmentReturnToSupplier = (payload: {
   supplierId?: number;

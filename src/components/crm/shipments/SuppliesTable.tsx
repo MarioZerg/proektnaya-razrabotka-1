@@ -9,11 +9,6 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -23,9 +18,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { useNavigate } from 'react-router-dom';
 import Icon from '@/components/ui/icon';
-import type { Shipment, ShipmentDetail } from '@/lib/shipmentsApi';
-import { printBarcodes } from '@/lib/printBarcodes';
+import type { Shipment } from '@/lib/shipmentsApi';
 import { formatDate, statusVariant } from '@/components/crm/shipments/fromSupplierShared';
 import { formatQuantity } from '@/lib/formatQuantity';
 
@@ -35,9 +30,6 @@ interface SuppliesTableProps {
   isAdmin: boolean;
   /** Кладовщик: правит и печатает стикеры, но не подтверждает приёмку. */
   canEditPending: boolean;
-  expandedRolls: Record<number, ShipmentDetail | null>;
-  loadingRolls: number | null;
-  onToggleRolls: (shipmentId: number) => void;
   onOpenReview: (shipmentId: number) => void;
   onPrintShipmentBarcodes: (shipmentId: number) => void;
   deleteId: number | null;
@@ -51,9 +43,6 @@ const SuppliesTable = ({
   shipments,
   isAdmin,
   canEditPending,
-  expandedRolls,
-  loadingRolls,
-  onToggleRolls,
   onOpenReview,
   onPrintShipmentBarcodes,
   deleteId,
@@ -61,6 +50,7 @@ const SuppliesTable = ({
   onSetDeleteId,
   onDelete,
 }: SuppliesTableProps) => {
+  const navigate = useNavigate();
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -93,8 +83,6 @@ const SuppliesTable = ({
           </TableHeader>
           <TableBody>
             {shipments.map((s) => {
-              const detail = expandedRolls[s.id];
-              const isExpanded = s.id in expandedRolls;
               const isPending = s.status === 'Новый';
               return (
                   <TableRow key={s.id}>
@@ -103,63 +91,19 @@ const SuppliesTable = ({
                       <div className="mb-1 font-semibold">
                         Итого: {s.itemsCount} поз., {formatQuantity(s.totalQuantity)} метр/шт
                       </div>
+                      {/* Раньше рулоны раскрывались мелкой гармошкой прямо в списке:
+                          на 284 позиции это нечитаемо. Теперь ведём на страницу приёмки —
+                          там поиск по штрихкоду и печать стикера по одному рулону. */}
                       {!isPending && (
-                        <Collapsible open={isExpanded}>
-                          <CollapsibleTrigger asChild>
-                            <Button
-                              variant="link"
-                              size="sm"
-                              className="h-auto px-0 py-0 text-xs"
-                              onClick={() => onToggleRolls(s.id)}
-                              disabled={loadingRolls === s.id}
-                            >
-                              <Icon
-                                name={isExpanded ? 'ChevronDown' : 'ChevronRight'}
-                                size={12}
-                                className="mr-1"
-                              />
-                              {loadingRolls === s.id ? 'Загрузка...' : `Показать рулоны (${s.itemsCount})`}
-                            </Button>
-                          </CollapsibleTrigger>
-                          <CollapsibleContent className="mt-1.5 space-y-1">
-                            {detail?.items.map((item) => (
-                              <div key={item.id} className="flex items-center gap-1.5 text-xs">
-                                <span className="font-medium">{item.materialName}</span>
-                                <span className="text-muted-foreground">
-                                  — {formatQuantity(item.quantity)} {item.unit}
-                                </span>
-                                {item.barcode && (
-                                  <>
-                                    <Button
-                                      variant="outline"
-                                      size="icon"
-                                      className="h-5 w-5"
-                                      title="Печать стикера рулона (75×120 мм)"
-                                      onClick={() =>
-                                        printBarcodes(
-                                          [
-                                            {
-                                              code: item.barcode as string,
-                                              label: `${item.materialName} — ${formatQuantity(item.quantity)} ${item.unit || ''}`,
-                                              supplier: s.supplierName,
-                                              receivedAt: s.completedAt || s.createdAt,
-                                            },
-                                          ],
-                                          item.barcode as string
-                                        )
-                                      }
-                                    >
-                                      <Icon name="Barcode" size={11} />
-                                    </Button>
-                                    <span className="font-mono-tech text-muted-foreground">
-                                      ({item.barcode})
-                                    </span>
-                                  </>
-                                )}
-                              </div>
-                            ))}
-                          </CollapsibleContent>
-                        </Collapsible>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto px-0 py-0 text-xs"
+                          onClick={() => navigate(`/crm/shipments/from-supplier/${s.id}`)}
+                        >
+                          <Icon name="ChevronRight" size={12} className="mr-1" />
+                          Открыть рулоны ({s.itemsCount})
+                        </Button>
                       )}
                     </TableCell>
                     <TableCell>
