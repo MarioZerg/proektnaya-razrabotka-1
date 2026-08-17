@@ -295,6 +295,19 @@ const SupplyShow = () => {
               </Card>
             )}
 
+            {/* Прямая инструкция администратору: без неё правку метража не находили —
+                искали отдельную кнопку «Редактировать», которой тут нет и не будет. */}
+            {isAdmin && !isPending && totals.inStorage > 0 && (
+              <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3">
+                <Icon name="Pencil" size={16} className="mt-0.5 shrink-0 text-primary" />
+                <p className="text-sm">
+                  <span className="font-medium">Метраж рулона правится прямо в таблице:</span>{' '}
+                  нажмите на число в столбце «Метраж» — оно обведено пунктиром у тех рулонов,
+                  которые ещё целыми лежат на складе. Рулоны в цехе и початые изменить нельзя
+                </p>
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative flex-1 min-w-[220px]">
                 <Icon
@@ -322,7 +335,14 @@ const SupplyShow = () => {
                   <TableRow>
                     <TableHead>Материал</TableHead>
                     <TableHead>Штрихкод</TableHead>
-                    <TableHead className="text-right">Метраж</TableHead>
+                    <TableHead className="text-right">
+                      Метраж
+                      {isAdmin && (
+                        <span className="ml-1 font-normal text-muted-foreground">
+                          (можно менять)
+                        </span>
+                      )}
+                    </TableHead>
                     <TableHead>Где рулон</TableHead>
                     <TableHead>Поставщик</TableHead>
                     <TableHead className="text-right">Себестоимость</TableHead>
@@ -371,6 +391,25 @@ const SupplyShow = () => {
                                 <Icon name="X" size={14} />
                               </Button>
                             </div>
+                          ) : isAdmin && item.canEditQuantity ? (
+                            /* КЛИКАБЕЛЬНЫЙ МЕТРАЖ. Раньше правка висела серым карандашом
+                               в дальней колонке справа — администратор её просто не находил.
+                               Теперь нажимается само число: рядом с ним стоит карандаш,
+                               и подпись прямо говорит, что цифру можно менять. */
+                            <button
+                              type="button"
+                              className="ml-auto flex items-center gap-1.5 rounded-md border border-dashed
+                                         border-primary/40 px-2 py-1 text-right font-medium
+                                         hover:border-primary hover:bg-primary/5"
+                              title="Нажмите, чтобы изменить метраж рулона"
+                              onClick={() => {
+                                setEditItemId(item.id);
+                                setEditValue(String(item.quantity ?? ''));
+                              }}
+                            >
+                              <Icon name="Pencil" size={12} className="text-primary" />
+                              {formatQuantity(item.quantity)} {item.unit}
+                            </button>
                           ) : (
                             <span className="font-medium">
                               {formatQuantity(item.quantity)} {item.unit}
@@ -401,21 +440,6 @@ const SupplyShow = () => {
                         </TableCell>
                         <TableCell>
                           <div className="flex justify-end gap-1">
-                            {/* Метраж правит только администратор и только у целого
-                                рулона на складе: тронутый рулон — это уже чужой раскрой. */}
-                            {isAdmin && item.canEditQuantity && !editing && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                title="Изменить метраж рулона"
-                                onClick={() => {
-                                  setEditItemId(item.id);
-                                  setEditValue(String(item.quantity ?? ''));
-                                }}
-                              >
-                                <Icon name="Pencil" size={14} />
-                              </Button>
-                            )}
                             <Button
                               variant="outline"
                               size="icon"
