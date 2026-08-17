@@ -6,6 +6,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import SchedulerJobCard from '@/components/crm/scheduler/SchedulerJobCard';
+import MarketplaceReconcile from '@/components/crm/scheduler/MarketplaceReconcile';
 import {
   fetchSchedulerStatus,
   type SchedulerGroup,
@@ -147,6 +148,11 @@ const SchedulerSettings = () => {
             );
           })
         )}
+
+        {/* Сверка с площадками. Планировщик выше показывает, что задания ЗАПУСКАЮТСЯ,
+            но запускаться они могут и впустую: 117 заказов OZON однажды висели на
+            площадке, а до цеха не доехали. Сверка ловит именно это. */}
+        <MarketplaceReconcile />
 
         {/* Куда идти, если задание перестало работать. Ссылки на задания живут во
             внешнем сервисе — без этой подсказки админ не знает, где их искать. */}

@@ -1,0 +1,7 @@
+{
+  "tests": [
+    {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
+    {"name": "Reconcile WB only", "method": "GET", "path": "/?marketplace=wb", "expectedStatus": 200},
+    {"name": "POST not allowed", "method": "POST", "path": "/", "body": {}, "expectedStatus": 405}
+  ]
+}

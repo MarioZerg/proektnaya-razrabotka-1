@@ -1,4 +1,5 @@
 {
+  "marketplace_reconcile": "https://functions.poehali.dev/6d6d5a20-18e6-4dea-8ec5-ffef149f45fa",
   "scheduler_status": "https://functions.poehali.dev/28ee919b-a6b3-4f53-9efb-d53ce1c8ca63",
   "data-import": "https://functions.poehali.dev/919a122d-2dd4-4c9d-9eb2-d45f5d9f1744",
   "system-cleanup": "https://functions.poehali.dev/77e1fa5e-112c-4718-9281-eeca2b4f1027",
