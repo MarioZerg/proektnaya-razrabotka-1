@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import ProductCostCard from '@/components/crm/cost/ProductCostCard';
+import FabricCostCard from '@/components/crm/cost/FabricCostCard';
 import CostSettingsPanel from '@/components/crm/cost/CostSettingsPanel';
-import { fetchProductCosts, type CostResponse } from '@/lib/productCostApi';
+import ExtraExpensesPanel from '@/components/crm/cost/ExtraExpensesPanel';
+import { fetchProductCosts, type CostResponse, type CostGroup } from '@/lib/productCostApi';
 
 const money = (v: number) =>
   v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -16,20 +15,19 @@ const money = (v: number) =>
  * Себестоимость товаров.
  *
  * Отвечает на вопрос, который иначе считают в тетрадке: во сколько нам обходится одна
- * вещь. Каждый товар — плашка с разбором: ткань, фурнитура, упаковка, оплата раскроя,
- * пошива и стикеровки, прочие расходы, налог.
+ * вещь. Считаем по ТКАНИ и ШИРИНЕ — высота на себестоимость не влияет: полотно кроят
+ * по ширине, тесьму пришивают по ширине, пакет берут по ширине. Поэтому вместо 875
+ * карточек товара здесь 8 плашек по тканям с переключением ширин внутри.
  *
  * Цифры живые: цены берутся из прайсов поставщиков с их курсом валют, расход — из
- * карточки товара, оплата работ — из тарифов цеха. Подняли цену в прайсе — себестоимость
- * пересчиталась сама, ничего вручную вводить не нужно.
+ * карточки товара, оплата работ — из тарифов цеха. Подняли цену в прайсе —
+ * себестоимость пересчиталась сама.
  */
 const ProductCost = () => {
   const { toast } = useToast();
   const [data, setData] = useState<CostResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [onlyIncomplete, setOnlyIncomplete] = useState(false);
-  const [visible, setVisible] = useState(24);
 
   const load = () => {
     setLoading(true);
@@ -50,31 +48,35 @@ const ProductCost = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const items = useMemo(() => data?.items || [], [data]);
+  const groups = useMemo(() => data?.groups || [], [data]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return items.filter((i) => {
-      if (onlyIncomplete && i.missing.length === 0) return false;
-      if (!q) return true;
-      return (
-        i.name?.toLowerCase().includes(q) || i.material?.toLowerCase().includes(q)
-      );
+  // Собираем ширины под каждую ткань: одна плашка на ткань, внутри переключатель.
+  const byFabric = useMemo(() => {
+    const map = new Map<string, CostGroup[]>();
+    groups.forEach((g) => {
+      const key = g.material || '—';
+      map.set(key, [...(map.get(key) || []), g]);
     });
-  }, [items, search, onlyIncomplete]);
+    return [...map.entries()]
+      .map(([material, widths]) => ({
+        material,
+        widths: [...widths].sort((a, b) => (a.width || 0) - (b.width || 0)),
+      }))
+      .sort((a, b) => a.material.localeCompare(b.material, 'ru'));
+  }, [groups]);
 
-  // Сброс постраничной догрузки при смене отбора.
-  useEffect(() => {
-    setVisible(24);
-  }, [search, onlyIncomplete]);
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return byFabric;
+    return byFabric.filter((f) => f.material.toLowerCase().includes(q));
+  }, [byFabric, search]);
 
-  const incompleteCount = items.filter((i) => i.missing.length > 0).length;
-  // Средняя себестоимость считается по товарам с полными данными: неполные
-  // занизили бы её и создали ложное впечатление дешевизны.
-  const complete = items.filter((i) => i.missing.length === 0);
+  const incompleteCount = groups.filter((g) => g.missing.length > 0).length;
+  const complete = groups.filter((g) => g.missing.length === 0);
   const avg = complete.length
-    ? complete.reduce((s, i) => s + i.total, 0) / complete.length
+    ? complete.reduce((s, g) => s + g.total, 0) / complete.length
     : 0;
+  const productsTotal = groups.reduce((s, g) => s + g.productsCount, 0);
 
   return (
     <CrmLayout>
@@ -82,8 +84,8 @@ const ProductCost = () => {
         <div>
           <h1 className="text-xl font-bold">Себестоимость товаров</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Во сколько обходится одна вещь: материалы, работа цеха, налог. Цены берутся
-            из прайсов поставщиков и обновляются сами.
+            Во сколько обходится одна вещь: материалы, работа цеха, налог. Считается по
+            ткани и ширине — высота на себестоимость не влияет.
           </p>
         </div>
 
@@ -95,11 +97,18 @@ const ProductCost = () => {
           />
         )}
 
-        {!loading && items.length > 0 && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {data && <ExtraExpensesPanel expenses={data.extras} onChanged={load} />}
+
+        {!loading && groups.length > 0 && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground">Товаров в расчёте</p>
-              <p className="text-2xl font-bold">{items.length}</p>
+              <p className="text-xs text-muted-foreground">Тканей</p>
+              <p className="text-2xl font-bold">{byFabric.length}</p>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted-foreground">Сочетаний</p>
+              <p className="text-2xl font-bold">{groups.length}</p>
+              <p className="text-xs text-muted-foreground">на {productsTotal} товаров</p>
             </div>
             <div className="rounded-lg border border-border p-3">
               <p className="text-xs text-muted-foreground">Средняя себестоимость</p>
@@ -116,53 +125,27 @@ const ProductCost = () => {
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            placeholder="Поиск по товару или ткани"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-xs"
-          />
-          <Button
-            variant={onlyIncomplete ? 'default' : 'outline'}
-            onClick={() => setOnlyIncomplete((v) => !v)}
-          >
-            <Icon name="TriangleAlert" size={16} className="mr-1.5" />
-            Только неполные
-            {incompleteCount > 0 && (
-              <Badge variant="secondary" className="ml-2">
-                {incompleteCount}
-              </Badge>
-            )}
-          </Button>
-        </div>
+        <Input
+          placeholder="Поиск по ткани"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="max-w-xs"
+        />
 
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Считаем себестоимость...
           </div>
-        ) : filtered.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Товаров не найдено</p>
+        ) : visible.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Тканей не найдено</p>
         ) : (
-          <>
-            <p className="text-sm text-muted-foreground">
-              Показано {Math.min(visible, filtered.length)} из {filtered.length}
-            </p>
-            {/* Плашками: каждый товар — отдельная карточка с разбором расходов. */}
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {filtered.slice(0, visible).map((i) => (
-                <ProductCostCard key={i.id} item={i} />
-              ))}
-            </div>
-            {filtered.length > visible && (
-              <div className="flex justify-center py-2">
-                <Button variant="outline" onClick={() => setVisible((n) => n + 24)}>
-                  Показать ещё
-                </Button>
-              </div>
-            )}
-          </>
+          /* Плашка на каждую ткань, внутри — переключение по ширинам. */
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+            {visible.map((f) => (
+              <FabricCostCard key={f.material} material={f.material} widths={f.widths} />
+            ))}
+          </div>
         )}
       </div>
     </CrmLayout>

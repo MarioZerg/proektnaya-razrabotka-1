@@ -14,13 +14,17 @@ export interface CostMaterial {
   priceSource: 'supplier' | 'rolls' | 'none';
 }
 
-/** Себестоимость одной единицы товара. */
-export interface ProductCost {
-  id: number;
-  name: string;
-  width: number | null;
-  height: number | null;
+/**
+ * Себестоимость сочетания «ткань + ширина».
+ *
+ * Высота изделия на себестоимость не влияет — кроят, обшивают тесьмой и пакуют
+ * по ширине. Поэтому одна такая запись закрывает весь ряд высот.
+ */
+export interface CostGroup {
   material: string | null;
+  width: number | null;
+  /** Сколько карточек товара закрывает эта запись (все высоты). */
+  productsCount: number;
   materials: CostMaterial[];
   fabricCost: number;
   trimCost: number;
@@ -38,6 +42,18 @@ export interface ProductCost {
   missing: string[];
 }
 
+/** Статья дополнительных расходов: сумма, поделённая на число вещей. */
+export interface ExtraExpense {
+  id: number;
+  name: string;
+  amount: number;
+  perItems: number;
+  note: string | null;
+  isActive: boolean;
+  /** Сколько ложится на одну вещь. */
+  perUnit: number;
+}
+
 export interface CostSettings {
   taxPercent: number;
   marketplacePercent: number;
@@ -47,9 +63,21 @@ export interface CostSettings {
 
 export interface CostResponse {
   settings: CostSettings;
-  items: ProductCost[];
+  groups: CostGroup[];
+  extras: ExtraExpense[];
   workshops: { id: number; name: string }[];
 }
+
+const post = async (payload: Record<string, unknown>) => {
+  const res = await fetch(PRODUCT_COST_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  return data;
+};
 
 export const fetchProductCosts = async (): Promise<CostResponse> => {
   const res = await fetch(PRODUCT_COST_URL);
@@ -58,14 +86,23 @@ export const fetchProductCosts = async (): Promise<CostResponse> => {
   return data;
 };
 
-export const saveCostSettings = async (
-  settings: CostSettings & { actorId?: number },
-): Promise<void> => {
-  const res = await fetch(PRODUCT_COST_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'save_settings', ...settings }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Не удалось сохранить');
-};
+export const saveCostSettings = (settings: CostSettings & { actorId?: number }) =>
+  post({ action: 'save_settings', ...settings });
+
+export const addExtraExpense = (payload: {
+  name: string;
+  amount: number;
+  perItems: number;
+  note?: string;
+}) => post({ action: 'add_expense', ...payload });
+
+export const updateExtraExpense = (payload: {
+  id: number;
+  name: string;
+  amount: number;
+  perItems: number;
+  note?: string | null;
+  isActive: boolean;
+}) => post({ action: 'update_expense', ...payload });
+
+export const deleteExtraExpense = (id: number) => post({ action: 'delete_expense', id });

@@ -112,43 +112,80 @@ def _rates(cur, workshop_id):
     return cutter, sewer, packer
 
 
-def _calc_items(cur, settings):
-    """Себестоимость каждого товара: материалы + работа + прочее + налог."""
+def _extra_expenses(cur):
+    """Доп. расходы на единицу: коробки, оклады кладовщика, менеджера, уборщицы.
+
+    Каждая строка — сумма и число вещей, на которое её делят. Владелец задаёт это
+    сам: система не может знать, что коробка за 250 ₽ рассчитана на 30 отправлений,
+    а оклад в 60 000 ₽ — на 4000 вещей в месяц.
+    """
+    cur.execute(
+        "SELECT id, name, amount, per_items, note, is_active "
+        "FROM cost_extra_expenses ORDER BY id"
+    )
+    rows = []
+    for r in cur.fetchall():
+        amount = float(r[2] or 0)
+        per = int(r[3] or 1) or 1
+        rows.append({
+            'id': r[0],
+            'name': r[1],
+            'amount': amount,
+            'perItems': per,
+            'note': r[4],
+            'isActive': bool(r[5]),
+            # Сколько ложится на одну вещь.
+            'perUnit': round(amount / per, 4),
+        })
+    return rows
+
+
+def _calc_groups(cur, settings):
+    """Себестоимость по ТКАНИ и ШИРИНЕ, а не по каждому товару.
+
+    Высота изделия на себестоимость не влияет: полотно кроят по ширине, тесьму
+    пришивают по ширине, пакет берут по ширине. Проверено по данным — внутри одной
+    пары «ткань + ширина» расход материалов одинаковый при любой высоте.
+
+    Поэтому 875 карточек товара схлопываются в 56 реальных сочетаний (8 тканей на
+    7 ширин). Владельцу не нужно листать сотни одинаковых плашек: он смотрит ткань
+    и переключает ширину.
+    """
     prices = _material_prices(cur)
     cutter_rates, sewer_rates, packer_rate = _rates(cur, settings['workshopId'])
+    extras = _extra_expenses(cur)
+    extra_per_unit = round(sum(e['perUnit'] for e in extras if e['isActive']), 4)
 
+    # Берём ОДИН товар-образец на каждую пару «ткань + ширина»: расход внутри пары
+    # одинаковый, а высоту мы намеренно не различаем.
     cur.execute(
-        "SELECT mi.id, mi.name, mi.width, mi.height, mi.material, "
-        "       mim.material_id, mim.quantity "
+        "SELECT mi.material, mi.width, mim.material_id, mim.quantity, "
+        "       COUNT(*) OVER (PARTITION BY mi.material, mi.width) "
         "FROM marketplace_items mi "
         "LEFT JOIN marketplace_item_materials mim ON mim.marketplace_item_id = mi.id "
-        "ORDER BY mi.name, mi.id"
+        "WHERE mi.id IN ("
+        "  SELECT DISTINCT ON (material, width) id FROM marketplace_items "
+        "  ORDER BY material, width, id"
+        ") "
+        "ORDER BY mi.material, mi.width"
     )
 
-    items = {}
+    groups = {}
     for r in cur.fetchall():
-        item_id = r[0]
-        if item_id not in items:
-            items[item_id] = {
-                'id': item_id,
-                'name': r[1],
-                'width': r[2],
-                'height': r[3],
-                'material': r[4],
-                'materials': [],
-            }
-        if r[5] is not None:
-            p = prices.get(r[5], {'name': '?', 'unit': '', 'typeName': '',
+        key = (r[0], r[1])
+        if key not in groups:
+            groups[key] = {'material': r[0], 'width': r[1], 'materials': []}
+        if r[2] is not None:
+            p = prices.get(r[2], {'name': '?', 'unit': '', 'typeName': '',
                                   'price': 0.0, 'priceSource': 'none'})
-            qty = float(r[6] or 0)
-            # Ткань изделия определяем по РАСХОДУ, а не по названию в карточке.
-            # Название там пишут вручную и сокращают: «Вуаль (без ут)» вместо
-            # «Вуаль без утяжелителя» — по такому тариф закройщика не находился,
-            # и у 91 товара работа кроя считалась нулевой.
+            qty = float(r[3] or 0)
+            # Ткань определяем по РАСХОДУ, а не по названию в карточке: там пишут
+            # руками и сокращают («Вуаль (без ут)» вместо «Вуаль без утяжелителя»),
+            # и тариф закройщика по такому названию не находился.
             if p['typeName'] == 'Тюль':
-                items[item_id]['fabricMaterialId'] = r[5]
-            items[item_id]['materials'].append({
-                'materialId': r[5],
+                groups[key]['fabricMaterialId'] = r[2]
+            groups[key]['materials'].append({
+                'materialId': r[2],
                 'name': p['name'],
                 'typeName': p['typeName'],
                 'unit': p['unit'],
@@ -158,7 +195,13 @@ def _calc_items(cur, settings):
                 'priceSource': p['priceSource'],
             })
 
-    # Сопоставление названия ткани с её id: тариф закройщика задан на материал.
+    # Сколько товаров стоит за каждой парой — владельцу видно, что плашка
+    # закрывает не одну позицию, а весь ряд высот.
+    cur.execute(
+        "SELECT material, width, COUNT(*) FROM marketplace_items GROUP BY material, width"
+    )
+    counts = {(r[0], r[1]): int(r[2]) for r in cur.fetchall()}
+
     cur.execute(
         "SELECT m.id, m.name FROM materials m "
         "JOIN material_types mt ON mt.id = m.type_id WHERE mt.name = 'Тюль'"
@@ -166,37 +209,35 @@ def _calc_items(cur, settings):
     fabric_by_name = {r[1]: r[0] for r in cur.fetchall()}
 
     result = []
-    for it in items.values():
-        width = float(it['width'] or 0)
+    for (material, width_raw), g in groups.items():
+        width = float(width_raw or 0)
         meters = round(width / 100, 2) if width else 0.0
 
-        # МАТЕРИАЛЫ, разложенные по назначению — так владелец видит,
-        # где именно сидят деньги: в ткани, в тесьме или в упаковке.
-        fabric_cost = sum(m['sum'] for m in it['materials'] if m['typeName'] == 'Тюль')
-        trim_cost = sum(m['sum'] for m in it['materials'] if m['typeName'] == 'Аксессуары')
-        pack_cost = sum(m['sum'] for m in it['materials'] if m['typeName'] == 'Упаковка')
+        fabric_cost = sum(m['sum'] for m in g['materials'] if m['typeName'] == 'Тюль')
+        trim_cost = sum(m['sum'] for m in g['materials'] if m['typeName'] == 'Аксессуары')
+        pack_cost = sum(m['sum'] for m in g['materials'] if m['typeName'] == 'Упаковка')
         materials_cost = fabric_cost + trim_cost + pack_cost
 
-        # РАБОТА. Считаем ровно по тем же формулам, по которым система реально
-        # начисляет зарплату, — иначе себестоимость разойдётся с кассой.
-        #
-        # Ткань берём из состава изделия, а если расход не задан — пробуем по
-        # названию в карточке.
-        fabric_id = it.get('fabricMaterialId') or fabric_by_name.get(it['material'])
+        # РАБОТА — по тем же формулам, по которым система начисляет зарплату:
+        # закройщику за метраж ширины, швее за штуку по ширине, упаковщице за метраж.
+        fabric_id = g.get('fabricMaterialId') or fabric_by_name.get(material)
         cut_cost = round(meters * cutter_rates.get(fabric_id, 0.0), 2) if fabric_id else 0.0
         sew_cost = round(sewer_rates.get(int(width), 0.0), 2) if width else 0.0
         pack_work = round(meters * packer_rate, 2)
         labor_cost = cut_cost + sew_cost + pack_work
 
-        overhead = settings['overheadPerItem']
-        # База до налога: всё, что мы реально тратим на вещь.
+        # Прочие расходы: список статей владельца плюс старое общее поле.
+        overhead = round(extra_per_unit + settings['overheadPerItem'], 2)
         base = materials_cost + labor_cost + overhead
         tax = round(base * settings['taxPercent'] / 100, 2)
         commission = round(base * settings['marketplacePercent'] / 100, 2)
         total = round(base + tax + commission, 2)
 
         result.append({
-            **{k: v for k, v in it.items() if k != 'fabricMaterialId'},
+            'material': material,
+            'width': width_raw,
+            'productsCount': counts.get((material, width_raw), 0),
+            'materials': g['materials'],
             'fabricCost': round(fabric_cost, 2),
             'trimCost': round(trim_cost, 2),
             'packCost': round(pack_cost, 2),
@@ -209,19 +250,17 @@ def _calc_items(cur, settings):
             'tax': tax,
             'commission': commission,
             'total': total,
-            # Чего не хватает для честной цифры: без этого владелец не поймёт,
-            # почему у одного товара себестоимость 300 ₽, а у соседнего 12 ₽.
             'missing': [
-                *(['Не задан расход материалов'] if not it['materials'] else []),
+                *(['Не задан расход материалов'] if not g['materials'] else []),
                 *(['Нет тарифа закройщика'] if cut_cost == 0 else []),
                 *(['Нет тарифа швеи'] if sew_cost == 0 else []),
                 *([f'Нет цены: {m["name"]}'
-                   for m in it['materials'] if m['priceSource'] == 'none']),
+                   for m in g['materials'] if m['priceSource'] == 'none']),
             ],
         })
 
-    result.sort(key=lambda x: -x['total'])
-    return result
+    result.sort(key=lambda x: (x['material'] or '', x['width'] or 0))
+    return result, extras
 
 
 def handler(event: dict, context) -> dict:
@@ -231,9 +270,14 @@ def handler(event: dict, context) -> dict:
     оплата раскроя, пошива и стикеровки по тарифам цеха, прочие расходы, налог и
     комиссия площадки. Цены и тарифы берутся из системы и всегда актуальны.
 
-    GET  /                               - себестоимость всех товаров + настройки
-    POST /  { action: 'save_settings', taxPercent, marketplacePercent,
-              overheadPerItem, workshopId }  - изменить параметры расчёта
+    Считается по ТКАНИ и ШИРИНЕ: высота на себестоимость не влияет — кроят, обшивают
+    и пакуют по ширине. 875 карточек товара сводятся к 56 реальным сочетаниям.
+
+    GET  /                                        - себестоимость по тканям и ширинам
+    POST /  { action: 'save_settings', ... }      - налог, комиссия, цех
+    POST /  { action: 'add_expense', name, amount, perItems, note }  - статья расходов
+    POST /  { action: 'update_expense', id, ... } - изменить статью
+    POST /  { action: 'delete_expense', id }      - удалить статью
     """
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
@@ -245,18 +289,71 @@ def handler(event: dict, context) -> dict:
 
         if method == 'GET':
             settings = _settings(cur)
-            items = _calc_items(cur, settings)
+            groups, extras = _calc_groups(cur, settings)
             cur.execute("SELECT id, name FROM workshops ORDER BY id")
             workshops = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
             return _resp(200, {
                 'settings': settings,
-                'items': items,
+                'groups': groups,
+                'extras': extras,
                 'workshops': workshops,
             })
 
         if method == 'POST':
             body_data = json.loads(event.get('body') or '{}')
-            if body_data.get('action') != 'save_settings':
+            action = body_data.get('action')
+
+            # СТАТЬИ ДОПОЛНИТЕЛЬНЫХ РАСХОДОВ.
+            # Владелец сам решает, что и на сколько штук делить: коробку на 30
+            # отправлений, оклад кладовщика на 4000 вещей в месяц.
+            if action in ('add_expense', 'update_expense'):
+                name = (body_data.get('name') or '').strip()
+                if not name:
+                    return _resp(400, {'error': 'Укажите название расхода'})
+                try:
+                    amount = float(body_data.get('amount') or 0)
+                    per_items = int(body_data.get('perItems') or 1)
+                except (TypeError, ValueError):
+                    return _resp(400, {'error': 'Сумма и количество должны быть числами'})
+                if amount < 0:
+                    return _resp(400, {'error': 'Сумма не может быть отрицательной'})
+                if per_items < 1:
+                    return _resp(400, {'error': 'Делить нужно хотя бы на 1 штуку'})
+                note = (body_data.get('note') or '').strip() or None
+                is_active = body_data.get('isActive', True)
+
+                if action == 'add_expense':
+                    cur.execute(
+                        "INSERT INTO cost_extra_expenses (name, amount, per_items, note, "
+                        "  is_active) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                        (name, amount, per_items, note, bool(is_active)),
+                    )
+                    new_id = cur.fetchone()[0]
+                    conn.commit()
+                    return _resp(200, {'id': new_id})
+
+                expense_id = body_data.get('id')
+                if not expense_id:
+                    return _resp(400, {'error': 'Укажите id'})
+                cur.execute(
+                    "UPDATE cost_extra_expenses SET name = %s, amount = %s, "
+                    "  per_items = %s, note = %s, is_active = %s WHERE id = %s",
+                    (name, amount, per_items, note, bool(is_active), int(expense_id)),
+                )
+                conn.commit()
+                return _resp(200, {'ok': True})
+
+            if action == 'delete_expense':
+                expense_id = body_data.get('id')
+                if not expense_id:
+                    return _resp(400, {'error': 'Укажите id'})
+                cur.execute(
+                    "DELETE FROM cost_extra_expenses WHERE id = %s", (int(expense_id),)
+                )
+                conn.commit()
+                return _resp(200, {'ok': True})
+
+            if action != 'save_settings':
                 return _resp(400, {'error': 'Неизвестное действие'})
 
             def num(key, default=0.0):

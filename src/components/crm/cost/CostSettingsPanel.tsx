@@ -25,13 +25,11 @@ interface CostSettingsPanelProps {
  * Параметры расчёта себестоимости.
  *
  * Всё остальное система знает сама: цены материалов приходят из прайсов поставщиков,
- * расход — из карточки товара, оплата работ — из тарифов цеха. А эти четыре величины
- * вывести неоткуда, их задаёт владелец:
+ * расход — из карточки товара, оплата работ — из тарифов цеха. А эти величины
+ * вывести неоткуда, их задаёт владелец (прочие расходы — отдельным блоком ниже):
  *
  *  · налог — зависит от системы налогообложения;
  *  · комиссия площадки — своя у каждого маркетплейса;
- *  · прочие расходы — аренда, свет, администрация: общие траты, которые владелец
- *    сам решает, как разложить на одну вещь;
  *  · цех — ставки закройщика и швеи в цехах разные, считать надо по какому-то одному.
  */
 const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelProps) => {
@@ -39,7 +37,6 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
   const { user } = useAuth();
   const [tax, setTax] = useState(String(settings.taxPercent));
   const [commission, setCommission] = useState(String(settings.marketplacePercent));
-  const [overhead, setOverhead] = useState(String(settings.overheadPerItem));
   const [workshopId, setWorkshopId] = useState(
     settings.workshopId ? String(settings.workshopId) : '',
   );
@@ -51,7 +48,8 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
       await saveCostSettings({
         taxPercent: Number(tax) || 0,
         marketplacePercent: Number(commission) || 0,
-        overheadPerItem: Number(overhead) || 0,
+        // Старое общее поле держим нулевым: расходы теперь ведутся списком статей.
+        overheadPerItem: settings.overheadPerItem,
         workshopId: workshopId ? Number(workshopId) : null,
         actorId: user?.id,
       });
@@ -74,7 +72,7 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
         <CardTitle className="text-sm">Параметры расчёта</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="space-y-1.5">
             <Label>Налог, %</Label>
             <Input
@@ -97,17 +95,6 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
               value={commission}
               onChange={(e) => setCommission(e.target.value)}
               placeholder="Например: 15"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Прочие расходы, ₽ за вещь</Label>
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={overhead}
-              onChange={(e) => setOverhead(e.target.value)}
-              placeholder="Аренда, свет"
             />
           </div>
           <div className="space-y-1.5">
