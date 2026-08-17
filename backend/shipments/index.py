@@ -556,6 +556,9 @@ def handler(event: dict, context) -> dict:
                 )
                 old_codes_by_id = {}
                 old_codes_by_material = {}
+                # Коды, уже отданные позициям в этом проходе: страховка от того, чтобы
+                # один штрихкод не достался двум рулонам (иначе приёмка не примется).
+                used_codes = set()
                 for old_id, old_mat, old_codes in cur.fetchall():
                     codes_list = [c for c in (old_codes or '').split(',') if c]
                     old_codes_by_id[old_id] = codes_list
@@ -607,10 +610,18 @@ def handler(event: dict, context) -> dict:
                     # Штрихкоды: берём ранее выданные этой же позиции (по id, иначе по материалу),
                     # чтобы наклеенные стикеры остались действительными. Если рулонов стало
                     # больше — добронируем недостающие, если меньше — лишние коды отбрасываем.
+                    #
+                    # ВАЖНО — КАЖДЫЙ КОД ОТДАЁМ РОВНО ОДИН РАЗ. Раньше подбор по id и подбор
+                    # по материалу работали независимо: позиция без id забирала коды из общей
+                    # корзины материала, даже если их уже получила позиция со своим id. Один
+                    # штрихкод оказывался у двух позиций, и при подтверждении приёмка падала
+                    # с ошибкой — два рулона с одинаковым кодом база не принимает. Поэтому
+                    # ведём учёт уже выданных кодов и отфильтровываем повторы.
                     prev = old_codes_by_id.get(item.get('id'))
                     if prev is None:
                         bucket = old_codes_by_material.get(int(material_id))
                         prev = bucket.pop(0) if bucket else []
+                    prev = [c for c in prev if c not in used_codes]
                     need = int(number_rolls)
                     codes = list(prev[:need])
                     if len(codes) < need:
@@ -618,6 +629,7 @@ def handler(event: dict, context) -> dict:
                         type_row = cur.fetchone()
                         if type_row:
                             codes += reserve_barcodes(cur, type_row[0], need - len(codes))
+                    used_codes.update(codes)
                     codes_sql = "'" + ','.join(codes).replace("'", "''") + "'" if codes else 'NULL'
 
                     cur.execute(
@@ -657,6 +669,43 @@ def handler(event: dict, context) -> dict:
                 if sh_row[0] != 'from_supplier' or sh_row[1] != 'Новый':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Поставка уже обработана'})}
                 supplier_id = sh_row[2]
+
+                # УБИРАЕМ СЛЕДЫ НЕУДАВШЕЙСЯ ПОПЫТКИ.
+                #
+                # Приёмка ещё в статусе «Новый», но рулоны от неё в базе уже есть — значит
+                # прошлое подтверждение оборвалось на полпути (например, на дубле штрихкода).
+                # Эти рулоны нигде не показываются, потому что позиции приёмки на них не
+                # ссылаются, но они держат штрихкоды и не дают принять приёмку повторно:
+                # кладовщик снова и снова получает «ошибку запроса».
+                #
+                # Удаляем только «осиротевшие» рулоны — те, что ещё лежат на складе
+                # целыми и никуда не отгружались. Тронутый рулон не удаляем: за ним уже
+                # стоит чей-то раскрой, лучше показать честную ошибку.
+                cur.execute(
+                    "SELECT COUNT(*) FROM rolls r "
+                    "WHERE r.shipment_id = %s "
+                    "  AND NOT EXISTS (SELECT 1 FROM shipment_items si WHERE si.roll_id = r.id) "
+                    "  AND (r.status <> 'in_storage' "
+                    "       OR r.remaining_quantity <> r.initial_quantity)",
+                    (int(shipment_id),),
+                )
+                touched = int(cur.fetchone()[0])
+                if touched:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Поставку уже частично приняли, и {touched} рулон(ов) '
+                                      f'успели пустить в работу. Обратитесь к администратору — '
+                                      f'принимать её повторно нельзя'},
+                            ensure_ascii=False,
+                        ),
+                    }
+                cur.execute(
+                    "DELETE FROM rolls r WHERE r.shipment_id = %s "
+                    "  AND NOT EXISTS (SELECT 1 FROM shipment_items si WHERE si.roll_id = r.id)",
+                    (int(shipment_id),),
+                )
 
                 cur.execute(
                     "SELECT id, material_id, quantity, number_rolls, price, currency, "
@@ -725,6 +774,8 @@ def handler(event: dict, context) -> dict:
                 )
 
                 created_rolls = []
+                # Коды, уже использованные в этом подтверждении: один штрихкод — один рулон.
+                taken_codes = set()
                 for (item_id, material_id, quantity, number_rolls, item_price, item_currency,
                      item_supplier, reserved) in pending_items:
                     quantity = float(quantity)
@@ -783,9 +834,25 @@ def handler(event: dict, context) -> dict:
                     # КЛЮЧЕВОЕ: берём штрихкоды, забронированные при оформлении приёмки, —
                     # именно они уже наклеены на рулоны. Сгенерировать новые здесь значило бы
                     # обесценить все распечатанные стикеры.
-                    codes = [c for c in (reserved or '').split(',') if c]
+                    #
+                    # Заодно отбрасываем коды, которые уже заняты: рулон с таким штрихкодом
+                    # мог появиться от прошлой попытки подтверждения или код случайно попал
+                    # к двум позициям. Раньше такая приёмка просто падала с «ошибкой
+                    # запроса», и кладовщик не мог её принять вообще никак — теперь для
+                    # занятых кодов молча выдаём новые, а остальные стикеры остаются в силе.
+                    codes = []
+                    for c in (reserved or '').split(','):
+                        if not c or c in taken_codes:
+                            continue
+                        cur.execute("SELECT 1 FROM rolls WHERE barcode = %s", (c,))
+                        if cur.fetchone():
+                            continue
+                        codes.append(c)
+                        taken_codes.add(c)
                     if len(codes) < number_rolls:
-                        codes += reserve_barcodes(cur, type_id, number_rolls - len(codes))
+                        extra = reserve_barcodes(cur, type_id, number_rolls - len(codes))
+                        codes += extra
+                        taken_codes.update(extra)
 
                     per_roll_qty = round(quantity / number_rolls, 3)
                     new_rolls = []
@@ -1465,6 +1532,23 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
+        except psycopg2.Error as db_err:
+            # Сбой на середине операции: откатываем всё, чтобы в базе не осталось
+            # половины приёмки. И главное — отвечаем человеческим текстом: раньше
+            # кладовщик видел безликую «ошибку запроса» и не понимал, что делать.
+            conn.rollback()
+            code = getattr(db_err, 'pgcode', '') or ''
+            if code == '23505':  # дубль уникального значения
+                message = ('Штрихкод из этой приёмки уже занят другим рулоном. '
+                           'Откройте приёмку, сохраните её заново — система выдаст '
+                           'свободные номера, и приёмку можно будет принять')
+            else:
+                message = f'Не удалось сохранить: база данных вернула ошибку ({code or "неизвестная"})'
+            return {
+                'statusCode': 409,
+                'headers': headers,
+                'body': json.dumps({'error': message}, ensure_ascii=False),
+            }
         finally:
             conn.close()
 
