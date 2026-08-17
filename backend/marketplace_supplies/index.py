@@ -380,6 +380,68 @@ def deny_if_locked_by_other(cur, supply_id, actor_id):
     return None
 
 
+def return_wb_order_to_accumulator(cur, goods_id):
+    """Возвращает вещь WB FBS в резервную (накопительную) поставку.
+
+    ЗАЧЕМ. Кладовщик убирает вещь из поставки, когда она не влезла в короб. Вещь при
+    этом никуда не делась: она застикерована, покупатель её ждёт, и поедет она
+    следующей поставкой. Но раньше вместе с позицией пропадала и связь с поставкой WB —
+    вещь исчезала из счётчика «Ожидают отгрузки». Кладовщик открывал новую поставку и
+    видел там ноль: найти убранную вещь можно было только вручную по складу.
+
+    Теперь связь не удаляется, а ПЕРЕСТАВЛЯЕТСЯ в резервную поставку — туда же, откуда
+    вещь попадает в сборку после стикеровки. Кладовщик сразу видит её в списке
+    «ожидают отгрузки» и сканирует в новую поставку.
+
+    На стороне WB заказ трогать не нужно: резервная поставка — тоже поставка WB, и
+    задание просто переезжает в неё при следующем сканировании.
+
+    Возвращает True, если связь восстановлена.
+    """
+    cur.execute(
+        "SELECT o.id FROM goods_warehouse gw "
+        "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+        "WHERE gw.id = %s AND o.marketplace = 'WB' AND o.order_type = 'FBS' "
+        "  AND o.status NOT IN ('Отгружен', 'Отменён')",
+        (int(goods_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    order_id = row[0]
+
+    # Резервная поставка: открытая накопительная. Если её нет — заводим свою запись.
+    # Идентификатор на стороне WB здесь не нужен: он появится при сканировании.
+    cur.execute(
+        "SELECT id FROM marketplace_supplies "
+        "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
+        "  AND status IN ('Открытая', 'На сборке') ORDER BY id DESC LIMIT 1"
+    )
+    acc = cur.fetchone()
+    if acc:
+        acc_id = acc[0]
+    else:
+        cur.execute(
+            "INSERT INTO marketplace_supplies (marketplace, type, status, comment, is_accumulator) "
+            "VALUES ('WB', 'FBS', 'Открытая', %s, true) RETURNING id",
+            ('Резервная поставка: вещи ждут сканирования в поставку',),
+        )
+        acc_id = cur.fetchone()[0]
+
+    # Связь одна на заказ, поэтому переставляем существующую, а если её нет — создаём.
+    cur.execute(
+        "UPDATE wb_supply_orders SET supply_id = %s WHERE order_id = %s",
+        (int(acc_id), int(order_id)),
+    )
+    if cur.rowcount == 0:
+        cur.execute(
+            "INSERT INTO wb_supply_orders (supply_id, order_id) VALUES (%s, %s) "
+            "ON CONFLICT (order_id) DO UPDATE SET supply_id = EXCLUDED.supply_id",
+            (int(acc_id), int(order_id)),
+        )
+    return True
+
+
 def find_cancelled_items(cur, supply_id):
     """Товары поставки, чьи заказы отменены маркетплейсом.
 
@@ -1916,6 +1978,9 @@ def handler(event: dict, context) -> dict:
                         "UPDATE goods_warehouse SET status = 'awaiting_supply' "
                         f"WHERE id = {int(goods_id)}"
                     )
+                    # Возвращаем вещь в резервную поставку, иначе она пропадёт из
+                    # счётчика «Ожидают отгрузки»: позиция удалена, а новой связи нет.
+                    return_wb_order_to_accumulator(cur, goods_id)
                 else:
                     # Вещь брали с полки склада — возвращаем её туда. Ярлык маркетплейса
                     # аннулируем: он выписан под конкретное отправление.
@@ -2208,6 +2273,9 @@ def handler(event: dict, context) -> dict:
                         "UPDATE goods_warehouse SET status = 'awaiting_supply' "
                         f"WHERE id = {int(goods_id)}"
                     )
+                    # Та же логика, что и при удалении позиции из поставки: вещь должна
+                    # вернуться в очередь на отгрузку, а не исчезнуть из счётчика.
+                    return_wb_order_to_accumulator(cur, goods_id)
                 else:
                     cur.execute(
                         "UPDATE goods_warehouse SET status = 'in_stock', "
