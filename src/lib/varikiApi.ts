@@ -47,6 +47,8 @@ export interface ShopItem {
   /** Ключ анимации на карточке: 'spa' — гидромассаж. */
   animation: string;
   icon: string;
+  /** Фотография подарка. Показывается вместо иконки, если задана. */
+  imageUrl?: string | null;
 }
 
 export type PurchaseStatus = 'pending' | 'issued' | 'cancelled';

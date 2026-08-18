@@ -61,13 +61,13 @@ def handler(event: dict, context) -> dict:
                 # Витрина магазина + покупки самого сотрудника. Сюда ходит и админ
                 # (посмотреть, что в продаже), и швея (купить и забрать купон).
                 cur.execute(
-                    "SELECT id, title, description, price, animation, icon "
+                    "SELECT id, title, description, price, animation, icon, image_url "
                     "FROM variki_shop_items WHERE is_active = true "
                     "ORDER BY sort_order, id"
                 )
                 items = [
                     {'id': r[0], 'title': r[1], 'description': r[2],
-                     'price': r[3], 'animation': r[4], 'icon': r[5]}
+                     'price': r[3], 'animation': r[4], 'icon': r[5], 'imageUrl': r[6]}
                     for r in cur.fetchall()
                 ]
                 user_id = params.get('userId')

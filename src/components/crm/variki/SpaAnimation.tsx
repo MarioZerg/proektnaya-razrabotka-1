@@ -19,13 +19,14 @@ const BUBBLES = [
 
 const SpaAnimation = () => (
   <div className="pointer-events-none absolute inset-0 overflow-hidden">
-    {/* Толща воды: сверху светлее, ко дну гуще. */}
-    <div className="absolute inset-0 bg-gradient-to-b from-cyan-50/0 via-cyan-100/40 to-sky-300/60" />
+    {/* Лёгкая водная дымка ко дну. Держим её слабой: поверх фотографии плотная
+        заливка «топила» картинку — лица и салона было почти не разглядеть. */}
+    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-100/10 to-sky-300/25" />
 
     {/* Две волны друг за другом, с разной скоростью — вода выглядит объёмной. */}
-    <div className="absolute inset-x-0 bottom-0 h-16 animate-wave rounded-[50%] bg-sky-400/30 blur-sm" />
+    <div className="absolute inset-x-0 bottom-0 h-14 animate-wave rounded-[50%] bg-sky-400/20 blur-sm" />
     <div
-      className="absolute inset-x-0 bottom-0 h-10 animate-wave rounded-[50%] bg-cyan-300/40 blur-[2px]"
+      className="absolute inset-x-0 bottom-0 h-8 animate-wave rounded-[50%] bg-cyan-300/25 blur-[2px]"
       style={{ animationDelay: '1.5s' }}
     />
 

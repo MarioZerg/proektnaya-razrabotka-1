@@ -119,14 +119,33 @@ const VarikiShop = () => {
                     key={item.id}
                     className="relative flex min-h-[19rem] flex-col overflow-hidden rounded-xl border border-border bg-card"
                   >
-                    {item.animation === 'spa' && <SpaAnimation />}
+                    {/* Фотография подарка: по одной анимации пузырьков непонятно,
+                        ЧТО покупаешь. Снимок делает награду наглядной, а пузырьки
+                        поверх воды на нём оживляют карточку. */}
+                    {item.imageUrl && (
+                      <div className="relative h-40 shrink-0 overflow-hidden">
+                        <img
+                          src={item.imageUrl}
+                          alt={item.title}
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                        />
+                        {item.animation === 'spa' && <SpaAnimation />}
+                        {/* Плавный переход от фото к карточке, чтобы снимок не
+                            обрывался резкой линией. */}
+                        <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-b from-transparent to-card" />
+                      </div>
+                    )}
+                    {!item.imageUrl && item.animation === 'spa' && <SpaAnimation />}
 
                     <div className="relative flex flex-1 flex-col p-5">
-                      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/80 shadow-sm ring-1 ring-cyan-200">
-                        <Icon name={item.icon} size={34} className="text-cyan-600" />
-                      </div>
+                      {!item.imageUrl && (
+                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/80 shadow-sm ring-1 ring-cyan-200">
+                          <Icon name={item.icon} size={34} className="text-cyan-600" />
+                        </div>
+                      )}
 
-                      <h2 className="mt-3 text-lg font-bold leading-tight">{item.title}</h2>
+                      <h2 className="text-lg font-bold leading-tight">{item.title}</h2>
                       {item.description && (
                         <p className="mt-1 text-sm text-foreground/80">{item.description}</p>
                       )}
