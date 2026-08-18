@@ -29,12 +29,12 @@ const KioskRollDefectDialog = ({
   onConfirm,
 }: KioskRollDefectDialogProps) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="kiosk-root sm:max-w-md">
+    <DialogContent className="kiosk-root sm:max-w-2xl">
       <DialogHeader>
-        <DialogTitle>Отставить рулон #{barcode}</DialogTitle>
+        <DialogTitle className="text-3xl">Отставить рулон #{barcode}</DialogTitle>
       </DialogHeader>
       <div className="space-y-3">
-        <p className="text-base text-muted-foreground">
+        <p className="text-xl text-muted-foreground">
           Рулон перестанет идти в раскрой и будет ждать, пока кладовщик заберёт его
           на склад. Обязательно сообщите руководителю
         </p>
@@ -50,7 +50,7 @@ const KioskRollDefectDialog = ({
                   key={label}
                   type="button"
                   variant={active ? 'default' : 'outline'}
-                  className="h-14 text-base"
+                  className="h-20 text-xl font-semibold"
                   onClick={() =>
                     setDefectReason(
                       (active
@@ -60,7 +60,7 @@ const KioskRollDefectDialog = ({
                     )
                   }
                 >
-                  {active && <Icon name="Check" size={18} className="mr-1.5" />}
+                  {active && <Icon name="Check" size={24} className="mr-2" />}
                   {label}
                 </Button>
               );
@@ -69,12 +69,12 @@ const KioskRollDefectDialog = ({
         </div>
         <Button
           size="lg"
-          className="h-14 w-full"
+          className="h-20 w-full text-2xl font-semibold"
           onClick={onConfirm}
           disabled={saving || !defectReason.trim()}
         >
           {saving ? (
-            <Icon name="Loader2" size={22} className="animate-spin" />
+            <Icon name="Loader2" size={28} className="animate-spin" />
           ) : (
             'Отставить рулон'
           )}

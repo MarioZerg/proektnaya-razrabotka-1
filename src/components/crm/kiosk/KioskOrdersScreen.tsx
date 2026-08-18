@@ -409,10 +409,10 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
                 не видит — она уже тянется за следующей вещью. */}
             {blockedWarning && (
               <div className="rounded-md border-2 border-destructive bg-destructive/10 p-4 text-center">
-                <p className="text-xl font-bold text-destructive">
+                <p className="text-3xl font-bold text-destructive">
                   Завершите текущий заказ
                 </p>
-                <p className="mt-1 text-base text-muted-foreground">
+                <p className="mt-1 text-xl text-muted-foreground">
                   Стикер напечатан, но заказ не закрыт. Нажмите «Закрыть заказ» —
                   и только потом сканируйте следующий
                 </p>

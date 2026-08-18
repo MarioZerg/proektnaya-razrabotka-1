@@ -327,8 +327,11 @@ const KioskWorkspace = ({
           </div>
         )}
 
+        {/* Заказ раскрываем на всю ширину планшета, а не узкой колонкой: упаковщица
+            смотрит на экран с расстояния вытянутой руки, и при max-w-xl карточка
+            вытягивалась в длинную «простыню» — половину строк приходилось листать. */}
         {screen === 'orders' && (
-          <div className="mx-auto max-w-xl">
+          <div className="mx-auto max-w-5xl">
             <KioskOrdersScreen
               packerId={user.id}
               packerName={user.name}
@@ -370,7 +373,7 @@ const KioskWorkspace = ({
         )}
 
         {screen === 'defect' && (
-          <div className="mx-auto max-w-xl space-y-4">
+          <div className="mx-auto max-w-5xl space-y-4">
             {shift?.isOpen ? (
               <KioskDefectWriteoffPanel
                 workshopId={currentWorkshopId || Number(workshopId) || 1}
@@ -390,8 +393,10 @@ const KioskWorkspace = ({
           </div>
         )}
 
+        {/* Рулоны и брак — тоже во всю ширину: в списке рулонов длинные названия
+            материалов и штрихкоды, в узкой колонке они переносились по три строки. */}
         {screen === 'rolls' && (
-          <div className="mx-auto max-w-xl">
+          <div className="mx-auto max-w-5xl">
             <KioskRollsScreen
               workshopId={Number(workshopId) || 1}
               shiftNumber={shift?.shiftNumber ?? user.shiftFromCode ?? null}

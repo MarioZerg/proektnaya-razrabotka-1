@@ -20,8 +20,9 @@ interface KioskOrderActionsProps {
 /**
  * Кнопки терминала: печать стикеров, закрытие заказа и отмена.
  *
- * Кнопки крупные (высотой 64px) — упаковщица работает пальцами, часто в перчатках,
- * и смотрит на экран с расстояния вытянутой руки.
+ * Кнопки крупные (высотой 80px, текст 2xl) — упаковщица работает пальцами, часто
+ * в перчатках, и смотрит на экран с расстояния вытянутой руки. Мелкую кнопку она
+ * промахивает и не читает, поэтому здесь размер важнее компактности.
  */
 const KioskOrderActions = ({
   order,
@@ -44,22 +45,22 @@ const KioskOrderActions = ({
       <Button
         size="lg"
         variant={tracePrinted ? 'outline' : 'default'}
-        className="h-16 w-full text-lg"
+        className="h-20 w-full text-2xl font-semibold"
         onClick={onPrintTrace}
       >
-        <Icon name={tracePrinted ? 'Check' : 'QrCode'} size={24} className="mr-2" />
+        <Icon name={tracePrinted ? 'Check' : 'QrCode'} size={30} className="mr-3" />
         {tracePrinted ? 'Стикер в пакет напечатан' : 'Стикер в пакет (кто шил)'}
       </Button>
     )}
 
     {order.isCancelled || labelRefused ? (
       <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-center">
-        <p className="text-lg font-bold text-destructive">
+        <p className="text-2xl font-bold text-destructive">
           {labelRefused && !order.isCancelled
             ? 'Маркетплейс не выдал ярлык'
             : 'Клиент отменил заказ'}
         </p>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-lg text-muted-foreground">
           Стикер отправления не нужен. Нажмите «Закрыть заказ» — распечатается стикер
           хранения, наклейте его и оставьте вещь для кладовщика
         </p>
@@ -67,7 +68,7 @@ const KioskOrderActions = ({
             отмена касается всей связки. Упаковщица стикерует вещи по очереди,
             но должна знать общее число — чтобы не потерять часть. */}
         {order.groupKey && (order.groupSize || 0) > 1 && (
-          <p className="mt-2 rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-sm font-semibold">
+          <p className="mt-2 rounded-md border border-destructive/40 bg-background px-3 py-2 text-lg font-semibold">
             Это связка: всего вещей {order.groupSize}, эта —{' '}
             {order.groupPosition || 1}. Стикеруйте по очереди и держите их вместе
           </p>
@@ -82,15 +83,15 @@ const KioskOrderActions = ({
             к своему покупателю), либо откажет — и тогда предложим стикер хранения. */}
         {order.labelGone && (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-center text-amber-900">
-            <p className="font-bold">Отправление уже помечено как уехавшее</p>
-            <p className="mt-1 text-sm">
+            <p className="text-2xl font-bold">Отправление уже помечено как уехавшее</p>
+            <p className="mt-1 text-lg">
               Ярлык один на всю посылку — попробуйте распечатать. Если маркетплейс
               откажет, появится стикер хранения
             </p>
           </div>
         )}
-        <Button size="lg" className="h-16 w-full text-lg" onClick={onPrint}>
-          <Icon name="Printer" size={24} className="mr-2" />
+        <Button size="lg" className="h-20 w-full text-2xl font-semibold" onClick={onPrint}>
+          <Icon name="Printer" size={30} className="mr-3" />
           {order.orderType === 'FBS'
             ? 'Распечатать ярлык отправления'
             : 'Распечатать стикер'}
@@ -101,14 +102,14 @@ const KioskOrderActions = ({
     {(printed || order.isCancelled || labelRefused) && (
       <Button
         size="lg"
-        className="h-16 w-full bg-emerald-600 text-lg text-white hover:bg-emerald-700"
+        className="h-20 w-full bg-emerald-600 text-2xl font-semibold text-white hover:bg-emerald-700"
         onClick={onClose}
         disabled={closing}
       >
         <Icon
           name={closing ? 'Loader2' : 'Check'}
-          size={24}
-          className={`mr-2 ${closing ? 'animate-spin' : ''}`}
+          size={30}
+          className={`mr-3 ${closing ? 'animate-spin' : ''}`}
         />
         Закрыть заказ
       </Button>
@@ -120,7 +121,7 @@ const KioskOrderActions = ({
     <Button
       variant="outline"
       size="lg"
-      className="h-14 w-full"
+      className="h-16 w-full text-xl"
       onClick={onCancel}
       disabled={cancelBlocked}
     >

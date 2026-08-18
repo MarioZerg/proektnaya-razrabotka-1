@@ -17,13 +17,13 @@ const KioskOrderNotices = ({ order }: { order: KioskOrder }) => (
         поэтому пишем его крупно прямо на экране. */}
     {order.orderType === 'FBO' ? (
       <div className="flex items-start gap-3 rounded-md border border-sky-300 bg-sky-50 p-3 text-sky-900">
-        <Icon name="Container" size={22} className="mt-0.5 shrink-0" />
+        <Icon name="Container" size={30} className="mt-0.5 shrink-0" />
         <div className="min-w-0">
-          <p className="font-bold">
+          <p className="text-2xl font-bold">
             Контейнер FBO
             {order.cluster ? ` · ${order.cluster}` : ''}
           </p>
-          <p className="text-sm">
+          <p className="text-lg">
             {order.cluster
               ? `Положите вещь в контейнер склада ${order.cluster}. Сверьте город на стикере: у одинаковых изделий разных городов артикул совпадает, система подмену не заметит`
               : 'Склад назначения указан на стикере — прочитайте город и положите вещь в контейнер этого склада, отдельно от FBS'}
@@ -32,10 +32,10 @@ const KioskOrderNotices = ({ order }: { order: KioskOrder }) => (
       </div>
     ) : order.orderType === 'FBS' ? (
       <div className="flex items-start gap-3 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-emerald-900">
-        <Icon name="Container" size={22} className="mt-0.5 shrink-0" />
+        <Icon name="Container" size={30} className="mt-0.5 shrink-0" />
         <div className="min-w-0">
-          <p className="font-bold">Контейнер FBS</p>
-          <p className="text-sm">
+          <p className="text-2xl font-bold">Контейнер FBS</p>
+          <p className="text-lg">
             Положите вещь в контейнер FBS — отдельно от товара FBO
           </p>
         </div>
@@ -47,12 +47,12 @@ const KioskOrderNotices = ({ order }: { order: KioskOrder }) => (
         ярлык на всю связку — и остальные пакеты уедут без ярлыков. */}
     {order.groupSize && order.groupSize > 1 && (
       <div className="flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
-        <Icon name="Layers" size={22} className="mt-0.5 shrink-0" />
+        <Icon name="Layers" size={30} className="mt-0.5 shrink-0" />
         <div>
-          <p className="font-bold">
+          <p className="text-2xl font-bold">
             Связка: вещь {order.groupPosition} из {order.groupSize}
           </p>
-          <p className="text-sm">
+          <p className="text-lg">
             Упакуйте вещи заказа вместе, но ярлык печатайте на каждую отдельно —
             у этой вещи свой ярлык «{order.groupPosition} из {order.groupSize}»
           </p>
@@ -63,10 +63,10 @@ const KioskOrderNotices = ({ order }: { order: KioskOrder }) => (
         упаковщица должна видеть, кому уйдёт вещь. */}
     {order.isLegalEntity && (
       <div className="flex items-start gap-3 rounded-md border border-indigo-300 bg-indigo-50 p-3 text-indigo-900">
-        <Icon name="Building2" size={22} className="mt-0.5 shrink-0" />
+        <Icon name="Building2" size={30} className="mt-0.5 shrink-0" />
         <div>
-          <p className="font-bold">Заказ юридического лица</p>
-          <p className="text-sm">
+          <p className="text-2xl font-bold">Заказ юридического лица</p>
+          <p className="text-lg">
             {order.legalCompanyName || 'Покупатель — компания'}. Собирается как обычный
             заказ, ярлык отправления печатается так же
           </p>
@@ -75,12 +75,12 @@ const KioskOrderNotices = ({ order }: { order: KioskOrder }) => (
     )}
     {order.groupSize && order.groupSize > 1 && (
       <div className="flex items-start gap-3 rounded-md border border-violet-300 bg-violet-50 p-3 text-violet-900">
-        <Icon name="Package" size={22} className="mt-0.5 shrink-0" />
+        <Icon name="Package" size={30} className="mt-0.5 shrink-0" />
         <div>
-          <p className="font-bold">
+          <p className="text-2xl font-bold">
             Заказ из {order.groupSize} вещей — это {order.groupPosition}-я
           </p>
-          <p className="text-sm">
+          <p className="text-lg">
             Каждая вещь едет своим пакетом со своим ярлыком. Отгружается заказ только
             целиком — все {order.groupSize} вещи должны попасть в одну поставку
           </p>

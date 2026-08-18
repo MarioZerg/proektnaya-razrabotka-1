@@ -38,10 +38,10 @@ const KioskRollsList = ({
     <Button
       variant="outline"
       size="lg"
-      className="h-12 w-full text-base"
+      className="h-16 w-full text-xl"
       onClick={onBackToScan}
     >
-      <Icon name="ScanLine" size={20} className="mr-2" />
+      <Icon name="ScanLine" size={26} className="mr-2" />
       Вернуться к сканированию
     </Button>
 
@@ -49,7 +49,7 @@ const KioskRollsList = ({
     <div className="flex flex-wrap gap-2">
       <Button
         variant={typeFilter === 'all' ? 'default' : 'outline'}
-        className="h-12 text-base"
+        className="h-16 px-6 text-xl"
         onClick={() => setTypeFilter('all')}
       >
         Все
@@ -58,7 +58,7 @@ const KioskRollsList = ({
         <Button
           key={t.id}
           variant={typeFilter === t.id ? 'default' : 'outline'}
-          className="h-12 text-base"
+          className="h-16 px-6 text-xl"
           onClick={() => setTypeFilter(t.id)}
         >
           {t.name}
@@ -70,7 +70,7 @@ const KioskRollsList = ({
       value={search}
       onChange={(e) => setSearch(e.target.value)}
       placeholder="Поиск по номеру рулона или материалу"
-      className="h-12 text-base"
+      className="h-16 text-xl"
     />
 
     {loading ? (
@@ -79,13 +79,16 @@ const KioskRollsList = ({
         Загрузка…
       </div>
     ) : visibleRolls.length === 0 ? (
-      <p className="py-10 text-center text-lg text-muted-foreground">
+      <p className="py-10 text-center text-2xl text-muted-foreground">
         {search.trim()
           ? 'Рулон не найден — проверьте номер'
           : 'В вашей смене нет открытых рулонов'}
       </p>
     ) : (
-      visibleRolls.map((r) => {
+      // Две колонки на широком экране: рулонов в смене бывает по два десятка,
+      // одной лентой их пришлось бы долго листать пальцем.
+      <div className="grid gap-3 md:grid-cols-2">
+      {visibleRolls.map((r) => {
         // Рулон закрывается вручную: закройщик сам выбирает его из списка своей смены,
         // сканер не нужен. Раньше рулон открывался только после движения материала в
         // смене — но закончившийся рулон, по которому в эту смену ещё не резали,
@@ -99,38 +102,39 @@ const KioskRollsList = ({
             key={r.id}
             onClick={() => active && onSelect(r)}
             disabled={!active}
-            className={`flex w-full items-center justify-between gap-3 rounded-lg border border-border p-4 text-left ${
+            className={`flex w-full items-center justify-between gap-3 rounded-lg border border-border p-5 text-left ${
               active ? 'hover:bg-accent' : 'cursor-not-allowed opacity-40 grayscale'
             }`}
           >
             <div className="min-w-0">
-              <div className="font-mono-tech text-lg font-bold">#{r.barcode}</div>
-              <div className="text-muted-foreground">{r.materialName}</div>
+              <div className="font-mono-tech text-2xl font-bold">#{r.barcode}</div>
+              <div className="text-xl text-muted-foreground">{r.materialName}</div>
               {r.foreignShift && (
-                <div className="text-xs font-medium text-amber-600">
+                <div className="text-base font-medium text-amber-600">
                   Материал чужой смены
                 </div>
               )}
               {r.defectFlaggedAt ? (
-                <div className="text-xs font-medium text-destructive">
+                <div className="text-base font-medium text-destructive">
                   Отставлен как бракованный — ждёт кладовщика
                 </div>
               ) : r.pendingAcceptance ? (
-                <div className="text-xs font-medium text-amber-600">
+                <div className="text-base font-medium text-amber-600">
                   Не принят — подтвердите поставку
                 </div>
               ) : (
                 r.usedInShift && (
-                  <div className="text-xs text-emerald-600">Резали в эту смену</div>
+                  <div className="text-base text-emerald-600">Резали в эту смену</div>
                 )
               )}
             </div>
-            <Badge variant="secondary" className="shrink-0 text-base">
+            <Badge variant="secondary" className="shrink-0 px-3 py-1.5 text-xl">
               {formatQuantity(r.remainingQuantity)} {r.unit}
             </Badge>
           </button>
         );
-      })
+      })}
+      </div>
     )}
   </div>
 );

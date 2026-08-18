@@ -19,7 +19,7 @@ interface KioskNumPadProps {
  * экрана. Поэтому любые числа (метраж, количество, недостача) набираются крупными
  * кнопками прямо в интерфейсе.
  *
- * Кнопки высотой 64px — под палец в перчатке, с запасом от случайных промахов.
+ * Кнопки высотой 80px — под палец в перчатке, с запасом от случайных промахов.
  */
 const KioskNumPad = ({ value, onChange, decimal = true, maxLength = 6 }: KioskNumPadProps) => {
   const pressDigit = (d: string) => onChange((value + d).slice(0, maxLength));
@@ -38,7 +38,7 @@ const KioskNumPad = ({ value, onChange, decimal = true, maxLength = 6 }: KioskNu
           key={d}
           type="button"
           variant="outline"
-          className="h-16 text-2xl"
+          className="h-20 text-3xl font-semibold"
           onClick={() => pressDigit(d)}
         >
           {d}
@@ -47,7 +47,7 @@ const KioskNumPad = ({ value, onChange, decimal = true, maxLength = 6 }: KioskNu
       <Button
         type="button"
         variant="outline"
-        className="h-16 text-2xl"
+        className="h-20 text-3xl font-semibold"
         onClick={pressDot}
         disabled={!decimal}
       >
@@ -56,13 +56,13 @@ const KioskNumPad = ({ value, onChange, decimal = true, maxLength = 6 }: KioskNu
       <Button
         type="button"
         variant="outline"
-        className="h-16 text-2xl"
+        className="h-20 text-3xl font-semibold"
         onClick={() => pressDigit('0')}
       >
         0
       </Button>
-      <Button type="button" variant="outline" className="h-16" onClick={pressBack}>
-        <Icon name="Delete" size={24} />
+      <Button type="button" variant="outline" className="h-20" onClick={pressBack}>
+        <Icon name="Delete" size={30} />
       </Button>
     </div>
   );

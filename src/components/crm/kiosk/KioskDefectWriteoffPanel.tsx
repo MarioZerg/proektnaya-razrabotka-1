@@ -141,10 +141,10 @@ const KioskDefectWriteoffPanel = ({
     return (
       <div className="rounded-lg border border-border bg-card p-4">
         <div className="flex items-start gap-3">
-          <Icon name="PackageX" size={24} className="mt-0.5 shrink-0 text-destructive" />
+          <Icon name="PackageX" size={32} className="mt-0.5 shrink-0 text-destructive" />
           <div className="min-w-0 flex-1">
-            <p className="text-lg font-bold">Брак из рулона</p>
-            <p className="mt-1 text-base text-muted-foreground">
+            <p className="text-2xl font-bold">Брак из рулона</p>
+            <p className="mt-1 text-xl text-muted-foreground">
               Вы работаете в чужом цехе — позовите штатного сотрудника этого цеха, он
               оформит брак за вас.
             </p>
@@ -163,15 +163,15 @@ const KioskDefectWriteoffPanel = ({
             <div className="rounded-full bg-destructive/10 p-6">
               <Icon
                 name={scanning ? 'Loader2' : 'ScanLine'}
-                size={56}
+                size={80}
                 className={`text-destructive ${scanning ? 'animate-spin' : ''}`}
               />
             </div>
             <div>
-              <p className="text-2xl font-bold">
+              <p className="text-4xl font-bold">
                 {scanning ? 'Ищем рулон…' : isPacker ? 'Отсканируйте пачку' : 'Отсканируйте рулон'}
               </p>
-              <p className="mt-1 text-lg text-muted-foreground">
+              <p className="mt-2 text-2xl text-muted-foreground">
                 {isPacker
                   ? 'Поднесите сканер к стикеру на пачке с пакетами или этикетками'
                   : isSewer
@@ -179,7 +179,7 @@ const KioskDefectWriteoffPanel = ({
                     : 'Поднесите сканер к стикеру на рулоне'}
               </p>
             </div>
-            <p className="text-base text-muted-foreground">
+            <p className="text-xl text-muted-foreground">
               Сканировать можно только материал своей смены
             </p>
           </div>
@@ -188,10 +188,10 @@ const KioskDefectWriteoffPanel = ({
         {/* Промах сканера показываем крупно: причину видно с расстояния вытянутой руки. */}
         {scanError && (
           <div className="flex items-start gap-3 rounded-lg border border-destructive bg-destructive/5 p-4">
-            <Icon name="TriangleAlert" size={24} className="mt-0.5 shrink-0 text-destructive" />
+            <Icon name="TriangleAlert" size={32} className="mt-0.5 shrink-0 text-destructive" />
             <div>
-              <p className="font-bold text-destructive">Так нельзя</p>
-              <p className="text-base text-muted-foreground">{scanError}</p>
+              <p className="text-2xl font-bold text-destructive">Так нельзя</p>
+              <p className="text-lg text-muted-foreground">{scanError}</p>
             </div>
           </div>
         )}
@@ -206,26 +206,27 @@ const KioskDefectWriteoffPanel = ({
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-4">
       <div className="text-center">
-        <p className="text-lg text-muted-foreground">
+        <p className="text-xl text-muted-foreground">
           {isPacker ? 'Пачка' : 'Рулон'} · {userName || 'Вы'}
         </p>
-        <p className="font-mono-tech text-2xl font-bold">#{roll.barcode}</p>
-        <p className="mt-1 text-lg">{roll.materialName}</p>
+        <p className="font-mono-tech text-4xl font-bold">#{roll.barcode}</p>
+        <p className="mt-1 text-2xl">{roll.materialName}</p>
       </div>
 
       {/* Остаток крупно и рядом с вводом: человек указывает брак, глядя на то,
           сколько по системе числится на рулоне. */}
       <div className="rounded-md border-2 border-border bg-muted/40 p-3 text-center">
-        <p className="text-sm text-muted-foreground">По системе осталось</p>
-        <p className="font-mono-tech text-3xl font-bold">
+        <p className="text-lg text-muted-foreground">По системе осталось</p>
+        <p className="font-mono-tech text-5xl font-bold">
           {formatQuantity(roll.remaining)} {roll.unit}
         </p>
       </div>
 
+      <div className="grid gap-4 md:grid-cols-2">
       <div className="space-y-1.5">
-        <Label className="text-sm">
+        <Label className="text-xl">
           Причина брака
-          <Badge variant="secondary" className="ml-2">
+          <Badge variant="secondary" className="ml-2 text-base">
             {materialLabel}
           </Badge>
         </Label>
@@ -235,10 +236,10 @@ const KioskDefectWriteoffPanel = ({
               key={r.code}
               type="button"
               variant={reasonCode === r.code ? 'default' : 'outline'}
-              className="h-14 text-base"
+              className="h-20 text-xl font-semibold"
               onClick={() => setReasonCode(r.code)}
             >
-              {reasonCode === r.code && <Icon name="Check" size={18} className="mr-1.5" />}
+              {reasonCode === r.code && <Icon name="Check" size={24} className="mr-2" />}
               {r.label}
             </Button>
           ))}
@@ -246,16 +247,16 @@ const KioskDefectWriteoffPanel = ({
       </div>
 
       <div className="space-y-1.5">
-        <Label className="text-sm">
+        <Label className="text-xl">
           {isPacker ? 'Количество брака' : 'Метраж брака'}
           {roll.unit ? `, ${roll.unit}` : ''}
         </Label>
         {/* Крупное табло + кнопки: в цехе набирают пальцем, клавиатуры нет. */}
         <div className="rounded-md border-2 border-border bg-muted/40 p-3 text-center">
-          <p className="font-mono-tech text-3xl font-bold">{quantity || '0'}</p>
+          <p className="font-mono-tech text-5xl font-bold">{quantity || '0'}</p>
           {/* Больше остатка списать нельзя — предупреждаем до нажатия кнопки. */}
           {tooMuch && (
-            <p className="mt-1 text-sm font-semibold text-destructive">
+            <p className="mt-1 text-lg font-semibold text-destructive">
               Больше, чем осталось на рулоне — проверьте цифру
             </p>
           )}
@@ -263,8 +264,8 @@ const KioskDefectWriteoffPanel = ({
         <KioskNumPad value={quantity} onChange={setQuantity} />
       </div>
 
-      <div className="space-y-1.5">
-        <Label className="text-sm">Где брак (необязательно)</Label>
+      <div className="space-y-1.5 md:col-span-2">
+        <Label className="text-xl">Где брак (необязательно)</Label>
         {/* Свободный текст в киоске не набрать — даём готовые варианты кнопками.
             Повторное нажатие снимает выбор: уточнение необязательное. */}
         <div className="grid grid-cols-2 gap-2">
@@ -276,27 +277,28 @@ const KioskDefectWriteoffPanel = ({
               key={label}
               type="button"
               variant={comment === label ? 'default' : 'outline'}
-              className="h-14 text-base"
+              className="h-20 text-xl font-semibold"
               onClick={() => setComment((c) => (c === label ? '' : label))}
             >
-              {comment === label && <Icon name="Check" size={18} className="mr-1.5" />}
+              {comment === label && <Icon name="Check" size={24} className="mr-2" />}
               {label}
             </Button>
           ))}
         </div>
       </div>
+      </div>
 
       <div className="flex gap-2">
-        <Button variant="outline" className="h-14 flex-1 text-lg" onClick={reset}>
+        <Button variant="outline" className="h-20 flex-1 text-2xl font-semibold" onClick={reset}>
           Отмена
         </Button>
         <Button
           variant="destructive"
-          className="h-14 flex-1 text-lg"
+          className="h-20 flex-1 text-2xl font-semibold"
           disabled={saving || !quantity || !reasonCode || tooMuch}
           onClick={handleSubmit}
         >
-          {saving ? <Icon name="Loader2" size={20} className="mr-2 animate-spin" /> : null}
+          {saving ? <Icon name="Loader2" size={28} className="mr-2 animate-spin" /> : null}
           Оформить и печать
         </Button>
       </div>
