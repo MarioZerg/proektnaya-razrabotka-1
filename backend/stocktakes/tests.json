@@ -1,0 +1,56 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get stocktakes list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get active stocktake",
+      "method": "GET",
+      "path": "/?active=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Unknown stocktake returns 404",
+      "method": "GET",
+      "path": "/?id=99999999",
+      "expectedStatus": 404
+    },
+    {
+      "name": "Start without storekeeper role fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "start" },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Scan without role fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "scan", "stocktakeId": 1, "barcode": "GW-000001" },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Approve without admin fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "approve", "stocktakeId": 1 },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "nope" },
+      "expectedStatus": 400
+    }
+  ]
+}

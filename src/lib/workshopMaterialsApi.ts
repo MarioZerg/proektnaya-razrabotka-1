@@ -51,5 +51,10 @@ export const fetchWorkshopMaterials = async (workshopId?: number): Promise<Works
   const url = workshopId ? `${WORKSHOP_MATERIALS_URL}?workshop_id=${workshopId}` : WORKSHOP_MATERIALS_URL;
   const res = await fetch(url);
   const data = await res.json();
-  return { types: data.types || [], columns: data.columns || [], activeColumn: data.activeColumn || null };
+  return {
+    types: data.types || [],
+    columns: data.columns || [],
+    activeColumn: data.activeColumn || null,
+    materialFreeShifts: data.materialFreeShifts || {},
+  };
 };
