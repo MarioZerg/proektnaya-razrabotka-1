@@ -545,6 +545,20 @@ def handler(event: dict, context) -> dict:
                         'dateTo': (r[4].isoformat() + 'Z') if r[4] else None,
                     })
 
+                # Скрытые администратором строки убираем. Запоминали количество на
+                # момент скрытия: если у человека на этом этапе появились НОВЫЕ
+                # незакрытые заказы, строка возвращается сама — иначе крестик
+                # заглушил бы предупреждение навсегда и следующая дыра прошла бы
+                # незамеченной.
+                cur.execute(
+                    "SELECT user_id, stage, dismissed_count FROM missed_accrual_dismissals"
+                )
+                hidden = {(r[0], r[1]): int(r[2] or 0) for r in cur.fetchall()}
+                missed = [
+                    m for m in missed
+                    if m['count'] > hidden.get((m['userId'], m['stage']), -1)
+                ]
+
                 missed.sort(key=lambda x: x['count'], reverse=True)
                 return {
                     'statusCode': 200,
@@ -850,6 +864,34 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if action == 'dismiss_missed_accrual':
+                # Крестик на предупреждении «работа без начисления».
+                #
+                # Иногда дыра объяснима: заказ переносили руками, этап закрыли задним
+                # числом, деньги выдали наличными. Раньше такое предупреждение висело
+                # вечно, и на него переставали смотреть — а вместе с ним пропускали
+                # настоящие потери. Теперь строку можно убрать.
+                m_user_id = body_data.get('userId')
+                stage = (body_data.get('stage') or '').strip()
+                count = int(body_data.get('count') or 0)
+                if not m_user_id or not stage:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите сотрудника и этап'})}
+                cur.execute(
+                    "INSERT INTO missed_accrual_dismissals "
+                    "  (user_id, stage, dismissed_count, dismissed_by) "
+                    "VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (user_id, stage) DO UPDATE SET "
+                    "  dismissed_count = EXCLUDED.dismissed_count, "
+                    "  dismissed_at = now(), dismissed_by = EXCLUDED.dismissed_by",
+                    (int(m_user_id), stage, count, int(actor_id) if actor_id else None),
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'dismiss_missed_accrual', 'salary', int(m_user_id),
+                    f'Скрыл предупреждение о неначислении: этап {stage}, {count} шт',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'update_rate':
                 rate_id = body_data.get('id')

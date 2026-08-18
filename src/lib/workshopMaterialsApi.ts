@@ -42,6 +42,9 @@ export interface WorkshopMaterialsResponse {
   types: WorkshopMaterialType[];
   columns: WorkshopMaterialColumn[];
   activeColumn: { workshopId: number; shiftNumber: number | null } | null;
+  /** Смены без собственного материала, по цехам: { "1": [3] }.
+   * Такая смена работает материалом соседних смен и видит остатки всего цеха. */
+  materialFreeShifts?: Record<string, number[]>;
 }
 
 export const fetchWorkshopMaterials = async (workshopId?: number): Promise<WorkshopMaterialsResponse> => {

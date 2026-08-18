@@ -246,6 +246,29 @@ export interface MissedAccrual {
   dateTo: string | null;
 }
 
+/** Убрать строку предупреждения о неначислении. Если у сотрудника на этом этапе
+ * появятся НОВЫЕ незакрытые заказы, предупреждение вернётся само. */
+export const dismissMissedAccrual = (
+  item: { userId: number; stage: string; count: number },
+  actorId?: number,
+  actorName?: string,
+) =>
+  fetch(SALARY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'dismiss_missed_accrual',
+      userId: item.userId,
+      stage: item.stage,
+      count: item.count,
+      actorId,
+      actorName,
+    }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.json()).error || 'Не удалось скрыть');
+    return true;
+  });
+
 export const fetchMissedAccruals = async (): Promise<MissedAccrual[]> => {
   const res = await fetch(`${SALARY_URL}?missedAccruals=1`);
   const data = res.ok ? await res.json() : {};

@@ -77,19 +77,28 @@ def handler(event: dict, context) -> dict:
 
         workshop_condition = f"AND w.id = {int(workshop_id_filter)}" if workshop_id_filter else ""
         cur.execute(
-            f"SELECT w.id, w.name, w.shift_names FROM workshops w "
+            f"SELECT w.id, w.name, w.shift_names, COALESCE(w.material_free_shifts, '[]'::jsonb) "
+            f"FROM workshops w "
             f"WHERE w.is_active = true {workshop_condition} ORDER BY w.id"
         )
         workshop_rows = cur.fetchall()
 
+        # Смены без собственного материала: работают материалом соседних смен цеха
+        # (например, смена только из швей берёт тесьму у смен 1 и 2). Своей колонки
+        # в таблице им не нужно — она всегда была бы пустой и только путала.
+        material_free = {}
         columns = []
-        for wid, wname, shift_names in workshop_rows:
+        for wid, wname, shift_names, free_shifts in workshop_rows:
+            free = free_shifts if isinstance(free_shifts, list) else json.loads(free_shifts or '[]')
+            material_free[wid] = {int(x) for x in free}
             names = shift_names if isinstance(shift_names, list) else json.loads(shift_names or '[]')
             if not names:
                 # Защитный случай (в БД сейчас такого нет) — у цеха нет именованных смен.
                 columns.append({'workshopId': wid, 'workshopName': wname, 'shiftNumber': None, 'shiftLabel': wname})
             else:
                 for idx, sname in enumerate(names, start=1):
+                    if idx in material_free[wid]:
+                        continue
                     columns.append({
                         'workshopId': wid,
                         'workshopName': wname,
@@ -182,5 +191,8 @@ def handler(event: dict, context) -> dict:
             'types': result,
             'columns': columns,
             'activeColumn': active_column,
+            # Кому какие смены показывать целиком: сотрудник смены без своего
+            # материала видит остатки ВСЕХ смен своего цеха — он ими и работает.
+            'materialFreeShifts': {str(k): sorted(v) for k, v in material_free.items()},
         }),
     }

@@ -882,6 +882,7 @@ def handler(event: dict, context) -> dict:
             # видят всё. Без открытой смены список пустой.
             for_user_id = params.get('forUserId')
             session_shift = None
+            session_workshop = None
             if for_user_id:
                 cur.execute(
                     "SELECT ss.workshop_id, ss.shift_number, ss.role FROM shift_sessions ss "
@@ -902,6 +903,7 @@ def handler(event: dict, context) -> dict:
                     # тесьма лежит на другой смене этого же цеха) — показываем весь цех,
                     # а рулоны чужой смены помечаем, чтобы швея видела, что берёт чужое.
                     session_shift = sess[1]
+                    session_workshop = sess[0]
                 else:
                     session_shift = None
                     conditions.append("1 = 0")
@@ -938,7 +940,21 @@ def handler(event: dict, context) -> dict:
             # Своя смена в приоритете: если в цехе есть подходящие рулоны своей смены,
             # чужие не показываем — иначе в списке мешанина. Если своих нет (гость пришёл
             # в цех, где нужный материал лежит на другой смене) — открываем весь цех.
-            if for_user_id and session_shift is not None:
+            # Смена без собственного материала (в ней одни швеи) работает материалом
+            # соседних смен цеха — сужать выборку до её номера нельзя вообще, иначе
+            # список рулонов всегда пуст и тесьму не выбрать.
+            shift_has_no_material = False
+            if for_user_id and session_shift is not None and session_workshop:
+                cur.execute(
+                    "SELECT COALESCE(material_free_shifts, '[]'::jsonb) FROM workshops WHERE id = %s",
+                    (int(session_workshop),),
+                )
+                mf_row = cur.fetchone()
+                if mf_row:
+                    mf = mf_row[0] if isinstance(mf_row[0], list) else json.loads(mf_row[0] or '[]')
+                    shift_has_no_material = int(session_shift) in {int(x) for x in mf}
+
+            if for_user_id and session_shift is not None and not shift_has_no_material:
                 own_conditions = conditions + [f"r.shift_number = {int(session_shift)}"]
                 cur.execute(
                     "SELECT COUNT(*) FROM rolls r "

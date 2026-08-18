@@ -30,6 +30,7 @@ const WorkshopMaterials = () => {
   const [columns, setColumns] = useState<WorkshopMaterialColumn[]>([]);
   const [activeColumn, setActiveColumn] = useState<{ workshopId: number; shiftNumber: number | null } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [materialFreeShifts, setMaterialFreeShifts] = useState<Record<string, number[]>>({});
 
   const load = () => {
     setLoading(true);
@@ -38,6 +39,7 @@ const WorkshopMaterials = () => {
         setTypes(materialsResp.types);
         setColumns(materialsResp.columns);
         setActiveColumn(materialsResp.activeColumn);
+        setMaterialFreeShifts(materialsResp.materialFreeShifts || {});
       })
       .finally(() => setLoading(false));
   };
@@ -59,11 +61,20 @@ const WorkshopMaterials = () => {
   const effectiveWorkshopId = user?.activeWorkshopId ?? user?.workshopId ?? null;
   const effectiveShiftNumber = user?.activeShiftNumber ?? user?.shiftNumber ?? null;
 
+  // Смена без собственного материала (например, третья — в ней одни швеи) работает
+  // тесьмой и тюлем соседних смен своего цеха. Показываем ей остатки ВСЕХ смен цеха:
+  // иначе она видела бы пустую таблицу и не знала, есть ли чем работать.
+  const myFreeShifts = materialFreeShifts[String(effectiveWorkshopId)] || [];
+  const isMaterialFreeShift =
+    effectiveShiftNumber !== null && myFreeShifts.includes(effectiveShiftNumber);
+
   const visibleColumns = isProduction
     ? columns.filter(
         (col) =>
           col.workshopId === effectiveWorkshopId &&
-          (col.shiftNumber === null || col.shiftNumber === effectiveShiftNumber)
+          (isMaterialFreeShift ||
+            col.shiftNumber === null ||
+            col.shiftNumber === effectiveShiftNumber)
       )
     : columns;
 
@@ -75,6 +86,12 @@ const WorkshopMaterials = () => {
           <p className="mt-1 text-sm text-muted-foreground">
             Остатки материалов в цехах по сменам (рулоны со статусом «в цехе»)
           </p>
+          {isMaterialFreeShift && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              У вашей смены нет своего материала — вы работаете материалом других смен
+              цеха, поэтому видите их остатки
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <span className="h-3 w-3 rounded-sm bg-red-100 ring-1 ring-red-300" />
