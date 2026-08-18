@@ -35,6 +35,8 @@ const GoodsWarehouse = () => {
           pickingPending={s.pickingPending}
           pickingFbo={s.pickingFbo}
           pickingFbs={s.pickingFbs}
+          stocktakeActive={s.stocktakeActive}
+          stocktakeLeft={s.stocktakeLeft}
           onPlace={() => s.setPlaceOpen(true)}
           onPickup={() => s.setPickupOpen(true)}
           onPlaceInspected={() => s.setPlaceInspectedOpen(true)}

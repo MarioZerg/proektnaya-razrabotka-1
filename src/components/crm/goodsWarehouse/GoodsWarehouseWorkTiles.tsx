@@ -13,6 +13,10 @@ interface GoodsWarehouseWorkTilesProps {
   /** Та же работа в разбивке по схемам: FBS клеится поштучно, FBO едет коробкой. */
   pickingFbo?: number;
   pickingFbs?: number;
+  /** Идёт ли пересчёт склада прямо сейчас. */
+  stocktakeActive?: boolean;
+  /** Сколько вещей ещё не сосчитано в текущем пересчёте. */
+  stocktakeLeft?: number;
   onPlace: () => void;
   onPickup: () => void;
   onPlaceInspected: () => void;
@@ -31,6 +35,8 @@ const GoodsWarehouseWorkTiles = ({
   pickingPending,
   pickingFbo = 0,
   pickingFbs = 0,
+  stocktakeActive = false,
+  stocktakeLeft = 0,
   onPlace,
   onPickup,
   onPlaceInspected,
@@ -62,7 +68,7 @@ const GoodsWarehouseWorkTiles = ({
         </span>
       </div>
 
-      <div className="grid items-end gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <WorkTile
           icon="Boxes"
           title="Разложить по полкам"
@@ -96,6 +102,22 @@ const GoodsWarehouseWorkTiles = ({
           stepLabel="Привёз с пункта выдачи"
           stepIcon="Truck"
           onStep={onPickup}
+        />
+        {/* Инвентаризация живёт здесь, а не в меню: пересчёт — работа на складе,
+            у стеллажей, и начинается он с этой же страницы. Пока пересчёт идёт,
+            плитка показывает, сколько вещей ещё не сосчитано, — чтобы работу не
+            бросили на середине. */}
+        <WorkTile
+          icon="ClipboardCheck"
+          title={stocktakeActive ? 'Продолжить инвентаризацию' : 'Инвентаризация'}
+          hint={
+            stocktakeActive
+              ? 'Пересчёт идёт — осталось сосчитать'
+              : 'Пересчитать товар по полкам'
+          }
+          count={stocktakeActive ? stocktakeLeft : 0}
+          zone="warehouse"
+          onClick={() => navigate('/crm/inventory/stocktakes')}
         />
         <WorkTile
           icon="Truck"

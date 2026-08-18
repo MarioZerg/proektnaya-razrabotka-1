@@ -243,7 +243,6 @@ const storekeeperNav: NavItem[] = [
       // «Товар к подбору» и инструкции убраны из меню: подбор открывается кнопкой
       // со склада товара, инструкции собраны в отдельном разделе «Инструкции».
       { label: 'Приём брака из цеха', path: '/crm/inventory/defect-receive' },
-      { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       // Аналитика (недостачи, возвраты, брак) убрана: это разбор движения товара и
       // решения по нему — работа руководителя, а не кладовщика. Его дело — принять
@@ -336,7 +335,6 @@ const adminNav: NavItem[] = [
       // «Товар к подбору» и инструкции убраны из меню: подбор открывается кнопкой
       // со склада товара, инструкции собраны в отдельном разделе «Инструкции».
       { label: 'Приём брака из цеха', path: '/crm/inventory/defect-receive' },
-      { label: 'Инвентаризации', path: '/crm/inventory/stocktakes' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
       { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
       { label: 'Анализ возвратов', path: '/crm/analytics/returns' },

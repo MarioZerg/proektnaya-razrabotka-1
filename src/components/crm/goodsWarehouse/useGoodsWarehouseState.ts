@@ -14,6 +14,7 @@ import {
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { fetchMarketplaceReturns } from '@/lib/marketplaceReturnsApi';
 import { fetchInspection } from '@/lib/goodsWarehouseApi';
+import { fetchActiveStocktake } from '@/lib/stocktakesApi';
 import { usePickingPending } from '@/hooks/usePickingPending';
 import { useTablePage } from '@/components/crm/finance/useTablePage';
 
@@ -54,6 +55,24 @@ export const useGoodsWarehouseState = () => {
 
   // Смена полки
   const [moveOpen, setMoveOpen] = useState(false);
+
+  // Инвентаризация: идёт ли пересчёт прямо сейчас и сколько вещей ещё не сосчитано.
+  // Плитка на складе показывает остаток работы, чтобы кладовщик не бросил пересчёт
+  // на середине и не искал его в меню.
+  const [stocktakeLeft, setStocktakeLeft] = useState(0);
+  const [stocktakeActive, setStocktakeActive] = useState(false);
+
+  const loadStocktake = () => {
+    fetchActiveStocktake()
+      .then((st) => {
+        setStocktakeActive(!!st);
+        setStocktakeLeft(st?.report ? st.report.missingCount : 0);
+      })
+      .catch(() => {
+        setStocktakeActive(false);
+        setStocktakeLeft(0);
+      });
+  };
 
   const load = () => {
     setLoading(true);
@@ -102,6 +121,7 @@ export const useGoodsWarehouseState = () => {
 
   useEffect(() => {
     loadInspectedReady();
+    loadStocktake();
   }, []);
 
   useEffect(() => {
@@ -322,6 +342,9 @@ export const useGoodsWarehouseState = () => {
     setAdminReceiveOpen,
     moveOpen,
     setMoveOpen,
+    stocktakeLeft,
+    stocktakeActive,
+    loadStocktake,
     load,
     loadInspectedReady,
     uncheckedReturns,
