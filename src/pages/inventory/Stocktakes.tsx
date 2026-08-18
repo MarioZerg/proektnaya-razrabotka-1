@@ -24,6 +24,7 @@ import {
   closeStocktake,
   approveStocktake,
   rejectStocktake,
+  cancelStocktake,
   STOCKTAKE_STATUS_LABEL,
   type Stocktake,
 } from '@/lib/stocktakesApi';
@@ -146,6 +147,26 @@ const Stocktakes = () => {
     }
   };
 
+  const handleCancel = async (id: number) => {
+    setSaving(true);
+    try {
+      await cancelStocktake(id, undefined, user?.id, user?.name);
+      toast({
+        title: 'Инвентаризация отменена',
+        description: 'Товар не затронут — ничего не списано',
+      });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось отменить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleReject = async () => {
     if (!pending || !rejectReason.trim()) return;
     setSaving(true);
@@ -219,6 +240,15 @@ const Stocktakes = () => {
                     После закрытия сканировать будет нельзя. Ненайденные вещи спишет
                     администратор
                   </p>
+                  <Button
+                    variant="ghost"
+                    className="w-full text-muted-foreground"
+                    onClick={() => handleCancel(active.id)}
+                    disabled={saving}
+                  >
+                    <Icon name="Trash2" size={15} className="mr-1.5" />
+                    Отменить инвентаризацию — открыл по ошибке
+                  </Button>
                 </div>
               </div>
             )}
@@ -295,6 +325,15 @@ const Stocktakes = () => {
                       >
                         <Icon name="Undo2" size={16} className="mr-1.5" />
                         Вернуть кладовщику на пересчёт
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="w-full text-muted-foreground"
+                        onClick={() => handleCancel(pending.id)}
+                        disabled={saving}
+                      >
+                        <Icon name="Trash2" size={15} className="mr-1.5" />
+                        Отменить инвентаризацию — ничего не списывать
                       </Button>
                     </div>
                   </div>

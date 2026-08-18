@@ -482,6 +482,42 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return _resp(200, {'success': True, 'disposed': disposed, 'moved': moved})
 
+        if action == 'cancel':
+            # Отмена пересчёта. Нужна, когда инвентаризацию открыли по ошибке или
+            # начали не вовремя: без неё запись висит активной и блокирует запуск
+            # нового пересчёта, а удалить её нельзя — история операций со складом
+            # не должна исчезать бесследно.
+            #
+            # Товара отмена не касается: ничего не списывается и не перекладывается,
+            # просто отменённый пересчёт выходит из работы.
+            stocktake_id = body_data.get('stocktakeId')
+            if not stocktake_id:
+                return _resp(400, {'error': 'Укажите инвентаризацию'})
+            cur.execute("SELECT status, started_by FROM stocktakes WHERE id = %s", (int(stocktake_id),))
+            st_row = cur.fetchone()
+            if not st_row:
+                return _resp(404, {'error': 'Инвентаризация не найдена'})
+            if st_row[0] == 'approved':
+                return _resp(409, {'error': 'Подтверждённую инвентаризацию отменить нельзя'})
+            if st_row[0] == 'cancelled':
+                return _resp(409, {'error': 'Инвентаризация уже отменена'})
+            # Свой незакрытый пересчёт кладовщик отменяет сам. Уже отправленный
+            # админу — только админ: иначе можно спрятать неудобный результат.
+            is_owner = st_row[1] and actor_id and int(st_row[1]) == int(actor_id)
+            if actor_role != 'admin' and not (is_owner and st_row[0] in ('in_progress', 'rejected')):
+                return _resp(403, {'error': 'Отменить может администратор или тот, кто начал пересчёт'})
+
+            cur.execute(
+                "UPDATE stocktakes SET status = 'cancelled', reject_reason = %s WHERE id = %s",
+                ((body_data.get('reason') or '').strip() or 'Отменена', int(stocktake_id)),
+            )
+            log_action(
+                cur, actor_id, actor_name, 'stocktake_cancel', stocktake_id,
+                'Инвентаризация отменена (товар не затронут)',
+            )
+            conn.commit()
+            return _resp(200, {'success': True})
+
         if action == 'reject':
             if actor_role != 'admin':
                 return _resp(403, {'error': 'Вернуть на пересчёт может только администратор'})

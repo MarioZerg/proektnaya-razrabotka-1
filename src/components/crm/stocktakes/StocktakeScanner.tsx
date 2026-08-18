@@ -111,7 +111,11 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
     <div
       className="space-y-4 rounded-md border border-border p-4"
       onClick={(e) => {
-        if (!(e.target as HTMLElement).closest('input, button, a, [role="combobox"]')) {
+        if (
+          !(e.target as HTMLElement).closest(
+            'input, button, a, textarea, [role="combobox"]',
+          )
+        ) {
           focusInput();
         }
       }}
@@ -140,7 +144,15 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
             value={barcode}
             onChange={(e) => setBarcode(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-            onBlur={focusInput}
+            onBlur={(e) => {
+              // Возвращаем фокус в поле, только если человек НЕ ушёл на другую
+              // кнопку. Раньше фокус отбирался всегда, и нажать «Закрыть
+              // инвентаризацию» было невозможно: поле перехватывало фокус
+              // на середине клика, и кнопка не срабатывала.
+              const next = e.relatedTarget as HTMLElement | null;
+              if (next?.closest('button, a, input, textarea, [role="combobox"]')) return;
+              focusInput();
+            }}
             placeholder="Наведите сканер на стикер GW"
             className="h-11 font-mono-tech"
             autoComplete="off"

@@ -139,6 +139,15 @@ export const approveStocktake = (
     moved: number;
   }>;
 
+/** Отменить пересчёт: открыли по ошибке или начали не вовремя.
+ * Товар не затрагивается — ничего не списывается и не перекладывается. */
+export const cancelStocktake = (
+  stocktakeId: number,
+  reason?: string,
+  actorId?: number,
+  actorName?: string,
+) => postAction({ action: 'cancel', stocktakeId, reason, actorId, actorName });
+
 export const rejectStocktake = (
   stocktakeId: number,
   reason: string,
