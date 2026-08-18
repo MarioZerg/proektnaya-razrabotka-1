@@ -47,7 +47,9 @@ const fmtDate = (s: string | null) =>
 const CancellationAnalytics = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-  const isAdmin = user?.role === 'admin';
+  // Отчёт открыт администратору и менеджеру: менеджер работает с площадками и
+  // разбирает отказы покупателей, для него это рабочий инструмент.
+  const canView = user?.role === 'admin' || user?.role === 'manager';
 
   const [days, setDays] = useState(30);
   const [minItems, setMinItems] = useState(2);
@@ -57,7 +59,7 @@ const CancellationAnalytics = () => {
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!canView) return;
     setLoading(true);
     fetchCancellationReport(days, minItems, onlyNever)
       .then(setData)
@@ -69,7 +71,7 @@ const CancellationAnalytics = () => {
         }),
       )
       .finally(() => setLoading(false));
-  }, [days, minItems, onlyNever, isAdmin, toast]);
+  }, [days, minItems, onlyNever, canView, toast]);
 
   const exportExcel = async () => {
     setExporting(true);
@@ -87,10 +89,12 @@ const CancellationAnalytics = () => {
     }
   };
 
-  if (!isAdmin) {
+  if (!canView) {
     return (
       <CrmLayout>
-        <p className="text-muted-foreground">Раздел доступен только администратору.</p>
+        <p className="text-muted-foreground">
+          Раздел доступен администратору и менеджеру.
+        </p>
       </CrmLayout>
     );
   }

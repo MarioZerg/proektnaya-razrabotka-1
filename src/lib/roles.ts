@@ -303,6 +303,9 @@ const managerNav: NavItem[] = [
       { label: 'Заказы с маркетплейса', path: '/crm/marketplace/orders' },
       { label: 'Товары для пошива', path: '/crm/marketplace/sewing-items' },
       { label: 'Отзывы', path: '/crm/marketplace/reviews' },
+      // Отказы покупателей — работа менеджера: он оспаривает отмены на площадке
+      // и видит, какой товар возвращают чаще других.
+      { label: 'Анализ отмен', path: '/crm/marketplace/cancellations' },
     ],
   },
   { label: 'Договоры', icon: 'FileSignature', path: '/crm/contracts' },

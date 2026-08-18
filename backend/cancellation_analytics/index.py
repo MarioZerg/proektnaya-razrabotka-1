@@ -401,10 +401,12 @@ def handler(event: dict, context) -> dict:
     days = max(1, min(days, 365))
     min_items = int(params.get('minItems') or 2)
 
-    # Отчёт видит только администратор: данные уходят во внешние обращения.
+    # Отчёт видят администратор и менеджер. Менеджер ведёт работу с площадками и
+    # разбирает отказы покупателей — без этих данных он не может ни оспорить
+    # отмену, ни понять, какой товар возвращают чаще других.
     role = (params.get('actorRole') or '').strip()
-    if role and role != 'admin':
-        return _resp(403, {'error': 'Доступ только для администратора'})
+    if role and role not in ('admin', 'manager'):
+        return _resp(403, {'error': 'Доступ только для администратора и менеджера'})
 
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
     try:
