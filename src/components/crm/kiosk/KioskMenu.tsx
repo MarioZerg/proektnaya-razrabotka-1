@@ -123,22 +123,22 @@ const KioskMenu = ({ onSelect, role, repackCount = 0 }: KioskMenuProps) => {
   // Нажатие подсвечиваем уменьшением (active:scale): в перчатке не всегда понятно,
   // сработало касание или нет, и сотрудник жал плитку по несколько раз.
   return (
-    <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
+    <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))]">
       {visibleTiles.map((t) => (
         <button
           key={t.screen}
           onClick={() => onSelect(t.screen)}
-          className={`relative flex min-h-[9rem] flex-col items-center justify-center gap-3 rounded-xl p-6 text-center transition active:scale-95 ${t.className}`}
+          className={`relative flex min-h-[10rem] flex-col items-center justify-center gap-3 rounded-xl p-6 text-center transition active:scale-95 ${t.className}`}
         >
           {/* Счётчик работы прямо на плитке. Показываем только когда есть что делать:
               нулевой бейдж на каждой плитке превращается в шум. */}
           {t.screen === 'repack' && repackCount > 0 && (
-            <span className="absolute right-3 top-3 min-w-[2.75rem] rounded-full bg-white px-3 py-1 text-2xl font-bold text-violet-700 shadow">
+            <span className="absolute right-3 top-3 min-w-[2.75rem] rounded-full bg-white px-3 py-1 text-3xl font-bold text-violet-700 shadow">
               {repackCount}
             </span>
           )}
-          <Icon name={t.icon} size={56} />
-          <span className="text-2xl font-bold leading-tight">{t.label}</span>
+          <Icon name={t.icon} size={64} />
+          <span className="text-3xl font-bold leading-tight">{t.label}</span>
         </button>
       ))}
     </div>

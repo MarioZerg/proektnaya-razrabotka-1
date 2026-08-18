@@ -70,7 +70,11 @@ const KioskShiftGate = ({
     fetchOpenShiftOptions()
       .then((list) => {
         setWorkshops(list);
-        // Цех терминала — самый частый вариант, подставляем его сразу.
+        // Цех НЕ выбирается: терминал стоит в конкретном цехе, и работать с него
+        // можно только в нём. Раньше на экран вываливался список всех цехов, и
+        // сотрудницы промахивались — открывали смену в чужом цехе, а потом не
+        // видели ни своего кроя, ни своих рулонов. Пришёл из другого цеха —
+        // просто открывает смену здесь, как обычно.
         const fallback = Number(workshopId) || list[0]?.id || null;
         const current = list.find((w) => w.id === fallback) || list[0];
         setSelectedWorkshop(current?.id ?? null);
@@ -152,32 +156,14 @@ const KioskShiftGate = ({
           </>
         ) : (
           <>
-            {workshops.length > 1 && (
-              <div className="space-y-2">
-                <p className="text-center text-base text-muted-foreground">Цех</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {workshops.map((w) => (
-                    <Button
-                      key={w.id}
-                      variant={selectedWorkshop === w.id ? 'default' : 'outline'}
-                      className="h-16 text-lg"
-                      onClick={() => {
-                        setSelectedWorkshop(w.id);
-                        setSelectedShift(w.shifts[0] ?? null);
-                      }}
-                    >
-                      {w.name}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {currentWorkshop && (
+          <div className="rounded-lg border border-border bg-muted/40 p-4 text-center">
+            <p className="text-base text-muted-foreground">Цех</p>
+            <p className="text-2xl font-bold">{currentWorkshop.name}</p>
+          </div>
+        )}
 
-            {/* Кем работаю сегодня. Должность определяет материал, который терминал
-                покажет в рулонах и в браке: закройщику — ткань, швее — тесьму.
-                Ошибиться здесь дороже, чем в выборе цеха, поэтому кнопки крупные
-                и с пояснением, а выбор стоит ПЕРЕД сменой. */}
-            {showRoleChoice && (
+        {showRoleChoice && (
               <div className="space-y-2">
                 <p className="text-center text-base text-muted-foreground">
                   Кем работаете сегодня?
