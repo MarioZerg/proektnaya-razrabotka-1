@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,6 +40,7 @@ import { formatDateTime } from '@/lib/dateUtils';
  * в способ тихо убрать со склада пропавшую вещь.
  */
 const Stocktakes = () => {
+  const navigate = useNavigate();
   const { toast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -189,6 +191,18 @@ const Stocktakes = () => {
   return (
     <CrmLayout>
       <div className="space-y-6">
+        {/* Возврат на склад товара: инвентаризация открывается плашкой оттуда, и
+            уйти обратно было нечем — в меню строки нет. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate('/crm/inventory/goods-warehouse')}
+          className="-ml-2 -mb-2"
+        >
+          <Icon name="ChevronLeft" size={16} className="mr-1" />
+          К складу товара
+        </Button>
+
         <div>
           <h1 className="text-xl font-bold">Инвентаризация склада</h1>
           <p className="mt-1 text-sm text-muted-foreground">
