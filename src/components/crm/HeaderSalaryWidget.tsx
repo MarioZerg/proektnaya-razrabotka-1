@@ -59,7 +59,7 @@ const HeaderSalaryWidget = () => {
   }, [showVariki, user?.id]);
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex shrink-0 items-center gap-2">
       {locked && !loading ? (
         // Замочек до конца испытательных двух недель. Открывается сам — сотруднику
         // ничего делать не нужно, поэтому показываем, сколько дней осталось.
@@ -72,7 +72,7 @@ const HeaderSalaryWidget = () => {
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
               Зарплата к выплате
             </div>
-            <div className="text-xs font-semibold text-muted-foreground">
+            <div className="whitespace-nowrap text-xs font-semibold text-muted-foreground">
               Откроется через {daysLeft} {dayWord(daysLeft)}
             </div>
           </div>
@@ -89,7 +89,11 @@ const HeaderSalaryWidget = () => {
             {loading ? (
               <Icon name="Loader2" size={14} className="animate-spin text-muted-foreground" />
             ) : (
-              <div className="text-sm font-bold">{formatMoney(salary || 0)} ₽</div>
+              /* whitespace-nowrap + неразрывный пробел: без них «12 345,67 ₽»
+                 ломалось по пробелу и знак рубля уезжал на вторую строку. */
+              <div className="whitespace-nowrap text-sm font-bold">
+                {formatMoney(salary || 0)}&nbsp;₽
+              </div>
             )}
           </div>
         </div>
@@ -106,12 +110,12 @@ const HeaderSalaryWidget = () => {
           <div className="leading-tight">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Варики</div>
             {canPlay ? (
-              <div className="flex items-center gap-1 text-xs font-bold text-amber-600">
+              <div className="flex items-center gap-1 whitespace-nowrap text-xs font-bold text-amber-600">
                 <Icon name="PartyPopper" size={12} />
                 Пора в лототрон!
               </div>
             ) : (
-              <div className="text-sm font-bold">{variki ?? 0} шт</div>
+              <div className="whitespace-nowrap text-sm font-bold">{variki ?? 0}&nbsp;шт</div>
             )}
           </div>
         </div>

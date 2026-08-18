@@ -115,6 +115,17 @@ export default {
 					from: { transform: 'rotate(0deg)' },
 					to: { transform: 'rotate(360deg)' }
 				},
+				// Пузырьки гидромассажа: всплывают со дна карточки и растворяются.
+				'bubble': {
+					'0%': { transform: 'translateY(0) scale(0.6)', opacity: '0' },
+					'15%': { opacity: '0.75' },
+					'100%': { transform: 'translateY(-120px) scale(1.15)', opacity: '0' }
+				},
+				// Волна на дне карточки — вода мягко покачивается.
+				'wave': {
+					'0%, 100%': { transform: 'translateX(-8%) scaleY(1)' },
+					'50%': { transform: 'translateX(8%) scaleY(1.18)' }
+				},
 				// Мягкое «дыхание» ореола, чтобы свечение не выглядело механическим.
 				'logo-glow': {
 					'0%, 100%': { opacity: '0.45' },
@@ -130,7 +141,9 @@ export default {
 				'logo-zoom': 'logo-zoom 1.1s cubic-bezier(0.22, 1, 0.36, 1) both',
 				'shimmer': 'shimmer 7s ease-in-out infinite',
 				'logo-spin': 'logo-spin 3.5s linear infinite',
-				'logo-glow': 'logo-glow 3.5s ease-in-out infinite'
+				'logo-glow': 'logo-glow 3.5s ease-in-out infinite',
+				'bubble': 'bubble 4.5s ease-in infinite',
+				'wave': 'wave 5s ease-in-out infinite'
 			}
 		}
 	},

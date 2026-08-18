@@ -2500,8 +2500,15 @@ def handler(event: dict, context) -> dict:
                         (int(supply_id),),
                     )
                     goods_ids = [r[0] for r in cur.fetchall()]
-                    for gid in goods_ids:
-                        cur.execute(f"UPDATE goods_warehouse SET status = 'shipped', shipped_at = now() WHERE id = {gid}")
+                    # Одним запросом на всю поставку, а не по вещи за раз: в крупной
+                    # поставке сотня позиций давала сотню обращений к базе, и отгрузка
+                    # упиралась в таймаут функции.
+                    if goods_ids:
+                        ids_csv = ','.join(str(int(g)) for g in goods_ids)
+                        cur.execute(
+                            f"UPDATE goods_warehouse SET status = 'shipped', "
+                            f"shipped_at = now() WHERE id IN ({ids_csv})"
+                        )
 
                     # Сами ЗАКАЗЫ тоже закрываем: вещь уехала к покупателю, ждать её
                     # больше нечего. Раньше отгружалась только вещь на складе, а заказ
@@ -2636,8 +2643,13 @@ def handler(event: dict, context) -> dict:
                     (int(supply_id),),
                 )
                 goods_ids = [r[0] for r in cur.fetchall()]
-                for gid in goods_ids:
-                    cur.execute(f"UPDATE goods_warehouse SET status = 'shipped', shipped_at = COALESCE(shipped_at, now()) WHERE id = {gid}")
+                # Одним запросом — см. пояснение выше.
+                if goods_ids:
+                    ids_csv = ','.join(str(int(g)) for g in goods_ids)
+                    cur.execute(
+                        f"UPDATE goods_warehouse SET status = 'shipped', "
+                        f"shipped_at = COALESCE(shipped_at, now()) WHERE id IN ({ids_csv})"
+                    )
 
                 # Заказы тоже закрываем — вещь уехала, производству она больше не нужна.
                 if goods_ids:

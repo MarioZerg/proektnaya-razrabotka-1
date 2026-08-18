@@ -1156,8 +1156,11 @@ def handler(event: dict, context) -> dict:
                     # заказы) — сдвигаемся дальше, пока не найдём свободный.
                     while True:
                         candidate = f"00000-{seq:02d}"
-                        cand_esc = candidate.replace("'", "''")
-                        cur.execute(f"SELECT 1 FROM orders WHERE order_number = '{cand_esc}'")
+                        # Значение подставляет драйвер: номер заказа приходит от
+                        # маркетплейса, и ручное экранирование кавычек — лишний риск.
+                        cur.execute(
+                            "SELECT 1 FROM orders WHERE order_number = %s", (candidate,)
+                        )
                         if not cur.fetchone():
                             break
                         seq += 1

@@ -387,18 +387,18 @@ def handler(event: dict, context) -> dict:
                 if not login:
                     login = f'user{secrets.token_hex(4)}'
 
-                login_esc = login.replace("'", "''")
-                cur.execute(f"SELECT id FROM users WHERE login = '{login_esc}'")
+                # Значения подставляет драйвер (%s), а не мы сами через кавычки:
+                # ручное экранирование ломалось на апострофе в адресе или имени
+                # (О'Брайен) — запрос падал с синтаксической ошибкой.
+                cur.execute("SELECT id FROM users WHERE login = %s", (login,))
                 suffix = 1
                 base_login = login
                 while cur.fetchone():
                     suffix += 1
                     login = f'{base_login}{suffix}'
-                    login_esc = login.replace("'", "''")
-                    cur.execute(f"SELECT id FROM users WHERE login = '{login_esc}'")
+                    cur.execute("SELECT id FROM users WHERE login = %s", (login,))
 
-                email_esc = email.replace("'", "''")
-                cur.execute(f"SELECT id FROM users WHERE email = '{email_esc}'")
+                cur.execute("SELECT id FROM users WHERE email = %s", (email,))
                 if cur.fetchone():
                     return {
                         'statusCode': 409,

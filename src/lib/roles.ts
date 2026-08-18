@@ -328,6 +328,9 @@ const managerNav: NavItem[] = [
 
 const adminNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
+  // Магазин вариков пока только у администратора: витрину обкатываем на нём,
+  // сотрудникам откроем позже — им нужен готовый набор подарков, а не пустая полка.
+  { label: 'Магазин вариков', icon: 'Gift', path: '/crm/variki/shop' },
   {
     label: 'Инвентаризация',
     icon: 'Boxes',

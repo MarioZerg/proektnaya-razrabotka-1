@@ -47,8 +47,18 @@ const EmployeeCard = ({
       </Avatar>
 
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate font-semibold">{emp.fullName}</span>
+        {/* Имя занимает всю строку целиком. Раньше оно делило строку с бейджем
+            «Отключён», сжималось им и обрывалось многоточием уже на «Привезенцева
+            Елена Ал…» — притом что справа оставалось пустое место. */}
+        <p className="font-semibold leading-tight break-words">{emp.fullName}</p>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+          <span>{roleLabels[emp.role] || 'Без должности'}</span>
+          {emp.workshop && <span>· {emp.workshop}</span>}
+          {/* Логин — служебная строка, нужная редко. На узком экране прячем: из-за
+              него данные переносились на третью строку и карточка «разбегалась». */}
+          <span className="hidden sm:inline">
+            · логин <span className="font-mono-tech">{emp.login}</span>
+          </span>
           {/* Отключённая учётная запись: человек уволен или ещё не утверждён —
               администратор должен видеть это без открытия карточки. */}
           {emp.isActive === false && (
@@ -56,13 +66,6 @@ const EmployeeCard = ({
               Отключён
             </Badge>
           )}
-        </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-          <span>{roleLabels[emp.role] || 'Без должности'}</span>
-          {emp.workshop && <span>· {emp.workshop}</span>}
-          <span>
-            · логин <span className="font-mono-tech">{emp.login}</span>
-          </span>
         </div>
       </div>
     </button>

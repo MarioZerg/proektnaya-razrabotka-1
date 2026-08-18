@@ -21,6 +21,7 @@ import {
 import { fetchShifts, type ShiftListItem } from '@/lib/shiftsApi';
 import DashboardWidgetsGrid from '@/components/crm/dashboard/DashboardWidgetsGrid';
 import AdminNotifications from '@/components/crm/dashboard/AdminNotifications';
+import VarikiPurchasesCard from '@/components/crm/variki/VarikiPurchasesCard';
 import WorkingTodayCard from '@/components/crm/dashboard/WorkingTodayCard';
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
@@ -381,6 +382,9 @@ const CrmDashboard = () => {
       {/* Решения склада, которые стоят денег, — сразу перед виджетами: админ видит их
           первыми, ещё до сводки по цеху. */}
       {user?.role === 'admin' && <AdminNotifications />}
+      {/* Покупки за варики: сотрудник заплатил и ждёт купон — заявка не должна
+          потеряться, поэтому висит на панели, пока админ не прикрепит PDF. */}
+      {user?.role === 'admin' && <VarikiPurchasesCard />}
 
       {/* Бонусная программа: швея видит СВОЙ прогресс к премии, руководство — всех.
           Остальным ролям карточка не нужна: программа только для швей. */}
