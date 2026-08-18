@@ -1208,6 +1208,61 @@ def handler(event: dict, context) -> dict:
                     if actor_role != 'admin':
                         return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Менять статус заказа может только администратор'})}
 
+                    # ЗАЩИТА КОНВЕЙЕРА. Даже администратор не может «телепортировать»
+                    # заказ через этапы: порядок Раскроено → В работе → Стикеровка →
+                    # Готовые обязателен для всех. Иначе вещь числится закрытой, а крой
+                    # висит в цехе — именно так терялся крой, который «есть по факту».
+                    cur.execute(
+                        "SELECT sewing_status FROM orders WHERE id = %s", (int(item_id),)
+                    )
+                    cs_row = cur.fetchone()
+                    if not cs_row:
+                        return {'statusCode': 404, 'headers': headers,
+                                'body': json.dumps({'error': 'Заказ не найден'})}
+                    current_sewing = cs_row[0]
+                    target_sewing = body_data['sewingStatus']
+
+                    # В «Готовые» — только со «Стикеровки». Ни из очереди, ни из работы.
+                    if target_sewing == 'Готовые' and current_sewing != 'Стикеровка':
+                        return {
+                            'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Заказ в статусе «{current_sewing}» нельзя перевести в «Готовые». '
+                                         f'Закрыть заказ можно только со стикеровки',
+                            }, ensure_ascii=False),
+                        }
+
+                    # В «Стикеровку» — только из «В работе»: этап пошива не пропускаем.
+                    if target_sewing == 'Стикеровка' and current_sewing != 'В работе':
+                        return {
+                            'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Заказ в статусе «{current_sewing}» нельзя отправить на стикеровку. '
+                                         f'Сначала швея должна взять его в работу',
+                            }, ensure_ascii=False),
+                        }
+
+                    # В «Раскроено» нельзя «скинуть» заказ просто так: без реального
+                    # расхода ткани в цехе не появится физического кроя, и швея будет
+                    # искать вещь, которой не существует. Ткань спишется ниже по FIFO —
+                    # но только если она есть на складе. Здесь проверяем, что списывать
+                    # вообще есть из чего: у заказа заполнены материал и размер.
+                    if target_sewing == 'Раскроено' and current_sewing != 'Раскроено':
+                        cur.execute(
+                            "SELECT material, width, height FROM orders WHERE id = %s",
+                            (int(item_id),),
+                        )
+                        mwh_row = cur.fetchone()
+                        if not mwh_row or not all(mwh_row):
+                            return {
+                                'statusCode': 409, 'headers': headers,
+                                'body': json.dumps({
+                                    'error': 'Нельзя перевести в «Раскроено»: у заказа не указаны '
+                                             'материал и размер — списать ткань не с чего. '
+                                             'Крой оформляет закройщик на терминале, указывая рулон',
+                                }, ensure_ascii=False),
+                            }
+
                 if 'orderNumber' in body_data:
                     new_number = str(body_data['orderNumber']).strip()
                     new_number_esc = new_number.replace("'", "''")
@@ -2141,15 +2196,26 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': 'Заказ уже отправлен на стикеровку'}),
                     }
-                # Отправить на стикеровку можно только заказ, который швея сейчас шьёт.
-                # Иначе на уже готовом заказе повторно списалась бы тесьма и начислилась
-                # зарплата, а заказ откатился бы из «Готовых» назад на стикеровку.
-                if current_status not in ('Раскроено', 'В работе'):
+                # На стикеровку — ТОЛЬКО из «В работе», то есть заказ, который швея взяла
+                # кнопкой «Взять заказ» из очереди «Раскроено».
+                #
+                # Раньше сюда пускали и статус «Раскроено»: заказ можно было сдать на
+                # стикеровку, минуя швею. Крой при этом физически оставался висеть на
+                # вешалке, а по системе вещь считалась отшитой — и пропадала из очереди
+                # навсегда. Теперь этап пошива обязателен: пропустить его нельзя.
+                if current_status != 'В работе':
+                    stage_hint = {
+                        'Новый': 'заказ ещё не раскроен',
+                        'На раскрое': 'заказ на раскрое у закройщика',
+                        'Раскроено': 'сначала возьмите заказ в работу кнопкой «Взять заказ»',
+                        'Стикеровка': 'заказ уже на стикеровке',
+                        'Готовые': 'заказ уже закрыт',
+                    }.get(current_status, f'заказ в статусе «{current_status}»')
                     return {
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps(
-                            {'error': f'Заказ в статусе «{current_status}» — на стикеровку отправляют только из работы'},
+                            {'error': f'На стикеровку нельзя: {stage_hint}'},
                             ensure_ascii=False,
                         ),
                     }
