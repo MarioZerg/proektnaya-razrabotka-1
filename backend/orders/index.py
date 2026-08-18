@@ -436,7 +436,9 @@ def handler(event: dict, context) -> dict:
                     "o.marketplace_item_id, COALESCE(o.product_ozon_sku, mi.ozon_sku), "
                     "u.last_hanger_number, "
                     "o.group_key, o.group_size, o.group_position, "
-                    "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number), " 
+                    # Название вешалки. Запятой после подзапроса быть не должно —
+                    # это последнее поле перед FROM.
+                    "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number) "
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
                     "LEFT JOIN workshops w ON w.id = o.workshop_id "
