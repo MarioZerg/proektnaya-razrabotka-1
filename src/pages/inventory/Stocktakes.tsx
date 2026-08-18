@@ -42,6 +42,9 @@ const Stocktakes = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const isStorekeeper = user?.role === 'storekeeper' || user?.role === 'senior_storekeeper';
+  // Считать склад может кладовщик, а также админ: иначе вкладка выглядит для него
+  // пустой страницей — ни начать пересчёт, ни досчитать за отсутствующего кладовщика.
+  const canCount = isStorekeeper || isAdmin;
 
   const [active, setActive] = useState<Stocktake | null>(null);
   const [history, setHistory] = useState<Stocktake[]>([]);
@@ -181,7 +184,7 @@ const Stocktakes = () => {
         ) : (
           <>
             {/* ИДЁТ ПЕРЕСЧЁТ — рабочий экран кладовщика. */}
-            {active && isStorekeeper && (
+            {active && canCount && (
               <div className="space-y-4 rounded-lg border border-primary/40 bg-primary/5 p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge>Инвентаризация №{active.id}</Badge>
@@ -220,7 +223,7 @@ const Stocktakes = () => {
               </div>
             )}
 
-            {!active && isStorekeeper && (
+            {!active && canCount && (
               <div className="rounded-md border border-dashed border-border p-6 text-center">
                 <Icon name="ClipboardCheck" size={36} className="mx-auto text-muted-foreground" />
                 <p className="mt-2 font-medium">Пересчёт не идёт</p>
@@ -254,6 +257,16 @@ const Stocktakes = () => {
                 )}
 
                 {pending.report && <StocktakeReportView report={pending.report} />}
+
+                {/* Считал и подтверждает один человек — двойного контроля нет.
+                    Прямо не запрещаем (админ может доcчитывать за кладовщика), но
+                    показываем это явно: списание товара должен видеть второй глаз. */}
+                {isAdmin && pending.startedByName === user?.name && (
+                  <div className="rounded-md border border-amber-400 bg-amber-100 p-3 text-sm text-amber-900">
+                    Эту инвентаризацию считали вы сами — подтверждая её, вы списываете
+                    товар без второй проверки
+                  </div>
+                )}
 
                 {isAdmin ? (
                   <div className="space-y-3 border-t border-amber-200 pt-3">

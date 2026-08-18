@@ -16,6 +16,11 @@ HEADERS = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json
 # ответственности и их доступ к полкам.
 STOREKEEPER_ROLES = ('storekeeper', 'senior_storekeeper')
 
+# Кто может вести пересчёт руками. Считают кладовщики, но админ тоже допущен:
+# без этого он не может ни проверить механизм, ни досчитать склад, когда
+# кладовщик заболел, — вкладка для него выглядела бы пустой и мёртвой.
+COUNTING_ROLES = STOREKEEPER_ROLES + ('admin',)
+
 # Вещи, которые ОБЯЗАНЫ лежать на полке и потому участвуют в пересчёте.
 # Всё остальное (уехало в поставку, списано, у покупателя) физически на складе
 # отсутствует — требовать его скан значило бы плодить ложные недостачи.
@@ -245,8 +250,8 @@ def handler(event: dict, context) -> dict:
         actor_role = get_role(cur, actor_id)
 
         if action == 'start':
-            if actor_role not in STOREKEEPER_ROLES:
-                return _resp(403, {'error': 'Инвентаризацию проводит кладовщик'})
+            if actor_role not in COUNTING_ROLES:
+                return _resp(403, {'error': 'Инвентаризацию проводит кладовщик или администратор'})
             # Две параллельные инвентаризации привели бы к двойному пересчёту
             # одних и тех же полок и спору, чей результат верный.
             cur.execute(
@@ -270,8 +275,8 @@ def handler(event: dict, context) -> dict:
             return _resp(200, {'id': new_id})
 
         if action == 'scan':
-            if actor_role not in STOREKEEPER_ROLES:
-                return _resp(403, {'error': 'Сканировать может только кладовщик'})
+            if actor_role not in COUNTING_ROLES:
+                return _resp(403, {'error': 'Сканировать может кладовщик или администратор'})
             stocktake_id = body_data.get('stocktakeId')
             barcode = (body_data.get('barcode') or '').strip().upper()
             # Полка, у которой кладовщик стоит СЕЙЧАС. Без неё нельзя понять, что
@@ -350,8 +355,8 @@ def handler(event: dict, context) -> dict:
             })
 
         if action == 'undo_scan':
-            if actor_role not in STOREKEEPER_ROLES:
-                return _resp(403, {'error': 'Только кладовщик'})
+            if actor_role not in COUNTING_ROLES:
+                return _resp(403, {'error': 'Только кладовщик или администратор'})
             stocktake_id = body_data.get('stocktakeId')
             barcode = (body_data.get('barcode') or '').strip().upper()
             if not stocktake_id or not barcode:
@@ -364,8 +369,8 @@ def handler(event: dict, context) -> dict:
             return _resp(200, {'success': True})
 
         if action == 'close':
-            if actor_role not in STOREKEEPER_ROLES:
-                return _resp(403, {'error': 'Закрывает инвентаризацию кладовщик'})
+            if actor_role not in COUNTING_ROLES:
+                return _resp(403, {'error': 'Закрывает инвентаризацию кладовщик или администратор'})
             stocktake_id = body_data.get('stocktakeId')
             if not stocktake_id:
                 return _resp(400, {'error': 'Укажите инвентаризацию'})
