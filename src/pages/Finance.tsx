@@ -51,6 +51,11 @@ const Finance = () => {
   const [filteredTotal, setFilteredTotal] = useState(0);
   const [totalToAccrue, setTotalToAccrue] = useState(0);
   const [totalDebts, setTotalDebts] = useState(0);
+  // Сумма всех удержаний: показываем её отдельно от «долгов», иначе штраф внутри
+  // плюсового баланса нигде не виден.
+  const [totalPenalties, setTotalPenalties] = useState(0);
+  const [penaltiesCount, setPenaltiesCount] = useState(0);
+  const [penaltiesUsers, setPenaltiesUsers] = useState(0);
   const [period1Total, setPeriod1Total] = useState(0);
   const [period2Total, setPeriod2Total] = useState(0);
   const [operationsLoading, setOperationsLoading] = useState(true);
@@ -148,6 +153,9 @@ const Finance = () => {
         setFilteredTotal(data.filteredTotal);
         setTotalToAccrue(data.totalToAccrue);
         setTotalDebts(data.totalDebts);
+        setTotalPenalties(data.totalPenalties);
+        setPenaltiesCount(data.penaltiesCount);
+        setPenaltiesUsers(data.penaltiesUsers);
         setPeriod1Total(data.period1Total);
         setPeriod2Total(data.period2Total);
       })
@@ -399,6 +407,16 @@ const Finance = () => {
             <FinanceSummaryCard
               totalToAccrue={totalToAccrue}
               totalDebts={totalDebts}
+              totalPenalties={totalPenalties}
+              penaltiesCount={penaltiesCount}
+              penaltiesUsers={penaltiesUsers}
+              // Клик по «Показать все штрафы» ставит фильтр таблицы слева:
+              // админ сразу видит, кому и за что начислено удержание.
+              onShowPenalties={() => {
+                setTypeFilter('penalty');
+                setUserFilter('all');
+                setOperationsPage(1);
+              }}
               period1Total={period1Total}
               period2Total={period2Total}
               loading={operationsLoading}

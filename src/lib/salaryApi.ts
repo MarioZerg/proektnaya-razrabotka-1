@@ -51,6 +51,13 @@ export interface SalarySummary {
   /** Сумма ОТРИЦАТЕЛЬНЫХ невыплаченных остатков (штрафы превысили начисления) —
    * суммарный долг сотрудников компании. */
   totalDebts: number;
+  /** Сумма ВСЕХ невыплаченных удержаний по компании. В отличие от totalDebts
+   * считается независимо от заработка: штраф в 170 ₽ при зарплате 32 000 ₽ не
+   * уводит баланс в минус, и без этой строки он не виден в сводке нигде. */
+  totalPenalties: number;
+  /** Сколько всего записей-удержаний и по скольким сотрудникам. */
+  penaltiesCount: number;
+  penaltiesUsers: number;
   period1Total: number;
   period2Total: number;
   /** Сумма по ВСЕМ записям текущего фильтра (не только видимой страницы). */
@@ -83,6 +90,9 @@ export const fetchSalarySummary = async (filters?: {
     totalPages: data.totalPages ?? 1,
     totalToAccrue: data.totalToAccrue ?? 0,
     totalDebts: data.totalDebts ?? 0,
+    totalPenalties: data.totalPenalties ?? 0,
+    penaltiesCount: data.penaltiesCount ?? 0,
+    penaltiesUsers: data.penaltiesUsers ?? 0,
     period1Total: data.period1Total ?? 0,
     period2Total: data.period2Total ?? 0,
     filteredTotal: data.filteredTotal ?? 0,

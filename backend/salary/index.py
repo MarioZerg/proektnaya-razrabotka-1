@@ -63,6 +63,10 @@ def handler(event: dict, context) -> dict:
                                                чтобы штраф одного не компенсировал незаметно
                                                премию другого) и totalDebts (сумма ОТРИЦАТЕЛЬНЫХ
                                                остатков — суммарный долг сотрудников компании),
+                                               totalPenalties (сумма ВСЕХ невыплаченных удержаний,
+                                               независимо от того, ушёл ли баланс сотрудника в
+                                               минус — иначе штраф внутри плюсового баланса не
+                                               виден в сводке нигде),
                                                начисления за период 1-19 и 20-конец текущего
                                                месяца — ТОЛЬКО невыплаченные (в контексте выплаты
                                                в СЛЕДУЮЩЕМ месяце 10 и 25 числа), список последних
@@ -759,6 +763,22 @@ def handler(event: dict, context) -> dict:
             total_to_accrue = float(total_to_accrue_row[0])
             total_debts = float(total_to_accrue_row[1])
 
+            # Сумма ВСЕХ невыплаченных удержаний по компании.
+            #
+            # totalDebts выше показывает только тех, у кого штраф СЪЕЛ всю зарплату и
+            # баланс ушёл в минус. Но обычно штраф в 170 ₽ просто вычитается из 32 000 ₽
+            # заработка: баланс остаётся плюсовым, и в сводке штраф не виден нигде —
+            # админ решал, что удержание не прошло. Считаем удержания отдельной строкой,
+            # чтобы каждый штраф был виден независимо от заработка сотрудника.
+            cur.execute(
+                "SELECT COALESCE(SUM(amount), 0), COUNT(*), COUNT(DISTINCT user_id) "
+                "FROM salary_accruals WHERE amount < 0 AND paid_at IS NULL"
+            )
+            pen_row = cur.fetchone()
+            total_penalties = float(pen_row[0])
+            penalties_count = int(pen_row[1])
+            penalties_users = int(pen_row[2])
+
             today = date.today()
             if today.day >= 20:
                 period1_from = today.replace(day=20)
@@ -813,6 +833,9 @@ def handler(event: dict, context) -> dict:
                 'filteredTotal': filtered_total,
                 'totalToAccrue': total_to_accrue,
                 'totalDebts': total_debts,
+                'totalPenalties': total_penalties,
+                'penaltiesCount': penalties_count,
+                'penaltiesUsers': penalties_users,
                 'period1Total': period1_total,
                 'period2Total': period2_total,
             }),
