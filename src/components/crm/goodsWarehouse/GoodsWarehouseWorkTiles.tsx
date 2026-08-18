@@ -68,7 +68,11 @@ const GoodsWarehouseWorkTiles = ({
         </span>
       </div>
 
-      <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Приём осмотренных из цеха — шаг ПЕРЕД раскладкой: кладовщик сначала
+            забирает у упаковщицы осмотренные возвраты, и только потом разносит
+            вещи по полкам. Стрелка показывает этот порядок — раньше это были две
+            отдельные плитки, и связь между ними была неочевидна. */}
         <WorkTile
           icon="Boxes"
           title="Разложить по полкам"
@@ -76,17 +80,10 @@ const GoodsWarehouseWorkTiles = ({
           count={pendingShelfCount}
           zone="both"
           onClick={onPlace}
-        />
-        {/* Приём осмотренных из цеха — своя плитка, а не вкладка внутри раскладки.
-            Это отдельный поток: упаковщица осмотрела возврат и наклеила стикер,
-            кладовщик забирает такие вещи из цеха и ставит на хранение. */}
-        <WorkTile
-          icon="Warehouse"
-          title="Принять осмотренные из цеха"
-          hint="Возвраты после осмотра — на хранение"
-          count={inspectedReady}
-          zone="both"
-          onClick={onPlaceInspected}
+          stepLabel="Принять осмотренные из цеха"
+          stepIcon="Warehouse"
+          stepCount={inspectedReady}
+          onStep={onPlaceInspected}
         />
         {/* Возвраты от покупателей — два шага подряд, поэтому они связаны стрелкой:
             сначала кладовщик отмечает, что привёз с пункта выдачи, и вещи встают на
@@ -103,22 +100,9 @@ const GoodsWarehouseWorkTiles = ({
           stepIcon="Truck"
           onStep={onPickup}
         />
-        {/* Инвентаризация живёт здесь, а не в меню: пересчёт — работа на складе,
-            у стеллажей, и начинается он с этой же страницы. Пока пересчёт идёт,
-            плитка показывает, сколько вещей ещё не сосчитано, — чтобы работу не
-            бросили на середине. */}
-        <WorkTile
-          icon="ClipboardCheck"
-          title={stocktakeActive ? 'Продолжить инвентаризацию' : 'Инвентаризация'}
-          hint={
-            stocktakeActive
-              ? 'Пересчёт идёт — осталось сосчитать'
-              : 'Пересчитать товар по полкам'
-          }
-          count={stocktakeActive ? stocktakeLeft : 0}
-          zone="warehouse"
-          onClick={() => navigate('/crm/inventory/stocktakes')}
-        />
+        {/* Инвентаризация — шаг НАД подбором: пересчёт наводит порядок на полках,
+            после него подбор идёт по верным адресам. Живёт здесь, а не в меню:
+            это работа у стеллажей, с той же страницы. */}
         <WorkTile
           icon="Truck"
           title="Товар к подбору"
@@ -133,6 +117,12 @@ const GoodsWarehouseWorkTiles = ({
           count={pickingPending}
           zone="warehouse"
           onClick={() => navigate('/crm/inventory/goods-picking')}
+          stepLabel={
+            stocktakeActive ? 'Продолжить инвентаризацию' : 'Инвентаризация'
+          }
+          stepIcon="ClipboardCheck"
+          stepCount={stocktakeActive ? stocktakeLeft : 0}
+          onStep={() => navigate('/crm/inventory/stocktakes')}
         />
       </div>
     </>

@@ -20,6 +20,8 @@ interface WorkTileProps {
   /** Подпись кнопки шага, который идёт ПЕРЕД этой плиткой (рисуется сверху со стрелкой). */
   stepLabel?: string;
   stepIcon?: string;
+  /** Счётчик у верхнего шага: сколько вещей там ждёт работы. */
+  stepCount?: number;
   onStep?: () => void;
   /** Третий шаг — ПОСЛЕ основного действия (рисуется снизу со стрелкой). */
   afterLabel?: string;
@@ -48,6 +50,7 @@ const WorkTile = ({
   zone = 'warehouse',
   stepLabel,
   stepIcon,
+  stepCount,
   onStep,
   afterLabel,
   afterIcon,
@@ -134,7 +137,12 @@ const WorkTile = ({
         className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-emerald-400 bg-card px-3 py-2 text-sm font-medium transition hover:bg-muted/50"
       >
         <Icon name={stepIcon || 'PackageOpen'} size={16} className="text-emerald-600" />
-        {stepLabel}
+        <span className="text-center leading-tight">{stepLabel}</span>
+        {stepCount ? (
+          <span className="shrink-0 rounded-full bg-emerald-600 px-2 py-0.5 text-xs font-bold text-white">
+            {stepCount}
+          </span>
+        ) : null}
       </button>
       <div className="flex justify-center py-0.5">
         <Icon name="ArrowDown" size={16} className="text-muted-foreground" />
