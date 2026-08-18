@@ -6,6 +6,40 @@ from datetime import datetime, timedelta
 import psycopg2
 
 
+def _is_admin(cur, actor_id):
+    """Проверяет право админа на сервере.
+
+    Спрятанной кнопки мало: запрос можно отправить и мимо интерфейса, а решение
+    по пропавшему браку стоит денег сотруднику.
+    """
+    if not actor_id:
+        return False
+    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+    row = cur.fetchone()
+    return bool(row and row[0] == 'admin')
+
+
+def notify_admin(cur, kind, title, message, actor_id, actor_name, link=None,
+                 entity_type=None, entity_id=None):
+    """Кладёт событие на панель администратора.
+
+    Пропавший при приёмке кусок брака решает только админ: удержать стоимость
+    с сотрудника или списать как потерянный. Без уведомления такая запись
+    затерялась бы в журнале, и вопрос никто бы не закрыл.
+    """
+    cur.execute(
+        "INSERT INTO admin_notifications (kind, title, message, actor_id, actor_name, "
+        "link, entity_type, entity_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            kind, title, message,
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            link, entity_type,
+            int(entity_id) if entity_id not in (None, '') else None,
+        ),
+    )
+
+
 def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
     """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit()."""
     cur.execute(
@@ -1815,7 +1849,10 @@ def handler(event: dict, context) -> dict:
                     "LEFT JOIN workshops w ON w.id = d.workshop_id "
                     "LEFT JOIN rolls r ON r.id = d.roll_id "
                     "LEFT JOIN suppliers s ON s.id = r.supplier_id "
-                    "WHERE d.received_at IS NULL ORDER BY d.created_at"
+                    # Помеченные «не найден» уходят из очереди приёмки к админу:
+                    # кладовщик их уже искал и не нашёл, повторно показывать нечего.
+                    "WHERE d.received_at IS NULL AND d.missing_at IS NULL "
+                    "ORDER BY d.created_at"
                 )
                 return {
                     'statusCode': 200,
@@ -1838,34 +1875,245 @@ def handler(event: dict, context) -> dict:
                 }
 
             if action == 'defect_history':
-                # Принятый брак за период: по нему видно, из каких рулонов и от каких
-                # поставщиков идёт плохая ткань. Куски поставщик не забирает, но такую
-                # выборку ему показывают как претензию по качеству партии.
-                days = int(body_data.get('days') or 30)
+                # Принятый брак за период: кто сдал, из какого рулона, сколько и из
+                # какой поставки пришёл материал. По этой выборке видно, от какого
+                # поставщика идёт плохая ткань — куски он обратно не берёт, но такую
+                # статистику ему показывают как претензию по качеству партии.
+                #
+                # Фильтр по датам приходит с экрана; если его нет — берём последние N дней.
+                date_from = (body_data.get('dateFrom') or '').strip()
+                date_to = (body_data.get('dateTo') or '').strip()
+                conds = ["d.received_at IS NOT NULL"]
+                if date_from:
+                    conds.append(f"d.received_at >= '{date_from}'::date")
+                if date_to:
+                    # Включительно по конец выбранного дня, иначе последний день выпадал.
+                    conds.append(f"d.received_at < '{date_to}'::date + interval '1 day'")
+                if not date_from and not date_to:
+                    days = int(body_data.get('days') or 30)
+                    conds.append(f"d.received_at >= now() - interval '{days} days'")
+                where_sql = " AND ".join(conds)
+
                 cur.execute(
                     "SELECT d.barcode, m.name, m.unit, d.quantity, d.reason_label, d.user_name, "
-                    "d.user_role, r.barcode, s.name, d.received_at, d.received_by_name, d.comment "
+                    "d.user_role, r.barcode, s.name, d.received_at, d.received_by_name, d.comment, "
+                    # Поставка, которой приехал рулон: по ней предъявляют претензию.
+                    "r.shipment_id, sup.created_at, d.created_at, w.name "
                     "FROM material_defects d "
                     "JOIN materials m ON m.id = d.material_id "
                     "LEFT JOIN rolls r ON r.id = d.roll_id "
                     "LEFT JOIN suppliers s ON s.id = r.supplier_id "
-                    "WHERE d.received_at IS NOT NULL "
-                    f"AND d.received_at >= now() - interval '{days} days' "
-                    "ORDER BY d.received_at DESC LIMIT 500"
+                    "LEFT JOIN shipments sup ON sup.id = r.shipment_id "
+                    "LEFT JOIN workshops w ON w.id = d.workshop_id "
+                    f"WHERE {where_sql} "
+                    "ORDER BY d.received_at DESC LIMIT 1000"
+                )
+                items = [
+                    {
+                        'barcode': r[0], 'materialName': r[1], 'unit': r[2],
+                        'quantity': float(r[3]), 'reasonLabel': r[4], 'userName': r[5],
+                        'userRole': r[6], 'rollBarcode': r[7], 'supplierName': r[8],
+                        'receivedAt': r[9].isoformat() + 'Z' if r[9] else None,
+                        'receivedByName': r[10], 'comment': r[11],
+                        'shipmentId': r[12],
+                        'shipmentDate': r[13].isoformat() + 'Z' if r[13] else None,
+                        'createdAt': r[14].isoformat() + 'Z' if r[14] else None,
+                        'workshopName': r[15],
+                    }
+                    for r in cur.fetchall()
+                ]
+                # Итог по выбранному периоду считаем на сервере: на экране может быть
+                # видна лишь часть строк, а сумма должна быть по всей выборке.
+                total_qty = sum(i['quantity'] for i in items)
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'items': items,
+                        'totalQuantity': round(total_qty, 2),
+                        'totalCount': len(items),
+                    }, ensure_ascii=False),
+                }
+
+            if action == 'defect_missing_list':
+                # Куски, которые кладовщик не нашёл при приёмке. Ждут решения админа:
+                # удержать стоимость с сотрудника или списать как потерянные.
+                cur.execute(
+                    "SELECT d.id, d.barcode, m.name, m.unit, d.quantity, d.reason_label, "
+                    "d.user_name, d.user_role, r.barcode, s.name, d.missing_at, "
+                    "d.missing_by_name, d.comment, d.resolution, d.resolved_at, "
+                    "d.resolved_by_name, d.resolution_comment, w.name, r.cost_per_unit "
+                    "FROM material_defects d "
+                    "JOIN materials m ON m.id = d.material_id "
+                    "LEFT JOIN rolls r ON r.id = d.roll_id "
+                    "LEFT JOIN suppliers s ON s.id = r.supplier_id "
+                    "LEFT JOIN workshops w ON w.id = d.workshop_id "
+                    "WHERE d.missing_at IS NOT NULL "
+                    "ORDER BY (d.resolved_at IS NOT NULL), d.missing_at DESC LIMIT 500"
                 )
                 return {
                     'statusCode': 200,
                     'headers': headers,
                     'body': json.dumps({'items': [
                         {
-                            'barcode': r[0], 'materialName': r[1], 'unit': r[2],
-                            'quantity': float(r[3]), 'reasonLabel': r[4], 'userName': r[5],
-                            'userRole': r[6], 'rollBarcode': r[7], 'supplierName': r[8],
-                            'receivedAt': r[9].isoformat() + 'Z' if r[9] else None,
-                            'receivedByName': r[10], 'comment': r[11],
+                            'id': r[0], 'barcode': r[1], 'materialName': r[2], 'unit': r[3],
+                            'quantity': float(r[4]), 'reasonLabel': r[5], 'userName': r[6],
+                            'userRole': r[7], 'rollBarcode': r[8], 'supplierName': r[9],
+                            'missingAt': r[10].isoformat() + 'Z' if r[10] else None,
+                            'missingByName': r[11], 'comment': r[12],
+                            'resolution': r[13],
+                            'resolvedAt': r[14].isoformat() + 'Z' if r[14] else None,
+                            'resolvedByName': r[15], 'resolutionComment': r[16],
+                            'workshopName': r[17],
+                            # Стоимость куска: по ней админ считает удержание.
+                            'costPerUnit': float(r[18]) if r[18] is not None else None,
                         }
                         for r in cur.fetchall()
                     ]}, ensure_ascii=False),
+                }
+
+            if action == 'defect_missing':
+                # Кусок брака не доехал до склада: в контейнере его нет.
+                #
+                # Кладовщик не может ни принять его (стикера нет), ни оставить висеть
+                # в очереди вечно. Он помечает кусок «не найден», и решение принимает
+                # админ: удержать стоимость с сотрудника или списать как потерянный.
+                # Сам кладовщик ничего не удаляет — иначе пропажу можно было бы скрыть.
+                barcode = (body_data.get('barcode') or '').strip().upper()
+                if not barcode:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Не указан стикер брака'}, ensure_ascii=False)}
+                cur.execute(
+                    "SELECT d.id, d.received_at, d.missing_at, d.quantity, m.name, m.unit, d.user_name "
+                    "FROM material_defects d JOIN materials m ON m.id = d.material_id "
+                    "WHERE d.barcode = %s",
+                    (barcode,),
+                )
+                m_row = cur.fetchone()
+                if not m_row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': f'Брак {barcode} не найден'}, ensure_ascii=False)}
+                if m_row[1]:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': f'Брак {barcode} уже принят на склад'}, ensure_ascii=False)}
+                if m_row[2]:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': f'Брак {barcode} уже отправлен администратору'}, ensure_ascii=False)}
+
+                comment = (body_data.get('comment') or '').strip()
+                cur.execute(
+                    "UPDATE material_defects SET missing_at = now(), missing_by = %s, "
+                    "missing_by_name = %s WHERE id = %s",
+                    (int(actor_id) if actor_id else None, actor_name, m_row[0]),
+                )
+                notify_admin(
+                    cur, 'defect_missing',
+                    f'Брак не найден при приёмке: {m_row[4]}',
+                    f'Стикер {barcode}: {round(float(m_row[3]), 2)} {m_row[5] or ""} — '
+                    f'оформил {m_row[6]}, но кусок не доехал до склада. '
+                    f'Решите: удержать стоимость с сотрудника или списать как потерянный.'
+                    + (f' Комментарий кладовщика: {comment}' if comment else ''),
+                    actor_id, actor_name,
+                    link='/crm/inventory/defect-receive?tab=missing',
+                    entity_type='material_defect', entity_id=int(m_row[0]),
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'defect_missing', 'material_defect', m_row[0],
+                    f'Брак {barcode} не найден при приёмке — отправлен администратору',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'barcode': barcode}, ensure_ascii=False),
+                }
+
+            if action == 'defect_resolve':
+                # Решение админа по пропавшему куску брака.
+                #
+                # penalty  — удержать стоимость с того, кто оформил брак: кусок числился
+                #            за ним, до склада не доехал.
+                # writeoff — списать как потерянный: вины сотрудника нет (стикер отклеился,
+                #            кусок ушёл в мусор вместе с обрезками).
+                #
+                # Решает только админ: кладовщик, который куска не нашёл, не должен сам
+                # закрывать вопрос — иначе пропажу можно скрыть.
+                if not _is_admin(cur, actor_id):
+                    return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Решение по пропавшему браку принимает администратор'},
+                        ensure_ascii=False)}
+
+                defect_id = body_data.get('id')
+                resolution = (body_data.get('resolution') or '').strip()
+                if not defect_id or resolution not in ('penalty', 'writeoff'):
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Укажите запись и решение'}, ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT d.id, d.barcode, d.quantity, d.user_id, d.user_name, d.resolved_at, "
+                    "m.name, m.unit, r.cost_per_unit, d.missing_at "
+                    "FROM material_defects d "
+                    "JOIN materials m ON m.id = d.material_id "
+                    "LEFT JOIN rolls r ON r.id = d.roll_id "
+                    "WHERE d.id = %s",
+                    (int(defect_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Запись брака не найдена'}, ensure_ascii=False)}
+                if not row[9]:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Этот кусок не помечен как пропавший'}, ensure_ascii=False)}
+                if row[5]:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Решение по этой записи уже принято'}, ensure_ascii=False)}
+
+                comment = (body_data.get('comment') or '').strip()
+                penalty_amount = 0.0
+                if resolution == 'penalty':
+                    if not row[3]:
+                        return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                            {'error': 'В записи не указан сотрудник — удержать не с кого'},
+                            ensure_ascii=False)}
+                    cost = float(row[8]) if row[8] is not None else 0.0
+                    penalty_amount = round(float(row[2]) * cost, 2)
+                    if penalty_amount <= 0:
+                        return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                            {'error': 'У рулона не задана цена — сумму удержания не посчитать'},
+                            ensure_ascii=False)}
+                    desc = (f'Пропал брак {row[1]}: {round(float(row[2]), 2)} {row[7] or ""} '
+                            f'{row[6]} не доехало до склада')
+                    if comment:
+                        desc += f'. {comment}'
+                    desc_esc = desc.replace("'", "''")
+                    cur.execute(
+                        f"INSERT INTO salary_accruals (user_id, type, amount, description) "
+                        f"VALUES ({int(row[3])}, 'penalty', {-penalty_amount}, '{desc_esc}')"
+                    )
+
+                cur.execute(
+                    "UPDATE material_defects SET resolution = %s, resolved_at = now(), "
+                    "resolved_by = %s, resolved_by_name = %s, resolution_comment = %s "
+                    "WHERE id = %s",
+                    (resolution, int(actor_id) if actor_id else None, actor_name,
+                     comment or None, int(defect_id)),
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'defect_resolved', 'material_defect', int(defect_id),
+                    (f'Пропавший брак {row[1]}: удержано {penalty_amount} ₽ с {row[4]}'
+                     if resolution == 'penalty'
+                     else f'Пропавший брак {row[1]} списан как потерянный'),
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'resolution': resolution,
+                        'penaltyAmount': penalty_amount,
+                    }, ensure_ascii=False),
                 }
 
             if action == 'defect_receive':

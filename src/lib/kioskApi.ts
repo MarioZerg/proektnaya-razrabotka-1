@@ -618,16 +618,106 @@ export interface DefectHistoryRow {
   receivedAt: string | null;
   receivedByName: string | null;
   comment: string | null;
+  /** Поставка, которой приехал рулон — по ней предъявляют претензию поставщику. */
+  shipmentId: number | null;
+  shipmentDate: string | null;
+  createdAt: string | null;
+  workshopName: string | null;
 }
 
-export const fetchDefectHistory = async (days = 30): Promise<DefectHistoryRow[]> => {
+export interface DefectHistoryResult {
+  items: DefectHistoryRow[];
+  /** Итог по всей выборке фильтра, а не только по видимым строкам. */
+  totalQuantity: number;
+  totalCount: number;
+}
+
+export const fetchDefectHistory = async (params?: {
+  days?: number;
+  dateFrom?: string;
+  dateTo?: string;
+}): Promise<DefectHistoryResult> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'defect_history', days }),
+    body: JSON.stringify({ action: 'defect_history', ...(params || {}) }),
+  });
+  const data = await res.json();
+  return {
+    items: data.items || [],
+    totalQuantity: data.totalQuantity ?? 0,
+    totalCount: data.totalCount ?? 0,
+  };
+};
+
+/** Кусок брака не доехал до склада — кладовщик отправляет его администратору. */
+export const markDefectMissing = async (
+  barcode: string,
+  comment?: string,
+  actorId?: number,
+  actorName?: string
+): Promise<{ success: boolean }> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_missing', barcode, comment, actorId, actorName }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось отправить администратору');
+  return data;
+};
+
+/** Пропавший кусок брака: ждёт решения администратора. */
+export interface MissingDefect {
+  id: number;
+  barcode: string;
+  materialName: string;
+  unit: string | null;
+  quantity: number;
+  reasonLabel: string;
+  userName: string;
+  userRole: string | null;
+  rollBarcode: string | null;
+  supplierName: string | null;
+  workshopName: string | null;
+  missingAt: string | null;
+  missingByName: string | null;
+  comment: string | null;
+  /** 'penalty' — удержали с сотрудника, 'writeoff' — списали как потерянный. */
+  resolution: string | null;
+  resolvedAt: string | null;
+  resolvedByName: string | null;
+  resolutionComment: string | null;
+  /** Цена за единицу из рулона — по ней считается удержание. */
+  costPerUnit: number | null;
+}
+
+export const fetchMissingDefects = async (): Promise<MissingDefect[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_missing_list' }),
   });
   const data = await res.json();
   return data.items || [];
+};
+
+/** Решение администратора по пропавшему куску: удержать или списать. */
+export const resolveMissingDefect = async (
+  id: number,
+  resolution: 'penalty' | 'writeoff',
+  comment?: string,
+  actorId?: number,
+  actorName?: string
+): Promise<{ success: boolean; penaltyAmount: number }> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_resolve', id, resolution, comment, actorId, actorName }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось сохранить решение');
+  return data;
 };
 
 /** Брак, который ещё лежит в контейнерах и не доехал до склада. */

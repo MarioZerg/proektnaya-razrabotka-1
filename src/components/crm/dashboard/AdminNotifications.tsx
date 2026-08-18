@@ -16,6 +16,10 @@ const kindIcons: Record<string, string> = {
   send_to_sewing: 'Shirt',
   // Товар числился на полке, а физически его нет — расхождение остатков.
   not_found: 'SearchX',
+  // Недостача по рулону сверх нормы поставщика — стоит денег.
+  roll_shortage: 'Scissors',
+  // Кусок брака оформили в цехе, но до склада он не доехал.
+  defect_missing: 'PackageX',
 };
 
 /**
