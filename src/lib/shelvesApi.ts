@@ -30,3 +30,6 @@ export const createShelf = (name: string, actorId?: number) =>
   postAction({ action: 'create', name, actorId });
 export const deleteShelf = (id: number, actorId?: number) =>
   postAction({ action: 'delete', id, actorId });
+/** Переименовать полку: названия на стеллажах меняются, а удалять полку с товаром нельзя. */
+export const renameShelf = (id: number, name: string, actorId?: number) =>
+  postAction({ action: 'rename', id, name, actorId });

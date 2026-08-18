@@ -63,7 +63,7 @@ def handler(event: dict, context) -> dict:
 
             # Создавать и удалять полки может только администратор. Роль проверяем по actorId
             # (в будущем кладовщик сможет только раскладывать товар по полкам, но не менять их).
-            if action in ('create', 'delete'):
+            if action in ('create', 'delete', 'rename'):
                 actor_id = body_data.get('actorId')
                 actor_role = None
                 if actor_id:
@@ -85,6 +85,26 @@ def handler(event: dict, context) -> dict:
                 new_id = cur.fetchone()[0]
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
+
+            if action == 'rename':
+                # Переименование полки. Названия на стеллажах меняются: склад
+                # переставили, ряды перенумеровали — раньше приходилось удалять
+                # полку и заводить заново, а удалить полку с товаром нельзя.
+                item_id = body_data.get('id')
+                name = (body_data.get('name') or '').strip()
+                if not item_id or not name:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите полку и название'})}
+                name_esc = name.replace("'", "''")
+                cur.execute(
+                    f"SELECT id FROM shelves WHERE name = '{name_esc}' AND id <> {int(item_id)}"
+                )
+                if cur.fetchone():
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Полка с таким названием уже существует'})}
+                cur.execute(
+                    f"UPDATE shelves SET name = '{name_esc}' WHERE id = {int(item_id)}"
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'delete':
                 item_id = body_data.get('id')

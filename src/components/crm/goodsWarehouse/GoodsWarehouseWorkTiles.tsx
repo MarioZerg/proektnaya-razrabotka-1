@@ -62,7 +62,7 @@ const GoodsWarehouseWorkTiles = ({
         </span>
       </div>
 
-      <div className="grid items-end gap-3 sm:grid-cols-3">
+      <div className="grid items-end gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <WorkTile
           icon="Boxes"
           title="Разложить по полкам"
@@ -70,6 +70,17 @@ const GoodsWarehouseWorkTiles = ({
           count={pendingShelfCount}
           zone="both"
           onClick={onPlace}
+        />
+        {/* Приём осмотренных из цеха — своя плитка, а не вкладка внутри раскладки.
+            Это отдельный поток: упаковщица осмотрела возврат и наклеила стикер,
+            кладовщик забирает такие вещи из цеха и ставит на хранение. */}
+        <WorkTile
+          icon="Warehouse"
+          title="Принять осмотренные из цеха"
+          hint="Возвраты после осмотра — на хранение"
+          count={inspectedReady}
+          zone="both"
+          onClick={onPlaceInspected}
         />
         {/* Возвраты от покупателей — два шага подряд, поэтому они связаны стрелкой:
             сначала кладовщик отмечает, что привёз с пункта выдачи, и вещи встают на
@@ -85,10 +96,6 @@ const GoodsWarehouseWorkTiles = ({
           stepLabel="Привёз с пункта выдачи"
           stepIcon="Truck"
           onStep={onPickup}
-          afterLabel="Принять осмотренные из цеха"
-          afterIcon="Warehouse"
-          afterCount={inspectedReady}
-          onAfter={onPlaceInspected}
         />
         <WorkTile
           icon="Truck"

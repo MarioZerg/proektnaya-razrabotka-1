@@ -173,9 +173,16 @@ export const findItemByCode = (code: string) =>
     height: number | null;
   }>;
 
-/** Кладовщик сканирует стикер хранения вещи, отменённой клиентом, и кладёт её на полку. */
-export const placeOnShelf = (barcode: string, shelfId: number) =>
-  postAction({ action: 'place_on_shelf', barcode, shelfId });
+/** Кладовщик сканирует стикер хранения вещи, отменённой клиентом.
+ * Полку выбирать не нужно — её назначает система и возвращает в ответе. */
+export const placeOnShelf = (barcode: string) =>
+  postAction({ action: 'place_on_shelf', barcode }) as Promise<{
+    orderNumber: string | null;
+    product: string | null;
+    shelfName: string;
+    shelfReason: string;
+    autoMatched: number;
+  }>;
 
 /** Кладовщик наклеил стикер отправления на вещь с полки, подобранную под новый заказ. */
 /**
@@ -479,16 +486,17 @@ export interface ShelfBatch {
 /** Приём осмотренных возвратов с производства сразу на полки хранения.
  * Кладовщик может чередовать полки в одном окне — отправляем всё одним запросом. */
 export const placeInspectedBatch = (
-  groups: ShelfBatch[],
+  barcodes: string[],
   actorId?: number,
   actorName?: string,
-) => postAction({ action: 'place_inspected_batch', groups, actorId, actorName }) as Promise<{
+) => postAction({ action: 'place_inspected_batch', barcodes, actorId, actorName }) as Promise<{
   total: number;
   placed: {
     barcode: string;
     orderNumber: string | null;
     product: string | null;
     shelfName: string;
+    shelfReason: string;
     autoMatched: number;
   }[];
   errors: { barcode: string; error: string }[];

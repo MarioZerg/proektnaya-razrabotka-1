@@ -702,10 +702,19 @@ def handler(event: dict, context) -> dict:
                 if not order_id or not packer_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите orderId и packerId'})}
 
+                # FOR UPDATE — заказ запирается на время закрытия.
+                #
+                # В цехе на смене могут стоять две упаковщицы сразу (например, штатная
+                # по графику 2/2 и вторая, вышедшая 5/2). Если обе пикнут один и тот же
+                # стикер в одну секунду, без замка обе прочитали бы статус «Стикеровка»
+                # и обе закрыли бы заказ: двойное списание упаковки и двойное начисление
+                # зарплаты. С замком вторая ждёт, видит уже изменённый статус и получает
+                # понятный ответ, что заказ закрыт.
                 cur.execute(
                     "SELECT sewing_status, width, assigned_user_id, order_number, workshop_id, "
                     "status, ozon_status, order_type, material, height, product, "
-                    "group_key, group_size, group_position, marketplace FROM orders WHERE id = %s",
+                    "group_key, group_size, group_position, marketplace FROM orders WHERE id = %s "
+                    "FOR UPDATE",
                     (int(order_id),),
                 )
                 row = cur.fetchone()

@@ -1,19 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { fetchInspection, placeInspectedBatch } from '@/lib/goodsWarehouseApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import { shortProductName } from '@/lib/shortProductName';
@@ -29,8 +21,6 @@ interface PlaceInspectedBodyProps {
 /** Одна отсканированная вещь: что это и на какую полку кладём. */
 interface ScannedRow {
   barcode: string;
-  shelfId: number;
-  shelfName: string;
   product: string | null;
   orderNumber: string | null;
 }
@@ -54,8 +44,6 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
   const { toast } = useToast();
   const { user } = useAuth();
 
-  const [shelves, setShelves] = useState<Shelf[]>([]);
-  const [shelfId, setShelfId] = useState('');
   const [barcode, setBarcode] = useState('');
   const [rows, setRows] = useState<ScannedRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +62,6 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
     setRows([]);
     setBarcode('');
     setError(null);
-    fetchShelves().then(setShelves).catch(() => setShelves([]));
     // Готовые к укладке вещи загружаем один раз: дальше сверяем сканы прямо в браузере,
     // и кладовщик получает ответ мгновенно, даже если связь в цехе слабая.
     fetchInspection('readyShelf')
@@ -91,20 +78,12 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
     setTimeout(() => inputRef.current?.focus(), 80);
   }, [active]);
 
-  const shelfName = shelves.find((s) => String(s.id) === shelfId)?.name || '';
-
   const handleScan = () => {
     const code = barcode.trim();
     if (!code) return;
     setBarcode('');
     setError(null);
 
-    if (!shelfId) {
-      setError('Сначала выберите полку');
-      playScanErrorSound();
-      focusInput();
-      return;
-    }
     if (rows.some((r) => r.barcode === code)) {
       setError(`Стикер ${code} уже в списке`);
       playScanErrorSound();
@@ -121,13 +100,7 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
 
     playScanSound();
     setRows((prev) => [
-      {
-        barcode: code,
-        shelfId: Number(shelfId),
-        shelfName,
-        product: found.product,
-        orderNumber: found.orderNumber,
-      },
+      { barcode: code, product: found.product, orderNumber: found.orderNumber },
       ...prev,
     ]);
     focusInput();
@@ -138,32 +111,28 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
   const removeRow = (code: string) =>
     setRows((prev) => prev.filter((r) => r.barcode !== code));
 
-  // Группируем по полкам: так кладовщик видит итог глазами — «на А-1 три вещи, на Б-2 две».
-  const groups = useMemo(() => {
-    const map = new Map<number, { shelfName: string; barcodes: string[] }>();
-    rows.forEach((r) => {
-      const g = map.get(r.shelfId) || { shelfName: r.shelfName, barcodes: [] };
-      g.barcodes.push(r.barcode);
-      map.set(r.shelfId, g);
-    });
-    return [...map.entries()].map(([id, g]) => ({ shelfId: id, ...g }));
-  }, [rows]);
-
   const handleSave = async () => {
     if (rows.length === 0) return;
     setSaving(true);
     try {
       const res = await placeInspectedBatch(
-        groups.map((g) => ({ shelfId: g.shelfId, barcodes: g.barcodes })),
+        rows.map((r) => r.barcode),
         user?.id,
         user?.name,
       );
+      // Куда система разложила вещи — показываем сразу: кладовщик несёт их
+      // на названные полки, выбирать ничего не нужно.
+      const byShelf = new Map<string, number>();
+      res.placed.forEach((p) => byShelf.set(p.shelfName, (byShelf.get(p.shelfName) || 0) + 1));
+      const shelfText = [...byShelf.entries()]
+        .map(([name, n]) => `${name} — ${n} шт.`)
+        .join(', ');
       toast({
         title: `Положено на полки: ${res.total}`,
         description:
           res.errors.length > 0
-            ? `Не удалось: ${res.errors.length}`
-            : 'Товары встали на хранение',
+            ? `Не удалось: ${res.errors.length}. ${shelfText}`
+            : `Разложите так: ${shelfText}`,
         variant: res.errors.length > 0 ? 'destructive' : undefined,
       });
       setRows([]);
@@ -191,46 +160,28 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
     >
       <div className="rounded-md border border-border bg-muted/40 p-3">
         <p className="text-sm text-muted-foreground">
-          Выберите полку и сканируйте стикеры хранения. Перешли к другой полке —
-          просто смените её здесь же и продолжайте. В конце нажмите «Положить на
-          полки хранения»
+          Сканируйте стикеры хранения один за другим. Полку система выберет сама:
+          однотипный товар кладёт вместе, ходовой — ближе. В конце нажмите
+          «Положить товар на полки хранения» и разложите по названным полкам
         </p>
         <p className="mt-1 text-sm">
           Готово к укладке: <span className="font-semibold">{ready.length}</span>
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label>Полка</Label>
-          <Select value={shelfId} onValueChange={setShelfId}>
-            <SelectTrigger>
-              <SelectValue placeholder="Выберите полку" />
-            </SelectTrigger>
-            <SelectContent>
-              {shelves.map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label>Стикер хранения</Label>
-          <Input
-            ref={inputRef}
-            autoFocus
-            disabled={!shelfId}
-            value={barcode}
-            onChange={(e) => setBarcode(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-            onBlur={focusInput}
-            placeholder={shelfId ? 'Наведите сканер' : 'Сначала выберите полку'}
-            className="h-11 font-mono-tech"
-            autoComplete="off"
-          />
-        </div>
+      <div className="space-y-1.5">
+        <Label>Стикер хранения</Label>
+        <Input
+          ref={inputRef}
+          autoFocus
+          value={barcode}
+          onChange={(e) => setBarcode(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleScan()}
+          onBlur={focusInput}
+          placeholder="Наведите сканер"
+          className="h-11 font-mono-tech"
+          autoComplete="off"
+        />
       </div>
 
       {error && (
@@ -242,18 +193,6 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
 
       {rows.length > 0 && (
         <div className="space-y-3">
-          {/* Итог по полкам — кладовщик сверяет с тем, что лежит перед ним. */}
-          <div className="flex flex-wrap gap-2">
-            {groups.map((g) => (
-              <span
-                key={g.shelfId}
-                className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-900"
-              >
-                {g.shelfName} — {g.barcodes.length} шт.
-              </span>
-            ))}
-          </div>
-
           <div className="max-h-64 space-y-1.5 overflow-y-auto">
             {rows.map((r) => (
               <div
@@ -265,7 +204,7 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
                     {shortProductName(r)}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {r.orderNumber || '—'} · {r.barcode} · полка {r.shelfName}
+                    {r.orderNumber || '—'} · {r.barcode}
                   </p>
                 </div>
                 <button

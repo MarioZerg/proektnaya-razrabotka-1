@@ -165,6 +165,99 @@ RESERVE_ALIVE_SQL = (
 )
 
 
+# Сколько вещей помещается на одну полку. Больше не кладём: полка забивается,
+# вещи мнутся и кладовщик перестаёт находить нужную.
+SHELF_CAPACITY = 50
+
+
+def pick_shelf_for_item(cur, gw_id):
+    """Сама выбирает полку, на которую лечь вещи. Кладовщик её больше не указывает.
+
+    Раньше полку выбирал человек, и каждый делал по-своему: одинаковые шторы
+    расползались по всему складу, а на подборе их приходилось искать по трём
+    полкам сразу. Плюс полки набивались неравномерно — одна ломилась, соседняя
+    пустовала.
+
+    Правила простые и в таком порядке:
+      1) Однотипный товар — вместе. Ищем полку, где уже лежит такая же ткань
+         того же размера: собирать заказ с одной полки быстрее всего.
+      2) Ходовой товар — ближе. Чем чаще ткань уходит в заказы, тем меньший
+         номер полки ей достаётся: ходовое лежит в начале стеллажа, редкое —
+         в глубине.
+      3) Полка заполнена (50 вещей) — берём следующую свободную.
+
+    Возвращает (shelf_id, shelf_name, reason) или (None, None, текст ошибки).
+    """
+    # Что за вещь кладём: ткань и размер берём из заказа.
+    cur.execute(
+        "SELECT o.material, o.width, o.height FROM goods_warehouse gw "
+        "LEFT JOIN orders o ON o.id = gw.order_id WHERE gw.id = %s",
+        (int(gw_id),),
+    )
+    row = cur.fetchone()
+    material, width, height = (row or (None, None, None))
+
+    # Занятость всех полок одним запросом: дальше выбираем только по этим числам.
+    cur.execute(
+        "SELECT s.id, s.name, "
+        "  (SELECT COUNT(*) FROM goods_warehouse g "
+        "     WHERE g.shelf_id = s.id AND g.status = 'in_stock') "
+        "FROM shelves s ORDER BY s.name"
+    )
+    shelves = [{'id': r[0], 'name': r[1], 'count': int(r[2] or 0)} for r in cur.fetchall()]
+    if not shelves:
+        return None, None, 'На складе не заведено ни одной полки'
+
+    free = [s for s in shelves if s['count'] < SHELF_CAPACITY]
+    if not free:
+        return None, None, (
+            f'Все полки заполнены (по {SHELF_CAPACITY} вещей). '
+            f'Освободите место или заведите новую полку'
+        )
+
+    # 1. Такой же товар уже где-то лежит — кладём туда же, пока есть место.
+    if material and width and height:
+        cur.execute(
+            "SELECT gw.shelf_id, COUNT(*) FROM goods_warehouse gw "
+            "JOIN orders o ON o.id = gw.order_id "
+            "WHERE gw.status = 'in_stock' AND gw.shelf_id IS NOT NULL "
+            "  AND o.material = %s AND o.width = %s AND o.height = %s "
+            "GROUP BY gw.shelf_id ORDER BY COUNT(*) DESC",
+            (material, width, height),
+        )
+        free_ids = {s['id']: s for s in free}
+        for shelf_id, _cnt in cur.fetchall():
+            same = free_ids.get(shelf_id)
+            if same:
+                return same['id'], same['name'], 'рядом с такими же'
+
+    # 2. Ходовой товар — в начало стеллажа. Считаем, сколько раз эта ткань
+    #    уходила в заказы за последние 60 дней: чем чаще, тем ближе полка.
+    is_popular = False
+    if material:
+        cur.execute(
+            "SELECT COUNT(*) FROM orders "
+            "WHERE material = %s AND created_at > now() - interval '60 days'",
+            (material,),
+        )
+        material_orders = int((cur.fetchone() or [0])[0] or 0)
+        cur.execute(
+            "SELECT COUNT(*) FROM orders WHERE created_at > now() - interval '60 days'"
+        )
+        all_orders = int((cur.fetchone() or [0])[0] or 0)
+        # Ходовой — это ткань, дающая заметную долю всех заказов.
+        is_popular = all_orders > 0 and (material_orders / all_orders) >= 0.15
+
+    if is_popular:
+        # Первая свободная по названию — она же ближняя на стеллаже.
+        target = free[0]
+        return target['id'], target['name'], 'ходовой товар, ближняя полка'
+
+    # 3. Обычный товар — на самую свободную полку, чтобы склад набивался ровно.
+    target = sorted(free, key=lambda s: (s['count'], s['name']))[0]
+    return target['id'], target['name'], 'свободное место'
+
+
 def try_match_orders_from_stock(cur, gw_id=None):
     """Ищет заказы, которые можно закрыть вещами со склада, и резервирует их.
 
@@ -1307,8 +1400,11 @@ def handler(event: dict, context) -> dict:
                 # наклеил на неё стикер отправления маркетплейса и сканирует стикер хранения
                 # у себя на компьютере. После этого вещь готова к сканированию в поставку FBS.
                 scan_barcode = (body_data.get('barcode') or '').strip()
+                shelf_id = body_data.get('shelfId')
                 if not scan_barcode:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте стикер хранения'})}
+                if shelf_id in (None, ''):
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите полку'})}
 
                 bc_esc = scan_barcode.replace("'", "''")
                 # Маркетплейс и тип заказа нужны, чтобы сразу напечатать стикер:
@@ -1462,11 +1558,8 @@ def handler(event: dict, context) -> dict:
                 # на неё стикер хранения), и сканирует её у себя на компьютере, укладывая на
                 # конкретную полку. Работает только со сканера — вручную полки не путаем.
                 scan_barcode = (body_data.get('barcode') or '').strip()
-                shelf_id = body_data.get('shelfId')
                 if not scan_barcode:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте стикер хранения'})}
-                if shelf_id in (None, ''):
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите полку'})}
 
                 bc_esc = scan_barcode.replace("'", "''")
                 cur.execute(
@@ -1503,16 +1596,25 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': f'Товар {gw_order_number or ""} не ожидает укладки (статус: {gw_status})'}),
                     }
 
+                # Полку выбирает система: однотипное кладём вместе, ходовое ближе,
+                # заполненную полку (50 вещей) пропускаем. Кладовщику остаётся
+                # только отсканировать стикер и отнести вещь туда, куда сказали.
+                shelf_id, shelf_name, shelf_reason = pick_shelf_for_item(cur, gw_id)
+                if not shelf_id:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': shelf_reason}, ensure_ascii=False),
+                    }
+
                 cur.execute(
                     f"UPDATE goods_warehouse SET status = 'in_stock', shelf_id = {int(shelf_id)}, "
                     f"received_at = now() WHERE id = {gw_id}"
                 )
-                cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
-                shelf_row = cur.fetchone()
-                shelf_name = shelf_row[0] if shelf_row else None
                 log_action(
                     cur, actor_id, actor_name, 'place_on_shelf', 'goods_warehouse', gw_id,
-                    f'Положил на полку {shelf_name or shelf_id}: заказ #{gw_order_number} ({scan_barcode})',
+                    f'Положил на полку {shelf_name} ({shelf_reason}): '
+                    f'заказ #{gw_order_number} ({scan_barcode})',
                 )
                 # Вещь появилась на полке — сразу проверяем, не ждёт ли её какой-то заказ.
                 # Если ждёт, заказ закрывается складом и не уходит в пошив.
@@ -1529,8 +1631,9 @@ def handler(event: dict, context) -> dict:
                     'body': json.dumps({
                         'id': gw_id, 'orderNumber': gw_order_number,
                         'product': gw_product, 'shelfName': shelf_name,
+                        'shelfReason': shelf_reason,
                         'autoMatched': len(auto_matched),
-                    }),
+                    }, ensure_ascii=False),
                 }
 
             if action == 'place_inspected_batch':
@@ -1538,56 +1641,65 @@ def handler(event: dict, context) -> dict:
                 # по полкам. Раскладка идёт «пачками»: выбрал полку, пикнул несколько вещей,
                 # сменил полку, пикнул ещё — и один раз нажал «Положить на полки хранения».
                 # Так вещи не путаются по местам, а сервер дёргается один раз вместо тридцати.
-                groups = body_data.get('groups') or []
-                if not groups:
+                # Полку кладовщик больше не выбирает — её назначает система. Сюда
+                # приходит просто список отсканированных стикеров, а куда лечь каждой
+                # вещи, решает pick_shelf_for_item: однотипное вместе, ходовое ближе,
+                # заполненную полку (50 вещей) пропускаем.
+                #
+                # Старый формат groups=[{shelfId, barcodes}] поддерживаем на случай,
+                # если у кладовщика открыта прежняя версия страницы: полку из него
+                # игнорируем и берём только штрихкоды.
+                codes = body_data.get('barcodes') or []
+                if not codes:
+                    for g in (body_data.get('groups') or []):
+                        codes.extend(g.get('barcodes') or [])
+                if not codes:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Отсканируйте вещи'})}
 
                 placed, errors = [], []
-                for g in groups:
-                    shelf_id = g.get('shelfId')
-                    codes = g.get('barcodes') or []
-                    if shelf_id in (None, '') or not codes:
+                for code in codes:
+                    bc = str(code).strip().replace("'", "''")
+                    cur.execute(
+                        "SELECT gw.id, gw.status, o.order_number, o.product "
+                        "FROM goods_warehouse gw "
+                        "LEFT JOIN orders o ON o.id = gw.order_id "
+                        f"WHERE gw.storage_barcode = '{bc}'"
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        errors.append({'barcode': code, 'error': 'Стикер не найден'})
                         continue
-                    cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
-                    sh = cur.fetchone()
-                    shelf_name = sh[0] if sh else str(shelf_id)
-
-                    for code in codes:
-                        bc = str(code).strip().replace("'", "''")
-                        cur.execute(
-                            "SELECT gw.id, gw.status, o.order_number, o.product "
-                            "FROM goods_warehouse gw "
-                            "LEFT JOIN orders o ON o.id = gw.order_id "
-                            f"WHERE gw.storage_barcode = '{bc}'"
-                        )
-                        row = cur.fetchone()
-                        if not row:
-                            errors.append({'barcode': code, 'error': 'Стикер не найден'})
-                            continue
-                        gid, gstatus, gnum, gprod = row
-                        # На полку кладём только реально осмотренное: 'inspected' —
-                        # упаковщица закончила и наклеила стикер, 'taken' — кладовщик
-                        # уже забрал вещь из цеха и держит в руках.
-                        if gstatus not in ('inspected', 'taken'):
-                            errors.append({
-                                'barcode': code,
-                                'error': f'{gnum or "Вещь"} не осмотрена (статус: {gstatus})',
-                            })
-                            continue
-                        cur.execute(
-                            f"UPDATE goods_warehouse SET status = 'in_stock', "
-                            f"shelf_id = {int(shelf_id)}, taken_at = COALESCE(taken_at, now()), "
-                            f"taken_by = COALESCE(taken_by, {int(actor_id) if actor_id else 'NULL'}), "
-                            f"received_at = now() WHERE id = {gid}"
-                        )
-                        matched = try_match_orders_from_stock(cur, gw_id=gid)
-                        placed.append({
+                    gid, gstatus, gnum, gprod = row
+                    # На полку кладём только реально осмотренное: 'inspected' —
+                    # упаковщица закончила и наклеила стикер, 'taken' — кладовщик
+                    # уже забрал вещь из цеха и держит в руках.
+                    if gstatus not in ('inspected', 'taken'):
+                        errors.append({
                             'barcode': code,
-                            'orderNumber': gnum,
-                            'product': gprod,
-                            'shelfName': shelf_name,
-                            'autoMatched': len(matched),
+                            'error': f'{gnum or "Вещь"} не осмотрена (статус: {gstatus})',
                         })
+                        continue
+
+                    shelf_id, shelf_name, shelf_reason = pick_shelf_for_item(cur, gid)
+                    if not shelf_id:
+                        errors.append({'barcode': code, 'error': shelf_reason})
+                        continue
+
+                    cur.execute(
+                        f"UPDATE goods_warehouse SET status = 'in_stock', "
+                        f"shelf_id = {int(shelf_id)}, taken_at = COALESCE(taken_at, now()), "
+                        f"taken_by = COALESCE(taken_by, {int(actor_id) if actor_id else 'NULL'}), "
+                        f"received_at = now() WHERE id = {gid}"
+                    )
+                    matched = try_match_orders_from_stock(cur, gw_id=gid)
+                    placed.append({
+                        'barcode': code,
+                        'orderNumber': gnum,
+                        'product': gprod,
+                        'shelfName': shelf_name,
+                        'shelfReason': shelf_reason,
+                        'autoMatched': len(matched),
+                    })
 
                 log_action(
                     cur, actor_id, actor_name, 'place_inspected_batch', 'goods_warehouse', None,

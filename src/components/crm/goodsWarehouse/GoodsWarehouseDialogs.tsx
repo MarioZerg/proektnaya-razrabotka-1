@@ -1,5 +1,6 @@
 import MoveShelfDialog from '@/components/crm/goodsWarehouse/MoveShelfDialog';
 import PlaceOnShelfDialog from '@/components/crm/goodsWarehouse/PlaceOnShelfDialog';
+import PlaceInspectedDialog from '@/components/crm/goodsWarehouse/PlaceInspectedDialog';
 import PickupReturnsDialog from '@/components/crm/returns/PickupReturnsDialog';
 import ReprintReportDialog from '@/components/crm/goodsWarehouse/ReprintReportDialog';
 import AdminReceiveDialog from '@/components/crm/goodsWarehouse/AdminReceiveDialog';
@@ -16,11 +17,9 @@ interface GoodsWarehouseDialogsProps {
   setPlaceOpen: (open: boolean) => void;
   pickupOpen: boolean;
   setPickupOpen: (open: boolean) => void;
-  /** Осмотренные из цеха — вторая вкладка внутри «Разложить по полкам». */
+  /** Приём осмотренных из цеха — отдельное окно со своей плиткой. */
   placeInspectedOpen: boolean;
   setPlaceInspectedOpen: (open: boolean) => void;
-  /** Сколько осмотренных вещей ждут укладки. */
-  inspectedReady?: number;
   moveOpen: boolean;
   setMoveOpen: (open: boolean) => void;
   adminReceiveOpen: boolean;
@@ -51,25 +50,22 @@ const GoodsWarehouseDialogs = ({
   setAdminReceiveOpen,
   reprintOpen,
   setReprintOpen,
-  inspectedReady = 0,
   load,
   loadInspectedReady,
 }: GoodsWarehouseDialogsProps) => (
   <>
-    {/* Одно окно на оба дела кладовщика у стеллажа: отменённые клиентом вещи и
-        осмотренные, вернувшиеся из цеха. Вторые — вкладкой внутри. */}
+    {/* Два раздельных окна: отказы клиентов с конвейера и осмотренные из цеха.
+        Раньше это были вкладки в одном окне, и кладовщик путался, где что. */}
     <PlaceOnShelfDialog
-      open={placeOpen || placeInspectedOpen}
-      onOpenChange={(v) => {
-        setPlaceOpen(v);
-        if (!v) setPlaceInspectedOpen(false);
-      }}
-      shelves={shelves}
+      open={placeOpen}
+      onOpenChange={setPlaceOpen}
       pendingItems={pendingShelf}
       onDone={load}
-      inspectedReady={inspectedReady}
-      onInspectedDone={loadInspectedReady}
-      initialTab={placeInspectedOpen ? 'inspected' : 'cancelled'}
+    />
+    <PlaceInspectedDialog
+      open={placeInspectedOpen}
+      onOpenChange={setPlaceInspectedOpen}
+      onDone={loadInspectedReady}
     />
     <PickupReturnsDialog
       open={pickupOpen}
