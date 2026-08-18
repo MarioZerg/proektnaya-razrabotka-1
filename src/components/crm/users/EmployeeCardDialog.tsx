@@ -243,8 +243,22 @@ const EmployeeCardDialog = ({
                 </div>
               </div>
               <p className="mt-1.5 text-xs text-muted-foreground">
-                Столько длится смена. Закрыть её можно через это время после прихода:
-                пришёл в 7:14 — закроет в 19:14
+                «С» — во сколько сотрудник должен открыть смену
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Часов в смене</Label>
+              <Input
+                type="number"
+                min={0}
+                max={24}
+                step="0.5"
+                value={cardForm.workHours}
+                onChange={(e) => setCardForm((f) => f && { ...f, workHours: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Отсчёт идёт от прихода: открыл смену в 6:05 при 12 часах — закроет в 18:05
               </p>
             </div>
 

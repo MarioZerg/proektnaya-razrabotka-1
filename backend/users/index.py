@@ -217,7 +217,7 @@ def handler(event: dict, context) -> dict:
                 "is_active, created_at, updated_at, shift_number, "
                 "max_user_id, phone, registered_via_max, shift_free, salary_unlock_at, "
                 "CEIL(GREATEST(0, EXTRACT(EPOCH FROM (salary_unlock_at - now())) / 86400))::int, "
-                "work_schedule, COALESCE(late_tolerance_minutes, 15) "
+                "work_schedule, COALESCE(late_tolerance_minutes, 15), work_hours "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -255,6 +255,8 @@ def handler(event: dict, context) -> dict:
                     'workSchedule': r[20],
                     # Сколько минут опоздания прощается, прежде чем начислится штраф.
                     'lateToleranceMinutes': r[21],
+                    # Сколько часов длится смена: от них считается время закрытия.
+                    'workHours': float(r[22]) if r[22] is not None else None,
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows
@@ -477,8 +479,22 @@ def handler(event: dict, context) -> dict:
                             hours = ('07:00', '19:00') if sched == '2/2' else ('08:00', '17:00')
                             fields.append(f"shift_from = '{hours[0]}'")
                             fields.append(f"shift_to = '{hours[1]}'")
+                            if 'workHours' not in body_data:
+                                fields.append(f"work_hours = {12 if sched == '2/2' else 9}")
                     else:
                         fields.append("work_schedule = NULL")
+                # Часы работы — главное поле: от него считается, во сколько сотрудник
+                # сможет закрыть смену (приход + эти часы).
+                if 'workHours' in body_data:
+                    wh = body_data['workHours']
+                    if wh in (None, ''):
+                        fields.append("work_hours = NULL")
+                    else:
+                        try:
+                            wh_val = max(0.0, min(24.0, float(wh)))
+                            fields.append(f"work_hours = {wh_val}")
+                        except (TypeError, ValueError):
+                            pass
                 if 'lateToleranceMinutes' in body_data:
                     try:
                         tol = max(0, int(body_data['lateToleranceMinutes']))

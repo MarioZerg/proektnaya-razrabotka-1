@@ -21,6 +21,7 @@ export interface Employee {
   workSchedule: string | null;
   /** Сколько минут опоздания прощается до штрафа. */
   lateToleranceMinutes: number;
+  workHours: number | null;
   avatarUrl: string | null;
   isActive: boolean;
   createdAt: string;
@@ -69,6 +70,7 @@ export const createEmployee = (payload: {
   shiftTo?: string;
   workSchedule?: string;
   lateToleranceMinutes?: number;
+  workHours?: number | null;
   avatarBase64?: string;
 }) => postAction({ action: 'create', ...payload });
 
@@ -84,6 +86,7 @@ export const updateEmployee = (
     shiftTo: string | null;
     workSchedule: string | null;
     lateToleranceMinutes: number;
+  workHours: number | null;
     isActive: boolean;
     avatarBase64: string;
     maxUserId: string | null;

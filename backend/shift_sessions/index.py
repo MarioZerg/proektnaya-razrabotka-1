@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import psycopg2
 
@@ -106,37 +106,45 @@ def get_setting(cur, workshop_id, key, default=None):
 def shift_close_allowed_at(cur, user_id, opened_at):
     """Во сколько сотрудник сможет закрыть смену.
 
-    Считаем от фактического прихода, а не от расписания: график 07:00–19:00 — это
-    12 часов работы, значит пришедший в 7:14 закрывает смену в 19:14. Опоздавший
-    дорабатывает своё, а не уходит вместе со всеми.
+    Отсчёт идёт СТРОГО ОТ ФАКТИЧЕСКОГО ПРИХОДА: во сколько человек открыл смену,
+    с того момента и пошли его рабочие часы. Пришёл в 6:05 при 12-часовой смене —
+    закроет в 18:05. Пришёл в 8:00 при 9-часовой — закроет в 17:00.
 
-    Возвращает datetime или None, если график не задан (тогда не ограничиваем).
+    Длительность берём из профиля (work_hours). Если она не заполнена — считаем её
+    из графика shift_from/shift_to, как раньше.
+
+    Возвращает datetime (UTC) или None, если длительность не задана.
     """
     cur.execute(
-        "SELECT shift_from, shift_to FROM users WHERE id = %s",
+        "SELECT shift_from, shift_to, work_hours FROM users WHERE id = %s",
         (int(user_id),),
     )
     row = cur.fetchone()
-    if not row or not row[0] or not row[1]:
+    if not row:
         return None
 
-    start, end = row[0], row[1]
-    # opened_at лежит в базе в UTC, а график (07:00-19:00) задан московским временем.
-    # Сравнивать их напрямую нельзя — сначала переводим приход в московскую шкалу,
-    # иначе смена, открытая в 07:14 по Москве, считалась бы открытой в 04:14.
-    opened_msk = msk_from_utc(opened_at)
-    start_dt = datetime.combine(opened_msk.date(), start)
-    end_dt = datetime.combine(opened_msk.date(), end)
-    # Ночная смена (например с 19:00 до 07:00) заканчивается на следующий день.
-    if end_dt <= start_dt:
-        end_dt += timedelta(days=1)
+    start, end, work_hours = row[0], row[1], row[2]
 
-    duration = end_dt - start_dt
-    # Пришёл раньше начала смены — отсчёт всё равно ведём от её начала по графику,
-    # иначе ранний приход сокращал бы рабочий день.
-    base = opened_msk if opened_msk > start_dt else start_dt
-    # Возвращаем UTC: это время уходит в базу и на фронтенд, где читается как UTC.
-    return utc_from_msk(base + duration)
+    # Сколько часов длится смена этого человека.
+    if work_hours is not None:
+        duration = timedelta(hours=float(work_hours))
+    elif start and end:
+        start_dt = datetime.combine(date(2000, 1, 1), start)
+        end_dt = datetime.combine(date(2000, 1, 1), end)
+        # Ночная смена (например с 19:00 до 07:00) заканчивается на следующий день.
+        if end_dt <= start_dt:
+            end_dt += timedelta(days=1)
+        duration = end_dt - start_dt
+    else:
+        return None
+
+    if duration <= timedelta(0):
+        return None
+
+    # Отсчёт ровно от прихода. Раньше ранний приход подтягивался к началу смены по
+    # графику, и человек, пришедший в 6:05 при графике с 08:00, всё равно ждал до
+    # 20:00 — это и была жалоба третьей смены. Теперь пришёл раньше — раньше и уйдёт.
+    return opened_at + duration
 
 
 def count_orders_in_work(cur, user_id, role, session_workshop_id=None):
@@ -415,7 +423,8 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'shifts': available})}
 
             cur.execute(
-                "SELECT id, full_name, role, shift_number, shift_from, shift_to, workshop, shift_free FROM users "
+                "SELECT id, full_name, role, shift_number, shift_from, shift_to, workshop, shift_free, "
+                "work_hours, late_tolerance_minutes FROM users "
                 "WHERE is_active = true ORDER BY full_name"
             )
             employee_rows = cur.fetchall()
@@ -429,21 +438,29 @@ def handler(event: dict, context) -> dict:
             latest_by_user = {r[0]: (r[1], r[2], r[3], r[4], r[5], r[6]) for r in cur.fetchall()}
 
             employees = []
-            for uid, full_name, role, shift_number, shift_from, shift_to, workshop_name, shift_free in employee_rows:
+            for (uid, full_name, role, shift_number, shift_from, shift_to, workshop_name,
+                 shift_free, emp_work_hours, emp_late_tol) in employee_rows:
                 latest = latest_by_user.get(uid)
                 is_open = bool(latest and latest[1] is None)
                 opened_at = (latest[0].isoformat() + 'Z') if is_open else None
                 # Время закрытия считаем от фактического прихода: смена длится столько,
                 # сколько заложено графиком. Пришёл в 7:14 при графике 07:00-19:00 —
                 # закроет в 19:14, то есть отработает свои 12 часов.
+                # Считаем ровно так же, как shift_close_allowed_at: от фактического
+                # прихода плюс длительность смены сотрудника.
                 can_close_at = None
-                if is_open and shift_from and shift_to:
-                    start_dt = datetime.combine(latest[0].date(), shift_from)
-                    end_dt = datetime.combine(latest[0].date(), shift_to)
-                    if end_dt <= start_dt:
-                        end_dt += timedelta(days=1)
-                    base = latest[0] if latest[0] > start_dt else start_dt
-                    can_close_at = (base + (end_dt - start_dt)).isoformat() + 'Z'
+                if is_open:
+                    dur = None
+                    if emp_work_hours is not None:
+                        dur = timedelta(hours=float(emp_work_hours))
+                    elif shift_from and shift_to:
+                        s_dt = datetime.combine(date(2000, 1, 1), shift_from)
+                        e_dt = datetime.combine(date(2000, 1, 1), shift_to)
+                        if e_dt <= s_dt:
+                            e_dt += timedelta(days=1)
+                        dur = e_dt - s_dt
+                    if dur and dur > timedelta(0):
+                        can_close_at = (latest[0] + dur).isoformat() + 'Z'
                 session_workshop_id = latest[2] if is_open else None
                 session_shift_number = latest[3] if is_open else None
                 session_workshop_name = latest[5] if is_open else None
@@ -462,6 +479,8 @@ def handler(event: dict, context) -> dict:
                     'openedAt': opened_at,
                     'canCloseAt': can_close_at,
                     'shiftFree': shift_free,
+                    'workHours': float(emp_work_hours) if emp_work_hours is not None else None,
+                    'lateToleranceMinutes': emp_late_tol,
                     'sessionWorkshopId': session_workshop_id,
                     'sessionShiftNumber': session_shift_number,
                     'sessionWorkshopName': session_workshop_name,

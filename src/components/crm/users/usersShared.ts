@@ -50,6 +50,7 @@ export interface CardFormState {
   workSchedule: string;
   /** Допустимое опоздание в минутах (строкой — поле ввода). */
   lateToleranceMinutes: string;
+  workHours: string;
   newPassword: string;
   avatarBase64: string;
   maxUserId: string;
