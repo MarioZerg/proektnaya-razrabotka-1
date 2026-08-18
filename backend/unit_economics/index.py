@@ -900,6 +900,90 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return _resp(200, {'success': True})
 
+        if action == 'auto_sync_prices':
+            # АВТОМАТИЧЕСКАЯ ЗАГРУЗКА ЦЕН, ЛОГИСТИКИ И КОМИССИЙ СО ВСЕХ ПЛОЩАДОК.
+            #
+            # Ручная кнопка тянет одну страницу за нажатие: у функции 5 секунд, а
+            # карточек почти тысяча. Человеку приходилось сидеть и ждать прогресс —
+            # и на практике цены обновляли раз в несколько месяцев, поэтому вся
+            # юнит-экономика считалась по устаревшим тарифам.
+            #
+            # Здесь тот же обход, но его дёргает планировщик: за вызов проходим
+            # столько страниц, сколько успеваем, и запоминаем курсор в настройках.
+            # Следующий запуск продолжает с того же места — так за несколько
+            # заходов обновляется весь каталог без участия человека.
+            marketplaces = body_data.get('marketplaces') or list(MARKETPLACES)
+            # Сколько страниц берём за один запуск. По умолчанию 3 — укладываемся
+            # в таймаут даже на медленном ответе площадки.
+            max_pages = int(body_data.get('maxPages') or 3)
+
+            report = {}
+            for code in marketplaces:
+                if code not in MARKETPLACES:
+                    continue
+                # Курсор незавершённого обхода лежит в настройках: планировщик
+                # продолжает с той страницы, на которой остановился прошлый запуск.
+                cur.execute(
+                    "SELECT value FROM system_settings WHERE key = %s",
+                    (f'ue_sync_cursor_{code}',),
+                )
+                cur_row = cur.fetchone()
+                cursor = (cur_row[0] or '') if cur_row else ''
+
+                fetched = 0
+                saved = 0
+                pages = 0
+                done = False
+                error = None
+                for _ in range(max_pages):
+                    if code == 'ozon':
+                        res = _sync_ozon(cur, cursor)
+                    elif code == 'wildberries':
+                        res = _sync_wb(cur, cursor)
+                    else:
+                        res = _sync_yandex(cur, cursor)
+                    if not res.get('ok'):
+                        error = res.get('error')
+                        break
+                    fetched += int(res.get('fetched') or 0)
+                    saved += int(res.get('saved') or 0)
+                    pages += 1
+                    cursor = res.get('cursor') or ''
+                    if res.get('done'):
+                        done = True
+                        cursor = ''
+                        break
+
+                # Запоминаем, где остановились. Каталог пройден целиком — курсор
+                # чистим, следующий запуск начнёт заново с актуальными ценами.
+                cur.execute(
+                    "INSERT INTO system_settings (key, value) VALUES (%s, %s) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                    (f'ue_sync_cursor_{code}', cursor),
+                )
+                report[code] = {
+                    'fetched': fetched, 'saved': saved, 'pages': pages,
+                    'done': done, 'error': error,
+                }
+
+            total_saved = sum(v['saved'] for v in report.values())
+            parts = []
+            for code, v in report.items():
+                if v['error']:
+                    parts.append(f"{code}: ошибка — {v['error'][:60]}")
+                else:
+                    parts.append(
+                        f"{code}: {v['saved']} цен"
+                        + (' (каталог пройден)' if v['done'] else ' (продолжение)')
+                    )
+            cur.execute(
+                "INSERT INTO audit_log (category, user_id, user_name, action, entity_type, description) "
+                "VALUES ('integration', NULL, 'Планировщик', 'ue_sync_prices', 'unit_economics', %s)",
+                (f'Обновление цен и логистики: {"; ".join(parts)}',),
+            )
+            conn.commit()
+            return _resp(200, {'ok': True, 'saved': total_saved, 'report': report})
+
         if action == 'sync_prices':
             # Тянем актуальные цены и комиссии из кабинета площадки.
             if not _can_edit(cur, actor_id):

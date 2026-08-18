@@ -116,6 +116,21 @@ JOBS = [
         'lateAfter': 240,
     },
     {
+        'key': 'ue_sync_prices',
+        'title': 'Цены, логистика и комиссии',
+        'func': 'unit_economics',
+        'urlAction': 'auto_sync_prices',
+        # Задание пишет цены в базу, поэтому только POST — как у автозакрытия смен.
+        'method': 'POST',
+        'purpose': 'Тянет с площадок цены, комиссии и стоимость логистики для юнит-экономики',
+        'group': 'service',
+        'everyMin': 360,
+        'lateAfter': 1440,
+        # Каталог обходится частями: за запуск берётся несколько страниц, поэтому
+        # отдельный заход может не дать новых записей — это не поломка.
+        'optional': True,
+    },
+    {
         'key': 'shifts_auto_close',
         'title': 'Автозакрытие смен',
         'func': 'shift_sessions',
@@ -141,6 +156,7 @@ FUNC_IDS = {
     'yandex_market': '27689c0a-e080-4c26-b433-8e0979079d19',
     'marketplace_returns': '015dbb02-13c9-49de-8718-8fe37c329b30',
     'shift_sessions': '6143d29d-094c-4dc6-a520-eb0eeb10d8a0',
+    'unit_economics': '4ebd72ad-8ca4-456c-840c-d2db30ce04cd',
 }
 
 # Разделы страницы: заголовок и пояснение, чем грозит молчание.
