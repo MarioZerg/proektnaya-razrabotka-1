@@ -389,9 +389,9 @@ const ToWorkshop = () => {
           </TabsList>
         </Tabs>
 
-        <div className="flex flex-wrap gap-3">
+        <div className="grid gap-3 sm:flex sm:flex-wrap">
           <Select value={materialFilter} onValueChange={setMaterialFilter}>
-            <SelectTrigger className="sm:w-64">
+            <SelectTrigger className="w-full sm:w-64">
               <SelectValue placeholder="Все материалы" />
             </SelectTrigger>
             <SelectContent>
@@ -410,7 +410,7 @@ const ToWorkshop = () => {
           {!isProduction && (
             <>
               <Select value={workshopFilter} onValueChange={setWorkshopFilter}>
-                <SelectTrigger className="sm:w-56">
+                <SelectTrigger className="w-full sm:w-56">
                   <SelectValue placeholder="Все цеха" />
                 </SelectTrigger>
                 <SelectContent>
@@ -424,7 +424,7 @@ const ToWorkshop = () => {
               </Select>
 
               <Select value={shiftFilter} onValueChange={setShiftFilter}>
-                <SelectTrigger className="sm:w-56">
+                <SelectTrigger className="w-full sm:w-56">
                   <SelectValue placeholder="Все смены" />
                 </SelectTrigger>
                 <SelectContent>
