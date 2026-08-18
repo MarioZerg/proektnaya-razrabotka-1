@@ -235,6 +235,26 @@ def try_match_orders_from_stock(cur, gw_id=None):
             "SELECT id, product FROM orders "
             "WHERE marketplace <> 'Yandex' AND group_key IS NULL "
             f"AND sewing_status = '{NOT_STARTED_SEWING}' AND fulfilled_from_stock_id IS NULL "
+            # ЖЁСТКОЕ УСЛОВИЕ: заказ не должен быть закреплён НИ ЗА КЕМ.
+            #
+            # Статуса «Новый» мало. Заказ может числиться новым, но уже лежать у
+            # конкретного человека: закройщица взяла стек и не отметила раскрой,
+            # заказ вернули по конвейеру назад, админ переназначил исполнителя.
+            # Вещь при этом закреплена за сотрудником, а подбор её всё равно
+            # забирал — человек шёл искать работу, которой у него больше нет,
+            # а раскроенный крой оставался висеть ничейным.
+            #
+            # Теперь подбор берёт ТОЛЬКО заказы, за которыми не стоит ни один
+            # сотрудник и по которым цех не сделал ни одного движения.
+            "AND assigned_user_id IS NULL "
+            "AND cutter_user_id IS NULL "
+            "AND sewer_user_id IS NULL "
+            "AND packer_user_id IS NULL "
+            "AND cut_at IS NULL AND taken_at IS NULL "
+            # Ткань уже списана — значит крой физически сделан, вещь существует
+            # в цехе. Подменять её складом нельзя: материал и работа пропадут.
+            "AND NOT EXISTS (SELECT 1 FROM order_material_usage omu "
+            "   WHERE omu.order_id = orders.id) "
             "AND COALESCE(status, '') <> 'Отменён' "
             # Подбирать со склада можно ТОЛЬКО отправления, которые маркетплейс ещё
             # ждёт от нас: у OZON это «ожидает упаковки» (awaiting_packaging).
