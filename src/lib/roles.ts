@@ -315,6 +315,13 @@ const managerNav: NavItem[] = [
     icon: 'Calculator',
     path: '/crm/analytics/product-cost',
   },
+  // Юнит-экономика — рабочий инструмент менеджера: он торгуется с площадками,
+  // заводит товар в акции и должен видеть, где проходит граница убытка.
+  {
+    label: 'Юнит-экономика',
+    icon: 'TrendingUp',
+    path: '/crm/analytics/unit-economics',
+  },
 ];
 
 const adminNav: NavItem[] = [
@@ -369,6 +376,7 @@ const adminNav: NavItem[] = [
       // Себестоимость — деньги, а не склад: сколько стоит одна вещь и из чего
       // складывается её цена. Смотрит только владелец.
       { label: 'Себестоимость товаров', path: '/crm/analytics/product-cost' },
+      { label: 'Юнит-экономика маркетплейсов', path: '/crm/analytics/unit-economics' },
     ],
   },
   {

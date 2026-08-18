@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
@@ -89,12 +91,22 @@ const ProductCost = () => {
   return (
     <CrmLayout>
       <div className="space-y-5">
-        <div>
-          <h1 className="text-xl font-bold">Себестоимость товаров</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Во сколько обходится одна вещь: материалы, работа цеха, налог. Считается по
-            ткани и ширине — высота на себестоимость не влияет.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold">Себестоимость товаров</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Во сколько обходится одна вещь: материалы, работа цеха, налог. Считается по
+              ткани и ширине — высота на себестоимость не влияет.
+            </p>
+          </div>
+          {/* Следующий вопрос после «сколько стоит вещь» — «сколько мы на ней
+              зарабатываем». Ведём туда прямо отсюда. */}
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/crm/analytics/unit-economics">
+              <Icon name="TrendingUp" size={14} className="mr-1.5" />
+              Юнит-экономика маркетплейсов
+            </Link>
+          </Button>
         </div>
 
         {data && canEdit && (

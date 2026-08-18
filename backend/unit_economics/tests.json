@@ -1,0 +1,57 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Unit economics for ozon FBS",
+      "method": "GET",
+      "path": "/?marketplace=ozon&scheme=FBS",
+      "expectedStatus": 200,
+      "expectedBody": { "marketplaceCode": "string", "scheme": "string" },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Unknown marketplace fails",
+      "method": "GET",
+      "path": "/?marketplace=avito&scheme=FBS",
+      "expectedStatus": 400
+    },
+    {
+      "name": "Unknown scheme fails",
+      "method": "GET",
+      "path": "/?marketplace=ozon&scheme=XXL",
+      "expectedStatus": 400
+    },
+    {
+      "name": "Compare all marketplaces",
+      "method": "GET",
+      "path": "/?action=compare",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Save tariffs without rights fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "save_tariffs", "marketplaceCode": "ozon" },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Save settings without rights fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "save_settings", "taxPercent": 6 },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "nope" },
+      "expectedStatus": 400
+    }
+  ]
+}

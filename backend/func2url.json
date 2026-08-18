@@ -1,4 +1,5 @@
 {
+  "unit_economics": "https://functions.poehali.dev/4ebd72ad-8ca4-456c-840c-d2db30ce04cd",
   "product_cost": "https://functions.poehali.dev/7e85cd3d-e5cd-44e2-a803-5ff07584de12",
   "cancellation_analytics": "https://functions.poehali.dev/89778b19-288d-4b45-a9bb-e1e80ac0b285",
   "marketplace_reconcile": "https://functions.poehali.dev/6d6d5a20-18e6-4dea-8ec5-ffef149f45fa",
