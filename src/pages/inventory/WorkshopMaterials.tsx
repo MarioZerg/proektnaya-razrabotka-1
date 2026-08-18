@@ -115,6 +115,15 @@ const WorkshopMaterials = () => {
                           key={`${col.workshopId}-${col.shiftNumber}`}
                           className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''}`}
                         >
+                          {/* Цех в заголовке нужен кладовщику и админу: они видят все
+                              цеха сразу, а «Смена №1» есть и в первом, и во втором —
+                              без названия цеха две одинаковые колонки не различить.
+                              Работник цеха видит только свою — ему цех не показываем. */}
+                          {!isProduction && (
+                            <div className="text-xs font-normal text-muted-foreground">
+                              {col.workshopName}
+                            </div>
+                          )}
                           {col.shiftLabel}
                         </TableHead>
                       ))}
@@ -171,6 +180,15 @@ const WorkshopMaterials = () => {
                                   : `0 ${m.unit}, 0 рул.`;
                               })()
                             : `${formatQuantity(m.totalQuantity)} ${m.unit}, ${m.totalRolls} рул.`}
+                          {/* Часть остатка доехала до цеха, но смена её ещё не приняла.
+                              Без этой пометки материал не виден нигде: в работу он не
+                              пойдёт, а в общем остатке уже учтён — цех считает, что
+                              ткань есть, и планирует раскрой, которого не будет. */}
+                          {(m.pendingQuantity ?? 0) > 0 && (
+                            <div className="text-xs font-medium text-amber-600">
+                              в пути: {formatQuantity(m.pendingQuantity ?? 0)} {m.unit}
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
