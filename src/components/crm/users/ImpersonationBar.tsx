@@ -19,7 +19,10 @@ const ImpersonationBar = () => {
 
   const handleReturn = () => {
     stopImpersonation();
-    navigate('/employees');
+    // Возвращаем на список сотрудников — именно оттуда админ и заходил в чужой
+    // аккаунт. Раньше здесь стоял несуществующий адрес /employees, и выход из
+    // режима просмотра приводил на страницу 404.
+    navigate('/crm/settings/users');
   };
 
   return (

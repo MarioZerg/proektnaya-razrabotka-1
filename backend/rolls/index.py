@@ -1365,7 +1365,11 @@ def handler(event: dict, context) -> dict:
                         f'{penalty["unit"]} на {penalty["total"]} ₽. '
                         f'Сотрудница заявила недостачу {round(shortage, 2)} {penalty["unit"]}.',
                         closed_by_id, closed_by_name,
-                        link='/crm/warehouse/rolls?tab=shortage',
+                        # Страница «Анализ недостач» — там админ решает судьбу
+                        # рулона (удержать с сотрудницы или списать на поставщика).
+                        # Раньше здесь стоял несуществующий адрес /crm/warehouse/rolls,
+                        # и кнопка «Открыть» в уведомлении вела на страницу 404.
+                        link='/crm/analytics/roll-shortage',
                         entity_type='roll', entity_id=int(item_id),
                     )
 
