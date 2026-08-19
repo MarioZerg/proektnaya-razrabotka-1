@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,6 +40,7 @@ const periodLabel = (item: ShopItem) => {
 
 const VarikiShopManage = () => {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const { user } = useAuth();
 
   const [items, setItems] = useState<ShopItem[]>([]);
@@ -136,6 +138,22 @@ const VarikiShopManage = () => {
       targetRef.current = null;
     }
   };
+
+  // Страница доступна по прямой ссылке, поэтому проверяем роль здесь, а не
+  // только прячем пункт меню: сертификаты и цены — не для сотрудников.
+  if (user && user.role !== 'admin') {
+    return (
+      <CrmLayout>
+        <div className="py-16 text-center">
+          <Icon name="Lock" size={32} className="mx-auto mb-3 text-muted-foreground" />
+          <p className="font-medium">Раздел доступен только администратору</p>
+          <Button className="mt-4" onClick={() => navigate('/crm/variki/shop')}>
+            Перейти в магазин
+          </Button>
+        </div>
+      </CrmLayout>
+    );
+  }
 
   return (
     <CrmLayout>
