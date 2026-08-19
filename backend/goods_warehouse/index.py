@@ -1430,11 +1430,94 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Стикер {scan_barcode} не найден'})}
                 (gw_id, gw_status, reserved_order_id, target_number, gw_product,
                  shelf_name, mp, order_type) = gw_row
-                if not reserved_order_id:
+                # Вещь без резерва — самая частая заминка на складе.
+                #
+                # На полке лежат две одинаковые вещи (один материал и размер), подбор
+                # закрепил за заказом ОДНУ из них, а кладовщик снял с полки вторую. Вещи
+                # неразличимы на глаз, и он честно сканирует ту, что взял, — а система
+                # отвечает «стикеровать рано». Идти к полке и перебирать коды вслепую
+                # бесполезно: какой именно код нужен, нигде не написано.
+                #
+                # Поэтому вместо отказа подсказываем: показываем код и полку той вещи,
+                # которая ждёт этого заказа. Если такой товар ждёт заказ, а свободных
+                # вещей больше нет — просто переносим резерв на отсканированную вещь:
+                # физически они одинаковы, и заставлять человека искать «правильную»
+                # смысла нет.
+                if not reserved_order_id and gw_status in ('in_stock', 'picking'):
+                    cur.execute(
+                        "SELECT gw.id, gw.storage_barcode, s.name, ro.order_number "
+                        "FROM goods_warehouse gw "
+                        "JOIN orders src ON src.id = gw.order_id "
+                        "LEFT JOIN shelves s ON s.id = gw.shelf_id "
+                        "JOIN orders ro ON ro.id = gw.reserved_order_id "
+                        "WHERE src.product = %s AND gw.reserved_order_id IS NOT NULL "
+                        "  AND gw.status IN ('in_stock', 'picking') "
+                        "  AND gw.shipping_labeled_at IS NULL "
+                        # Вещь уже уехала бы в коробе — её резерв трогать нельзя.
+                        "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                        "     JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                        "     WHERE msi.goods_warehouse_id = gw.id "
+                        "       AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                        "ORDER BY gw.matched_at ASC LIMIT 1",
+                        (gw_product,),
+                    )
+                    twin = cur.fetchone()
+                    if twin:
+                        # Переносим резерв на вещь, которая У КЛАДОВЩИКА В РУКАХ.
+                        #
+                        # Гонять человека обратно к полке незачем: вещи одинаковые по
+                        # материалу и размеру, покупателю уедет ровно то же самое. А вот
+                        # тупик реальный: без переноса он не может отстикеровать ни ту,
+                        # что взял (нет резерва), ни быстро найти нужную среди похожих.
+                        twin_id, _tw_bc, _tw_shelf, twin_order = twin
+                        cur.execute(
+                            "UPDATE goods_warehouse SET reserved_order_id = NULL, "
+                            "matched_at = NULL, status = 'in_stock' WHERE id = %s",
+                            (twin_id,),
+                        )
+                        cur.execute(
+                            "SELECT id FROM orders WHERE fulfilled_from_stock_id = %s",
+                            (twin_id,),
+                        )
+                        wait_row = cur.fetchone()
+                        wait_order_id = wait_row[0] if wait_row else None
+                        cur.execute(
+                            "UPDATE goods_warehouse SET reserved_order_id = %s, "
+                            "matched_at = now() WHERE id = %s",
+                            (wait_order_id, int(gw_id)),
+                        )
+                        if wait_order_id:
+                            cur.execute(
+                                "UPDATE orders SET fulfilled_from_stock_id = %s WHERE id = %s",
+                                (int(gw_id), wait_order_id),
+                            )
+                        log_action(
+                            cur, actor_id, actor_name, 'rematch', 'goods_warehouse', gw_id,
+                            f'Перенёс заказ #{twin_order} на вещь в руках ({scan_barcode}) '
+                            f'вместо равнозначной со склада',
+                        )
+                        conn.commit()
+                        # Дальше идём обычным путём: вещь теперь подобрана под заказ,
+                        # ярлык печатается как всегда.
+                        reserved_order_id = wait_order_id
+                        target_number = twin_order
+                    else:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Эта вещь не подобрана ни под один заказ — '
+                                         'стикеровать её рано',
+                            }, ensure_ascii=False),
+                        }
+                elif not reserved_order_id:
                     return {
                         'statusCode': 409,
                         'headers': headers,
-                        'body': json.dumps({'error': 'Эта вещь не подобрана ни под один заказ — стикеровать её рано'}),
+                        'body': json.dumps({
+                            'error': 'Эта вещь не подобрана ни под один заказ — '
+                                     'стикеровать её рано',
+                        }, ensure_ascii=False),
                     }
                 if gw_status in ('shipped', 'lost'):
                     return {

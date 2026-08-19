@@ -2520,8 +2520,18 @@ def handler(event: dict, context) -> dict:
                             "UPDATE orders SET status = 'Отгружен', "
                             "completed_at = COALESCE(completed_at, now()) "
                             "WHERE status <> 'Отменён' AND id IN ("
-                            f"  SELECT COALESCE(reserved_order_id, order_id) FROM goods_warehouse "
-                            f"  WHERE id IN ({gids_csv})"
+                            # И заказ покупателя, и карточку-источник вещи.
+                            #
+                            # Раньше стоял COALESCE(reserved_order_id, order_id): у вещи,
+                            # подобранной с полки, закрывался только заказ покупателя, а
+                            # служебная карточка приёмки (WH-…) висела «Новой» вечно —
+                            # будто товар всё ещё ждут от цеха. Кладовщик видел «вещь
+                            # отгружена» и рядом «заказ новый» и не понимал, где товар.
+                            f"  SELECT reserved_order_id FROM goods_warehouse "
+                            f"  WHERE id IN ({gids_csv}) AND reserved_order_id IS NOT NULL "
+                            "  UNION "
+                            f"  SELECT order_id FROM goods_warehouse "
+                            f"  WHERE id IN ({gids_csv}) AND order_id IS NOT NULL"
                             ")"
                         )
 
@@ -2658,8 +2668,13 @@ def handler(event: dict, context) -> dict:
                         "UPDATE orders SET status = 'Отгружен', "
                         "completed_at = COALESCE(completed_at, now()) "
                         "WHERE status <> 'Отменён' AND id IN ("
-                        f"  SELECT COALESCE(reserved_order_id, order_id) FROM goods_warehouse "
-                        f"  WHERE id IN ({gids_csv})"
+                        # Закрываем и заказ покупателя, и карточку-источник — иначе
+                        # служебная приёмка WH-… остаётся «Новой» после отгрузки.
+                        f"  SELECT reserved_order_id FROM goods_warehouse "
+                        f"  WHERE id IN ({gids_csv}) AND reserved_order_id IS NOT NULL "
+                        "  UNION "
+                        f"  SELECT order_id FROM goods_warehouse "
+                        f"  WHERE id IN ({gids_csv}) AND order_id IS NOT NULL"
                         ")"
                     )
 
