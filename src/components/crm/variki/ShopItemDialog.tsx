@@ -43,6 +43,11 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
   const [imageUrl, setImageUrl] = useState('');
   const [orgAddress, setOrgAddress] = useState('');
   const [orgPhone, setOrgPhone] = useState('');
+  // Отдельный флаг «бессрочно»: так админу не нужно догадываться, что пустые
+  // поля дат означают «продаётся всегда» — выбор виден явно.
+  const [unlimited, setUnlimited] = useState(true);
+  const [validFrom, setValidFrom] = useState('');
+  const [validTo, setValidTo] = useState('');
   const [icon, setIcon] = useState('Gift');
   const [isActive, setIsActive] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -56,6 +61,9 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
     setImageUrl(item?.imageUrl || '');
     setOrgAddress(item?.orgAddress || '');
     setOrgPhone(item?.orgPhone || '');
+    setValidFrom(item?.validFrom || '');
+    setValidTo(item?.validTo || '');
+    setUnlimited(!item?.validFrom && !item?.validTo);
     setIcon(item?.icon || 'Gift');
     setIsActive(item?.isActive ?? true);
   }, [open, item]);
@@ -68,6 +76,19 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
     const priceNum = Number(price);
     if (!priceNum || priceNum <= 0) {
       toast({ title: 'Укажите цену в вариках', variant: 'destructive' });
+      return;
+    }
+
+    if (!unlimited && !validFrom && !validTo) {
+      toast({
+        title: 'Укажите период продажи',
+        description: 'Или выберите «бессрочно»',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!unlimited && validFrom && validTo && validFrom > validTo) {
+      toast({ title: 'Дата начала позже даты окончания', variant: 'destructive' });
       return;
     }
 
@@ -85,6 +106,8 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
           stockLimit: stockLimit ? Number(stockLimit) : null,
           orgAddress: orgAddress.trim() || null,
           orgPhone: orgPhone.trim() || null,
+          validFrom: unlimited ? null : validFrom || null,
+          validTo: unlimited ? null : validTo || null,
           isActive,
         },
         user?.id,
@@ -155,6 +178,45 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
                 сертификатов система не даст.
               </p>
             </div>
+          </div>
+
+          {/* Срок действия: после конечной даты подарок исчезает из продажи сам.
+              Так сотрудник не купит сертификат, которым уже не воспользуется. */}
+          <div className="space-y-3 rounded-md border border-border p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Действует бессрочно</p>
+                <p className="text-xs text-muted-foreground">
+                  Выключите, чтобы задать период продажи
+                </p>
+              </div>
+              <Switch checked={unlimited} onCheckedChange={setUnlimited} />
+            </div>
+
+            {!unlimited && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Продавать с</Label>
+                  <Input
+                    type="date"
+                    value={validFrom}
+                    onChange={(e) => setValidFrom(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Продавать по</Label>
+                  <Input
+                    type="date"
+                    value={validTo}
+                    onChange={(e) => setValidTo(e.target.value)}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  Можно заполнить только одну дату. Последний день включительно —
+                  в этот день купить ещё можно.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Контакты организации: без них сотрудник с сертификатом на руках не

@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import uuid
+from datetime import date
 
 import boto3
 import psycopg2
@@ -111,6 +112,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT i.id, i.title, i.description, i.price, i.animation, i.icon, "
                     "  i.image_url, i.stock_limit, i.org_address, i.org_phone, "
+                    "  i.valid_from, i.valid_to, "
                     "  (SELECT count(*) FROM variki_certificates c "
                     "     WHERE c.item_id = i.id AND c.purchase_id IS NULL) AS free "
                     "FROM variki_shop_items i WHERE i.is_active = true "
@@ -120,7 +122,9 @@ def handler(event: dict, context) -> dict:
                     {'id': r[0], 'title': r[1], 'description': r[2],
                      'price': r[3], 'animation': r[4], 'icon': r[5], 'imageUrl': r[6],
                      'stockLimit': r[7], 'orgAddress': r[8], 'orgPhone': r[9],
-                     'available': int(r[10])}
+                     'validFrom': r[10].isoformat() if r[10] else None,
+                     'validTo': r[11].isoformat() if r[11] else None,
+                     'available': int(r[12])}
                     for r in cur.fetchall()
                 ]
                 user_id = params.get('userId')
@@ -164,7 +168,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT i.id, i.title, i.description, i.price, i.animation, i.icon, "
                     "  i.image_url, i.stock_limit, i.is_active, i.sort_order, "
-                    "  i.org_address, i.org_phone, "
+                    "  i.org_address, i.org_phone, i.valid_from, i.valid_to, "
                     "  (SELECT count(*) FROM variki_certificates c "
                     "     WHERE c.item_id = i.id AND c.purchase_id IS NULL), "
                     "  (SELECT count(*) FROM variki_certificates c "
@@ -176,7 +180,9 @@ def handler(event: dict, context) -> dict:
                      'animation': r[4], 'icon': r[5], 'imageUrl': r[6],
                      'stockLimit': r[7], 'isActive': r[8], 'sortOrder': r[9],
                      'orgAddress': r[10], 'orgPhone': r[11],
-                     'available': int(r[12]), 'issued': int(r[13])}
+                     'validFrom': r[12].isoformat() if r[12] else None,
+                     'validTo': r[13].isoformat() if r[13] else None,
+                     'available': int(r[14]), 'issued': int(r[15])}
                     for r in cur.fetchall()
                 ]
                 return _resp(200, {'items': items})
@@ -286,7 +292,7 @@ def handler(event: dict, context) -> dict:
                     return _resp(400, {'error': 'Укажите сотрудника и подарок'})
 
                 cur.execute(
-                    "SELECT title, price FROM variki_shop_items "
+                    "SELECT title, price, valid_from, valid_to FROM variki_shop_items "
                     "WHERE id = %s AND is_active = true",
                     (int(item_id),),
                 )
@@ -294,6 +300,20 @@ def handler(event: dict, context) -> dict:
                 if not item:
                     return _resp(404, {'error': 'Подарок не найден или снят с продажи'})
                 title, price = item[0], int(item[1])
+
+                # Проверяем период ЗДЕСЬ, а не только на кнопке: между открытием
+                # страницы и нажатием срок мог закончиться, и сотрудник потратил бы
+                # варики на сертификат, которым уже не воспользуется.
+                today = date.today()
+                valid_from, valid_to = item[2], item[3]
+                if valid_from and today < valid_from:
+                    return _resp(409, {
+                        'error': f'Подарок поступит в продажу {valid_from.strftime("%d.%m.%Y")}',
+                    })
+                if valid_to and today > valid_to:
+                    return _resp(409, {
+                        'error': f'Срок действия сертификатов истёк {valid_to.strftime("%d.%m.%Y")}',
+                    })
 
                 # Сертификаты кончились — покупать нечего. Проверяем ДО списания
                 # вариков: иначе сотрудник остался бы без валюты и без подарка.
@@ -393,6 +413,13 @@ def handler(event: dict, context) -> dict:
                 description = (body_data.get('description') or '').strip() or None
                 org_address = (body_data.get('orgAddress') or '').strip()[:400] or None
                 org_phone = (body_data.get('orgPhone') or '').strip()[:50] or None
+                # Пустая строка из формы — это «не ограничивать», а не дата.
+                valid_from = (body_data.get('validFrom') or '').strip() or None
+                valid_to = (body_data.get('validTo') or '').strip() or None
+                if valid_from and valid_to and valid_from > valid_to:
+                    return _resp(400, {
+                        'error': 'Дата начала продажи позже даты окончания',
+                    })
                 image_url = (body_data.get('imageUrl') or '').strip() or None
                 icon = (body_data.get('icon') or 'Gift').strip()
                 animation = (body_data.get('animation') or 'none').strip()
@@ -408,9 +435,11 @@ def handler(event: dict, context) -> dict:
                         "UPDATE variki_shop_items SET title = %s, description = %s, "
                         "  price = %s, image_url = %s, icon = %s, animation = %s, "
                         "  stock_limit = %s, is_active = %s, org_address = %s, "
-                        "  org_phone = %s WHERE id = %s RETURNING id",
+                        "  org_phone = %s, valid_from = %s, valid_to = %s "
+                        "WHERE id = %s RETURNING id",
                         (title, description, price, image_url, icon, animation,
-                         stock_limit, is_active, org_address, org_phone, int(item_id)),
+                         stock_limit, is_active, org_address, org_phone,
+                         valid_from, valid_to, int(item_id)),
                     )
                     row = cur.fetchone()
                     if not row:
@@ -420,12 +449,13 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         "INSERT INTO variki_shop_items (title, description, price, "
                         "  image_url, icon, animation, stock_limit, is_active, "
-                        "  org_address, org_phone, sort_order) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                        "  org_address, org_phone, valid_from, valid_to, sort_order) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
                         "  COALESCE((SELECT max(sort_order) + 1 FROM variki_shop_items), 1)) "
                         "RETURNING id",
                         (title, description, price, image_url, icon, animation,
-                         stock_limit, is_active, org_address, org_phone),
+                         stock_limit, is_active, org_address, org_phone,
+                         valid_from, valid_to),
                     )
                     new_id = cur.fetchone()[0]
                 conn.commit()

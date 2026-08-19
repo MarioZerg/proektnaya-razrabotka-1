@@ -33,6 +33,35 @@ import { formatDateTime } from '@/lib/dateUtils';
  * на стороне, автоматически их выдать неоткуда — поэтому шаг с админом честно
  * показан сотруднику, чтобы он не ждал купон мгновенно.
  */
+/** Дата в «01.09.2026» — читается привычнее, чем 2026-09-01. */
+const formatDate = (iso: string) => {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+};
+
+/**
+ * Доступен ли подарок к покупке сегодня.
+ *
+ * Считаем в виде строк ГГГГ-ММ-ДД: они сравниваются как даты без возни с
+ * часовыми поясами, из-за которых подарок мог «закончиться» на день раньше.
+ */
+const checkPeriod = (item: ShopItem) => {
+  const today = new Date();
+  const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
+    today.getDate(),
+  ).padStart(2, '0')}`;
+  if (item.validFrom && iso < item.validFrom) {
+    return { active: false, note: `В продаже с ${formatDate(item.validFrom)}` };
+  }
+  if (item.validTo && iso > item.validTo) {
+    return { active: false, note: `Срок истёк ${formatDate(item.validTo)}` };
+  }
+  if (item.validTo) {
+    return { active: true, note: `Купить до ${formatDate(item.validTo)}` };
+  }
+  return { active: true, note: '' };
+};
+
 const VarikiShop = () => {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -129,6 +158,7 @@ const VarikiShop = () => {
               {items.map((item) => {
                 const enough = balance >= item.price;
                 const soldOut = item.available === 0;
+                const period = checkPeriod(item);
                 return (
                   <div
                     key={item.id}
@@ -202,7 +232,7 @@ const VarikiShop = () => {
 
                         {/* Не хватает — говорим СКОЛЬКО именно: так виден понятный
                             ориентир, а не глухое «недостаточно средств». */}
-                        {!enough && !soldOut && (
+                        {!enough && !soldOut && period.active && (
                           <p className="text-xs font-medium text-muted-foreground">
                             Не хватает {item.price - balance} вариков
                           </p>
@@ -210,24 +240,47 @@ const VarikiShop = () => {
 
                         {/* Остаток показываем, только когда он МАЛЕНЬКИЙ: «осталось 2»
                             подталкивает решиться, а «осталось 47» — просто шум. */}
-                        {!soldOut && item.available <= 3 && (
+                        {!soldOut && period.active && item.available <= 3 && (
                           <p className="text-xs font-semibold text-amber-700">
                             Осталось {item.available}
                             {item.stockLimit ? ` из ${item.stockLimit}` : ''}
                           </p>
                         )}
 
+                        {/* Срок продажи. Пока подарок доступен — мягкое напоминание
+                            «купить до», когда истёк — явная причина, почему нельзя. */}
+                        {period.note && (
+                          <p
+                            className={`flex items-center gap-1.5 text-xs font-semibold ${
+                              period.active ? 'text-muted-foreground' : 'text-destructive'
+                            }`}
+                          >
+                            <Icon name="CalendarClock" size={13} className="shrink-0" />
+                            {period.note}
+                          </p>
+                        )}
+
                         <Button
                           className="w-full"
-                          disabled={!enough || !user?.id || soldOut}
+                          disabled={!enough || !user?.id || soldOut || !period.active}
                           onClick={() => setConfirmItem(item)}
                         >
                           <Icon
-                            name={soldOut ? 'PackageX' : 'ShoppingBag'}
+                            name={
+                              !period.active
+                                ? 'CalendarOff'
+                                : soldOut
+                                  ? 'PackageX'
+                                  : 'ShoppingBag'
+                            }
                             size={16}
                             className="mr-1.5"
                           />
-                          {soldOut ? 'Закончились' : 'Купить'}
+                          {!period.active
+                            ? 'Недоступно'
+                            : soldOut
+                              ? 'Закончились'
+                              : 'Купить'}
                         </Button>
                       </div>
                     </div>

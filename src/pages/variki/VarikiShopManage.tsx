@@ -22,6 +22,20 @@ import {
  * Количество ограничено ровно числом загруженных файлов: продать сертификатов
  * больше, чем есть, система не даст.
  */
+const formatDate = (iso: string) => {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+};
+
+/** Подпись про срок продажи для строки списка. */
+const periodLabel = (item: ShopItem) => {
+  if (!item.validFrom && !item.validTo) return 'бессрочно';
+  if (item.validFrom && item.validTo)
+    return `${formatDate(item.validFrom)} — ${formatDate(item.validTo)}`;
+  if (item.validTo) return `до ${formatDate(item.validTo)}`;
+  return `с ${formatDate(item.validFrom!)}`;
+};
+
 const VarikiShopManage = () => {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -187,6 +201,7 @@ const VarikiShopManage = () => {
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {item.price} вариков
                       {item.stockLimit != null && ` · план ${item.stockLimit} шт`}
+                      {` · ${periodLabel(item)}`}
                     </p>
 
                     {/* Контакты видны в списке: сразу понятно, у каких подарков

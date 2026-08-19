@@ -54,6 +54,9 @@ export interface ShopItem {
   /** Куда прийти с сертификатом и куда звонить записываться. */
   orgAddress?: string | null;
   orgPhone?: string | null;
+  /** Период продажи. Оба пустые — бессрочно. Формат ГГГГ-ММ-ДД. */
+  validFrom?: string | null;
+  validTo?: string | null;
   /** Сколько сертификатов свободно ПРЯМО СЕЙЧАС — столько и можно купить. */
   available: number;
   /** Только во вкладке управления. */
@@ -185,6 +188,8 @@ export interface SaveItemPayload {
   isActive?: boolean;
   orgAddress?: string | null;
   orgPhone?: string | null;
+  validFrom?: string | null;
+  validTo?: string | null;
 }
 
 export const saveShopItem = (payload: SaveItemPayload, actorId?: number) =>
