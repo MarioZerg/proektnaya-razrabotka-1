@@ -51,6 +51,9 @@ export interface ShopItem {
   imageUrl?: string | null;
   /** Сколько всего сертификатов задумано (null — без ограничения). */
   stockLimit?: number | null;
+  /** Куда прийти с сертификатом и куда звонить записываться. */
+  orgAddress?: string | null;
+  orgPhone?: string | null;
   /** Сколько сертификатов свободно ПРЯМО СЕЙЧАС — столько и можно купить. */
   available: number;
   /** Только во вкладке управления. */
@@ -73,6 +76,9 @@ export interface VarikiPurchase {
   couponName: string | null;
   couponAt: string | null;
   cancelReason: string | null;
+  /** Контакты организации: куда идти с сертификатом и куда звонить. */
+  orgAddress?: string | null;
+  orgPhone?: string | null;
 }
 
 const postAction = async (payload: Record<string, unknown>) => {
@@ -177,6 +183,8 @@ export interface SaveItemPayload {
   animation?: string;
   stockLimit?: number | null;
   isActive?: boolean;
+  orgAddress?: string | null;
+  orgPhone?: string | null;
 }
 
 export const saveShopItem = (payload: SaveItemPayload, actorId?: number) =>

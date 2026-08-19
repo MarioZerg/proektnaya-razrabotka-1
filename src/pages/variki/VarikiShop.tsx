@@ -165,6 +165,32 @@ const VarikiShop = () => {
                         <p className="mt-1 text-sm text-foreground/80">{item.description}</p>
                       )}
 
+                      {/* Куда идти и куда звонить — видно ДО покупки: сотрудник
+                          решает, удобно ли ему добираться, пока не потратил варики.
+                          Телефон кликабельный: с телефона сразу набор. */}
+                      {(item.orgAddress || item.orgPhone) && (
+                        <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                          {item.orgAddress && (
+                            <p className="flex items-start gap-1.5">
+                              <Icon name="MapPin" size={13} className="mt-0.5 shrink-0" />
+                              <span>{item.orgAddress}</span>
+                            </p>
+                          )}
+                          {item.orgPhone && (
+                            <p className="flex items-center gap-1.5">
+                              <Icon name="Phone" size={13} className="shrink-0" />
+                              <a
+                                href={`tel:${item.orgPhone.replace(/[^\d+]/g, '')}`}
+                                className="hover:text-foreground hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {item.orgPhone}
+                              </a>
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       <div className="mt-auto space-y-2 pt-4">
                         <div className="flex items-center gap-2">
                           <Icon name="Coins" size={20} className="text-amber-500" />
@@ -230,6 +256,31 @@ const VarikiShop = () => {
                           <p className="mt-0.5 text-xs text-destructive">
                             Отменено: {p.cancelReason}. Варики возвращены
                           </p>
+                        )}
+
+                        {/* Главное место для контактов: сотрудник открывает свои
+                            покупки, чтобы записаться на услугу по сертификату.
+                            У отменённых не показываем — идти уже некуда. */}
+                        {p.status !== 'cancelled' && (p.orgAddress || p.orgPhone) && (
+                          <div className="mt-1.5 space-y-1 text-xs text-muted-foreground">
+                            {p.orgAddress && (
+                              <p className="flex items-start gap-1.5">
+                                <Icon name="MapPin" size={13} className="mt-0.5 shrink-0" />
+                                <span>{p.orgAddress}</span>
+                              </p>
+                            )}
+                            {p.orgPhone && (
+                              <p className="flex items-center gap-1.5">
+                                <Icon name="Phone" size={13} className="shrink-0" />
+                                <a
+                                  href={`tel:${p.orgPhone.replace(/[^\d+]/g, '')}`}
+                                  className="font-medium hover:text-foreground hover:underline"
+                                >
+                                  {p.orgPhone}
+                                </a>
+                              </p>
+                            )}
+                          </div>
                         )}
                       </div>
 

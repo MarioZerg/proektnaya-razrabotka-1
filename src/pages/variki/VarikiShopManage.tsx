@@ -189,6 +189,14 @@ const VarikiShopManage = () => {
                       {item.stockLimit != null && ` · план ${item.stockLimit} шт`}
                     </p>
 
+                    {/* Контакты видны в списке: сразу понятно, у каких подарков
+                        они не заполнены — сотруднику некуда будет идти. */}
+                    {(item.orgAddress || item.orgPhone) && (
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {[item.orgAddress, item.orgPhone].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+
                     {/* Главное число на странице: сколько сертификатов реально
                         лежит на складе и может уйти сотрудникам прямо сейчас. */}
                     <div className="mt-1.5 flex flex-wrap items-center gap-2">

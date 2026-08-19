@@ -110,7 +110,7 @@ def handler(event: dict, context) -> dict:
                 # не сколько их задумывал админ.
                 cur.execute(
                     "SELECT i.id, i.title, i.description, i.price, i.animation, i.icon, "
-                    "  i.image_url, i.stock_limit, "
+                    "  i.image_url, i.stock_limit, i.org_address, i.org_phone, "
                     "  (SELECT count(*) FROM variki_certificates c "
                     "     WHERE c.item_id = i.id AND c.purchase_id IS NULL) AS free "
                     "FROM variki_shop_items i WHERE i.is_active = true "
@@ -119,7 +119,8 @@ def handler(event: dict, context) -> dict:
                 items = [
                     {'id': r[0], 'title': r[1], 'description': r[2],
                      'price': r[3], 'animation': r[4], 'icon': r[5], 'imageUrl': r[6],
-                     'stockLimit': r[7], 'available': int(r[8])}
+                     'stockLimit': r[7], 'orgAddress': r[8], 'orgPhone': r[9],
+                     'available': int(r[10])}
                     for r in cur.fetchall()
                 ]
                 user_id = params.get('userId')
@@ -134,7 +135,10 @@ def handler(event: dict, context) -> dict:
                     balance = int(br[0]) if br else 0
                     cur.execute(
                         "SELECT p.id, p.item_id, i.title, p.price, p.status, p.created_at, "
-                        "  p.coupon_url, p.coupon_name, p.coupon_at, p.cancel_reason "
+                        "  p.coupon_url, p.coupon_name, p.coupon_at, p.cancel_reason, "
+                        # Контакты нужны именно ЗДЕСЬ: сотрудник с сертификатом на
+                        # руках открывает свои покупки, чтобы записаться на услугу.
+                        "  i.org_address, i.org_phone "
                         "FROM variki_purchases p "
                         "JOIN variki_shop_items i ON i.id = p.item_id "
                         "WHERE p.user_id = %s ORDER BY p.created_at DESC",
@@ -146,7 +150,8 @@ def handler(event: dict, context) -> dict:
                          'createdAt': r[5].isoformat() + 'Z' if r[5] else None,
                          'couponUrl': r[6], 'couponName': r[7],
                          'couponAt': r[8].isoformat() + 'Z' if r[8] else None,
-                         'cancelReason': r[9]}
+                         'cancelReason': r[9],
+                         'orgAddress': r[10], 'orgPhone': r[11]}
                         for r in cur.fetchall()
                     ]
                 return _resp(200, {'items': items, 'balance': balance, 'purchases': purchases})
@@ -159,6 +164,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT i.id, i.title, i.description, i.price, i.animation, i.icon, "
                     "  i.image_url, i.stock_limit, i.is_active, i.sort_order, "
+                    "  i.org_address, i.org_phone, "
                     "  (SELECT count(*) FROM variki_certificates c "
                     "     WHERE c.item_id = i.id AND c.purchase_id IS NULL), "
                     "  (SELECT count(*) FROM variki_certificates c "
@@ -169,7 +175,8 @@ def handler(event: dict, context) -> dict:
                     {'id': r[0], 'title': r[1], 'description': r[2], 'price': r[3],
                      'animation': r[4], 'icon': r[5], 'imageUrl': r[6],
                      'stockLimit': r[7], 'isActive': r[8], 'sortOrder': r[9],
-                     'available': int(r[10]), 'issued': int(r[11])}
+                     'orgAddress': r[10], 'orgPhone': r[11],
+                     'available': int(r[12]), 'issued': int(r[13])}
                     for r in cur.fetchall()
                 ]
                 return _resp(200, {'items': items})
@@ -384,6 +391,8 @@ def handler(event: dict, context) -> dict:
                     return _resp(400, {'error': 'Цена должна быть больше нуля'})
 
                 description = (body_data.get('description') or '').strip() or None
+                org_address = (body_data.get('orgAddress') or '').strip()[:400] or None
+                org_phone = (body_data.get('orgPhone') or '').strip()[:50] or None
                 image_url = (body_data.get('imageUrl') or '').strip() or None
                 icon = (body_data.get('icon') or 'Gift').strip()
                 animation = (body_data.get('animation') or 'none').strip()
@@ -398,9 +407,10 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         "UPDATE variki_shop_items SET title = %s, description = %s, "
                         "  price = %s, image_url = %s, icon = %s, animation = %s, "
-                        "  stock_limit = %s, is_active = %s WHERE id = %s RETURNING id",
+                        "  stock_limit = %s, is_active = %s, org_address = %s, "
+                        "  org_phone = %s WHERE id = %s RETURNING id",
                         (title, description, price, image_url, icon, animation,
-                         stock_limit, is_active, int(item_id)),
+                         stock_limit, is_active, org_address, org_phone, int(item_id)),
                     )
                     row = cur.fetchone()
                     if not row:
@@ -409,12 +419,13 @@ def handler(event: dict, context) -> dict:
                 else:
                     cur.execute(
                         "INSERT INTO variki_shop_items (title, description, price, "
-                        "  image_url, icon, animation, stock_limit, is_active, sort_order) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, "
+                        "  image_url, icon, animation, stock_limit, is_active, "
+                        "  org_address, org_phone, sort_order) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
                         "  COALESCE((SELECT max(sort_order) + 1 FROM variki_shop_items), 1)) "
                         "RETURNING id",
                         (title, description, price, image_url, icon, animation,
-                         stock_limit, is_active),
+                         stock_limit, is_active, org_address, org_phone),
                     )
                     new_id = cur.fetchone()[0]
                 conn.commit()

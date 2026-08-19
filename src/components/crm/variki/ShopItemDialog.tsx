@@ -41,6 +41,8 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
   const [price, setPrice] = useState('');
   const [stockLimit, setStockLimit] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+  const [orgAddress, setOrgAddress] = useState('');
+  const [orgPhone, setOrgPhone] = useState('');
   const [icon, setIcon] = useState('Gift');
   const [isActive, setIsActive] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -52,6 +54,8 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
     setPrice(item ? String(item.price) : '');
     setStockLimit(item?.stockLimit != null ? String(item.stockLimit) : '');
     setImageUrl(item?.imageUrl || '');
+    setOrgAddress(item?.orgAddress || '');
+    setOrgPhone(item?.orgPhone || '');
     setIcon(item?.icon || 'Gift');
     setIsActive(item?.isActive ?? true);
   }, [open, item]);
@@ -79,6 +83,8 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
           icon: icon.trim() || 'Gift',
           animation: item?.animation || 'none',
           stockLimit: stockLimit ? Number(stockLimit) : null,
+          orgAddress: orgAddress.trim() || null,
+          orgPhone: orgPhone.trim() || null,
           isActive,
         },
         user?.id,
@@ -148,6 +154,28 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
                 Для подписи «осталось 3 из 5». Продать больше загруженных
                 сертификатов система не даст.
               </p>
+            </div>
+          </div>
+
+          {/* Контакты организации: без них сотрудник с сертификатом на руках не
+              знает, куда ехать и куда звонить записываться. */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Адрес организации</Label>
+              <Input
+                value={orgAddress}
+                onChange={(e) => setOrgAddress(e.target.value)}
+                placeholder="Ярославль, ул. Свободы, 12"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Телефон организации</Label>
+              <Input
+                type="tel"
+                value={orgPhone}
+                onChange={(e) => setOrgPhone(e.target.value)}
+                placeholder="+7 999 123-45-67"
+              />
             </div>
           </div>
 
