@@ -111,9 +111,23 @@ const GoodsCard = () => {
       // Раньше кнопка лишь запоминала печать в браузере: вещь выглядела готовой,
       // но сервер об этом не знал и на «Отправить на поставку» отвечал «сначала
       // напечатайте стикер FBS». Кладовщик оказывался в тупике — печатал снова и снова.
-      await shipLabelGoods(card.storageBarcode, user?.id, user?.name).catch(() => undefined);
+      // Ошибку отметки НЕ глушим, но и печать из-за неё не отменяем: стикер уже
+      // вышел из принтера. Раньше ответ сервера терялся молча — вещь выглядела
+      // готовой, а на отправке всплывало «сначала напечатайте стикер», и понять
+      // причину было невозможно.
+      try {
+        await shipLabelGoods(card.storageBarcode, user?.id, user?.name);
+        toast({ title: 'Стикер отправлен на печать' });
+      } catch (markErr) {
+        toast({
+          title: 'Стикер напечатан, но отметка не сохранилась',
+          description:
+            (markErr instanceof Error ? markErr.message : '') +
+            ' Наклейте стикер и нажмите «Отправить на поставку» — отметка проставится.',
+          variant: 'destructive',
+        });
+      }
       setJustPrinted(true);
-      toast({ title: 'Стикер отправлен на печать' });
       load();
     } catch (e) {
       toast({
@@ -134,7 +148,7 @@ const GoodsCard = () => {
       // проставляем её здесь же. Кладовщик держит наклеенную вещь в руках — разворачивать
       // его сообщением «сначала напечатайте стикер» нельзя.
       if (!card.shippingLabeledAt) {
-        await shipLabelGoods(card.storageBarcode, user?.id, user?.name).catch(() => undefined);
+        await shipLabelGoods(card.storageBarcode, user?.id, user?.name);
       }
       await sendGoodsToSupply(card.id, user?.id, user?.name);
       toast({
