@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 import psycopg2
 
@@ -243,6 +243,48 @@ OZON_SHIPMENT_GONE = ('delivering', 'delivered', 'cancelled', 'not_accepted', 'd
 def is_label_gone(marketplace, ozon_status) -> bool:
     """Ярлык отправления уже не получить: вещь идёт на склад, а не покупателю."""
     return (marketplace or '').upper() == 'OZON' and (ozon_status or '') in OZON_SHIPMENT_GONE
+
+
+
+def shift_close_allowed_at(schedule_row, opened_at):
+    """Во сколько сотрудник сможет закрыть смену. Считает ТАК ЖЕ, как shift_sessions.
+
+    Отсчёт идёт строго от фактического прихода: во сколько человек открыл смену, с
+    того момента и пошли его рабочие часы. Открыла в 7:45 при 9-часовой смене —
+    закроет в 16:45.
+
+    Раньше здесь была своя формула, и она ошибалась дважды:
+      * длительность брала только из shift_from/shift_to, игнорируя work_hours из
+        профиля — а именно его администратор правит в карточке сотрудника;
+      * подтягивала начало отсчёта к началу смены по графику (base = max(приход,
+        начало смены)), причём сравнивала время прихода в UTC с графиком в МСК.
+        Из-за смешения шкал начало уезжало на три часа вперёд.
+    В сумме терминал держал кнопку «Закрыть смену» лишние 3 часа 15 минут: сервер
+    закрытие уже разрешал, а кнопка на планшете оставалась серой, и сотрудники
+    уходили домой с открытой сменой (и получали штраф за незакрытую смену).
+
+    schedule_row — (shift_from, shift_to, work_hours) из users, opened_at — UTC.
+    Возвращает строку ISO с 'Z' или None, если длительность смены не задана.
+    """
+    if not schedule_row or not opened_at:
+        return None
+    start, end, work_hours = schedule_row[0], schedule_row[1], schedule_row[2]
+
+    if work_hours is not None:
+        duration = timedelta(hours=float(work_hours))
+    elif start and end:
+        start_dt = datetime.combine(date(2000, 1, 1), start)
+        end_dt = datetime.combine(date(2000, 1, 1), end)
+        # Ночная смена (например с 19:00 до 07:00) заканчивается на следующий день.
+        if end_dt <= start_dt:
+            end_dt += timedelta(days=1)
+        duration = end_dt - start_dt
+    else:
+        return None
+
+    if duration <= timedelta(0):
+        return None
+    return (opened_at + duration).isoformat() + 'Z'
 
 
 def handler(event: dict, context) -> dict:
@@ -657,17 +699,11 @@ def handler(event: dict, context) -> dict:
                 can_close_at = None
                 if s_row:
                     cur.execute(
-                        "SELECT shift_from, shift_to FROM users WHERE id = %s", (user_id,)
+                        "SELECT shift_from, shift_to, work_hours FROM users WHERE id = %s",
+                        (user_id,),
                     )
                     sch = cur.fetchone()
-                    if sch and sch[0] and sch[1]:
-                        opened = s_row[1]
-                        start_dt = datetime.combine(opened.date(), sch[0])
-                        end_dt = datetime.combine(opened.date(), sch[1])
-                        if end_dt <= start_dt:
-                            end_dt += timedelta(days=1)
-                        base = opened if opened > start_dt else start_dt
-                        can_close_at = (base + (end_dt - start_dt)).isoformat() + 'Z'
+                    can_close_at = shift_close_allowed_at(sch, s_row[1])
 
                 return {
                     'statusCode': 200,
