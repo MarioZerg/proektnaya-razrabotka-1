@@ -13,6 +13,7 @@ import { useAuth } from '@/context/AuthContext';
 import {
   fetchCertificates,
   certificateLink,
+  deleteCertificate,
   type CertificateInfo,
 } from '@/lib/varikiApi';
 
@@ -52,6 +53,7 @@ const CertificatesDialog = ({
   const { user } = useAuth();
   const [list, setList] = useState<CertificateInfo[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   useEffect(() => {
     if (!open || !itemId) return;
@@ -67,6 +69,31 @@ const CertificatesDialog = ({
       )
       .finally(() => setLoading(false));
   }, [open, itemId, user?.id, toast]);
+
+  const handleDelete = async (c: CertificateInfo) => {
+    if (
+      !window.confirm(
+        `Удалить «${c.fileName || 'сертификат'}»? Файл исчезнет из магазина безвозвратно.`,
+      )
+    )
+      return;
+    setDeletingId(c.id);
+    try {
+      await deleteCertificate(c.id, user?.id);
+      // Убираем из списка сразу, не перезапрашивая: так админ видит результат
+      // мгновенно и может удалить следующий файл без ожидания.
+      setList((prev) => prev.filter((x) => x.id !== c.id));
+      toast({ title: 'Сертификат удалён' });
+    } catch (e) {
+      toast({
+        title: 'Не удалось удалить',
+        description: e instanceof Error ? e.message : '',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const free = list.filter((c) => !c.issuedAt).length;
 
@@ -132,6 +159,25 @@ const CertificatesDialog = ({
                         Открыть
                       </a>
                     </Button>
+
+                    {/* Удалять можно только НЕвыданное: выданный файл уже на руках
+                        у сотрудника, и его исчезновение оставит покупку без
+                        документа. Поэтому у выданных кнопки просто нет. */}
+                    {!c.issuedAt && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        disabled={deletingId === c.id}
+                        onClick={() => handleDelete(c)}
+                      >
+                        <Icon
+                          name={deletingId === c.id ? 'Loader2' : 'Trash2'}
+                          size={15}
+                          className={deletingId === c.id ? 'animate-spin' : ''}
+                        />
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}

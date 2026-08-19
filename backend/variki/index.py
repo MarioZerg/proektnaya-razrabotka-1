@@ -108,6 +108,7 @@ def handler(event: dict, context) -> dict:
     GET /?purchases=1&actorId=N - все покупки (для админа)
     GET /?certificates=1&itemId=N&actorId=N - сертификаты подарка (для админа)
     GET /?download=N&actorId=N  - скачать сам файл сертификата
+    POST / { action: 'delete_certificate', actorId, certificateId } - удалить файл
     POST / { action: 'debit', actorId, userId, amount } - списание вариков (только админ)
     POST / { action: 'buy', userId, itemId }            - купить подарок за варики
         (сертификат со склада выдаётся сразу, если он есть)
@@ -207,7 +208,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT i.id, i.title, i.description, i.price, i.animation, i.icon, "
                     "  i.image_url, i.stock_limit, i.org_address, i.org_phone, "
-                    "  i.valid_from, i.valid_to, "
+                    "  i.valid_from, i.valid_to, i.needs_visit_date, "
                     "  (SELECT count(*) FROM variki_certificates c "
                     "     WHERE c.item_id = i.id AND c.purchase_id IS NULL) AS free "
                     "FROM variki_shop_items i WHERE i.is_active = true "
@@ -219,7 +220,8 @@ def handler(event: dict, context) -> dict:
                      'stockLimit': r[7], 'orgAddress': r[8], 'orgPhone': r[9],
                      'validFrom': r[10].isoformat() if r[10] else None,
                      'validTo': r[11].isoformat() if r[11] else None,
-                     'available': int(r[12])}
+                     'needsVisitDate': r[12],
+                     'available': int(r[13])}
                     for r in cur.fetchall()
                 ]
                 user_id = params.get('userId')
@@ -237,7 +239,7 @@ def handler(event: dict, context) -> dict:
                         "  p.coupon_url, p.coupon_name, p.coupon_at, p.cancel_reason, "
                         # Контакты нужны именно ЗДЕСЬ: сотрудник с сертификатом на
                         # руках открывает свои покупки, чтобы записаться на услугу.
-                        "  i.org_address, i.org_phone "
+                        "  i.org_address, i.org_phone, p.visit_date "
                         "FROM variki_purchases p "
                         "JOIN variki_shop_items i ON i.id = p.item_id "
                         "WHERE p.user_id = %s ORDER BY p.created_at DESC",
@@ -252,7 +254,8 @@ def handler(event: dict, context) -> dict:
                          'hasCoupon': bool(r[6]), 'couponName': r[7],
                          'couponAt': r[8].isoformat() + 'Z' if r[8] else None,
                          'cancelReason': r[9],
-                         'orgAddress': r[10], 'orgPhone': r[11]}
+                         'orgAddress': r[10], 'orgPhone': r[11],
+                         'visitDate': r[12].isoformat() if r[12] else None}
                         for r in cur.fetchall()
                     ]
                 return _resp(200, {'items': items, 'balance': balance, 'purchases': purchases})
@@ -296,6 +299,7 @@ def handler(event: dict, context) -> dict:
                     "SELECT i.id, i.title, i.description, i.price, i.animation, i.icon, "
                     "  i.image_url, i.stock_limit, i.is_active, i.sort_order, "
                     "  i.org_address, i.org_phone, i.valid_from, i.valid_to, "
+                    "  i.needs_visit_date, "
                     "  (SELECT count(*) FROM variki_certificates c "
                     "     WHERE c.item_id = i.id AND c.purchase_id IS NULL), "
                     "  (SELECT count(*) FROM variki_certificates c "
@@ -309,7 +313,8 @@ def handler(event: dict, context) -> dict:
                      'orgAddress': r[10], 'orgPhone': r[11],
                      'validFrom': r[12].isoformat() if r[12] else None,
                      'validTo': r[13].isoformat() if r[13] else None,
-                     'available': int(r[14]), 'issued': int(r[15])}
+                     'needsVisitDate': r[14],
+                     'available': int(r[15]), 'issued': int(r[16])}
                     for r in cur.fetchall()
                 ]
                 return _resp(200, {'items': items})
@@ -327,10 +332,14 @@ def handler(event: dict, context) -> dict:
                     return _resp(403, {'error': 'Доступ только для администратора'})
                 cur.execute(
                     "SELECT p.id, p.user_id, p.user_name, i.title, p.price, p.status, "
-                    "  p.created_at, p.coupon_url, p.coupon_name, p.coupon_at, p.cancel_reason "
+                    "  p.created_at, p.coupon_url, p.coupon_name, p.coupon_at, p.cancel_reason, "
+                    # Дата посещения — главное, что нужно админу для брони.
+                    "  p.visit_date, i.org_address, i.org_phone "
                     "FROM variki_purchases p "
                     "JOIN variki_shop_items i ON i.id = p.item_id "
-                    "ORDER BY (p.status = 'pending') DESC, p.created_at DESC LIMIT 100"
+                    "ORDER BY (p.status = 'pending') DESC, "
+                    # Ближайшие даты посещения сверху: бронировать нужно вовремя.
+                    "  p.visit_date NULLS LAST, p.created_at DESC LIMIT 100"
                 )
                 rows = [
                     {'id': r[0], 'userId': r[1], 'userName': r[2], 'title': r[3],
@@ -338,7 +347,9 @@ def handler(event: dict, context) -> dict:
                      'createdAt': r[6].isoformat() + 'Z' if r[6] else None,
                      'hasCoupon': bool(r[7]), 'couponName': r[8],
                      'couponAt': r[9].isoformat() + 'Z' if r[9] else None,
-                     'cancelReason': r[10]}
+                     'cancelReason': r[10],
+                     'visitDate': r[11].isoformat() if r[11] else None,
+                     'orgAddress': r[12], 'orgPhone': r[13]}
                     for r in cur.fetchall()
                 ]
                 pending = sum(1 for r in rows if r['status'] == 'pending')
@@ -419,7 +430,8 @@ def handler(event: dict, context) -> dict:
                     return _resp(400, {'error': 'Укажите сотрудника и подарок'})
 
                 cur.execute(
-                    "SELECT title, price, valid_from, valid_to FROM variki_shop_items "
+                    "SELECT title, price, valid_from, valid_to, needs_visit_date "
+                    "FROM variki_shop_items "
                     "WHERE id = %s AND is_active = true",
                     (int(item_id),),
                 )
@@ -442,19 +454,38 @@ def handler(event: dict, context) -> dict:
                         'error': f'Срок действия сертификатов истёк {valid_to.strftime("%d.%m.%Y")}',
                     })
 
-                # Сертификаты кончились — покупать нечего. Проверяем ДО списания
-                # вариков: иначе сотрудник остался бы без валюты и без подарка.
-                cur.execute(
-                    "SELECT count(*) FROM variki_certificates "
-                    "WHERE item_id = %s AND purchase_id IS NULL",
-                    (int(item_id),),
-                )
-                free_count = int(cur.fetchone()[0])
-                if free_count == 0:
-                    return _resp(409, {
-                        'error': 'Сертификаты на этот подарок закончились. '
-                                 'Загляните позже — администратор пополнит запас',
-                    })
+                # Подарки с записью на дату (аквапарк, массаж) сертификатами заранее
+                # не запасают: админ бронирует место под конкретный день. Поэтому
+                # склад у них не проверяем, но требуем саму дату посещения.
+                needs_visit = bool(item[4])
+                visit_date = (body_data.get('visitDate') or '').strip() or None
+                if needs_visit:
+                    if not visit_date:
+                        return _resp(400, {
+                            'error': 'Выберите дату посещения',
+                        })
+                    if visit_date < today.isoformat():
+                        return _resp(400, {
+                            'error': 'Дата посещения уже прошла',
+                        })
+                    if valid_to and visit_date > valid_to.isoformat():
+                        return _resp(400, {
+                            'error': f'Сертификаты действуют до {valid_to.strftime("%d.%m.%Y")}',
+                        })
+                else:
+                    visit_date = None
+                    # Сертификаты кончились — покупать нечего. Проверяем ДО списания
+                    # вариков: иначе сотрудник остался бы без валюты и без подарка.
+                    cur.execute(
+                        "SELECT count(*) FROM variki_certificates "
+                        "WHERE item_id = %s AND purchase_id IS NULL",
+                        (int(item_id),),
+                    )
+                    if int(cur.fetchone()[0]) == 0:
+                        return _resp(409, {
+                            'error': 'Сертификаты на этот подарок закончились. '
+                                     'Загляните позже — администратор пополнит запас',
+                        })
 
                 cur.execute(
                     "SELECT COALESCE(variki, 0), full_name FROM users WHERE id = %s FOR UPDATE",
@@ -480,24 +511,27 @@ def handler(event: dict, context) -> dict:
                 # FOR UPDATE SKIP LOCKED: если две швеи жмут «Купить» одновременно,
                 # каждая получит свой файл, а не один и тот же. Без этого один
                 # сертификат мог уехать двоим.
-                cur.execute(
-                    "SELECT id, file_url, file_name FROM variki_certificates "
-                    "WHERE item_id = %s AND purchase_id IS NULL "
-                    "ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED",
-                    (int(item_id),),
-                )
-                cert = cur.fetchone()
+                cert = None
+                if not needs_visit:
+                    cur.execute(
+                        "SELECT id, file_url, file_name FROM variki_certificates "
+                        "WHERE item_id = %s AND purchase_id IS NULL "
+                        "ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED",
+                        (int(item_id),),
+                    )
+                    cert = cur.fetchone()
 
                 # Сертификат есть — покупка закрывается мгновенно, ждать админа не нужно.
                 # Нет — заявка уходит админу, как раньше.
                 status = 'issued' if cert else 'pending'
                 cur.execute(
                     "INSERT INTO variki_purchases (item_id, user_id, user_name, price, "
-                    "  status, coupon_url, coupon_name, coupon_at) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, "
+                    "  status, coupon_url, coupon_name, visit_date, coupon_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, "
                     "  CASE WHEN %s THEN now() ELSE NULL END) RETURNING id",
                     (int(item_id), int(user_id), user_name, price, status,
-                     cert[1] if cert else None, cert[2] if cert else None, bool(cert)),
+                     cert[1] if cert else None, cert[2] if cert else None,
+                     visit_date, bool(cert)),
                 )
                 purchase_id = cur.fetchone()[0]
                 if cert:
@@ -544,6 +578,7 @@ def handler(event: dict, context) -> dict:
                 # Пустая строка из формы — это «не ограничивать», а не дата.
                 valid_from = (body_data.get('validFrom') or '').strip() or None
                 valid_to = (body_data.get('validTo') or '').strip() or None
+                needs_visit_date = bool(body_data.get('needsVisitDate'))
                 if valid_from and valid_to and valid_from > valid_to:
                     return _resp(400, {
                         'error': 'Дата начала продажи позже даты окончания',
@@ -563,11 +598,11 @@ def handler(event: dict, context) -> dict:
                         "UPDATE variki_shop_items SET title = %s, description = %s, "
                         "  price = %s, image_url = %s, icon = %s, animation = %s, "
                         "  stock_limit = %s, is_active = %s, org_address = %s, "
-                        "  org_phone = %s, valid_from = %s, valid_to = %s "
-                        "WHERE id = %s RETURNING id",
+                        "  org_phone = %s, valid_from = %s, valid_to = %s, "
+                        "  needs_visit_date = %s WHERE id = %s RETURNING id",
                         (title, description, price, image_url, icon, animation,
                          stock_limit, is_active, org_address, org_phone,
-                         valid_from, valid_to, int(item_id)),
+                         valid_from, valid_to, needs_visit_date, int(item_id)),
                     )
                     row = cur.fetchone()
                     if not row:
@@ -577,17 +612,59 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         "INSERT INTO variki_shop_items (title, description, price, "
                         "  image_url, icon, animation, stock_limit, is_active, "
-                        "  org_address, org_phone, valid_from, valid_to, sort_order) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                        "  org_address, org_phone, valid_from, valid_to, "
+                        "  needs_visit_date, sort_order) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
                         "  COALESCE((SELECT max(sort_order) + 1 FROM variki_shop_items), 1)) "
                         "RETURNING id",
                         (title, description, price, image_url, icon, animation,
                          stock_limit, is_active, org_address, org_phone,
-                         valid_from, valid_to),
+                         valid_from, valid_to, needs_visit_date),
                     )
                     new_id = cur.fetchone()[0]
                 conn.commit()
                 return _resp(200, {'id': new_id})
+
+            if action == 'delete_certificate':
+                # Удаление ошибочно загруженного файла: не тот сертификат, дубль,
+                # истёкший срок. Уже ВЫДАННЫЙ файл не трогаем — он на руках у
+                # сотрудника, и удаление оставило бы его покупку без документа.
+                if not _is_admin(cur, body_data.get('actorId')):
+                    return _resp(403, {'error': 'Доступно только администратору'})
+                cert_id = body_data.get('certificateId')
+                if not str(cert_id or '').isdigit():
+                    return _resp(400, {'error': 'Не указан сертификат'})
+
+                cur.execute(
+                    "SELECT file_url, file_name, purchase_id FROM variki_certificates "
+                    "WHERE id = %s",
+                    (int(cert_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return _resp(404, {'error': 'Сертификат не найден'})
+                if row[2] is not None:
+                    return _resp(409, {
+                        'error': 'Этот сертификат уже выдан сотруднику — удалить нельзя',
+                    })
+
+                cur.execute("DELETE FROM variki_certificates WHERE id = %s", (int(cert_id),))
+                conn.commit()
+
+                # Файл в хранилище убираем ПОСЛЕ удаления записи: если хранилище
+                # ответит ошибкой, в магазине уже не останется несуществующего
+                # сертификата, который нельзя выдать.
+                try:
+                    boto3.client(
+                        's3',
+                        endpoint_url='https://bucket.poehali.dev',
+                        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+                        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+                    ).delete_object(Bucket='files', Key=_storage_key(row[0]))
+                except Exception:
+                    pass
+
+                return _resp(200, {'deleted': True, 'fileName': row[1]})
 
             if action == 'upload_certificates':
                 # Загрузка ПАЧКИ готовых сертификатов на товар. Файлы лежат на складе

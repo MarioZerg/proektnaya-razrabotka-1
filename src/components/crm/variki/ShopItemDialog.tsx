@@ -45,6 +45,7 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
   const [orgPhone, setOrgPhone] = useState('');
   // Отдельный флаг «бессрочно»: так админу не нужно догадываться, что пустые
   // поля дат означают «продаётся всегда» — выбор виден явно.
+  const [needsVisitDate, setNeedsVisitDate] = useState(false);
   const [unlimited, setUnlimited] = useState(true);
   const [validFrom, setValidFrom] = useState('');
   const [validTo, setValidTo] = useState('');
@@ -61,6 +62,7 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
     setImageUrl(item?.imageUrl || '');
     setOrgAddress(item?.orgAddress || '');
     setOrgPhone(item?.orgPhone || '');
+    setNeedsVisitDate(!!item?.needsVisitDate);
     setValidFrom(item?.validFrom || '');
     setValidTo(item?.validTo || '');
     setUnlimited(!item?.validFrom && !item?.validTo);
@@ -106,6 +108,7 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
           stockLimit: stockLimit ? Number(stockLimit) : null,
           orgAddress: orgAddress.trim() || null,
           orgPhone: orgPhone.trim() || null,
+          needsVisitDate,
           validFrom: unlimited ? null : validFrom || null,
           validTo: unlimited ? null : validTo || null,
           isActive,
@@ -178,6 +181,20 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
                 сертификатов система не даст.
               </p>
             </div>
+          </div>
+
+          {/* Запись на дату: для аквапарка, массажа и подобных услуг место
+              бронируется под конкретный день, поэтому заранее заготовить файлы
+              нельзя. Сотрудник выбирает дату, заявка уходит админу. */}
+          <div className="flex items-start justify-between gap-3 rounded-md border border-border p-3">
+            <div>
+              <p className="font-medium">Нужна дата посещения</p>
+              <p className="text-xs text-muted-foreground">
+                Сотрудник выберет день, вы забронируете место и приложите
+                сертификат. Запас файлов заранее не нужен.
+              </p>
+            </div>
+            <Switch checked={needsVisitDate} onCheckedChange={setNeedsVisitDate} />
           </div>
 
           {/* Срок действия: после конечной даты подарок исчезает из продажи сам.

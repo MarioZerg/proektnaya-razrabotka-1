@@ -176,7 +176,9 @@ const VarikiShopManage = () => {
         ) : (
           <div className="space-y-3">
             {items.map((item) => {
-              const out = item.available === 0;
+              // У подарков по записи склада нет: сертификат бронируется под
+              // конкретный день. Пустой остаток для них — норма, а не проблема.
+              const out = !item.needsVisitDate && item.available === 0;
               return (
                 <div
                   key={item.id}
@@ -204,6 +206,7 @@ const VarikiShopManage = () => {
                       {item.price} вариков
                       {item.stockLimit != null && ` · план ${item.stockLimit} шт`}
                       {` · ${periodLabel(item)}`}
+                      {item.needsVisitDate && ' · по записи'}
                     </p>
 
                     {/* Контакты видны в списке: сразу понятно, у каких подарков
@@ -219,14 +222,18 @@ const VarikiShopManage = () => {
                     <div className="mt-1.5 flex flex-wrap items-center gap-2">
                       <span
                         className={`rounded px-2 py-0.5 text-xs font-semibold ${
-                          out
-                            ? 'bg-amber-100 text-amber-900'
-                            : 'bg-emerald-100 text-emerald-900'
+                          item.needsVisitDate
+                            ? 'bg-violet-100 text-violet-900'
+                            : out
+                              ? 'bg-amber-100 text-amber-900'
+                              : 'bg-emerald-100 text-emerald-900'
                         }`}
                       >
-                        {out
-                          ? 'Нет сертификатов — купить нельзя'
-                          : `Готово к выдаче: ${item.available}`}
+                        {item.needsVisitDate
+                          ? 'По записи — сертификат бронируете вы'
+                          : out
+                            ? 'Нет сертификатов — купить нельзя'
+                            : `Готово к выдаче: ${item.available}`}
                       </span>
                       {!!item.issued && (
                         <span className="text-xs text-muted-foreground">
@@ -295,7 +302,14 @@ const VarikiShopManage = () => {
         itemId={certItem?.id ?? null}
         itemTitle={certItem?.title ?? ''}
         open={!!certItem}
-        onOpenChange={(v) => !v && setCertItem(null)}
+        onOpenChange={(v) => {
+          if (!v) {
+            setCertItem(null);
+            // Пересчитываем остатки: админ мог удалить файлы, и счётчик
+            // «готово к выдаче» на странице стал бы неверным.
+            load();
+          }
+        }}
       />
     </CrmLayout>
   );

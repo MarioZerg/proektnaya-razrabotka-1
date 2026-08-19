@@ -57,6 +57,11 @@ export interface ShopItem {
   /** Период продажи. Оба пустые — бессрочно. Формат ГГГГ-ММ-ДД. */
   validFrom?: string | null;
   validTo?: string | null;
+  /**
+   * Сотрудник выбирает дату посещения, а сертификат бронирует админ.
+   * Такие подарки не держат запас файлов — купить можно всегда.
+   */
+  needsVisitDate?: boolean;
   /** Сколько сертификатов свободно ПРЯМО СЕЙЧАС — столько и можно купить. */
   available: number;
   /** Только во вкладке управления. */
@@ -83,6 +88,8 @@ export interface VarikiPurchase {
   /** Контакты организации: куда идти с сертификатом и куда звонить. */
   orgAddress?: string | null;
   orgPhone?: string | null;
+  /** На какую дату сотрудник хочет попасть. Заполнено — админу нужно бронировать. */
+  visitDate?: string | null;
 }
 
 const postAction = async (payload: Record<string, unknown>) => {
@@ -135,8 +142,8 @@ export const fetchAllPurchases = async (
   return { purchases: data.purchases || [], pendingCount: data.pendingCount || 0 };
 };
 
-export const buyShopItem = (userId: number, itemId: number) =>
-  postAction({ action: 'buy', userId, itemId }) as Promise<{
+export const buyShopItem = (userId: number, itemId: number, visitDate?: string) =>
+  postAction({ action: 'buy', userId, itemId, visitDate }) as Promise<{
     purchaseId: number;
     variki: number;
     title: string;
@@ -191,6 +198,7 @@ export interface SaveItemPayload {
   orgPhone?: string | null;
   validFrom?: string | null;
   validTo?: string | null;
+  needsVisitDate?: boolean;
 }
 
 export const saveShopItem = (payload: SaveItemPayload, actorId?: number) =>
@@ -267,3 +275,11 @@ export const fetchCertificates = async (itemId: number, actorId?: number) => {
   if (!res.ok) throw new Error(data.error || 'Не удалось загрузить сертификаты');
   return data.certificates as CertificateInfo[];
 };
+
+/** Удаление ошибочно загруженного сертификата. Выданный удалить нельзя. */
+export const deleteCertificate = (certificateId: number, actorId?: number) =>
+  postAction({
+    action: 'delete_certificate',
+    certificateId,
+    actorId,
+  }) as Promise<{ deleted: boolean; fileName: string }>;

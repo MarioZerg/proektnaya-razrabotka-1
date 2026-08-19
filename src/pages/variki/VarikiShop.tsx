@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,6 +36,14 @@ import { formatDateTime } from '@/lib/dateUtils';
  * на стороне, автоматически их выдать неоткуда — поэтому шаг с админом честно
  * показан сотруднику, чтобы он не ждал купон мгновенно.
  */
+/** Сегодня в виде ГГГГ-ММ-ДД — минимальная дата для поля выбора. */
+const todayIso = () => {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(
+    t.getDate(),
+  ).padStart(2, '0')}`;
+};
+
 /** Дата в «01.09.2026» — читается привычнее, чем 2026-09-01. */
 const formatDate = (iso: string) => {
   const [y, m, d] = iso.split('-');
@@ -74,6 +84,7 @@ const VarikiShop = () => {
   const [loading, setLoading] = useState(true);
   const [buying, setBuying] = useState(false);
   const [confirmItem, setConfirmItem] = useState<ShopItem | null>(null);
+  const [visitDate, setVisitDate] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -93,16 +104,25 @@ const VarikiShop = () => {
 
   const handleBuy = async () => {
     if (!confirmItem || !user?.id) return;
+    // Дату проверяем и здесь: без неё админ не сможет забронировать место,
+    // а варики уже спишутся.
+    if (confirmItem.needsVisitDate && !visitDate) {
+      toast({ title: 'Выберите дату посещения', variant: 'destructive' });
+      return;
+    }
     setBuying(true);
     try {
-      const res = await buyShopItem(user.id, confirmItem.id);
+      const res = await buyShopItem(user.id, confirmItem.id, visitDate || undefined);
       toast({
         title: res.instant ? 'Сертификат ваш!' : 'Куплено!',
         description: res.instant
           ? `${res.title} — сертификат уже готов, скачайте его ниже`
-          : `${res.title} — администратор пришлёт купон, он появится здесь`,
+          : confirmItem.needsVisitDate
+            ? `${res.title} — администратор забронирует место и пришлёт сертификат`
+            : `${res.title} — администратор пришлёт купон, он появится здесь`,
       });
       setConfirmItem(null);
+      setVisitDate('');
       load();
     } catch (e) {
       toast({
@@ -158,7 +178,10 @@ const VarikiShop = () => {
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {items.map((item) => {
                 const enough = balance >= item.price;
-                const soldOut = item.available === 0;
+                // У подарков с записью на дату склада нет вовсе: сертификат
+                // бронирует админ под конкретный день. Считать их «закончившимися»
+                // из-за пустого склада нельзя — купить можно всегда.
+                const soldOut = !item.needsVisitDate && item.available === 0;
                 const period = checkPeriod(item);
                 return (
                   <div
@@ -241,10 +264,20 @@ const VarikiShop = () => {
 
                         {/* Остаток показываем, только когда он МАЛЕНЬКИЙ: «осталось 2»
                             подталкивает решиться, а «осталось 47» — просто шум. */}
-                        {!soldOut && period.active && item.available <= 3 && (
+                        {!soldOut && period.active && !item.needsVisitDate
+                          && item.available <= 3 && (
                           <p className="text-xs font-semibold text-amber-700">
                             Осталось {item.available}
                             {item.stockLimit ? ` из ${item.stockLimit}` : ''}
+                          </p>
+                        )}
+
+                        {/* Подарок с записью: сотрудник должен понимать заранее,
+                            что сертификат придёт не сразу, а после брони. */}
+                        {item.needsVisitDate && period.active && (
+                          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <Icon name="CalendarCheck" size={13} className="shrink-0" />
+                            Выберете дату — администратор забронирует
                           </p>
                         )}
 
@@ -306,6 +339,15 @@ const VarikiShop = () => {
                         <p className="text-xs text-muted-foreground">
                           {p.createdAt ? formatDateTime(p.createdAt) : ''} · {p.price} вариков
                         </p>
+                        {/* Своя дата визита: сотрудник помнит, на когда записался,
+                            и видит, что заявка ушла именно на этот день. */}
+                        {p.visitDate && p.status !== 'cancelled' && (
+                          <p className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
+                            <Icon name="CalendarCheck" size={13} className="shrink-0" />
+                            Посещение: {formatDate(p.visitDate)}
+                          </p>
+                        )}
+
                         {p.status === 'cancelled' && p.cancelReason && (
                           <p className="mt-0.5 text-xs text-destructive">
                             Отменено: {p.cancelReason}. Варики возвращены
@@ -351,7 +393,9 @@ const VarikiShop = () => {
                         </Button>
                       ) : p.status === 'pending' ? (
                         <Badge variant="secondary" className="shrink-0">
-                          Ждём купон от администратора
+                          {p.visitDate
+                            ? 'Бронируем место'
+                            : 'Ждём купон от администратора'}
                         </Badge>
                       ) : (
                         <Badge variant="outline" className="shrink-0">
@@ -367,20 +411,52 @@ const VarikiShop = () => {
         )}
       </div>
 
-      <AlertDialog open={!!confirmItem} onOpenChange={(v) => !v && setConfirmItem(null)}>
+      <AlertDialog
+        open={!!confirmItem}
+        onOpenChange={(v) => {
+          if (!v) {
+            setConfirmItem(null);
+            setVisitDate('');
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Купить за {confirmItem?.price} вариков?</AlertDialogTitle>
             <AlertDialogDescription>
               {confirmItem?.title}. Варики спишутся сразу.{' '}
-              {confirmItem && confirmItem.available > 0
-                ? 'Сертификат вы получите тут же — ждать не нужно.'
-                : 'Купон пришлёт администратор — он появится на этой странице.'}
+              {confirmItem?.needsVisitDate
+                ? 'Администратор забронирует место на выбранный день и пришлёт сертификат сюда.'
+                : confirmItem && confirmItem.available > 0
+                  ? 'Сертификат вы получите тут же — ждать не нужно.'
+                  : 'Купон пришлёт администратор — он появится на этой странице.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          {/* Дата посещения. Для таких подарков место бронируется под конкретный
+              день, поэтому без даты покупку не пропускаем. */}
+          {confirmItem?.needsVisitDate && (
+            <div className="space-y-1.5">
+              <Label>Когда хотите посетить?</Label>
+              <Input
+                type="date"
+                value={visitDate}
+                min={todayIso()}
+                max={confirmItem.validTo || undefined}
+                onChange={(e) => setVisitDate(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Если на этот день не получится забронировать, администратор
+                свяжется с вами
+              </p>
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={buying}>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleBuy} disabled={buying}>
+            <AlertDialogAction
+              onClick={handleBuy}
+              disabled={buying || (!!confirmItem?.needsVisitDate && !visitDate)}
+            >
               {buying ? 'Покупаем...' : 'Купить'}
             </AlertDialogAction>
           </AlertDialogFooter>

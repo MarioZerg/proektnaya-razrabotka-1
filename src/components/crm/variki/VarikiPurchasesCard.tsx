@@ -22,6 +22,12 @@ import { formatDateTime } from '@/lib/dateUtils';
  * Пока купон не прикреплён, блок висит на панели и не даёт про него забыть.
  * Прикрепили PDF — заявка уходит из списка, а файл появляется у сотрудника.
  */
+/** «2026-09-01» -> «01.09.2026»: дата брони читается привычнее. */
+const formatVisitDate = (iso: string) => {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+};
+
 const VarikiPurchasesCard = () => {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -140,8 +146,28 @@ const VarikiPurchasesCard = () => {
               <p className="text-xs text-muted-foreground">
                 {p.createdAt ? formatDateTime(p.createdAt) : ''} · списано {p.price} вариков
               </p>
+
+              {/* Дата посещения — то, ради чего заявка вообще пришла: админ звонит
+                  в организацию и бронирует место именно на этот день. Выделяем,
+                  чтобы её было видно сразу, не вчитываясь в строку. */}
+              {p.visitDate && (
+                <p className="mt-1 flex flex-wrap items-center gap-1.5 text-sm font-semibold text-violet-900">
+                  <Icon name="CalendarCheck" size={15} className="shrink-0" />
+                  Хочет посетить: {formatVisitDate(p.visitDate)}
+                </p>
+              )}
+
+              {/* Куда звонить для брони — прямо здесь, чтобы не искать подарок. */}
+              {p.visitDate && (p.orgAddress || p.orgPhone) && (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {[p.orgAddress, p.orgPhone].filter(Boolean).join(' · ')}
+                </p>
+              )}
+
               <p className="mt-0.5 text-xs font-medium text-violet-800">
-                Прикрепите PDF-купон — сотрудник получит его в магазине
+                {p.visitDate
+                  ? 'Забронируйте место и прикрепите PDF-сертификат'
+                  : 'Прикрепите PDF-купон — сотрудник получит его в магазине'}
               </p>
             </div>
 
