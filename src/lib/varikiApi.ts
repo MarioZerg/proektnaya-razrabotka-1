@@ -81,8 +81,25 @@ const postAction = async (payload: Record<string, unknown>) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  // Ответ бывает НЕ json: при слишком большом теле запроса шлюз отвечает своей
+  // ошибкой (413) ещё до функции, и res.json() падал с невнятным «Ошибка запроса».
+  const raw = await res.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = {};
+  }
+  if (!res.ok) {
+    // 413 и 503 без внятного тела — это шлюз отказал из-за размера запроса,
+    // функция до него даже не дошла. Показываем причину, а не код ошибки.
+    if (res.status === 413 || (res.status === 503 && !data.error)) {
+      throw new Error('файл слишком большой, до 2,5 МБ');
+    }
+    throw new Error(
+      (data.error as string) || `Ошибка запроса (код ${res.status})`,
+    );
+  }
   return data;
 };
 
@@ -165,17 +182,39 @@ export interface SaveItemPayload {
 export const saveShopItem = (payload: SaveItemPayload, actorId?: number) =>
   postAction({ action: 'save_item', ...payload, actorId }) as Promise<{ id: number }>;
 
-/** Загрузка пачки готовых сертификатов: после неё покупка выдаёт файл мгновенно. */
-export const uploadCertificates = (
+/**
+ * Загрузка готовых сертификатов: после неё покупка выдаёт файл мгновенно.
+ *
+ * Файлы уходят ПО ОДНОМУ, а не пачкой в одном запросе. У сервера есть предел на
+ * размер запроса (~3 МБ), и пачка из нескольких PDF в него не влезала: загрузка
+ * обрывалась ошибкой ещё до функции. По одному — каждый файл заведомо проходит,
+ * а если один окажется битым, остальные всё равно загрузятся.
+ */
+export const uploadCertificates = async (
   itemId: number,
   files: { fileBase64: string; fileName: string }[],
   actorId?: number,
   actorName?: string,
-) =>
-  postAction({
-    action: 'upload_certificates',
-    itemId,
-    files,
-    actorId,
-    actorName,
-  }) as Promise<{ saved: number; available: number }>;
+): Promise<{ saved: number; available: number; errors: string[] }> => {
+  let saved = 0;
+  let available = 0;
+  const errors: string[] = [];
+
+  for (const file of files) {
+    try {
+      const res = (await postAction({
+        action: 'upload_certificates',
+        itemId,
+        files: [file],
+        actorId,
+        actorName,
+      })) as { saved: number; available: number };
+      saved += res.saved || 0;
+      available = res.available ?? available;
+    } catch (e) {
+      errors.push(`${file.fileName}: ${e instanceof Error ? e.message : 'ошибка'}`);
+    }
+  }
+
+  return { saved, available, errors };
+};

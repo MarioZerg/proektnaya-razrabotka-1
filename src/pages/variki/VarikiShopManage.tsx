@@ -61,10 +61,26 @@ const VarikiShopManage = () => {
     const itemId = targetRef.current;
     if (!list.length || !itemId) return;
 
+    // Отсеиваем тяжёлые файлы сразу: сервер их всё равно не примет, а так
+    // админ узнает причину мгновенно и без ожидания загрузки.
+    const tooBig = list.filter((f) => f.size > 2560 * 1024);
+    const ok = list.filter((f) => f.size <= 2560 * 1024);
+    if (tooBig.length) {
+      toast({
+        title: `Не подойдут: ${tooBig.length} файл(ов)`,
+        description: `${tooBig
+          .slice(0, 3)
+          .map((f) => f.name)
+          .join(', ')} — размер больше 2,5 МБ`,
+        variant: 'destructive',
+      });
+    }
+    if (!ok.length) return;
+
     setUploadingId(itemId);
     try {
       const files = await Promise.all(
-        list.map(
+        ok.map(
           (f) =>
             new Promise<{ fileBase64: string; fileName: string }>((resolve, reject) => {
               const reader = new FileReader();
@@ -76,10 +92,22 @@ const VarikiShopManage = () => {
         ),
       );
       const res = await uploadCertificates(itemId, files, user?.id, user?.name);
-      toast({
-        title: `Загружено сертификатов: ${res.saved}`,
-        description: `Доступно к покупке: ${res.available}`,
-      });
+      // Часть файлов могла не пройти (слишком большой, битый). Молчать нельзя:
+      // админ будет думать, что загрузились все, и продаст больше, чем есть.
+      if (res.errors.length) {
+        toast({
+          title: res.saved
+            ? `Загружено ${res.saved} из ${ok.length}`
+            : 'Не удалось загрузить',
+          description: res.errors.slice(0, 3).join('; '),
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: `Загружено сертификатов: ${res.saved}`,
+          description: `Доступно к покупке: ${res.available}`,
+        });
+      }
       load();
     } catch (err) {
       toast({
@@ -214,8 +242,8 @@ const VarikiShopManage = () => {
         )}
 
         <p className="text-xs text-muted-foreground">
-          Сертификаты — PDF-файлы. Можно выбрать сразу несколько: каждый уйдёт своему
-          сотруднику, один файл дважды не выдаётся.
+          Сертификаты — PDF-файлы размером до 2,5 МБ. Можно выбрать сразу несколько:
+          каждый уйдёт своему сотруднику, один файл дважды не выдаётся.
         </p>
       </div>
 

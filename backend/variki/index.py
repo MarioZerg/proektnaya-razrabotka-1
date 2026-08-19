@@ -65,8 +65,11 @@ def _decode_pdf(file_b64: str):
         binary = base64.b64decode(file_b64)
     except Exception:
         return None, 'Файл повреждён'
-    if len(binary) > 10 * 1024 * 1024:
-        return None, 'Файл больше 10 МБ'
+    # 2.5 МБ, а не больше: шлюз режет запросы тяжелее ~3.5 МБ ещё до функции, а
+    # base64 раздувает файл на треть — PDF на 3 МБ превращается в тело на 4 МБ и
+    # до нас просто не доезжает. Предел считаем от РЕАЛЬНОГО размера файла.
+    if len(binary) > 2560 * 1024:
+        return None, 'файл больше 2,5 МБ'
     return binary, None
 
 
