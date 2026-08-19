@@ -200,17 +200,17 @@ const VarikiShopManage = () => {
               return (
                 <div
                   key={item.id}
-                  className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-card p-3"
+                  className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3 sm:gap-4"
                 >
                   {item.imageUrl ? (
                     <img
                       src={item.imageUrl}
                       alt=""
                       loading="lazy"
-                      className="h-20 w-28 shrink-0 rounded-md object-cover"
+                      className="h-16 w-20 shrink-0 rounded-md object-cover sm:h-20 sm:w-28"
                     />
                   ) : (
-                    <div className="flex h-20 w-28 shrink-0 items-center justify-center rounded-md bg-muted">
+                    <div className="flex h-16 w-20 shrink-0 items-center justify-center rounded-md bg-muted sm:h-20 sm:w-28">
                       <Icon name={item.icon} size={28} className="text-muted-foreground" />
                     </div>
                   )}
@@ -261,9 +261,12 @@ const VarikiShopManage = () => {
                     </div>
                   </div>
 
-                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  {/* На телефоне кнопки занимают всю ширину карточки: раньше три
+                      кнопки в ряд не помещались и «Проверить» уезжала за экран. */}
+                  <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto">
                     <Button
                       size="sm"
+                      className="flex-1 sm:flex-none"
                       disabled={uploadingId === item.id}
                       onClick={() => pickFiles(item.id)}
                     >
@@ -272,7 +275,8 @@ const VarikiShopManage = () => {
                         size={15}
                         className={`mr-1.5 ${uploadingId === item.id ? 'animate-spin' : ''}`}
                       />
-                      Загрузить сертификаты
+                      <span className="sm:hidden">Загрузить</span>
+                      <span className="hidden sm:inline">Загрузить сертификаты</span>
                     </Button>
                     {/* Проверить загруженное: какие файлы лежат, кому что ушло.
                         Прячем у подарков без сертификатов — смотреть там нечего. */}
@@ -280,6 +284,7 @@ const VarikiShopManage = () => {
                       <Button
                         size="sm"
                         variant="outline"
+                        className="flex-1 sm:flex-none"
                         onClick={() => setCertItem(item)}
                       >
                         <Icon name="Eye" size={15} className="mr-1.5" />
@@ -289,6 +294,7 @@ const VarikiShopManage = () => {
                     <Button
                       size="sm"
                       variant="outline"
+                      className="shrink-0"
                       onClick={() => {
                         setDialogItem(item);
                         setDialogOpen(true);

@@ -145,26 +145,29 @@ const VarikiShop = () => {
               Обменяйте накопленные варики на подарки
             </p>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/* min-w-0 и без shrink-0: на телефоне кнопка с балансом вылезали за
+              правый край экрана — блок должен ужиматься, а не распирать страницу. */}
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             {/* Кнопка управления прямо на витрине: раздел меню бывает свёрнут, и
                 админ не находил, где заводить подарки и грузить сертификаты. */}
             {user?.role === 'admin' && (
               <Button variant="outline" onClick={() => navigate('/crm/variki/manage')}>
                 <Icon name="Settings" size={16} className="mr-1.5" />
-                Добавить и редактировать
+                <span className="sm:hidden">Управление</span>
+                <span className="hidden sm:inline">Добавить и редактировать</span>
               </Button>
             )}
-          <div className="flex shrink-0 items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-4 py-2">
-            <Icon name="Coins" size={22} className="text-amber-500" />
-            <div className="leading-tight">
-              <div className="text-[10px] uppercase tracking-wide text-amber-800">
-                Ваш баланс
-              </div>
-              <div className="whitespace-nowrap text-lg font-bold text-amber-900">
-                {balance}&nbsp;шт
+            <div className="flex min-w-0 items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 sm:px-4">
+              <Icon name="Coins" size={22} className="shrink-0 text-amber-500" />
+              <div className="min-w-0 leading-tight">
+                <div className="truncate text-[10px] uppercase tracking-wide text-amber-800">
+                  Ваш баланс
+                </div>
+                <div className="truncate text-lg font-bold text-amber-900">
+                  {balance}&nbsp;шт
+                </div>
               </div>
             </div>
-          </div>
           </div>
         </div>
 

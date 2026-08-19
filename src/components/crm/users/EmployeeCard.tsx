@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import Icon from '@/components/ui/icon';
 import { roleLabels } from '@/lib/roles';
 import type { Employee } from '@/lib/usersApi';
-import { initials } from '@/components/crm/users/usersShared';
+import { initials, shortName } from '@/components/crm/users/usersShared';
 
 interface EmployeeCardProps {
   emp: Employee;
@@ -32,37 +32,44 @@ const EmployeeCard = ({
   enteringId,
 }: EmployeeCardProps) => (
   <div
-    className={`flex items-center gap-3 rounded-lg border p-3 transition hover:bg-muted/40 ${
+    className={`flex items-center gap-2 rounded-lg border p-2.5 transition hover:bg-muted/40 sm:gap-3 sm:p-3 ${
       emp.isActive === false ? 'border-border bg-muted/30' : 'border-border bg-card'
     }`}
   >
     <button
       type="button"
       onClick={() => onOpenCard(emp)}
-      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+      className="flex min-w-0 flex-1 items-center gap-2 text-left sm:gap-3"
     >
-      <Avatar className="h-11 w-11 shrink-0">
+      <Avatar className="h-8 w-8 shrink-0 sm:h-11 sm:w-11">
         {emp.avatarUrl && <AvatarImage src={emp.avatarUrl} />}
         <AvatarFallback className="text-sm">{initials(emp.fullName)}</AvatarFallback>
       </Avatar>
 
       <div className="min-w-0 flex-1">
-        {/* Имя занимает всю строку целиком. Раньше оно делило строку с бейджем
-            «Отключён», сжималось им и обрывалось многоточием уже на «Привезенцева
-            Елена Ал…» — притом что справа оставалось пустое место. */}
-        <p className="font-semibold leading-tight break-words">{emp.fullName}</p>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-          <span>{roleLabels[emp.role] || 'Без должности'}</span>
-          {emp.workshop && <span>· {emp.workshop}</span>}
+        {/* «Фамилия И. О.» в одну строку: полное ФИО переносилось на вторую строку,
+            из-за чего карточки прыгали по высоте, а на телефоне имя обрывалось
+            многоточием. Полное имя остаётся в подсказке и в карточке сотрудника. */}
+        <p
+          className="truncate text-sm font-semibold leading-tight sm:text-base"
+          title={emp.fullName}
+        >
+          {shortName(emp.fullName)}
+        </p>
+        {/* Должность и цех — одной строкой с обрезкой: на телефоне они уходили
+            на третью строку и карточка вырастала вдвое. */}
+        <div className="mt-0.5 flex items-center gap-x-1.5 truncate text-xs text-muted-foreground">
+          <span className="truncate">{roleLabels[emp.role] || 'Без должности'}</span>
+          {emp.workshop && <span className="shrink-0">· {emp.workshop}</span>}
           {/* Логин — служебная строка, нужная редко. На узком экране прячем: из-за
               него данные переносились на третью строку и карточка «разбегалась». */}
-          <span className="hidden sm:inline">
+          <span className="hidden shrink-0 sm:inline">
             · логин <span className="font-mono-tech">{emp.login}</span>
           </span>
           {/* Отключённая учётная запись: человек уволен или ещё не утверждён —
               администратор должен видеть это без открытия карточки. */}
           {emp.isActive === false && (
-            <Badge variant="outline" className="text-muted-foreground">
+            <Badge variant="outline" className="shrink-0 text-muted-foreground">
               Отключён
             </Badge>
           )}
@@ -71,11 +78,14 @@ const EmployeeCard = ({
     </button>
 
     {/* Кнопки всегда справа от имени и всегда на экране — ради этого и делалась карточка. */}
-    <div className="flex shrink-0 items-center gap-1.5">
+    {/* На телефоне кнопки меньше: тремя кнопками по 40px они съедали половину
+        ширины, и на имя не оставалось места. */}
+    <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
       {emp.id !== currentUserId && (
         <Button
           size="icon"
           variant="outline"
+          className="h-8 w-8 sm:h-10 sm:w-10"
           title="Войти в аккаунт и посмотреть панель сотрудника"
           disabled={enteringId !== null}
           onClick={() => onImpersonate(emp)}
@@ -90,6 +100,7 @@ const EmployeeCard = ({
       <Button
         size="icon"
         variant="secondary"
+        className="h-8 w-8 sm:h-10 sm:w-10"
         title="Редактировать профиль"
         onClick={() => onOpenCard(emp)}
       >
@@ -98,6 +109,7 @@ const EmployeeCard = ({
       <Button
         size="icon"
         variant="destructive"
+        className="h-8 w-8 sm:h-10 sm:w-10"
         title="Удалить сотрудника"
         onClick={() => onDeleteRequest(emp.id)}
       >

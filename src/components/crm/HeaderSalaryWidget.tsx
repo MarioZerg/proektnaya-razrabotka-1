@@ -60,39 +60,45 @@ const HeaderSalaryWidget = () => {
   }, [showVariki, user?.id]);
 
   return (
-    <div className="flex shrink-0 items-center gap-2">
+    // min-w-0 + гибкая ширина: при большом балансе виджеты ужимаются, а не
+    // растягивают шапку — иначе на телефоне появлялась прокрутка всей страницы.
+    <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
       {locked && !loading ? (
         // Замочек до конца испытательных двух недель. Открывается сам — сотруднику
         // ничего делать не нужно, поэтому показываем, сколько дней осталось.
         <div
-          className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-muted/40 px-3 py-1.5"
+          className="flex min-w-0 items-center gap-1.5 rounded-lg border border-dashed border-border bg-muted/40 px-2 py-1.5 sm:gap-2 sm:px-3"
           title={`Баланс откроется через ${daysLeft} ${dayWord(daysLeft)}`}
         >
-          <Icon name="Lock" size={16} className="text-muted-foreground" />
-          <div className="leading-tight">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Зарплата к выплате
+          <Icon name="Lock" size={16} className="shrink-0 text-muted-foreground" />
+          <div className="min-w-0 leading-tight">
+            <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span className="sm:hidden">Зарплата</span>
+              <span className="hidden sm:inline">Зарплата к выплате</span>
             </div>
-            <div className="whitespace-nowrap text-xs font-semibold text-muted-foreground">
+            <div className="truncate text-xs font-semibold text-muted-foreground">
               Откроется через {daysLeft} {dayWord(daysLeft)}
             </div>
           </div>
         </div>
       ) : (
-        <div className="relative flex items-center gap-2 overflow-hidden rounded-lg border border-border bg-card px-3 py-1.5">
+        <div className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border border-border bg-card px-2 py-1.5 sm:gap-2 sm:px-3">
           {/* Изредка переливающийся блик по виджету */}
           <div className="pointer-events-none absolute inset-0 -skew-x-12 animate-shimmer bg-gradient-to-r from-transparent via-emerald-400/25 to-transparent" />
-          <Icon name="Wallet" size={16} className="text-emerald-600" />
-          <div className="leading-tight">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Зарплата к выплате
+          <Icon name="Wallet" size={16} className="shrink-0 text-emerald-600" />
+          <div className="min-w-0 leading-tight">
+            {/* На узком экране подпись короче: «Зарплата к выплате» переносилась
+                на две строки и раздувала виджет. */}
+            <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span className="sm:hidden">Зарплата</span>
+              <span className="hidden sm:inline">Зарплата к выплате</span>
             </div>
             {loading ? (
               <Icon name="Loader2" size={14} className="animate-spin text-muted-foreground" />
             ) : (
               /* whitespace-nowrap + неразрывный пробел: без них «12 345,67 ₽»
                  ломалось по пробелу и знак рубля уезжал на вторую строку. */
-              <div className="whitespace-nowrap text-sm font-bold">
+              <div className="truncate text-xs font-bold sm:text-sm">
                 {formatMoney(salary || 0)}&nbsp;₽
               </div>
             )}
@@ -105,13 +111,15 @@ const HeaderSalaryWidget = () => {
         // самый короткий путь от «вижу баланс» до «трачу его».
         <Link
           to="/crm/variki/shop"
-          className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 transition hover:bg-muted/60"
+          className="flex min-w-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2 py-1.5 transition hover:bg-muted/60 sm:gap-2 sm:px-3"
           title="Варики — на подарки в магазине"
         >
-          <Icon name="Coins" size={16} className="text-amber-500" />
-          <div className="leading-tight">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Варики</div>
-            <div className="whitespace-nowrap text-sm font-bold">{variki ?? 0}&nbsp;шт</div>
+          <Icon name="Coins" size={16} className="shrink-0 text-amber-500" />
+          <div className="min-w-0 leading-tight">
+            <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
+              Варики
+            </div>
+            <div className="truncate text-xs font-bold sm:text-sm">{variki ?? 0}&nbsp;шт</div>
           </div>
         </Link>
       )}

@@ -12,6 +12,26 @@ export const initials = (name: string) =>
     .slice(0, 2)
     .toUpperCase();
 
+/**
+ * «Привезенцева Елена Александровна» -> «Привезенцева Е. А.»
+ *
+ * Полное ФИО в списке не помещалось в строку и переносилось на вторую, из-за чего
+ * карточки прыгали по высоте, а на телефоне имя обрывалось многоточием. Фамилия
+ * важнее отчества: по ней администратор и ищет человека, поэтому её оставляем
+ * целиком, а имя с отчеством сокращаем до инициалов.
+ */
+export const shortName = (fullName: string) => {
+  const parts = (fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return fullName || '';
+  const rest = parts
+    .slice(1, 3)
+    .map((p) => `${p[0].toUpperCase()}.`)
+    .join('\u00a0');
+  // Неразрывный пробел между фамилией и инициалами: иначе «Е. А.» отрывается
+  // от фамилии и уезжает на следующую строку.
+  return `${parts[0]}\u00a0${rest}`;
+};
+
 export { formatDateTime } from '@/lib/dateUtils';
 
 export const readFileAsBase64 = (file: File): Promise<string> =>

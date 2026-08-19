@@ -358,18 +358,20 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
         {/* Счётчик срока на документы — над всем содержимым, чтобы новичок видел его
             на любой странице, а не только там, где документы загружаются. */}
         <DocsCountdownBanner />
-        <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-          <SidebarTrigger />
+        {/* min-w-0 на шапке: без него виджеты с крупным балансом раздвигали
+            строку и правый край уезжал за экран телефона. */}
+        <div className="flex min-w-0 items-center gap-2 border-b border-border px-3 py-2.5 sm:px-4">
+          <SidebarTrigger className="shrink-0" />
           {/* Персональный QR сотрудника — рядом с меню, чтобы быстро показать его сканеру. */}
           <button
             onClick={() => setQrOpen(true)}
-            className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label="Мой QR-код"
             title="Мой QR-код"
           >
             <Icon name="QrCode" size={20} />
           </button>
-          <div className="ml-auto">
+          <div className="ml-auto min-w-0">
             <HeaderSalaryWidget />
           </div>
         </div>
