@@ -49,6 +49,13 @@ export interface ShopItem {
   icon: string;
   /** Фотография подарка. Показывается вместо иконки, если задана. */
   imageUrl?: string | null;
+  /** Сколько всего сертификатов задумано (null — без ограничения). */
+  stockLimit?: number | null;
+  /** Сколько сертификатов свободно ПРЯМО СЕЙЧАС — столько и можно купить. */
+  available: number;
+  /** Только во вкладке управления. */
+  isActive?: boolean;
+  issued?: number;
 }
 
 export type PurchaseStatus = 'pending' | 'issued' | 'cancelled';
@@ -106,6 +113,9 @@ export const buyShopItem = (userId: number, itemId: number) =>
     purchaseId: number;
     variki: number;
     title: string;
+    /** Сертификат нашёлся на складе и выдан сразу — ждать администратора не нужно. */
+    instant: boolean;
+    couponUrl: string | null;
   }>;
 
 /** Админ прикрепляет PDF-купон к покупке — после этого его видит сотрудник. */
@@ -132,3 +142,40 @@ export const cancelPurchase = (
   actorId?: number,
   actorName?: string,
 ) => postAction({ action: 'cancel_purchase', purchaseId, reason, actorId, actorName });
+
+/** Товары магазина глазами администратора — включая снятые с продажи. */
+export const fetchShopManage = async (actorId?: number): Promise<ShopItem[]> => {
+  const res = await fetch(`${VARIKI_URL}?manage=1&actorId=${actorId ?? ''}`);
+  const data = res.ok ? await res.json() : {};
+  return data.items || [];
+};
+
+export interface SaveItemPayload {
+  itemId?: number;
+  title: string;
+  description?: string | null;
+  price: number;
+  imageUrl?: string | null;
+  icon?: string;
+  animation?: string;
+  stockLimit?: number | null;
+  isActive?: boolean;
+}
+
+export const saveShopItem = (payload: SaveItemPayload, actorId?: number) =>
+  postAction({ action: 'save_item', ...payload, actorId }) as Promise<{ id: number }>;
+
+/** Загрузка пачки готовых сертификатов: после неё покупка выдаёт файл мгновенно. */
+export const uploadCertificates = (
+  itemId: number,
+  files: { fileBase64: string; fileName: string }[],
+  actorId?: number,
+  actorName?: string,
+) =>
+  postAction({
+    action: 'upload_certificates',
+    itemId,
+    files,
+    actorId,
+    actorName,
+  }) as Promise<{ saved: number; available: number }>;

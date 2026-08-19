@@ -65,8 +65,10 @@ const VarikiShop = () => {
     try {
       const res = await buyShopItem(user.id, confirmItem.id);
       toast({
-        title: 'Куплено!',
-        description: `${res.title} — администратор пришлёт купон, он появится здесь`,
+        title: res.instant ? 'Сертификат ваш!' : 'Куплено!',
+        description: res.instant
+          ? `${res.title} — сертификат уже готов, скачайте его ниже`
+          : `${res.title} — администратор пришлёт купон, он появится здесь`,
       });
       setConfirmItem(null);
       load();
@@ -114,6 +116,7 @@ const VarikiShop = () => {
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {items.map((item) => {
                 const enough = balance >= item.price;
+                const soldOut = item.available === 0;
                 return (
                   <div
                     key={item.id}
@@ -161,19 +164,32 @@ const VarikiShop = () => {
 
                         {/* Не хватает — говорим СКОЛЬКО именно: так виден понятный
                             ориентир, а не глухое «недостаточно средств». */}
-                        {!enough && (
+                        {!enough && !soldOut && (
                           <p className="text-xs font-medium text-muted-foreground">
                             Не хватает {item.price - balance} вариков
                           </p>
                         )}
 
+                        {/* Остаток показываем, только когда он МАЛЕНЬКИЙ: «осталось 2»
+                            подталкивает решиться, а «осталось 47» — просто шум. */}
+                        {!soldOut && item.available <= 3 && (
+                          <p className="text-xs font-semibold text-amber-700">
+                            Осталось {item.available}
+                            {item.stockLimit ? ` из ${item.stockLimit}` : ''}
+                          </p>
+                        )}
+
                         <Button
                           className="w-full"
-                          disabled={!enough || !user?.id}
+                          disabled={!enough || !user?.id || soldOut}
                           onClick={() => setConfirmItem(item)}
                         >
-                          <Icon name="ShoppingBag" size={16} className="mr-1.5" />
-                          Купить
+                          <Icon
+                            name={soldOut ? 'PackageX' : 'ShoppingBag'}
+                            size={16}
+                            className="mr-1.5"
+                          />
+                          {soldOut ? 'Закончились' : 'Купить'}
                         </Button>
                       </div>
                     </div>
@@ -235,8 +251,10 @@ const VarikiShop = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Купить за {confirmItem?.price} вариков?</AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmItem?.title}. Варики спишутся сразу, а купон пришлёт администратор —
-              он появится на этой странице.
+              {confirmItem?.title}. Варики спишутся сразу.{' '}
+              {confirmItem && confirmItem.available > 0
+                ? 'Сертификат вы получите тут же — ждать не нужно.'
+                : 'Купон пришлёт администратор — он появится на этой странице.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

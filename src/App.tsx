@@ -29,6 +29,7 @@ const MarketplaceSupplyAssemble = lazy(() => import("./pages/shipments/Marketpla
 const GoodsWarehouse = lazy(() => import("./pages/inventory/GoodsWarehouse"));
 const Stocktakes = lazy(() => import("./pages/inventory/Stocktakes"));
 const VarikiShop = lazy(() => import("./pages/variki/VarikiShop"));
+const VarikiShopManage = lazy(() => import("./pages/variki/VarikiShopManage"));
 const GoodsPicking = lazy(() => import("./pages/inventory/GoodsPicking"));
 const PackerRepack = lazy(() => import("./pages/inventory/PackerRepack"));
 const GoodsCard = lazy(() => import("./pages/inventory/GoodsCard"));
@@ -138,6 +139,7 @@ const App = () => (
             <Route path="/crm/inventory/goods-warehouse" element={<GoodsWarehouse />} />
             <Route path="/crm/inventory/stocktakes" element={<Stocktakes />} />
             <Route path="/crm/variki/shop" element={<VarikiShop />} />
+            <Route path="/crm/variki/manage" element={<VarikiShopManage />} />
             <Route path="/crm/inventory/goods-picking" element={<GoodsPicking />} />
             <Route path="/crm/inventory/packer-repack" element={<PackerRepack />} />
             <Route path="/crm/inventory/goods/:id" element={<GoodsCard />} />

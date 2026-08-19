@@ -32,15 +32,57 @@ def _resp(status, body):
     }
 
 
+def _is_admin(cur, actor_id) -> bool:
+    """Роль берём из базы по actorId, а не из запроса: подменить её нельзя."""
+    if not actor_id:
+        return False
+    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+    row = cur.fetchone()
+    return bool(row and row[0] == 'admin')
+
+
+def _upload_pdf(binary: bytes, prefix: str) -> str:
+    """Кладём PDF в облако и отдаём постоянную ссылку."""
+    s3 = boto3.client(
+        's3',
+        endpoint_url='https://bucket.poehali.dev',
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    )
+    key = f'{prefix}/{uuid.uuid4().hex}.pdf'
+    s3.put_object(Bucket='files', Key=key, Body=binary, ContentType='application/pdf')
+    return (
+        f"https://cdn.poehali.dev/projects/"
+        f"{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
+    )
+
+
+def _decode_pdf(file_b64: str):
+    """base64 из тела запроса -> байты. Возвращает (данные, ошибка)."""
+    if ',' in file_b64:
+        file_b64 = file_b64.split(',', 1)[1]
+    try:
+        binary = base64.b64decode(file_b64)
+    except Exception:
+        return None, 'Файл повреждён'
+    if len(binary) > 10 * 1024 * 1024:
+        return None, 'Файл больше 10 МБ'
+    return binary, None
+
+
 def handler(event: dict, context) -> dict:
     """Внутренняя игровая валюта "Варики".
 
     GET /?userId=N   - баланс вариков сотрудника (+порог лототрона)
     GET /?players=1  - список производственных сотрудников с их вариками (для админа)
     GET /?shop=1&userId=N     - витрина магазина и покупки сотрудника
+    GET /?manage=1&actorId=N  - все товары для админа (вкладка управления)
     GET /?purchases=1&actorId=N - все покупки (для админа)
     POST / { action: 'debit', actorId, userId, amount } - списание вариков (только админ)
     POST / { action: 'buy', userId, itemId }            - купить подарок за варики
+        (сертификат со склада выдаётся сразу, если он есть)
+    POST / { action: 'save_item', actorId, itemId?, title, price, ... } - товар в магазине
+    POST / { action: 'upload_certificates', actorId, itemId, files[] }  - пачка сертификатов
     POST / { action: 'attach_coupon', actorId, purchaseId, fileBase64, fileName }
         - админ прикрепляет PDF-купон к покупке, сотрудник видит его в магазине
     POST / { action: 'cancel_purchase', actorId, purchaseId, reason }
@@ -60,14 +102,21 @@ def handler(event: dict, context) -> dict:
             if params.get('shop'):
                 # Витрина магазина + покупки самого сотрудника. Сюда ходит и админ
                 # (посмотреть, что в продаже), и швея (купить и забрать купон).
+                # Остаток считаем по СВОБОДНЫМ сертификатам на складе: сотрудник
+                # должен видеть, сколько подарков реально можно забрать сейчас, а
+                # не сколько их задумывал админ.
                 cur.execute(
-                    "SELECT id, title, description, price, animation, icon, image_url "
-                    "FROM variki_shop_items WHERE is_active = true "
-                    "ORDER BY sort_order, id"
+                    "SELECT i.id, i.title, i.description, i.price, i.animation, i.icon, "
+                    "  i.image_url, i.stock_limit, "
+                    "  (SELECT count(*) FROM variki_certificates c "
+                    "     WHERE c.item_id = i.id AND c.purchase_id IS NULL) AS free "
+                    "FROM variki_shop_items i WHERE i.is_active = true "
+                    "ORDER BY i.sort_order, i.id"
                 )
                 items = [
                     {'id': r[0], 'title': r[1], 'description': r[2],
-                     'price': r[3], 'animation': r[4], 'icon': r[5], 'imageUrl': r[6]}
+                     'price': r[3], 'animation': r[4], 'icon': r[5], 'imageUrl': r[6],
+                     'stockLimit': r[7], 'available': int(r[8])}
                     for r in cur.fetchall()
                 ]
                 user_id = params.get('userId')
@@ -98,6 +147,29 @@ def handler(event: dict, context) -> dict:
                         for r in cur.fetchall()
                     ]
                 return _resp(200, {'items': items, 'balance': balance, 'purchases': purchases})
+
+            if params.get('manage'):
+                # Витрина глазами админа: все товары, включая снятые с продажи,
+                # с остатком сертификатов на складе.
+                if not _is_admin(cur, params.get('actorId')):
+                    return _resp(403, {'error': 'Доступ только для администратора'})
+                cur.execute(
+                    "SELECT i.id, i.title, i.description, i.price, i.animation, i.icon, "
+                    "  i.image_url, i.stock_limit, i.is_active, i.sort_order, "
+                    "  (SELECT count(*) FROM variki_certificates c "
+                    "     WHERE c.item_id = i.id AND c.purchase_id IS NULL), "
+                    "  (SELECT count(*) FROM variki_certificates c "
+                    "     WHERE c.item_id = i.id AND c.purchase_id IS NOT NULL) "
+                    "FROM variki_shop_items i ORDER BY i.sort_order, i.id"
+                )
+                items = [
+                    {'id': r[0], 'title': r[1], 'description': r[2], 'price': r[3],
+                     'animation': r[4], 'icon': r[5], 'imageUrl': r[6],
+                     'stockLimit': r[7], 'isActive': r[8], 'sortOrder': r[9],
+                     'available': int(r[10]), 'issued': int(r[11])}
+                    for r in cur.fetchall()
+                ]
+                return _resp(200, {'items': items})
 
             if params.get('purchases'):
                 # Все покупки — рабочий список админа: по нему он видит, кому ещё
@@ -213,6 +285,20 @@ def handler(event: dict, context) -> dict:
                     return _resp(404, {'error': 'Подарок не найден или снят с продажи'})
                 title, price = item[0], int(item[1])
 
+                # Сертификаты кончились — покупать нечего. Проверяем ДО списания
+                # вариков: иначе сотрудник остался бы без валюты и без подарка.
+                cur.execute(
+                    "SELECT count(*) FROM variki_certificates "
+                    "WHERE item_id = %s AND purchase_id IS NULL",
+                    (int(item_id),),
+                )
+                free_count = int(cur.fetchone()[0])
+                if free_count == 0:
+                    return _resp(409, {
+                        'error': 'Сертификаты на этот подарок закончились. '
+                                 'Загляните позже — администратор пополнит запас',
+                    })
+
                 cur.execute(
                     "SELECT COALESCE(variki, 0), full_name FROM users WHERE id = %s FOR UPDATE",
                     (int(user_id),),
@@ -232,12 +318,37 @@ def handler(event: dict, context) -> dict:
                     (price, int(user_id)),
                 )
                 new_balance = int(cur.fetchone()[0])
+                # Берём СВОБОДНЫЙ сертификат со склада и сразу закрепляем за покупкой.
+                #
+                # FOR UPDATE SKIP LOCKED: если две швеи жмут «Купить» одновременно,
+                # каждая получит свой файл, а не один и тот же. Без этого один
+                # сертификат мог уехать двоим.
                 cur.execute(
-                    "INSERT INTO variki_purchases (item_id, user_id, user_name, price, status) "
-                    "VALUES (%s, %s, %s, %s, 'pending') RETURNING id",
-                    (int(item_id), int(user_id), user_name, price),
+                    "SELECT id, file_url, file_name FROM variki_certificates "
+                    "WHERE item_id = %s AND purchase_id IS NULL "
+                    "ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED",
+                    (int(item_id),),
+                )
+                cert = cur.fetchone()
+
+                # Сертификат есть — покупка закрывается мгновенно, ждать админа не нужно.
+                # Нет — заявка уходит админу, как раньше.
+                status = 'issued' if cert else 'pending'
+                cur.execute(
+                    "INSERT INTO variki_purchases (item_id, user_id, user_name, price, "
+                    "  status, coupon_url, coupon_name, coupon_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, "
+                    "  CASE WHEN %s THEN now() ELSE NULL END) RETURNING id",
+                    (int(item_id), int(user_id), user_name, price, status,
+                     cert[1] if cert else None, cert[2] if cert else None, bool(cert)),
                 )
                 purchase_id = cur.fetchone()[0]
+                if cert:
+                    cur.execute(
+                        "UPDATE variki_certificates SET purchase_id = %s, issued_at = now() "
+                        "WHERE id = %s",
+                        (purchase_id, cert[0]),
+                    )
                 cur.execute(
                     "INSERT INTO audit_log (category, user_id, user_name, action, "
                     "  entity_type, entity_id, description) "
@@ -248,7 +359,102 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return _resp(200, {
                     'purchaseId': purchase_id, 'variki': new_balance, 'title': title,
+                    'couponUrl': cert[1] if cert else None,
+                    'instant': bool(cert),
                 })
+
+            if action == 'save_item':
+                # Создание и правка карточки товара. Один обработчик на оба случая:
+                # поля одинаковые, а разделять создание и правку — лишний код.
+                if not _is_admin(cur, body_data.get('actorId')):
+                    return _resp(403, {'error': 'Управлять магазином может только администратор'})
+
+                item_id = body_data.get('itemId')
+                title = (body_data.get('title') or '').strip()
+                if not title:
+                    return _resp(400, {'error': 'Укажите название подарка'})
+                try:
+                    price = int(body_data.get('price'))
+                except (TypeError, ValueError):
+                    return _resp(400, {'error': 'Укажите цену в вариках'})
+                if price <= 0:
+                    return _resp(400, {'error': 'Цена должна быть больше нуля'})
+
+                description = (body_data.get('description') or '').strip() or None
+                image_url = (body_data.get('imageUrl') or '').strip() or None
+                icon = (body_data.get('icon') or 'Gift').strip()
+                animation = (body_data.get('animation') or 'none').strip()
+                is_active = bool(body_data.get('isActive', True))
+                stock_limit = body_data.get('stockLimit')
+                try:
+                    stock_limit = int(stock_limit) if stock_limit not in (None, '') else None
+                except (TypeError, ValueError):
+                    stock_limit = None
+
+                if item_id:
+                    cur.execute(
+                        "UPDATE variki_shop_items SET title = %s, description = %s, "
+                        "  price = %s, image_url = %s, icon = %s, animation = %s, "
+                        "  stock_limit = %s, is_active = %s WHERE id = %s RETURNING id",
+                        (title, description, price, image_url, icon, animation,
+                         stock_limit, is_active, int(item_id)),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return _resp(404, {'error': 'Подарок не найден'})
+                    new_id = row[0]
+                else:
+                    cur.execute(
+                        "INSERT INTO variki_shop_items (title, description, price, "
+                        "  image_url, icon, animation, stock_limit, is_active, sort_order) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, "
+                        "  COALESCE((SELECT max(sort_order) + 1 FROM variki_shop_items), 1)) "
+                        "RETURNING id",
+                        (title, description, price, image_url, icon, animation,
+                         stock_limit, is_active),
+                    )
+                    new_id = cur.fetchone()[0]
+                conn.commit()
+                return _resp(200, {'id': new_id})
+
+            if action == 'upload_certificates':
+                # Загрузка ПАЧКИ готовых сертификатов на товар. Файлы лежат на складе
+                # и выдаются автоматически при покупке — сотруднику не нужно ждать,
+                # пока админ вручную пришлёт купон.
+                if not _is_admin(cur, body_data.get('actorId')):
+                    return _resp(403, {'error': 'Загружать сертификаты может только администратор'})
+
+                item_id = body_data.get('itemId')
+                files = body_data.get('files') or []
+                if not item_id or not files:
+                    return _resp(400, {'error': 'Выберите подарок и файлы сертификатов'})
+
+                cur.execute("SELECT id FROM variki_shop_items WHERE id = %s", (int(item_id),))
+                if not cur.fetchone():
+                    return _resp(404, {'error': 'Подарок не найден'})
+
+                saved = 0
+                for f in files[:50]:
+                    binary, err = _decode_pdf(f.get('fileBase64') or '')
+                    if err:
+                        return _resp(400, {'error': f"{f.get('fileName') or 'Файл'}: {err}"})
+                    url = _upload_pdf(binary, 'variki-certificates')
+                    cur.execute(
+                        "INSERT INTO variki_certificates (item_id, file_url, file_name, "
+                        "  uploaded_by, uploaded_by_name) VALUES (%s, %s, %s, %s, %s)",
+                        (int(item_id), url, (f.get('fileName') or 'certificate.pdf')[:300],
+                         body_data.get('actorId'), body_data.get('actorName')),
+                    )
+                    saved += 1
+
+                cur.execute(
+                    "SELECT count(*) FROM variki_certificates "
+                    "WHERE item_id = %s AND purchase_id IS NULL",
+                    (int(item_id),),
+                )
+                available = int(cur.fetchone()[0])
+                conn.commit()
+                return _resp(200, {'saved': saved, 'available': available})
 
             if action == 'attach_coupon':
                 # Админ прикрепляет купон PDF. Сертификаты покупаются на стороне и
@@ -278,29 +484,10 @@ def handler(event: dict, context) -> dict:
                 if prow[0] == 'cancelled':
                     return _resp(409, {'error': 'Покупка отменена — купон приложить нельзя'})
 
-                if ',' in file_b64:
-                    file_b64 = file_b64.split(',', 1)[1]
-                try:
-                    binary = base64.b64decode(file_b64)
-                except Exception:
-                    return _resp(400, {'error': 'Файл повреждён'})
-                if len(binary) > 10 * 1024 * 1024:
-                    return _resp(400, {'error': 'Файл больше 10 МБ'})
-
-                s3 = boto3.client(
-                    's3',
-                    endpoint_url='https://bucket.poehali.dev',
-                    aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-                    aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
-                )
-                key = f'variki-coupons/{uuid.uuid4().hex}.pdf'
-                s3.put_object(
-                    Bucket='files', Key=key, Body=binary, ContentType='application/pdf'
-                )
-                url = (
-                    f"https://cdn.poehali.dev/projects/"
-                    f"{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
-                )
+                binary, err = _decode_pdf(file_b64)
+                if err:
+                    return _resp(400, {'error': err})
+                url = _upload_pdf(binary, 'variki-coupons')
 
                 cur.execute(
                     "UPDATE variki_purchases SET status = 'issued', coupon_url = %s, "
@@ -347,6 +534,13 @@ def handler(event: dict, context) -> dict:
                     "UPDATE variki_purchases SET status = 'cancelled', cancel_reason = %s "
                     "WHERE id = %s",
                     (reason, int(purchase_id)),
+                )
+                # Сертификат возвращаем на склад: он не использован и должен снова
+                # стать доступным для покупки, иначе запас утекал бы с каждой отменой.
+                cur.execute(
+                    "UPDATE variki_certificates SET purchase_id = NULL, issued_at = NULL "
+                    "WHERE purchase_id = %s",
+                    (int(purchase_id),),
                 )
                 conn.commit()
                 return _resp(200, {'success': True, 'refunded': int(prow[1])})
