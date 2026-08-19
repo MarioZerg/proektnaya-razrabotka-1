@@ -52,10 +52,34 @@ def _upload_pdf(binary: bytes, prefix: str) -> str:
     )
     key = f'{prefix}/{uuid.uuid4().hex}.pdf'
     s3.put_object(Bucket='files', Key=key, Body=binary, ContentType='application/pdf')
-    return (
-        f"https://cdn.poehali.dev/projects/"
-        f"{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
+    # Возвращаем КЛЮЧ файла, а не публичную ссылку на хранилище: сертификат —
+    # это ценность, и прямая ссылка позволила бы скачать его кому угодно, в том
+    # числе переслав её дальше. Наружу файл отдаётся только через нашу функцию,
+    # которая проверяет, что человек имеет на него право.
+    return key
+
+
+def _read_pdf(key: str) -> bytes:
+    """Забираем PDF из хранилища по ключу, чтобы отдать его через наш домен."""
+    s3 = boto3.client(
+        's3',
+        endpoint_url='https://bucket.poehali.dev',
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
     )
+    return s3.get_object(Bucket='files', Key=key)['Body'].read()
+
+
+def _storage_key(stored: str) -> str:
+    """
+    Ключ файла в хранилище.
+
+    Старые записи хранят полную ссылку на CDN, новые — сразу ключ. Приводим к
+    ключу, чтобы уже загруженные сертификаты продолжили открываться.
+    """
+    if stored.startswith('http'):
+        return stored.split('/bucket/', 1)[-1]
+    return stored
 
 
 def _decode_pdf(file_b64: str):
@@ -82,6 +106,8 @@ def handler(event: dict, context) -> dict:
     GET /?shop=1&userId=N     - витрина магазина и покупки сотрудника
     GET /?manage=1&actorId=N  - все товары для админа (вкладка управления)
     GET /?purchases=1&actorId=N - все покупки (для админа)
+    GET /?certificates=1&itemId=N&actorId=N - сертификаты подарка (для админа)
+    GET /?download=N&actorId=N  - скачать сам файл сертификата
     POST / { action: 'debit', actorId, userId, amount } - списание вариков (только админ)
     POST / { action: 'buy', userId, itemId }            - купить подарок за варики
         (сертификат со склада выдаётся сразу, если он есть)
@@ -102,6 +128,75 @@ def handler(event: dict, context) -> dict:
 
         if method == 'GET':
             params = event.get('queryStringParameters') or {}
+
+            if params.get('download'):
+                # Отдаём сам PDF со своего домена. Право на файл проверяем здесь:
+                # админу открыты все сертификаты (ему нужно проверять загруженное),
+                # сотруднику — только тот, который выдали лично ему.
+                cert_id = params.get('download')
+                actor_id = params.get('actorId')
+                if not str(cert_id).isdigit() or not str(actor_id or '').isdigit():
+                    return _resp(400, {'error': 'Не указан файл или пользователь'})
+
+                cur.execute(
+                    "SELECT c.file_url, c.file_name, p.user_id "
+                    "FROM variki_certificates c "
+                    "LEFT JOIN variki_purchases p ON p.id = c.purchase_id "
+                    "WHERE c.id = %s",
+                    (int(cert_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return _resp(404, {'error': 'Сертификат не найден'})
+
+                owner_id = row[2]
+                if not _is_admin(cur, actor_id) and owner_id != int(actor_id):
+                    return _resp(403, {'error': 'Этот сертификат выдан не вам'})
+
+                binary = _read_pdf(_storage_key(row[0]))
+                safe_name = (row[1] or 'sertifikat.pdf').replace('"', '')
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        **CORS_HEADERS,
+                        'Content-Type': 'application/pdf',
+                        'Content-Disposition': f'inline; filename="{safe_name}"',
+                    },
+                    'body': base64.b64encode(binary).decode(),
+                    'isBase64Encoded': True,
+                }
+
+            if params.get('coupon'):
+                # Купон по покупке. Ссылку на хранилище наружу не отдаём вовсе:
+                # забрать файл может только его владелец или админ.
+                purchase_id = params.get('coupon')
+                actor_id = params.get('actorId')
+                if not str(purchase_id).isdigit() or not str(actor_id or '').isdigit():
+                    return _resp(400, {'error': 'Не указана покупка или пользователь'})
+
+                cur.execute(
+                    "SELECT coupon_url, coupon_name, user_id FROM variki_purchases "
+                    "WHERE id = %s",
+                    (int(purchase_id),),
+                )
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return _resp(404, {'error': 'Купон ещё не выдан'})
+                if not _is_admin(cur, actor_id) and row[2] != int(actor_id):
+                    return _resp(403, {'error': 'Этот купон выдан не вам'})
+
+                binary = _read_pdf(_storage_key(row[0]))
+                safe_name = (row[1] or 'kupon.pdf').replace('"', '')
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        **CORS_HEADERS,
+                        'Content-Type': 'application/pdf',
+                        'Content-Disposition': f'inline; filename="{safe_name}"',
+                    },
+                    'body': base64.b64encode(binary).decode(),
+                    'isBase64Encoded': True,
+                }
 
             if params.get('shop'):
                 # Витрина магазина + покупки самого сотрудника. Сюда ходит и админ
@@ -152,13 +247,45 @@ def handler(event: dict, context) -> dict:
                         {'id': r[0], 'itemId': r[1], 'title': r[2], 'price': r[3],
                          'status': r[4],
                          'createdAt': r[5].isoformat() + 'Z' if r[5] else None,
-                         'couponUrl': r[6], 'couponName': r[7],
+                         # Ссылку на хранилище наружу не отдаём — только признак,
+                         # что купон готов. Файл забирают через наш адрес.
+                         'hasCoupon': bool(r[6]), 'couponName': r[7],
                          'couponAt': r[8].isoformat() + 'Z' if r[8] else None,
                          'cancelReason': r[9],
                          'orgAddress': r[10], 'orgPhone': r[11]}
                         for r in cur.fetchall()
                     ]
                 return _resp(200, {'items': items, 'balance': balance, 'purchases': purchases})
+
+            if params.get('certificates'):
+                # Список загруженных сертификатов по подарку: админ должен видеть,
+                # что именно лежит на складе, какие файлы уже ушли сотрудникам, а
+                # какие ждут покупателя — и открыть любой из них для проверки.
+                if not _is_admin(cur, params.get('actorId')):
+                    return _resp(403, {'error': 'Доступно только администратору'})
+                item_id = params.get('itemId')
+                if not str(item_id or '').isdigit():
+                    return _resp(400, {'error': 'Не указан подарок'})
+
+                cur.execute(
+                    "SELECT c.id, c.file_name, c.uploaded_at, c.uploaded_by_name, "
+                    "  c.issued_at, p.user_name "
+                    "FROM variki_certificates c "
+                    "LEFT JOIN variki_purchases p ON p.id = c.purchase_id "
+                    "WHERE c.item_id = %s "
+                    # Свободные сверху: именно их админ пополняет и проверяет чаще.
+                    "ORDER BY (c.purchase_id IS NULL) DESC, c.uploaded_at DESC",
+                    (int(item_id),),
+                )
+                certificates = [
+                    {'id': r[0], 'fileName': r[1],
+                     'uploadedAt': r[2].isoformat() + 'Z' if r[2] else None,
+                     'uploadedByName': r[3],
+                     'issuedAt': r[4].isoformat() + 'Z' if r[4] else None,
+                     'issuedTo': r[5]}
+                    for r in cur.fetchall()
+                ]
+                return _resp(200, {'certificates': certificates})
 
             if params.get('manage'):
                 # Витрина глазами админа: все товары, включая снятые с продажи,
@@ -209,7 +336,7 @@ def handler(event: dict, context) -> dict:
                     {'id': r[0], 'userId': r[1], 'userName': r[2], 'title': r[3],
                      'price': r[4], 'status': r[5],
                      'createdAt': r[6].isoformat() + 'Z' if r[6] else None,
-                     'couponUrl': r[7], 'couponName': r[8],
+                     'hasCoupon': bool(r[7]), 'couponName': r[8],
                      'couponAt': r[9].isoformat() + 'Z' if r[9] else None,
                      'cancelReason': r[10]}
                     for r in cur.fetchall()
@@ -389,7 +516,8 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return _resp(200, {
                     'purchaseId': purchase_id, 'variki': new_balance, 'title': title,
-                    'couponUrl': cert[1] if cert else None,
+                    # Сам файл фронт запросит по покупке — ключ хранилища наружу не уходит.
+                    'hasCoupon': bool(cert),
                     'instant': bool(cert),
                 })
 
@@ -541,7 +669,7 @@ def handler(event: dict, context) -> dict:
                      body_data.get('actorName'), int(purchase_id)),
                 )
                 conn.commit()
-                return _resp(200, {'couponUrl': url})
+                return _resp(200, {'saved': True})
 
             if action == 'cancel_purchase':
                 # Подарок выдать не получилось — возвращаем варики. Без возврата

@@ -75,7 +75,8 @@ export interface VarikiPurchase {
   price: number;
   status: PurchaseStatus;
   createdAt: string | null;
-  couponUrl: string | null;
+  /** Купон готов. Сам файл забираем по couponLink() — прямых ссылок нет. */
+  hasCoupon: boolean;
   couponName: string | null;
   couponAt: string | null;
   cancelReason: string | null;
@@ -141,7 +142,7 @@ export const buyShopItem = (userId: number, itemId: number) =>
     title: string;
     /** Сертификат нашёлся на складе и выдан сразу — ждать администратора не нужно. */
     instant: boolean;
-    couponUrl: string | null;
+    hasCoupon: boolean;
   }>;
 
 /** Админ прикрепляет PDF-купон к покупке — после этого его видит сотрудник. */
@@ -159,7 +160,7 @@ export const attachCoupon = (
     fileName,
     actorId,
     actorName,
-  }) as Promise<{ couponUrl: string }>;
+  }) as Promise<{ saved: boolean }>;
 
 /** Отмена покупки с возвратом вариков сотруднику. */
 export const cancelPurchase = (
@@ -230,4 +231,39 @@ export const uploadCertificates = async (
   }
 
   return { saved, available, errors };
+};
+
+/**
+ * Ссылка на купон сотрудника — с нашего адреса, а не из хранилища.
+ *
+ * Прямые ссылки на файлы больше не выдаются: сертификат имеет ценность, и по
+ * такой ссылке его мог бы скачать любой, кому её переслали. Здесь файл отдаётся
+ * только владельцу покупки или администратору.
+ */
+export const couponLink = (purchaseId: number, actorId?: number) =>
+  `${VARIKI_URL}?coupon=${purchaseId}&actorId=${actorId ?? ''}`;
+
+/** Ссылка на конкретный загруженный сертификат (для проверки администратором). */
+export const certificateLink = (certificateId: number, actorId?: number) =>
+  `${VARIKI_URL}?download=${certificateId}&actorId=${actorId ?? ''}`;
+
+/** Один загруженный сертификат в списке проверки. */
+export interface CertificateInfo {
+  id: number;
+  fileName: string | null;
+  uploadedAt: string | null;
+  uploadedByName: string | null;
+  /** Заполнено, если файл уже ушёл сотруднику. */
+  issuedAt: string | null;
+  issuedTo: string | null;
+}
+
+/** Что лежит на складе по конкретному подарку — только для админа. */
+export const fetchCertificates = async (itemId: number, actorId?: number) => {
+  const res = await fetch(
+    `${VARIKI_URL}?certificates=1&itemId=${itemId}&actorId=${actorId ?? ''}`,
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить сертификаты');
+  return data.certificates as CertificateInfo[];
 };

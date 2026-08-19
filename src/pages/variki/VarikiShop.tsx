@@ -20,6 +20,7 @@ import SpaAnimation from '@/components/crm/variki/SpaAnimation';
 import {
   fetchShop,
   buyShopItem,
+  couponLink,
   type ShopItem,
   type VarikiPurchase,
 } from '@/lib/varikiApi';
@@ -337,9 +338,13 @@ const VarikiShop = () => {
                         )}
                       </div>
 
-                      {p.status === 'issued' && p.couponUrl ? (
+                      {p.status === 'issued' && p.hasCoupon ? (
                         <Button asChild variant="default" className="shrink-0">
-                          <a href={p.couponUrl} target="_blank" rel="noreferrer">
+                          <a
+                            href={couponLink(p.id, user?.id)}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
                             <Icon name="FileDown" size={16} className="mr-1.5" />
                             Скачать купон
                           </a>

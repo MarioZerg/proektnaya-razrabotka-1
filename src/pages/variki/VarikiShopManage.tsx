@@ -6,6 +6,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import ShopItemDialog from '@/components/crm/variki/ShopItemDialog';
+import CertificatesDialog from '@/components/crm/variki/CertificatesDialog';
 import {
   fetchShopManage,
   uploadCertificates,
@@ -45,6 +46,7 @@ const VarikiShopManage = () => {
   const [dialogItem, setDialogItem] = useState<ShopItem | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [uploadingId, setUploadingId] = useState<number | null>(null);
+  const [certItem, setCertItem] = useState<ShopItem | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const targetRef = useRef<number | null>(null);
@@ -247,6 +249,18 @@ const VarikiShopManage = () => {
                       />
                       Загрузить сертификаты
                     </Button>
+                    {/* Проверить загруженное: какие файлы лежат, кому что ушло.
+                        Прячем у подарков без сертификатов — смотреть там нечего. */}
+                    {(item.available > 0 || !!item.issued) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setCertItem(item)}
+                      >
+                        <Icon name="Eye" size={15} className="mr-1.5" />
+                        Проверить
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="outline"
@@ -275,6 +289,13 @@ const VarikiShopManage = () => {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onSaved={load}
+      />
+
+      <CertificatesDialog
+        itemId={certItem?.id ?? null}
+        itemTitle={certItem?.title ?? ''}
+        open={!!certItem}
+        onOpenChange={(v) => !v && setCertItem(null)}
       />
     </CrmLayout>
   );
