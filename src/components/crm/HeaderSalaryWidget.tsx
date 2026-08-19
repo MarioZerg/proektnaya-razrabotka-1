@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import { fetchMySalary } from '@/lib/salaryApi';
@@ -18,14 +19,17 @@ const dayWord = (n: number) => {
 };
 
 /** Компактный виджет зарплаты к выплате для правого угла шапки CRM. Показывается на всех
- * ролях. Производственным ролям дополнительно показываются «Варики» — внутренняя игровая
- * валюта (при накоплении порога — приглашение сыграть в лототрон). */
+ * ролях. Производственным ролям дополнительно показываются «Варики» — внутренняя валюта
+ * для покупки подарков в магазине вариков.
+ *
+ * Приглашение «Пора в лототрон!» убрано: варики больше не про игру, а про магазин.
+ * Надпись сбивала с толку — сотрудник искал лототрон вместо того, чтобы копить на
+ * подарок. Вместо неё виджет ведёт прямо в магазин. */
 const HeaderSalaryWidget = () => {
   const { user } = useAuth();
   const [salary, setSalary] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [variki, setVariki] = useState<number | null>(null);
-  const [canPlay, setCanPlay] = useState(false);
   // Новичкам баланс закрыт первые две недели после регистрации — считает сервер.
   const [locked, setLocked] = useState(false);
   const [daysLeft, setDaysLeft] = useState(0);
@@ -51,10 +55,7 @@ const HeaderSalaryWidget = () => {
   useEffect(() => {
     if (!showVariki || !user?.id) return;
     fetchMyVariki(user.id)
-      .then((data) => {
-        setVariki(data.variki);
-        setCanPlay(data.canPlay);
-      })
+      .then((data) => setVariki(data.variki))
       .catch(() => setVariki(null));
   }, [showVariki, user?.id]);
 
@@ -100,25 +101,19 @@ const HeaderSalaryWidget = () => {
       )}
 
       {showVariki && (
-        <div
-          className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 ${
-            canPlay ? 'border-amber-400 bg-amber-50' : 'border-border bg-card'
-          }`}
-          title={canPlay ? 'Пора играть в лототрон!' : 'Игровая валюта «Варики»'}
+        // Клик ведёт в магазин: варики нужны именно для покупки подарков, и это
+        // самый короткий путь от «вижу баланс» до «трачу его».
+        <Link
+          to="/crm/variki/shop"
+          className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 transition hover:bg-muted/60"
+          title="Варики — на подарки в магазине"
         >
           <Icon name="Coins" size={16} className="text-amber-500" />
           <div className="leading-tight">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Варики</div>
-            {canPlay ? (
-              <div className="flex items-center gap-1 whitespace-nowrap text-xs font-bold text-amber-600">
-                <Icon name="PartyPopper" size={12} />
-                Пора в лототрон!
-              </div>
-            ) : (
-              <div className="whitespace-nowrap text-sm font-bold">{variki ?? 0}&nbsp;шт</div>
-            )}
+            <div className="whitespace-nowrap text-sm font-bold">{variki ?? 0}&nbsp;шт</div>
           </div>
-        </div>
+        </Link>
       )}
     </div>
   );

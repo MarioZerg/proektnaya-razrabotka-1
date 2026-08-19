@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,7 @@ import { formatDateTime } from '@/lib/dateUtils';
 const VarikiShop = () => {
   const { toast } = useToast();
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const [items, setItems] = useState<ShopItem[]>([]);
   const [balance, setBalance] = useState(0);
@@ -93,6 +95,15 @@ const VarikiShop = () => {
               Обменяйте накопленные варики на подарки
             </p>
           </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {/* Кнопка управления прямо на витрине: раздел меню бывает свёрнут, и
+                админ не находил, где заводить подарки и грузить сертификаты. */}
+            {user?.role === 'admin' && (
+              <Button variant="outline" onClick={() => navigate('/crm/variki/manage')}>
+                <Icon name="Settings" size={16} className="mr-1.5" />
+                Добавить и редактировать
+              </Button>
+            )}
           <div className="flex shrink-0 items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-4 py-2">
             <Icon name="Coins" size={22} className="text-amber-500" />
             <div className="leading-tight">
@@ -103,6 +114,7 @@ const VarikiShop = () => {
                 {balance}&nbsp;шт
               </div>
             </div>
+          </div>
           </div>
         </div>
 
