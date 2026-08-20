@@ -37,6 +37,7 @@ const UnitEconomics = () => {
   const [tab, setTab] = useState('ozon');
   const [showSettings, setShowSettings] = useState(false);
   const [tax, setTax] = useState('');
+  const [vat, setVat] = useState('');
   const [fixedCosts, setFixedCosts] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -51,6 +52,7 @@ const UnitEconomics = () => {
     fetchEconomics({ marketplace: 'ozon', scheme: 'FBS' })
       .then((d) => {
         setTax(String(d.settings.taxPercent));
+        setVat(String(d.settings.vatPercent ?? 0));
         setFixedCosts(String(d.settings.fixedCostsMonth));
       })
       .catch(() => undefined);
@@ -61,6 +63,7 @@ const UnitEconomics = () => {
     try {
       await saveEconomicsSettings({
         taxPercent: Number(tax) || 0,
+        vatPercent: Number(vat) || 0,
         fixedCostsMonth: Number(fixedCosts) || 0,
         actorId: user?.id,
       });
@@ -117,9 +120,9 @@ const UnitEconomics = () => {
         {showSettings && isAdmin && (
           <Card className="border-border shadow-none">
             <CardContent className="space-y-3 pt-6">
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-3">
                 <div className="space-y-1.5">
-                  <Label>Налог с выручки, %</Label>
+                  <Label>Налог УСН, %</Label>
                   <Input
                     type="number"
                     step="0.1"
@@ -129,7 +132,25 @@ const UnitEconomics = () => {
                     onChange={(e) => setTax(e.target.value)}
                   />
                   <p className="text-[11px] text-muted-foreground">
-                    При УСН «доходы» налог платится со всей выручки, а не с прибыли
+                    Платится со всей суммы, которую заплатил покупатель. Комиссия
+                    площадки базу не уменьшает
+                  </p>
+                </div>
+                {/* НДС задаётся отдельно: он уже сидит внутри цены на витрине,
+                    поэтому не прибавляется к ней, а вынимается из неё. */}
+                <div className="space-y-1.5">
+                  <Label>НДС, %</Label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    min={0}
+                    max={100}
+                    value={vat}
+                    onChange={(e) => setVat(e.target.value)}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    0 — если освобождены. НДС входит в цену покупателя, а налог
+                    УСН считается с суммы без него
                   </p>
                 </div>
                 <div className="space-y-1.5">

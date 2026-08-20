@@ -78,8 +78,8 @@ const EconomicsRowCard = ({ row }: { row: EconomicsRow }) => {
         />
         <div
           className="bg-violet-400"
-          style={{ width: `${share(u.tax + u.acquiring + u.promo)}%` }}
-          title={`Налог, эквайринг, реклама ${money(u.tax + u.acquiring + u.promo)} ₽`}
+          style={{ width: `${share(u.tax + u.vat + u.acquiring + u.promo)}%` }}
+          title={`Налоги, эквайринг, реклама ${money(u.tax + u.vat + u.acquiring + u.promo)} ₽`}
         />
         {u.profit > 0 && (
           <div
@@ -91,8 +91,10 @@ const EconomicsRowCard = ({ row }: { row: EconomicsRow }) => {
       </div>
 
       <div className="mt-3 space-y-1 text-sm">
+        {/* Подчёркиваем, что это сумма, которую платит покупатель на кассе, а
+            не наша цена в кабинете: от неё считаются комиссия и налоги. */}
         <div className="flex justify-between font-medium">
-          <span>Цена продажи</span>
+          <span>Платит покупатель</span>
           <span>{money(u.price)} ₽</span>
         </div>
         <div className="flex justify-between text-xs text-muted-foreground">
@@ -144,8 +146,23 @@ const EconomicsRowCard = ({ row }: { row: EconomicsRow }) => {
           <span className="font-medium">Себестоимость производства</span>
           <span className="font-medium">−{money(u.productionCost)} ₽</span>
         </div>
+        {/* НДС показываем отдельно от УСН: это разные налоги с разной базой,
+            и владельцу важно видеть, сколько забирает каждый. */}
+        {u.vat > 0 && (
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>НДС в цене</span>
+            <span>−{money(u.vat)} ₽</span>
+          </div>
+        )}
         <div className="flex justify-between text-xs text-muted-foreground">
-          <span>Налог с выручки</span>
+          <span>
+            Налог УСН
+            {u.vat > 0 && (
+              <span className="ml-1 text-[11px]">
+                (с {money(u.revenueNet)} ₽ без НДС)
+              </span>
+            )}
+          </span>
           <span>−{money(u.tax)} ₽</span>
         </div>
         <div

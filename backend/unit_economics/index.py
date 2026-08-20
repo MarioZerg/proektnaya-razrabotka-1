@@ -257,12 +257,18 @@ def _sync_wb(cur, cursor=None):
             if sizes:
                 price = sizes[0].get('price')
                 discounted = sizes[0].get('discountedPrice')
+            # Цена, которую реально платит покупатель. WB отдаёт её как
+            # clubDiscountedPrice (цена с WB-кошельком) или discountedPrice —
+            # это уже после скидок площадки, а не наша цена в карточке.
+            club = sizes[0].get('clubDiscountedPrice') if sizes else None
+            actual = club or discounted
             rows.append({
                 'itemId': item_id,
                 # Продавец получает цену ПОСЛЕ своей скидки.
                 'price': float(discounted) if discounted else (
                     float(price) if price else None),
                 'priceBeforeDiscount': float(price) if price else None,
+                'priceWithMarketplaceDiscount': float(actual) if actual else None,
                 'discountPercent': float(g['discount']) if g.get('discount') else None,
             })
         done = len(goods) < 100
@@ -304,9 +310,15 @@ def _sync_yandex(cur, cursor=None):
             if not item_id:
                 continue
             price = (o.get('price') or {}).get('value')
+            # Цена покупателя на витрине: Яндекс отдаёт её отдельно, уже с
+            # учётом своих акций. Наша цена из кабинета бывает заметно выше.
+            market = (o.get('marketSku') or {}).get('price') or {}
+            actual = market.get('value') or (
+                (o.get('priceWithDiscount') or {}).get('value'))
             rows.append({
                 'itemId': item_id,
                 'price': float(price) if price else None,
+                'priceWithMarketplaceDiscount': float(actual) if actual else None,
             })
         next_cursor = (result.get('paging') or {}).get('nextPageToken') or ''
         done = not next_cursor or not offers
@@ -319,13 +331,14 @@ def _sync_yandex(cur, cursor=None):
 def _settings(cur):
     """Налог и постоянные расходы компании."""
     cur.execute(
-        "SELECT tax_percent, fixed_costs_month FROM unit_economics_settings "
-        "ORDER BY id LIMIT 1"
+        "SELECT tax_percent, fixed_costs_month, vat_percent "
+        "FROM unit_economics_settings ORDER BY id LIMIT 1"
     )
     r = cur.fetchone()
     if not r:
-        return {'taxPercent': 6.0, 'fixedCostsMonth': 0.0}
-    return {'taxPercent': float(r[0] or 0), 'fixedCostsMonth': float(r[1] or 0)}
+        return {'taxPercent': 6.0, 'fixedCostsMonth': 0.0, 'vatPercent': 0.0}
+    return {'taxPercent': float(r[0] or 0), 'fixedCostsMonth': float(r[1] or 0),
+            'vatPercent': float(r[2] or 0)}
 
 
 def _tariffs(cur):
@@ -620,10 +633,23 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
     # закладываем — иначе экономика была бы занижена вдвое.
     production = cost['productionCost']
 
-    # Налог УСН «доходы» — с выручки, а не с прибыли.
-    tax = round(price * settings['taxPercent'] / 100, 2)
+    # НАЛОГИ. Считаются от ФАКТИЧЕСКОЙ цены покупателя (price) — это вся сумма,
+    # которую он заплатил на площадке. Комиссия и логистика базу НЕ уменьшают:
+    # при УСН «доходы» налог платится со всей выручки, даже с той части, что
+    # площадка удержала себе и до нашего счёта не дошла.
+    #
+    # НДС уже сидит ВНУТРИ цены на витрине — покупатель не доплачивает его
+    # сверху. Поэтому его не прибавляют к цене, а ВЫНИМАЮТ из неё:
+    # при ставке 22% в 1220 ₽ содержится 220 ₽ налога.
+    vat_percent = settings.get('vatPercent') or 0
+    vat = round(price * vat_percent / (100 + vat_percent), 2) if vat_percent else 0.0
 
-    profit = round(price - marketplace_costs - production - tax, 2)
+    # Доход по УСН считается БЕЗ НДС — иначе один и тот же рубль облагается
+    # дважды. Поэтому база для УСН — цена за вычетом НДС.
+    revenue_net = round(price - vat, 2)
+    tax = round(revenue_net * settings['taxPercent'] / 100, 2)
+
+    profit = round(price - marketplace_costs - production - tax - vat, 2)
     margin = round(profit / price * 100, 1) if price else 0.0
     # Рентабельность вложений: сколько прибыли на каждый вложенный рубль.
     roi = round(profit / production * 100, 1) if production else 0.0
@@ -633,11 +659,16 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
     # Если эквайринг пришёл суммой, он не зависит от цены — значит уходит в
     # постоянную часть, а не в процентную.
     acquiring_is_fixed = fees.get('acquiringAmount') is not None
+    # НДС и УСН тоже тянутся за ценой, но по-своему: НДС — это доля vat/(100+vat)
+    # от цены, а УСН берётся с остатка после НДС. Считаем их совокупную долю,
+    # иначе минимальная цена окажется заниженной и товар уйдёт в минус.
+    vat_share = vat_percent / (100.0 + vat_percent) if vat_percent else 0.0
+    tax_share = (1 - vat_share) * settings['taxPercent'] / 100.0
     variable_share = (
         (commission_percent or 0)
         + (0 if acquiring_is_fixed else tariff['acquiringPercent'])
-        + tariff['promoPercent'] + settings['taxPercent']
-    ) / 100.0
+        + tariff['promoPercent']
+    ) / 100.0 + vat_share + tax_share
     fixed_part = (logistics + return_cost + storage + acceptance + production
                   + (acquiring if acquiring_is_fixed else 0))
     break_even_price = (
@@ -658,6 +689,9 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
         'marketplaceCosts': marketplace_costs,
         'productionCost': production,
         'tax': tax,
+        'vat': vat,
+        # Выручка без НДС — именно с неё считается налог УСН.
+        'revenueNet': revenue_net,
         'profit': profit,
         'margin': margin,
         'roi': roi,
@@ -666,13 +700,20 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
     }
 
 
-def _build(cur, code, scheme, buyout_override):
-    """Собирает расчёт по всем товарам одной площадки."""
-    settings = _settings(cur)
-    tariffs = _tariffs(cur)[code]
-    costs = _cost_by_group(cur)
+def _build(cur, code, scheme, buyout_override, shared=None):
+    """Собирает расчёт по всем товарам одной площадки.
+
+    shared — уже прочитанные справочники (налоги, тарифы, себестоимость, выкуп).
+    Сравнение площадок считает шесть вариантов подряд, и без этого одни и те же
+    таблицы перечитывались шесть раз: база упиралась в лимит запросов и страница
+    сравнения падала целиком.
+    """
+    s = shared or {}
+    settings = s.get('settings') or _settings(cur)
+    tariffs = (s.get('tariffs') or _tariffs(cur))[code]
+    costs = s.get('costs') or _cost_by_group(cur)
     prices = _prices_by_item(cur, code)
-    buyouts = _buyout_rates(cur)
+    buyouts = s.get('buyouts') or _buyout_rates(cur)
 
     orders_mp = ORDERS_CODE.get(code)
     real = buyouts.get((orders_mp, scheme))
@@ -691,9 +732,23 @@ def _build(cur, code, scheme, buyout_override):
         key = (material, width)
         g = groups.setdefault(key, {'material': material, 'width': width, 'items': []})
         p = prices.get(item_id)
+        # ЦЕНА, ПО КОТОРОЙ СЧИТАЕМ ВСЁ, — та, что реально платит покупатель.
+        #
+        # На витрине площадка часто режет цену своими акциями и баллами: в
+        # карточке 5000 ₽, а на кассе покупатель отдаёт 4300 ₽. Комиссия,
+        # эквайринг и налог считаются от этой фактической суммы, а не от нашей
+        # цены в кабинете — иначе прибыль на бумаге выше настоящей.
+        #
+        # Если площадка фактическую цену не отдала, берём цену карточки: лучше
+        # посчитать по ней, чем не посчитать вовсе.
+        actual = (p or {}).get('priceWithMarketplaceDiscount')
         g['items'].append({
             'id': item_id, 'height': height, 'name': name, 'sku': sku,
-            'price': p['price'] if p else None,
+            'price': (actual if actual else (p['price'] if p else None)),
+            # Помечаем, откуда взялась цена: менеджеру важно видеть, где расчёт
+            # идёт по реальной продаже, а где по цене витрины.
+            'priceIsActual': bool(actual),
+            'cardPrice': p['price'] if p else None,
             'commissionFbo': p['commissionFboPercent'] if p else None,
             'commissionFbs': p['commissionFbsPercent'] if p else None,
             'discountPercent': p['discountPercent'] if p else None,
@@ -731,6 +786,8 @@ def _build(cur, code, scheme, buyout_override):
                 'itemId': i['id'], 'height': i['height'], 'name': i['name'],
                 'sku': i['sku'], 'source': i['source'],
                 'discountPercent': i['discountPercent'],
+                'priceIsActual': i['priceIsActual'],
+                'cardPrice': i['cardPrice'],
                 'unit': unit,
             })
 
@@ -805,9 +862,17 @@ def handler(event: dict, context) -> dict:
                 # Одна ткань и ширина на всех площадках и обеих схемах рядом —
                 # видно, где продавать выгоднее и какая схема лучше.
                 out = {}
+                # Справочники общие для всех шести вариантов — читаем их один
+                # раз, иначе база упирается в лимит и сравнение не открывается.
+                shared = {
+                    'settings': _settings(cur),
+                    'tariffs': _tariffs(cur),
+                    'costs': _cost_by_group(cur),
+                    'buyouts': _buyout_rates(cur),
+                }
                 for code in MARKETPLACES:
                     for scheme in ('FBO', 'FBS'):
-                        data = _build(cur, code, scheme, None)
+                        data = _build(cur, code, scheme, None, shared)
                         for row in data['rows']:
                             key = f"{row['material']}|{row['width']}"
                             entry = out.setdefault(key, {
@@ -889,11 +954,13 @@ def handler(event: dict, context) -> dict:
                 return _resp(403, {'error': 'Налог и расходы компании меняет администратор'})
             cur.execute(
                 "UPDATE unit_economics_settings SET tax_percent = %s, "
-                "fixed_costs_month = %s, updated_at = now(), updated_by = %s "
+                "fixed_costs_month = %s, vat_percent = %s, "
+                "updated_at = now(), updated_by = %s "
                 "WHERE id = (SELECT id FROM unit_economics_settings ORDER BY id LIMIT 1)",
                 (
                     float(body_data.get('taxPercent') or 0),
                     float(body_data.get('fixedCostsMonth') or 0),
+                    float(body_data.get('vatPercent') or 0),
                     int(actor_id) if actor_id else None,
                 ),
             )

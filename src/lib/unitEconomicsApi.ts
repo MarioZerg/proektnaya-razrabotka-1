@@ -27,7 +27,12 @@ export interface UnitCalc {
   acceptance: number;
   marketplaceCosts: number;
   productionCost: number;
+  /** Налог УСН — считается с выручки без НДС. */
   tax: number;
+  /** НДС, который сидит внутри цены покупателя. */
+  vat: number;
+  /** Выручка без НДС — база для налога УСН. */
+  revenueNet: number;
   profit: number;
   margin: number;
   roi: number;
@@ -65,6 +70,10 @@ export interface HeightRow {
   sku: string | null;
   source: string | null;
   discountPercent: number | null;
+  /** Цена взята из фактической продажи, а не из карточки. */
+  priceIsActual: boolean;
+  /** Наша цена в кабинете — для сравнения с фактической. */
+  cardPrice: number | null;
   unit: UnitCalc | null;
 }
 
@@ -101,7 +110,7 @@ export interface Tariffs {
 export interface EconomicsResponse {
   marketplaceCode: string;
   scheme: Scheme;
-  settings: { taxPercent: number; fixedCostsMonth: number };
+  settings: { taxPercent: number; fixedCostsMonth: number; vatPercent: number };
   tariffs: Tariffs;
   buyout: {
     used: number;
@@ -203,6 +212,8 @@ export const saveTariffs = (
 export const saveEconomicsSettings = (payload: {
   taxPercent: number;
   fixedCostsMonth: number;
+  /** Ставка НДС, %. 0 — освобождение. */
+  vatPercent: number;
   actorId?: number;
 }) => post({ action: 'save_settings', ...payload });
 

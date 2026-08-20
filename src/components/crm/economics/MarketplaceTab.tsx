@@ -251,8 +251,11 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
 
       {data && priced.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          Налог {data.settings.taxPercent}% с выручки · комиссия и логистика — из кабинета
-          {' '}{MARKETPLACE_LABELS[code]} · себестоимость — из раздела «Себестоимость товаров»
+          Расчёт от суммы, которую платит покупатель · налог УСН
+          {' '}{data.settings.taxPercent}%
+          {data.settings.vatPercent > 0 && <> · НДС {data.settings.vatPercent}% в цене</>}
+          {' '}· комиссия и логистика — из кабинета {MARKETPLACE_LABELS[code]} ·
+          себестоимость — из раздела «Себестоимость товаров»
         </p>
       )}
     </div>
