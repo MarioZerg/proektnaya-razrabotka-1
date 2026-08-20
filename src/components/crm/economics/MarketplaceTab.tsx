@@ -98,9 +98,17 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
     ? priced.reduce((s, r) => s + r.unit!.profit, 0) / priced.length
     : 0;
 
-  // Точка безубыточности: сколько вещей продать, чтобы покрыть постоянные расходы.
-  const fixedCosts = data?.settings.fixedCostsMonth || 0;
-  const breakEvenUnits = avgProfit > 0 ? Math.ceil(fixedCosts / avgProfit) : null;
+  // Самая прибыльная позиция — вместо точки безубыточности.
+  //
+  // Раньше здесь считалось, сколько вещей продать, чтобы покрыть аренду и
+  // оклады. Но эти расходы уже разложены на каждую вещь в себестоимости:
+  // прибыль с вещи их УЖЕ покрывает, и делить на них ещё раз было двойным
+  // счётом. Показываем то, что действительно помогает решать, — где заработок
+  // выше всего.
+  const best = priced.reduce<typeof priced[number] | null>(
+    (acc, r) => (!acc || r.unit!.profit > acc.unit!.profit ? r : acc),
+    null,
+  );
 
   return (
     <div className="space-y-4">
@@ -152,12 +160,12 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
             <p className="text-2xl font-bold">{lossmaking.length}</p>
           </div>
           <div className="rounded-lg border border-border p-3">
-            <p className="text-xs text-muted-foreground">Точка безубыточности</p>
+            <p className="text-xs text-muted-foreground">Лучшая позиция</p>
             <p className="text-2xl font-bold">
-              {breakEvenUnits != null ? breakEvenUnits : '—'}
+              {best ? `${moneyShort(best.unit!.profit)} ₽` : '—'}
             </p>
-            <p className="text-xs text-muted-foreground">
-              {fixedCosts > 0 ? 'вещей в месяц' : 'задайте расходы компании'}
+            <p className="truncate text-xs text-muted-foreground">
+              {best ? `${best.material} · ${best.width} см` : 'нет данных'}
             </p>
           </div>
         </div>

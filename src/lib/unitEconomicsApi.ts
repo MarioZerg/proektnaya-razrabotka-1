@@ -114,7 +114,7 @@ export interface Tariffs {
 export interface EconomicsResponse {
   marketplaceCode: string;
   scheme: Scheme;
-  settings: { taxPercent: number; fixedCostsMonth: number; vatPercent: number };
+  settings: { taxPercent: number; vatPercent: number };
   tariffs: Tariffs;
   buyout: {
     used: number;
@@ -223,7 +223,6 @@ export const saveTariffs = (
 
 export const saveEconomicsSettings = (payload: {
   taxPercent: number;
-  fixedCostsMonth: number;
   /** Ставка НДС, %. 0 — освобождение. */
   vatPercent: number;
   actorId?: number;

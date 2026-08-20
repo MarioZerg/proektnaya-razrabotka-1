@@ -38,7 +38,6 @@ const UnitEconomics = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [tax, setTax] = useState('');
   const [vat, setVat] = useState('');
-  const [fixedCosts, setFixedCosts] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -53,7 +52,7 @@ const UnitEconomics = () => {
       .then((d) => {
         setTax(String(d.settings.taxPercent));
         setVat(String(d.settings.vatPercent ?? 0));
-        setFixedCosts(String(d.settings.fixedCostsMonth));
+
       })
       .catch(() => undefined);
   }, [canView]);
@@ -64,7 +63,7 @@ const UnitEconomics = () => {
       await saveEconomicsSettings({
         taxPercent: Number(tax) || 0,
         vatPercent: Number(vat) || 0,
-        fixedCostsMonth: Number(fixedCosts) || 0,
+
         actorId: user?.id,
       });
       toast({ title: 'Сохранено', description: 'Расчёт обновлён' });
@@ -153,17 +152,16 @@ const UnitEconomics = () => {
                     УСН считается с суммы без него
                   </p>
                 </div>
+                {/* Постоянные расходы отсюда убраны: аренда, оклады и
+                    обслуживание машин уже разложены на каждую вещь статьями в
+                    себестоимости. Держать их в двух местах — считать одни и те
+                    же деньги дважды. */}
                 <div className="space-y-1.5">
-                  <Label>Постоянные расходы, ₽/мес</Label>
-                  <Input
-                    type="number"
-                    step="1"
-                    min={0}
-                    value={fixedCosts}
-                    onChange={(e) => setFixedCosts(e.target.value)}
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Аренда, оклады, связь — для расчёта точки безубыточности
+                  <Label className="text-muted-foreground">Прочие расходы</Label>
+                  <p className="rounded-md bg-muted px-3 py-2 text-[11px] text-muted-foreground">
+                    Аренда, оклады и обслуживание машин ведутся статьями в
+                    разделе «Себестоимость товаров» — они уже входят в
+                    себестоимость каждой вещи
                   </p>
                 </div>
               </div>

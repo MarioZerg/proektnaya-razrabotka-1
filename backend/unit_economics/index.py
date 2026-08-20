@@ -819,16 +819,20 @@ def _sync_yandex(cur, cursor=None):
 
 
 def _settings(cur):
-    """Налог и постоянные расходы компании."""
+    """Налоги компании: УСН и НДС.
+
+    Постоянных расходов здесь больше нет. Аренда, оклады и обслуживание машин
+    ведутся списком статей в себестоимости и уже разложены на каждую вещь —
+    держать их ещё и тут значило считать одни и те же деньги дважды.
+    """
     cur.execute(
-        "SELECT tax_percent, fixed_costs_month, vat_percent "
+        "SELECT tax_percent, vat_percent "
         "FROM unit_economics_settings ORDER BY id LIMIT 1"
     )
     r = cur.fetchone()
     if not r:
-        return {'taxPercent': 6.0, 'fixedCostsMonth': 0.0, 'vatPercent': 0.0}
-    return {'taxPercent': float(r[0] or 0), 'fixedCostsMonth': float(r[1] or 0),
-            'vatPercent': float(r[2] or 0)}
+        return {'taxPercent': 6.0, 'vatPercent': 0.0}
+    return {'taxPercent': float(r[0] or 0), 'vatPercent': float(r[1] or 0)}
 
 
 def _tariffs(cur):
@@ -1506,7 +1510,7 @@ def handler(event: dict, context) -> dict:
     GET  /?action=compare                          - сравнение всех площадок и схем
     POST /  { action: 'sync_prices', marketplaceCode } - тянет цены и комиссии из кабинета
     POST /  { action: 'save_tariffs', marketplaceCode, ... }   - тарифы площадки
-    POST /  { action: 'save_settings', taxPercent, fixedCostsMonth }
+    POST /  { action: 'save_settings', taxPercent, vatPercent }
     POST /  { action: 'save_price', itemId, marketplaceCode, price, ... }
     """
     method = event.get('httpMethod', 'GET')
@@ -1634,17 +1638,17 @@ def handler(event: dict, context) -> dict:
             return _resp(200, {'success': True})
 
         if action == 'save_settings':
-            # Налог и постоянные расходы компании — деньги владельца.
+            # Ставки налогов компании — деньги владельца.
             if not _is_admin(cur, actor_id):
-                return _resp(403, {'error': 'Налог и расходы компании меняет администратор'})
+                return _resp(403, {'error': 'Ставки налогов меняет администратор'})
+            # Постоянные расходы больше не принимаем: они ведутся статьями в
+            # себестоимости. Если старая версия страницы их пришлёт — игнорируем.
             cur.execute(
                 "UPDATE unit_economics_settings SET tax_percent = %s, "
-                "fixed_costs_month = %s, vat_percent = %s, "
-                "updated_at = now(), updated_by = %s "
+                "vat_percent = %s, updated_at = now(), updated_by = %s "
                 "WHERE id = (SELECT id FROM unit_economics_settings ORDER BY id LIMIT 1)",
                 (
                     float(body_data.get('taxPercent') or 0),
-                    float(body_data.get('fixedCostsMonth') or 0),
                     float(body_data.get('vatPercent') or 0),
                     int(actor_id) if actor_id else None,
                 ),
