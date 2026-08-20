@@ -176,10 +176,19 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
                 </Badge>
               )}
             </p>
+            {/* Данные площадки честнее наших: они видят возвраты уже после
+                доставки, а мы — только отмены до отгрузки. Разрыв доходит до
+                20 пунктов, поэтому показываем оба числа рядом. */}
+            {data.buyout.fromMarketplace != null && (
+              <p className="text-xs text-emerald-700">
+                <Icon name="RefreshCw" size={11} className="mr-0.5 inline" />
+                По данным площадки: {data.buyout.fromMarketplace}% (продано{' '}
+                {data.buyout.mpOrdered}, вернули {data.buyout.mpReturned})
+              </p>
+            )}
             {data.buyout.real != null && (
               <p className="text-xs text-muted-foreground">
-                По нашим заказам: {data.buyout.real}% ({data.buyout.orders} заказов,
-                отменено {data.buyout.cancelled})
+                По нашим отметкам: {data.buyout.real}% — только отмены до отгрузки
               </p>
             )}
           </div>

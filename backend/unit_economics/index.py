@@ -2,7 +2,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 
@@ -11,7 +11,12 @@ WB_PRICES_API = 'https://discounts-prices-api.wildberries.ru'
 WB_COMMISSION_API = 'https://common-api.wildberries.ru'
 WB_TARIFFS_API = 'https://common-api.wildberries.ru'
 WB_CONTENT_API = 'https://content-api.wildberries.ru'
+WB_STATS_API = 'https://statistics-api.wildberries.ru'
 YM_API = 'https://api.partner.market.yandex.ru'
+
+# За сколько дней считаем выкуп. Два месяца — чтобы попали и возвраты по
+# вещам, купленным в конце периода: покупатель возвращает не сразу.
+BUYOUT_PERIOD_DAYS = 60
 
 # Объём одной упакованной вещи в литрах. Логистика WB считается за литры, а
 # штора едет в мягкой упаковке — примерно 40x30x10 см. От этого числа зависит
@@ -252,6 +257,8 @@ def _sync_ozon(cur, cursor=None):
         tariffs.pop('return_fbo', None)
         if tariffs:
             _save_tariffs(cur, 'ozon', tariffs)
+        # Выкуп по данным площадки — с учётом возвратов после доставки.
+        _sync_ozon_buyout(cur, headers)
     return {'ok': True, 'saved': saved, 'fetched': len(rows),
             'cursor': next_cursor, 'done': done, 'tariffs': tariffs}
 
@@ -298,6 +305,85 @@ def _num_ru(v):
         return float(s)
     except ValueError:
         return None
+
+
+def _wb_card_dimensions(headers, limit_pages=6, start_cursor=None):
+    """Габариты карточек WB по артикулу: {vendorCode: объём в литрах}.
+
+    Логистика WB считается за ЛИТРЫ, а у нас тюль 200 см и штора 800 см едут в
+    разных по размеру упаковках. Один общий объём для всех размеров означал бы,
+    что мелкие вещи мы считаем дороже, чем есть, а крупные — дешевле.
+
+    Габариты вписаны в саму карточку, поэтому берём их оттуда и переводим в
+    литры: сантиметры в кубе делим на 1000.
+    """
+    out = {}
+    cursor = dict(start_cursor) if start_cursor else {}
+    cursor['limit'] = 100
+    next_cursor = None
+    for _ in range(limit_pages):
+        st, data = _http(
+            f'{WB_CONTENT_API}/content/v2/get/cards/list', 'POST', headers,
+            {'settings': {'cursor': cursor, 'filter': {'withPhoto': -1}}},
+            timeout=12,
+        )
+        if st != 200 or not isinstance(data, dict):
+            break
+        cards = data.get('cards') or []
+        for c in cards:
+            code = (c.get('vendorCode') or '').strip()
+            dim = c.get('dimensions') or {}
+            l, w, h = dim.get('length'), dim.get('width'), dim.get('height')
+            if code and l and w and h:
+                out[code] = round(float(l) * float(w) * float(h) / 1000.0, 3)
+        nxt = data.get('cursor') or {}
+        if len(cards) < 100 or not nxt.get('updatedAt'):
+            # Каталог кончился — следующий заход начнёт сначала, с обновлёнными
+            # габаритами. Так изменения в карточках рано или поздно доедут.
+            next_cursor = None
+            break
+        cursor = {'limit': 100, 'updatedAt': nxt.get('updatedAt'),
+                  'nmID': nxt.get('nmID')}
+        next_cursor = {'updatedAt': nxt.get('updatedAt'), 'nmID': nxt.get('nmID')}
+    return out, next_cursor
+
+
+def _wb_box_rates(headers):
+    """Тариф короба WB: (база за первый литр, цена литра) для FBS и FBO."""
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    st, box = _http(
+        f'{WB_TARIFFS_API}/api/v1/tariffs/box?date={today}', 'GET', headers,
+        timeout=12,
+    )
+    if st != 200 or not isinstance(box, dict):
+        return None
+    whs = (((box.get('response') or {}).get('data') or {}).get('warehouseList')) or []
+    base_l, liter_l, base_o, liter_o = [], [], [], []
+    for w in whs:
+        b, li = (_num_ru(w.get('boxDeliveryMarketplaceBase')),
+                 _num_ru(w.get('boxDeliveryMarketplaceLiter')))
+        if b is not None and li is not None:
+            base_l.append(b)
+            liter_l.append(li)
+        bo, lo = (_num_ru(w.get('boxDeliveryBase')),
+                  _num_ru(w.get('boxDeliveryLiter')))
+        if bo is not None and lo is not None:
+            base_o.append(bo)
+            liter_o.append(lo)
+    avg = lambda xs: sum(xs) / len(xs) if xs else None  # noqa: E731
+    return {
+        'fbsBase': avg(base_l), 'fbsLiter': avg(liter_l),
+        'fboBase': avg(base_o), 'fboLiter': avg(liter_o),
+    }
+
+
+def _box_price(rates, prefix, liters):
+    """Стоимость доставки короба по объёму: первый литр по базе, дальше по литру."""
+    base = rates.get(f'{prefix}Base')
+    liter = rates.get(f'{prefix}Liter')
+    if base is None or liter is None or not liters:
+        return None
+    return round(base + liter * max(liters - 1, 0), 2)
 
 
 def _sync_wb_tariffs(cur, headers):
@@ -405,10 +491,50 @@ def _sync_wb(cur, cursor=None):
         if status != 200 or not isinstance(data, dict):
             return {'ok': False, 'error': f'WB ответил {status}: {str(data)[:200]}'}
         goods = ((data.get('data') or {}).get('listGoods')) or []
+
+        # ЛОГИСТИКА ПО КАЖДОМУ РАЗМЕРУ.
+        #
+        # WB считает доставку за литры, а тюль 200 см и штора 800 см едут в
+        # разных упаковках. Раньше на все размеры шёл один усреднённый объём —
+        # мелкие вещи выглядели дороже, чем есть, крупные дешевле. Берём
+        # габариты из самой карточки и считаем доставку для каждого размера.
+        # Габариты карточек копим в базе: за вызов WB отдаёт сотню, а карточек
+        # почти восемьсот. Уже известные объёмы берём из базы, новые дописываем
+        # по одной странице за заход — так за несколько запусков наберутся все,
+        # и ни один вызов не упрётся в лимит времени.
+        cur.execute(
+            "SELECT mi.sku, mp.volume_liters FROM marketplace_prices mp "
+            "JOIN marketplace_items mi ON mi.id = mp.marketplace_item_id "
+            "WHERE mp.marketplace_code = 'wildberries' "
+            "  AND mp.volume_liters IS NOT NULL AND mi.sku IS NOT NULL"
+        )
+        dims = {str(r[0]).strip(): float(r[1]) for r in cur.fetchall()}
+
+        cur.execute(
+            "SELECT value FROM system_settings WHERE key = 'wb_cards_cursor'")
+        row = cur.fetchone()
+        try:
+            start = json.loads(row[0]) if row and row[0] else None
+        except (TypeError, ValueError):
+            start = None
+
+        fresh, next_cards = _wb_card_dimensions(
+            headers, limit_pages=1, start_cursor=start)
+        dims.update(fresh)
+        cur.execute(
+            "INSERT INTO system_settings (key, value) VALUES "
+            "('wb_cards_cursor', %s) ON CONFLICT (key) DO UPDATE SET "
+            "value = EXCLUDED.value, updated_at = now()",
+            (json.dumps(next_cards) if next_cards else '',),
+        )
+        box = _wb_box_rates(headers) or {}
+
         for g in goods:
-            item_id = by_sku.get(str(g.get('vendorCode') or '').strip())
+            vendor = str(g.get('vendorCode') or '').strip()
+            item_id = by_sku.get(vendor)
             if not item_id:
                 continue
+            liters = dims.get(vendor)
             sizes = g.get('sizes') or []
             price = None
             discounted = None
@@ -428,6 +554,9 @@ def _sync_wb(cur, cursor=None):
                 'priceBeforeDiscount': float(price) if price else None,
                 'priceWithMarketplaceDiscount': float(actual) if actual else None,
                 'discountPercent': float(g['discount']) if g.get('discount') else None,
+                'volumeLiters': liters,
+                'logisticsFbs': _box_price(box, 'fbs', liters),
+                'logisticsFbo': _box_price(box, 'fbo', liters),
             })
         done = len(goods) < 100
         next_cursor = '' if done else str(offset + 100)
@@ -438,6 +567,9 @@ def _sync_wb(cur, cursor=None):
     tariffs = _sync_wb_tariffs(cur, headers) if done else {}
     if tariffs:
         _save_tariffs(cur, 'wildberries', tariffs)
+    if done:
+        # Выкуп по отчёту продаж площадки — там видны возвраты после доставки.
+        _sync_wb_buyout(cur, headers)
     return {'ok': True, 'saved': saved, 'fetched': len(rows),
             'cursor': next_cursor, 'done': done, 'tariffs': tariffs}
 
@@ -461,13 +593,7 @@ def _sync_ym_tariffs(cur, headers, campaign_id, avg_price):
     # Категория лежит в карточках бизнеса (offer-mappings), а не в ценах: там
     # только цены и остатки. Номер бизнеса берём из списка кампаний, чтобы не
     # зашивать его в код.
-    st0, camps = _http(f'{YM_API}/campaigns', 'GET', headers, timeout=10)
-    business_id = None
-    if st0 == 200 and isinstance(camps, dict):
-        for c in (camps.get('campaigns') or []):
-            if str(c.get('id')) == str(campaign_id):
-                business_id = (c.get('business') or {}).get('id')
-                break
+    business_id = _ym_business_id(headers, campaign_id)
 
     category_id = None
     if business_id:
@@ -512,6 +638,88 @@ def _sync_ym_tariffs(cur, headers, campaign_id, avg_price):
     return out
 
 
+def _ym_business_id(headers, campaign_id):
+    """Номер бизнеса Яндекса по кампании — в нём лежат карточки с габаритами."""
+    st, camps = _http(f'{YM_API}/campaigns', 'GET', headers, timeout=10)
+    if st != 200 or not isinstance(camps, dict):
+        return None
+    for c in (camps.get('campaigns') or []):
+        if str(c.get('id')) == str(campaign_id):
+            return (c.get('business') or {}).get('id')
+    return None
+
+
+def _ym_item_logistics(headers, campaign_id, business_id, offer_ids, prices):
+    """Логистика Яндекса по КАЖДОМУ товару: {offerId: рубли}.
+
+    Доставка зависит от габаритов и цены, а они у наших размеров разные: тюль
+    200 см и штора 800 см не могут стоить одинаково в перевозке. Калькулятор
+    Яндекса умеет считать сразу пачку товаров — этим и пользуемся.
+
+    Габариты берём из карточек: продавец заполняет их в кабинете, и это те же
+    цифры, по которым площадка считает доставку на самом деле.
+    """
+    if not business_id or not offer_ids:
+        return {}
+
+    # Габариты и категории карточек.
+    cards = {}
+    st, data = _http(
+        f'{YM_API}/businesses/{business_id}/offer-mappings?limit=200', 'POST',
+        headers, {'offerIds': offer_ids[:200]}, timeout=12,
+    )
+    if st == 200 and isinstance(data, dict):
+        for m in ((data.get('result') or {}).get('offerMappings')) or []:
+            offer = m.get('offer') or {}
+            oid = (offer.get('offerId') or '').strip()
+            wd = offer.get('weightDimensions') or {}
+            cat = (m.get('mapping') or {}).get('marketCategoryId')
+            if oid and cat and wd.get('length'):
+                cards[oid] = {
+                    'categoryId': int(cat),
+                    'length': float(wd.get('length') or 0),
+                    'width': float(wd.get('width') or 0),
+                    'height': float(wd.get('height') or 0),
+                    'weight': float(wd.get('weight') or 0) or 1.0,
+                }
+
+    if not cards:
+        return {}
+
+    order = list(cards.keys())
+    offers = [{
+        'categoryId': cards[o]['categoryId'],
+        'price': prices.get(o) or 5000,
+        'length': cards[o]['length'] or YM_PARCEL['length'],
+        'width': cards[o]['width'] or YM_PARCEL['width'],
+        'height': cards[o]['height'] or YM_PARCEL['height'],
+        'weight': cards[o]['weight'] or YM_PARCEL['weight'],
+        'quantity': 1,
+    } for o in order]
+
+    out = {}
+    # Считаем частями: калькулятор не любит слишком длинные списки.
+    for start in range(0, len(offers), 50):
+        chunk = offers[start:start + 50]
+        st2, res = _http(
+            f'{YM_API}/tariffs/calculate', 'POST', headers,
+            {'parameters': {'campaignId': int(campaign_id)}, 'offers': chunk},
+            timeout=15,
+        )
+        if st2 != 200 or not isinstance(res, dict):
+            continue
+        for i, row in enumerate(((res.get('result') or {}).get('offers')) or []):
+            oid = order[start + i] if start + i < len(order) else None
+            if not oid:
+                continue
+            for t in (row.get('tariffs') or []):
+                if t.get('type') == 'DELIVERY_TO_CUSTOMER':
+                    amount = _num_ru(t.get('amount'))
+                    if amount is not None:
+                        out[oid] = round(amount, 2)
+    return out
+
+
 def _sync_yandex(cur, cursor=None):
     """Цены товаров с Яндекс Маркета.
 
@@ -538,8 +746,41 @@ def _sync_yandex(cur, cursor=None):
             return {'ok': False, 'error': f'Яндекс ответил {status}: {str(data)[:200]}'}
         result = data.get('result') or {}
         offers = result.get('offers') or []
+
+        # Логистика по КАЖДОМУ размеру: считаем пачкой для товаров этой страницы.
+        #
+        # У функции 5 секунд на всё, а тут три обращения к Яндексу подряд:
+        # кампании, карточки, калькулятор. Номер бизнеса не меняется — держим
+        # его в настройках, чтобы не спрашивать заново на каждой странице.
+        page_ids, page_prices = [], {}
         for o in offers:
-            item_id = by_sku.get(str(o.get('offerId') or o.get('id') or '').strip())
+            oid = str(o.get('offerId') or o.get('id') or '').strip()
+            if oid and by_sku.get(oid):
+                page_ids.append(oid)
+                p = (o.get('price') or {}).get('value')
+                if p:
+                    page_prices[oid] = float(p)
+
+        cur.execute(
+            "SELECT value FROM system_settings WHERE key = 'ym_business_id'")
+        row = cur.fetchone()
+        business_id = (row[0] if row else None) or None
+        if not business_id:
+            business_id = _ym_business_id(headers, campaign_id)
+            if business_id:
+                cur.execute(
+                    "INSERT INTO system_settings (key, value) VALUES "
+                    "('ym_business_id', %s) ON CONFLICT (key) DO UPDATE SET "
+                    "value = EXCLUDED.value, updated_at = now()",
+                    (str(business_id),),
+                )
+
+        item_logistics = _ym_item_logistics(
+            headers, campaign_id, business_id, page_ids, page_prices)
+
+        for o in offers:
+            offer_id = str(o.get('offerId') or o.get('id') or '').strip()
+            item_id = by_sku.get(offer_id)
             if not item_id:
                 continue
             price = (o.get('price') or {}).get('value')
@@ -552,6 +793,7 @@ def _sync_yandex(cur, cursor=None):
                 'itemId': item_id,
                 'price': float(price) if price else None,
                 'priceWithMarketplaceDiscount': float(actual) if actual else None,
+                'logisticsFbs': item_logistics.get(offer_id),
             })
         next_cursor = (result.get('paging') or {}).get('nextPageToken') or ''
         done = not next_cursor or not offers
@@ -568,6 +810,8 @@ def _sync_yandex(cur, cursor=None):
         row = cur.fetchone()
         avg_price = float(row[0]) if row and row[0] else None
         tariffs = _sync_ym_tariffs(cur, headers, campaign_id, avg_price)
+        # Выкуп по статусам заказов площадки — с учётом невыкупов.
+        _sync_ym_buyout(cur, headers, campaign_id)
         if tariffs:
             _save_tariffs(cur, 'yandex_market', tariffs)
     return {'ok': True, 'saved': saved, 'fetched': len(rows),
@@ -626,12 +870,158 @@ def _tariffs(cur):
     return out
 
 
+def _save_buyout(cur, code, scheme, percent, stats):
+    """Сохраняет процент выкупа, посчитанный самой площадкой."""
+    if percent is None:
+        return
+    cur.execute(
+        "INSERT INTO marketplace_buyout (marketplace_code, scheme, percent, "
+        "ordered_units, delivered_units, returned_units, cancelled_units, "
+        "period_days, synced_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now()) "
+        "ON CONFLICT (marketplace_code, scheme) DO UPDATE SET "
+        "percent = EXCLUDED.percent, ordered_units = EXCLUDED.ordered_units, "
+        "delivered_units = EXCLUDED.delivered_units, "
+        "returned_units = EXCLUDED.returned_units, "
+        "cancelled_units = EXCLUDED.cancelled_units, "
+        "period_days = EXCLUDED.period_days, synced_at = now()",
+        (code, scheme, round(percent, 2), stats.get('ordered'),
+         stats.get('delivered'), stats.get('returned'), stats.get('cancelled'),
+         BUYOUT_PERIOD_DAYS),
+    )
+
+
+def _sync_ozon_buyout(cur, headers):
+    """Выкуп OZON — из отчёта аналитики площадки.
+
+    Площадка отдаёт по каждому товару: сколько заказали, сколько доставили,
+    сколько отменили и вернули. Выкуп — это доля доставленных за вычетом
+    возвратов: именно те вещи, за которые нам заплатили и оставили себе.
+    """
+    date_to = datetime.now(timezone.utc).date()
+    date_from = date_to - timedelta(days=BUYOUT_PERIOD_DAYS)
+    st, data = _http(
+        f'{OZON_API}/v1/analytics/data', 'POST', headers,
+        {'date_from': date_from.strftime('%Y-%m-%d'),
+         'date_to': date_to.strftime('%Y-%m-%d'),
+         'metrics': ['ordered_units', 'delivered_units', 'cancellations',
+                     'returns'],
+         'dimension': ['sku'], 'limit': 1000},
+        timeout=15,
+    )
+    if st != 200 or not isinstance(data, dict):
+        return None
+    totals = ((data.get('result') or {}).get('totals')) or []
+    if len(totals) < 4:
+        return None
+    ordered, delivered, cancelled, returned = (float(x or 0) for x in totals[:4])
+    if ordered <= 0:
+        return None
+    kept = max(delivered - returned, 0)
+    percent = round(100.0 * kept / ordered, 2)
+    stats = {'ordered': int(ordered), 'delivered': int(delivered),
+             'returned': int(returned), 'cancelled': int(cancelled)}
+    _save_buyout(cur, 'ozon', 'FBS', percent, stats)
+    _save_buyout(cur, 'ozon', 'FBO', percent, stats)
+    return {'percent': percent, **stats}
+
+
+def _sync_wb_buyout(cur, headers):
+    """Выкуп Wildberries — из отчёта о продажах.
+
+    В отчёте каждая строка — либо продажа, либо возврат (номер начинается с R).
+    Выкуп считаем как долю продаж, оставшихся у покупателей.
+    """
+    date_from = (datetime.now(timezone.utc).date()
+                 - timedelta(days=BUYOUT_PERIOD_DAYS)).strftime('%Y-%m-%d')
+    st, rows = _http(
+        f'{WB_STATS_API}/api/v1/supplier/sales?dateFrom={date_from}',
+        'GET', headers, timeout=20,
+    )
+    if st != 200 or not isinstance(rows, list) or not rows:
+        return None
+    returns = sum(1 for r in rows if str(r.get('saleID') or '').startswith('R'))
+    sales = len(rows) - returns
+    total = sales + returns
+    if total <= 0:
+        return None
+    percent = round(100.0 * sales / total, 2)
+    stats = {'ordered': total, 'delivered': sales, 'returned': returns,
+             'cancelled': None}
+    _save_buyout(cur, 'wildberries', 'FBS', percent, stats)
+    _save_buyout(cur, 'wildberries', 'FBO', percent, stats)
+    return {'percent': percent, **stats}
+
+
+def _sync_ym_buyout(cur, headers, campaign_id):
+    """Выкуп Яндекс Маркета — по статусам заказов кампании.
+
+    Площадка отдаёт список заказов со статусами. Выкуп — доля доставленных из
+    всех, что доехали до развязки: отменённые и возвращённые вычитаем.
+    """
+    date_from = (datetime.now(timezone.utc).date()
+                 - timedelta(days=BUYOUT_PERIOD_DAYS)).strftime('%Y-%m-%d')
+    st, data = _http(
+        f'{YM_API}/campaigns/{campaign_id}/orders'
+        f'?fromDate={date_from}&pageSize=200', 'GET', headers, timeout=20,
+    )
+    if st != 200 or not isinstance(data, dict):
+        return None
+    orders = data.get('orders') or []
+    if not orders:
+        return None
+
+    delivered = cancelled = returned = 0
+    for o in orders:
+        status = (o.get('status') or '').upper()
+        sub = (o.get('substatus') or '').upper()
+        if status == 'DELIVERED':
+            delivered += 1
+        elif status == 'CANCELLED':
+            # Возврат после доставки — отдельная история: покупатель вещь видел.
+            if 'RETURNED' in sub or 'DELIVERY_SERVICE_UNDELIVERED' in sub:
+                returned += 1
+            else:
+                cancelled += 1
+    total = delivered + cancelled + returned
+    # Меньше двадцати заказов — это не статистика, а случайность: один
+    # отказ качнёт процент на пять пунктов. Лучше показать «нет данных»,
+    # чем посчитать всю экономику по трём заказам.
+    if total < 20:
+        return None
+    percent = round(100.0 * delivered / total, 2)
+    stats = {'ordered': total, 'delivered': delivered, 'returned': returned,
+             'cancelled': cancelled}
+    _save_buyout(cur, 'yandex_market', 'FBS', percent, stats)
+    _save_buyout(cur, 'yandex_market', 'FBO', percent, stats)
+    return {'percent': percent, **stats}
+
+
+def _buyout_from_marketplaces(cur):
+    """Проценты выкупа, посчитанные площадками: {(код, схема): данные}."""
+    cur.execute(
+        "SELECT marketplace_code, scheme, percent, ordered_units, "
+        "delivered_units, returned_units, synced_at FROM marketplace_buyout"
+    )
+    out = {}
+    for code, scheme, percent, ordered, delivered, returned, at in cur.fetchall():
+        out[(code, scheme)] = {
+            'percent': float(percent) if percent is not None else None,
+            'ordered': ordered, 'delivered': delivered, 'returned': returned,
+            'syncedAt': at.isoformat() + 'Z' if at else None,
+        }
+    return out
+
+
 def _buyout_rates(cur):
     """РЕАЛЬНЫЙ процент выкупа по нашим заказам — отдельно по площадке и схеме.
 
     Это ключевой параметр всей экономики: при выкупе 80% каждая пятая вещь едет
     обратно, и обратная логистика съедает прибыль с четырёх проданных. Считать
     его «на глазок» нельзя, а у нас есть точные отметки отмен по заказам.
+
+    ВАЖНО: это только отмены ДО отгрузки. Возврат через две недели после
+    доставки сюда не попадает, поэтому цифра всегда оптимистичнее правды. Более
+    честные данные приходят от самой площадки — см. _buyout_from_marketplaces.
     """
     cur.execute(
         "SELECT marketplace, order_type, COUNT(*), "
@@ -969,7 +1359,20 @@ def _build(cur, code, scheme, buyout_override, shared=None):
     orders_mp = ORDERS_CODE.get(code)
     real = buyouts.get((orders_mp, scheme))
     real_buyout = real['percent'] if real else None
-    buyout = buyout_override if buyout_override else (real_buyout or 100.0)
+
+    # ВЫКУП БЕРЁМ У ПЛОЩАДКИ, а не из своих заказов.
+    #
+    # Наши отметки видят только отмены ДО отгрузки. Покупатель может забрать
+    # вещь и вернуть её через две недели — такой возврат в наши данные не
+    # попадает, поэтому свой выкуп всегда выглядит красивее реального.
+    # У OZON разрыв оказался в 20 пунктов: 90% по нашим отметкам против 69% по
+    # данным площадки. Считать логистику по завышенному выкупу — значит не
+    # видеть трети обратных поездок.
+    mp_buyouts = s.get('mpBuyouts') or _buyout_from_marketplaces(cur)
+    from_mp = mp_buyouts.get((code, scheme))
+    mp_buyout = from_mp['percent'] if from_mp else None
+
+    buyout = buyout_override or mp_buyout or real_buyout or 100.0
 
     # Один товар-образец на пару «ткань + ширина»: себестоимость внутри пары
     # одинакова, а цены на площадке у разных высот различаются — поэтому цену
@@ -1075,6 +1478,16 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             'isOverride': bool(buyout_override),
             'orders': real['orders'] if real else 0,
             'cancelled': real['cancelled'] if real else 0,
+            # Данные самой площадки: они честнее наших отметок, потому что
+            # учитывают возвраты уже после доставки.
+            'fromMarketplace': mp_buyout,
+            'mpOrdered': from_mp['ordered'] if from_mp else None,
+            'mpDelivered': from_mp['delivered'] if from_mp else None,
+            'mpReturned': from_mp['returned'] if from_mp else None,
+            'mpSyncedAt': from_mp['syncedAt'] if from_mp else None,
+            'source': ('override' if buyout_override
+                       else 'marketplace' if mp_buyout
+                       else 'orders' if real_buyout else 'none'),
         },
         'rows': rows,
     }
@@ -1120,6 +1533,7 @@ def handler(event: dict, context) -> dict:
                     'tariffs': _tariffs(cur),
                     'costs': _cost_by_group(cur),
                     'buyouts': _buyout_rates(cur),
+                    'mpBuyouts': _buyout_from_marketplaces(cur),
                 }
                 for code in MARKETPLACES:
                     for scheme in ('FBO', 'FBS'):
@@ -1175,27 +1589,48 @@ def handler(event: dict, context) -> dict:
             code = body_data.get('marketplaceCode')
             if code not in MARKETPLACES:
                 return _resp(400, {'error': 'Неизвестный маркетплейс'})
+
+            # ЛОГИСТИКУ И КОМИССИЮ РУКАМИ НЕ ПРАВИМ.
+            #
+            # Их присылает площадка, причём по каждому размеру отдельно: тюль
+            # 200 см и штора 800 см едут за разные деньги. Вписанное вручную
+            # число ломает расчёт молча — оно выглядит достоверно, но перестаёт
+            # соответствовать тарифам площадки уже на следующий день.
+            #
+            # Поэтому такие поля просто не принимаем: сохраняем то, что задаёт
+            # менеджер по своему усмотрению, а остальное оставляем как есть.
+            editable = {
+                'storage_per_month': body_data.get('storagePerMonth'),
+                'acceptance_fee': body_data.get('acceptanceFee'),
+                'promo_percent': body_data.get('promoPercent'),
+                'storage_months': body_data.get('storageMonths'),
+            }
+            # Поля, которые площадка уже прислала, менеджер не трогает. Всё
+            # прочее он может задать сам — площадка их не отдаёт.
             cur.execute(
-                "UPDATE marketplace_tariffs SET logistics_fbo = %s, logistics_fbs = %s, "
-                "return_logistics = %s, storage_per_month = %s, acceptance_fee = %s, "
-                "acquiring_percent = %s, promo_percent = %s, storage_months = %s, "
-                "commission_fbo_percent = %s, commission_fbs_percent = %s, "
-                "updated_at = now(), updated_by = %s WHERE marketplace_code = %s",
-                (
-                    float(body_data.get('logisticsFbo') or 0),
-                    float(body_data.get('logisticsFbs') or 0),
-                    float(body_data.get('returnLogistics') or 0),
-                    float(body_data.get('storagePerMonth') or 0),
-                    float(body_data.get('acceptanceFee') or 0),
-                    float(body_data.get('acquiringPercent') or 0),
-                    float(body_data.get('promoPercent') or 0),
-                    float(body_data.get('storageMonths') or 1),
-                    float(body_data.get('commissionFboPercent') or 0),
-                    float(body_data.get('commissionFbsPercent') or 0),
-                    int(actor_id) if actor_id else None,
-                    code,
-                ),
+                "SELECT synced_fields FROM marketplace_tariffs "
+                "WHERE marketplace_code = %s",
+                (code,),
             )
+            row = cur.fetchone()
+            auto = {f for f in ((row[0] if row else '') or '').split(',') if f}
+            for key, param in (
+                ('return_logistics', 'returnLogistics'),
+                ('acquiring_percent', 'acquiringPercent'),
+                ('commission_fbo_percent', 'commissionFboPercent'),
+                ('commission_fbs_percent', 'commissionFbsPercent'),
+            ):
+                if key not in auto:
+                    editable[key] = body_data.get(param)
+
+            editable = {k: float(v or 0) for k, v in editable.items() if v is not None}
+            if editable:
+                sets = ', '.join(f"{k} = %s" for k in editable)
+                cur.execute(
+                    f"UPDATE marketplace_tariffs SET {sets}, updated_at = now(), "
+                    "updated_by = %s WHERE marketplace_code = %s",
+                    (*editable.values(), int(actor_id) if actor_id else None, code),
+                )
             conn.commit()
             return _resp(200, {'success': True})
 

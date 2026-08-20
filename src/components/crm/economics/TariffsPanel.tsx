@@ -81,11 +81,21 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
       })
     : null;
 
+  // Логистика и комиссия приходят от площадки по КАЖДОМУ размеру, поэтому
+  // редактировать их нельзя: одно общее число на все размеры уже неверно, а
+  // вручную вписанное перестанет отвечать тарифам площадки на следующий день.
+  const readOnly = new Set<keyof Tariffs>([
+    'logisticsFbo',
+    'logisticsFbs',
+    'commissionFbsPercent',
+    'commissionFboPercent',
+  ]);
+
   const fields: { key: keyof Tariffs; label: string; hint?: string }[] = [
-    { key: 'commissionFbsPercent', label: 'Комиссия FBS, %', hint: 'если не приходит по товару' },
-    { key: 'commissionFboPercent', label: 'Комиссия FBO, %', hint: 'если не приходит по товару' },
-    { key: 'logisticsFbo', label: 'Логистика FBO, ₽', hint: 'если площадка не отдала по товару' },
-    { key: 'logisticsFbs', label: 'Логистика FBS, ₽', hint: 'если площадка не отдала по товару' },
+    { key: 'commissionFbsPercent', label: 'Комиссия FBS, %' },
+    { key: 'commissionFboPercent', label: 'Комиссия FBO, %' },
+    { key: 'logisticsFbo', label: 'Логистика FBO, ₽', hint: 'в среднем по размерам' },
+    { key: 'logisticsFbs', label: 'Логистика FBS, ₽', hint: 'в среднем по размерам' },
     { key: 'returnLogistics', label: 'Обратная логистика, ₽', hint: 'за каждый возврат' },
     { key: 'storagePerMonth', label: 'Хранение, ₽/мес', hint: 'за единицу на складе площадки' },
     { key: 'storageMonths', label: 'Срок хранения, мес', hint: 'сколько лежит до продажи' },
@@ -110,7 +120,8 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
       <CardContent className="space-y-3">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {fields.map((f) => {
-            const auto = syncedKeys.has(f.key);
+            const locked = readOnly.has(f.key);
+            const auto = locked || syncedKeys.has(f.key);
             return (
               <div key={f.key} className="space-y-1.5">
                 <Label className="flex items-center gap-1 text-xs">
@@ -122,7 +133,7 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
                       className="flex items-center gap-0.5 text-[10px] font-normal text-emerald-700"
                       title="Приходит из кабинета площадки автоматически"
                     >
-                      <Icon name="RefreshCw" size={10} />
+                      <Icon name={locked ? 'Lock' : 'RefreshCw'} size={10} />
                       авто
                     </span>
                   )}
@@ -133,10 +144,18 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
                   min={0}
                   value={String(form[f.key] ?? 0)}
                   onChange={(e) => set(f.key, e.target.value)}
-                  className={auto ? 'border-emerald-200 bg-emerald-50/40' : undefined}
+                  readOnly={locked}
+                  disabled={locked}
+                  className={
+                    auto ? 'border-emerald-200 bg-emerald-50/40' : undefined
+                  }
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  {auto ? 'Обновляется автоматически' : f.hint}
+                  {locked
+                    ? 'Считает площадка — по каждому размеру свой'
+                    : auto
+                      ? 'Обновляется автоматически'
+                      : f.hint}
                 </p>
               </div>
             );
@@ -144,10 +163,12 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Поля с пометкой «авто» площадка присылает сама — они обновляются вместе с
-          ценами, раз в 6 часов. Править их вручную нет смысла: следующая загрузка
-          вернёт значения площадки. Остальные расходы задаёте вы: площадка их не
-          отдаёт, потому что они зависят от вашего оборота и рекламного бюджета.
+          Логистику и комиссию считает площадка — по каждому размеру отдельно,
+          потому что тюль 200 см и штора 800 см едут за разные деньги. Здесь они
+          показаны средними и не редактируются: в расчёт идёт точная цена
+          конкретного размера. Обновляются раз в 6 часов вместе с ценами.
+          Остальные расходы задаёте вы — площадка их не отдаёт, они зависят от
+          вашего оборота и рекламного бюджета.
         </p>
 
         <Button onClick={handleSave} disabled={saving}>

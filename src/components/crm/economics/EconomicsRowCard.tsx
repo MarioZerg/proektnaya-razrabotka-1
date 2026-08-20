@@ -227,6 +227,16 @@ const EconomicsRowCard = ({ row }: { row: EconomicsRow }) => {
               {h.unit ? (
                 <span className="flex shrink-0 items-center gap-2">
                   <span className="text-muted-foreground">{moneyShort(h.unit.price)} ₽</span>
+                  {/* Логистика у каждого размера своя: площадка считает её по
+                      габаритам упаковки. Показываем рядом с ценой — видно, где
+                      доставка съедает прибыль сильнее всего. */}
+                  <span
+                    className="w-20 text-right text-muted-foreground"
+                    title={`Доставка по тарифу ${moneyShort(h.unit.logisticsBase)} ₽ · с учётом выкупа ${h.unit.buyoutPercent}% — ${moneyShort(h.unit.logistics)} ₽`}
+                  >
+                    <Icon name="Truck" size={11} className="mr-0.5 inline" />
+                    {moneyShort(h.unit.logisticsBase)} ₽
+                  </span>
                   <span className={`font-bold ${profitColor(h.unit.margin)}`}>
                     {h.unit.profit > 0 ? '+' : ''}
                     {moneyShort(h.unit.profit)} ₽

@@ -120,6 +120,14 @@ export interface EconomicsResponse {
     used: number;
     real: number | null;
     isOverride: boolean;
+    /** Выкуп по данным самой площадки — с учётом возвратов после доставки. */
+    fromMarketplace: number | null;
+    mpOrdered: number | null;
+    mpDelivered: number | null;
+    mpReturned: number | null;
+    mpSyncedAt: string | null;
+    /** Откуда взят выкуп: marketplace / orders / override / none. */
+    source: string;
     orders: number;
     cancelled: number;
   };
