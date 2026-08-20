@@ -162,6 +162,44 @@ def get_setting_int(cur, workshop_id, key, default=0):
         return default
 
 
+
+def ozon_cutoff_passed(cur, workshop_id):
+    """Прошло ли время, после которого OZON уходит в конец очереди.
+
+    Машина на ПВЗ уезжает раз в день (у нас в 12:30), и всё, что сшито после отсечки,
+    на неё уже не попадёт — вещь пролежит до завтра. А заказы WB и Яндекса отгружаются
+    иначе и от этой машины не зависят.
+
+    Поэтому после отсечки (по умолчанию 11:00 МСК) конвейер сначала отдаёт WB и Яндекс:
+    их работу можно закрыть сегодня. OZON при этом НЕ запрещён — если другой работы нет,
+    швея спокойно берёт его и шьёт, просто вещь уедет завтрашней машиной. Простоя нет.
+
+    Настройки цеха:
+      ozon_cutoff_enabled — 'true'/'false', контролировать выдачу по времени;
+      ozon_cutoff_time    — время отсечки в МСК, например '11:00'.
+
+    Возвращает True, если сейчас позже отсечки и правило включено.
+    """
+    enabled = (get_setting(cur, workshop_id, 'ozon_cutoff_enabled', 'false') or 'false').strip().lower()
+    if enabled not in ('true', 'yes', '1'):
+        return False
+
+    raw = (get_setting(cur, workshop_id, 'ozon_cutoff_time', '11:00') or '11:00').strip()
+    try:
+        parts = raw.split(':')
+        cutoff_h = int(parts[0])
+        cutoff_m = int(parts[1]) if len(parts) > 1 else 0
+    except (ValueError, IndexError):
+        return False
+    if not (0 <= cutoff_h <= 23 and 0 <= cutoff_m <= 59):
+        return False
+
+    # Время в базе хранится в UTC, а цех живёт по московскому — сравниваем в МСК.
+    cur.execute("SELECT (now() + interval '3 hours')::time")
+    now_msk = cur.fetchone()[0]
+    return (now_msk.hour, now_msk.minute) >= (cutoff_h, cutoff_m)
+
+
 def apply_penalty(cur, user_id, amount, description, order_id=None):
     """Начисляет автоматический штраф сотруднику (salary_accruals, type='penalty') —
     отрицательная сумма, как и у ручных штрафов через backend/salary. Если order_id указан,
@@ -874,6 +912,15 @@ def handler(event: dict, context) -> dict:
                     " AND (group_key IS NULL OR COALESCE(group_size, 1) <= 1) "
                     if single_mode else " "
                 )
+                # Отсечка OZON действует и на раскрое: резать во второй половине дня то,
+                # что всё равно не уедет сегодня, — значит копить крой впустую, пока
+                # заказы WB и Яндекса ждут. Это порядок, а не запрет: кончились заказы
+                # других площадок — закройщик получает OZON и работает дальше.
+                cut_ozon_last_sql = (
+                    "(marketplace = 'OZON') ASC, "
+                    if ozon_cutoff_passed(cur, int(workshop_id) if workshop_id else None)
+                    else ""
+                )
                 cur.execute(
                     "SELECT id, group_key, group_size, COALESCE(width, 0) FROM orders "
                     "WHERE sewing_status = 'Новый' "
@@ -881,7 +928,8 @@ def handler(event: dict, context) -> dict:
                     "AND COALESCE(status, '') <> 'Отменён' "
                     "AND material IN (" + names_csv + ") "
                     + single_sql +
-                    "ORDER BY (order_type = 'FBS') DESC, "
+                    "ORDER BY " + cut_ozon_last_sql +
+                    "(order_type = 'FBS') DESC, "
                     "COALESCE(marketplace_created_at, created_at) ASC, "
                     "group_key NULLS FIRST, group_position ASC NULLS LAST, id ASC LIMIT %s "
                     "FOR UPDATE SKIP LOCKED",
@@ -1957,13 +2005,27 @@ def handler(event: dict, context) -> dict:
                     where_parts.append("order_type = 'FBS'")
 
                 order_parts = []
+                # ОТСЕЧКА OZON. Машина на ПВЗ уезжает раз в день, и вещь, сшитая после
+                # отсечки, на неё уже не попадёт. Поэтому во второй половине дня сначала
+                # отдаём WB и Яндекс — их работу ещё можно закрыть сегодня.
+                #
+                # Это именно ПОРЯДОК, а не запрет: OZON остаётся в очереди последним и
+                # уходит швее, как только другой работы не осталось. Иначе цех вставал бы
+                # на пустом месте в дни, когда WB и Яндекс молчат.
+                ozon_last = ozon_cutoff_passed(cur, session_workshop_id)
+                if ozon_last:
+                    order_parts.append("(marketplace = 'OZON') ASC")
                 # FBS-заказы ВСЕГДА идут первыми в очереди — это жёсткое правило, оно важнее
                 # любых настроек приоритета цеха (у FBS сжатые сроки отгрузки на маркетплейс).
                 order_parts.append("(order_type = 'FBS') DESC")
                 if cluster_priority:
                     cluster_esc = cluster_priority.replace("'", "''")
                     order_parts.append(f"(cluster = '{cluster_esc}') DESC")
-                if orders_priority_setting == 'ozon_first':
+                # После отсечки настройка «Сначала OZON» не применяется: иначе две
+                # настройки тянули бы очередь в разные стороны. У нас в системе глобально
+                # стоит именно ozon_first, и без этой оговорки правило отсечки выглядело бы
+                # сломанным — OZON бы возвращался наверх сразу после отсечки.
+                if orders_priority_setting == 'ozon_first' and not ozon_last:
                     order_parts.append("(marketplace = 'OZON') DESC")
                 elif orders_priority_setting == 'wb_first':
                     order_parts.append("(marketplace = 'WB') DESC")

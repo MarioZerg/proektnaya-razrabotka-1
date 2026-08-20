@@ -12,6 +12,10 @@ SETTINGS_KEYS = [
     'seller_id_ozon',
     'max_quantity_orders_to_seamstress',
     'orders_priority',
+    # Отсечка OZON: после указанного времени заказы OZON уходят в конец очереди,
+    # чтобы цех успевал закрыть WB и Яндекс к отгрузке на ПВЗ.
+    'ozon_cutoff_enabled',
+    'ozon_cutoff_time',
     'late_opened_shift_penalty',
     'unclosed_shift_penalty',
     'unclosed_shift_with_orders_penalty',

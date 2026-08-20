@@ -45,6 +45,17 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
       { value: 'by_date', label: 'По дате заказа' },
     ],
   },
+  {
+    key: 'ozon_cutoff_enabled',
+    label: 'Ограничивать выдачу OZON по времени?',
+    type: 'select',
+    options: yesNoOptions,
+  },
+  {
+    key: 'ozon_cutoff_time',
+    label: 'После этого времени OZON уходит в конец очереди',
+    type: 'time',
+  },
   { key: 'late_opened_shift_penalty', label: 'Штраф за опоздание, руб.', type: 'number' },
   { key: 'unclosed_shift_penalty', label: 'Штраф за не закрытую смену, руб.', type: 'number' },
   {
