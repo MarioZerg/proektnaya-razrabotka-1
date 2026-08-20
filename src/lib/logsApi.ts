@@ -29,6 +29,11 @@ export interface LogEvent {
   category: string;
   workshop: string | null;
   role: string | null;
+  /** Настоящий номер заказа с маркетплейса — тот, что на ярлыке. */
+  orderNumber: string | null;
+  marketplace: string | null;
+  /** Штрихкод вещи на складской полке. */
+  storageBarcode: string | null;
 }
 
 export interface LogFilters {

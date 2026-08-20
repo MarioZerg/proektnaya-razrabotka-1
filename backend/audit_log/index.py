@@ -91,18 +91,41 @@ def build_filters(params):
         log_where.append(f"a.user_id = {int(user_id)}")
         shift_where.append(f"s.user_id = {int(user_id)}")
 
-    if date_from:
-        log_where.append(f"a.created_at >= '{esc(date_from)} 00:00:00'")
-        shift_where.append(f"s.opened_at >= '{esc(date_from)} 00:00:00'")
-    if date_to:
-        log_where.append(f"a.created_at <= '{esc(date_to)} 23:59:59'")
-        shift_where.append(f"s.opened_at <= '{esc(date_to)} 23:59:59'")
+    # ПРИ ПОИСКЕ ПЕРИОД НЕ ПРИМЕНЯЕТСЯ.
+    #
+    # Человек ищет конкретный заказ, когда разбирает спорную ситуацию, — и почти
+    # никогда не знает, каким днём его шили. Страница по умолчанию открыта на
+    # «сегодня», поэтому вчерашний заказ не находился, и поиск выглядел сломанным.
+    # Ищем по всей истории: точный номер и так отсекает лишнее.
+    if not search:
+        if date_from:
+            log_where.append(f"a.created_at >= '{esc(date_from)} 00:00:00'")
+            shift_where.append(f"s.opened_at >= '{esc(date_from)} 00:00:00'")
+        if date_to:
+            log_where.append(f"a.created_at <= '{esc(date_to)} 23:59:59'")
+            shift_where.append(f"s.opened_at <= '{esc(date_to)} 23:59:59'")
 
     if search:
         s = esc(search)
+        # ПОИСК ПО НАСТОЯЩЕМУ НОМЕРУ ЗАКАЗА.
+        #
+        # В журнале хранится только внутренний номер записи (#87381), а человек ищет
+        # номер с маркетплейса — «0132602800-0285-2»: он на ярлыке, в переписке с
+        # площадкой и в разборе спорной ситуации. Раньше поиск смотрел лишь в текст
+        # описания и такой номер не находил вообще.
+        #
+        # Поэтому ищем и по номеру связанного заказа: напрямую для событий заказов и
+        # через вещь на складе — у неё свой штрихкод (GW-725159), но заказ тот же.
         log_where.append(
             f"(a.description ILIKE '%{s}%' OR a.user_name ILIKE '%{s}%' "
-            f"OR CAST(a.entity_id AS TEXT) = '{s}')"
+            f"OR CAST(a.entity_id AS TEXT) = '{s}' "
+            f"OR EXISTS (SELECT 1 FROM orders so WHERE so.id = a.entity_id "
+            f"           AND a.entity_type = 'order' AND so.order_number ILIKE '%{s}%') "
+            f"OR EXISTS (SELECT 1 FROM goods_warehouse sg "
+            f"           LEFT JOIN orders sgo ON sgo.id = sg.order_id "
+            f"           WHERE sg.id = a.entity_id AND a.entity_type = 'goods_warehouse' "
+            f"           AND (sg.storage_barcode ILIKE '%{s}%' "
+            f"                OR sgo.order_number ILIKE '%{s}%')))"
         )
         shift_where.append(f"u.full_name ILIKE '%{s}%'")
 
@@ -135,11 +158,31 @@ def fetch_events(cur, params):
     parts = []
     if include_log:
         parts.append(
-            "SELECT a.created_at AS at, a.user_id, "
-            "COALESCE(u.full_name, a.user_name, 'Система') AS who, "
+            # У части записей «взял в работу» сотрудник не проставлялся, и в журнале
+            # вместо швеи стояла «Система» — как раз там, где имя важнее всего. Берём
+            # его из самого заказа: кто отшил вещь, тот её и брал. Подставляем ТОЛЬКО
+            # для этого действия — у раскроя и склада свои исполнители, и приписать им
+            # швею значило бы соврать админу в журнале.
+            "SELECT a.created_at AS at, "
+            "COALESCE(a.user_id, CASE WHEN a.action = 'take_order' "
+            "                         THEN ao.sewer_user_id END) AS user_id, "
+            "COALESCE(u.full_name, CASE WHEN a.action = 'take_order' "
+            "                           THEN su.full_name END, "
+            "         a.user_name, 'Система') AS who, "
             "a.action, a.entity_type, a.entity_id, a.description, a.category, "
-            "NULL::int AS workshop_id, NULL::text AS role "
-            "FROM audit_log a LEFT JOIN users u ON u.id = a.user_id "
+            "NULL::int AS workshop_id, NULL::text AS role, "
+            # Настоящий номер заказа с маркетплейса — его админ знает и ищет.
+            # Для событий склада заказ берётся через вещь на полке.
+            "COALESCE(ao.order_number, go.order_number) AS order_number, "
+            "COALESCE(ao.marketplace, go.marketplace) AS marketplace, "
+            "g.storage_barcode "
+            "FROM audit_log a "
+            "LEFT JOIN users u ON u.id = a.user_id "
+            "LEFT JOIN orders ao ON ao.id = a.entity_id AND a.entity_type = 'order' "
+            "LEFT JOIN goods_warehouse g ON g.id = a.entity_id "
+            "     AND a.entity_type = 'goods_warehouse' "
+            "LEFT JOIN orders go ON go.id = g.order_id "
+            "LEFT JOIN users su ON su.id = ao.sewer_user_id "
             f"WHERE {' AND '.join(log_where)}{stage_sql}"
         )
     if include_shifts:
@@ -151,7 +194,9 @@ def fetch_events(cur, params):
             # сама себя («Открыл смену» / «Открыл смену») и не давала админу ничего.
             "(CASE WHEN s.is_late THEN 'Опоздание' ELSE 'Вовремя' END "
             " || COALESCE(', смена №' || s.shift_number, '')) AS description, "
-            "'shifts' AS category, s.workshop_id, s.role "
+            "'shifts' AS category, s.workshop_id, s.role, "
+            "NULL::text AS order_number, NULL::text AS marketplace, "
+            "NULL::text AS storage_barcode "
             "FROM shift_sessions s JOIN users u ON u.id = s.user_id "
             f"WHERE {' AND '.join(shift_where)}"
         )
@@ -161,7 +206,9 @@ def fetch_events(cur, params):
             # Сколько человек отработал — главное, что админ хочет знать о закрытой смене.
             "('Отработал ' || "
             " to_char((s.closed_at - s.opened_at), 'HH24:MI')) AS description, "
-            "'shifts' AS category, s.workshop_id, s.role "
+            "'shifts' AS category, s.workshop_id, s.role, "
+            "NULL::text AS order_number, NULL::text AS marketplace, "
+            "NULL::text AS storage_barcode "
             "FROM shift_sessions s JOIN users u ON u.id = s.user_id "
             f"WHERE {' AND '.join(shift_where)} AND s.closed_at IS NOT NULL"
         )
@@ -180,6 +227,15 @@ def fetch_events(cur, params):
     items = []
     for r in cur.fetchall():
         action = r[3]
+        description = r[6] or ''
+        order_number = r[10]
+
+        # Из описания убираем внутренний номер («Раскроил заказ #87381»): рядом уже
+        # стоит название действия и настоящий номер заказа, а служебное число админу
+        # ничего не говорит и только мешает читать строку.
+        if order_number and '#' in description:
+            description = description.split('#')[0].strip(' :')
+
         items.append({
             'at': r[0].isoformat() if r[0] else None,
             'userId': r[1],
@@ -188,10 +244,13 @@ def fetch_events(cur, params):
             'actionTitle': ACTION_TITLES.get(action, action),
             'entityType': r[4],
             'entityId': r[5],
-            'description': r[6],
+            'description': description,
             'category': r[7],
-            'workshop': r[10],
+            'workshop': r[13],
             'role': r[9],
+            'orderNumber': order_number,
+            'marketplace': r[11],
+            'storageBarcode': r[12],
         })
 
     return {'items': items, 'total': total, 'limit': limit, 'offset': offset}
@@ -236,7 +295,9 @@ def handler(event: dict, context) -> dict:
     audit_log (действия с заказами и складом) и shift_sessions (смены).
 
     GET /?action=events — лента событий.
-        Фильтры: search (по описанию, сотруднику, номеру заказа), userId, stage
+        Поиск работает по НАСТОЯЩЕМУ номеру заказа с маркетплейса (0132602800-0285-2),
+        штрихкоду вещи на складе (GW-725159), имени сотрудника и тексту события.
+        Фильтры: search, userId, stage
         (shifts|cutting|sewing|stickering), dateFrom, dateTo (YYYY-MM-DD), limit, offset.
     GET /?action=summary — сводка за период (сколько раскроено, отшито, упаковано).
     GET /?action=users — список сотрудников, встречающихся в журнале (для фильтра).
