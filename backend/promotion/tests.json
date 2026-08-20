@@ -1,0 +1,9 @@
+{"tests":[
+ {"name":"OPTIONS preflight","method":"OPTIONS","path":"/","expectedStatus":200},
+ {"name":"Overview without admin forbidden","method":"GET","path":"/?action=overview","expectedStatus":403},
+ {"name":"Promotions without admin forbidden","method":"GET","path":"/?action=promotions","expectedStatus":403},
+ {"name":"History without admin forbidden","method":"GET","path":"/?action=history&itemId=1","expectedStatus":403},
+ {"name":"Decide without admin forbidden","method":"POST","path":"/","body":{"action":"decide","items":[],"decision":"applied"},"expectedStatus":403},
+ {"name":"Save strategy without admin forbidden","method":"POST","path":"/","body":{"action":"save_strategy","marginMin":10},"expectedStatus":403},
+ {"name":"Unknown action fails","method":"POST","path":"/","body":{"action":"nope"},"expectedStatus":403}
+]}

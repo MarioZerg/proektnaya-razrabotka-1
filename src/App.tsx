@@ -80,6 +80,7 @@ const ReturnsAnalysis = lazy(() => import("./pages/analytics/ReturnsAnalysis"));
 const DefectAnalysis = lazy(() => import("./pages/analytics/DefectAnalysis"));
 const ProductCost = lazy(() => import("./pages/analytics/ProductCost"));
 const UnitEconomics = lazy(() => import("./pages/analytics/UnitEconomics"));
+const Promotion = lazy(() => import("./pages/analytics/Promotion"));
 import Index from "./pages/Index";
 
 import NotFoundRedirect from "./pages/NotFoundRedirect";
@@ -124,6 +125,7 @@ const App = () => (
             <Route path="/crm/analytics/defects" element={<DefectAnalysis />} />
             <Route path="/crm/analytics/product-cost" element={<ProductCost />} />
             <Route path="/crm/analytics/unit-economics" element={<UnitEconomics />} />
+            <Route path="/crm/analytics/promotion" element={<Promotion />} />
             <Route path="/crm/inventory/workshop-materials" element={<WorkshopMaterials />} />
             <Route path="/crm/inventory/rolls" element={<Rolls />} />
             <Route path="/crm/inventory/rolls/:id" element={<RollShow />} />

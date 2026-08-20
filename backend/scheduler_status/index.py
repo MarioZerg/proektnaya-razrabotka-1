@@ -131,6 +131,30 @@ JOBS = [
         'optional': True,
     },
     {
+        'key': 'price_capture',
+        'title': 'История цен и СПП',
+        'func': 'promotion',
+        'urlAction': 'capture',
+        'method': 'POST',
+        'purpose': 'Снимок цен и скидки площадки — по нему видно, к чему привёл подъём цены',
+        'group': 'service',
+        'everyMin': 1440,
+        'lateAfter': 2880,
+        'optional': True,
+    },
+    {
+        'key': 'promotions_sync',
+        'title': 'Акции площадок',
+        'func': 'promotion',
+        'urlAction': 'sync_promotions',
+        'method': 'POST',
+        'purpose': 'Тянет акции с площадок, чтобы не пропустить выгодные',
+        'group': 'service',
+        'everyMin': 720,
+        'lateAfter': 2880,
+        'optional': True,
+    },
+    {
         'key': 'shifts_auto_close',
         'title': 'Автозакрытие смен',
         'func': 'shift_sessions',
@@ -157,6 +181,7 @@ FUNC_IDS = {
     'marketplace_returns': '015dbb02-13c9-49de-8718-8fe37c329b30',
     'shift_sessions': '6143d29d-094c-4dc6-a520-eb0eeb10d8a0',
     'unit_economics': '4ebd72ad-8ca4-456c-840c-d2db30ce04cd',
+    'promotion': '5fc24d57-7e45-4a1a-898d-a610c310093a',
 }
 
 # Разделы страницы: заголовок и пояснение, чем грозит молчание.

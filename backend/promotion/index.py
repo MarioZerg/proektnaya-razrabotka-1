@@ -1,0 +1,695 @@
+import json
+import os
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta, timezone
+
+import psycopg2
+
+CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, X-Auth-Token',
+    'Content-Type': 'application/json',
+}
+
+UNIT_ECONOMICS_URL = 'https://functions.poehali.dev/4ebd72ad-8ca4-456c-840c-d2db30ce04cd'
+
+MARKETPLACES = ('ozon', 'wildberries', 'yandex_market')
+MP_TITLES = {'ozon': 'OZON', 'wildberries': 'Wildberries',
+             'yandex_market': 'Яндекс Маркет'}
+
+OZON_API = 'https://api-seller.ozon.ru'
+WB_PROMO_API = 'https://dp-calendar-api.wildberries.ru'
+
+
+def _resp(code, body):
+    return {'statusCode': code, 'headers': CORS_HEADERS,
+            'body': json.dumps(body, ensure_ascii=False, default=str)}
+
+
+def _http(url, method='GET', headers=None, payload=None, timeout=15):
+    body = json.dumps(payload).encode('utf-8') if payload is not None else None
+    req = urllib.request.Request(url, method=method, data=body)
+    for k, v in (headers or {}).items():
+        req.add_header(k, v)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = r.read().decode('utf-8')
+            return r.status, (json.loads(data) if data else {})
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode('utf-8', errors='replace')[:300]
+    except Exception as e:
+        return 0, str(e)
+
+
+def _is_admin(cur, actor_id):
+    if not actor_id:
+        return False
+    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+    row = cur.fetchone()
+    return bool(row and row[0] == 'admin')
+
+
+def _credentials(cur, code):
+    cur.execute(
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = %s",
+        (code,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return {}, False
+    creds = row[1] if isinstance(row[1], dict) else json.loads(row[1] or '{}')
+    return creds, bool(row[0])
+
+
+def _strategy(cur):
+    """Правила ценообразования: целевой коридор маржи и безопасный шаг."""
+    cur.execute(
+        "SELECT target_margin_min, target_margin_max, step_percent, step_days, "
+        "min_spp_percent FROM pricing_strategy ORDER BY id LIMIT 1"
+    )
+    r = cur.fetchone()
+    if not r:
+        return {'marginMin': 10.0, 'marginMax': 15.0, 'stepPercent': 2.0,
+                'stepDays': 7, 'minSpp': 0.0}
+    return {'marginMin': float(r[0] or 10), 'marginMax': float(r[1] or 15),
+            'stepPercent': float(r[2] or 2), 'stepDays': int(r[3] or 7),
+            'minSpp': float(r[4] or 0)}
+
+
+def _economics(marketplace, scheme='FBS'):
+    """Расчёт юнит-экономики по площадке — оттуда берём маржу по каждому размеру."""
+    st, data = _http(
+        f'{UNIT_ECONOMICS_URL}?marketplace={marketplace}&scheme={scheme}',
+        'GET', timeout=25,
+    )
+    if st != 200 or not isinstance(data, dict):
+        return None
+    return data
+
+
+def _capture_history(cur, marketplace):
+    """Снимок цены и СПП по каждому товару — один на сутки.
+
+    Без истории нельзя понять, почему упал СПП: из-за нашего подъёма цены или
+    площадка сама передумала. Пишем раз в сутки — этого хватает, чтобы видеть
+    тренд, и таблица не растёт бесконтрольно.
+
+    Берём прямо из таблицы цен, ОДНИМ запросом. Раньше снимок считался через
+    полную юнит-экономику, и функция не укладывалась в свои пять секунд: ради
+    двух чисел пересчитывались все размеры со всеми тарифами. Маржу сюда не
+    пишем — она есть в юнит-экономике, а для решения о цене важны цена и СПП.
+    """
+    cur.execute(
+        "INSERT INTO price_history (marketplace_item_id, marketplace_code, "
+        "  price, buyer_price, spp_percent) "
+        "SELECT marketplace_item_id, marketplace_code, price, "
+        "  price_with_marketplace_discount, "
+        "  CASE WHEN price > 0 AND price_with_marketplace_discount IS NOT NULL "
+        "       THEN round((1 - price_with_marketplace_discount / price) * 100, 2) "
+        "  END "
+        "FROM marketplace_prices WHERE marketplace_code = %s AND price > 0 "
+        "ON CONFLICT (marketplace_item_id, marketplace_code, captured_on) "
+        "DO UPDATE SET price = EXCLUDED.price, "
+        "  buyer_price = EXCLUDED.buyer_price, "
+        "  spp_percent = EXCLUDED.spp_percent, captured_at = now()",
+        (marketplace,),
+    )
+    return cur.rowcount
+
+
+def _last_change(cur, marketplace):
+    """Когда по каждому товару последний раз применяли рекомендацию.
+
+    Нужно, чтобы не двигать цену чаще, чем раз в неделю: площадке нужно время
+    пересчитать СПП и позицию в выдаче, а нам — увидеть результат шага.
+    """
+    cur.execute(
+        "SELECT marketplace_item_id, MAX(decided_at) FROM price_recommendations "
+        "WHERE marketplace_code = %s AND status = 'applied' "
+        "GROUP BY marketplace_item_id",
+        (marketplace,),
+    )
+    return {r[0]: r[1] for r in cur.fetchall()}
+
+
+def _spp_trend(cur, marketplace):
+    """Как менялся СПП по товару: {itemId: (сейчас, неделю назад)}.
+
+    Если после подъёма цены СПП просел — площадка перестала давать скидку, и
+    шаг надо откатывать. Это главный сигнал, что мы перешли границу.
+    """
+    cur.execute(
+        "SELECT DISTINCT ON (marketplace_item_id) marketplace_item_id, spp_percent "
+        "FROM price_history WHERE marketplace_code = %s AND spp_percent IS NOT NULL "
+        "ORDER BY marketplace_item_id, captured_at DESC",
+        (marketplace,),
+    )
+    now = {r[0]: float(r[1]) for r in cur.fetchall()}
+
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).date()
+    cur.execute(
+        "SELECT DISTINCT ON (marketplace_item_id) marketplace_item_id, spp_percent "
+        "FROM price_history WHERE marketplace_code = %s AND spp_percent IS NOT NULL "
+        "  AND captured_on <= %s ORDER BY marketplace_item_id, captured_at DESC",
+        (marketplace, week_ago),
+    )
+    before = {r[0]: float(r[1]) for r in cur.fetchall()}
+    return now, before
+
+
+def _build_recommendations(cur, marketplace, data, strategy):
+    """Что делать с ценой каждого размера, чтобы маржа пришла в коридор.
+
+    Логика простая и объяснимая — владелец должен понимать каждое предложение:
+
+      · маржа ниже коридора  → поднимаем цену на один шаг (по умолчанию 2%);
+      · маржа выше коридора  → опускаем: цена завышена, продажи падают зря;
+      · маржа в коридоре     → не трогаем, всё хорошо.
+
+    Три предохранителя, без которых советы навредят:
+
+      1. ЧАСТОТА. Один товар двигаем не чаще раза в неделю: площадке нужно
+         время пересчитать СПП, а нам — увидеть, чем кончился прошлый шаг.
+      2. СПП. Если после прошлого шага скидка площадки просела больше чем на
+         пять пунктов — предлагаем откатиться, а не давить дальше.
+      3. РАЗМЕР ШАГА. Никаких «поднять на 30% и сразу в коридор»: резкий скачок
+         выбрасывает товар из СПП и из выдачи. Только мелкими шагами.
+    """
+    now_spp, before_spp = _spp_trend(cur, marketplace)
+    last = _last_change(cur, marketplace)
+    step = strategy['stepPercent'] / 100.0
+    cooldown = timedelta(days=strategy['stepDays'])
+    now = datetime.now(timezone.utc)
+
+    out = []
+    for row in data.get('rows', []):
+        for h in (row.get('heights') or []):
+            unit = h.get('unit')
+            item_id = h.get('itemId')
+            if not unit or not item_id:
+                continue
+
+            margin = unit.get('margin') or 0
+            price = unit.get('price') or 0
+            if price <= 0:
+                continue
+
+            title = f"{row.get('material')} · {row.get('width')}×{h.get('height')}"
+
+            # 1. Недавно двигали — ждём, пока площадка пересчитает СПП.
+            was = last.get(item_id)
+            if was and (now - was.replace(tzinfo=timezone.utc)) < cooldown:
+                days_left = cooldown - (now - was.replace(tzinfo=timezone.utc))
+                out.append({
+                    'itemId': item_id, 'title': title, 'sku': h.get('sku'),
+                    'action': 'wait', 'currentPrice': price,
+                    'suggestedPrice': price, 'currentMargin': margin,
+                    'expectedMargin': margin, 'spp': now_spp.get(item_id),
+                    'reason': f'Цену меняли недавно — ждём ещё {days_left.days + 1} дн.',
+                })
+                continue
+
+            # 2. Скидка площадки просела после прошлого шага — откатываемся.
+            spp_now = now_spp.get(item_id)
+            spp_was = before_spp.get(item_id)
+            if spp_now is not None and spp_was is not None and spp_was - spp_now > 5:
+                back = round(price / (1 + step), 2)
+                out.append({
+                    'itemId': item_id, 'title': title, 'sku': h.get('sku'),
+                    'action': 'rollback', 'currentPrice': price,
+                    'suggestedPrice': back, 'currentMargin': margin,
+                    'expectedMargin': None, 'spp': spp_now,
+                    'reason': (f'Скидка площадки упала с {spp_was:.0f}% до '
+                               f'{spp_now:.0f}% — вернём цену назад'),
+                })
+                continue
+
+            # 3. Маржа вне коридора — двигаем на один шаг.
+            if margin < strategy['marginMin']:
+                new_price = round(price * (1 + step), 2)
+                # Прибыль растёт на всю прибавку минус доля площадки и налоги:
+                # грубо считаем, что нам остаётся столько же процентов, сколько
+                # сейчас. Точную цифру покажет следующий пересчёт.
+                gain = new_price - price
+                new_profit = (unit.get('profit') or 0) + gain * 0.35
+                out.append({
+                    'itemId': item_id, 'title': title, 'sku': h.get('sku'),
+                    'action': 'raise', 'currentPrice': price,
+                    'suggestedPrice': new_price, 'currentMargin': margin,
+                    'expectedMargin': round(new_profit / new_price * 100, 1),
+                    'spp': spp_now,
+                    'reason': (f'Маржа {margin}% ниже цели '
+                               f'{strategy["marginMin"]:.0f}% — поднимаем на '
+                               f'{strategy["stepPercent"]:.0f}%'),
+                })
+            elif margin > strategy['marginMax']:
+                new_price = round(price / (1 + step), 2)
+                out.append({
+                    'itemId': item_id, 'title': title, 'sku': h.get('sku'),
+                    'action': 'lower', 'currentPrice': price,
+                    'suggestedPrice': new_price, 'currentMargin': margin,
+                    'expectedMargin': None, 'spp': spp_now,
+                    'reason': (f'Маржа {margin}% выше цели '
+                               f'{strategy["marginMax"]:.0f}% — цена завышена, '
+                               f'снизим и добавим продаж'),
+                })
+            else:
+                out.append({
+                    'itemId': item_id, 'title': title, 'sku': h.get('sku'),
+                    'action': 'hold', 'currentPrice': price,
+                    'suggestedPrice': price, 'currentMargin': margin,
+                    'expectedMargin': margin, 'spp': spp_now,
+                    'reason': 'Маржа в целевом коридоре — ничего не меняем',
+                })
+    return out
+
+
+def _cost_by_offer(cur):
+    """Расходы площадки по каждому товару OZON — ключ по НАШЕМУ артикулу.
+
+    В акции OZON присылает свой внутренний product_id, который у нас нигде не
+    хранится. Зато по нему можно спросить карточку и получить offer_id — это и
+    есть наш артикул (vyal2_240). По нему и связываем.
+    """
+    cur.execute(
+        "SELECT mi.sku, mp.commission_fbs_percent, mp.logistics_fbs, "
+        "  mp.acquiring_amount "
+        "FROM marketplace_items mi "
+        "JOIN marketplace_prices mp ON mp.marketplace_item_id = mi.id "
+        "WHERE mp.marketplace_code = 'ozon' AND mi.sku IS NOT NULL"
+    )
+    return {str(r[0]).strip(): {
+        'commission': float(r[1] or 0),
+        'logistics': float(r[2] or 0),
+        'acquiring': float(r[3] or 0),
+    } for r in cur.fetchall()}
+
+
+def _ozon_offer_ids(headers, product_ids):
+    """Наши артикулы по внутренним номерам OZON: {product_id: offer_id}."""
+    if not product_ids:
+        return {}
+    st, data = _http(
+        f'{OZON_API}/v3/product/info/list', 'POST', headers,
+        {'product_id': [int(i) for i in product_ids[:1000]]}, timeout=20,
+    )
+    if st != 200 or not isinstance(data, dict):
+        return {}
+    items = (data.get('items') or (data.get('result') or {}).get('items')) or []
+    return {str(i.get('id')): (i.get('offer_id') or '').strip() for i in items}
+
+
+def _ozon_action_margin(cur, headers, action_id, tax, vat, production_avg):
+    """Что останется от маржи, если пойти в эту акцию OZON.
+
+    Площадка называет максимальную цену участия по каждому товару. Считаем по
+    ней настоящую экономику: вычитаем комиссию, логистику, эквайринг, налоги и
+    себестоимость. Ответ на вопрос «идти или нет» должен быть в рублях, а не в
+    ощущениях — акция с хорошим бустингом может съесть всю прибыль.
+    """
+    st, data = _http(
+        f'{OZON_API}/v1/actions/candidates', 'POST', headers,
+        {'action_id': int(action_id), 'limit': 100, 'offset': 0}, timeout=20,
+    )
+    if st != 200 or not isinstance(data, dict):
+        return None
+
+    products = ((data.get('result') or {}).get('products')) or []
+    if not products:
+        return None
+
+    costs = _cost_by_offer(cur)
+    offers = _ozon_offer_ids(headers, [p.get('id') for p in products if p.get('id')])
+
+    margins, loss = [], 0
+    for p in products:
+        action_price = float(p.get('max_action_price') or 0)
+        if action_price <= 0:
+            continue
+        offer = offers.get(str(p.get('id')))
+        c = costs.get(offer) if offer else None
+        if not c:
+            continue
+        mp_costs = (action_price * c['commission'] / 100
+                    + c['logistics'] + c['acquiring'])
+        v = action_price * vat / (100 + vat) if vat else 0.0
+        t = (action_price - v) * tax / 100
+        profit = action_price - mp_costs - production_avg - t - v
+        margins.append(profit / action_price * 100)
+        if profit < 0:
+            loss += 1
+
+    if not margins:
+        return None
+    avg = round(sum(margins) / len(margins), 1)
+    # Вердикт простой и честный: акция либо оставляет нам заработок, либо нет.
+    verdict = 'good' if avg >= 10 else ('risky' if avg >= 3 else 'bad')
+    return {'avg': avg, 'loss': loss, 'count': len(margins), 'verdict': verdict}
+
+
+def _sync_ozon_promotions(cur, creds):
+    """Акции OZON: во что обойдётся участие.
+
+    Площадка зовёт в акцию и обещает продвижение, но требует срезать цену.
+    Считаем, что останется от маржи по каждой акции, и даём прямой ответ.
+    """
+    headers = {'Client-Id': (creds.get('clientId') or '').strip(),
+               'Api-Key': (creds.get('apiKey') or '').strip()}
+    st, data = _http(f'{OZON_API}/v1/actions', 'GET', headers, timeout=20)
+    if st != 200 or not isinstance(data, dict):
+        return 0
+
+    # Ставки налогов и средняя себестоимость — общие для всех акций, берём один раз.
+    cur.execute(
+        "SELECT tax_percent, vat_percent FROM unit_economics_settings "
+        "ORDER BY id LIMIT 1"
+    )
+    s = cur.fetchone()
+    tax = float(s[0] or 0) if s else 0.0
+    vat = float(s[1] or 0) if s else 0.0
+
+    saved = 0
+    for a in (data.get('result') or []):
+        cur.execute(
+            "INSERT INTO marketplace_promotions (marketplace_code, external_id, "
+            "title, date_start, date_end, items_count, synced_at) "
+            "VALUES ('ozon', %s, %s, %s, %s, %s, now()) "
+            "ON CONFLICT (marketplace_code, external_id) DO UPDATE SET "
+            "  title = EXCLUDED.title, date_start = EXCLUDED.date_start, "
+            "  date_end = EXCLUDED.date_end, items_count = EXCLUDED.items_count, "
+            "  synced_at = now()",
+            (str(a.get('id')), a.get('title'),
+             (a.get('date_start') or '')[:10] or None,
+             (a.get('date_end') or '')[:10] or None,
+             int(a.get('potential_products_count') or 0)),
+        )
+        saved += 1
+    return saved
+
+
+def _score_ozon_promotions(cur, creds, limit=3):
+    """Считает выгоду по акциям OZON — по нескольку за вызов.
+
+    Каждая акция требует отдельного запроса к площадке, а у функции пять секунд.
+    Поэтому берём те, что дольше всех не пересчитывали, и идём по кругу: за
+    несколько запусков планировщика обсчитываются все.
+    """
+    headers = {'Client-Id': (creds.get('clientId') or '').strip(),
+               'Api-Key': (creds.get('apiKey') or '').strip()}
+
+    cur.execute(
+        "SELECT tax_percent, vat_percent FROM unit_economics_settings "
+        "ORDER BY id LIMIT 1"
+    )
+    s = cur.fetchone()
+    tax = float(s[0] or 0) if s else 0.0
+    vat = float(s[1] or 0) if s else 0.0
+
+    # Средняя себестоимость производства — по ней оцениваем акцию целиком.
+    data = _economics('ozon')
+    production = 0.0
+    if data:
+        costs = [r['cost']['productionCost'] for r in data.get('rows', [])
+                 if r.get('cost')]
+        production = round(sum(costs) / len(costs), 2) if costs else 0.0
+
+    cur.execute(
+        "SELECT external_id FROM marketplace_promotions "
+        "WHERE marketplace_code = 'ozon' "
+        "  AND (date_end IS NULL OR date_end >= CURRENT_DATE) "
+        "ORDER BY avg_margin IS NOT NULL, synced_at LIMIT %s",
+        (int(limit),),
+    )
+    ids = [r[0] for r in cur.fetchall()]
+
+    done = 0
+    for action_id in ids:
+        res = _ozon_action_margin(cur, headers, action_id, tax, vat, production)
+        if not res:
+            continue
+        cur.execute(
+            "UPDATE marketplace_promotions SET avg_margin = %s, "
+            "  lossmaking_count = %s, items_count = %s, verdict = %s, "
+            "  synced_at = now() "
+            "WHERE marketplace_code = 'ozon' AND external_id = %s",
+            (res['avg'], res['loss'], res['count'], res['verdict'], action_id),
+        )
+        done += 1
+    return done
+
+
+def _sync_wb_promotions(cur, creds):
+    """Акции Wildberries из календаря продвижения."""
+    headers = {'Authorization': (creds.get('apiKey') or '').strip()}
+    start = datetime.now(timezone.utc).strftime('%Y-%m-%dT00:00:00Z')
+    end = (datetime.now(timezone.utc) + timedelta(days=45)).strftime('%Y-%m-%dT00:00:00Z')
+    st, data = _http(
+        f'{WB_PROMO_API}/api/v1/calendar/promotions'
+        f'?startDateTime={start}&endDateTime={end}&allPromo=false',
+        'GET', headers, timeout=20,
+    )
+    if st != 200 or not isinstance(data, dict):
+        return 0
+    saved = 0
+    for a in ((data.get('data') or {}).get('promotions') or []):
+        cur.execute(
+            "INSERT INTO marketplace_promotions (marketplace_code, external_id, "
+            "title, date_start, date_end, synced_at) "
+            "VALUES ('wildberries', %s, %s, %s, %s, now()) "
+            "ON CONFLICT (marketplace_code, external_id) DO UPDATE SET "
+            "  title = EXCLUDED.title, date_start = EXCLUDED.date_start, "
+            "  date_end = EXCLUDED.date_end, synced_at = now()",
+            (str(a.get('id')), a.get('name'),
+             (a.get('startDateTime') or '')[:10] or None,
+             (a.get('endDateTime') or '')[:10] or None),
+        )
+        saved += 1
+    return saved
+
+
+def _promotions(cur):
+    """Список акций с вердиктом: идти или нет."""
+    cur.execute(
+        "SELECT marketplace_code, external_id, title, date_start, date_end, "
+        "items_count, avg_margin, lossmaking_count, verdict, synced_at "
+        "FROM marketplace_promotions "
+        "WHERE date_end IS NULL OR date_end >= CURRENT_DATE "
+        "ORDER BY date_start NULLS LAST, id"
+    )
+    out = []
+    for r in cur.fetchall():
+        out.append({
+            'marketplaceCode': r[0], 'marketplaceTitle': MP_TITLES.get(r[0], r[0]),
+            'externalId': r[1], 'title': r[2],
+            'dateStart': r[3].isoformat() if r[3] else None,
+            'dateEnd': r[4].isoformat() if r[4] else None,
+            'itemsCount': r[5], 'avgMargin': float(r[6]) if r[6] is not None else None,
+            'lossmakingCount': r[7], 'verdict': r[8],
+            'syncedAt': r[9].isoformat() + 'Z' if r[9] else None,
+        })
+    return out
+
+
+def handler(event: dict, context) -> dict:
+    """Продвижение: советы по ценам и разбор акций площадок.
+
+    Держит маржу в целевом коридоре, поднимая цену мелкими шагами, чтобы не
+    потерять скидку площадки (СПП). Система НИЧЕГО не меняет сама — она считает
+    и предлагает, решение за владельцем.
+
+    GET  /?action=overview&actorId=  - советы по ценам и сводка
+    GET  /?action=promotions&actorId= - акции площадок с расчётом выгоды
+    GET  /?action=history&itemId=     - история цены и СПП по товару
+    POST /  { action: 'capture' }     - снимок цен и СПП (для планировщика)
+    POST /  { action: 'sync_promotions' } - подтянуть акции площадок
+    POST /  { action: 'decide', ids, decision } - принять или отклонить советы
+    POST /  { action: 'save_strategy', ... }    - коридор маржи и шаг
+    """
+    method = event.get('httpMethod', 'GET')
+    if method == 'OPTIONS':
+        return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
+
+    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    conn.autocommit = False
+    try:
+        cur = conn.cursor()
+
+        if method == 'GET':
+            params = event.get('queryStringParameters') or {}
+            action = params.get('action') or 'overview'
+            actor_id = params.get('actorId')
+
+            # Раздел про деньги и цены — только владельцу.
+            if not _is_admin(cur, actor_id):
+                return _resp(403, {'error': 'Раздел доступен администратору'})
+
+            if action == 'promotions':
+                return _resp(200, {'items': _promotions(cur)})
+
+            if action == 'history':
+                item_id = params.get('itemId')
+                if not item_id or not str(item_id).isdigit():
+                    return _resp(400, {'error': 'Укажите товар'})
+                cur.execute(
+                    "SELECT captured_on, price, buyer_price, spp_percent, "
+                    "margin_percent FROM price_history "
+                    "WHERE marketplace_item_id = %s ORDER BY captured_on DESC LIMIT 60",
+                    (int(item_id),),
+                )
+                return _resp(200, {'items': [{
+                    'date': r[0].isoformat(),
+                    'price': float(r[1]) if r[1] is not None else None,
+                    'buyerPrice': float(r[2]) if r[2] is not None else None,
+                    'spp': float(r[3]) if r[3] is not None else None,
+                    'margin': float(r[4]) if r[4] is not None else None,
+                } for r in cur.fetchall()]})
+
+            if action != 'overview':
+                return _resp(400, {'error': 'Неизвестное действие'})
+
+            marketplace = params.get('marketplace') or 'ozon'
+            if marketplace not in MARKETPLACES:
+                return _resp(400, {'error': 'Неизвестный маркетплейс'})
+
+            strategy = _strategy(cur)
+            data = _economics(marketplace)
+            if not data:
+                return _resp(200, {'strategy': strategy, 'items': [],
+                                   'error': 'Не удалось получить расчёт экономики'})
+
+            items = _build_recommendations(cur, marketplace, data, strategy)
+            by_action = {}
+            for i in items:
+                by_action[i['action']] = by_action.get(i['action'], 0) + 1
+
+            return _resp(200, {
+                'marketplaceCode': marketplace,
+                'strategy': strategy,
+                'buyout': data.get('buyout'),
+                'items': items,
+                'summary': {
+                    'total': len(items),
+                    'raise': by_action.get('raise', 0),
+                    'lower': by_action.get('lower', 0),
+                    'hold': by_action.get('hold', 0),
+                    'wait': by_action.get('wait', 0),
+                    'rollback': by_action.get('rollback', 0),
+                },
+            })
+
+        body_data = json.loads(event.get('body') or '{}')
+        action = body_data.get('action')
+        actor_id = body_data.get('actorId')
+
+        # Снимок цен запускает планировщик — ему нужен ключ, а не пользователь.
+        if action == 'capture':
+            secret = os.environ.get('CRON_SECRET', '')
+            if body_data.get('cronSecret'):
+                if not secret or body_data['cronSecret'] != secret:
+                    return _resp(403, {'error': 'Неверный ключ планировщика'})
+            elif not _is_admin(cur, actor_id):
+                return _resp(403, {'error': 'Доступно администратору'})
+
+            total = 0
+            for mp in MARKETPLACES:
+                total += _capture_history(cur, mp)
+            cur.execute(
+                "INSERT INTO audit_log (category, user_id, user_name, action, "
+                "entity_type, description) VALUES ('integration', NULL, "
+                "'Планировщик', 'price_capture', 'promotion', %s)",
+                (f'Снимок цен и СПП: {total} позиций',),
+            )
+            conn.commit()
+            return _resp(200, {'ok': True, 'saved': total})
+
+        if action == 'sync_promotions':
+            secret = os.environ.get('CRON_SECRET', '')
+            if body_data.get('cronSecret'):
+                if not secret or body_data['cronSecret'] != secret:
+                    return _resp(403, {'error': 'Неверный ключ планировщика'})
+            elif not _is_admin(cur, actor_id):
+                return _resp(403, {'error': 'Доступно администратору'})
+
+            report = {}
+            oz, oz_on = _credentials(cur, 'ozon')
+            if oz_on:
+                report['ozon'] = _sync_ozon_promotions(cur, oz)
+            wb, wb_on = _credentials(cur, 'wildberries')
+            if wb_on:
+                report['wildberries'] = _sync_wb_promotions(cur, wb)
+            # Запись в журнал: по ней страница Планировщика видит, что задание
+            # реально отработало, а не молчит незамеченным.
+            cur.execute(
+                "INSERT INTO audit_log (category, user_id, user_name, action, "
+                "entity_type, description) VALUES ('integration', NULL, "
+                "'Планировщик', 'promotions_sync', 'promotion', %s)",
+                (f'Акции площадок: {sum(report.values())} шт.',),
+            )
+            conn.commit()
+            return _resp(200, {'ok': True, 'report': report})
+
+        if action == 'score_promotions':
+            # Расчёт выгоды вынесен отдельно: он тяжелее загрузки списка,
+            # потому что по каждой акции надо спросить у площадки цены участия.
+            secret = os.environ.get('CRON_SECRET', '')
+            if body_data.get('cronSecret'):
+                if not secret or body_data['cronSecret'] != secret:
+                    return _resp(403, {'error': 'Неверный ключ планировщика'})
+            elif not _is_admin(cur, actor_id):
+                return _resp(403, {'error': 'Доступно администратору'})
+
+            oz, oz_on = _credentials(cur, 'ozon')
+            done = _score_ozon_promotions(cur, oz) if oz_on else 0
+            conn.commit()
+            return _resp(200, {'ok': True, 'scored': done})
+
+        if not _is_admin(cur, actor_id):
+            return _resp(403, {'error': 'Раздел доступен администратору'})
+
+        if action == 'decide':
+            # Владелец согласился с советом или отклонил его. Цену на площадке
+            # НЕ меняем: система только запоминает решение, чтобы не предлагать
+            # то же самое каждый день и выдержать паузу до следующего шага.
+            items = body_data.get('items') or []
+            decision = body_data.get('decision')
+            if decision not in ('applied', 'skipped'):
+                return _resp(400, {'error': 'Неизвестное решение'})
+            saved = 0
+            for it in items:
+                cur.execute(
+                    "INSERT INTO price_recommendations (marketplace_item_id, "
+                    "marketplace_code, action, current_price, suggested_price, "
+                    "current_margin, expected_margin, reason, status, decided_at, "
+                    "decided_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s)",
+                    (int(it['itemId']), it.get('marketplaceCode'), it.get('action'),
+                     it.get('currentPrice'), it.get('suggestedPrice'),
+                     it.get('currentMargin'), it.get('expectedMargin'),
+                     it.get('reason'), decision,
+                     int(actor_id) if actor_id else None),
+                )
+                saved += 1
+            conn.commit()
+            return _resp(200, {'ok': True, 'saved': saved})
+
+        if action == 'save_strategy':
+            cur.execute(
+                "UPDATE pricing_strategy SET target_margin_min = %s, "
+                "target_margin_max = %s, step_percent = %s, step_days = %s, "
+                "updated_at = now(), updated_by = %s "
+                "WHERE id = (SELECT id FROM pricing_strategy ORDER BY id LIMIT 1)",
+                (float(body_data.get('marginMin') or 10),
+                 float(body_data.get('marginMax') or 15),
+                 float(body_data.get('stepPercent') or 2),
+                 int(body_data.get('stepDays') or 7),
+                 int(actor_id) if actor_id else None),
+            )
+            conn.commit()
+            return _resp(200, {'ok': True})
+
+        return _resp(400, {'error': 'Неизвестное действие'})
+    finally:
+        conn.close()
