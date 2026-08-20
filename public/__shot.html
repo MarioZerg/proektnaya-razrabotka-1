@@ -1,0 +1,5 @@
+<!doctype html><meta charset="utf-8"><script>
+const p=new URLSearchParams(location.search);
+localStorage.setItem('megatul_user',p.get('u'));
+location.replace(p.get('to'));
+</script>
