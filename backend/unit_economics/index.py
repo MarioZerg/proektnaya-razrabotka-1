@@ -2,6 +2,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 import psycopg2
 
@@ -9,7 +10,16 @@ OZON_API = 'https://api-seller.ozon.ru'
 WB_PRICES_API = 'https://discounts-prices-api.wildberries.ru'
 WB_COMMISSION_API = 'https://common-api.wildberries.ru'
 WB_TARIFFS_API = 'https://common-api.wildberries.ru'
+WB_CONTENT_API = 'https://content-api.wildberries.ru'
 YM_API = 'https://api.partner.market.yandex.ru'
+
+# Объём одной упакованной вещи в литрах. Логистика WB считается за литры, а
+# штора едет в мягкой упаковке — примерно 40x30x10 см. От этого числа зависит
+# расчёт доставки, поэтому оно вынесено сюда, а не спрятано в формуле.
+WB_VOLUME_LITERS = 12.0
+
+# Габариты и вес для расчёта тарифов Яндекса — та же упакованная штора.
+YM_PARCEL = {'length': 40, 'width': 30, 'height': 10, 'weight': 1.5}
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -217,8 +227,156 @@ def _sync_ozon(cur, cursor=None):
         done = not next_cursor or not items
 
     saved = _save_prices(cur, 'ozon', rows)
+    # Ozon отдаёт комиссию и логистику по КАЖДОМУ товару, и расчёт берёт их
+    # оттуда. Но в настройках площадки те же цифры нужны как ориентир: менеджер
+    # смотрит туда, чтобы понять условия работы, и не должен видеть там свои
+    # прошлогодние 55%, когда площадка давно считает по 48%.
+    tariffs = {}
+    if done:
+        cur.execute(
+            "SELECT AVG(commission_fbo_percent), AVG(commission_fbs_percent), "
+            "AVG(logistics_fbo), AVG(logistics_fbs), AVG(return_fbo), "
+            "AVG(return_fbs) FROM marketplace_prices "
+            "WHERE marketplace_code = 'ozon'"
+        )
+        r = cur.fetchone() or ()
+        keys = ('commission_fbo_percent', 'commission_fbs_percent',
+                'logistics_fbo', 'logistics_fbs', 'return_fbo', 'return_fbs')
+        for key, val in zip(keys, r):
+            if val is not None:
+                tariffs[key] = round(float(val), 2)
+        # Обратная логистика в настройках одна на площадку — берём по схеме FBS,
+        # по ней мы и работаем.
+        if 'return_fbs' in tariffs:
+            tariffs['return_logistics'] = tariffs.pop('return_fbs')
+        tariffs.pop('return_fbo', None)
+        if tariffs:
+            _save_tariffs(cur, 'ozon', tariffs)
     return {'ok': True, 'saved': saved, 'fetched': len(rows),
-            'cursor': next_cursor, 'done': done}
+            'cursor': next_cursor, 'done': done, 'tariffs': tariffs}
+
+
+def _save_tariffs(cur, code, fields):
+    """Обновляет тарифы площадки теми полями, что пришли из её кабинета.
+
+    Пустые значения не затираем: если площадка что-то не отдала, остаётся то,
+    что менеджер вписал руками. Иначе одна неудачная загрузка обнулила бы
+    настройки, и весь расчёт поехал бы.
+    """
+    fields = {k: v for k, v in fields.items() if v is not None}
+    if not fields:
+        return 0
+    # Отметки «авто» НАКАПЛИВАЕМ, а не перезаписываем.
+    #
+    # Площадка не всегда отдаёт всё сразу: WB ограничивает частоту запросов и на
+    # втором заходе может вернуть только логистику. Если затирать список, поле
+    # комиссии теряло бы пометку «авто» и выглядело бы так, будто его надо
+    # заполнять руками, — хотя площадка его прекрасно присылает.
+    cur.execute(
+        "SELECT synced_fields FROM marketplace_tariffs WHERE marketplace_code = %s",
+        (code,),
+    )
+    row = cur.fetchone()
+    known = {f for f in ((row[0] if row else '') or '').split(',') if f}
+    known.update(fields)
+
+    sets = ', '.join(f"{k} = %s" for k in fields)
+    cur.execute(
+        f"UPDATE marketplace_tariffs SET {sets}, updated_at = now(), "
+        "synced_at = now(), synced_fields = %s WHERE marketplace_code = %s",
+        (*fields.values(), ','.join(sorted(known)), code),
+    )
+    return cur.rowcount
+
+
+def _num_ru(v):
+    """Число из ответа площадки. WB присылает «78,2» и «-» вместо пустого."""
+    s = str(v or '').strip().replace(',', '.')
+    if not s or s == '-':
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _sync_wb_tariffs(cur, headers):
+    """Комиссия и логистика Wildberries — из кабинета продавца.
+
+    Комиссия у WB зависит от КАТЕГОРИИ товара, а не от карточки: тюль и шторы
+    считаются по своей ставке. Поэтому берём категории наших карточек и по ним
+    находим комиссию — вписывать её руками значит однажды забыть обновить.
+
+    Логистика приходит тарифом короба: база за первый литр плюс цена за каждый
+    следующий. Считаем по среднему объёму нашей вещи — шторы едут в мягкой
+    упаковке, около 12 литров.
+    """
+    out = {}
+
+    # 1. Категории наших карточек. Обычно она одна — «Тюль».
+    st, cards = _http(
+        'https://content-api.wildberries.ru/content/v2/get/cards/list', 'POST',
+        headers, {'settings': {'cursor': {'limit': 100}, 'filter': {'withPhoto': -1}}},
+        timeout=10,
+    )
+    subjects = set()
+    if st == 200 and isinstance(cards, dict):
+        for c in (cards.get('cards') or []):
+            name = (c.get('subjectName') or '').strip()
+            if name:
+                subjects.add(name.lower())
+
+    # 2. Комиссия по этим категориям.
+    st2, comm = _http(
+        'https://common-api.wildberries.ru/api/v1/tariffs/commission?locale=ru',
+        'GET', headers, timeout=10,
+    )
+    if st2 == 200 and isinstance(comm, dict):
+        fbs, fbo = [], []
+        for r in (comm.get('report') or []):
+            if (r.get('subjectName') or '').strip().lower() in subjects:
+                # kgvpMarketplace — продажа со своего склада (FBS),
+                # kgvpSupplier — со склада WB (FBO).
+                if r.get('kgvpMarketplace') is not None:
+                    fbs.append(float(r['kgvpMarketplace']))
+                if r.get('kgvpSupplier') is not None:
+                    fbo.append(float(r['kgvpSupplier']))
+        if fbs:
+            out['commission_fbs_percent'] = round(sum(fbs) / len(fbs), 2)
+        if fbo:
+            out['commission_fbo_percent'] = round(sum(fbo) / len(fbo), 2)
+
+    # 3. Логистика: тариф короба на сегодня.
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    st3, box = _http(
+        f'https://common-api.wildberries.ru/api/v1/tariffs/box?date={today}',
+        'GET', headers, timeout=10,
+    )
+    if st3 == 200 and isinstance(box, dict):
+        whs = (((box.get('response') or {}).get('data') or {}).get('warehouseList')) or []
+        base_l, liter_l, base_o, liter_o = [], [], [], []
+        for w in whs:
+            b = _num_ru(w.get('boxDeliveryMarketplaceBase'))
+            li = _num_ru(w.get('boxDeliveryMarketplaceLiter'))
+            if b is not None and li is not None:
+                base_l.append(b)
+                liter_l.append(li)
+            bo = _num_ru(w.get('boxDeliveryBase'))
+            lo = _num_ru(w.get('boxDeliveryLiter'))
+            if bo is not None and lo is not None:
+                base_o.append(bo)
+                liter_o.append(lo)
+        if base_l:
+            # Первый литр по базовой ставке, остальные по литровой.
+            out['logistics_fbs'] = round(
+                sum(base_l) / len(base_l)
+                + sum(liter_l) / len(liter_l) * (WB_VOLUME_LITERS - 1), 2)
+        if base_o:
+            out['logistics_fbo'] = round(
+                sum(base_o) / len(base_o)
+                + sum(liter_o) / len(liter_o) * (WB_VOLUME_LITERS - 1), 2)
+
+    return out
 
 
 def _sync_wb(cur, cursor=None):
@@ -275,8 +433,83 @@ def _sync_wb(cur, cursor=None):
         next_cursor = '' if done else str(offset + 100)
 
     saved = _save_prices(cur, 'wildberries', rows)
+    # Комиссию и логистику тянем один раз — на последней странице. Они общие для
+    # площадки, дёргать их на каждой сотне карточек незачем.
+    tariffs = _sync_wb_tariffs(cur, headers) if done else {}
+    if tariffs:
+        _save_tariffs(cur, 'wildberries', tariffs)
     return {'ok': True, 'saved': saved, 'fetched': len(rows),
-            'cursor': next_cursor, 'done': done}
+            'cursor': next_cursor, 'done': done, 'tariffs': tariffs}
+
+
+def _sync_ym_tariffs(cur, headers, campaign_id, avg_price):
+    """Комиссия, эквайринг и доставка Яндекс Маркета — через калькулятор тарифов.
+
+    Яндекс не отдаёт «ставку комиссии» списком: он считает стоимость услуг для
+    КОНКРЕТНОГО товара — цена, габариты, категория. Поэтому спрашиваем расчёт по
+    нашей средней шторе и переводим ответ в проценты и рубли.
+
+    Что приходит:
+      FEE               — комиссия за продажу, % от цены;
+      PAYMENT_TRANSFER  — перевод денег продавцу, это эквайринг;
+      DELIVERY_TO_CUSTOMER — доставка покупателю, рублями.
+    """
+    out = {}
+    # Категория наших карточек: спрашиваем у самого Маркета, к чему он относит
+    # наш товар, — угадывать номер категории руками нельзя, он меняется.
+    #
+    # Категория лежит в карточках бизнеса (offer-mappings), а не в ценах: там
+    # только цены и остатки. Номер бизнеса берём из списка кампаний, чтобы не
+    # зашивать его в код.
+    st0, camps = _http(f'{YM_API}/campaigns', 'GET', headers, timeout=10)
+    business_id = None
+    if st0 == 200 and isinstance(camps, dict):
+        for c in (camps.get('campaigns') or []):
+            if str(c.get('id')) == str(campaign_id):
+                business_id = (c.get('business') or {}).get('id')
+                break
+
+    category_id = None
+    if business_id:
+        st, maps = _http(
+            f'{YM_API}/businesses/{business_id}/offer-mappings?limit=10',
+            'POST', headers, {}, timeout=10,
+        )
+        if st == 200 and isinstance(maps, dict):
+            for m in ((maps.get('result') or {}).get('offerMappings')) or []:
+                category_id = (m.get('mapping') or {}).get('marketCategoryId')
+                if category_id:
+                    break
+
+    if not category_id:
+        return out
+
+    st2, data = _http(
+        f'{YM_API}/tariffs/calculate', 'POST', headers,
+        {'parameters': {'campaignId': int(campaign_id)},
+         'offers': [{'categoryId': int(category_id),
+                     'price': avg_price or 5000, 'quantity': 1, **YM_PARCEL}]},
+        timeout=10,
+    )
+    if st2 != 200 or not isinstance(data, dict):
+        return out
+
+    offers = ((data.get('result') or {}).get('offers')) or []
+    if not offers:
+        return out
+
+    for t in (offers[0].get('tariffs') or []):
+        kind = t.get('type')
+        params = {p.get('name'): p.get('value') for p in (t.get('parameters') or [])}
+        value = _num_ru(params.get('value'))
+        amount = _num_ru(t.get('amount'))
+        if kind == 'FEE' and value is not None:
+            out['commission_fbs_percent'] = round(value, 2)
+        elif kind == 'PAYMENT_TRANSFER' and value is not None:
+            out['acquiring_percent'] = round(value, 2)
+        elif kind == 'DELIVERY_TO_CUSTOMER' and amount is not None:
+            out['logistics_fbs'] = round(amount, 2)
+    return out
 
 
 def _sync_yandex(cur, cursor=None):
@@ -324,8 +557,21 @@ def _sync_yandex(cur, cursor=None):
         done = not next_cursor or not offers
 
     saved = _save_prices(cur, 'yandex_market', rows)
+    # Тарифы считаются по конкретной цене товара, поэтому берём среднюю по
+    # нашим карточкам, а не выдуманную. Спрашиваем один раз, в конце обхода.
+    tariffs = {}
+    if done:
+        cur.execute(
+            "SELECT AVG(price) FROM marketplace_prices "
+            "WHERE marketplace_code = 'yandex_market' AND price > 0"
+        )
+        row = cur.fetchone()
+        avg_price = float(row[0]) if row and row[0] else None
+        tariffs = _sync_ym_tariffs(cur, headers, campaign_id, avg_price)
+        if tariffs:
+            _save_tariffs(cur, 'yandex_market', tariffs)
     return {'ok': True, 'saved': saved, 'fetched': len(rows),
-            'cursor': next_cursor, 'done': done}
+            'cursor': next_cursor, 'done': done, 'tariffs': tariffs}
 
 
 def _settings(cur):
@@ -346,8 +592,8 @@ def _tariffs(cur):
     cur.execute(
         "SELECT marketplace_code, logistics_fbo, logistics_fbs, return_logistics, "
         "storage_per_month, acceptance_fee, acquiring_percent, promo_percent, "
-        "storage_months, commission_fbo_percent, commission_fbs_percent "
-        "FROM marketplace_tariffs"
+        "storage_months, commission_fbo_percent, commission_fbs_percent, "
+        "synced_at, synced_fields FROM marketplace_tariffs"
     )
     out = {}
     for r in cur.fetchall():
@@ -364,6 +610,10 @@ def _tariffs(cur):
             # Запасная комиссия: WB и Яндекс не отдают её по товару.
             'commissionFboPercent': float(r[9] or 0),
             'commissionFbsPercent': float(r[10] or 0),
+            # Какие поля пришли из кабинета площадки и когда: экран помечает их,
+            # чтобы менеджер не правил руками то, что перезапишется загрузкой.
+            'syncedAt': r[11].isoformat() + 'Z' if r[11] else None,
+            'syncedFields': [f for f in (r[12] or '').split(',') if f],
         }
     for code in MARKETPLACES:
         out.setdefault(code, {
@@ -371,6 +621,7 @@ def _tariffs(cur):
             'returnLogistics': 0.0, 'storagePerMonth': 0.0, 'acceptanceFee': 0.0,
             'acquiringPercent': 0.0, 'promoPercent': 0.0, 'storageMonths': 1.0,
             'commissionFboPercent': 0.0, 'commissionFbsPercent': 0.0,
+            'syncedAt': None, 'syncedFields': [],
         })
     return out
 
@@ -999,6 +1250,7 @@ def handler(event: dict, context) -> dict:
 
                 fetched = 0
                 saved = 0
+                tariffs = {}
                 pages = 0
                 done = False
                 error = None
@@ -1016,6 +1268,11 @@ def handler(event: dict, context) -> dict:
                     saved += int(res.get('saved') or 0)
                     pages += 1
                     cursor = res.get('cursor') or ''
+                    # Тарифы приходят только на последней странице каталога —
+                    # запоминаем их, иначе в отчёте не видно, обновились они
+                    # или площадка промолчала.
+                    if res.get('tariffs'):
+                        tariffs = res['tariffs']
                     if res.get('done'):
                         done = True
                         cursor = ''
@@ -1030,7 +1287,7 @@ def handler(event: dict, context) -> dict:
                 )
                 report[code] = {
                     'fetched': fetched, 'saved': saved, 'pages': pages,
-                    'done': done, 'error': error,
+                    'done': done, 'error': error, 'tariffs': tariffs,
                 }
 
             total_saved = sum(v['saved'] for v in report.values())
@@ -1041,6 +1298,7 @@ def handler(event: dict, context) -> dict:
                 else:
                     parts.append(
                         f"{code}: {v['saved']} цен"
+                        + (f", тарифов {len(v['tariffs'])}" if v.get('tariffs') else '')
                         + (' (каталог пройден)' if v['done'] else ' (продолжение)')
                     )
             cur.execute(

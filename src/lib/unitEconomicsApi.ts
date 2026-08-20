@@ -105,6 +105,10 @@ export interface Tariffs {
   /** Запасная комиссия: WB и Яндекс не отдают её по каждому товару. */
   commissionFboPercent: number;
   commissionFbsPercent: number;
+  /** Когда тарифы последний раз пришли из кабинета площадки. */
+  syncedAt?: string | null;
+  /** Поля, которые площадка заполняет сама — руками их править не нужно. */
+  syncedFields?: string[];
 }
 
 export interface EconomicsResponse {

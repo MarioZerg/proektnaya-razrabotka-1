@@ -57,6 +57,30 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
     }
   };
 
+  // Поля, которые площадка заполняет сама. Названия приходят с сервера в том
+  // виде, в каком лежат в базе, — сопоставляем их с полями формы.
+  const syncedKeys = new Set(
+    (tariffs.syncedFields || []).map((f) =>
+      ({
+        commission_fbo_percent: 'commissionFboPercent',
+        commission_fbs_percent: 'commissionFbsPercent',
+        logistics_fbo: 'logisticsFbo',
+        logistics_fbs: 'logisticsFbs',
+        return_logistics: 'returnLogistics',
+        acquiring_percent: 'acquiringPercent',
+      })[f] || f,
+    ),
+  );
+
+  const syncedAt = tariffs.syncedAt
+    ? new Date(tariffs.syncedAt).toLocaleString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : null;
+
   const fields: { key: keyof Tariffs; label: string; hint?: string }[] = [
     { key: 'commissionFbsPercent', label: 'Комиссия FBS, %', hint: 'если не приходит по товару' },
     { key: 'commissionFboPercent', label: 'Комиссия FBO, %', hint: 'если не приходит по товару' },
@@ -73,29 +97,57 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
   return (
     <Card className="border-border shadow-none">
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm">Тарифы площадки</CardTitle>
+        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+          Тарифы площадки
+          {syncedAt && (
+            <span className="flex items-center gap-1 text-xs font-normal text-emerald-700">
+              <Icon name="RefreshCw" size={12} />
+              обновлено с площадки {syncedAt}
+            </span>
+          )}
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {fields.map((f) => (
-            <div key={f.key} className="space-y-1.5">
-              <Label className="text-xs">{f.label}</Label>
-              <Input
-                type="number"
-                step="0.01"
-                min={0}
-                value={String(form[f.key] ?? 0)}
-                onChange={(e) => set(f.key, e.target.value)}
-              />
-              {f.hint && <p className="text-[11px] text-muted-foreground">{f.hint}</p>}
-            </div>
-          ))}
+          {fields.map((f) => {
+            const auto = syncedKeys.has(f.key);
+            return (
+              <div key={f.key} className="space-y-1.5">
+                <Label className="flex items-center gap-1 text-xs">
+                  {f.label}
+                  {/* Поле заполняет площадка: правка руками доживёт только до
+                      следующей загрузки, и об этом честнее предупредить сразу. */}
+                  {auto && (
+                    <span
+                      className="flex items-center gap-0.5 text-[10px] font-normal text-emerald-700"
+                      title="Приходит из кабинета площадки автоматически"
+                    >
+                      <Icon name="RefreshCw" size={10} />
+                      авто
+                    </span>
+                  )}
+                </Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={String(form[f.key] ?? 0)}
+                  onChange={(e) => set(f.key, e.target.value)}
+                  className={auto ? 'border-emerald-200 bg-emerald-50/40' : undefined}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {auto ? 'Обновляется автоматически' : f.hint}
+                </p>
+              </div>
+            );
+          })}
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Комиссию и логистику по каждому товару система берёт из кабинета площадки —
-          они зависят от категории и габаритов. Здесь задаются только те расходы,
-          которые площадка через API не отдаёт.
+          Поля с пометкой «авто» площадка присылает сама — они обновляются вместе с
+          ценами, раз в 6 часов. Править их вручную нет смысла: следующая загрузка
+          вернёт значения площадки. Остальные расходы задаёте вы: площадка их не
+          отдаёт, потому что они зависят от вашего оборота и рекламного бюджета.
         </p>
 
         <Button onClick={handleSave} disabled={saving}>
