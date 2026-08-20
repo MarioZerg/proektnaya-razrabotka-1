@@ -1,29 +1,39 @@
-const LOGS_URL = 'https://functions.poehali.dev/236734c3-d32a-4920-b0c1-0e2e176f7425';
+const LOGS_URL = 'https://functions.poehali.dev/76b45ef0-dcd6-43ae-bafe-a568bb09547a';
 
-export type LogCategory = 'production' | 'warehouse' | 'finance';
+/** Этап работы — по нему админ фильтрует журнал: «покажи всё про пошив». */
+export type LogStage = 'shifts' | 'cutting' | 'sewing' | 'stickering';
 
-export const logCategoryLabels: Record<LogCategory, string> = {
-  production: 'Заказы и производство',
-  warehouse: 'Склад и материалы',
-  finance: 'Финансы',
+export const stageLabels: Record<LogStage, string> = {
+  shifts: 'Смены',
+  cutting: 'Раскрой',
+  sewing: 'Пошив',
+  stickering: 'Стикеровка и склад',
 };
 
-export interface LogEntry {
-  id: number;
-  createdAt: string;
+export const stageIcons: Record<LogStage, string> = {
+  shifts: 'CalendarClock',
+  cutting: 'Scissors',
+  sewing: 'Shirt',
+  stickering: 'Package',
+};
+
+export interface LogEvent {
+  at: string;
   userId: number | null;
-  userName: string | null;
-  category: LogCategory;
+  who: string;
   action: string;
+  actionTitle: string;
   entityType: string | null;
   entityId: number | null;
   description: string;
-  details: Record<string, unknown> | null;
+  category: string;
+  workshop: string | null;
+  role: string | null;
 }
 
 export interface LogFilters {
-  category?: LogCategory;
-  userId?: number;
+  stage?: LogStage | '';
+  userId?: number | '';
   dateFrom?: string;
   dateTo?: string;
   search?: string;
@@ -32,21 +42,48 @@ export interface LogFilters {
 }
 
 export interface LogsResult {
-  entries: LogEntry[];
+  items: LogEvent[];
   total: number;
 }
 
-export const fetchLogs = async (filters?: LogFilters): Promise<LogsResult> => {
+export interface LogSummary {
+  shiftsOpened: number;
+  shiftsClosed: number;
+  cut: number;
+  taken: number;
+  sewn: number;
+  packed: number;
+}
+
+const buildParams = (filters?: LogFilters) => {
   const params = new URLSearchParams();
-  if (filters?.category) params.set('category', filters.category);
-  if (filters?.userId) params.set('user_id', String(filters.userId));
-  if (filters?.dateFrom) params.set('date_from', filters.dateFrom);
-  if (filters?.dateTo) params.set('date_to', filters.dateTo);
+  if (filters?.stage) params.set('stage', filters.stage);
+  if (filters?.userId) params.set('userId', String(filters.userId));
+  if (filters?.dateFrom) params.set('dateFrom', filters.dateFrom);
+  if (filters?.dateTo) params.set('dateTo', filters.dateTo);
   if (filters?.search) params.set('search', filters.search);
   if (filters?.limit) params.set('limit', String(filters.limit));
   if (filters?.offset) params.set('offset', String(filters.offset));
-  const qs = params.toString();
-  const res = await fetch(qs ? `${LOGS_URL}?${qs}` : LOGS_URL);
+  return params;
+};
+
+export const fetchLogEvents = async (filters?: LogFilters): Promise<LogsResult> => {
+  const params = buildParams(filters);
+  params.set('action', 'events');
+  const res = await fetch(`${LOGS_URL}?${params.toString()}`);
   const data = await res.json();
-  return { entries: data.entries || [], total: data.total || 0 };
+  return { items: data.items || [], total: data.total || 0 };
+};
+
+export const fetchLogSummary = async (filters?: LogFilters): Promise<LogSummary> => {
+  const params = buildParams(filters);
+  params.set('action', 'summary');
+  const res = await fetch(`${LOGS_URL}?${params.toString()}`);
+  return res.json();
+};
+
+export const fetchLogUsers = async (): Promise<{ id: number; name: string }[]> => {
+  const res = await fetch(`${LOGS_URL}?action=users`);
+  const data = await res.json();
+  return data.users || [];
 };

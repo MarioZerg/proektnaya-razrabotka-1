@@ -1,4 +1,5 @@
 {
+  "audit_log": "https://functions.poehali.dev/76b45ef0-dcd6-43ae-bafe-a568bb09547a",
   "stocktakes": "https://functions.poehali.dev/a737392b-5582-4cfd-ba50-185a19b73ee9",
   "unit_economics": "https://functions.poehali.dev/4ebd72ad-8ca4-456c-840c-d2db30ce04cd",
   "product_cost": "https://functions.poehali.dev/7e85cd3d-e5cd-44e2-a803-5ff07584de12",

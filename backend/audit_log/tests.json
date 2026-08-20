@@ -1,0 +1,59 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Events feed returns items",
+      "method": "GET",
+      "path": "/?action=events&limit=5",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Summary returns counters",
+      "method": "GET",
+      "path": "/?action=summary",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Users list for filter",
+      "method": "GET",
+      "path": "/?action=users",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Filter by stage sewing",
+      "method": "GET",
+      "path": "/?action=events&stage=sewing&limit=3",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Filter by stage shifts",
+      "method": "GET",
+      "path": "/?action=events&stage=shifts&limit=3",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Search with quote does not break",
+      "method": "GET",
+      "path": "/?action=events&search=O%27Brien&limit=3",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "GET",
+      "path": "/?action=nope",
+      "expectedStatus": 400
+    },
+    {
+      "name": "POST not allowed",
+      "method": "POST",
+      "path": "/",
+      "body": {},
+      "expectedStatus": 405
+    }
+  ]
+}

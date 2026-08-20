@@ -419,6 +419,7 @@ const adminNav: NavItem[] = [
       { label: 'Планировщик', path: '/crm/settings/scheduler' },
       { label: 'Полки на складе', path: '/crm/settings/shelves' },
       { label: 'Вешалки', path: '/crm/settings/hangers' },
+      { label: 'Журнал действий', path: '/crm/settings/logs' },
     ],
   },
 ];
