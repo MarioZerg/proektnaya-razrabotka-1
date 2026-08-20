@@ -31,7 +31,10 @@ const UnitEconomics = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const canView = isAdmin || user?.role === 'manager';
+  // Пока страницу видит только владелец: расчёт ещё донастраивается, и решения
+  // по ценам по нему принимать рано. Проверяем здесь, а не только в меню, —
+  // иначе менеджер откроет страницу по прямой ссылке из закладок.
+  const canView = isAdmin;
 
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState('ozon');
@@ -82,9 +85,19 @@ const UnitEconomics = () => {
   if (!canView) {
     return (
       <CrmLayout>
-        <p className="text-sm text-muted-foreground">
-          Раздел доступен менеджеру и администратору.
-        </p>
+        <div className="rounded-lg border border-border p-6 text-center">
+          <Icon name="Lock" size={28} className="mx-auto text-muted-foreground" />
+          <p className="mt-2 font-medium">Раздел временно закрыт</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Расчёт дорабатывается. Себестоимость товаров доступна как обычно.
+          </p>
+          <Button variant="outline" size="sm" className="mt-3" asChild>
+            <Link to="/crm/analytics/product-cost">
+              <Icon name="Calculator" size={14} className="mr-1.5" />
+              Себестоимость товаров
+            </Link>
+          </Button>
+        </div>
       </CrmLayout>
     );
   }

@@ -100,13 +100,16 @@ const ProductCost = () => {
             </p>
           </div>
           {/* Следующий вопрос после «сколько стоит вещь» — «сколько мы на ней
-              зарабатываем». Ведём туда прямо отсюда. */}
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/crm/analytics/unit-economics">
-              <Icon name="TrendingUp" size={14} className="mr-1.5" />
-              Юнит-экономика маркетплейсов
-            </Link>
-          </Button>
+              зарабатываем». Ведём туда прямо отсюда — но только владельца:
+              менеджеру раздел пока закрыт, и вести его в тупик незачем. */}
+          {canEdit && (
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/crm/analytics/unit-economics">
+                <Icon name="TrendingUp" size={14} className="mr-1.5" />
+                Юнит-экономика маркетплейсов
+              </Link>
+            </Button>
+          )}
         </div>
 
         {data && canEdit && (

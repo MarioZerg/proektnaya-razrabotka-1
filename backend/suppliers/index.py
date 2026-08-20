@@ -180,6 +180,7 @@ def handler(event: dict, context) -> dict:
                 if not cur.fetchone():
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставщик не найден'})}
 
+                kept = []
                 for item in prices:
                     material_id = item.get('materialId')
                     price = item.get('price')
@@ -194,12 +195,36 @@ def handler(event: dict, context) -> dict:
                             'headers': headers,
                             'body': json.dumps({'error': 'Цена не может быть отрицательной'}, ensure_ascii=False),
                         }
+                    kept.append(int(material_id))
                     cur.execute(
                         "INSERT INTO supplier_prices (supplier_id, material_id, price, currency) "
                         "VALUES (%s, %s, %s, %s) "
                         "ON CONFLICT (supplier_id, material_id) DO UPDATE "
                         "SET price = EXCLUDED.price, currency = EXCLUDED.currency, updated_at = now()",
                         (int(supplier_id), int(material_id), float(price), currency),
+                    )
+
+                # УБИРАЕМ ЦЕНЫ, КОТОРЫХ БОЛЬШЕ НЕТ В ПРАЙСЕ.
+                #
+                # Экран присылает только заполненные строки: очистил поле цены —
+                # материал в список не попал. Раньше мы такие строки просто
+                # пропускали, и старая цена навсегда оставалась в базе. Со стороны
+                # это выглядело как «цена не удаляется»: счётчик показывал прежнее
+                # число, а расчёт себестоимости продолжал брать удалённую цену.
+                #
+                # Теперь список считается полным: всё, чего в нём нет, удаляем.
+                if kept:
+                    ids = ','.join(str(i) for i in kept)
+                    cur.execute(
+                        f"DELETE FROM supplier_prices WHERE supplier_id = %s "
+                        f"AND material_id NOT IN ({ids})",
+                        (int(supplier_id),),
+                    )
+                else:
+                    # Прайс очистили целиком — убираем все цены поставщика.
+                    cur.execute(
+                        "DELETE FROM supplier_prices WHERE supplier_id = %s",
+                        (int(supplier_id),),
                     )
 
                 conn.commit()
