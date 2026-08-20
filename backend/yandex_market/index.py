@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+from datetime import datetime
 import urllib.request
 import urllib.error
 
@@ -145,6 +146,33 @@ def log_action(cur, actor_id, actor_name, action, description):
     )
 
 
+
+def parse_ym_date(raw):
+    """Дата создания заказа из Яндекс.Маркета в формат, понятный базе.
+
+    Яндекс отдаёт дату по-русски: "20-08-2026 12:41:07" — сначала день, потом месяц.
+    PostgreSQL читает даты как год-месяц-день и на такую строку отвечал ошибкой
+    «date/time field value out of range». Синхронизация падала на первом же заказе,
+    и с Яндекса не подгрузилось НИ ОДНОГО заказа за всё время работы.
+
+    Ошибка проявлялась не всегда одинаково: пока день был не больше 12 (например
+    05-08), база молча читала его как месяц и записывала неверную дату. С 13-го числа
+    такой месяц невозможен — и синхронизация обрывалась целиком.
+
+    Разбираем сами и отдаём стандартный вид. Формат не распознан — возвращаем None:
+    заказ важнее его даты создания, пусть встанет на конвейер без неё.
+    """
+    if not raw:
+        return None
+    text = str(raw).strip()
+    for fmt in ('%d-%m-%Y %H:%M:%S', '%d-%m-%Y %H:%M', '%d-%m-%Y'):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
     """Тянет новые заказы Яндекс Маркета и ставит их на конвейер.
 
@@ -201,7 +229,7 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
         if not ym_id:
             continue
         group_key = f'YM-{ym_id}'
-        mp_created_at = o.get('creationDate') or None
+        mp_created_at = parse_ym_date(o.get('creationDate'))
 
         # Сначала разворачиваем позиции в плоский список вещей: товар с count=3 — это три
         # отдельные вещи на конвейере, но все они из одного заказа покупателя.
