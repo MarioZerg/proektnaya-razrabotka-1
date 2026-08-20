@@ -95,8 +95,8 @@ const ProductCost = () => {
           <div>
             <h1 className="text-xl font-bold">Себестоимость товаров</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Во сколько обходится одна вещь: материалы, работа цеха, налог. Считается по
-              ткани и ширине — высота на себестоимость не влияет.
+              Во сколько вещь обходится цеху: материалы, работа, прочие расходы.
+              Считается по ткани и ширине — высота на себестоимость не влияет.
             </p>
           </div>
           {/* Следующий вопрос после «сколько стоит вещь» — «сколько мы на ней
@@ -127,9 +127,7 @@ const ProductCost = () => {
           <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
             <p className="font-medium">Что входит в расчёт</p>
             <p className="mt-1 text-muted-foreground">
-              Налог {data.settings.taxPercent}%
-              {data.settings.marketplacePercent > 0 &&
-                ` · комиссия площадки ${data.settings.marketplacePercent}%`}
+              Материалы по ценам поставщиков · работа по тарифам цеха
               {extrasPerUnit > 0 &&
                 ` · прочие расходы ${money(extrasPerUnit)} ₽ на вещь`}
             </p>

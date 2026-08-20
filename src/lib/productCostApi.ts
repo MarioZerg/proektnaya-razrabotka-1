@@ -35,8 +35,7 @@ export interface CostGroup {
   packWorkCost: number;
   laborCost: number;
   overhead: number;
-  tax: number;
-  commission: number;
+  /** Во сколько вещь обходится цеху. Без налога и комиссии площадки. */
   total: number;
   /** Чего не хватает для честной цифры. */
   missing: string[];
@@ -55,8 +54,6 @@ export interface ExtraExpense {
 }
 
 export interface CostSettings {
-  taxPercent: number;
-  marketplacePercent: number;
   overheadPerItem: number;
   workshopId: number | null;
 }

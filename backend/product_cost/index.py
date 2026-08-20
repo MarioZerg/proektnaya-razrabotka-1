@@ -34,20 +34,21 @@ def _is_admin(cur, actor_id):
 
 
 def _settings(cur):
-    """Настройки расчёта: налог, комиссия площадки, прочие расходы, цех для тарифов."""
+    """Настройки расчёта: прочие расходы и цех, по тарифам которого считаем работу.
+
+    Налога и комиссии площадки здесь больше нет: они зависят от цены продажи, а
+    не от затрат цеха, и живут в юнит-экономике. Колонки в таблице остались —
+    их читают старые расчёты, но себестоимость их не использует.
+    """
     cur.execute(
-        "SELECT tax_percent, marketplace_percent, overhead_per_item, workshop_id "
-        "FROM cost_settings ORDER BY id LIMIT 1"
+        "SELECT overhead_per_item, workshop_id FROM cost_settings ORDER BY id LIMIT 1"
     )
     r = cur.fetchone()
     if not r:
-        return {'taxPercent': 0.0, 'marketplacePercent': 0.0,
-                'overheadPerItem': 0.0, 'workshopId': None}
+        return {'overheadPerItem': 0.0, 'workshopId': None}
     return {
-        'taxPercent': float(r[0] or 0),
-        'marketplacePercent': float(r[1] or 0),
-        'overheadPerItem': float(r[2] or 0),
-        'workshopId': r[3],
+        'overheadPerItem': float(r[0] or 0),
+        'workshopId': r[1],
     }
 
 
@@ -242,10 +243,22 @@ def _calc_groups(cur, settings):
 
         # Прочие расходы: список статей владельца плюс старое общее поле.
         overhead = round(extra_per_unit + settings['overheadPerItem'], 2)
-        base = materials_cost + labor_cost + overhead
-        tax = round(base * settings['taxPercent'] / 100, 2)
-        commission = round(base * settings['marketplacePercent'] / 100, 2)
-        total = round(base + tax + commission, 2)
+
+        # СЕБЕСТОИМОСТЬ — ТОЛЬКО НАШИ ЗАТРАТЫ.
+        #
+        # Раньше сюда добавлялись налог и комиссия площадки, посчитанные ОТ
+        # ЗАТРАТ. Это давало неверную цифру дважды:
+        #
+        #  · налог платится с ВЫРУЧКИ, а не с себестоимости. Считать его от
+        #    затрат — всё равно что платить процент с расходов;
+        #  · комиссия площадки берётся с ЦЕНЫ ПРОДАЖИ. При комиссии 58% от
+        #    затрат вещь за 500 ₽ «дорожала» на 290 ₽, хотя площадка возьмёт
+        #    свои проценты совсем с другой суммы.
+        #
+        # Оба расхода теперь считает юнит-экономика — от цены продажи, как и
+        # положено. Здесь остаётся честный ответ на вопрос «во сколько вещь
+        # обходится цеху»: материалы, работа и накладные.
+        total = round(materials_cost + labor_cost + overhead, 2)
 
         result.append({
             'material': material,
@@ -261,8 +274,6 @@ def _calc_groups(cur, settings):
             'packWorkCost': pack_work,
             'laborCost': round(labor_cost, 2),
             'overhead': overhead,
-            'tax': tax,
-            'commission': commission,
             'total': total,
             'missing': [
                 *(['Не задан расход материалов'] if not g['materials'] else []),
@@ -280,15 +291,19 @@ def _calc_groups(cur, settings):
 def handler(event: dict, context) -> dict:
     """Себестоимость одной единицы товара.
 
-    Считает, во сколько обходится одна вещь: ткань и фурнитура по ценам поставщиков,
-    оплата раскроя, пошива и стикеровки по тарифам цеха, прочие расходы, налог и
-    комиссия площадки. Цены и тарифы берутся из системы и всегда актуальны.
+    Считает, во сколько обходится одна вещь ЦЕХУ: ткань и фурнитура по ценам
+    поставщиков, оплата раскроя, пошива и стикеровки по тарифам цеха, прочие
+    расходы. Цены и тарифы берутся из системы и всегда актуальны.
+
+    Налога и комиссии площадки здесь НЕТ: они зависят от цены продажи, а не от
+    затрат, и считаются в юнит-экономике — там же, где комиссия по каждой
+    площадке и логистика по каждому размеру.
 
     Считается по ТКАНИ и ШИРИНЕ: высота на себестоимость не влияет — кроят, обшивают
     и пакуют по ширине. 875 карточек товара сводятся к 56 реальным сочетаниям.
 
     GET  /                                        - себестоимость по тканям и ширинам
-    POST /  { action: 'save_settings', ... }      - налог, комиссия, цех
+    POST /  { action: 'save_settings', ... }      - прочие расходы, цех
     POST /  { action: 'add_expense', name, amount, perItems, note }  - статья расходов
     POST /  { action: 'update_expense', id, ... } - изменить статью
     POST /  { action: 'delete_expense', id }      - удалить статью
@@ -381,31 +396,27 @@ def handler(event: dict, context) -> dict:
                 except (TypeError, ValueError):
                     return default
 
-            tax = num('taxPercent')
-            commission = num('marketplacePercent')
+            # Налог и комиссию площадки здесь больше не принимаем: они считаются
+            # от цены продажи и настраиваются в юнит-экономике. Если старая
+            # версия страницы их пришлёт, они просто игнорируются.
             overhead = num('overheadPerItem')
             workshop_id = body_data.get('workshopId')
-            if tax < 0 or tax > 100 or commission < 0 or commission > 100:
-                return _resp(400, {'error': 'Проценты должны быть от 0 до 100'})
 
             cur.execute("SELECT id FROM cost_settings ORDER BY id LIMIT 1")
             row = cur.fetchone()
             if row:
                 cur.execute(
-                    "UPDATE cost_settings SET tax_percent = %s, marketplace_percent = %s, "
-                    "  overhead_per_item = %s, workshop_id = %s, updated_at = now(), "
+                    "UPDATE cost_settings SET overhead_per_item = %s, "
+                    "  workshop_id = %s, updated_at = now(), "
                     "  updated_by = %s WHERE id = %s",
-                    (tax, commission, overhead,
-                     int(workshop_id) if workshop_id else None,
+                    (overhead, int(workshop_id) if workshop_id else None,
                      body_data.get('actorId'), row[0]),
                 )
             else:
                 cur.execute(
-                    "INSERT INTO cost_settings (tax_percent, marketplace_percent, "
-                    "  overhead_per_item, workshop_id, updated_by) "
-                    "VALUES (%s, %s, %s, %s, %s)",
-                    (tax, commission, overhead,
-                     int(workshop_id) if workshop_id else None,
+                    "INSERT INTO cost_settings (overhead_per_item, workshop_id, "
+                    "  updated_by) VALUES (%s, %s, %s)",
+                    (overhead, int(workshop_id) if workshop_id else None,
                      body_data.get('actorId')),
                 )
             conn.commit()

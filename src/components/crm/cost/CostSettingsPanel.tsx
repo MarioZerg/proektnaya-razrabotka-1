@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -24,19 +23,16 @@ interface CostSettingsPanelProps {
 /**
  * Параметры расчёта себестоимости.
  *
- * Всё остальное система знает сама: цены материалов приходят из прайсов поставщиков,
- * расход — из карточки товара, оплата работ — из тарифов цеха. А эти величины
- * вывести неоткуда, их задаёт владелец (прочие расходы — отдельным блоком ниже):
+ * Цены материалов приходят из прайсов поставщиков, расход — из карточки товара,
+ * оплата работ — из тарифов цеха. Задать нужно только одно: по тарифам какого
+ * цеха считать, потому что ставки закройщика и швеи в цехах разные.
  *
- *  · налог — зависит от системы налогообложения;
- *  · комиссия площадки — своя у каждого маркетплейса;
- *  · цех — ставки закройщика и швеи в цехах разные, считать надо по какому-то одному.
+ * Налога и комиссии площадки здесь больше нет: они зависят от цены продажи, а
+ * не от затрат цеха, и настраиваются в юнит-экономике.
  */
 const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [tax, setTax] = useState(String(settings.taxPercent));
-  const [commission, setCommission] = useState(String(settings.marketplacePercent));
   const [workshopId, setWorkshopId] = useState(
     settings.workshopId ? String(settings.workshopId) : '',
   );
@@ -46,8 +42,6 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
     setSaving(true);
     try {
       await saveCostSettings({
-        taxPercent: Number(tax) || 0,
-        marketplacePercent: Number(commission) || 0,
         // Старое общее поле держим нулевым: расходы теперь ведутся списком статей.
         overheadPerItem: settings.overheadPerItem,
         workshopId: workshopId ? Number(workshopId) : null,
@@ -74,30 +68,6 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
       <CardContent className="space-y-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="space-y-1.5">
-            <Label>Налог, %</Label>
-            <Input
-              type="number"
-              step="0.1"
-              min={0}
-              max={100}
-              value={tax}
-              onChange={(e) => setTax(e.target.value)}
-              placeholder="Например: 6"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Комиссия площадки, %</Label>
-            <Input
-              type="number"
-              step="0.1"
-              min={0}
-              max={100}
-              value={commission}
-              onChange={(e) => setCommission(e.target.value)}
-              placeholder="Например: 15"
-            />
-          </div>
-          <div className="space-y-1.5">
             <Label>Тарифы какого цеха</Label>
             <Select value={workshopId} onValueChange={setWorkshopId}>
               <SelectTrigger>
@@ -117,6 +87,12 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
         <p className="text-xs text-muted-foreground">
           Цены материалов и тарифы работ система берёт сама — из прайсов поставщиков и
           настроек цеха. Меняется прайс — себестоимость пересчитывается без вашего участия.
+        </p>
+        {/* Раньше налог и комиссия задавались здесь и накручивались на затраты.
+            Это давало неверную цифру: оба расхода зависят от цены продажи. */}
+        <p className="text-xs text-muted-foreground">
+          Налог и комиссия площадки сюда не входят — они считаются от цены продажи
+          и настраиваются в разделе «Юнит-экономика».
         </p>
 
         <Button onClick={handleSave} disabled={saving}>

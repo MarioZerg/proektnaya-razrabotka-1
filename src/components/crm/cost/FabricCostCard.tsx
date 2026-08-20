@@ -86,11 +86,6 @@ const FabricCostCard = ({ material, widths }: FabricCostCardProps) => {
             style={{ width: `${share(g.overhead)}%` }}
             title={`Прочие расходы ${money(g.overhead)} ₽`}
           />
-          <div
-            className="bg-amber-400"
-            style={{ width: `${share(g.tax + g.commission)}%` }}
-            title={`Налог и комиссия ${money(g.tax + g.commission)} ₽`}
-          />
         </div>
       )}
 
@@ -141,26 +136,12 @@ const FabricCostCard = ({ material, widths }: FabricCostCardProps) => {
           </div>
         </div>
 
-        {(g.overhead > 0 || g.tax > 0 || g.commission > 0) && (
+        {g.overhead > 0 && (
           <div className="border-t border-border pt-2">
-            {g.overhead > 0 && (
-              <div className="flex justify-between text-xs">
-                <span>Прочие расходы</span>
-                <span className="font-medium">{money(g.overhead)} ₽</span>
-              </div>
-            )}
-            {g.tax > 0 && (
-              <div className="flex justify-between text-xs">
-                <span>Налог</span>
-                <span className="font-medium">{money(g.tax)} ₽</span>
-              </div>
-            )}
-            {g.commission > 0 && (
-              <div className="flex justify-between text-xs">
-                <span>Комиссия площадки</span>
-                <span className="font-medium">{money(g.commission)} ₽</span>
-              </div>
-            )}
+            <div className="flex justify-between text-xs">
+              <span>Прочие расходы</span>
+              <span className="font-medium">{money(g.overhead)} ₽</span>
+            </div>
           </div>
         )}
       </div>

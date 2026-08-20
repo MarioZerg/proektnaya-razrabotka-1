@@ -1103,17 +1103,16 @@ def _cost_by_group(cur):
     """Себестоимость производства по паре «ткань + ширина».
 
     ВАЖНО: здесь только СВОИ затраты — материалы, работа цеха и прочие расходы.
-    Комиссию площадки и налог сюда НЕ включаем, в отличие от страницы
-    себестоимости: в юнит-экономике они считаются от ЦЕНЫ ПРОДАЖИ, а не от
-    затрат. Иначе комиссия была бы посчитана дважды и от неверной базы.
+    Комиссия площадки и налог сюда не входят: они считаются от ЦЕНЫ ПРОДАЖИ, а
+    не от затрат, и вычитаются ниже, в расчёте одной единицы. Страница
+    себестоимости считает ровно так же — обе стороны показывают одну цифру.
     """
     cur.execute(
-        "SELECT tax_percent, marketplace_percent, overhead_per_item, workshop_id "
-        "FROM cost_settings ORDER BY id LIMIT 1"
+        "SELECT overhead_per_item, workshop_id FROM cost_settings ORDER BY id LIMIT 1"
     )
     cs = cur.fetchone()
-    workshop_id = cs[3] if cs else None
-    overhead_legacy = float(cs[2] or 0) if cs else 0.0
+    workshop_id = cs[1] if cs else None
+    overhead_legacy = float(cs[0] or 0) if cs else 0.0
 
     cur.execute(
         "SELECT amount, per_items FROM cost_extra_expenses WHERE is_active = true"
