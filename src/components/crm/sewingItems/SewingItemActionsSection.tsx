@@ -107,7 +107,7 @@ const SewingItemActionsSection = ({
     return (
       <Card className="border-border shadow-none">
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm">
+          <CardTitle className="break-words text-sm">
             Выбор рулона тюля
             {orderDetail?.requiredFabricMaterialName && (
               <span className="ml-1 font-normal text-muted-foreground">
@@ -117,7 +117,7 @@ const SewingItemActionsSection = ({
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap items-end gap-3">
-          <div className="w-64 space-y-1.5">
+          <div className="w-full space-y-1.5 sm:w-64">
             <Label>Рулон в вашем цехе/смене</Label>
             <Select value={selectedRollId} onValueChange={setSelectedRollId} disabled={cutting || isAlreadyCut}>
               <SelectTrigger>
@@ -218,7 +218,10 @@ const SewingItemActionsSection = ({
     return (
       <Card className="border-border shadow-none">
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm">
+          {/* break-words обязателен: название материала приходит из справочника
+              и бывает длинным, а без переноса эта строка задаёт карточке
+              минимальную ширину больше экрана телефона и уводит текст вправо. */}
+          <CardTitle className="break-words text-sm">
             Выбор рулона тесьмы
             {orderDetail?.requiredTrimMaterialName && (
               <span className="ml-1 font-normal text-muted-foreground">
@@ -229,7 +232,7 @@ const SewingItemActionsSection = ({
         </CardHeader>
         <CardContent className="flex flex-wrap items-end gap-3">
           {trimNeeded ? (
-            <div className="w-64 space-y-1.5">
+            <div className="w-full space-y-1.5 sm:w-64">
               <Label>Рулон тесьмы в вашем цехе/смене</Label>
               <Select
                 value={selectedRollId}
@@ -299,7 +302,7 @@ const SewingItemActionsSection = ({
         <CardTitle className="text-sm">Действия</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-wrap items-end gap-3">
-        <div className="w-48 space-y-1.5">
+        <div className="w-full space-y-1.5 sm:w-48">
           <Label>Статус пошива</Label>
           <Select value={selectedOrder.sewingStatus} onValueChange={onStatusChange} disabled={saving}>
             <SelectTrigger>
@@ -315,7 +318,7 @@ const SewingItemActionsSection = ({
           </Select>
         </div>
 
-        <div className="w-48 space-y-1.5">
+        <div className="w-full space-y-1.5 sm:w-48">
           <Label>Сотрудник</Label>
           <Select
             value={selectedOrder.assignedUserId ? String(selectedOrder.assignedUserId) : 'none'}
@@ -336,7 +339,7 @@ const SewingItemActionsSection = ({
           </Select>
         </div>
 
-        <div className="w-48 space-y-1.5">
+        <div className="w-full space-y-1.5 sm:w-48">
           <Label>Цех</Label>
           <Select
             value={selectedOrder.workshopId ? String(selectedOrder.workshopId) : 'none'}

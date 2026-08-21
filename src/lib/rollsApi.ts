@@ -159,6 +159,11 @@ export const fetchRolls = async (filters?: {
   usedSinceUserId?: number;
   /** Производственная роль: вернуть рулоны ТОЛЬКО цеха её открытой смены. */
   forUserId?: number;
+  /** В какой должности человек работает ПРЯМО СЕЙЧАС — от неё зависит материал:
+   * швея берёт тесьму, закройщик тюль. У совместителей роль в открытой смене
+   * может не совпадать с выбранной в приложении, и без этого швея-совместитель
+   * видела список рулонов закройщика. */
+  forRole?: string;
   /** Поиск по штрихкоду. Ищется в базе: список ограничен свежими рулонами,
    * и закрытый рулон полугодовой давности иначе не нашёлся бы. */
   search?: string;
@@ -168,6 +173,7 @@ export const fetchRolls = async (filters?: {
   if (filters?.status) params.set('status', filters.status);
   if (filters?.usedSinceUserId) params.set('usedSinceUserId', String(filters.usedSinceUserId));
   if (filters?.forUserId) params.set('forUserId', String(filters.forUserId));
+  if (filters?.forRole) params.set('forRole', filters.forRole);
   if (filters?.search) params.set('search', filters.search);
   const qs = params.toString();
   const res = await fetch(qs ? `${ROLLS_URL}?${qs}` : ROLLS_URL);

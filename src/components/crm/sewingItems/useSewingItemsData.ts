@@ -119,7 +119,11 @@ export const useSewingItemsData = () => {
     fetchWorkshops().then(setWorkshops).catch(() => {});
     fetchRolls(
       isProductionRole && user?.id
-        ? { status: 'in_workshop', forUserId: user.id }
+        ? // Роль передаём ЯВНО — ту, в которой человек сейчас в приложении.
+          // У совместителя (швея + закройщик) в открытой смене может стоять
+          // другая должность, и тогда швее подбирался материал закройщика:
+          // тюль вместо тесьмы, а выбрать рулон было не из чего.
+          { status: 'in_workshop', forUserId: user.id, forRole: user.role }
         : { status: 'in_workshop' }
     )
       .then(setRolls)

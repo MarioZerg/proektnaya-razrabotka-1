@@ -29,7 +29,7 @@ const SewingItemInfoCards = ({
           <CardTitle className="text-sm">Информация</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
+          <Table className="min-w-0">
             <TableBody>
               <TableRow>
                 <TableCell className="font-medium text-muted-foreground">Товар</TableCell>
@@ -99,7 +99,7 @@ const SewingItemInfoCards = ({
         </CardHeader>
         <CardContent className="space-y-3">
           <OrderStagesDiagram order={selectedOrder} />
-          <Table>
+          <Table className="min-w-0">
             <TableBody>
               <TableRow>
                 <TableCell className="font-medium text-muted-foreground">Назначен сейчас</TableCell>

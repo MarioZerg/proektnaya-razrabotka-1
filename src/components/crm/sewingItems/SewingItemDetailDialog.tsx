@@ -96,7 +96,10 @@ const SewingItemDetailDialog = ({
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-      <DialogContent className="max-h-[90vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto p-4 sm:max-w-4xl sm:p-6">
+      {/* overflow-x-hidden обязателен: окно центрируется сдвигом на половину своей
+          ширины, поэтому любой блок шире экрана растягивает его и уводит текст
+          за оба края — заголовок обрезается слева, номер заказа уходит вправо. */}
+      <DialogContent className="max-h-[90vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto overflow-x-hidden p-4 sm:max-w-4xl sm:p-6">
         <DialogHeader>
           <div className="flex flex-wrap items-center gap-2 pr-8">
             <DialogTitle>Товар #{selectedOrder?.id}</DialogTitle>
@@ -160,7 +163,10 @@ const SewingItemDetailDialog = ({
           }}
         />
         {selectedOrder && (
-          <div className="space-y-4">
+          /* min-w-0 разрешает содержимому сжиматься: без него длинное слово
+             внутри (название материала, номер заказа) задаёт всей колонке
+             ширину больше экрана, и текст уезжает за правый край. */
+          <div className="min-w-0 space-y-4">
             {/* Раскрой/стикеровку выполняют закройщик и швея. Общий блок «Действия» со сменой
                 статуса и назначением сотрудника/цеха доступен только админу — остальные роли
                 (кладовщик, менеджер) двигать заказ по статусам не могут. */}
