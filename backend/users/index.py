@@ -217,7 +217,12 @@ def handler(event: dict, context) -> dict:
                 "is_active, created_at, updated_at, shift_number, "
                 "max_user_id, phone, registered_via_max, shift_free, salary_unlock_at, "
                 "CEIL(GREATEST(0, EXTRACT(EPOCH FROM (salary_unlock_at - now())) / 86400))::int, "
-                "work_schedule, COALESCE(late_tolerance_minutes, 15), work_hours "
+                "work_schedule, COALESCE(late_tolerance_minutes, 15), work_hours, "
+                # Расторжение договора: подписанное сотрудником заявление ждёт
+                # решения админа, либо договор уже расторгнут и доступ закрыт.
+                "contract_terminated_at, "
+                "(SELECT count(*) FROM contract_terminations t "
+                "  WHERE t.user_id = users.id AND t.status = 'pending_admin') "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -257,6 +262,11 @@ def handler(event: dict, context) -> dict:
                     'lateToleranceMinutes': r[21],
                     # Сколько часов длится смена: от них считается время закрытия.
                     'workHours': float(r[22]) if r[22] is not None else None,
+                    # Договор расторгнут: доступ закрыт, аккаунт сохранён.
+                    'contractTerminatedAt': (r[23].isoformat() + 'Z') if r[23] else None,
+                    # Заявление подписано сотрудником и ждёт решения админа —
+                    # по этому признаку в списке горит красный знак.
+                    'terminationPending': bool(r[24]),
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows

@@ -661,7 +661,8 @@ def handler(event: dict, context) -> dict:
                 shift_from_code = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
 
                 cur.execute(
-                    "SELECT u.id, u.full_name, u.role, u.is_active, w.id "
+                    "SELECT u.id, u.full_name, u.role, u.is_active, w.id, "
+                    "u.contract_terminated_at "
                     "FROM users u LEFT JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
                     (user_id,),
                 )
@@ -670,6 +671,11 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник не найден'})}
                 if not u_row[3]:
                     return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник неактивен'})}
+                # Договор расторгнут — смену открыть нельзя (п. 5.7 договора).
+                if u_row[5]:
+                    return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Договор расторгнут, доступ закрыт'},
+                        ensure_ascii=False)}
 
                 cur.execute(
                     "SELECT id, opened_at, workshop_id, shift_number, role FROM shift_sessions "

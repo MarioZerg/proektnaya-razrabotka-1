@@ -51,10 +51,21 @@ const EmployeeCard = ({
             из-за чего карточки прыгали по высоте, а на телефоне имя обрывалось
             многоточием. Полное имя остаётся в подсказке и в карточке сотрудника. */}
         <p
-          className="truncate text-sm font-semibold leading-tight sm:text-base"
+          className="flex items-center gap-1.5 truncate text-sm font-semibold leading-tight sm:text-base"
           title={emp.fullName}
         >
-          {shortName(emp.fullName)}
+          {/* Красный знак: сотрудник подписал Акт о расторжении и ждёт решения.
+              Он виден прямо в списке, чтобы заявление не пролежало незамеченным
+              — от него зависит, работает человек завтра или нет. */}
+          {emp.terminationPending && (
+            <Icon
+              name="CircleAlert"
+              size={16}
+              className="shrink-0 text-destructive"
+              aria-label="Договор подан на расторжение"
+            />
+          )}
+          <span className="truncate">{shortName(emp.fullName)}</span>
         </p>
         {/* Должность и цех — одной строкой с обрезкой: на телефоне они уходили
             на третью строку и карточка вырастала вдвое. */}
@@ -71,6 +82,11 @@ const EmployeeCard = ({
           {emp.isActive === false && (
             <Badge variant="outline" className="shrink-0 text-muted-foreground">
               Отключён
+            </Badge>
+          )}
+          {emp.contractTerminatedAt && (
+            <Badge variant="outline" className="shrink-0 border-destructive/40 text-destructive">
+              Договор расторгнут
             </Badge>
           )}
         </div>

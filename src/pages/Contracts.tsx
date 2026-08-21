@@ -15,6 +15,8 @@ import {
   type Contract,
 } from '@/lib/contractsApi';
 import SignContractDialog from '@/components/crm/contracts/SignContractDialog';
+import TerminationPanel from '@/components/crm/contracts/TerminationPanel';
+import TerminationsAdmin from '@/components/crm/contracts/TerminationsAdmin';
 import UploadContractDialog from '@/components/crm/contracts/UploadContractDialog';
 import PersonalDataPanel from '@/components/crm/personal/PersonalDataPanel';
 
@@ -116,6 +118,10 @@ const Contracts = () => {
           <PersonalDataPanel userId={user.id} actorId={user.id} isAdmin={false} />
         )}
 
+        {/* Заявления на расторжение — вверху и красным: человек ждёт решения,
+            а от него зависит, работает он завтра или нет. */}
+        {isAdmin && <TerminationsAdmin onChanged={load} />}
+
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -193,6 +199,10 @@ const Contracts = () => {
             ))}
           </div>
         )}
+
+        {/* Расторжение — в самом низу: это крайняя мера, и она не должна
+            попадаться на глаза раньше самих документов. */}
+        {!isAdmin && user && <TerminationPanel />}
 
         {user && (
           <SignContractDialog

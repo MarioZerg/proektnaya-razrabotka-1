@@ -197,6 +197,9 @@ def handler(event: dict, context) -> dict:
                 "FROM users u "
                 "LEFT JOIN workshops w ON w.name = u.workshop "
                 "WHERE u.is_active = true AND u.role <> '' "
+                # Расторгнувших договор в списке для входа не показываем: их
+                # доступ закрыт, и предлагать им кнопку входа незачем.
+                "  AND u.contract_terminated_at IS NULL "
                 "ORDER BY u.role, u.id"
             )
             rows = cur.fetchall()
@@ -253,6 +256,16 @@ def handler(event: dict, context) -> dict:
             if not is_active:
                 conn.commit()
                 return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Учётная запись отключена'})}
+            # Договор расторгнут — доступ закрыт (п. 5.7 договора). Аккаунт при
+            # этом сохраняется: расчёты по нему продолжаются.
+            cur.execute('SELECT contract_terminated_at FROM users WHERE id = %s', (user_id,))
+            t_row = cur.fetchone()
+            if t_row and t_row[0]:
+                conn.commit()
+                return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                    {'error': 'Договор расторгнут, доступ в систему закрыт. '
+                              'По вопросам расчётов обратитесь к администратору'},
+                    ensure_ascii=False)}
 
             cur.execute('SELECT role, is_approved FROM user_roles WHERE user_id = %s ORDER BY id', (user_id,))
             roles = [{'role': r[0], 'isApproved': r[1]} for r in cur.fetchall()]
@@ -366,13 +379,22 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             cur.execute(
-                'SELECT is_active, full_name FROM users WHERE id = %s', (int(user_id),)
+                'SELECT is_active, full_name, contract_terminated_at '
+                'FROM users WHERE id = %s', (int(user_id),)
             )
             row = cur.fetchone()
             if not row:
                 return _resp_access(False, 'Учётная запись удалена')
             if not row[0]:
                 return _resp_access(False, 'Администратор закрыл доступ к профилю')
+            # Договор расторгнут (п. 5.7): выкидываем даже того, кто уже был в
+            # системе. Без этой проверки человек с открытой вкладкой продолжал
+            # бы работать и после расторжения — вход-то бессрочный.
+            if row[2]:
+                return _resp_access(
+                    False,
+                    'Договор расторгнут, доступ закрыт. По вопросам расчётов '
+                    'обратитесь к администратору')
 
             cur.execute(
                 'SELECT role FROM user_roles WHERE user_id = %s AND is_approved = true',
@@ -411,7 +433,8 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             cur.execute(
-                "SELECT u.id, u.full_name, u.is_active, u.workshop, u.shift_number, w.id, ur.is_approved "
+                "SELECT u.id, u.full_name, u.is_active, u.workshop, u.shift_number, w.id, "
+                "ur.is_approved, u.contract_terminated_at "
                 "FROM users u "
                 "LEFT JOIN workshops w ON w.name = u.workshop "
                 "LEFT JOIN user_roles ur ON ur.user_id = u.id AND ur.role = %s "
@@ -425,9 +448,16 @@ def handler(event: dict, context) -> dict:
         if not row:
             return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Пользователь не найден'})}
 
-        user_id, full_name, is_active, workshop_name, shift_number, workshop_id, is_approved = row
+        (user_id, full_name, is_active, workshop_name, shift_number, workshop_id,
+         is_approved, terminated_at) = row
         if not is_active:
             return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Учётная запись отключена'})}
+        # Договор расторгнут — в систему не пускаем (п. 5.7).
+        if terminated_at:
+            return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                {'error': 'Договор расторгнут, доступ в систему закрыт. '
+                          'По вопросам расчётов обратитесь к администратору'},
+                ensure_ascii=False)}
         if not is_approved:
             return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Эта должность ещё не утверждена администратором'})}
 

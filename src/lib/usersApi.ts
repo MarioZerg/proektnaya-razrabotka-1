@@ -24,6 +24,10 @@ export interface Employee {
   workHours: number | null;
   avatarUrl: string | null;
   isActive: boolean;
+  /** Договор расторгнут: доступ закрыт, аккаунт и история сохранены. */
+  contractTerminatedAt?: string | null;
+  /** Сотрудник подписал Акт о расторжении — ждёт решения администратора. */
+  terminationPending?: boolean;
   createdAt: string;
   updatedAt: string;
   shiftNumber: number | null;

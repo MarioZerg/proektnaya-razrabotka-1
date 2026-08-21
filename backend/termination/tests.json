@@ -1,0 +1,12 @@
+{"tests":[
+ {"name":"OPTIONS preflight","method":"OPTIONS","path":"/","expectedStatus":200},
+ {"name":"Заявление без сотрудника отклоняется","method":"GET","path":"/","expectedStatus":400},
+ {"name":"Список на подтверждение не админу закрыт","method":"GET","path":"/?pending=1&actorId=3","expectedStatus":403},
+ {"name":"Подача без сотрудника отклоняется","method":"POST","path":"/","body":{"action":"request"},"expectedStatus":400},
+ {"name":"Подтверждение не админом закрыто","method":"POST","path":"/","body":{"action":"confirm","terminationId":1,"actorId":3},"expectedStatus":403},
+ {"name":"Отклонение не админом закрыто","method":"POST","path":"/","body":{"action":"reject","terminationId":1,"actorId":3,"reason":"x"},"expectedStatus":403},
+ {"name":"Отклонение без причины запрещено","method":"POST","path":"/","body":{"action":"reject","terminationId":1,"actorId":10},"expectedStatus":400},
+ {"name":"Код без заявления отклоняется","method":"POST","path":"/","body":{"action":"send_code"},"expectedStatus":400},
+ {"name":"Подпись без кода отклоняется","method":"POST","path":"/","body":{"action":"sign","terminationId":1,"userId":1},"expectedStatus":400},
+ {"name":"Неизвестное действие","method":"POST","path":"/","body":{"action":"nope"},"expectedStatus":400}
+]}
