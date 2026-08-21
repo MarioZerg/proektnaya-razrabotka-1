@@ -143,6 +143,18 @@ JOBS = [
         'optional': True,
     },
     {
+        'key': 'ad_spend_sync',
+        'title': 'Расходы на рекламу',
+        'func': 'ad_spend',
+        'urlAction': 'sync',
+        'method': 'POST',
+        'purpose': 'Считает, сколько площадки списали за рекламу — для честной маржи',
+        'group': 'service',
+        'everyMin': 1440,
+        'lateAfter': 2880,
+        'optional': True,
+    },
+    {
         'key': 'promotions_sync',
         'title': 'Акции площадок',
         'func': 'promotion',
@@ -182,6 +194,7 @@ FUNC_IDS = {
     'shift_sessions': '6143d29d-094c-4dc6-a520-eb0eeb10d8a0',
     'unit_economics': '4ebd72ad-8ca4-456c-840c-d2db30ce04cd',
     'promotion': '5fc24d57-7e45-4a1a-898d-a610c310093a',
+    'ad_spend': '29442dba-b5a9-4e15-b9ba-5fdc52eef574',
 }
 
 # Разделы страницы: заголовок и пояснение, чем грозит молчание.

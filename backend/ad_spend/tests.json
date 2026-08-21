@@ -1,0 +1,7 @@
+{"tests":[
+ {"name":"OPTIONS preflight","method":"OPTIONS","path":"/","expectedStatus":200},
+ {"name":"Status without admin forbidden","method":"GET","path":"/?action=status","expectedStatus":403},
+ {"name":"Sync without admin forbidden","method":"POST","path":"/","body":{"action":"sync","marketplace":"ozon"},"expectedStatus":403},
+ {"name":"Nm ids without admin forbidden","method":"POST","path":"/","body":{"action":"sync_nm_ids"},"expectedStatus":403},
+ {"name":"Unknown action forbidden","method":"POST","path":"/","body":{"action":"nope"},"expectedStatus":403}
+]}

@@ -841,7 +841,8 @@ def _tariffs(cur):
         "SELECT marketplace_code, logistics_fbo, logistics_fbs, return_logistics, "
         "storage_per_month, acceptance_fee, acquiring_percent, promo_percent, "
         "storage_months, commission_fbo_percent, commission_fbs_percent, "
-        "synced_at, synced_fields FROM marketplace_tariffs"
+        "synced_at, synced_fields, promo_from_fact, promo_fact_percent, "
+        "promo_synced_at FROM marketplace_tariffs"
     )
     out = {}
     for r in cur.fetchall():
@@ -862,6 +863,10 @@ def _tariffs(cur):
             # чтобы менеджер не правил руками то, что перезапишется загрузкой.
             'syncedAt': r[11].isoformat() + 'Z' if r[11] else None,
             'syncedFields': [f for f in (r[12] or '').split(',') if f],
+            # Реклама по факту: сколько площадка реально списала за месяц.
+            'promoFromFact': bool(r[13]) if r[13] is not None else True,
+            'promoFactPercent': float(r[14]) if r[14] is not None else None,
+            'promoSyncedAt': r[15].isoformat() + 'Z' if r[15] else None,
         }
     for code in MARKETPLACES:
         out.setdefault(code, {
@@ -870,6 +875,8 @@ def _tariffs(cur):
             'acquiringPercent': 0.0, 'promoPercent': 0.0, 'storageMonths': 1.0,
             'commissionFboPercent': 0.0, 'commissionFbsPercent': 0.0,
             'syncedAt': None, 'syncedFields': [],
+            'promoFromFact': True, 'promoFactPercent': None,
+            'promoSyncedAt': None,
         })
     return out
 
@@ -1223,8 +1230,33 @@ def _prices_by_item(cur, code):
     return out
 
 
+# Потолок доли рекламы в цене товара. Бывает, что на позицию потратили больше,
+# чем она принесла (в данных встречалось 887% — товар только раскручивали).
+# Тащить такое число в юнит-экономику нельзя: оно не описывает нормальную
+# продажу, а превращает расчёт в бессмыслицу и прячет настоящую картину по
+# остальному ассортименту. Всё, что выше, считаем разовым перекосом и
+# ограничиваем средним по площадке.
+AD_PERCENT_CAP = 40.0
+
+
+def _ad_percents(cur, marketplace):
+    """Фактическая доля рекламы по каждому товару, %.
+
+    WB отдаёт расход по каждому товару, поэтому позиция, которую продвигали,
+    несёт свою рекламу, а та, что продавалась сама, не платит за чужой бустинг.
+    OZON списывает рекламу общей суммой — там у всех товаров один процент.
+    """
+    cur.execute(
+        "SELECT marketplace_item_id, ad_percent FROM marketplace_ad_spend "
+        "WHERE marketplace_code = %s AND marketplace_item_id IS NOT NULL "
+        "  AND ad_percent IS NOT NULL",
+        (marketplace,),
+    )
+    return {r[0]: min(float(r[1]), AD_PERCENT_CAP) for r in cur.fetchall()}
+
+
 def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout,
-               item_fees=None):
+               item_fees=None, ad_percent=None):
     """Экономика ОДНОЙ проданной единицы.
 
     Считается по общепринятой для маркетплейсов схеме: из цены продажи вычитаем
@@ -1248,7 +1280,18 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
         fees['acquiringAmount'] if fees.get('acquiringAmount') is not None
         else price * tariff['acquiringPercent'] / 100, 2
     )
-    promo = round(price * tariff['promoPercent'] / 100, 2)
+    # Продвижение считаем ПО ФАКТУ, а не по числу, вписанному руками: реклама
+    # съедает около 20% выручки, а в настройках стояло 10% (WB — вообще ноль), и
+    # маржа выходила завышенной. Порядок такой:
+    #   1) сколько реально потрачено на ЭТОТ товар (WB отдаёт по каждому);
+    #   2) если по товару данных нет — средний факт по площадке;
+    #   3) если факта нет совсем — ручное значение как запасной вариант.
+    promo_percent = ad_percent
+    if promo_percent is None:
+        promo_percent = tariff.get('promoFactPercent')
+    if promo_percent is None or not tariff.get('promoFromFact', True):
+        promo_percent = tariff['promoPercent']
+    promo = round(price * (promo_percent or 0) / 100, 2)
 
     # Логистику берём ПО ТОВАРУ, если площадка её отдала: она зависит от габаритов,
     # и общий тариф для шторы 800 см и мелочи одинаковым быть не может.
@@ -1311,7 +1354,7 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
     variable_share = (
         (commission_percent or 0)
         + (0 if acquiring_is_fixed else tariff['acquiringPercent'])
-        + tariff['promoPercent']
+        + (promo_percent or 0)
     ) / 100.0 + vat_share + tax_share
     fixed_part = (logistics + return_cost + storage + acceptance + production
                   + (acquiring if acquiring_is_fixed else 0))
@@ -1325,6 +1368,12 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
         'commissionPercent': round(commission_percent or 0, 2),
         'acquiring': acquiring,
         'promo': promo,
+        # Какой процент рекламы применён к этому товару и откуда он взят —
+        # экран показывает это рядом с цифрой, чтобы не гадать.
+        'promoPercent': round(promo_percent or 0, 2),
+        'promoIsFact': ad_percent is not None
+        or (tariff.get('promoFactPercent') is not None
+            and tariff.get('promoFromFact', True)),
         'logistics': logistics,
         'logisticsBase': round(logistics_direct, 2),
         'returnCost': return_cost,
@@ -1413,6 +1462,9 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             'fees': p if p else None,
         })
 
+    # Фактическая реклама по товарам этой площадки.
+    ad_percents = _ad_percents(cur, code)
+
     rows = []
     for (material, width), g in sorted(groups.items(), key=lambda x: (x[0][0] or '', x[0][1] or 0)):
         cost = costs.get((material, width))
@@ -1437,7 +1489,7 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             unit = _calc_unit(
                 i['price'], cost, tariffs, settings,
                 i[comm_key] if i[comm_key] is not None else commission_percent,
-                scheme, buyout, i['fees'],
+                scheme, buyout, i['fees'], ad_percents.get(i['id']),
             )
             heights.append({
                 'itemId': i['id'], 'height': i['height'], 'name': i['name'],
@@ -1452,8 +1504,13 @@ def _build(cur, code, scheme, buyout_override, shared=None):
         # Тарифы для группы берём у первого товара с ценой: внутри пары
         # «ткань + ширина» габариты одинаковые, значит и логистика тоже.
         group_fees = priced[0]['fees'] if priced else None
+        # Реклама по группе — средняя по её размерам: внутри «ткань + ширина»
+        # продвигают обычно не все высоты, и брать процент одной из них нельзя.
+        g_ads = [ad_percents[i['id']] for i in g['items'] if i['id'] in ad_percents]
+        group_ad = round(sum(g_ads) / len(g_ads), 2) if g_ads else None
         group_unit = _calc_unit(avg_price, cost, tariffs, settings,
-                                commission_percent, scheme, buyout, group_fees)
+                                commission_percent, scheme, buyout, group_fees,
+                                group_ad)
         rows.append({
             'material': material,
             'width': width,

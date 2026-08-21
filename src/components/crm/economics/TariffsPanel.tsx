@@ -8,6 +8,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import {
   saveTariffs,
+  syncAdSpend,
+  syncWbNmIds,
   type MarketplaceCode,
   type Tariffs,
 } from '@/lib/unitEconomicsApi';
@@ -26,16 +28,65 @@ interface TariffsPanelProps {
  * или отдаёт не полностью, поэтому их задаёт менеджер:
  *
  *  · хранение и приёмка — считаются по вашему обороту на складе площадки;
- *  · продвижение — сколько вы готовы тратить на рекламу с продажи;
  *  · обратная логистика — если площадка не отдала её по товару.
+ *
+ * Реклама раньше была в этом же списке — её вписывали руками. Оказалось, что
+ * так она сильно занижена: стояло 10% (у WB вообще ноль), а по факту площадки
+ * забирают около 20% выручки, и маржа выходила завышенной. Теперь считаем по
+ * фактическим списаниям за 30 дней, а ручное значение осталось запасным.
  */
 const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [form, setForm] = useState(tariffs);
   const [saving, setSaving] = useState(false);
+  const [adBusy, setAdBusy] = useState(false);
+  const [adStage, setAdStage] = useState('');
 
   useEffect(() => setForm(tariffs), [tariffs]);
+
+  // Реклама есть только у OZON и Wildberries: Яндекс рекламных списаний не
+  // присылает, и кнопка там ничего бы не сделала.
+  const hasAds = marketplaceCode === 'ozon' || marketplaceCode === 'wildberries';
+
+  const handleSyncAds = async () => {
+    setAdBusy(true);
+    try {
+      // У WB реклама привязана к его внутреннему номеру товара — без него
+      // расход не разложить по позициям, поэтому сначала подтягиваем номера.
+      if (marketplaceCode === 'wildberries') {
+        setAdStage('Связываем товары с кабинетом WB…');
+        await syncWbNmIds(user?.id);
+      }
+      const r = await syncAdSpend(
+        marketplaceCode as 'ozon' | 'wildberries', user?.id, setAdStage,
+      );
+      toast({
+        title: `Реклама: ${r.percent ?? 0}% от выручки`,
+        description: `Потрачено ${Math.round(r.spend).toLocaleString('ru-RU')} ₽ `
+          + `при выручке ${Math.round(r.revenue).toLocaleString('ru-RU')} ₽ за 30 дней`,
+      });
+      onSaved();
+    } catch (e) {
+      toast({
+        title: 'Не удалось посчитать рекламу',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setAdBusy(false);
+      setAdStage('');
+    }
+  };
+
+  const promoSyncedAt = tariffs.promoSyncedAt
+    ? new Date(tariffs.promoSyncedAt).toLocaleString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : null;
 
   const set = (key: keyof Tariffs, value: string) =>
     setForm((f) => ({ ...f, [key]: Number(value) || 0 }));
@@ -101,7 +152,15 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
     { key: 'storageMonths', label: 'Срок хранения, мес', hint: 'сколько лежит до продажи' },
     { key: 'acceptanceFee', label: 'Приёмка поставки, ₽', hint: 'за единицу, только FBO' },
     { key: 'acquiringPercent', label: 'Эквайринг, %', hint: 'если не приходит суммой' },
-    { key: 'promoPercent', label: 'Продвижение, %', hint: 'реклама от цены продажи' },
+    {
+      key: 'promoPercent',
+      label: 'Продвижение, %',
+      // Ручное значение осталось запасным: если площадка ничего не отдала,
+      // расчёт не должен молча обнулять рекламу.
+      hint: tariffs.promoFactPercent != null
+        ? 'не используется — считаем по факту выше'
+        : 'запасное значение, пока нет факта',
+    },
   ];
 
   return (
@@ -162,13 +221,72 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
           })}
         </div>
 
+        {hasAds && (
+          /* Реклама — самая дорогая строка расходов после комиссии, и раньше
+             её вписывали руками наугад. Теперь считаем по фактическим
+             списаниям площадки за месяц. */
+          <div className="rounded-lg border border-border bg-muted/30 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="flex items-center gap-1.5 text-sm font-medium">
+                  <Icon name="Megaphone" size={14} />
+                  Реклама по факту
+                </p>
+                {tariffs.promoFactPercent != null ? (
+                  <p className="mt-1 text-sm">
+                    <span className="text-2xl font-bold">
+                      {tariffs.promoFactPercent}%
+                    </span>
+                    <span className="ml-2 text-muted-foreground">
+                      от выручки за 30 дней
+                    </span>
+                    {promoSyncedAt && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        · обновлено {promoSyncedAt}
+                      </span>
+                    )}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Ещё не считали — нажмите «Обновить рекламу»
+                  </p>
+                )}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {marketplaceCode === 'wildberries'
+                    ? 'По каждому товару отдельно: что продвигали — платит за себя, '
+                      + 'остальные за чужой бустинг не отвечают'
+                    : 'OZON списывает рекламу общей суммой, поэтому процент '
+                      + 'одинаковый для всех товаров'}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSyncAds}
+                disabled={adBusy}
+              >
+                <Icon
+                  name={adBusy ? 'Loader2' : 'RefreshCw'}
+                  size={14}
+                  className={`mr-1.5 ${adBusy ? 'animate-spin' : ''}`}
+                />
+                Обновить рекламу
+              </Button>
+            </div>
+            {adStage && (
+              <p className="mt-2 text-xs text-muted-foreground">{adStage}</p>
+            )}
+          </div>
+        )}
+
         <p className="text-xs text-muted-foreground">
           Логистику и комиссию считает площадка — по каждому размеру отдельно,
           потому что тюль 200 см и штора 800 см едут за разные деньги. Здесь они
           показаны средними и не редактируются: в расчёт идёт точная цена
           конкретного размера. Обновляются раз в 6 часов вместе с ценами.
-          Остальные расходы задаёте вы — площадка их не отдаёт, они зависят от
-          вашего оборота и рекламного бюджета.
+          Рекламу тоже считаем по факту — по тому, что площадка реально списала.
+          Руками задаются только хранение, приёмка и срок: их площадка не
+          отдаёт, они зависят от вашего оборота на её складе.
         </p>
 
         <Button onClick={handleSave} disabled={saving}>

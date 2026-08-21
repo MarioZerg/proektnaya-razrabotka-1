@@ -18,6 +18,10 @@ export interface UnitCalc {
   commissionPercent: number;
   acquiring: number;
   promo: number;
+  /** Какой процент рекламы применён к этому товару. */
+  promoPercent?: number;
+  /** Процент взят из фактических трат площадки, а не из ручной настройки. */
+  promoIsFact?: boolean;
   /** Логистика с учётом выкупа: платим за все отправленные, продаём не все. */
   logistics: number;
   /** Базовый тариф логистики до пересчёта на выкуп. */
@@ -109,6 +113,22 @@ export interface Tariffs {
   syncedAt?: string | null;
   /** Поля, которые площадка заполняет сама — руками их править не нужно. */
   syncedFields?: string[];
+  /** Считать рекламу по фактическим тратам, а не по ручному проценту. */
+  promoFromFact?: boolean;
+  /** Сколько реально ушло на рекламу за месяц, % от выручки площадки. */
+  promoFactPercent?: number | null;
+  /** Когда факт по рекламе последний раз обновлялся. */
+  promoSyncedAt?: string | null;
+}
+
+/** Фактические траты на рекламу по площадке за период. */
+export interface AdSpendTotal {
+  marketplaceCode: string;
+  adSpend: number;
+  revenue: number;
+  adPercent: number | null;
+  periodDays: number;
+  calculatedAt: string | null;
 }
 
 export interface EconomicsResponse {
@@ -213,6 +233,80 @@ export const syncPrices = async (
     onProgress?.(total);
     cursor = data.cursor || '';
     if (data.done || !cursor) break;
+  }
+  return total;
+};
+
+const AD_SPEND_URL = 'https://functions.poehali.dev/29442dba-b5a9-4e15-b9ba-5fdc52eef574';
+
+const postAd = async (payload: Record<string, unknown>) => {
+  const res = await fetch(AD_SPEND_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  return data;
+};
+
+export const fetchAdSpend = async (
+  actorId?: number,
+): Promise<{ totals: AdSpendTotal[]; itemsWithSpend: Record<string, number> }> => {
+  const res = await fetch(`${AD_SPEND_URL}?action=status&actorId=${actorId ?? ''}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить');
+  return { totals: data.totals || [], itemsWithSpend: data.itemsWithSpend || {} };
+};
+
+/**
+ * Тянет фактические траты на рекламу с площадки.
+ *
+ * OZON считается одним запросом. Wildberries — в несколько приёмов: у него
+ * десятки кампаний, и каждая требует отдельного обращения к площадке, а у
+ * функции всего пять секунд. Поэтому идём шагами, пока не кончатся кампании,
+ * и только потом считаем процент.
+ */
+export const syncAdSpend = async (
+  marketplace: 'ozon' | 'wildberries',
+  actorId?: number,
+  onProgress?: (stage: string) => void,
+): Promise<{ percent: number | null; spend: number; revenue: number }> => {
+  if (marketplace === 'ozon') {
+    onProgress?.('Считаем траты на рекламу…');
+    const d = await postAd({ action: 'sync', marketplace, actorId });
+    if (!d.ok) throw new Error(d.error || 'Не удалось посчитать');
+    return { percent: d.percent, spend: d.spend, revenue: d.revenue };
+  }
+
+  let spend = 0;
+  for (let step = 0; step < 12; step += 1) {
+    onProgress?.(`Собираем рекламные кампании… (${step + 1})`);
+    const d = await postAd({
+      action: 'sync', marketplace, actorId, stage: 'spend', step,
+    });
+    if (!d.ok) throw new Error(d.error || 'Не удалось получить расходы');
+    spend = d.spend || spend;
+    if (d.done) break;
+  }
+
+  onProgress?.('Считаем долю рекламы в выручке…');
+  const r = await postAd({
+    action: 'sync', marketplace, actorId, stage: 'revenue', totalSpend: spend,
+  });
+  if (!r.ok) throw new Error(r.error || 'Не удалось посчитать процент');
+  return { percent: r.percent, spend, revenue: r.revenue };
+};
+
+/** Подтягивает номера товаров WB — без них рекламу не разнести по позициям. */
+export const syncWbNmIds = async (actorId?: number): Promise<number> => {
+  let cursor: unknown = null;
+  let total = 0;
+  for (let i = 0; i < 15; i += 1) {
+    const d = await postAd({ action: 'sync_nm_ids', actorId, cursor });
+    total += d.saved || 0;
+    cursor = d.cursor;
+    if (d.done) break;
   }
   return total;
 };
