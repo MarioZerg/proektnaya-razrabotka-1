@@ -8,7 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/lib/dateUtils';
 import {
-  contractFileUrl,
+  openContractFile,
   fetchAllContracts,
   fetchMyContracts,
   cancelContract,
@@ -153,15 +153,21 @@ const Contracts = () => {
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" asChild>
-                    <a
-                      href={contractFileUrl(c.id, user?.id)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <Icon name="FileText" size={14} className="mr-1.5" />
-                      Открыть документ
-                    </a>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      openContractFile(c.id, user?.id).catch((e) =>
+                        toast({
+                          title: 'Не удалось открыть документ',
+                          description: e instanceof Error ? e.message : undefined,
+                          variant: 'destructive',
+                        }),
+                      )
+                    }
+                  >
+                    <Icon name="FileText" size={14} className="mr-1.5" />
+                    Открыть документ
                   </Button>
 
                   {!isAdmin && c.status === 'pending' && (

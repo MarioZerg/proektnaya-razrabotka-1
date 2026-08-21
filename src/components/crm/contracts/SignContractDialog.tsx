@@ -6,7 +6,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import {
-  contractFileUrl,
+  openContractFile,
   sendSignCode,
   signContract,
   type Contract,
@@ -91,15 +91,14 @@ const SignContractDialog = ({
           <div className="space-y-4">
             <div className="rounded-md border border-border p-3">
               <p className="font-semibold">{contract.title}</p>
-              <a
-                href={contractFileUrl(contract.id, user?.id)}
-                target="_blank"
-                rel="noreferrer"
+              <button
+                type="button"
+                onClick={() => openContractFile(contract.id, user?.id)}
                 className="mt-2 inline-flex items-center gap-1.5 text-sm text-primary underline underline-offset-2"
               >
                 <Icon name="FileText" size={14} />
                 Открыть и прочитать документ
-              </a>
+              </button>
             </div>
 
             <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">

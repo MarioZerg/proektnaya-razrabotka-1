@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
-import { contractFileUrl, fetchMyContracts, type Contract } from '@/lib/contractsApi';
+import { openContractFile, fetchMyContracts, type Contract } from '@/lib/contractsApi';
 import SignContractDialog from '@/components/crm/contracts/SignContractDialog';
 
 interface ContractGateProps {
@@ -58,15 +58,13 @@ const ContractGate = ({ onAllSigned }: ContractGateProps) => {
               <div key={c.id} className="rounded-md border border-border p-4">
                 <p className="font-semibold">{c.title}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" asChild>
-                    <a
-                      href={contractFileUrl(c.id, user?.id)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <Icon name="FileText" size={14} className="mr-1.5" />
-                      Прочитать
-                    </a>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openContractFile(c.id, user?.id)}
+                  >
+                    <Icon name="FileText" size={14} className="mr-1.5" />
+                    Прочитать
                   </Button>
                   <Button size="sm" onClick={() => setSigning(c)}>
                     <Icon name="PenLine" size={14} className="mr-1.5" />

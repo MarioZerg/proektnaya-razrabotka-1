@@ -3,14 +3,37 @@ import func2url from '../../backend/func2url.json';
 const CONTRACTS_URL = (func2url as Record<string, string>).contracts;
 
 /**
- * Ссылка на файл договора — через нашу систему, а не на хранилище напрямую.
+ * Открывает договор так, чтобы в адресной строке был НАШ домен.
  *
- * Файл лежит во внешнем хранилище, и прямая ссылка показывала бы сотруднику
- * чужой домен в адресной строке. Под документом, который человек подписывает
- * с вашим ИП, это выглядит несерьёзно, поэтому файл отдаём сами.
+ * Файл лежит во внешнем хранилище, и любая прямая ссылка — хоть на хранилище,
+ * хоть на адрес функции — показывала бы сотруднику чужой домен. Под документом,
+ * который человек подписывает с вашим ИП, это выглядит несерьёзно.
+ *
+ * Поэтому файл сначала скачивается в браузер, а открывается уже из памяти: в
+ * строке адреса остаётся домен самой системы. Ссылку освобождаем через минуту —
+ * этого хватает, чтобы вкладка успела показать документ.
  */
-export const contractFileUrl = (contractId: number, userId?: number) =>
-  `${CONTRACTS_URL}?file=${contractId}&userId=${userId ?? ''}`;
+export const openContractFile = async (contractId: number, userId?: number) => {
+  const res = await fetch(
+    `${CONTRACTS_URL}?file=${contractId}&userId=${userId ?? ''}`,
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Не удалось открыть документ');
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank', 'noopener');
+  if (!win) {
+    // Браузер заблокировал вкладку — тогда просто скачиваем файл, иначе
+    // человек нажал кнопку и не увидел вообще ничего.
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'dogovor.pdf';
+    a.click();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+};
 
 export interface Contract {
   id: number;
