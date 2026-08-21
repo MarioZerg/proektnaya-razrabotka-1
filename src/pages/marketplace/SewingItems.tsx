@@ -1,10 +1,11 @@
+import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
-import type { SewingStatus } from '@/lib/ordersApi';
+import { fetchStackPreview, type SewingStatus } from '@/lib/ordersApi';
 import SewingItemsFilters from '@/components/crm/sewingItems/SewingItemsFilters';
 import DonePeriodFilter from '@/components/crm/sewingItems/DonePeriodFilter';
 import SewingItemsTable from '@/components/crm/sewingItems/SewingItemsTable';
@@ -36,6 +37,17 @@ const SewingItems = () => {
     effectiveWorkshopId,
     effectiveShiftNumber,
   } = useSewingItemsData();
+
+  // Предел заказов на руках у закройщика — настройка цеха (сейчас 20).
+  // Берём с сервера: в разных цехах он может отличаться, а зашитое в код число
+  // однажды разойдётся с настройкой, и кнопка начнёт врать.
+  const [cutterLimit, setCutterLimit] = useState(20);
+  useEffect(() => {
+    if (!isCutter || !effectiveWorkshopId) return;
+    fetchStackPreview(effectiveWorkshopId)
+      .then((p) => setCutterLimit(p.cutterLimit))
+      .catch(() => undefined);
+  }, [isCutter, effectiveWorkshopId]);
 
   const {
     activeTab,
@@ -238,18 +250,30 @@ const SewingItems = () => {
                     </>
                   )}
                 </Button>
-                {/* Добор одной вещи: в конце смены или под остаток ткани брать полный
-                    стек незачем. Связки Яндекса сюда не попадают — заказ из нескольких
-                    вещей раскраивается только целиком, поэтому придёт следующий
-                    одиночный заказ по очереди. */}
+                {/* Добор одной вещи ДО предела заказов на руках.
+                    Раньше кнопка запиралась любым незакрытым заказом: взял стек,
+                    раскроил половину — и добрать вещь под остаток рулона уже
+                    нельзя. Теперь можно добирать, пока на руках меньше лимита.
+                    Связки Яндекса сюда не попадают — заказ из нескольких вещей
+                    раскраивается только целиком, придёт следующий одиночный. */}
                 <Button
                   variant="outline"
                   onClick={() => handleTakeStack(true)}
-                  disabled={takingStack || myUnfinishedCount > 0}
+                  disabled={takingStack || myUnfinishedCount >= cutterLimit}
                   className="w-full sm:w-auto"
+                  title={
+                    myUnfinishedCount >= cutterLimit
+                      ? `На руках ${myUnfinishedCount} из ${cutterLimit} — раскроите часть`
+                      : undefined
+                  }
                 >
                   <Icon name="Plus" size={16} className="mr-2" />
                   Взять 1 заказ
+                  {myUnfinishedCount > 0 && (
+                    <span className="ml-1.5 text-xs text-muted-foreground">
+                      {myUnfinishedCount}/{cutterLimit}
+                    </span>
+                  )}
                 </Button>
                 {/* Кнопка живёт, пока есть нераскроенные заказы — это данные с сервера.
                     Раньше она зависела от памяти браузера: закройщица обновляла страницу

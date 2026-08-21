@@ -418,31 +418,11 @@ def handler(event: dict, context) -> dict:
             # закройщик заранее знал, получит он связку Яндекса или обычный стек.
             if params.get('stackPreview') and params.get('workshopId'):
                 preview_workshop_id = int(params['workshopId'])
-                cur.execute(
-                    "SELECT allowed_materials FROM workshops WHERE id = %s", (preview_workshop_id,)
-                )
-                pw_row = cur.fetchone()
-                p_allowed = pw_row[0] if pw_row and pw_row[0] else []
-                if isinstance(p_allowed, str):
-                    p_allowed = json.loads(p_allowed or '[]')
-                if not p_allowed:
-                    return {
-                        'statusCode': 200,
-                        'headers': headers,
-                        'body': json.dumps({'kind': 'none', 'count': 0}),
-                    }
-                p_ids_csv = ','.join(str(int(i)) for i in p_allowed)
-                cur.execute("SELECT name FROM materials WHERE id IN (" + p_ids_csv + ")")
-                p_names = [r[0] for r in cur.fetchall()]
-                if not p_names:
-                    return {
-                        'statusCode': 200,
-                        'headers': headers,
-                        'body': json.dumps({'kind': 'none', 'count': 0}),
-                    }
-                p_names_csv = ','.join("'" + n.replace("'", "''") + "'" for n in p_names)
-                # Размер стека берём тот же, что и при реальной выдаче (настройка цеха),
-                # иначе подсказка обещала бы больше заказов, чем закройщик получит.
+
+                # Предел заказов на руках у закройщика. Читаем сразу: он нужен
+                # фронту в ЛЮБОМ ответе — по нему кнопка «Взять 1 заказ» решает,
+                # можно ли добирать. Раньше при пустой очереди лимит не приходил,
+                # и кнопка не знала, что делать.
                 cur.execute(
                     "SELECT value FROM workshop_settings WHERE workshop_id = %s "
                     "AND key = 'max_quantity_orders_to_cutter'",
@@ -455,6 +435,32 @@ def handler(event: dict, context) -> dict:
                     )
                     ps_row = cur.fetchone()
                 p_stack_size = int(ps_row[0]) if ps_row and ps_row[0] else 20
+
+                cur.execute(
+                    "SELECT allowed_materials FROM workshops WHERE id = %s", (preview_workshop_id,)
+                )
+                pw_row = cur.fetchone()
+                p_allowed = pw_row[0] if pw_row and pw_row[0] else []
+                if isinstance(p_allowed, str):
+                    p_allowed = json.loads(p_allowed or '[]')
+                if not p_allowed:
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'kind': 'none', 'count': 0,
+                                            'cutterLimit': p_stack_size}),
+                    }
+                p_ids_csv = ','.join(str(int(i)) for i in p_allowed)
+                cur.execute("SELECT name FROM materials WHERE id IN (" + p_ids_csv + ")")
+                p_names = [r[0] for r in cur.fetchall()]
+                if not p_names:
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'kind': 'none', 'count': 0,
+                                            'cutterLimit': p_stack_size}),
+                    }
+                p_names_csv = ','.join("'" + n.replace("'", "''") + "'" for n in p_names)
                 # Порядок ТОЧНО такой же, как при реальной выдаче стека — иначе предпросмотр
                 # показывал бы одно, а выдавалось другое.
                 cur.execute(
@@ -472,7 +478,8 @@ def handler(event: dict, context) -> dict:
                     return {
                         'statusCode': 200,
                         'headers': headers,
-                        'body': json.dumps({'kind': 'none', 'count': 0}),
+                        'body': json.dumps({'kind': 'none', 'count': 0,
+                                            'cutterLimit': p_stack_size}),
                     }
                 # Связкой считаем только заказ от ДВУХ вещей — как и при реальной выдаче.
                 # Одиночные заказы Яндекса идут в обычный стек.
@@ -491,12 +498,16 @@ def handler(event: dict, context) -> dict:
                     return {
                         'statusCode': 200,
                         'headers': headers,
-                        'body': json.dumps({'kind': 'group', 'count': p_count}),
+                        'body': json.dumps({'kind': 'group', 'count': p_count,
+                                            'cutterLimit': p_stack_size}),
                     }
+                # Предел заказов на руках отдаём фронту: по нему кнопка «Взять 1
+                # заказ» понимает, можно ли ещё добирать, и не гоняет сервер зря.
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'kind': 'stack', 'count': len(p_rows)}),
+                    'body': json.dumps({'kind': 'stack', 'count': len(p_rows),
+                                        'cutterLimit': p_stack_size}),
                 }
 
             if order_id:
@@ -842,14 +853,6 @@ def handler(event: dict, context) -> dict:
                     (int(user_id),),
                 )
                 unfinished = cur.fetchone()[0]
-                if unfinished > 0:
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps(
-                            {'error': f'У вас есть {unfinished} нераскроенных заказов — сначала раскроите их'}
-                        ),
-                    }
 
                 cur.execute(
                     "SELECT value FROM workshop_settings WHERE workshop_id = %s AND key = 'max_quantity_orders_to_cutter'",
@@ -862,8 +865,42 @@ def handler(event: dict, context) -> dict:
                     )
                     row = cur.fetchone()
                 stack_size = int(row[0]) if row and row[0] else 20
+
                 if single_mode:
+                    # «Взять 1 заказ» — добор поштучно ДО общего лимита закройщика.
+                    #
+                    # Раньше любой незакрытый заказ полностью запирал кнопку: взял стек,
+                    # раскроил половину — и добрать одну вещь под остаток рулона уже
+                    # нельзя, пока не закроешь всё до последнего. Закройщики упирались в
+                    # это каждый день: ткань на столе есть, работа стоит.
+                    #
+                    # Теперь считаем не «есть ли незакрытые», а сколько их: пока на руках
+                    # меньше лимита — можно добирать по одной. Сам лимит остаётся прежним
+                    # (max_quantity_orders_to_cutter, сейчас 20): он защищает от того,
+                    # чтобы один человек не разобрал всю очередь цеха.
+                    if unfinished >= stack_size:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'У вас уже {unfinished} нераскроенных заказов — '
+                                         f'это предел ({stack_size} шт.). Раскроите часть, '
+                                         f'и можно будет добрать ещё'
+                            }, ensure_ascii=False),
+                        }
                     stack_size = 1
+                elif unfinished > 0:
+                    # Стек берётся только «с чистого листа»: иначе на закройщике окажется
+                    # два десятка заказов поверх недоделанных, и очередь цеха встанет.
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'У вас есть {unfinished} нераскроенных заказов — '
+                                     f'раскроите их или добирайте по одному кнопкой '
+                                     f'«Взять 1 заказ»'
+                        }, ensure_ascii=False),
+                    }
 
                 # Остаток лимита метража на смену. Раньше стек выдавался целиком, не глядя
                 # на лимит: закройщик с 490 из 500 пог.м. получал ещё 20 заказов, кроил один

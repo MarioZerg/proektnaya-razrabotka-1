@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react';
+import { usePrintOrderSticker } from '@/components/crm/sewingItems/usePrintOrderSticker';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -28,13 +29,21 @@ import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
 import { isUrgent } from '@/components/crm/sewingItems/orderUrgency';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
-import { printFboSticker } from '@/lib/printFboSticker';
 import { orderHangerLabel } from '@/lib/hangersApi';
 
-/** Стикер FBO можно печатать для готового FBO-товара — прямо у номера заказа.
- * Доступно только кладовщику и админу (передаётся флагом canPrint). */
-const canPrintFboSticker = (o: Order, canPrint: boolean) =>
-  canPrint && o.orderType === 'FBO' && o.sewingStatus === 'Готовые';
+/**
+ * Печать стикера для готового заказа — прямо у номера в списке.
+ *
+ * Доступно кладовщику и админу (флаг canPrint). Работает для обеих схем:
+ *   · FBO — печатаем наш складской стикер;
+ *   · FBS — запрашиваем ярлык у маркетплейса (OZON, WB, Яндекс).
+ *
+ * FBS раньше отсюда не печатался: если ярлык потерялся или не пропечатался,
+ * кладовщику приходилось искать вещь на складе и печатать из другого раздела.
+ * Вещь при этом лежит готовая, а отгрузить её без ярлыка нельзя.
+ */
+const canPrintStickerForOrder = (o: Order, canPrint: boolean) =>
+  canPrint && o.sewingStatus === 'Готовые';
 
 /** Компактный список страниц с многоточиями: первая, последняя, текущая и соседние.
  * Например при 42 страницах и текущей 6-й: [1, '…', 5, 6, 7, '…', 42]. */
@@ -72,6 +81,8 @@ const SewingItemsTable = ({
   totalCount = 0,
   canPrintSticker = false,
 }: SewingItemsTableProps) => {
+  const { printingId, printSticker: handlePrintSticker } = usePrintOrderSticker();
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -152,22 +163,35 @@ const SewingItemsTable = ({
                       />
                     )}
                     {o.orderNumber}
-                    {canPrintFboSticker(o, canPrintSticker) && (
+                    {canPrintStickerForOrder(o, canPrintSticker) && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <button
                             type="button"
+                            disabled={printingId === o.id}
                             onClick={(e) => {
                               e.stopPropagation();
-                              printFboSticker(o);
+                              void handlePrintSticker(o);
                             }}
-                            className="text-muted-foreground hover:text-blue-600"
-                            aria-label="Печать стикера FBO"
+                            className="text-muted-foreground hover:text-blue-600 disabled:opacity-50"
+                            aria-label={
+                              o.orderType === 'FBS'
+                                ? 'Печать ярлыка маркетплейса'
+                                : 'Печать стикера FBO'
+                            }
                           >
-                            <Icon name="Printer" size={15} />
+                            <Icon
+                              name={printingId === o.id ? 'Loader2' : 'Printer'}
+                              size={15}
+                              className={printingId === o.id ? 'animate-spin' : undefined}
+                            />
                           </button>
                         </TooltipTrigger>
-                        <TooltipContent>Печать стикера FBO</TooltipContent>
+                        <TooltipContent>
+                          {o.orderType === 'FBS'
+                            ? `Ярлык ${o.marketplace || 'маркетплейса'}`
+                            : 'Печать стикера FBO'}
+                        </TooltipContent>
                       </Tooltip>
                     )}
                   </span>

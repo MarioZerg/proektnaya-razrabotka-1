@@ -116,13 +116,19 @@ export interface OrderDetail extends Order {
 export interface StackPreview {
   kind: 'group' | 'stack' | 'none';
   count: number;
+  /** Сколько заказов закройщик может держать на руках — настройка цеха. */
+  cutterLimit: number;
 }
 
 export const fetchStackPreview = async (workshopId: number): Promise<StackPreview> => {
   const res = await fetch(`${ORDERS_URL}?stackPreview=1&workshopId=${workshopId}`);
-  if (!res.ok) return { kind: 'none', count: 0 };
+  if (!res.ok) return { kind: 'none', count: 0, cutterLimit: 20 };
   const data = await res.json();
-  return { kind: data.kind ?? 'none', count: data.count ?? 0 };
+  return {
+    kind: data.kind ?? 'none',
+    count: data.count ?? 0,
+    cutterLimit: data.cutterLimit ?? 20,
+  };
 };
 
 export const fetchOrders = async (): Promise<Order[]> => {

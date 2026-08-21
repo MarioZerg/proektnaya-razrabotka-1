@@ -12,7 +12,7 @@ import {
 } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
-import { printFboSticker } from '@/lib/printFboSticker';
+import { usePrintOrderSticker } from '@/components/crm/sewingItems/usePrintOrderSticker';
 import { isUrgent } from '@/components/crm/sewingItems/orderUrgency';
 import { orderHangerLabel } from '@/lib/hangersApi';
 
@@ -44,6 +44,8 @@ const SewingItemsCards = ({
   totalCount,
   canPrintSticker = false,
 }: SewingItemsCardsProps) => {
+  const { printingId, printSticker: handlePrintSticker } = usePrintOrderSticker();
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -125,17 +127,29 @@ const SewingItemsCards = ({
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {canPrintSticker && o.orderType === 'FBO' && o.sewingStatus === 'Готовые' && (
+                  {/* Печать стикера готовой вещи — обе схемы. Для FBS ярлык
+                      запрашивается у маркетплейса: если наклейка потерялась,
+                      кладовщик печатает её прямо отсюда, не уходя со списка. */}
+                  {canPrintSticker && o.sewingStatus === 'Готовые' && (
                     <button
                       type="button"
+                      disabled={printingId === o.id}
                       onClick={(e) => {
                         e.stopPropagation();
-                        printFboSticker(o);
+                        void handlePrintSticker(o);
                       }}
-                      className="text-muted-foreground hover:text-blue-600"
-                      aria-label="Печать стикера FBO"
+                      className="text-muted-foreground hover:text-blue-600 disabled:opacity-50"
+                      aria-label={
+                        o.orderType === 'FBS'
+                          ? 'Печать ярлыка маркетплейса'
+                          : 'Печать стикера FBO'
+                      }
                     >
-                      <Icon name="Printer" size={15} />
+                      <Icon
+                        name={printingId === o.id ? 'Loader2' : 'Printer'}
+                        size={15}
+                        className={printingId === o.id ? 'animate-spin' : undefined}
+                      />
                     </button>
                   )}
                   <OrderWaitTimer order={o} compact />
