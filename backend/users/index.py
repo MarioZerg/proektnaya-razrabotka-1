@@ -222,7 +222,15 @@ def handler(event: dict, context) -> dict:
                 # решения админа, либо договор уже расторгнут и доступ закрыт.
                 "contract_terminated_at, "
                 "(SELECT count(*) FROM contract_terminations t "
-                "  WHERE t.user_id = users.id AND t.status = 'pending_admin') "
+                "  WHERE t.user_id = users.id AND t.status = 'pending_admin'), "
+                # Готовность к оформлению договора — видно прямо в списке:
+                #   · сколько сканов из трёх загружено (паспорт, прописка, СНИЛС);
+                #   · сверил ли администратор паспортные данные со сканом;
+                #   · указан ли номер для выплат и подтверждён ли он.
+                # Без этого приходилось открывать каждую карточку по очереди,
+                # чтобы понять, кому чего не хватает.
+                "(SELECT count(*) FROM user_documents d WHERE d.user_id = users.id), "
+                "personal_data_verified, sbp_phone, sbp_confirmed, docs_submitted_at "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -267,6 +275,12 @@ def handler(event: dict, context) -> dict:
                     # Заявление подписано сотрудником и ждёт решения админа —
                     # по этому признаку в списке горит красный знак.
                     'terminationPending': bool(r[24]),
+                    # Готовность документов: показывается значками в списке.
+                    'docsCount': int(r[25] or 0),
+                    'passportVerified': bool(r[26]),
+                    'sbpPhone': r[27],
+                    'sbpConfirmed': bool(r[28]),
+                    'docsSubmittedAt': (r[29].isoformat() + 'Z') if r[29] else None,
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows

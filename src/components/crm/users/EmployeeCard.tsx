@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import Icon from '@/components/ui/icon';
 import { roleLabels } from '@/lib/roles';
+import DocsReadyBadges from '@/components/crm/users/DocsReadyBadges';
 import type { Employee } from '@/lib/usersApi';
 import { initials, shortName } from '@/components/crm/users/usersShared';
 
@@ -66,6 +67,10 @@ const EmployeeCard = ({
             />
           )}
           <span className="truncate">{shortName(emp.fullName)}</span>
+          {/* Готовность документов тремя значками: сканы, паспорт, номер для
+              выплат. Раньше это было видно только внутри карточки, и понять,
+              кому чего не хватает, можно было лишь открыв каждого по очереди. */}
+          <DocsReadyBadges emp={emp} compact />
         </p>
         {/* Должность и цех — одной строкой с обрезкой: на телефоне они уходили
             на третью строку и карточка вырастала вдвое. */}

@@ -27,6 +27,7 @@ import {
 } from '@/components/crm/users/usersShared';
 import EmployeeKioskQr from '@/components/crm/users/EmployeeKioskQr';
 import PersonalDataPanel from '@/components/crm/personal/PersonalDataPanel';
+import DocsReadyBadges from '@/components/crm/users/DocsReadyBadges';
 
 /** «1 день», «3 дня», «7 дней» — чтобы подпись читалась по-русски. */
 const dayWord = (n: number) => {
@@ -117,6 +118,10 @@ const EmployeeCardDialog = ({
                 }}
               />
             </div>
+
+            {/* Готовность к договору одной строкой: сканы, паспорт, номер для
+                выплат. Подробности — ниже, в панели личных данных. */}
+            <DocsReadyBadges emp={cardEmployee} />
 
             <div className="flex items-center justify-between rounded-md border border-border bg-muted px-3 py-2">
               <div>

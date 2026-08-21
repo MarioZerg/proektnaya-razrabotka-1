@@ -28,6 +28,16 @@ export interface Employee {
   contractTerminatedAt?: string | null;
   /** Сотрудник подписал Акт о расторжении — ждёт решения администратора. */
   terminationPending?: boolean;
+  /** Сколько сканов загружено из трёх: паспорт, прописка, СНИЛС. */
+  docsCount?: number;
+  /** Администратор сверил паспортные данные со сканом. */
+  passportVerified?: boolean;
+  /** Номер телефона для выплат по СБП. */
+  sbpPhone?: string | null;
+  /** Реквизиты для выплат подтверждены администратором. */
+  sbpConfirmed?: boolean;
+  /** Когда сотрудник прислал полный комплект документов. */
+  docsSubmittedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   shiftNumber: number | null;
