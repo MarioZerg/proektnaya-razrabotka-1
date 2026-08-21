@@ -127,6 +127,53 @@ def write_off_materials_once(cur, order_id, material, width, height):
     return None
 
 
+def can_work_as(cur, actor_id, needed_role):
+    """Может ли сотрудник выполнять работу этой должности прямо сейчас.
+
+    В цехе совмещают: Елена Привезенцева оформлена швеёй, но у неё утверждены
+    ОБЕ должности — швея и закройщик. Смену она открыла закройщиком, а шьёт.
+
+    Раньше должность брали только из открытой смены, и таким людям система
+    отказывала: «отправлять на стикеровку может только швея» — при том что
+    швеёй человек и оформлен, и утверждён. Работа вставала на ровном месте.
+
+    Поэтому проверяем ТРИ источника и достаточно любого:
+      · должность в открытой смене — кем человек вышел работать;
+      · должность в карточке — кем он оформлен;
+      · утверждённые должности — что ему вообще разрешено делать.
+
+    Админ может всё.
+    """
+    if not actor_id:
+        # Без сотрудника проверять нечего: такие вызовы приходят из киоска и
+        # проверяются иначе. Не блокируем.
+        return True
+
+    roles = set()
+
+    cur.execute(
+        "SELECT role FROM shift_sessions WHERE user_id = %s "
+        "AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+        (int(actor_id),),
+    )
+    row = cur.fetchone()
+    if row and row[0]:
+        roles.add(row[0])
+
+    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+    row = cur.fetchone()
+    if row and row[0]:
+        roles.add(row[0])
+
+    cur.execute(
+        "SELECT role FROM user_roles WHERE user_id = %s AND is_approved = true",
+        (int(actor_id),),
+    )
+    roles.update(r[0] for r in cur.fetchall() if r[0])
+
+    return 'admin' in roles or needed_role in roles
+
+
 def get_setting(cur, workshop_id, key, default=None):
     """Читает значение настройки: сначала переопределение цеха (workshop_settings),
     если его нет — глобальное значение (system_settings), если и его нет — default.
@@ -1433,33 +1480,18 @@ def handler(event: dict, context) -> dict:
                 # Остальные роли — швея, упаковщица, кладовщик, менеджер — к материалам
                 # заказа отношения не имеют, иначе списание ушло бы мимо реального этапа.
                 #
-                # Должность берём из ОТКРЫТОЙ СМЕНЫ, как и на стикеровке: в цехе
-                # совмещают, и человек, оформленный швеёй, может выйти сегодня
-                # закройщиком. Карточка говорит, кем он оформлен, смена — кем
-                # работает прямо сейчас; для допуска к работе верна вторая.
-                if actor_id:
-                    cur.execute(
-                        "SELECT role FROM shift_sessions WHERE user_id = %s "
-                        "AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
-                        (int(actor_id),),
-                    )
-                    cut_sh_row = cur.fetchone()
-                    cut_actor_role = cut_sh_row[0] if cut_sh_row and cut_sh_row[0] else None
-                    # Смена не открыта или должность в ней не зафиксирована (старые
-                    # смены) — падаем обратно на карточку, чтобы никого не заблокировать.
-                    if not cut_actor_role:
-                        cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
-                        cut_role_row = cur.fetchone()
-                        cut_actor_role = cut_role_row[0] if cut_role_row else None
-                    if cut_actor_role not in ('cutter', 'admin'):
-                        return {
-                            'statusCode': 403,
-                            'headers': headers,
-                            'body': json.dumps(
-                                {'error': 'Раскраивать заказы и выбирать рулон может только закройщик'},
-                                ensure_ascii=False,
-                            ),
-                        }
+                # Допуск — по всем должностям сотрудника сразу (см. can_work_as):
+                # смена, карточка и утверждённые должности. Совместитель, вышедший
+                # в смену другой должностью, не должен упираться в отказ.
+                if not can_work_as(cur, actor_id, 'cutter'):
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Раскраивать заказы и выбирать рулон может только закройщик'},
+                            ensure_ascii=False,
+                        ),
+                    }
 
                 # Для связки собираем все её ещё не раскроенные вещи, закреплённые за этим же
                 # закройщиком, и обрабатываем их одну за другой в общей транзакции: либо
@@ -2228,35 +2260,17 @@ def handler(event: dict, context) -> dict:
 
                 # Тесьму списывает только швея (и администратор): это её этап работы.
                 #
-                # Должность берём из ОТКРЫТОЙ СМЕНЫ, а не из карточки сотрудника.
-                # В цехе совмещают: Мария Ануфриева числится закройщиком, но сегодня
-                # вышла швеёй и выбрала эту должность при открытии смены. По карточке
-                # ей отказывали — «выбирать материал может только швея», — хотя она
-                # весь день шьёт. Карточка говорит, кем человек оформлен, смена —
-                # кем он работает прямо сейчас; для допуска к работе верна вторая.
-                if actor_id:
-                    cur.execute(
-                        "SELECT role FROM shift_sessions WHERE user_id = %s "
-                        "AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
-                        (int(actor_id),),
-                    )
-                    sh_role_row = cur.fetchone()
-                    st_actor_role = sh_role_row[0] if sh_role_row and sh_role_row[0] else None
-                    # Смена не открыта или должность в ней не зафиксирована (старые
-                    # смены) — падаем обратно на карточку, чтобы никого не заблокировать.
-                    if not st_actor_role:
-                        cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
-                        st_role_row = cur.fetchone()
-                        st_actor_role = st_role_row[0] if st_role_row else None
-                    if st_actor_role not in ('sewer', 'admin'):
-                        return {
-                            'statusCode': 403,
-                            'headers': headers,
-                            'body': json.dumps(
-                                {'error': 'Отправлять на стикеровку и выбирать тесьму может только швея'},
-                                ensure_ascii=False,
-                            ),
-                        }
+                # Допуск проверяем по всем должностям сотрудника сразу — см.
+                # can_work_as: смена, карточка и утверждённые должности.
+                if not can_work_as(cur, actor_id, 'sewer'):
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Отправлять на стикеровку и выбирать тесьму может только швея'},
+                            ensure_ascii=False,
+                        ),
+                    }
 
                 cur.execute(
                     "SELECT material, width, height, workshop_id, sewing_status, assigned_user_id FROM orders WHERE id = %s",
