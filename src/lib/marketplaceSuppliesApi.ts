@@ -54,6 +54,9 @@ export interface SupplyItem {
   goodsStatus: string | null;
   shippedAt: string | null;
   boxId: number | null;
+  /** Стикер связки (YM-…): им вещь сканируют в поставку — ярлык маркетплейса
+   * у заказа из нескольких вещей один на всех. */
+  bundleBarcode?: string | null;
   /** Заказ покупателя из нескольких вещей (Яндекс Маркет) — ярлык на них общий. */
   groupKey?: string | null;
   groupSize?: number | null;
@@ -98,6 +101,8 @@ export interface SupplyAwaitingItem {
   groupKey?: string | null;
   groupSize?: number | null;
   groupPosition?: number | null;
+  /** Стикер связки (YM-…): им вещь сканируют в поставку. */
+  bundleBarcode?: string | null;
 }
 
 /** Заказ на пошив, привязанный к поставке: по ним видно, что уже сшито, а что в работе. */

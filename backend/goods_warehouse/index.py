@@ -1576,6 +1576,40 @@ def handler(event: dict, context) -> dict:
                     "shipping_labeled_by = %s, shipping_labeled_by_name = %s WHERE id = %s",
                     (actor_id, actor_name, int(gw_id)),
                 )
+
+                # Вещь из СВЯЗКИ Яндекса получает свой стикер YM-… .
+                #
+                # У связки ярлык маркетплейса ОДИН на все вещи: на каждой наклейке
+                # один и тот же номер грузоместа и «1/1». Отсканировать им четыре
+                # разные вещи невозможно, поэтому связку собирают по этому коду —
+                # он у каждой вещи свой.
+                #
+                # Отдельный код, а не складской GW-: складской означает «лежит на
+                # полке хранения», и два похожих стикера на одной вещи кладовщик
+                # путает. YM ни с чем не спутать — увидел, значит собираешь связку.
+                bundle_barcode = None
+                cur.execute(
+                    "SELECT o.group_key, COALESCE(o.group_size, 1), o.group_position "
+                    "FROM orders o WHERE o.id = %s",
+                    (reserved_order_id,),
+                )
+                g_row = cur.fetchone()
+                if g_row and g_row[0] and g_row[1] > 1:
+                    cur.execute(
+                        "SELECT bundle_barcode FROM goods_warehouse WHERE id = %s",
+                        (int(gw_id),),
+                    )
+                    b_row = cur.fetchone()
+                    bundle_barcode = b_row[0] if b_row else None
+                    if not bundle_barcode:
+                        # Код повторяет номер заказа и позицию вещи в нём:
+                        # «YM-60603398529-2». По нему сразу видно, из какой связки
+                        # вещь и какая она по счёту — это читается и глазами.
+                        bundle_barcode = f"{g_row[0]}-{g_row[2] or 1}"
+                        cur.execute(
+                            "UPDATE goods_warehouse SET bundle_barcode = %s WHERE id = %s",
+                            (bundle_barcode, int(gw_id)),
+                        )
                 log_action(
                     cur, actor_id, actor_name, 'ship_label', 'goods_warehouse', gw_id,
                     f'Наклеил стикер отправления на заказ #{target_number} ({scan_barcode})',
@@ -1591,6 +1625,9 @@ def handler(event: dict, context) -> dict:
                         'product': gw_product,
                         'shelfName': shelf_name,
                         'storageBarcode': scan_barcode,
+                        # Стикер связки: если он есть, терминал печатает его вторым —
+                        # именно им кладовщик соберёт связку в поставку.
+                        'bundleBarcode': bundle_barcode,
                         'marketplace': mp,
                         'orderType': order_type,
                     }, ensure_ascii=False),

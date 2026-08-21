@@ -818,7 +818,9 @@ def handler(event: dict, context) -> dict:
                     "COALESCE(ro.status, o.status), "
                     "COALESCE(ro.ozon_status, o.ozon_status), "
                     "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id, "
-                    "COALESCE(ro.marketplace, o.marketplace), gw.shipping_labeled_by_name "
+                    "COALESCE(ro.marketplace, o.marketplace), gw.shipping_labeled_by_name, "
+                    # Стикер связки — им вещь сканируют в поставку.
+                    "gw.bundle_barcode "
                     "FROM marketplace_supply_items msi "
                     "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
@@ -859,6 +861,9 @@ def handler(event: dict, context) -> dict:
                         'mpStatus': r[14] or r[15],
                         # Кто наклеил ярлык отправления на эту вещь.
                         'labeledByName': r[19],
+                        # Стикер связки: им вещь сканируется в поставку, потому что
+                        # ярлык маркетплейса у связки один на все вещи.
+                        'bundleBarcode': r[20],
                     }
                     for r in cur.fetchall()
                 ]
@@ -1095,7 +1100,7 @@ def handler(event: dict, context) -> dict:
                 # Незастикерованный товар сюда не попадает — ровно как в счётчике:
                 # без ярлыка отправления вещь в поставку не принимается.
                 cur.execute(
-                    "SELECT gw.id, gw.storage_barcode, "
+                    "SELECT gw.id, gw.storage_barcode, gw.bundle_barcode, "
                     "       COALESCE(ro.order_number, so.order_number), "
                     "       COALESCE(ro.product, so.product), "
                     "       COALESCE(ro.material, so.material), "
@@ -1147,23 +1152,25 @@ def handler(event: dict, context) -> dict:
                     {
                         'id': r[0],
                         'storageBarcode': r[1],
-                        'orderNumber': r[2],
-                        'product': r[3],
-                        'material': r[4],
-                        'width': r[5],
-                        'height': r[6],
-                        'labeledByName': r[7],
-                        'labeledAt': (r[8].isoformat() + 'Z') if r[8] else None,
-                        'shelfName': r[9],
+                        # Стикер связки: им вещь сканируют в поставку.
+                        'bundleBarcode': r[2],
+                        'orderNumber': r[3],
+                        'product': r[4],
+                        'material': r[5],
+                        'width': r[6],
+                        'height': r[7],
+                        'labeledByName': r[8],
+                        'labeledAt': (r[9].isoformat() + 'Z') if r[9] else None,
+                        'shelfName': r[10],
                         # Кто делал вещь — для печатного листа недостачи.
-                        'cutterName': r[10],
-                        'sewerName': r[11],
-                        'packerName': r[12],
-                        'packedAt': (r[13].isoformat() + 'Z') if r[13] else None,
+                        'cutterName': r[11],
+                        'sewerName': r[12],
+                        'packerName': r[13],
+                        'packedAt': (r[14].isoformat() + 'Z') if r[14] else None,
                         # Связка Яндекса: по ней чек-лист сводит вещи в одну строку.
-                        'groupKey': r[14],
-                        'groupSize': r[15],
-                        'groupPosition': r[16],
+                        'groupKey': r[15],
+                        'groupSize': r[16],
+                        'groupPosition': r[17],
                     }
                     for r in cur.fetchall()
                 ]
@@ -1602,28 +1609,36 @@ def handler(event: dict, context) -> dict:
                 # же номер грузоместа и «1/1». Отсканировать таким ярлыком четыре
                 # разные вещи невозможно — система каждый раз находила бы первую.
                 #
-                # Поэтому вещи связки собираем по НАШЕМУ складскому стикеру: он у
-                # каждой вещи свой и уже напечатан при стикеровке. Кладовщик пикает
-                # их по одной, система видит, что связка собрана целиком, и только
-                # после этого поставку можно отгружать. Ярлык маркетплейса при этом
-                # остаётся на посылке — его клеят на общую упаковку заказа.
+                # Поэтому у каждой вещи связки есть свой стикер YM-… (выдаётся при
+                # стикеровке). Кладовщик пикает вещи по одной, система видит, что
+                # связка собрана целиком, и только после этого поставку можно
+                # отгружать. Ярлык маркетплейса остаётся на общей упаковке заказа.
+                bundle_hit = None
                 cur.execute(
-                    "SELECT gw.id, o.group_key, COALESCE(o.group_size, 1) "
-                    "FROM goods_warehouse gw "
-                    "LEFT JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
-                    f"WHERE gw.storage_barcode = '{barcode_esc}'"
+                    "SELECT gw.id FROM goods_warehouse gw "
+                    f"WHERE gw.bundle_barcode = '{barcode_esc}'"
                 )
-                storage_hit = cur.fetchone()
-                if storage_hit and not (storage_hit[1] and storage_hit[2] > 1):
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps({
-                            'error': 'Это складской стикер хранения. В поставку сканируйте '
-                                     'стикер маркетплейса (ярлык отправления), наклеенный '
-                                     'на вещь при сборке с полок'
-                        }, ensure_ascii=False),
-                    }
+                bundle_hit = cur.fetchone()
+
+                # Складской стикер хранения в поставку не принимаем: он означает
+                # «вещь лежит на полке», а не «едет в поставку». Связка собирается
+                # своим стикером YM — их специально сделали разными, чтобы кладовщик
+                # не путал два одинаковых на вид кода.
+                if not bundle_hit:
+                    cur.execute(
+                        "SELECT gw.id FROM goods_warehouse gw "
+                        f"WHERE gw.storage_barcode = '{barcode_esc}'"
+                    )
+                    if cur.fetchone():
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Это складской стикер хранения. В поставку '
+                                         'сканируйте стикер маркетплейса, а для связки '
+                                         'Яндекса — её стикер YM-…'
+                            }, ensure_ascii=False),
+                        }
 
                 # Ищем вещь по номеру отправления маркетплейса: именно он напечатан на
                 # ярлыке, который кладовщик клеит при сборке с полок.
@@ -1661,16 +1676,14 @@ def handler(event: dict, context) -> dict:
                     "         (gw.status = 'awaiting_supply') DESC, "
                     "         (gw.reserved_order_id = o.id) DESC LIMIT 1"
                 )
-                # Складской стикер вещи из СВЯЗКИ: выше мы его пропустили, потому
-                # что ярлык маркетплейса у связки один на всех и разложить им вещи
-                # по одной невозможно. Ищем вещь прямо по этому стикеру.
-                if storage_hit and storage_hit[1] and storage_hit[2] > 1:
+                # Стикер связки YM-…: вещь найдена прямо по нему.
+                if bundle_hit:
                     cur.execute(
                         "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
                         "FROM goods_warehouse gw "
                         "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
                         "WHERE gw.id = %s",
-                        (storage_hit[0],),
+                        (bundle_hit[0],),
                     )
                     gw_row = cur.fetchone()
                 else:
