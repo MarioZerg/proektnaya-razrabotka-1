@@ -54,6 +54,9 @@ const SupplyItemsSection = ({
 }: SupplyItemsSectionProps) => {
   useScannerAutoSubmit(scanOrderNumber, onScanOrder, !scanning && supply.type === 'FBS' && canEditItems);
 
+  // Есть ли в поставке связки — от этого зависит подсказка о сканировании.
+  const hasBundles = (supply.groups || []).some((g) => g.total > 1);
+
   // Раскладываем позиции на связки и одиночные заказы.
   //
   // Связка (Яндекс) — заказ из нескольких вещей с одним общим ярлыком: он едет
@@ -143,6 +146,19 @@ const SupplyItemsSection = ({
               <Icon name="ScanLine" size={18} />
               Сканируйте пакет с товаром — ярлык маркетплейса на нём
             </div>
+            {/* У связки Яндекса ярлык маркетплейса ОДИН на все вещи: на каждой
+                наклейке один и тот же номер и «1/1». Разложить им вещи по одной
+                нельзя, поэтому связку собирают по нашему складскому стикеру. */}
+            {hasBundles && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                <Icon name="Package" size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  В поставке есть связки: у них ярлык маркетплейса один на все вещи.
+                  Такие вещи сканируйте по <b>складскому стикеру</b> (GW-…) — каждую
+                  отдельно, пока связка не соберётся целиком
+                </span>
+              </div>
+            )}
             <div className="flex gap-2">
               <Input
                 ref={scanInputRef}

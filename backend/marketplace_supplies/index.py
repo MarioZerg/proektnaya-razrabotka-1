@@ -1594,16 +1594,27 @@ def handler(event: dict, context) -> dict:
 
                 barcode_esc = storage_barcode.replace("'", "''")
 
-                # В поставку принимается ТОЛЬКО стикер маркетплейса (номер отправления).
-                # Складской стикер хранения здесь не работает: по нему кладовщик может
-                # лишь застикеровать вещь на складе. Иначе в короб уезжала вещь без
-                # ярлыка маркетплейса — на приёмке её не опознают.
+                # Обычно в поставку сканируется стикер маркетплейса: у каждой вещи
+                # свой ярлык, по нему её и опознают на приёмке.
+                #
+                # ИСКЛЮЧЕНИЕ — связка Яндекса. Покупатель заказал несколько вещей,
+                # и ярлык на них ОДИН общий: на всех наклейках напечатан один и тот
+                # же номер грузоместа и «1/1». Отсканировать таким ярлыком четыре
+                # разные вещи невозможно — система каждый раз находила бы первую.
+                #
+                # Поэтому вещи связки собираем по НАШЕМУ складскому стикеру: он у
+                # каждой вещи свой и уже напечатан при стикеровке. Кладовщик пикает
+                # их по одной, система видит, что связка собрана целиком, и только
+                # после этого поставку можно отгружать. Ярлык маркетплейса при этом
+                # остаётся на посылке — его клеят на общую упаковку заказа.
                 cur.execute(
-                    "SELECT gw.id, gw.storage_barcode FROM goods_warehouse gw "
+                    "SELECT gw.id, o.group_key, COALESCE(o.group_size, 1) "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
                     f"WHERE gw.storage_barcode = '{barcode_esc}'"
                 )
                 storage_hit = cur.fetchone()
-                if storage_hit:
+                if storage_hit and not (storage_hit[1] and storage_hit[2] > 1):
                     return {
                         'statusCode': 409,
                         'headers': headers,
@@ -1650,8 +1661,21 @@ def handler(event: dict, context) -> dict:
                     "         (gw.status = 'awaiting_supply') DESC, "
                     "         (gw.reserved_order_id = o.id) DESC LIMIT 1"
                 )
-                cur.execute(find_sql.format(code=barcode_esc))
-                gw_row = cur.fetchone()
+                # Складской стикер вещи из СВЯЗКИ: выше мы его пропустили, потому
+                # что ярлык маркетплейса у связки один на всех и разложить им вещи
+                # по одной невозможно. Ищем вещь прямо по этому стикеру.
+                if storage_hit and storage_hit[1] and storage_hit[2] > 1:
+                    cur.execute(
+                        "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
+                        "FROM goods_warehouse gw "
+                        "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+                        "WHERE gw.id = %s",
+                        (storage_hit[0],),
+                    )
+                    gw_row = cur.fetchone()
+                else:
+                    cur.execute(find_sql.format(code=barcode_esc))
+                    gw_row = cur.fetchone()
 
                 # Не нашли по номеру — возможно, это ярлык ЯНДЕКСА.
                 #

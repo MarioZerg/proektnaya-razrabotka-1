@@ -32,6 +32,8 @@ interface Row {
   height: number | null;
   labeledByName: string | null;
   shelfName?: string | null;
+  /** Складской стикер вещи — им сканируют связку и по нему её печатают заново. */
+  storageBarcode?: string | null;
   item?: SupplyItem;
   /** Связка Яндекса: строки с одним ключом показываются под общей шапкой. */
   groupKey?: string | null;
@@ -69,6 +71,7 @@ const FbsSupplyChecklist = ({
     labeledByName: item.labeledByName ?? null,
     item,
     groupKey: item.groupKey ?? null,
+    storageBarcode: item.storageBarcode ?? null,
   }));
 
   const waitingRows: Row[] = (supply.awaitingItems || []).map((a) => ({
@@ -81,6 +84,7 @@ const FbsSupplyChecklist = ({
     labeledByName: a.labeledByName,
     shelfName: a.shelfName,
     groupKey: a.groupKey ?? null,
+    storageBarcode: a.storageBarcode ?? null,
   }));
 
   // Ненайденные — НАВЕРХ. Это и есть работа: собранное кладовщик уже держит в коробе
@@ -137,6 +141,28 @@ const FbsSupplyChecklist = ({
       height: row.height,
       marketplace: supply.marketplace,
       orderType: supply.type,
+    });
+  };
+
+  /**
+   * Печать складского стикера вещи.
+   *
+   * Связку собирают именно по нему: ярлык маркетплейса у заказа из нескольких
+   * вещей один на всех, и отсканировать им четыре разные вещи невозможно.
+   * Стикер на складе мнётся и отклеивается — тогда вещь не отсканировать вовсе,
+   * поэтому даём напечатать его заново.
+   */
+  const handlePrintStorage = async (row: Row) => {
+    if (!row.storageBarcode) return;
+    const { printStorageSticker } = await import('@/lib/printStorageSticker');
+    const group = row.groupKey
+      ? supply.groups?.find((g) => g.groupKey === row.groupKey)
+      : undefined;
+    printStorageSticker({
+      storageBarcode: row.storageBarcode,
+      title: `${row.material || ''} ${row.width && row.height ? `${row.width}×${row.height}` : ''}`.trim(),
+      orderNumber: row.orderNumber,
+      groupLabel: group && group.total > 1 ? `Связка из ${group.total}` : null,
     });
   };
 
@@ -218,6 +244,22 @@ const FbsSupplyChecklist = ({
                       >
                         <Icon name="QrCode" size={14} className="mr-1" />
                         QR заказа
+                      </Button>
+                    )}
+                    {/* Складской стикер — им собирают связку: ярлык маркетплейса
+                        у неё один на все вещи, разложить им вещи по одной нельзя.
+                        Стикер мнётся и отклеивается на складе, поэтому даём
+                        напечатать его заново прямо отсюда. */}
+                    {row.storageBarcode && row.groupKey && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-1 h-7 px-1.5 text-xs text-muted-foreground"
+                        title="Напечатать складской стикер — им сканируют связку в поставку"
+                        onClick={() => void handlePrintStorage(row)}
+                      >
+                        <Icon name="Barcode" size={14} className="mr-1" />
+                        Стикер {row.storageBarcode}
                       </Button>
                     )}
                   </TableCell>
