@@ -210,8 +210,27 @@ export const updateRoll = (
   fields: Partial<{ status: RollStatus; workshopId: number | null; shiftNumber: number | null }>
 ) => postAction({ action: 'update', id, ...fields });
 
-export const writeOffRoll = (id: number, quantity: number, orderId?: number) =>
-  postAction({ action: 'write_off', id, quantity, orderId });
+/**
+ * Ручное списание метража с рулона — когда материал уходит не в пошив.
+ *
+ * Продали знакомому, отрезали образец, испортили при перемотке. Без такого
+ * списания остаток в системе расходился бы с тем, что реально на полке.
+ * Доступно только администратору, причина обязательна: расход попадает в
+ * журнал движений материала и в историю действий.
+ */
+export const writeOffRoll = (
+  id: number,
+  quantity: number,
+  opts?: { orderId?: number; actorId?: number; reason?: string },
+) =>
+  postAction({
+    action: 'write_off',
+    id,
+    quantity,
+    orderId: opts?.orderId,
+    actorId: opts?.actorId,
+    reason: opts?.reason,
+  }) as Promise<{ success: true; remainingQuantity: number }>;
 
 export const deleteRoll = (id: number) => postAction({ action: 'delete', id });
 

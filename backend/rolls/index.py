@@ -1199,23 +1199,71 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'write_off':
+                # Ручное списание метража с конкретного рулона.
+                #
+                # Нужно, когда материал уходит не в пошив: продали знакомому,
+                # отрезали на образец, испортили при перемотке. Раньше такой
+                # расход было некуда деть — остаток в системе расходился с тем,
+                # что реально лежит на полке, и это всплывало на инвентаризации.
+                #
+                # Списывает только администратор: это движение денег в чистом
+                # виде, и след о нём должен оставаться именной.
                 item_id = body_data.get('id')
                 quantity = body_data.get('quantity')
                 order_id = body_data.get('orderId')
+                actor_id = body_data.get('actorId')
+                reason = (body_data.get('reason') or '').strip()
 
                 if not item_id or quantity in (None, ''):
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id и quantity'})}
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите рулон и количество'},
+                                               ensure_ascii=False)}
+
+                try:
+                    qty = float(quantity)
+                except (TypeError, ValueError):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Количество должно быть числом'},
+                                               ensure_ascii=False)}
+                if qty <= 0:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Количество должно быть больше нуля'},
+                                               ensure_ascii=False)}
+
+                # Списание вручную доступно только администратору. Заказу
+                # (order_id) списание приходит из терминала — там свои проверки.
+                if not order_id:
+                    if not actor_id:
+                        return {'statusCode': 403, 'headers': headers,
+                                'body': json.dumps({'error': 'Списывать материал может только администратор'},
+                                                   ensure_ascii=False)}
+                    cur.execute("SELECT role, full_name FROM users WHERE id = %s",
+                                (int(actor_id),))
+                    actor = cur.fetchone()
+                    if not actor or actor[0] != 'admin':
+                        return {'statusCode': 403, 'headers': headers,
+                                'body': json.dumps({'error': 'Списывать материал может только администратор'},
+                                                   ensure_ascii=False)}
+                    if not reason:
+                        return {'statusCode': 400, 'headers': headers,
+                                'body': json.dumps({'error': 'Укажите причину списания — иначе в журнале '
+                                                             'останется расход без объяснения'},
+                                                   ensure_ascii=False)}
 
                 cur.execute(
-                    "SELECT remaining_quantity, material_id, status, accepted_at FROM rolls WHERE id = %s",
+                    "SELECT remaining_quantity, material_id, status, accepted_at, barcode "
+                    "FROM rolls WHERE id = %s",
                     (int(item_id),),
                 )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
+
+                remaining, material_id, status, accepted_at, barcode = row
+
                 # Рулон отгружен в цех, но смена его не приняла — материал мог не доехать
                 # или приехать не в том количестве. Сначала приёмка, потом работа.
-                if row[2] == 'in_workshop' and row[3] is None:
+                if status == 'in_workshop' and accepted_at is None:
                     return {
                         'statusCode': 409,
                         'headers': headers,
@@ -1225,22 +1273,61 @@ def handler(event: dict, context) -> dict:
                         }, ensure_ascii=False),
                     }
 
-                remaining, material_id = row
-                new_remaining = float(remaining) - float(quantity)
-                new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
+                remaining = float(remaining or 0)
+                # Больше, чем есть в рулоне, списать нельзя: иначе остаток уйдёт
+                # в минус и склад начнёт показывать несуществующий материал.
+                if qty > remaining + 0.001:
+                    cur.execute("SELECT unit FROM materials WHERE id = %s", (material_id,))
+                    u_row = cur.fetchone()
+                    unit = u_row[0] if u_row else ''
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'В рулоне осталось {round(remaining, 2)} {unit} — '
+                                     f'списать {round(qty, 2)} нельзя'
+                        }, ensure_ascii=False),
+                    }
+
+                new_remaining = round(remaining - qty, 3)
+                new_status_sql = (", status = 'completed', completed_at = now()"
+                                  if new_remaining <= 0 else "")
 
                 cur.execute(
-                    f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {int(item_id)}"
+                    f"UPDATE rolls SET remaining_quantity = %s{new_status_sql} WHERE id = %s",
+                    (new_remaining, int(item_id)),
                 )
 
                 if order_id:
                     cur.execute(
-                        f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
-                        f"VALUES ({int(order_id)}, {int(material_id)}, {int(item_id)}, {float(quantity)})"
+                        "INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
+                        "VALUES (%s, %s, %s, %s)",
+                        (int(order_id), int(material_id), int(item_id), qty),
+                    )
+                else:
+                    # Ручное списание попадает в журнал движений материала — туда
+                    # же, где приход от поставщика и расход в производство. Иначе
+                    # остаток «просто уменьшился», и на инвентаризации это
+                    # выглядело бы как недостача без объяснения.
+                    who = actor[1] if actor and actor[1] else 'Администратор'
+                    cur.execute(
+                        "INSERT INTO material_movements (material_id, quantity, "
+                        "  movement_type, reference) VALUES (%s, %s, 'Списание', %s)",
+                        (int(material_id), -qty,
+                         f'рулон {barcode or item_id} · {reason} · {who}'),
+                    )
+                    cur.execute(
+                        "INSERT INTO audit_log (category, user_id, user_name, action, "
+                        "entity_type, entity_id, description) VALUES "
+                        "('warehouse', %s, %s, 'roll_write_off', 'roll', %s, %s)",
+                        (int(actor_id), who, int(item_id),
+                         f'Списано {round(qty, 2)} с рулона {barcode or item_id}: {reason}'),
                     )
 
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'remainingQuantity': new_remaining})}
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True,
+                                            'remainingQuantity': new_remaining})}
 
             # Закрытие рулона в цехе (терминал): рулон физически закончился. Остаток списывается
             # полностью, а если ткани не хватило — дополнительно фиксируется недостача (метраж,

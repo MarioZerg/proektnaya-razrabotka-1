@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { formatQuantity } from '@/lib/formatQuantity';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
 import { printBarcodes } from '@/lib/printBarcodes';
+import RollWriteOffDialog from '@/components/crm/rolls/RollWriteOffDialog';
 import { currencySymbols } from '@/lib/suppliersApi';
 
 const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | 'default' | 'outline' }> = {
@@ -46,14 +47,17 @@ const RollShow = () => {
   const [data, setData] = useState<RollDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [writeOffOpen, setWriteOffOpen] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true);
     fetchRollDetail(rollId)
       .then(setData)
       .catch((e) => setError(e instanceof Error ? e.message : 'Не удалось загрузить рулон'))
       .finally(() => setLoading(false));
   }, [rollId]);
+
+  useEffect(() => load(), [load]);
 
   if (loading) {
     return (
@@ -137,7 +141,33 @@ const RollShow = () => {
                 Стикер рулона
               </Button>
             )}
+
+            {/* Ручное списание метража: материал уходит не только в пошив —
+                его продают, отрезают на образец, портят при перемотке. Без
+                этой кнопки остаток в системе расходился с полкой, и понять
+                причину можно было только на инвентаризации. */}
+            {isAdmin && roll.remainingQuantity > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setWriteOffOpen(true)}
+              >
+                <Icon name="Minus" size={14} className="mr-1" />
+                Списать метраж
+              </Button>
+            )}
           </div>
+          <RollWriteOffDialog
+            open={writeOffOpen}
+            onOpenChange={setWriteOffOpen}
+            rollId={roll.id}
+            barcode={roll.barcode}
+            materialName={roll.materialName || 'Материал'}
+            remaining={roll.remainingQuantity}
+            unit={unit}
+            onDone={load}
+          />
+
           <p className="mt-1 text-sm text-muted-foreground">
             {roll.materialName || 'Материал —'}
             {roll.materialType ? ` · ${roll.materialType}` : ''}
