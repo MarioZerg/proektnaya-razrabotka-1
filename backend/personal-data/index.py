@@ -105,9 +105,14 @@ def docs_status(row_map: dict, doc_types: set) -> dict:
 
     left = deadline - datetime.utcnow()
     days = left.days + (1 if left.seconds > 0 and left.days >= 0 else 0)
+    # Когда до конца меньше суток, «0 дней» звучит как «срок уже вышел», а
+    # «1 день» — как будто время ещё есть. Ни то ни другое не правда, поэтому
+    # на финишной прямой считаем часы: «осталось 6 часов» понятно без пояснений.
+    hours_left = max(0, int(left.total_seconds() // 3600))
     return {
         'state': 'countdown',
         'daysLeft': max(0, days) if left.total_seconds() > 0 else 0,
+        'hoursLeft': hours_left if left.total_seconds() > 0 else 0,
         'deadline': iso(deadline),
         'blocked': False,
         'expired': left.total_seconds() <= 0,
@@ -483,6 +488,8 @@ def handler(event: dict, context) -> dict:
         if action == 'check_expired':
             # Срок вышел, а комплекта нет — ставим блокировку. Проверку делает сам
             # сотрудник при входе: отдельный планировщик ради этого держать незачем.
+            # Смысл блокировки — не пустить к работе, а к работе человек попадает
+            # только через вход, так что момент проверки выбран верно.
             user_id = body_data.get('userId')
             cur.execute(
                 "UPDATE users u SET docs_blocked = true "

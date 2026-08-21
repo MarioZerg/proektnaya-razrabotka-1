@@ -14,6 +14,15 @@ const daysWord = (n: number) => {
   return 'дней';
 };
 
+/** Склонение: 1 час, 2 часа, 5 часов. */
+const hoursWord = (n: number) => {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'час';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'часа';
+  return 'часов';
+};
+
 /** Счётчик до окончания срока на документы. Висит вверху системы, пока сотрудник
  * не сдаст комплект. Когда документы уходят на проверку — счётчик замирает и
  * превращается в спокойное «на проверке»: человек свою часть выполнил. */
@@ -51,7 +60,11 @@ const DocsCountdownBanner = () => {
   }
 
   const days = status.daysLeft ?? 0;
-  const urgent = days <= 2;
+  const hours = status.hoursLeft ?? 0;
+  // Меньше суток — считаем часами: «1 день» звучит так, будто время ещё есть,
+  // а «0 дней» — будто срок уже прошёл. Часы не оставляют разночтений.
+  const byHours = hours > 0 && hours <= 24;
+  const urgent = byHours || days <= 2;
 
   return (
     <div
@@ -73,9 +86,11 @@ const DocsCountdownBanner = () => {
               urgent ? 'text-destructive' : 'text-amber-900'
             }`}
           >
-            {days > 0
-              ? `Загрузите документы: остал${days === 1 ? 'ся' : 'ось'} ${days} ${daysWord(days)}`
-              : 'Сегодня последний день для загрузки документов'}
+            {byHours
+              ? `Загрузите документы: остал${hours === 1 ? 'ся' : 'ось'} ${hours} ${hoursWord(hours)}`
+              : days > 0
+                ? `Загрузите документы: остал${days === 1 ? 'ся' : 'ось'} ${days} ${daysWord(days)}`
+                : 'Сегодня последний день для загрузки документов'}
           </p>
           <p className={`text-xs ${urgent ? 'text-destructive' : 'text-amber-900'}`}>
             {reason

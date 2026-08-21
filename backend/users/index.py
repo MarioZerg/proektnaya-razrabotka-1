@@ -442,6 +442,18 @@ def handler(event: dict, context) -> dict:
                     'INSERT INTO user_roles (user_id, role, is_approved) VALUES (%s, %s, true)',
                     (new_id, role),
                 )
+                # Срок на документы ставим ЗДЕСЬ же.
+                #
+                # Раньше он назначался только при утверждении должности, но админ
+                # заводит сотрудника сразу с утверждённой — этот шаг просто не
+                # наступал. В итоге у двадцати человек срок не был назначен вовсе,
+                # и требование сдать паспорт по факту не действовало ни для кого.
+                cur.execute(
+                    "UPDATE users SET docs_deadline = now() + interval '7 days' "
+                    "WHERE id = %s AND docs_deadline IS NULL "
+                    "AND personal_data_verified = false",
+                    (new_id,),
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'login': login})}
 

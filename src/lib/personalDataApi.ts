@@ -18,6 +18,8 @@ export interface UserDocument {
 export interface DocsStatus {
   state: 'countdown' | 'review' | 'blocked' | 'done' | 'none';
   daysLeft: number | null;
+  /** Часов до конца срока — показываем вместо дней на последних сутках. */
+  hoursLeft?: number | null;
   deadline: string | null;
   blocked: boolean;
   expired?: boolean;
