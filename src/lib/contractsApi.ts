@@ -1,4 +1,5 @@
 import func2url from '../../backend/func2url.json';
+import { cachedRequest, invalidateCache } from '@/lib/requestCache';
 
 const CONTRACTS_URL = (func2url as Record<string, string>).contracts;
 
@@ -77,11 +78,24 @@ export const fetchAllContracts = async (actorId: number): Promise<Contract[]> =>
 };
 
 /** Сколько документов ждут подписи. Пока больше нуля — система для сотрудника закрыта. */
-export const fetchPendingContracts = async (userId: number): Promise<number> => {
-  const res = await fetch(`${CONTRACTS_URL}?pending=1&userId=${userId}`);
-  const data = await res.json();
-  return data.pending || 0;
-};
+/**
+ * Есть ли у сотрудника неподписанные документы — вопрос на входе в систему.
+ *
+ * Ответ кэшируем на 5 минут: проверка идёт при появлении общего макета, а он
+ * пересобирается на каждом переходе по меню. Без кэша человек, кликающий по
+ * разделам, слал бы этот запрос десятки раз за смену — при том что договор
+ * появляется раз в несколько месяцев.
+ */
+export const fetchPendingContracts = (userId: number): Promise<number> =>
+  cachedRequest(
+    `contracts:pending:${userId}`,
+    async () => {
+      const res = await fetch(`${CONTRACTS_URL}?pending=1&userId=${userId}`);
+      const data = await res.json();
+      return (data.pending || 0) as number;
+    },
+    5 * 60 * 1000,
+  );
 
 /** Админ загружает договор на сотрудника — документ сразу становится обязательным. */
 export const createContract = (payload: {
@@ -91,18 +105,32 @@ export const createContract = (payload: {
   fileName: string;
   actorId?: number;
   actorName?: string;
-}) => postAction({ action: 'create', actorRole: 'admin', ...payload });
+}) => {
+  // Договор появился — сотрудник должен увидеть заслонку сразу, а не через
+  // пять минут, пока держится кэш проверки.
+  invalidateCache(`contracts:pending:${payload.userId}`);
+  return postAction({ action: 'create', actorRole: 'admin', ...payload });
+};
 
 /** Сотрудник просит код подписи — бот присылает 6 цифр в MAX. */
 export const sendSignCode = (contractId: number, userId: number) =>
   postAction({ action: 'send_code', contractId, userId });
 
 /** Подпись договора кодом из MAX. */
-export const signContract = (contractId: number, userId: number, code: string) =>
-  postAction({ action: 'sign', contractId, userId, code }) as Promise<{
+export const signContract = async (
+  contractId: number,
+  userId: number,
+  code: string,
+) => {
+  const r = (await postAction({ action: 'sign', contractId, userId, code })) as {
     success: true;
     title: string;
-  }>;
+  };
+  // Сбрасываем кэш: человек только что подписал, и заслонка должна пропустить
+  // его сразу, а не через пять минут.
+  invalidateCache(`contracts:pending:${userId}`);
+  return r;
+};
 
 /** Админ отзывает ошибочно загруженный документ — блокировка снимается. */
 export const cancelContract = (id: number) =>
@@ -127,12 +155,14 @@ export const previewGeneratedContract = (userId: number, actorId: number, role?:
   }>;
 
 /** Отправляет собранный договор сотруднику на подпись. */
-export const sendGeneratedContract = (userId: number, actorId: number, role?: string) =>
-  postAction({ action: 'send_generated', userId, actorId, role }) as Promise<{
+export const sendGeneratedContract = (userId: number, actorId: number, role?: string) => {
+  invalidateCache(`contracts:pending:${userId}`);
+  return postAction({ action: 'send_generated', userId, actorId, role }) as Promise<{
     id: number;
     fileUrl: string;
     title: string;
   }>;
+};
 
 /** Реквизиты ИП — подставляются в каждый договор. */
 export interface CompanyRequisites {

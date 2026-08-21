@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
@@ -59,11 +60,13 @@ const SchedulerSettings = () => {
 
   useEffect(() => {
     load();
-    // Обновляем сами: страницу держат открытой, а задания продолжают работать.
-    const timer = setInterval(load, 60000);
-    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Обновляем сами: страницу держат открытой, а задания продолжают работать.
+  // Через usePolling, а не свой setInterval: тот опрашивал сервер и в свёрнутой
+  // вкладке, и ночью — а эту страницу админ нередко оставляет открытой на день.
+  usePolling(load, 120000, !!user?.id && isAdmin);
 
   if (!isAdmin) {
     return (

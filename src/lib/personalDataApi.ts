@@ -1,3 +1,5 @@
+import { cachedRequest, invalidateCache } from '@/lib/requestCache';
+
 const PERSONAL_DATA_URL = 'https://functions.poehali.dev/ec5431c3-28ca-48c0-aabe-1ec7a5136923';
 
 /** Тип документа, который сотрудник загружает в профиле. */
@@ -84,7 +86,12 @@ export const uploadUserDoc = (payload: {
   fileBase64: string;
   mimeType: string;
   fileName: string;
-}) => post({ action: 'upload_doc', ...payload });
+}) => {
+  // Загрузили скан — прежний ответ о блокировке устарел: комплект мог стать
+  // полным, и человека больше нельзя держать за заслонкой.
+  invalidateCache(`docs:expired:${payload.userId}`);
+  return post({ action: 'upload_doc', ...payload });
+};
 
 export const saveSbp = (payload: {
   userId: number;
@@ -120,9 +127,23 @@ export const rejectDocs = (payload: {
 }) => post({ action: 'reject_docs', ...payload });
 
 /** Админ возвращает заблокированного сотрудника в работу. */
-export const unblockDocs = (userId: number, actorId: number, days = 7) =>
-  post({ action: 'unblock_docs', userId, actorId, days });
+export const unblockDocs = (userId: number, actorId: number, days = 7) => {
+  // Админ снял блокировку — прежний ответ о ней недействителен.
+  invalidateCache(`docs:expired:${userId}`);
+  return post({ action: 'unblock_docs', userId, actorId, days });
+};
 
-/** Проверка при входе: срок вышел, а документов нет — ставим блокировку. */
+/**
+ * Проверка при входе: срок вышел, а документов нет — ставим блокировку.
+ *
+ * Кэшируем на 10 минут. Проверка идёт при появлении общего макета, а он
+ * пересобирается на каждом переходе по меню — без кэша получалось по запросу
+ * на каждый клик. Срок при этом измеряется днями, и десять минут задержки
+ * ничего не решают: человек всё равно увидит блокировку в тот же день.
+ */
 export const checkDocsExpired = (userId: number) =>
-  post({ action: 'check_expired', userId }) as Promise<{ blocked: boolean }>;
+  cachedRequest(
+    `docs:expired:${userId}`,
+    () => post({ action: 'check_expired', userId }) as Promise<{ blocked: boolean }>,
+    10 * 60 * 1000,
+  );
