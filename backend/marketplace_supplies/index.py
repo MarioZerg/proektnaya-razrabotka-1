@@ -558,6 +558,33 @@ def check_incomplete_groups(cur, supply_id):
     ]
 
 
+def check_unlabeled_bundles(cur, supply_id):
+    """Связки, собранные целиком, но БЕЗ наклеенного общего ярлыка.
+
+    Сборка связки состоит из двух шагов: отсканировать вещи по стикерам YM и
+    подтвердить общий ярлык маркетплейса, который клеится на коробку. Вещи
+    внутри есть, а коробка не подписана — на приёмке её не опознают, и заказ
+    зависнет. Поэтому такую поставку не отпускаем.
+    """
+    cur.execute(
+        "SELECT o.group_key, count(*) AS in_supply, max(o.group_size) AS total "
+        "FROM marketplace_supply_items msi "
+        "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+        "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+        "WHERE msi.supply_id = %s AND o.group_key IS NOT NULL "
+        "  AND COALESCE(o.group_size, 1) > 1 "
+        "  AND NOT EXISTS (SELECT 1 FROM supply_bundle_labels sbl "
+        "                  WHERE sbl.supply_id = msi.supply_id "
+        "                    AND sbl.group_key = o.group_key) "
+        "GROUP BY o.group_key",
+        (int(supply_id),),
+    )
+    return [
+        {'groupKey': r[0], 'inSupply': int(r[1]), 'total': int(r[2] or 0)}
+        for r in cur.fetchall()
+    ]
+
+
 def handler(event: dict, context) -> dict:
     """Поставки готового товара на маркетплейс (полный цикл, как на физическом складе):
 
@@ -910,6 +937,23 @@ def handler(event: dict, context) -> dict:
                     }
                     for r in cur.fetchall()
                 ]
+
+                # Наклеен ли на коробку общий ярлык связки — второй шаг сборки.
+                # Без него связка собрана, но коробка не подписана: на приёмке её
+                # не опознают, и заказ зависнет.
+                cur.execute(
+                    "SELECT group_key, scanned_at, scanned_by_name "
+                    "FROM supply_bundle_labels WHERE supply_id = %s",
+                    (int(supply_id),),
+                )
+                labeled = {r[0]: r for r in cur.fetchall()}
+                for g in groups:
+                    # Отдельное имя, а не row: row выше — это сама поставка, и её
+                    # затирание ломало весь ответ функции.
+                    lbl = labeled.get(g['groupKey'])
+                    g['labelScanned'] = bool(lbl)
+                    g['labelScannedAt'] = (lbl[1].isoformat() + 'Z') if lbl else None
+                    g['labelScannedByName'] = lbl[2] if lbl else None
 
                 # Заказы на пошив по этой поставке: менеджеру нужно видеть, что уже сшито,
                 # а что ещё в работе, и догружать недостающее прямо из карточки поставки.
@@ -1398,7 +1442,7 @@ def handler(event: dict, context) -> dict:
         FBS_WRITE_ACTIONS = (
             'scan_order', 'remove_item', 'create_box', 'delete_box', 'close_box',
             'add_order_to_box', 'remove_box_item', 'move_status', 'force_complete',
-            'update', 'delete', 'add_sewing_orders',
+            'update', 'delete', 'add_sewing_orders', 'scan_bundle_label',
         )
 
         # Действия сборки: пока поставку держит один кладовщик, второй их выполнить
@@ -1407,6 +1451,7 @@ def handler(event: dict, context) -> dict:
         ASSEMBLY_ACTIONS = (
             'scan_order', 'remove_item', 'create_box', 'delete_box', 'close_box',
             'add_order_to_box', 'remove_box_item', 'cancelled_to_shelf', 'add_sewing_orders',
+            'scan_bundle_label',
         )
 
         conn = psycopg2.connect(dsn)
@@ -1579,6 +1624,101 @@ def handler(event: dict, context) -> dict:
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': supply_id})}
+
+            if action == 'scan_bundle_label':
+                # ВТОРОЙ ШАГ сборки связки: общий ярлык маркетплейса на коробку.
+                #
+                # Порядок у кладовщика такой:
+                #   1. сканирует стикеры YM-… — по одному на каждую вещь заказа;
+                #   2. когда собрались все, подтверждает общий ярлык — тот самый,
+                #      который Яндекс выдал один на весь заказ;
+                #   3. клеит этот ярлык на коробку со связкой.
+                #
+                # Шаг нужен как физическая отметка: ярлык существует в единственном
+                # экземпляре, и без него коробка уедет неопознанной. «Вещи собраны»
+                # и «ярлык наклеен» — разные вещи, и знать надо обе.
+                supply_id = body_data.get('supplyId')
+                group_key = (body_data.get('groupKey') or '').strip()
+                code = (body_data.get('code') or '').strip()
+                if not supply_id or not group_key:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите поставку и связку'},
+                                               ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT status FROM marketplace_supplies WHERE id = %s", (int(supply_id),)
+                )
+                s_row = cur.fetchone()
+                if not s_row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Поставка не найдена'},
+                                               ensure_ascii=False)}
+                if s_row[0] not in ('Открытая', 'На сборке'):
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Поставка уже закрыта'},
+                                               ensure_ascii=False)}
+
+                # Ярлык подтверждаем ТОЛЬКО когда связка собрана целиком. Иначе
+                # коробку заклеят с неполным заказом: ярлык наклеен, а вещи внутри
+                # не все — на приёмке это уже не разобрать.
+                cur.execute(
+                    "SELECT max(o.group_size), "
+                    "count(*) FILTER (WHERE msi.supply_id = %s) "
+                    "FROM orders o "
+                    "LEFT JOIN goods_warehouse gw "
+                    "  ON gw.order_id = o.id OR gw.reserved_order_id = o.id "
+                    "LEFT JOIN marketplace_supply_items msi "
+                    "  ON msi.goods_warehouse_id = gw.id "
+                    "WHERE o.group_key = %s",
+                    (int(supply_id), group_key),
+                )
+                g_row = cur.fetchone()
+                total = int(g_row[0] or 0) if g_row else 0
+                in_supply = int(g_row[1] or 0) if g_row else 0
+                if not total:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Связка не найдена'},
+                                               ensure_ascii=False)}
+                if in_supply < total:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Связка собрана не целиком: {in_supply} из {total}. '
+                                     f'Отсканируйте оставшиеся вещи по стикерам YM, '
+                                     f'потом клейте общий ярлык'
+                        }, ensure_ascii=False),
+                    }
+
+                # Сверяем, что отсканирован ярлык ИМЕННО этой связки: на нём напечатан
+                # номер заказа. Иначе на коробку уедет ярлык от соседнего заказа —
+                # и обе посылки придут не туда.
+                if code:
+                    digits = ''.join(ch for ch in code if ch.isdigit())
+                    key_digits = ''.join(ch for ch in group_key if ch.isdigit())
+                    if key_digits and key_digits not in digits:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Это ярлык другого заказа. Нужен ярлык связки '
+                                         f'{group_key}'
+                            }, ensure_ascii=False),
+                        }
+
+                cur.execute(
+                    "INSERT INTO supply_bundle_labels (supply_id, group_key, scanned_code, "
+                    "  scanned_by, scanned_by_name) VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (supply_id, group_key) DO UPDATE SET "
+                    "  scanned_code = EXCLUDED.scanned_code, scanned_at = now(), "
+                    "  scanned_by = EXCLUDED.scanned_by, scanned_by_name = EXCLUDED.scanned_by_name",
+                    (int(supply_id), group_key, code or None,
+                     int(actor_id) if actor_id else None, body_data.get('actorName')),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'groupKey': group_key},
+                                           ensure_ascii=False)}
 
             if action == 'scan_order':
                 # Сканируется ЯРЛЫК МАРКЕТПЛЕЙСА (номер отправления) на собранной вещи,
@@ -2580,6 +2720,22 @@ def handler(event: dict, context) -> dict:
                                 'incompleteGroups': incomplete,
                             }, ensure_ascii=False),
                         }
+                    # Связка собрана, но общий ярлык на коробку не наклеен: вещи
+                    # внутри есть, а коробка не подписана — на приёмке её не опознают.
+                    unlabeled = check_unlabeled_bundles(cur, supply_id)
+                    if unlabeled:
+                        parts = '; '.join(g['groupKey'] for g in unlabeled)
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'На коробку со связкой не наклеен общий ярлык '
+                                         'маркетплейса: ' + parts + '. Отсканируйте ярлык '
+                                         'в карточке поставки и наклейте его на коробку',
+                                'unlabeledBundles': unlabeled,
+                            }, ensure_ascii=False),
+                        }
+
                     # Поставка FBO едет по заявке: привезти меньше обещанного нельзя —
                     # маркетплейс засчитает недовоз, а остаток зависнет на складе.
                     underfilled = check_fbo_underfilled(cur, supply_id)

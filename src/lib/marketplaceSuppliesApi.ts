@@ -133,6 +133,10 @@ export interface SupplyGroup {
   inSupply: number;
   isComplete: boolean;
   orderNumbers: string | null;
+  /** Наклеен ли на коробку общий ярлык маркетплейса — второй шаг сборки связки. */
+  labelScanned?: boolean;
+  labelScannedAt?: string | null;
+  labelScannedByName?: string | null;
 }
 
 export interface SupplyBox {
@@ -329,6 +333,23 @@ export interface ScanOrderResult {
 
 export const scanOrderToSupply = (supplyId: number, orderNumber: string): Promise<ScanOrderResult> =>
   postAction({ action: 'scan_order', supplyId, orderNumber });
+
+/**
+ * Второй шаг сборки связки: общий ярлык маркетплейса на коробку.
+ *
+ * У заказа Яндекса из нескольких вещей ярлык один на всех. Сначала кладовщик
+ * сканирует вещи по стикерам YM, а когда собрал все — подтверждает этот ярлык
+ * и клеит его на коробку. Без отметки поставку не отгрузить: вещи внутри есть,
+ * а коробка не подписана.
+ */
+export const scanBundleLabel = (
+  supplyId: number,
+  groupKey: string,
+  code: string,
+  actorId?: number,
+  actorName?: string,
+): Promise<{ success: true; groupKey: string }> =>
+  postAction({ action: 'scan_bundle_label', supplyId, groupKey, code, actorId, actorName });
 
 /** Убрать товар из поставки. Вещь возвращается на полку — ответ содержит данные
  * для печати стикера хранения: без него вещь уедет на полку неопознанной. */
