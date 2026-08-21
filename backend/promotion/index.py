@@ -198,6 +198,18 @@ def _build_recommendations(cur, marketplace, data, strategy):
             if price <= 0:
                 continue
 
+            # Доля рекламы в цене этого размера. Без неё непонятно, почему
+            # товар в минусе: дорого шьём или бустинг съел всю прибыль. Первое
+            # лечится ценой, второе — отключением рекламы, и это разные решения.
+            ad_pct = unit.get('promoPercent') or 0
+            # Сколько осталось бы без рекламы: видно, тянет товар сам себя или нет.
+            margin_wo_ad = round(margin + ad_pct, 1)
+
+            # Цена в советах — та, что платит покупатель (после скидки площадки
+            # за её счёт). Своя цена продавца выше, и именно её принимает
+            # площадка. Показываем обе, чтобы не путать при отправке.
+            card_price = h.get('cardPrice') or price
+
             title = f"{row.get('material')} · {row.get('width')}×{h.get('height')}"
 
             # 1. Недавно двигали — ждём, пока площадка пересчитает СПП.
@@ -206,6 +218,8 @@ def _build_recommendations(cur, marketplace, data, strategy):
                 days_left = cooldown - (now - was.replace(tzinfo=timezone.utc))
                 out.append({
                     'itemId': item_id, 'title': title, 'sku': h.get('sku'),
+                    'adPercent': ad_pct, 'marginWithoutAd': margin_wo_ad,
+                    'cardPrice': card_price,
                     'action': 'wait', 'currentPrice': price,
                     'suggestedPrice': price, 'currentMargin': margin,
                     'expectedMargin': margin, 'spp': now_spp.get(item_id),
@@ -220,6 +234,8 @@ def _build_recommendations(cur, marketplace, data, strategy):
                 back = round(price / (1 + step), 2)
                 out.append({
                     'itemId': item_id, 'title': title, 'sku': h.get('sku'),
+                    'adPercent': ad_pct, 'marginWithoutAd': margin_wo_ad,
+                    'cardPrice': card_price,
                     'action': 'rollback', 'currentPrice': price,
                     'suggestedPrice': back, 'currentMargin': margin,
                     'expectedMargin': None, 'spp': spp_now,
@@ -238,6 +254,8 @@ def _build_recommendations(cur, marketplace, data, strategy):
                 new_profit = (unit.get('profit') or 0) + gain * 0.35
                 out.append({
                     'itemId': item_id, 'title': title, 'sku': h.get('sku'),
+                    'adPercent': ad_pct, 'marginWithoutAd': margin_wo_ad,
+                    'cardPrice': card_price,
                     'action': 'raise', 'currentPrice': price,
                     'suggestedPrice': new_price, 'currentMargin': margin,
                     'expectedMargin': round(new_profit / new_price * 100, 1),
@@ -250,6 +268,8 @@ def _build_recommendations(cur, marketplace, data, strategy):
                 new_price = round(price / (1 + step), 2)
                 out.append({
                     'itemId': item_id, 'title': title, 'sku': h.get('sku'),
+                    'adPercent': ad_pct, 'marginWithoutAd': margin_wo_ad,
+                    'cardPrice': card_price,
                     'action': 'lower', 'currentPrice': price,
                     'suggestedPrice': new_price, 'currentMargin': margin,
                     'expectedMargin': None, 'spp': spp_now,
@@ -260,6 +280,8 @@ def _build_recommendations(cur, marketplace, data, strategy):
             else:
                 out.append({
                     'itemId': item_id, 'title': title, 'sku': h.get('sku'),
+                    'adPercent': ad_pct, 'marginWithoutAd': margin_wo_ad,
+                    'cardPrice': card_price,
                     'action': 'hold', 'currentPrice': price,
                     'suggestedPrice': price, 'currentMargin': margin,
                     'expectedMargin': margin, 'spp': spp_now,
@@ -566,6 +588,17 @@ def handler(event: dict, context) -> dict:
             for i in items:
                 by_action[i['action']] = by_action.get(i['action'], 0) + 1
 
+            # Товары, которые убыточны ТОЛЬКО из-за рекламы: сами по себе они
+            # прибыльны, но бустинг съедает больше, чем они приносят. Поднимать
+            # им цену бессмысленно — нужно выключить продвижение.
+            killed_by_ads = [
+                i for i in items
+                if (i.get('currentMargin') or 0) < 0
+                and (i.get('marginWithoutAd') or 0) >= strategy['marginMin']
+            ]
+            ads = [i.get('adPercent') or 0 for i in items]
+            avg_ad = round(sum(ads) / len(ads), 1) if ads else 0.0
+
             return _resp(200, {
                 'marketplaceCode': marketplace,
                 'strategy': strategy,
@@ -578,6 +611,9 @@ def handler(event: dict, context) -> dict:
                     'hold': by_action.get('hold', 0),
                     'wait': by_action.get('wait', 0),
                     'rollback': by_action.get('rollback', 0),
+                    # Реклама: средняя доля в цене и сколько позиций она топит.
+                    'avgAdPercent': avg_ad,
+                    'killedByAds': len(killed_by_ads),
                 },
             })
 

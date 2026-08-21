@@ -10,10 +10,12 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import PriceAdviceTable from '@/components/crm/promotion/PriceAdviceTable';
 import PromotionsList from '@/components/crm/promotion/PromotionsList';
+import PricePushConfirm from '@/components/crm/promotion/PricePushConfirm';
 import {
   decideAdvice,
   fetchOverview,
   fetchPromotions,
+  pushPrices,
   saveStrategy,
   scorePromotions,
   syncPromotions,
@@ -31,9 +33,11 @@ const MARKETPLACES: { code: MarketplaceCode; label: string }[] = [
 /**
  * Продвижение: как вести цены к целевой марже и куда идти из акций.
  *
- * Система НИЧЕГО не меняет на площадках сама — она считает и предлагает.
- * Владелец смотрит и решает. Так задумано: ошибка в расчёте, разошедшаяся по
- * восьмистам карточкам, стоит дороже, чем несколько минут на проверку.
+ * Цены меняются прямо отсюда — система отправляет их на площадку сама, и
+ * ходить в кабинет больше не нужно. Но никогда по своей инициативе: только
+ * после того, как владелец отметил позиции и подтвердил в отдельном окне.
+ * Ошибка, разошедшаяся по восьмистам карточкам, стоит дороже, чем минута на
+ * проверку списка.
  *
  * Цену двигаем мелкими шагами. Резкий подъём выбрасывает товар из скидки
  * площадки (СПП) и из выдачи — потерять позицию легко, вернуть трудно.
@@ -49,6 +53,7 @@ const PromotionPage = () => {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [pushOpen, setPushOpen] = useState(false);
 
   const [marginMin, setMarginMin] = useState('10');
   const [marginMax, setMarginMax] = useState('15');
@@ -123,6 +128,38 @@ const PromotionPage = () => {
     }
   };
 
+  const chosen = actionable.filter((i) => selected.has(i.itemId));
+
+  /** Отправляет выбранные цены прямо на витрину площадки. */
+  const handlePush = async () => {
+    setBusy(true);
+    try {
+      const r = await pushPrices(
+        marketplace,
+        chosen.map((i) => ({ itemId: i.itemId, newPrice: i.suggestedPrice })),
+        user?.id,
+      );
+      const problems = [...r.skipped, ...r.failed];
+      toast({
+        title: `Цены изменены: ${r.pushed}`,
+        description: problems.length
+          ? `Не отправлено ${problems.length}: ${problems[0].reason}`
+          : 'Новые цены уже уходят на витрину',
+        variant: r.pushed === 0 ? 'destructive' : undefined,
+      });
+      setPushOpen(false);
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось изменить цены',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleSaveStrategy = async () => {
     setBusy(true);
     try {
@@ -178,8 +215,9 @@ const PromotionPage = () => {
           <div>
             <h1 className="text-xl font-bold">Продвижение</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Ведём маржу к цели мелкими шагами, чтобы не потерять скидку площадки.
-              Система советует — решение за вами.
+              Ведём маржу к цели мелкими шагами, чтобы не потерять скидку
+              площадки. Отметьте позиции — и система сама изменит цены на
+              витрине, в кабинет заходить не нужно.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -279,9 +317,31 @@ const PromotionPage = () => {
                     <p className="text-xs text-muted-foreground">трогать не нужно</p>
                   </div>
                   <div className="rounded-lg border border-border p-3">
-                    <p className="text-xs text-muted-foreground">Ждут паузы</p>
-                    <p className="text-2xl font-bold">{s.wait}</p>
-                    <p className="text-xs text-muted-foreground">меняли недавно</p>
+                    <p className="text-xs text-muted-foreground">Реклама съедает</p>
+                    <p className="text-2xl font-bold">{s.avgAdPercent ?? 0}%</p>
+                    <p className="text-xs text-muted-foreground">от цены в среднем</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Эти товары прибыльны сами по себе — их топит только реклама.
+                  Поднимать им цену бесполезно: надо выключать бустинг. */}
+              {!!s?.killedByAds && s.killedByAds > 0 && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                  <Icon
+                    name="TriangleAlert"
+                    size={16}
+                    className="mt-0.5 shrink-0 text-amber-700"
+                  />
+                  <div className="text-sm">
+                    <p className="font-medium text-amber-900">
+                      {s.killedByAds} позиций убыточны только из-за рекламы
+                    </p>
+                    <p className="text-amber-800">
+                      Без продвижения они были бы в плюсе. Поднимать цену тут
+                      бесполезно — выгоднее отключить им рекламу в кабинете
+                      площадки
+                    </p>
                   </div>
                 </div>
               )}
@@ -289,22 +349,30 @@ const PromotionPage = () => {
               {selected.size > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 p-3">
                   <span className="text-sm font-medium">Выбрано: {selected.size}</span>
-                  <Button size="sm" onClick={() => decide('applied')} disabled={busy}>
-                    <Icon name="Check" size={14} className="mr-1.5" />
-                    Применил в кабинете
+                  {/* Главное действие: система сама меняет цену на витрине.
+                      Раньше приходилось идти в кабинет площадки руками. */}
+                  <Button size="sm" onClick={() => setPushOpen(true)} disabled={busy}>
+                    <Icon name="Upload" size={14} className="mr-1.5" />
+                    Изменить цены на площадке
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
+                    onClick={() => decide('applied')}
+                    disabled={busy}
+                  >
+                    <Icon name="Check" size={14} className="mr-1.5" />
+                    Уже менял сам
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
                     onClick={() => decide('skipped')}
                     disabled={busy}
                   >
                     <Icon name="X" size={14} className="mr-1.5" />
                     Не буду менять
                   </Button>
-                  <p className="text-xs text-muted-foreground">
-                    Цены на площадке меняете вы — система только запомнит решение
-                  </p>
                 </div>
               )}
 
@@ -324,6 +392,17 @@ const PromotionPage = () => {
             </TabsContent>
           ))}
         </Tabs>
+
+        <PricePushConfirm
+          open={pushOpen}
+          onOpenChange={setPushOpen}
+          items={chosen}
+          marketplaceTitle={
+            MARKETPLACES.find((m) => m.code === marketplace)?.label || ''
+          }
+          busy={busy}
+          onConfirm={handlePush}
+        />
 
         <div className="space-y-3 pt-2">
           <div className="flex flex-wrap items-center justify-between gap-2">

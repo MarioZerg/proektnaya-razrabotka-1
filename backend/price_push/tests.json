@@ -1,0 +1,8 @@
+{"tests":[
+ {"name":"OPTIONS preflight","method":"OPTIONS","path":"/","expectedStatus":200},
+ {"name":"GET not allowed","method":"GET","path":"/","expectedStatus":405},
+ {"name":"Unknown action fails","method":"POST","path":"/","body":{"action":"nope"},"expectedStatus":400},
+ {"name":"Unknown marketplace fails","method":"POST","path":"/","body":{"action":"push","marketplace":"foo","items":[{"itemId":1,"newPrice":100}]},"expectedStatus":400},
+ {"name":"Empty items fails","method":"POST","path":"/","body":{"action":"push","marketplace":"ozon","items":[]},"expectedStatus":400},
+ {"name":"Push without admin forbidden","method":"POST","path":"/","body":{"action":"push","marketplace":"ozon","items":[{"itemId":1,"newPrice":100}]},"expectedStatus":403}
+]}

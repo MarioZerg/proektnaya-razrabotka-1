@@ -87,6 +87,7 @@ const PriceAdviceTable = ({ items, selected, onToggle, onToggleAll }: Props) => 
             <TableHead className="w-[130px]">Что делаем</TableHead>
             <TableHead className="w-[150px]">Цена</TableHead>
             <TableHead className="w-[120px]">Маржа</TableHead>
+            <TableHead className="w-[110px]">Реклама</TableHead>
             <TableHead className="w-[90px]">СПП</TableHead>
             <TableHead>Почему</TableHead>
           </TableRow>
@@ -95,6 +96,9 @@ const PriceAdviceTable = ({ items, selected, onToggle, onToggleAll }: Props) => 
           {actionable.map((i) => {
             const style = ACTION_STYLE[i.action];
             const diff = i.suggestedPrice - i.currentPrice;
+            // Убыточен только из-за рекламы: без неё был бы в плюсе.
+            const adKills =
+              i.currentMargin < 0 && (i.marginWithoutAd ?? 0) > 0;
             return (
               <TableRow key={i.itemId}>
                 <TableCell>
@@ -135,6 +139,23 @@ const PriceAdviceTable = ({ items, selected, onToggle, onToggleAll }: Props) => 
                       <Icon name="ArrowRight" size={12} className="mx-1 inline" />
                       <span className="font-semibold">{i.expectedMargin}%</span>
                     </>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {i.adPercent ? (
+                    <>
+                      <div className="text-sm font-medium">−{i.adPercent}%</div>
+                      {/* Товар прибыльный сам по себе, но реклама съедает
+                          больше, чем он приносит. Поднимать цену бесполезно —
+                          надо выключать бустинг. */}
+                      {adKills && (
+                        <div className="text-[11px] leading-tight text-destructive">
+                          без неё {i.marginWithoutAd}%
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">не крутим</span>
                   )}
                 </TableCell>
                 <TableCell className="text-sm">

@@ -16,6 +16,16 @@ export interface PriceAdvice {
   expectedMargin: number | null;
   /** Скидка площадки за свой счёт, %. Null — площадка её не отдала. */
   spp: number | null;
+  /** Сколько от цены съедает реклама этого товара, %. */
+  adPercent?: number;
+  /** Какой была бы маржа, если рекламу не крутить. */
+  marginWithoutAd?: number;
+  /**
+   * Наша цена до скидки площадки — та, что стоит в кабинете.
+   * currentPrice выше показывает цену для покупателя (уже с СПП), а площадка
+   * принимает именно эту. Шаг пересчитывается автоматически при отправке.
+   */
+  cardPrice?: number;
   reason: string;
 }
 
@@ -38,6 +48,10 @@ export interface OverviewResponse {
     hold: number;
     wait: number;
     rollback: number;
+    /** Средняя доля рекламы в цене по площадке, %. */
+    avgAdPercent?: number;
+    /** Сколько позиций убыточны ТОЛЬКО из-за рекламы. */
+    killedByAds?: number;
   };
   buyout?: { used: number; fromMarketplace: number | null };
   error?: string;
@@ -113,3 +127,35 @@ export const syncPromotions = (actorId?: number) =>
 
 export const scorePromotions = (actorId?: number) =>
   post({ action: 'score_promotions', actorId });
+
+const PRICE_PUSH_URL = 'https://functions.poehali.dev/fc1cfb34-b57c-41d4-97d9-fcee27c9af6a';
+
+export interface PushResult {
+  pushed: number;
+  /** Позиции, которые система не рискнула отправить, и почему. */
+  skipped: Array<{ itemId?: number; name?: string; reason: string }>;
+  /** Позиции, которые отклонила сама площадка. */
+  failed: Array<{ itemId?: number; name?: string; reason: string }>;
+  items: Array<{ itemId: number; name: string; oldPrice: number; newPrice: number }>;
+}
+
+/**
+ * Отправляет новые цены НА площадку.
+ *
+ * Пишет прямо на витрину, поэтому вызывается только после явного
+ * подтверждения владельца — никаких фоновых запусков.
+ */
+export const pushPrices = async (
+  marketplace: MarketplaceCode,
+  items: Array<{ itemId: number; newPrice: number }>,
+  actorId?: number,
+): Promise<PushResult> => {
+  const res = await fetch(PRICE_PUSH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'push', marketplace, items, actorId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось отправить цены');
+  return data;
+};
