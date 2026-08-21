@@ -75,7 +75,20 @@ export const printLabelPdf = async (pdfBase64: string, title = 'Ярлык от�
 
   // 300 dpi: пункты PDF (1/72 дюйма) переводим в пиксели печати.
   const scale = 300 / 72;
-  const viewport = page.getViewport({ scale });
+
+  // Яндекс отдаёт ярлык ВЕРТИКАЛЬНЫМ (40×58 мм), а наклейка у нас горизонтальная
+  // (58×40). Такой ярлык вписывался по высоте и занимал лишь 27 мм из 58 — почти
+  // половина наклейки оставалась пустой, а QR-код и номер заказа ужимались вдвое
+  // и переставали читаться сканером.
+  //
+  // Поворачиваем страницу на 90°: тогда ярлык ложится на наклейку целиком, без
+  // полей, и все коды печатаются в полный размер.
+  const base = page.getViewport({ scale });
+  const needRotate = base.height > base.width;
+  const viewport = needRotate
+    ? page.getViewport({ scale, rotation: (page.rotate + 90) % 360 })
+    : base;
+
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(viewport.width);
   canvas.height = Math.round(viewport.height);

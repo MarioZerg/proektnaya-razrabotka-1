@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 import uuid
@@ -872,13 +873,27 @@ def handler(event: dict, context) -> dict:
                     "FROM orders o "
                     "LEFT JOIN goods_warehouse gw ON gw.order_id = o.id "
                     "LEFT JOIN marketplace_supply_items msi ON msi.goods_warehouse_id = gw.id "
+                    # Берём связки, у которых хотя бы одна вещь уже в поставке ЛИБО
+                    # ждёт сканирования (застикерована и свободна). Раньше учитывались
+                    # только попавшие в поставку — и пока кладовщик не отсканировал
+                    # первую вещь, связки для него не существовало: остальные три
+                    # лежали в чек-листе врозь, как отдельные заказы.
                     "WHERE o.group_key IS NOT NULL AND o.group_key IN ("
                     "  SELECT o2.group_key FROM marketplace_supply_items m2 "
                     "  JOIN goods_warehouse g2 ON g2.id = m2.goods_warehouse_id "
                     "  JOIN orders o2 ON o2.id = g2.order_id "
-                    "  WHERE m2.supply_id = %s AND o2.group_key IS NOT NULL) "
+                    "  WHERE m2.supply_id = %s AND o2.group_key IS NOT NULL "
+                    "  UNION "
+                    "  SELECT o3.group_key FROM goods_warehouse g3 "
+                    "  JOIN orders o3 ON o3.id = COALESCE(g3.reserved_order_id, g3.order_id) "
+                    "  WHERE o3.group_key IS NOT NULL "
+                    "    AND g3.status IN ('picking', 'awaiting_supply') "
+                    "    AND g3.shipping_labeled_at IS NOT NULL "
+                    "    AND g3.shipped_at IS NULL "
+                    "    AND o3.marketplace = (SELECT marketplace FROM marketplace_supplies "
+                    "                          WHERE id = %s)) "
                     "GROUP BY o.group_key ORDER BY o.group_key",
-                    (int(supply_id), int(supply_id)),
+                    (int(supply_id), int(supply_id), int(supply_id)),
                 )
                 groups = [
                     {
@@ -1093,7 +1108,14 @@ def handler(event: dict, context) -> dict:
                     # с кого спрашивать — кто кроил, кто шил, кто упаковывал и в какой
                     # день. Иначе поиск виноватого превращается в опрос всей смены.
                     "       cu.full_name, su.full_name, pu.full_name, "
-                    "       COALESCE(ro.packed_at, so.packed_at) "
+                    "       COALESCE(ro.packed_at, so.packed_at), "
+                    # Связка: заказ Яндекса из нескольких вещей с одним общим
+                    # ярлыком. Нужна и у НЕсобранных вещей — иначе в чек-листе
+                    # связку не показать целиком: часть строк уехала бы в общий
+                    # список, и кладовщик снова не понял бы, что вещи связаны.
+                    "       COALESCE(ro.group_key, so.group_key), "
+                    "       COALESCE(ro.group_size, so.group_size), "
+                    "       COALESCE(ro.group_position, so.group_position) "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
                     "LEFT JOIN orders so ON so.id = gw.order_id "
@@ -1138,6 +1160,10 @@ def handler(event: dict, context) -> dict:
                         'sewerName': r[11],
                         'packerName': r[12],
                         'packedAt': (r[13].isoformat() + 'Z') if r[13] else None,
+                        # Связка Яндекса: по ней чек-лист сводит вещи в одну строку.
+                        'groupKey': r[14],
+                        'groupSize': r[15],
+                        'groupPosition': r[16],
                     }
                     for r in cur.fetchall()
                 ]
@@ -1627,7 +1653,47 @@ def handler(event: dict, context) -> dict:
                 cur.execute(find_sql.format(code=barcode_esc))
                 gw_row = cur.fetchone()
 
-                # Не нашли по номеру — возможно, отсканирован ШТРИХКОД с ярлыка OZON
+                # Не нашли по номеру — возможно, это ярлык ЯНДЕКСА.
+                #
+                # Яндекс печатает на ярлыке номер грузоместа «60603398529-1», а у нас
+                # тот же заказ хранится как «YM-60603398529-1»: префикс мы добавляем
+                # сами при загрузке. Из-за одного этого префикса ни один ярлык Яндекса
+                # не сканировался — кладовщика разворачивали с готовой вещью в руках.
+                #
+                # Принимаем оба вида: и номер грузоместа, и номер заказа целиком
+                # («60603398529» — он тоже напечатан на ярлыке крупно, и кладовщик
+                # вполне может отсканировать именно его).
+                if not gw_row:
+                    digits = storage_barcode.strip()
+                    # Номер грузоместа: цифры, дефис, позиция в заказе.
+                    ym_match = re.fullmatch(r'(\d{6,})-(\d{1,3})', digits)
+                    if ym_match:
+                        candidate = f'YM-{digits}'
+                        cur.execute(find_sql.format(code=candidate.replace("'", "''")))
+                        gw_row = cur.fetchone()
+                    elif re.fullmatch(r'\d{6,}', digits):
+                        # Отсканирован номер заказа без позиции: в заказе может быть
+                        # несколько вещей (связка). Берём первую, которая ещё не в
+                        # поставке и уже отстикерована — остальные кладовщик отсканирует
+                        # следующими, каждая в своём пакете со своим ярлыком.
+                        cur.execute(
+                            "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
+                            "FROM orders o "
+                            "JOIN goods_warehouse gw "
+                            "  ON gw.reserved_order_id = o.id "
+                            "  OR gw.id = o.fulfilled_from_stock_id "
+                            "  OR gw.order_id = o.id "
+                            "LEFT JOIN marketplace_supply_items msi "
+                            "  ON msi.goods_warehouse_id = gw.id "
+                            "WHERE o.group_key = %s AND msi.id IS NULL "
+                            "ORDER BY (gw.shipping_labeled_at IS NOT NULL) DESC, "
+                            "         (gw.status = 'awaiting_supply') DESC, "
+                            "         o.group_position LIMIT 1",
+                            (f'YM-{digits}',),
+                        )
+                        gw_row = cur.fetchone()
+
+                # Всё ещё не нашли — возможно, отсканирован ШТРИХКОД с ярлыка OZON
                 # (на ярлыке печатается он, а не номер отправления). Спрашиваем номер
                 # у OZON и ищем повторно.
                 if not gw_row:

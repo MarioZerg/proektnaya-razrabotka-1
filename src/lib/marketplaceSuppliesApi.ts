@@ -94,6 +94,10 @@ export interface SupplyAwaitingItem {
   packerName?: string | null;
   /** Когда вещь упаковали. */
   packedAt?: string | null;
+  /** Связка Яндекса: заказ из нескольких вещей с одним общим ярлыком. */
+  groupKey?: string | null;
+  groupSize?: number | null;
+  groupPosition?: number | null;
 }
 
 /** Заказ на пошив, привязанный к поставке: по ним видно, что уже сшито, а что в работе. */

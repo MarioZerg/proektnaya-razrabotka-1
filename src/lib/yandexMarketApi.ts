@@ -34,6 +34,17 @@ export const syncYandexOrders = async (actor?: {
 /** Ярлык Яндекса на вещь заказа (PDF в base64, формат A9 = 58×40 мм). Яндекс печатает
  * ярлык на КАЖДОЕ грузоместо — на нём указано «1 из 3». */
 export const fetchYandexLabel = async (orderNumber: string): Promise<string> => {
+  const { pdfBase64 } = await fetchYandexLabelFull(orderNumber);
+  return pdfBase64;
+};
+
+/** Ярлык вместе с его подписями: номер заказа, грузоместо и «1 из 3». */
+export const fetchYandexLabelFull = async (
+  orderNumber: string,
+): Promise<{
+  pdfBase64: string;
+  labelInfo: { orderId: string; placeNumber: string; placeIndex: string } | null;
+}> => {
   const res = await fetch(YM_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -41,7 +52,7 @@ export const fetchYandexLabel = async (orderNumber: string): Promise<string> => 
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось получить ярлык Яндекса');
-  return data.pdfBase64;
+  return { pdfBase64: data.pdfBase64, labelInfo: data.labelInfo || null };
 };
 
 /** Проверка подключения: сколько заказов ждёт сборки и сколько из них многотоварные. */

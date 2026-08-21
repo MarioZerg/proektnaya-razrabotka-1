@@ -18,6 +18,7 @@ import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import CancelledItemShelfCell from './CancelledItemShelfCell';
 import FbsSupplyChecklist from './FbsSupplyChecklist';
+import SupplyBundleRow from './SupplyBundleRow';
 
 interface SupplyItemsSectionProps {
   supply: SupplyDetail;
@@ -52,6 +53,33 @@ const SupplyItemsSection = ({
   onReload,
 }: SupplyItemsSectionProps) => {
   useScannerAutoSubmit(scanOrderNumber, onScanOrder, !scanning && supply.type === 'FBS' && canEditItems);
+
+  // Раскладываем позиции на связки и одиночные заказы.
+  //
+  // Связка (Яндекс) — заказ из нескольких вещей с одним общим ярлыком: он едет
+  // только целиком. Такие вещи собираем под одну строку, чтобы кладовщик видел
+  // заказ, а не четыре одинаковых номера подряд. Порядок связок сохраняем по
+  // первому появлению — список не должен прыгать при каждом сканировании.
+  const bundles = new Map<string, typeof supply.items>();
+  const singles: typeof supply.items = [];
+  for (const item of supply.items) {
+    const group = item.groupKey
+      ? supply.groups?.find((g) => g.groupKey === item.groupKey)
+      : undefined;
+    // Группа из одной вещи связкой не считается: это обычный заказ.
+    if (group && group.total > 1) {
+      const list = bundles.get(group.groupKey) || [];
+      list.push(item);
+      bundles.set(group.groupKey, list);
+    } else {
+      singles.push(item);
+    }
+  }
+  const rows = [...bundles.entries()].map(([key, items]) => ({
+    kind: 'bundle' as const,
+    group: supply.groups!.find((g) => g.groupKey === key)!,
+    items,
+  }));
 
   // Готовые вещи, которые ещё не попали в эту поставку. Сверяем по стикеру хранения:
   // это единственный признак конкретной физической вещи.
@@ -162,36 +190,32 @@ const SupplyItemsSection = ({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {supply.items.map((item) => {
-                // Связка этого товара: полностью собранные подсвечиваем зелёным, неполные —
-                // жёлтым, чтобы кладовщик прямо в списке видел, что ещё нужно донести.
-                const group = item.groupKey
-                  ? supply.groups?.find((g) => g.groupKey === item.groupKey)
-                  : undefined;
-                return (
+              {/* Связки Яндекса показываем ОДНОЙ строкой с раскрытием, а не
+                  вперемешку с одиночными заказами. Вещи такого заказа едут
+                  только целиком, и кладовщик должен видеть это сразу, а не
+                  вычитывать одинаковые номера в четырёх соседних строках. */}
+              {rows.map((row) =>
+                row.kind === 'bundle' ? (
+                  <SupplyBundleRow
+                    key={row.group.groupKey}
+                    group={row.group}
+                    items={row.items}
+                    supply={supply}
+                    canEditItems={canEditItems}
+                    canRemoveItems={canRemoveItems}
+                    onRemoveItem={onRemoveItem}
+                    onReload={onReload}
+                  />
+                ) : null,
+              )}
+              {/* Одиночные заказы: одна вещь — одна строка, как и было. */}
+              {singles.map((item) => (
                 <TableRow
                   key={item.id}
-                  className={
-                    item.isCancelled
-                      ? 'bg-destructive/10'
-                      : group && !group.isComplete
-                        ? 'bg-amber-50'
-                        : undefined
-                  }
+                  className={item.isCancelled ? 'bg-destructive/10' : undefined}
                 >
                   <TableCell className="font-medium">
                     <span className="break-all">{item.orderNumber || '—'}</span>
-                    {group && (
-                      <Badge
-                        className={`ml-1.5 px-1.5 py-0 text-[10px] text-white ${
-                          group.isComplete
-                            ? 'bg-emerald-600 hover:bg-emerald-600'
-                            : 'bg-amber-600 hover:bg-amber-600'
-                        }`}
-                      >
-                        связка {group.inSupply}/{group.total}
-                      </Badge>
-                    )}
                     {/* Замена потерянному листку закройщика: печатаем бирку с QR
                         заказа, несём в цех — и упаковщица стикерует вещь обычным
                         путём, сканируя код. */}
@@ -271,8 +295,7 @@ const SupplyItemsSection = ({
                     </TableCell>
                   )}
                 </TableRow>
-                );
-              })}
+              ))}
             </TableBody>
           </Table>
         </div>

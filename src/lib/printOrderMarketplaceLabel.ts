@@ -1,7 +1,7 @@
 import { printLabelPng, printLabelPdf } from '@/lib/printMarketplaceLabel';
 import { fetchWbLabel } from '@/lib/wbFbsApi';
 import { fetchOzonLabel } from '@/lib/ozonFbsApi';
-import { fetchYandexLabel } from '@/lib/yandexMarketApi';
+import { fetchYandexLabelFull } from '@/lib/yandexMarketApi';
 import { printFboSticker } from '@/lib/printFboSticker';
 import { fetchOrderDetail } from '@/lib/ordersApi';
 
@@ -37,7 +37,16 @@ export const printOrderMarketplaceLabel = async (order: {
     return;
   }
   if (mp === 'YANDEX' || mp === 'YANDEX_MARKET') {
-    await printLabelPdf(await fetchYandexLabel(order.orderNumber), 'Ярлык Яндекс Маркета');
+    // Ярлык Яндекса вертикальный (40×58) и на нашу наклейку 58×40 целиком не
+    // ложится: половина оставалась пустой, а QR ужимался до нечитаемого. Здесь
+    // он пересобирается под наклейку — коды берутся с оригинала как есть.
+    const { pdfBase64, labelInfo } = await fetchYandexLabelFull(order.orderNumber);
+    const { printYandexLabel58x40 } = await import('@/lib/printYandexLabel');
+    await printYandexLabel58x40(pdfBase64, {
+      orderId: labelInfo?.orderId || order.orderNumber,
+      placeNumber: labelInfo?.placeNumber || order.orderNumber,
+      placeIndex: labelInfo?.placeIndex || '',
+    });
     return;
   }
   printFboSticker(await fetchOrderDetail(order.id));

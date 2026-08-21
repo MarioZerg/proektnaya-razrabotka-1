@@ -686,7 +686,28 @@ def handler(event: dict, context) -> dict:
             err, pdf_b64 = get_order_label(cur, api_key, campaign_id, order_number)
             if err:
                 return _resp(502, {'error': err})
-            return _resp(200, {'orderNumber': order_number, 'pdfBase64': pdf_b64})
+            # Вместе с ярлыком отдаём его текст: терминал печатает наклейку
+            # 58×40 своей вёрсткой (ярлык Яндекса вертикальный и на нашу
+            # наклейку целиком не ложится), а надписи берёт отсюда.
+            cur.execute(
+                "SELECT ym_order_id, group_position, group_size "
+                "FROM orders WHERE order_number = %s",
+                (order_number,),
+            )
+            r = cur.fetchone()
+            info = None
+            if r and r[0]:
+                ym_id, pos, size = r[0], r[1] or 1, r[2] or 1
+                info = {
+                    'orderId': str(ym_id),
+                    'placeNumber': f'{ym_id}-{pos}',
+                    'placeIndex': f'{pos}/{size}',
+                }
+            return _resp(200, {
+                'orderNumber': order_number,
+                'pdfBase64': pdf_b64,
+                'labelInfo': info,
+            })
 
         if action == 'sync':
             result = sync_orders(cur, api_key, campaign_id, actor_id, actor_name)
