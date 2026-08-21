@@ -4,7 +4,13 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { sendSignCode, signContract, type Contract } from '@/lib/contractsApi';
+import { useAuth } from '@/context/AuthContext';
+import {
+  contractFileUrl,
+  sendSignCode,
+  signContract,
+  type Contract,
+} from '@/lib/contractsApi';
 
 interface SignContractDialogProps {
   contract: Contract | null;
@@ -22,6 +28,7 @@ const SignContractDialog = ({
   onSigned,
 }: SignContractDialogProps) => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [code, setCode] = useState('');
   const [sending, setSending] = useState(false);
   const [signing, setSigning] = useState(false);
@@ -85,7 +92,7 @@ const SignContractDialog = ({
             <div className="rounded-md border border-border p-3">
               <p className="font-semibold">{contract.title}</p>
               <a
-                href={contract.fileUrl}
+                href={contractFileUrl(contract.id, user?.id)}
                 target="_blank"
                 rel="noreferrer"
                 className="mt-2 inline-flex items-center gap-1.5 text-sm text-primary underline underline-offset-2"

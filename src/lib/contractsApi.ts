@@ -2,6 +2,16 @@ import func2url from '../../backend/func2url.json';
 
 const CONTRACTS_URL = (func2url as Record<string, string>).contracts;
 
+/**
+ * Ссылка на файл договора — через нашу систему, а не на хранилище напрямую.
+ *
+ * Файл лежит во внешнем хранилище, и прямая ссылка показывала бы сотруднику
+ * чужой домен в адресной строке. Под документом, который человек подписывает
+ * с вашим ИП, это выглядит несерьёзно, поэтому файл отдаём сами.
+ */
+export const contractFileUrl = (contractId: number, userId?: number) =>
+  `${CONTRACTS_URL}?file=${contractId}&userId=${userId ?? ''}`;
+
 export interface Contract {
   id: number;
   userId: number;

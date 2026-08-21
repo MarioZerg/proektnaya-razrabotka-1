@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
-import { fetchMyContracts, type Contract } from '@/lib/contractsApi';
+import { contractFileUrl, fetchMyContracts, type Contract } from '@/lib/contractsApi';
 import SignContractDialog from '@/components/crm/contracts/SignContractDialog';
 
 interface ContractGateProps {
@@ -59,7 +59,11 @@ const ContractGate = ({ onAllSigned }: ContractGateProps) => {
                 <p className="font-semibold">{c.title}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" asChild>
-                    <a href={c.fileUrl} target="_blank" rel="noreferrer">
+                    <a
+                      href={contractFileUrl(c.id, user?.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       <Icon name="FileText" size={14} className="mr-1.5" />
                       Прочитать
                     </a>

@@ -8,6 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/lib/dateUtils';
 import {
+  contractFileUrl,
   fetchAllContracts,
   fetchMyContracts,
   cancelContract,
@@ -153,7 +154,11 @@ const Contracts = () => {
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" asChild>
-                    <a href={c.fileUrl} target="_blank" rel="noreferrer">
+                    <a
+                      href={contractFileUrl(c.id, user?.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       <Icon name="FileText" size={14} className="mr-1.5" />
                       Открыть документ
                     </a>

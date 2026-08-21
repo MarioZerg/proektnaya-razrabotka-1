@@ -263,6 +263,69 @@ def handler(event: dict, context) -> dict:
                     }, ensure_ascii=False),
                 }
 
+            if params.get('file'):
+                # Отдаём сам файл договора — чтобы сотрудник не видел адрес
+                # хранилища.
+                #
+                # Раньше кнопка «Открыть документ» вела прямо на cdn.poehali.dev,
+                # и человек, подписывающий договор с ИП, видел в адресной строке
+                # чужой домен. Для документа, под которым ставят подпись, это
+                # выглядит несерьёзно. Теперь файл проходит через нашу систему.
+                contract_id = params.get('file')
+                user_id = params.get('userId')
+                cur.execute(
+                    "SELECT c.file_url, c.file_name, c.user_id FROM contracts c "
+                    "WHERE c.id = %s",
+                    (int(contract_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Документ не найден'})}
+
+                # Свой договор открывает сам сотрудник, чужой — только админ.
+                if not user_id or int(user_id) != int(row[2]):
+                    if not user_id:
+                        return {'statusCode': 403, 'headers': headers,
+                                'body': json.dumps({'error': 'Нет доступа'})}
+                    cur.execute("SELECT role FROM users WHERE id = %s", (int(user_id),))
+                    actor = cur.fetchone()
+                    if not actor or actor[0] != 'admin':
+                        return {'statusCode': 403, 'headers': headers,
+                                'body': json.dumps({'error': 'Это чужой документ'})}
+
+                src_url, fname = row[0], row[1] or 'dogovor.pdf'
+                try:
+                    resp = requests.get(src_url, timeout=20, verify=certifi.where())
+                    if resp.status_code != 200:
+                        raise ValueError(resp.status_code)
+                    data = resp.content
+                except Exception:
+                    return {'statusCode': 502, 'headers': headers,
+                            'body': json.dumps({'error': 'Не удалось получить файл'})}
+
+                ext = (fname.rsplit('.', 1)[-1] or 'pdf').lower()
+                mime = {
+                    'pdf': 'application/pdf', 'png': 'image/png',
+                    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                    'doc': 'application/msword',
+                    'docx': 'application/vnd.openxmlformats-officedocument'
+                            '.wordprocessingml.document',
+                }.get(ext, 'application/octet-stream')
+
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        **headers,
+                        'Content-Type': mime,
+                        # inline — документ открывается прямо в браузере, а не
+                        # падает в загрузки: его пришли прочитать и подписать.
+                        'Content-Disposition': f'inline; filename="{fname}"',
+                    },
+                    'body': base64.b64encode(data).decode(),
+                    'isBase64Encoded': True,
+                }
+
             if params.get('pending'):
                 # Быстрая проверка для блокировки входа: есть ли что подписывать.
                 user_id = params.get('userId')
