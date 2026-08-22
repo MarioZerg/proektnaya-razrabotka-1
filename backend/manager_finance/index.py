@@ -1,12 +1,8 @@
 import json
 import os
-import uuid
 from datetime import datetime, timedelta
 
-import boto3
 import psycopg2
-
-from report_pdf import build_weekly_report
 
 CORS = {
     'Access-Control-Allow-Origin': '*',
@@ -155,10 +151,7 @@ def _apply_returns(cur):
 
         cur.execute(
             "UPDATE manager_accruals SET returned_units = %s, "
-            "  returned_amount = %s, "
-            # Сумма изменилась — старый PDF ей уже противоречит. Сбрасываем
-            # ссылку, документ пересоберётся с актуальными цифрами.
-            "  report_url = NULL "
+            "  returned_amount = %s "
             "WHERE id = %s AND returned_amount IS DISTINCT FROM %s",
             (returned, back, a_id, back),
         )
@@ -182,82 +175,10 @@ def _confirm(cur):
         "    cancelled_at = CASE WHEN amount - returned_amount <= 0 "
         "                        THEN now() END, "
         "    cancel_reason = CASE WHEN amount - returned_amount <= 0 "
-        "        THEN 'Все вещи периода вернули покупатели в течение холда' END, "
-        # Статус в документе меняется с «на проверке» на «подтверждено»,
-        # поэтому отчёт нужно выпустить заново.
-        "    report_url = NULL "
+        "        THEN 'Все вещи периода вернули покупатели в течение холда' END "
         "WHERE status = 'hold' AND hold_until < now()::date"
     )
     return cur.rowcount
-
-
-def _upload_pdf(binary, name):
-    """Кладёт готовый отчёт в облако и возвращает ссылку."""
-    s3 = boto3.client(
-        's3',
-        endpoint_url='https://bucket.poehali.dev',
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
-    )
-    key = f'manager-reports/{name}-{uuid.uuid4().hex[:8]}.pdf'
-    s3.put_object(Bucket='files', Key=key, Body=binary,
-                  ContentType='application/pdf')
-    return (f"https://cdn.poehali.dev/projects/"
-            f"{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}")
-
-
-def _build_reports(cur, only_id=None):
-    """Формирует PDF по неделям, у которых его ещё нет.
-
-    Пересобираем документ, если начисление изменилось после его выпуска:
-    возврат мог уменьшить сумму, и старый файл начал бы противоречить экрану.
-    """
-    where = "a.report_url IS NULL"
-    args = []
-    if only_id:
-        where = "a.id = %s"
-        args = [int(only_id)]
-
-    cur.execute(
-        "SELECT a.id, a.period_start, a.period_end, a.units, a.base_amount, "
-        "  a.percent, a.amount, a.per_unit, a.status, a.hold_until, "
-        "  a.returned_units, a.returned_amount, a.cancel_reason, u.full_name "
-        "FROM manager_accruals a "
-        "JOIN users u ON u.id = a.user_id "
-        f"WHERE {where} "
-        "ORDER BY a.period_start DESC LIMIT 20",
-        args,
-    )
-    rows = cur.fetchall()
-
-    built = 0
-    for r in rows:
-        data = {
-            'userName': r[13] or 'Менеджер',
-            'periodStart': r[1],
-            'periodEnd': r[2],
-            'units': int(r[3] or 0),
-            'baseAmount': float(r[4] or 0),
-            'percent': float(r[5] or 0),
-            'amount': float(r[6] or 0),
-            'perUnit': float(r[7]) if r[7] is not None else None,
-            'status': r[8],
-            'holdUntil': r[9],
-            'returnedUnits': int(r[10] or 0),
-            'returnedAmount': float(r[11] or 0),
-            'cancelReason': r[12],
-            'net': round(float(r[6] or 0) - float(r[11] or 0), 2),
-        }
-        pdf = build_weekly_report(data)
-        url = _upload_pdf(pdf, f"{r[1]}-{r[2]}")
-        cur.execute(
-            "UPDATE manager_accruals SET report_url = %s, "
-            "  report_built_at = now() WHERE id = %s",
-            (url, r[0]),
-        )
-        built += 1
-
-    return built
 
 
 def _balance(cur, user_id):
@@ -273,7 +194,7 @@ def _balance(cur, user_id):
     cur.execute(
         "SELECT id, period_start, period_end, units, base_amount, percent, "
         "  amount, per_unit, status, hold_until, returned_units, "
-        "  returned_amount, cancel_reason, confirmed_at, report_url "
+        "  returned_amount, cancel_reason, confirmed_at "
         "FROM manager_accruals WHERE user_id = %s "
         "ORDER BY period_start DESC LIMIT 40",
         (int(user_id),),
@@ -297,7 +218,6 @@ def _balance(cur, user_id):
             'confirmedAt': str(r[13]) if r[13] else None,
             # Сколько осталось после возвратов — это и идёт в баланс.
             'net': round(float(r[6] or 0) - float(r[11] or 0), 2),
-            'reportUrl': r[14],
         })
 
     st = _settings(cur)
@@ -370,10 +290,6 @@ def handler(event: dict, context) -> dict:
             created = _accrue(cur)
             updated = _apply_returns(cur)
             confirmed = _confirm(cur)
-            # Отчёты формируем сразу: менеджер должен увидеть документ вместе
-            # с начислением, а не ждать отдельной кнопки.
-            reports = _build_reports(cur)
-
             # Запись в журнал — по ней страница «Планировщик» понимает, что
             # задание живо. Без неё молчащий планировщик выглядел бы рабочим,
             # а начисления просто перестали бы появляться.
@@ -400,8 +316,7 @@ def handler(event: dict, context) -> dict:
                 'created': created.get('created', 0),
                 'returnsApplied': updated,
                 'confirmed': max(0, confirmed),
-                'reports': reports,
-            })
+                            })
 
         if action == 'recalc':
             # Полный пересчёт: удаляет начисления и считает заново.

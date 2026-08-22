@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import {
   fetchManagerBalance,
+  type ManagerAccrual,
   type ManagerBalance,
 } from '@/lib/managerFinanceApi';
+import { printManagerReport } from '@/lib/printManagerReport';
+import { useAuth } from '@/context/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 
 const money = (v: number) => Math.round(v).toLocaleString('ru-RU');
 
@@ -32,8 +37,28 @@ const daysLeft = (iso: string) => {
  * остаются у менеджера, так и договаривались.
  */
 const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
+  const { user } = useAuth();
+  const { toast } = useToast();
   const [data, setData] = useState<ManagerBalance | null>(null);
   const [loading, setLoading] = useState(true);
+  // Какой отчёт сейчас собирается: сборка занимает секунду-другую, и без
+  // отметки человек жмёт кнопку повторно.
+  const [busyId, setBusyId] = useState<number | null>(null);
+
+  const download = async (a: ManagerAccrual) => {
+    setBusyId(a.id);
+    try {
+      await printManagerReport(a, user?.name || 'Менеджер маркетплейсов');
+    } catch (e) {
+      toast({
+        title: 'Не удалось собрать отчёт',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -176,19 +201,23 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
                   </p>
                 )}
 
-                {/* Документ фиксирует расчёт: база, ставка, штуки и возвраты.
-                    Раньше сумму присылали текстом, и проверить её было нечем. */}
-                {a.reportUrl && (
-                  <a
-                    href={a.reportUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-                  >
-                    <Icon name="FileText" size={13} />
-                    Отчёт за неделю (PDF)
-                  </a>
-                )}
+                {/* Отчёт собирается в браузере и сразу уходит в загрузки:
+                    в нём суммы к выплате, и ссылке на него взяться неоткуда. */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 h-8"
+                  onClick={() => download(a)}
+                  disabled={busyId === a.id}
+                >
+                  <Icon
+                    name={busyId === a.id ? 'Loader2' : 'Download'}
+                    size={13}
+                    className={`mr-1.5 ${busyId === a.id ? 'animate-spin' : ''}`}
+                  />
+                  Скачать отчёт PDF
+                </Button>
+
               </div>
             );
           })}
