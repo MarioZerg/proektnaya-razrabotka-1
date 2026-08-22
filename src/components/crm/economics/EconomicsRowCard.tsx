@@ -86,8 +86,21 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
       {!!row.lossHeights && row.lossHeights > 0 && (
         <p className="mt-2 flex items-start gap-1.5 rounded-md bg-rose-100 p-2 text-xs font-medium text-rose-900">
           <Icon name="TrendingDown" size={13} className="mt-0.5 shrink-0" />
-          {row.lossHeights} из {row.pricedCount} размеров продаются в минус —
-          разверните расчёт по высотам
+          <span>
+            {row.lossHeights} из {row.pricedCount} размеров продаются в минус
+            {/* Главная причина. Цена и логистика внутри группы одинаковые, и
+                если убыточные отличаются только рекламой — дело в ней, а не
+                в цене. Иначе непонятно, почему соседние высоты разные. */}
+            {!!row.lossFromPromo && row.lossFromPromo > 0 ? (
+              <>
+                {' '}
+                · {row.lossFromPromo} из них — из-за расходов на рекламу, без
+                неё были бы прибыльны
+              </>
+            ) : (
+              <> — разверните расчёт по высотам</>
+            )}
+          </span>
         </p>
       )}
 

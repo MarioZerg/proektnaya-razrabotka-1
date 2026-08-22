@@ -297,6 +297,12 @@ def loss_share_for_period(cur, p_from, p_to, mp_code='ozon'):
             # высота может быть убыточной, пока соседняя приносит доход.
             for h in (row.get('heights') or []):
                 u = h.get('unit') or {}
+                # Размеры с приблизительной логистикой пропускаем: там
+                # подставлен общий тариф площадки, вчетверо выше реального,
+                # и прибыльный товар выглядит убыточным. Удерживать по такой
+                # цифре деньги с менеджера нельзя.
+                if u.get('logisticsFromTariff'):
+                    continue
                 if u.get('price'):
                     profit_by_key[(row['material'], float(row['width'] or 0),
                                    round(float(u['price']), 0))] = float(

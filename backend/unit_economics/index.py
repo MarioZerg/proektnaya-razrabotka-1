@@ -530,9 +530,39 @@ def _sync_wb(cur, cursor=None):
         except (TypeError, ValueError):
             start = None
 
+        # Габариты нужны для логистики: без них подставляется общий тариф
+        # 270 ₽ вместо реальных 62 ₽, и товар выглядит убыточным.
+        #
+        # Раньше брали ОДНУ страницу за заход — по сотне карточек из восьмисот.
+        # Каталог обходился неделями, и половина товаров всё это время считалась
+        # по завышенной логистике. Берём по четыре страницы: обход укладывается
+        # в отведённое время и завершается за пару запусков.
         fresh, next_cards = _wb_card_dimensions(
-            headers, limit_pages=1, start_cursor=start)
+            headers, limit_pages=4, start_cursor=start)
         dims.update(fresh)
+
+        # Габариты сохраняем СРАЗУ, для всех карточек, а не только для товаров
+        # текущей страницы цен.
+        #
+        # Раньше они применялись лишь к той сотне товаров, что пришла в этом
+        # заходе вместе с ценами. Два обхода шли вразнобой — по каталогу и по
+        # ценам — и половина товаров так и оставалась без габаритов, сколько
+        # ни запускай. Из-за этого у них подставлялся общий тариф 270 ₽ вместо
+        # реальных 62 ₽, и прибыльные размеры выглядели убыточными.
+        if fresh:
+            box_now = _wb_box_rates(headers) or {}
+            for vendor, liters in fresh.items():
+                cur.execute(
+                    "UPDATE marketplace_prices mp "
+                    "SET volume_liters = %s, logistics_fbs = %s, "
+                    "    logistics_fbo = %s, updated_at = now() "
+                    "FROM marketplace_items mi "
+                    "WHERE mi.id = mp.marketplace_item_id "
+                    "  AND mp.marketplace_code = 'wildberries' "
+                    "  AND mi.sku = %s",
+                    (liters, _box_price(box_now, 'fbs', liters),
+                     _box_price(box_now, 'fbo', liters), vendor),
+                )
         cur.execute(
             "INSERT INTO system_settings (key, value) VALUES "
             "('wb_cards_cursor', %s) ON CONFLICT (key) DO UPDATE SET "
@@ -1305,9 +1335,17 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
         promo_percent = tariff['promoPercent']
     promo = round(price * (promo_percent or 0) / 100, 2)
 
-    # Логистику берём ПО ТОВАРУ, если площадка её отдала: она зависит от габаритов,
-    # и общий тариф для шторы 800 см и мелочи одинаковым быть не может.
+    # Логистику берём ПО ТОВАРУ, если площадка её отдала: она зависит от
+    # габаритов, и общий тариф для шторы 800 см и мелочи одинаковым быть
+    # не может.
+    #
+    # Когда габаритов ещё нет, подставляется общий тариф — и он способен
+    # переврать картину. У WB это 270 ₽ против реальных 62 ₽: товар с ценой
+    # 2177 ₽ показывал минус 242 ₽, будучи прибыльным. Соседние размеры той же
+    # ткани отличались вчетверо по логистике при одинаковой цене — именно это
+    # и выглядело необъяснимо.
     item_log = fees.get('logisticsFbo') if scheme == 'FBO' else fees.get('logisticsFbs')
+    logistics_is_tariff = item_log is None
     logistics_direct = item_log if item_log is not None else (
         tariff['logisticsFbo'] if scheme == 'FBO' else tariff['logisticsFbs'])
     item_ret = fees.get('returnFbo') if scheme == 'FBO' else fees.get('returnFbs')
@@ -1388,6 +1426,9 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
             and tariff.get('promoFromFact', True)),
         'logistics': logistics,
         'logisticsBase': round(logistics_direct, 2),
+        # Логистика взята из общего тарифа, а не по габаритам товара: цифра
+        # приблизительная и обычно завышена.
+        'logisticsFromTariff': logistics_is_tariff,
         'returnCost': return_cost,
         'storage': storage,
         'acceptance': acceptance,
@@ -1559,10 +1600,31 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             # прячутся: «Вуаль 200 см» в среднем прибыльна, но высоты 285 и
             # 295 см идут в минус на 70 ₽. По одной средней цифре такие
             # позиции не найти — а именно с ними и надо работать.
+            # Считаем убыточными только те размеры, где логистика известна
+            # ТОЧНО. Пока габариты не подтянулись, подставляется общий тариф —
+            # у WB он вчетверо выше реального, и прибыльный товар выглядит
+            # убыточным. Обвинять менеджера по такой цифре нельзя.
             'lossHeights': sum(
                 1 for h in heights
                 if (h.get('unit') or {}).get('price')
                 and (h['unit'].get('profit') or 0) <= 0
+                and not h['unit'].get('logisticsFromTariff')
+            ),
+            # Сколько размеров посчитаны по общему тарифу логистики.
+            # Из-за чего размеры ушли в минус: если у убыточных есть реклама,
+            # а у прибыльных её нет — дело в ней, а не в цене или логистике.
+            'lossFromPromo': sum(
+                1 for h in heights
+                if (h.get('unit') or {}).get('price')
+                and (h['unit'].get('profit') or 0) <= 0
+                and not h['unit'].get('logisticsFromTariff')
+                and (h['unit'].get('promo') or 0) > 0
+                and (h['unit']['profit'] + h['unit']['promo']) > 0
+            ),
+            'approxLogistics': sum(
+                1 for h in heights
+                if (h.get('unit') or {}).get('price')
+                and h['unit'].get('logisticsFromTariff')
             ),
             'minPrice': round(min(i['price'] for i in priced), 2) if priced else None,
             'maxPrice': round(max(i['price'] for i in priced), 2) if priced else None,

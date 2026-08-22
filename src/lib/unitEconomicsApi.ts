@@ -91,6 +91,10 @@ export interface EconomicsRow {
   actualPriceCount?: number;
   /** Сколько размеров внутри группы убыточны: среднее их прячет. */
   lossHeights?: number;
+  /** Из них ушли в минус ИЗ-ЗА РЕКЛАМЫ — без неё были бы прибыльны. */
+  lossFromPromo?: number;
+  /** Размеры, посчитанные по общему тарифу логистики: цифра приблизительная. */
+  approxLogistics?: number;
   /** Разброс логистики внутри группы: размеры весят по-разному. */
   logisticsMin?: number | null;
   logisticsMax?: number | null;
