@@ -22,7 +22,28 @@ interface CardProps {
 
 const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
   const [open, setOpen] = useState(false);
-  const u = row.unit;
+
+  // Высоты с ценой: только по ним есть расчёт.
+  const sizes = (row.heights || []).filter((h) => h.unit?.price);
+
+  // Какую высоту сейчас смотрим.
+  //
+  // По умолчанию — ХОДОВУЮ: она делает оборот, и решение о цене принимают по
+  // ней. Раньше карточка показывала среднее по группе, и понять, что творится
+  // с конкретным размером, было нельзя: одна высота в минусе, соседняя в
+  // плюсе, а в шапке — усреднённая цифра, не похожая ни на одну из них.
+  const topIdx = Math.max(
+    0,
+    sizes.findIndex((h) => h.height === row.topHeight?.height),
+  );
+  const [idx, setIdx] = useState(topIdx);
+  const current = sizes[idx] || null;
+
+  // Смотрим ВЫБРАННУЮ высоту, а не среднее по группе.
+  const u = current?.unit || row.unit;
+
+  const step = (d: number) =>
+    setIdx((i) => (i + d + sizes.length) % sizes.length);
 
   if (!u) {
     return (
@@ -48,39 +69,58 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
         <div className="min-w-0">
           <p className="text-base font-bold leading-tight">
             {row.material} · {row.width} см
-            {/* Ходовая высота. Без неё в шапке только ширина, а какая из
-                шестнадцати высот делает оборот — непонятно. Решение о цене
-                принимают именно по ней. */}
-            {row.topHeight && (
-              <span className="text-primary"> × {row.topHeight.height} см</span>
+            {current?.height && (
+              <span className="text-primary"> × {current.height} см</span>
             )}
           </p>
-          {row.topHeight && (
-            <p className="text-xs font-medium text-primary">
-              ходовой размер · {row.topHeight.soldUnits} шт за месяц
-              {row.topHeight.profit != null && (
-                <>
-                  {' · '}
-                  {row.topHeight.profit > 0 ? '+' : ''}
-                  {money(row.topHeight.profit)} ₽ с вещи
-                </>
+
+          {/* Листание высот прямо в шапке.
+              Весь расчёт ниже пересчитывается под выбранный размер: цена,
+              логистика, реклама и прибыль у высот разные, и по среднему их
+              не разглядеть. */}
+          {sizes.length > 1 && (
+            <div className="mt-1 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => step(-1)}
+                className="flex h-6 w-6 items-center justify-center rounded border border-border bg-background/70 hover:bg-background"
+                title="Предыдущая высота"
+              >
+                <Icon name="ChevronLeft" size={13} />
+              </button>
+              <span className="min-w-[4.5rem] text-center text-xs font-medium">
+                {idx + 1} из {sizes.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => step(1)}
+                className="flex h-6 w-6 items-center justify-center rounded border border-border bg-background/70 hover:bg-background"
+                title="Следующая высота"
+              >
+                <Icon name="ChevronRight" size={13} />
+              </button>
+              {/* Ходовую отмечаем: по ней принимают решение о цене. */}
+              {current?.height === row.topHeight?.height && (
+                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+                  ходовой · {row.topHeight?.soldUnits} шт за месяц
+                </span>
               )}
-            </p>
+              {!!current?.soldUnits &&
+                current.height !== row.topHeight?.height && (
+                  <span className="text-[11px] text-muted-foreground">
+                    {current.soldUnits} шт за месяц
+                  </span>
+                )}
+            </div>
           )}
+          {/* Раньше здесь оговаривались, что цифры в шапке усреднённые.
+              Теперь расчёт идёт по ВЫБРАННОЙ высоте, поэтому оговорка не
+              нужна — показываем состав группы и её общие продажи. */}
           <p className="text-xs text-muted-foreground">
             {row.productsCount} размеров по высоте
-            {/* Логистика внутри группы разная: объём зависит от высоты.
-                В шапке средняя — говорим об этом прямо, иначе цифра выглядит
-                точной, а по конкретному размеру отличается. */}
-            {row.logisticsMin != null &&
-              row.logisticsMax != null &&
-              row.logisticsMax > row.logisticsMin && (
-                <>
-                  {' '}
-                  · логистика {moneyShort(row.logisticsMin)}–
-                  {moneyShort(row.logisticsMax)} ₽, в шапке средняя
-                </>
-              )}
+            {!!row.soldUnits && row.soldUnits > 0 && (
+              <> · всего {row.soldUnits} шт за месяц</>
+            )}
             {row.minPrice !== row.maxPrice && row.minPrice != null && (
               <> · цены {moneyShort(row.minPrice)}–{moneyShort(row.maxPrice)} ₽</>
             )}

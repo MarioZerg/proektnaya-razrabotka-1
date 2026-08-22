@@ -84,6 +84,8 @@ export interface HeightRow {
   /** Наша цена в кабинете — для сравнения с фактической. */
   cardPrice: number | null;
   unit: UnitCalc | null;
+  /** Сколько продано за месяц: по этой цифре видно ходовой размер. */
+  soldUnits?: number;
 }
 
 /** Строка расчёта: ткань + ширина. */
