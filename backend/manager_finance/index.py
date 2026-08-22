@@ -31,7 +31,7 @@ def _is_admin(cur, actor_id):
 def _settings(cur):
     """Ставка менеджера, срок холда и кому начисляем."""
     cur.execute(
-        "SELECT percent, hold_days, user_id, is_active "
+        "SELECT percent, hold_days, user_id, is_active, accrue_from "
         "FROM manager_commission_settings ORDER BY id LIMIT 1"
     )
     r = cur.fetchone()
@@ -42,6 +42,9 @@ def _settings(cur):
         'holdDays': int(r[1] or 15),
         'userId': r[2],
         'isActive': bool(r[3]),
+        # Отчёты раньше этой даты владелец сверяет и оплачивает сам:
+        # в них перерасчёты площадки, которые автоматике не разобрать.
+        'accrueFrom': r[4],
     }
 
 
@@ -65,11 +68,12 @@ def _accrue(cur):
         "FROM marketplace_payouts "
         "WHERE marketplace_code = 'ozon' "
         "  AND transferred_amount > 0 "
+        "  AND period_start >= %s "
         "  AND NOT EXISTS ("
         "    SELECT 1 FROM manager_accruals a "
         "    WHERE a.user_id = %s AND a.period_start = marketplace_payouts.period_start "
         "      AND a.period_end = marketplace_payouts.period_end)",
-        (st['userId'],),
+        (st['accrueFrom'] or '2026-08-24', st['userId']),
     )
     rows = cur.fetchall()
 
@@ -81,43 +85,17 @@ def _accrue(cur):
 
         # Сколько вещей закрыто этим периодом.
         #
-        # Считаем по ДАННЫМ ПЛОЩАДКИ, а не по нашим заказам: в CRM они появились
-        # позже, и за старые недели там пусто. На реальных данных выходило
-        # «1 штука на 1,3 млн ₽ перечислений» — по такой цифре ни процент на
-        # вещь не посчитать, ни отчёт менеджеру не показать.
-        #
-        # Площадка отдаёт штуки помесячно, поэтому долю недели берём по её весу
-        # в перечислениях того же месяца: больше пришло денег — больше вещей.
+        # Считаем по своим заказам: начиная с новой недели они в системе полные,
+        # каждая вещь проходит через цех и склад. Раньше приходилось брать долю
+        # от месячных данных площадки — за старые недели заказов в CRM просто
+        # не было, и выходило «1 штука на 1,3 млн ₽».
         cur.execute(
-            "SELECT sold_units FROM marketplace_ad_monthly "
-            "WHERE marketplace_code = 'ozon' "
-            "  AND month = date_trunc('month', %s::date)::date",
-            (p_from,),
+            "SELECT count(*) FROM orders "
+            "WHERE marketplace = 'OZON' AND cancelled_at IS NULL "
+            "  AND created_at::date >= %s AND created_at::date <= %s",
+            (p_from, p_to),
         )
-        row = cur.fetchone()
-        month_units = int(row[0] or 0) if row else 0
-
-        cur.execute(
-            "SELECT coalesce(sum(transferred_amount), 0) "
-            "FROM marketplace_payouts "
-            "WHERE marketplace_code = 'ozon' "
-            "  AND date_trunc('month', period_start) "
-            "      = date_trunc('month', %s::date)",
-            (p_from,),
-        )
-        month_base = float(cur.fetchone()[0] or 0)
-
-        if month_units and month_base > 0:
-            units = int(round(month_units * base / month_base))
-        else:
-            # Запасной вариант: наши заказы. Для свежих недель они полные.
-            cur.execute(
-                "SELECT count(*) FROM orders "
-                "WHERE marketplace = 'OZON' AND cancelled_at IS NULL "
-                "  AND created_at::date >= %s AND created_at::date <= %s",
-                (p_from, p_to),
-            )
-            units = int(cur.fetchone()[0] or 0)
+        units = int(cur.fetchone()[0] or 0)
 
         amount = round(base * st['percent'] / 100.0, 2)
         per_unit = round(amount / units, 4) if units else None
@@ -245,6 +223,9 @@ def _balance(cur, user_id):
     return {
         'percent': st['percent'] if st else 0,
         'holdDays': st['holdDays'] if st else 15,
+        # С какой даты считает система: до неё отчёты сверяются вручную,
+        # и человек должен понимать, почему в списке пусто.
+        'accrueFrom': str(st['accrueFrom']) if st and st['accrueFrom'] else None,
         # К выплате: подтверждённое.
         'confirmed': round(by_status.get('confirmed', {}).get('amount', 0), 2),
         # В холде: ещё проверяется, может уменьшиться при возврате.
@@ -294,19 +275,47 @@ def handler(event: dict, context) -> dict:
         body = json.loads(event.get('body') or '{}')
         action = body.get('action')
 
-        if not _is_admin(cur, body.get('actorId')):
+        # Планировщик ходит по ключу, а не от имени человека: холды должны
+        # закрываться сами, без того чтобы кто-то каждый день нажимал кнопку.
+        secret = os.environ.get('CRON_SECRET', '')
+        by_cron = bool(body.get('cronSecret'))
+        if by_cron:
+            if not secret or body['cronSecret'] != secret:
+                return _resp(403, {'error': 'Неверный ключ планировщика'})
+        elif not _is_admin(cur, body.get('actorId')):
             return _resp(403, {'error': 'Доступно администратору'})
 
         if action == 'accrue':
             created = _accrue(cur)
             updated = _apply_returns(cur)
             confirmed = _confirm(cur)
+
+            # Запись в журнал — по ней страница «Планировщик» понимает, что
+            # задание живо. Без неё молчащий планировщик выглядел бы рабочим,
+            # а начисления просто перестали бы появляться.
+            cur.execute(
+                "INSERT INTO audit_log (user_id, user_name, category, action, "
+                "  entity_type, description, details) "
+                "VALUES (%s, %s, 'finance', 'manager_accrue', "
+                "        'manager_accrual', %s, %s)",
+                (
+                    None if by_cron else body.get('actorId'),
+                    'Планировщик' if by_cron else None,
+                    f"Начислено отчётов: {created.get('created', 0)}, "
+                    f"закрыто холдов: {max(0, confirmed)}",
+                    json.dumps({
+                        'created': created.get('created', 0),
+                        'returnsApplied': updated,
+                        'confirmed': max(0, confirmed),
+                    }, ensure_ascii=False),
+                ),
+            )
             conn.commit()
             return _resp(200, {
                 'ok': True,
                 'created': created.get('created', 0),
                 'returnsApplied': updated,
-                'confirmed': confirmed,
+                'confirmed': max(0, confirmed),
             })
 
         if action == 'recalc':

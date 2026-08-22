@@ -29,6 +29,8 @@ export interface ManagerAccrual {
 export interface ManagerBalance {
   percent: number;
   holdDays: number;
+  /** С какой даты считает система: раньше отчёты сверяются вручную. */
+  accrueFrom: string | null;
   /** Подтверждено — к выплате. */
   confirmed: number;
   /** В холде: ещё проверяется, может уменьшиться при возврате. */

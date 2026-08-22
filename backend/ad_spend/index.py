@@ -200,7 +200,17 @@ def _sync_payouts(cur, creds, months=6):
             d_period = det.get('period') or {}
             key = (d_period.get('begin') or '')[:10]
             payments = det.get('payments') or []
-            transferred = sum(abs(float(p.get('payment') or 0)) for p in payments)
+            # payments — это ВЫВОД ДЕНЕГ С БАЛАНСА: движение, в которое попадают
+            # средства за прошлые недели. Для процента менеджера оно не годится,
+            # иначе одни и те же деньги считаются дважды: на реальных данных
+            # неделя 27–31.07 дала «перевод» 4,97 млн — это выводили накопленный
+            # баланс, а не выручку той недели.
+            #
+            # Сумма к переводу селлеру ЗА ТОВАРЫ НЕДЕЛИ лежит в invoice_transfer.
+            # Проверено по отчёту, который менеджер прикрепляет вручную:
+            # за 10–16.08 там 1 490 035 ₽ — ровно то же число.
+            withdrawn = sum(abs(float(p.get('payment') or 0)) for p in payments)
+            transferred = float(det.get('invoice_transfer') or 0)
             # Агентское вознаграждение — техническая проводка на миллионы,
             # деньгами она не является. Держим отдельно, чтобы объяснить,
             # почему сумма услуг в отчёте выглядит положительной.
@@ -210,6 +220,7 @@ def _sync_payouts(cur, creds, months=6):
                     agency += float(it.get('price') or 0)
             details[key] = {
                 'transferred': transferred,
+                'withdrawn': withdrawn,
                 'balance': float(det.get('begin_balance_amount') or 0),
                 'agency': agency,
             }

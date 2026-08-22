@@ -57,9 +57,19 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
   if (!data || data.items.length === 0) {
     return (
       <Card className="border-border shadow-none">
-        <CardContent className="py-6 text-sm text-muted-foreground">
-          Начислений пока нет. Они появятся, когда площадка закроет недельный
-          отчёт и переведёт деньги
+        <CardContent className="space-y-1.5 py-6 text-sm text-muted-foreground">
+          <p>
+            Начислений пока нет — первое появится, когда площадка закроет
+            недельный отчёт в среду
+          </p>
+          {/* Пустой экран без объяснения выглядит поломкой. Говорим прямо,
+              что старые недели считаются вручную, а не потерялись. */}
+          {data?.accrueFrom && (
+            <p className="text-xs">
+              Система считает с {dmy(data.accrueFrom)}. Отчёты за более ранние
+              недели сверяются и оплачиваются вручную
+            </p>
+          )}
         </CardContent>
       </Card>
     );
