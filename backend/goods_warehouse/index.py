@@ -1092,8 +1092,20 @@ def handler(event: dict, context) -> dict:
 
             conditions = []
             if status:
-                status_esc = status.replace("'", "''")
-                conditions.append(f"gw.status = '{status_esc}'")
+                # Можно перечислить несколько статусов через запятую:
+                # ?status=picking,awaiting_supply.
+                #
+                # Карточка поставки берёт «готовое к сборке» — это ДВА статуса:
+                # снятое с полок (picking) и сшитое в цехе (awaiting_supply).
+                # Раньше на это уходило два отдельных вызова функции подряд,
+                # хотя запрос к базе почти одинаковый.
+                status_list = [v.strip() for v in status.split(',') if v.strip()]
+                if len(status_list) > 1:
+                    quoted = "', '".join(v.replace("'", "''") for v in status_list)
+                    conditions.append(f"gw.status IN ('{quoted}')")
+                else:
+                    status_esc = status.replace("'", "''")
+                    conditions.append(f"gw.status = '{status_esc}'")
                 # Возвраты с маркетплейса: показываем только СВЕЖИЕ (за сегодня и вчера).
                 #
                 # Кладовщик открывает этот фильтр, чтобы разобрать привезённое сегодня,

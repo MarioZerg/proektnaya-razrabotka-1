@@ -97,6 +97,101 @@ def handler(event: dict, context) -> dict:
     action = body_data.get('action')
     dsn = os.environ['DATABASE_URL']
 
+    if action == 'startup':
+        """Всё, что нужно показать сотруднику при входе, — ОДНИМ запросом.
+
+        Раньше при открытии системы уходило три отдельных обращения: неподписанные
+        договоры, срок на документы и счётчик работы в меню. Три вызова облачных
+        функций на каждое открытие вкладки, у каждого сотрудника, весь день — при
+        том что все три вопроса про одного человека и решаются одним походом в базу.
+
+        Здесь считаем всё сразу. Счётчик отдаём только тем, у кого он есть в меню:
+        кладовщику и администратору — остальным незачем.
+        """
+        user_id = body_data.get('userId')
+        role = (body_data.get('role') or '').strip()
+        if not user_id:
+            return {'statusCode': 400, 'headers': headers,
+                    'body': json.dumps({'error': 'Укажите userId'}, ensure_ascii=False)}
+
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            uid = int(user_id)
+
+            # 1. Неподписанные договоры: пока они есть, вместо страниц показывается
+            # экран подписания. Без этого числа нельзя нарисовать интерфейс.
+            cur.execute(
+                "SELECT count(*) FROM contracts WHERE user_id = %s AND status = 'pending'",
+                (uid,),
+            )
+            pending_contracts = int(cur.fetchone()[0])
+
+            # 2. Срок на загрузку документов. Интересует только факт блокировки:
+            # подробности человек смотрит на своей странице документов.
+            #
+            # Администратора не проверяем — у него этого требования нет.
+            docs_blocked = False
+            if role != 'admin':
+                cur.execute(
+                    "SELECT docs_blocked, personal_data_verified FROM users WHERE id = %s",
+                    (uid,),
+                )
+                d_row = cur.fetchone()
+                docs_blocked = bool(d_row and d_row[0] and not d_row[1])
+
+            # 3. Счётчик работы кладовщика в меню: подбор и вещи «на руках».
+            # Считаем ОДНИМ проходом по таблице — как в самом складе, иначе цифры
+            # в меню и на странице разойдутся.
+            picking = 0
+            awaiting_shelf = 0
+            if role in ('storekeeper', 'senior_storekeeper', 'admin'):
+                # Вещи «на руках»: отказы из цеха, ждущие полки, и возвраты
+                # с маркетплейса, ждущие разбора.
+                cur.execute(
+                    "SELECT count(*) FROM goods_warehouse "
+                    "WHERE status = 'mp_return' "
+                    "   OR (status = 'awaiting_shelf' AND storage_labeled_at IS NOT NULL)"
+                )
+                awaiting_shelf = int(cur.fetchone()[0] or 0)
+
+                # Подбор считаем ТЕМ ЖЕ запросом, что и страница склада, иначе цифры
+                # в меню и на экране разойдутся, и кладовщик перестанет им верить.
+                # Условия здесь не косметические: вещь должна быть под живым заказом
+                # и не лежать уже в чьей-то поставке.
+                cur.execute(
+                    "SELECT count(*) FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.reserved_order_id "
+                    "WHERE gw.status IN ('picking', 'awaiting_supply') "
+                    "  AND gw.reserved_order_id IS NOT NULL "
+                    "  AND gw.shipped_at IS NULL "
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                    "                  JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                    "                  WHERE msi.goods_warehouse_id = gw.id "
+                    "                    AND COALESCE(ms.status, '') "
+                    "                        NOT IN ('Выполнена', 'Отменена')) "
+                    "  AND (COALESCE(o.sewing_status, '') IN ('Новый', 'Со склада') "
+                    "       AND COALESCE(o.status, '') "
+                    "           NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
+                    "       AND COALESCE(o.ozon_status, '') NOT IN "
+                    "           ('delivering', 'delivered', 'cancelled', "
+                    "            'not_accepted', 'driver_pickup'))"
+                )
+                picking = int(cur.fetchone()[0] or 0)
+
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({
+                    'pendingContracts': pending_contracts,
+                    'docsBlocked': docs_blocked,
+                    'picking': picking,
+                    'awaitingShelf': awaiting_shelf,
+                }, ensure_ascii=False),
+            }
+        finally:
+            conn.close()
+
     if action == 'bot_info':
         # Ссылка на бота с ОДНОРАЗОВОЙ МЕТКОЙ этой вкладки (?start=...).
         #

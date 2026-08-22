@@ -33,6 +33,38 @@ export interface TestAccount {
   shiftNumber: number | null;
 }
 
+/** Что показать сотруднику при входе — одним запросом. */
+export interface StartupInfo {
+  /** Неподписанные договоры: пока есть, вместо страниц идёт экран подписания. */
+  pendingContracts: number;
+  /** Срок на загрузку документов вышел — доступ приостановлен. */
+  docsBlocked: boolean;
+  /** Счётчик подбора в меню кладовщика. */
+  picking: number;
+  /** Вещи «на руках»: отказы из цеха и возвраты, ждущие разбора. */
+  awaitingShelf: number;
+}
+
+/**
+ * Всё, что нужно для отрисовки меню при входе, — ОДНИМ вызовом.
+ *
+ * Раньше при каждом открытии системы уходило три отдельных запроса к трём разным
+ * облачным функциям: договоры, документы и счётчик работы. Все три — про одного
+ * человека, и все три решаются одним походом в базу.
+ */
+export const fetchStartupInfo = async (
+  userId: number,
+  role: string,
+): Promise<StartupInfo> => {
+  const res = await fetchWithTimeout(AUTH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'startup', userId, role }),
+  });
+  if (!res.ok) throw new Error('Не удалось загрузить данные входа');
+  return res.json();
+};
+
 export const fetchTestAccounts = async (): Promise<TestAccount[]> => {
   const res = await fetchWithTimeout(AUTH_URL, {
     method: 'POST',

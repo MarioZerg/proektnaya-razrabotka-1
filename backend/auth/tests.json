@@ -98,6 +98,15 @@
         "password": "x"
       },
       "expectedStatus": 410
+    },
+    {
+      "name": "Startup without userId fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "startup"
+      },
+      "expectedStatus": 400
     }
   ]
 }

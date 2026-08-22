@@ -32,14 +32,12 @@ import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels, isStorekeeperRole } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
 import { usePickingPending } from '@/hooks/usePickingPending';
-import { useRepackPending } from '@/hooks/useRepackPending';
 import KioskPreviewDialog from '@/components/crm/kiosk/KioskPreviewDialog';
 import ContractGate from '@/components/crm/contracts/ContractGate';
 import DocsGate from '@/components/crm/personal/DocsGate';
 import DocsCountdownBanner from '@/components/crm/personal/DocsCountdownBanner';
-import { checkDocsExpired } from '@/lib/personalDataApi';
 import CloseSidebarOnNavigate from '@/components/crm/CloseSidebarOnNavigate';
-import { fetchPendingContracts } from '@/lib/contractsApi';
+import { fetchStartupInfo } from '@/lib/authApi';
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
   const { user, login, logout, switchRole } = useAuth();
@@ -56,13 +54,6 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     isStorekeeperRole(user?.role) || user?.role === 'admin',
   );
 
-  // Счётчик работы у упаковщицы: возвраты, переданные кладовщиком в цех на осмотр.
-  // Цех берём из открытой смены, иначе из профиля: у каждого цеха своя перепаковка.
-  const repackPending = useRepackPending(
-    user?.role === 'packer' || user?.role === 'admin',
-    user?.activeWorkshopId || user?.workshopId || null,
-  );
-
   const navigate = useNavigate();
   const location = useLocation();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
@@ -77,20 +68,21 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   // Проверяем при входе: отдельный планировщик ради этого держать незачем.
   const [docsBlocked, setDocsBlocked] = useState(false);
 
+  // Договоры и срок документов — ОДНИМ запросом вместо двух отдельных вызовов
+  // к разным функциям. Оба вопроса про одного человека и решаются одним походом
+  // в базу; раньше на каждое открытие системы уходило по два обращения.
   useEffect(() => {
     if (!user?.id) return;
-    fetchPendingContracts(user.id)
-      .then(setPendingContracts)
+    fetchStartupInfo(user.id, user.role || '')
+      .then((r) => {
+        setPendingContracts(r.pendingContracts);
+        setDocsBlocked(r.docsBlocked);
+      })
       // Если проверка не удалась (сеть, функция) — не запираем человека снаружи.
-      .catch(() => setPendingContracts(0));
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!user?.id || user.role === 'admin') return;
-    checkDocsExpired(user.id)
-      .then((r) => setDocsBlocked(r.blocked))
-      // Сбой проверки не должен запирать человека снаружи.
-      .catch(() => setDocsBlocked(false));
+      .catch(() => {
+        setPendingContracts(0);
+        setDocsBlocked(false);
+      });
   }, [user?.id, user?.role]);
 
   useEffect(() => {
@@ -178,14 +170,6 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                           <Link to={item.path!}>
                             <Icon name={item.icon} size={16} />
                             <span>{item.label}</span>
-                            {/* Возвраты, переданные в цех: упаковщица видит новую работу,
-                                не заходя на страницу. */}
-                            {item.path === '/crm/inventory/packer-repack' &&
-                              repackPending > 0 && (
-                                <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
-                                  {repackPending}
-                                </span>
-                              )}
                           </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>

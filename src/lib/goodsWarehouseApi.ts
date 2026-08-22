@@ -23,6 +23,16 @@ export type GoodsStatus =
   | 'shipped'
   | 'lost';
 
+/**
+ * Что передаём в фильтр списка: один статус или несколько через запятую.
+ *
+ * Отдельно от GoodsStatus намеренно: «picking,awaiting_supply» — это не состояние
+ * вещи, а запрос «покажи готовое к сборке». Смешивать их в одном типе нельзя —
+ * иначе такой набор придётся раскрашивать и подписывать наравне с настоящими
+ * статусами.
+ */
+export type GoodsStatusFilter = GoodsStatus | 'picking,awaiting_supply';
+
 /** Почему товар оказался на складе хранения:
  * cancelled — заказ отменён клиентом (по статусу из API OZON/WB);
  * return — возврат с маркетплейса, принят вручную по номеру заказа;
@@ -78,7 +88,7 @@ export interface GoodsWarehouseItem {
 }
 
 export interface GoodsWarehouseFilters {
-  status?: GoodsStatus | 'all';
+  status?: GoodsStatusFilter | 'all';
   material?: string;
   width?: number;
   height?: number;
@@ -86,7 +96,7 @@ export interface GoodsWarehouseFilters {
 }
 
 export const fetchGoodsWarehouse = async (
-  filters?: GoodsStatus | GoodsWarehouseFilters
+  filters?: GoodsStatusFilter | GoodsWarehouseFilters
 ): Promise<GoodsWarehouseItem[]> => {
   const f: GoodsWarehouseFilters = typeof filters === 'string' ? { status: filters } : filters || {};
   const params = new URLSearchParams();
