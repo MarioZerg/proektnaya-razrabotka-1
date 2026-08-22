@@ -47,10 +47,22 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
   const [perItems, setPerItems] = useState('');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
+  // Какую строку сейчас правим и что в ней набрано.
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editAmount, setEditAmount] = useState('');
+  const [editPer, setEditPer] = useState('');
 
   const totalPerUnit = expenses
     .filter((e) => e.isActive)
     .reduce((s, e) => s + e.perUnit, 0);
+
+  // Окладные строки с устаревшим делителем. Мелкие расходы вроде «коробка на
+  // 50 заказов» не трогаем: там делитель — это норма упаковки, а не продажи.
+  const staleCount = sold?.total
+    ? expenses.filter(
+        (e) => e.isActive && e.perItems !== sold.total && e.perItems > 100,
+      ).length
+    : 0;
 
   const fail = (e: unknown, title: string) =>
     toast({
@@ -102,6 +114,65 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
     }
   };
 
+  const startEdit = (x: ExtraExpense) => {
+    setEditId(x.id);
+    setEditAmount(String(x.amount));
+    setEditPer(String(x.perItems));
+  };
+
+  const saveEdit = async (x: ExtraExpense) => {
+    try {
+      await updateExtraExpense({
+        id: x.id,
+        name: x.name,
+        amount: Number(editAmount) || 0,
+        perItems: Number(editPer) || 1,
+        note: x.note,
+        isActive: x.isActive,
+        actorId: user?.id,
+      });
+      setEditId(null);
+      onChanged();
+    } catch (e) {
+      fail(e, 'Не удалось сохранить');
+    }
+  };
+
+  /**
+   * Перевести ВСЕ окладные строки на фактическое число продаж.
+   *
+   * Правило простое: если делитель отличается от факта, он устарел. Править
+   * такие строки по одной — работа на десять кликов, и на середине легко
+   * сбиться, а половина расходов останется посчитанной по-старому.
+   */
+  const applySoldToAll = async () => {
+    if (!sold?.total) return;
+    const stale = expenses.filter(
+      (e) => e.isActive && e.perItems !== sold.total && e.perItems > 100,
+    );
+    if (stale.length === 0) return;
+    setSaving(true);
+    try {
+      for (const x of stale) {
+        await updateExtraExpense({
+          id: x.id,
+          name: x.name,
+          amount: x.amount,
+          perItems: sold.total,
+          note: x.note,
+          isActive: x.isActive,
+          actorId: user?.id,
+        });
+      }
+      toast({ title: `Обновлено строк: ${stale.length}` });
+      onChanged();
+    } catch (e) {
+      fail(e, 'Не удалось обновить');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const remove = async (id: number) => {
     try {
       await deleteExtraExpense(id, user?.id);
@@ -144,14 +215,29 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
                   склада площадки, за вычетом возвратов
                 </p>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPerItems(String(sold.total))}
-              >
-                <Icon name="ArrowDownToLine" size={14} className="mr-1.5" />
-                Подставить в делитель
-              </Button>
+              {/* Две разные задачи: подставить число в НОВУЮ строку и
+                  пересчитать УЖЕ ЗАВЕДЁННЫЕ. Вторая нужнее: оклады заводят
+                  один раз, а продажи меняются каждый месяц. */}
+              <div className="flex flex-wrap items-center gap-2">
+                {staleCount > 0 && (
+                  <Button size="sm" onClick={applySoldToAll} disabled={saving}>
+                    <Icon
+                      name={saving ? 'Loader2' : 'RefreshCw'}
+                      size={14}
+                      className={`mr-1.5 ${saving ? 'animate-spin' : ''}`}
+                    />
+                    Пересчитать окладные ({staleCount})
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPerItems(String(sold.total))}
+                >
+                  <Icon name="ArrowDownToLine" size={14} className="mr-1.5" />
+                  В новую строку
+                </Button>
+              </div>
             </div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
               {sold.byMarketplace.map((m) => (
@@ -189,10 +275,55 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
               >
                 <div className="min-w-0">
                   <p className="text-sm font-medium">{x.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {money(x.amount)} ₽ ÷ {x.perItems} шт
-                    {x.note ? ` · ${x.note}` : ''}
-                  </p>
+                  {/* Правка прямо в строке: раньше изменить сумму или делитель
+                      было нельзя — только удалить и завести заново. */}
+                  {editId === x.id ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={editAmount}
+                        onChange={(e) => setEditAmount(e.target.value)}
+                        className="h-8 w-28"
+                      />
+                      <span className="text-xs text-muted-foreground">₽ ÷</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={editPer}
+                        onChange={(e) => setEditPer(e.target.value)}
+                        className="h-8 w-24"
+                      />
+                      <span className="text-xs text-muted-foreground">шт</span>
+                      {sold && sold.total > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8"
+                          onClick={() => setEditPer(String(sold.total))}
+                        >
+                          факт {sold.total}
+                        </Button>
+                      )}
+                      <Button size="sm" className="h-8" onClick={() => saveEdit(x)}>
+                        Сохранить
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8"
+                        onClick={() => setEditId(null)}
+                      >
+                        Отмена
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {money(x.amount)} ₽ ÷ {x.perItems} шт
+                      {x.note ? ` · ${x.note}` : ''}
+                    </p>
+                  )}
                   {/* Делитель сильно выше факта — расход недооценён.
                       Молчать об этом нельзя: себестоимость выглядит ниже
                       настоящей, а решения по ценам принимаются по ней. */}
@@ -207,6 +338,14 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="font-semibold">{money(x.perUnit)} ₽</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => startEdit(x)}
+                    title="Изменить сумму или делитель"
+                  >
+                    <Icon name="Pencil" size={14} />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"

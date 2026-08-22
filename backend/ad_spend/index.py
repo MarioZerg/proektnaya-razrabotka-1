@@ -367,6 +367,20 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
         )
 
     units_total = max(0, units_fbo) + max(0, units_fbs)
+
+    # Строку «за последние 30 дней» обновляем ТОЛЬКО обычным запуском.
+    #
+    # Расчёт за конкретный месяц (dateFrom/dateTo) нужен, чтобы дозаполнить
+    # историю, и трогать текущие цифры он не должен: иначе пересчёт мая молча
+    # подменяет собой данные за последние 30 дней — и в себестоимости вместо
+    # свежего числа продаж оказывается майское.
+    if date_from and date_to:
+        pct = round(spend / revenue * 100, 2) if revenue > 0 else None
+        return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
+                'percent': pct, 'byItem': 0, 'months': len(by_month),
+                'soldUnits': units_total, 'soldFbo': max(0, units_fbo),
+                'soldFbs': max(0, units_fbs), 'historyOnly': True}
+
     pct = _save_total(cur, 'ozon', spend, revenue,
                       (units_total, max(0, units_fbo), max(0, units_fbs)))
     return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
