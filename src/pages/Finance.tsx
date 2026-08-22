@@ -24,6 +24,7 @@ import {
   type CashBoxTransaction,
 } from '@/lib/salaryApi';
 import FinanceSummaryCard from '@/components/crm/finance/FinanceSummaryCard';
+import ManagerAccrualsPanel from '@/components/crm/finance/ManagerAccrualsPanel';
 import FinanceToolbar from '@/components/crm/finance/FinanceToolbar';
 import OperationsTable from '@/components/crm/finance/OperationsTable';
 import SalaryPayoutsTable from '@/components/crm/finance/SalaryPayoutsTable';
@@ -291,6 +292,25 @@ const Finance = () => {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
   };
+
+  // У менеджера маркетплейсов другая схема: не сдельная работа в цехе, а
+  // процент с денег, пришедших на счёт по недельным отчётам площадки.
+  // Показывать ему экран цеховых начислений бессмысленно — он там пустой.
+  if (user?.role === 'manager' && user?.id) {
+    return (
+      <CrmLayout>
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-xl font-bold">Мои финансы</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Процент с продаж по недельным отчётам маркетплейсов
+            </p>
+          </div>
+          <ManagerAccrualsPanel userId={user.id} />
+        </div>
+      </CrmLayout>
+    );
+  }
 
   if (user?.role !== 'admin') {
     return (

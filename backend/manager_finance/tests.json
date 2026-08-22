@@ -1,0 +1,8 @@
+{
+  "tests": [
+    {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
+    {"name": "Balance without user fails", "method": "GET", "path": "/?action=balance", "expectedStatus": 400},
+    {"name": "Accrue without admin forbidden", "method": "POST", "path": "/", "body": {"action": "accrue"}, "expectedStatus": 403},
+    {"name": "Unknown action fails", "method": "GET", "path": "/?action=nope&userId=1", "expectedStatus": 400}
+  ]
+}
