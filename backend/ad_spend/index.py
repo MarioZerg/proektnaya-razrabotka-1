@@ -109,12 +109,73 @@ def _save_total(cur, code, spend, revenue, units=None):
     return pct
 
 
-def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
-    """Реклама OZON: сколько списали за клики и какая была выручка.
+def _load_progress(cur, code):
+    """Где остановились в прошлый раз и что успели накопить.
+
+    Нужно, чтобы после обрыва не читать 29 страниц заново: продолжаем
+    с той страницы, на которой закончили.
+    """
+    cur.execute(
+        "SELECT next_page, ad_spend, revenue, units_fbo, units_fbs, by_month "
+        "FROM marketplace_sync_progress WHERE marketplace_code = %s",
+        (code,),
+    )
+    r = cur.fetchone()
+    if not r:
+        return 1, None
+    return int(r[0] or 1), {
+        'spend': float(r[1] or 0),
+        'revenue': float(r[2] or 0),
+        'units_fbo': int(r[3] or 0),
+        'units_fbs': int(r[4] or 0),
+        'by_month': r[5] or {},
+    }
+
+
+def _save_progress(cur, code, next_page, acc):
+    """Откладываем промежуточный итог до следующей порции."""
+    cur.execute(
+        "INSERT INTO marketplace_sync_progress (marketplace_code, next_page, "
+        "  ad_spend, revenue, units_fbo, units_fbs, by_month, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, now()) "
+        "ON CONFLICT (marketplace_code) DO UPDATE SET "
+        "  next_page = EXCLUDED.next_page, ad_spend = EXCLUDED.ad_spend, "
+        "  revenue = EXCLUDED.revenue, units_fbo = EXCLUDED.units_fbo, "
+        "  units_fbs = EXCLUDED.units_fbs, by_month = EXCLUDED.by_month, "
+        "  updated_at = now()",
+        (code, int(next_page), acc['spend'], acc['revenue'],
+         acc['units_fbo'], acc['units_fbs'], json.dumps(acc['by_month'])),
+    )
+
+
+def _clear_progress(cur, code):
+    """Период дочитан — накопитель больше не нужен."""
+    cur.execute(
+        "DELETE FROM marketplace_sync_progress WHERE marketplace_code = %s",
+        (code,),
+    )
+
+
+# Сколько страниц операций читаем за один вызов функции.
+#
+# У площадки за месяц бывает 29 000 операций — 29 страниц по 1000. Все сразу
+# не прочитать: не хватит таймаута. Раньше стоял жёсткий предел в 5 страниц,
+# и мы видели 17% данных — отсюда 1234 проданных штуки вместо примерно 5000.
+# Теперь читаем порциями за несколько вызовов, накапливая итог в базе.
+PAGES_PER_CALL = 8
+
+
+def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
+               start_page=1, acc=None):
+    """Реклама OZON: сколько списали за клики, какая выручка и сколько штук.
 
     OZON списывает «Оплату за клик» ОБЩИМИ суммами — в операции нет ни товара,
     ни артикула. Разнести по позициям физически не из чего, поэтому считаем
     один процент на всю площадку и применяем ко всем товарам одинаково.
+
+    Читает ПОРЦИЮ страниц начиная с start_page и возвращает накопленный итог
+    вместе с номером следующей страницы. Пока страницы не кончились, вызов
+    повторяется — иначе за один заход данные не помещаются.
     """
     headers = {'Client-Id': (creds.get('clientId') or '').strip(),
                'Api-Key': (creds.get('apiKey') or '').strip()}
@@ -126,14 +187,22 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
         since = datetime.strptime(date_from, '%Y-%m-%d').date()
         today = datetime.strptime(date_to, '%Y-%m-%d').date()
 
-    spend = 0.0
-    revenue = 0.0
+    # Продолжаем с того, что накоплено прошлыми порциями.
+    acc = acc or {}
+    spend = float(acc.get('spend') or 0)
+    revenue = float(acc.get('revenue') or 0)
+    units_fbo = int(acc.get('units_fbo') or 0)
+    units_fbs = int(acc.get('units_fbs') or 0)
+    total_pages = 0
+    last_page = start_page + PAGES_PER_CALL - 1
     # Расход и оборот ПО МЕСЯЦАМ: {'2026-06-01': [расход, оборот]}.
     #
     # Общая цифра за 30 дней отвечает на вопрос «сколько сейчас», а помесячная —
     # на вопрос «куда движемся». Второй важнее: по одному числу нельзя понять,
     # реклама подорожала или спрос упал.
-    by_month = {}
+    by_month = {k: list(v[:2]) for k, v in (acc.get('by_month') or {}).items()}
+    units_by_month = {k: int(v[2]) for k, v in (acc.get('by_month') or {}).items()
+                      if len(v) > 2}
     # ШТУКИ, за которые получены деньги. Нужны себестоимости: на это число
     # делятся оклады и прочие постоянные расходы.
     #
@@ -141,11 +210,8 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
     # FBO-продажи (товар лежит на складе OZON и уходит покупателю без нашего
     # участия) в заказы не попадают вовсе. А здесь, в финансовых операциях,
     # видно обе схемы — и за каждую заплачено.
-    units_fbo = 0
-    units_fbs = 0
-    units_by_month = {}
     # Транзакции приходят страницами по 1000 — за месяц их бывает несколько.
-    for page in range(1, 6):
+    for page in range(start_page, start_page + PAGES_PER_CALL):
         st, d = _http(
             f'{OZON_API}/v3/finance/transaction/list', 'POST', headers,
             {'filter': {'date': {'from': f'{since}T00:00:00.000Z',
@@ -157,6 +223,8 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
         if st != 200 or not isinstance(d, dict):
             break
         ops = ((d.get('result') or {}).get('operations')) or []
+        if page == start_page:
+            total_pages = int((d.get('result') or {}).get('page_count') or 0)
         if not ops:
             break
         for o in ops:
@@ -224,8 +292,33 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
             # процент перестанет совпадать с кабинетом, и сверять цифры станет
             # невозможно. Потери от возвратов видны в юнит-экономике отдельно —
             # через выкуп, там им и место.
+        last_page = page
         if len(ops) < 1000:
+            total_pages = page
             break
+
+    # Собираем накопленное в один свёрток: он вернётся сюда же следующим вызовом.
+    merged = {}
+    for k in set(by_month) | set(units_by_month):
+        sp, rv = by_month.get(k, [0.0, 0.0])
+        merged[k] = [round(sp, 2), round(rv, 2), units_by_month.get(k, 0)]
+    acc_out = {
+        'spend': round(spend, 2),
+        'revenue': round(revenue, 2),
+        'units_fbo': units_fbo,
+        'units_fbs': units_fbs,
+        'by_month': merged,
+    }
+
+    next_page = last_page + 1
+    done = total_pages > 0 and next_page > total_pages
+
+    # Страницы ещё есть — отдаём промежуточный итог и просим позвать снова.
+    # В базу пока ничего не пишем: неполные цифры там хуже вчерашних полных.
+    if not done:
+        return {'ok': True, 'inProgress': True, 'nextPage': next_page,
+                'totalPages': total_pages, 'acc': acc_out,
+                'spend': round(spend, 2), 'revenue': round(revenue, 2)}
 
     if revenue <= 0:
         return {'ok': False, 'error': 'Нет данных о выручке за период'}
@@ -235,7 +328,9 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
     if dry_run:
         pct = round(spend / revenue * 100, 2) if revenue > 0 else None
         return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
-                'percent': pct, 'byItem': 0, 'from': str(since), 'to': str(today)}
+                'percent': pct, 'byItem': 0, 'from': str(since), 'to': str(today),
+                'soldUnits': max(0, units_fbo) + max(0, units_fbs),
+                'soldFbo': max(0, units_fbo), 'soldFbs': max(0, units_fbs)}
 
     # Складываем историю по месяцам.
     #
@@ -524,11 +619,28 @@ def handler(event: dict, context) -> dict:
                 return _resp(400, {'error': 'Интеграция не подключена'})
 
             if code == 'ozon':
+                # Операций за месяц около 29 000 — за один вызов не прочитать.
+                # Читаем порциями: страницу продолжения и накопленный итог
+                # передаёт сам вызывающий, а промежуточный результат мы храним
+                # в базе, чтобы после обрыва не начинать с первой страницы.
+                start_page = int(body_data.get('page') or 0)
+                acc = body_data.get('acc')
+                if not start_page:
+                    saved_page, saved_acc = _load_progress(cur, 'ozon')
+                    start_page = saved_page
+                    acc = acc or saved_acc
+
                 res = _sync_ozon(
                     cur, creds,
                     body_data.get('dateFrom'), body_data.get('dateTo'),
                     bool(body_data.get('dryRun')),
+                    start_page, acc,
                 )
+                if res.get('inProgress'):
+                    _save_progress(cur, 'ozon', res['nextPage'], res['acc'])
+                    conn.commit()
+                else:
+                    _clear_progress(cur, 'ozon')
             else:
                 # WB считается в два приёма: сначала расход по кампаниям
                 # (порциями, их десятки), потом выручка и сам процент.
