@@ -1503,9 +1503,24 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             })
 
         avg_price = round(sum(i['price'] for i in priced) / len(priced), 2) if priced else None
-        # Тарифы для группы берём у первого товара с ценой: внутри пары
-        # «ткань + ширина» габариты одинаковые, значит и логистика тоже.
-        group_fees = priced[0]['fees'] if priced else None
+
+        # Логистика внутри группы НЕ одинаковая.
+        #
+        # Раньше тарифы брали у первого товара с ценой, считая габариты внутри
+        # пары «ткань + ширина» одинаковыми. На деле объём зависит и от высоты:
+        # у ширины 200 см он гуляет от 0,2 до 0,9 литра, а логистика — от 92 до
+        # 114 ₽. Заголовок карточки показывал 92 ₽ и занижал расход.
+        #
+        # Берём СРЕДНЮЮ по товарам группы и отдельно отдаём разброс: в шапке
+        # честная средняя, а точная цифра по каждому размеру — в разворачивании.
+        log_key = 'logisticsFbo' if scheme == 'FBO' else 'logisticsFbs'
+        log_vals = [
+            i['fees'][log_key] for i in priced
+            if i.get('fees') and i['fees'].get(log_key) is not None
+        ]
+        group_fees = dict(priced[0]['fees']) if priced and priced[0]['fees'] else None
+        if group_fees is not None and log_vals:
+            group_fees[log_key] = round(sum(log_vals) / len(log_vals), 2)
         # Реклама по группе — средняя по её размерам: внутри «ткань + ширина»
         # продвигают обычно не все высоты, и брать процент одной из них нельзя.
         g_ads = [ad_percents[i['id']] for i in g['items'] if i['id'] in ad_percents]
@@ -1516,6 +1531,10 @@ def _build(cur, code, scheme, buyout_override, shared=None):
         rows.append({
             'material': material,
             'width': width,
+            # Разброс логистики внутри группы: если размеры весят по-разному,
+            # одна цифра в шапке вводит в заблуждение.
+            'logisticsMin': round(min(log_vals), 2) if log_vals else None,
+            'logisticsMax': round(max(log_vals), 2) if log_vals else None,
             'productsCount': len(g['items']),
             'pricedCount': len(priced),
             'minPrice': round(min(i['price'] for i in priced), 2) if priced else None,

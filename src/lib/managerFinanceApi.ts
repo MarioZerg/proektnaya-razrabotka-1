@@ -38,6 +38,10 @@ export interface ManagerAccrual {
   compensation: number;
   /** Когда вознаграждение передано в зарплату. */
   paidAt: string | null;
+  /** По какой площадке начислено: ozon, wildberries, yandex_market. */
+  marketplace: string;
+  /** Сколько площадка удержала за перевод денег продавцу. */
+  withdrawFee: number;
 }
 
 export interface ManagerBalance {

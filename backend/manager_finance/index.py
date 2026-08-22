@@ -32,7 +32,8 @@ def _is_admin(cur, actor_id):
 def _settings(cur):
     """Ставка менеджера, срок холда и кому начисляем."""
     cur.execute(
-        "SELECT percent, user_id, is_active, accrue_from, skip_loss_items "
+        "SELECT percent, user_id, is_active, accrue_from, skip_loss_items, "
+        "       ym_withdraw_percent, ym_delay_weeks "
         "FROM manager_commission_settings ORDER BY id LIMIT 1"
     )
     r = cur.fetchone()
@@ -46,6 +47,9 @@ def _settings(cur):
         # в них перерасчёты площадки, которые автоматике не разобрать.
         'accrueFrom': r[3],
         'skipLossItems': bool(r[4]) if len(r) > 4 else True,
+        # Комиссия площадки за вывод денег: у Яндекса 1,6%.
+        'ymWithdrawPercent': float(r[5] or 0) if len(r) > 5 else 1.6,
+        'ymDelayWeeks': int(r[6] or 4) if len(r) > 6 else 4,
     }
 
 
@@ -57,7 +61,7 @@ PRODUCT_COST_URL = (
 )
 
 
-def _loss_share(p_from, p_to):
+def _loss_share(p_from, p_to, mp_code='ozon'):
     """Доля убыточных продаж за период — из расчёта себестоимости.
 
     Возвращает долю в ВЫРУЧКЕ (0..1) и количество вещей, проданных ниже
@@ -68,7 +72,8 @@ def _loss_share(p_from, p_to):
     как раньше, чем срезать человеку выплату из-за сбоя связи.
     """
     try:
-        url = f'{PRODUCT_COST_URL}?action=loss_share&from={p_from}&to={p_to}'
+        url = (f'{PRODUCT_COST_URL}?action=loss_share'
+               f'&from={p_from}&to={p_to}&marketplace={mp_code}')
         req = urllib.request.Request(url, headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=20) as r:
             d = json.loads(r.read())
@@ -95,28 +100,43 @@ def _accrue(cur):
     if not st or not st['userId'] or not st['isActive']:
         return {'created': 0, 'skipped': 'Не задан сотрудник или расчёт выключен'}
 
+    # Берём отчёты ВСЕХ подключённых площадок, а не только OZON: менеджер
+    # ведёт их одинаково, и правила начисления везде общие.
     cur.execute(
         "SELECT id, period_start, period_end, transferred_amount, "
-        "       withdrawn_amount, compensation_amount "
+        "       withdrawn_amount, compensation_amount, marketplace_code "
         "FROM marketplace_payouts "
-        "WHERE marketplace_code = 'ozon' "
-        "  AND transferred_amount > 0 "
+        "WHERE transferred_amount > 0 "
         "  AND period_start >= %s "
         "  AND NOT EXISTS ("
         "    SELECT 1 FROM manager_accruals a "
-        "    WHERE a.user_id = %s AND a.period_start = marketplace_payouts.period_start "
-        "      AND a.period_end = marketplace_payouts.period_end)",
+        "    WHERE a.user_id = %s "
+        "      AND a.marketplace_code = marketplace_payouts.marketplace_code "
+        "      AND a.period_start = marketplace_payouts.period_start "
+        "      AND a.period_end = marketplace_payouts.period_end) "
+        "ORDER BY period_start",
         (st['accrueFrom'] or '2026-08-24', st['userId']),
     )
     rows = cur.fetchall()
 
     created = 0
-    for payout_id, p_from, p_to, transferred, withdrawn, compensation in rows:
+    for (payout_id, p_from, p_to, transferred, withdrawn, compensation,
+         mp_code) in rows:
         # Компенсации площадки — тоже выручка: возмещения за утерянный,
         # испорченный или бракованный товар и выкупы невозвратных позиций.
         # Деньги приходят на счёт, значит входят в базу вознаграждения.
         comp = float(compensation or 0)
-        base = float(transferred or 0) + comp
+        transferred = float(transferred or 0)
+
+        # Комиссия площадки за перевод денег продавцу.
+        #
+        # У Яндекса это 1,6% от суммы вывода. Компания этих денег не получает,
+        # поэтому вычитаем их ДО расчёта процента: иначе менеджеру платили бы
+        # с суммы, которая до счёта не дошла.
+        fee_pct = st['ymWithdrawPercent'] if mp_code == 'yandex_market' else 0.0
+        withdraw_fee = round((transferred + comp) * fee_pct / 100.0, 2)
+
+        base = round(transferred + comp - withdraw_fee, 2)
         if base <= 0:
             continue
 
@@ -126,11 +146,16 @@ def _accrue(cur):
         # каждая вещь проходит через цех и склад. Раньше приходилось брать долю
         # от месячных данных площадки — за старые недели заказов в CRM просто
         # не было, и выходило «1 штука на 1,3 млн ₽».
+        # В заказах площадка записана своим именем — сопоставляем с кодом
+        # отчёта, иначе по WB и Яндексу штуки считались бы нулями.
+        mp_orders = {
+            'ozon': 'OZON', 'wildberries': 'WB', 'yandex_market': 'Yandex',
+        }.get(mp_code, mp_code.upper())
         cur.execute(
             "SELECT count(*) FROM orders "
-            "WHERE marketplace = 'OZON' AND cancelled_at IS NULL "
+            "WHERE marketplace = %s AND cancelled_at IS NULL "
             "  AND created_at::date >= %s AND created_at::date <= %s",
-            (p_from, p_to),
+            (mp_orders, p_from, p_to),
         )
         units = int(cur.fetchone()[0] or 0)
 
@@ -138,14 +163,14 @@ def _accrue(cur):
         # что принесло доход. Долю берём по выручке, а не по штукам — дешёвая
         # позиция чаще уходит в минус, и по количеству её вес выглядит больше,
         # чем в деньгах.
-        loss = _loss_share(p_from, p_to) if st.get('skipLossItems') else {
+        loss = _loss_share(p_from, p_to, mp_code) if st.get('skipLossItems') else {
             'lossUnits': 0, 'share': 0.0,
         }
         # Долю убыточных считаем от ПРОДАЖ, без компенсаций: компенсация —
         # это возмещение за конкретный испорченный товар, к прибыльности
         # ассортимента она отношения не имеет. Применив долю ко всей базе,
         # мы бы срезали часть возмещения ни за что.
-        loss_amount = round(float(transferred or 0) * loss['share'], 2)
+        loss_amount = round(transferred * loss['share'], 2)
         payable = round(base - loss_amount, 2)
 
         amount = round(payable * st['percent'] / 100.0, 2)
@@ -180,14 +205,17 @@ def _accrue(cur):
             # отчётной недели: на расчёт это не влияет, а смысл сохраняется —
             # «начисление относится к этому периоду».
             "  status, hold_until, confirmed_at, "
-            "  loss_units, loss_amount, payable_base, compensation_amount) "
+            "  loss_units, loss_amount, payable_base, compensation_amount, "
+            "  marketplace_code, withdraw_fee) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-            "        CASE WHEN %s = 'confirmed' THEN now() END, %s, %s, %s, %s) "
+            "        CASE WHEN %s = 'confirmed' THEN now() END, "
+            "        %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (user_id, marketplace_code, period_start, period_end) "
             "DO NOTHING",
             (st['userId'], payout_id, p_from, p_to, units, base,
              st['percent'], amount, per_unit, status, p_to, status,
-             loss['lossUnits'], loss_amount, payable, comp),
+             loss['lossUnits'], loss_amount, payable, comp,
+             mp_code, withdraw_fee),
         )
         created += 1
 
@@ -240,7 +268,7 @@ def _balance(cur, user_id):
         "  amount, per_unit, status, returned_units, "
         "  returned_amount, cancel_reason, confirmed_at, "
         "  loss_units, loss_amount, payable_base, paid_out_at, "
-        "  compensation_amount, paid_at "
+        "  compensation_amount, paid_at, marketplace_code, withdraw_fee "
         "FROM manager_accruals WHERE user_id = %s "
         "ORDER BY period_start DESC LIMIT 40",
         (int(user_id),),
@@ -277,6 +305,9 @@ def _balance(cur, user_id):
             'compensation': float(r[17] or 0),
             # Передано в зарплату — повторно выплатить уже нельзя.
             'paidAt': str(r[18]) if r[18] else None,
+            # По какой площадке начислено и сколько она удержала за вывод.
+            'marketplace': r[19] or 'ozon',
+            'withdrawFee': float(r[20] or 0),
         })
 
     st = _settings(cur)

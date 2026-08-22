@@ -51,6 +51,18 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
           </p>
           <p className="text-xs text-muted-foreground">
             {row.productsCount} размеров по высоте
+            {/* Логистика внутри группы разная: объём зависит от высоты.
+                В шапке средняя — говорим об этом прямо, иначе цифра выглядит
+                точной, а по конкретному размеру отличается. */}
+            {row.logisticsMin != null &&
+              row.logisticsMax != null &&
+              row.logisticsMax > row.logisticsMin && (
+                <>
+                  {' '}
+                  · логистика {moneyShort(row.logisticsMin)}–
+                  {moneyShort(row.logisticsMax)} ₽, в шапке средняя
+                </>
+              )}
             {row.minPrice !== row.maxPrice && row.minPrice != null && (
               <> · цены {moneyShort(row.minPrice)}–{moneyShort(row.maxPrice)} ₽</>
             )}

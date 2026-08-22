@@ -31,6 +31,13 @@ const shortDate = (iso: string) => {
   return `${d}.${m}.${y}`;
 };
 
+/** Названия площадок: в отчёте они приходят кодом. */
+const MARKETPLACE_LABEL: Record<string, string> = {
+  ozon: 'OZON',
+  wildberries: 'Wildberries',
+  yandex_market: 'Яндекс Маркет',
+};
+
 const STATUS_LABEL: Record<string, string> = {
   pending: 'ожидает поступления денег от площадки',
   confirmed: 'к выплате',
@@ -53,7 +60,8 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
   <div style="border-bottom:2px solid #111;padding-bottom:16px;">
     <div style="font-size:24px;font-weight:700;">Отчёт по вознаграждению</div>
     <div style="font-size:15px;color:#555;margin-top:6px;">
-      Неделя ${shortDate(a.periodStart)} — ${shortDate(a.periodEnd)}
+      ${MARKETPLACE_LABEL[a.marketplace] || a.marketplace} ·
+      неделя ${shortDate(a.periodStart)} — ${shortDate(a.periodEnd)}
     </div>
   </div>
 
@@ -87,6 +95,18 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
         ${money(a.baseAmount)} ₽
       </td>
     </tr>
+    ${a.withdrawFee > 0 ? `
+    <tr>
+      <td style="padding:11px 12px;">
+        Комиссия площадки за вывод средств<br />
+        <span style="font-size:12px;color:#666;">
+          удержана площадкой при переводе — на счёт эти деньги не поступают
+        </span>
+      </td>
+      <td style="padding:11px 12px;text-align:right;">
+        −${money(a.withdrawFee)} ₽
+      </td>
+    </tr>` : ''}
     ${a.compensation > 0 ? `
     <tr>
       <td style="padding:11px 12px;">

@@ -264,6 +264,118 @@ def _sync_compensations(cur, creds, date_from, date_to):
     return updated
 
 
+def _wb_week(day):
+    """Отчётная неделя WB: понедельник—воскресенье, в которую попал день."""
+    monday = day - timedelta(days=day.weekday())
+    return monday, monday + timedelta(days=6)
+
+
+def _sync_wb_payouts(cur, creds, weeks=12):
+    """Недельные отчёты Wildberries: сколько продали и сколько дошло до счёта.
+
+    WB закрывает неделю по средам и отдаёт детализацию построчно: каждая
+    строка — продажа, возврат, логистика, хранение или штраф. Складываем их
+    по неделям и получаем ту же картину, что и по OZON.
+
+    БАЗА ПРОЦЕНТА — деньги, которые реально придут продавцу: продажи минус
+    возвраты и минус все удержания площадки. Оборот в базу не годится:
+    логистику и хранение мы не получаем, платить с них не с чего.
+    """
+    headers = {'Authorization': (creds.get('apiKey') or '').strip()}
+    today = datetime.now(timezone.utc).date()
+    since = today - timedelta(weeks=weeks)
+
+    # Тянем построчно: отчёт большой, поэтому идём страницами по rrd_id.
+    rows = []
+    rrd = 0
+    for _ in range(40):
+        st, d = _http(
+            'https://statistics-api.wildberries.ru'
+            '/api/v5/supplier/reportDetailByPeriod'
+            f'?dateFrom={since}&dateTo={today}&limit=100000&rrdid={rrd}',
+            'GET', headers, None, timeout=60,
+        )
+        if not isinstance(d, list) or not d:
+            break
+        rows.extend(d)
+        rrd = d[-1].get('rrd_id') or 0
+        if len(d) < 100000:
+            break
+
+    if not rows:
+        return 0
+
+    # Раскладываем по неделям отчёта. Границы берём из самого отчёта
+    # (date_from/date_to) — так они совпадут с тем, что показывает кабинет.
+    weeks_data = {}
+    for r in rows:
+        d_from = (r.get('date_from') or '')[:10]
+        d_to = (r.get('date_to') or '')[:10]
+        if not d_from or not d_to:
+            continue
+        w = weeks_data.setdefault((d_from, d_to), {
+            'orders': 0.0, 'returns': 0.0, 'commission': 0.0,
+            'delivery': 0.0, 'services': 0.0, 'pay': 0.0,
+        })
+
+        name = (r.get('supplier_oper_name') or '').lower()
+        for_pay = float(r.get('ppvz_for_pay') or 0)
+        retail = float(r.get('retail_amount') or 0)
+
+        if 'возврат' in name:
+            # Возврат приходит положительным — вычитаем сами.
+            w['returns'] -= retail
+            w['pay'] -= for_pay
+        elif 'продаж' in name:
+            w['orders'] += retail
+            w['pay'] += for_pay
+            # Комиссия площадки = что покупатель заплатил минус что придёт нам.
+            w['commission'] -= max(0.0, retail - for_pay)
+        else:
+            # Логистика, хранение, штрафы, удержания — всё это уменьшает
+            # перечисление, но продажей не является.
+            w['delivery'] -= float(r.get('delivery_rub') or 0)
+            w['services'] -= (
+                float(r.get('storage_fee') or 0)
+                + float(r.get('penalty') or 0)
+                + float(r.get('deduction') or 0)
+            )
+            w['pay'] += for_pay
+
+    saved = 0
+    for (d_from, d_to), w in weeks_data.items():
+        # Сколько реально дойдёт до счёта: перечисление за вычетом услуг.
+        transferred = round(
+            w['pay'] + w['delivery'] + w['services'], 2
+        )
+        accrued = round(
+            w['orders'] + w['returns'] + w['commission']
+            + w['services'] + w['delivery'], 2
+        )
+        cur.execute(
+            "INSERT INTO marketplace_payouts (marketplace_code, "
+            "  period_start, period_end, orders_amount, returns_amount, "
+            "  commission_amount, services_amount, delivery_amount, "
+            "  accrued_amount, transferred_amount, synced_at) "
+            "VALUES ('wildberries', %s, %s, %s, %s, %s, %s, %s, %s, %s, now()) "
+            "ON CONFLICT (marketplace_code, period_start, period_end) "
+            "DO UPDATE SET orders_amount = EXCLUDED.orders_amount, "
+            "  returns_amount = EXCLUDED.returns_amount, "
+            "  commission_amount = EXCLUDED.commission_amount, "
+            "  services_amount = EXCLUDED.services_amount, "
+            "  delivery_amount = EXCLUDED.delivery_amount, "
+            "  accrued_amount = EXCLUDED.accrued_amount, "
+            "  transferred_amount = EXCLUDED.transferred_amount, "
+            "  synced_at = now()",
+            (d_from, d_to, round(w['orders'], 2), round(w['returns'], 2),
+             round(w['commission'], 2), round(w['services'], 2),
+             round(w['delivery'], 2), accrued, transferred),
+        )
+        saved += 1
+
+    return saved
+
+
 def _sync_payouts(cur, creds, months=6):
     """Отчёты OZON о выплатах: сколько начислено и сколько реально пришло.
 
@@ -1079,7 +1191,19 @@ def handler(event: dict, context) -> dict:
                 # без них отчёт неполный, без выплат — пустой.
                 pass
             conn.commit()
-            return _resp(200, {'ok': True, 'periods': saved, 'compensations': comp})
+            return _resp(200, {'ok': True, 'periods': saved,
+                               'compensations': comp})
+
+        if action == 'sync_wb_payouts':
+            # Отдельным действием: отчёт WB построчный и тяжёлый, вместе с
+            # OZON он не укладывается в отведённое время, и падали обе выгрузки.
+            creds, enabled = _credentials(cur, 'wildberries')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция WB не подключена'})
+            weeks = int(body_data.get('weeks') or 4)
+            saved = _sync_wb_payouts(cur, creds, weeks)
+            conn.commit()
+            return _resp(200, {'ok': True, 'periods': saved})
 
         if action == 'sync_nm_ids':
             creds, enabled = _credentials(cur, 'wildberries')

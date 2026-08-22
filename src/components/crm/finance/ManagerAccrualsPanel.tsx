@@ -40,6 +40,13 @@ interface Props {
   canPay?: boolean;
 }
 
+/** Названия площадок: в отчётах они приходят кодом. */
+const MARKETPLACE_LABEL: Record<string, string> = {
+  ozon: 'OZON',
+  wildberries: 'Wildberries',
+  yandex_market: 'Яндекс Маркет',
+};
+
 const ManagerAccrualsPanel = ({ userId, canPay = false }: Props) => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -195,8 +202,13 @@ const ManagerAccrualsPanel = ({ userId, canPay = false }: Props) => {
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">
+                    <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
                       {dmy(a.periodStart)} — {dmy(a.periodEnd)}
+                      {/* Площадка: у каждой свои сроки и удержания, без метки
+                          отчёты за одну неделю сливаются в одинаковые строки. */}
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                        {MARKETPLACE_LABEL[a.marketplace] || a.marketplace}
+                      </span>
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {money(a.baseAmount)} ₽ на счёт · {a.units} шт
@@ -208,6 +220,14 @@ const ManagerAccrualsPanel = ({ userId, canPay = false }: Props) => {
                     {/* Компенсации площадки — тоже выручка, и процент с них
                         начисляется. Показываем отдельно: иначе непонятно,
                         почему база больше суммы обычных продаж. */}
+                    {/* Комиссия за перевод денег: у Яндекса 1,6%. Компания их
+                        не получает, поэтому процент считается уже без них. */}
+                    {a.withdrawFee > 0 && (
+                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Icon name="Minus" size={12} className="shrink-0" />
+                        комиссия площадки за вывод — {money(a.withdrawFee)} ₽
+                      </p>
+                    )}
                     {a.compensation > 0 && (
                       <p className="mt-0.5 flex items-center gap-1.5 text-xs text-emerald-700">
                         <Icon name="Gift" size={12} className="shrink-0" />

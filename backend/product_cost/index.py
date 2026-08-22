@@ -231,7 +231,7 @@ def _sold_units(cur, days=30):
     return {'days': int(days), 'total': total, 'byMarketplace': out}
 
 
-def loss_share_for_period(cur, p_from, p_to):
+def loss_share_for_period(cur, p_from, p_to, mp_code='ozon'):
     """Доля убыточных продаж за период: штук в минусе и их вес в деньгах.
 
     Нужна для начисления менеджеру: премировать за проданное в убыток не за что.
@@ -254,9 +254,14 @@ def loss_share_for_period(cur, p_from, p_to):
         for g in groups
     }
 
+    # В заказах площадка записана своим именем, в тарифах — кодом.
+    mp_orders = {
+        'ozon': 'OZON', 'wildberries': 'WB', 'yandex_market': 'Yandex',
+    }.get(mp_code, mp_code.upper())
+
     cur.execute(
         "SELECT commission_fbs_percent, acquiring_percent, logistics_fbs "
-        "FROM marketplace_tariffs WHERE marketplace_code = 'ozon'"
+        "FROM marketplace_tariffs WHERE marketplace_code = %s", (mp_code,)
     )
     t = cur.fetchone()
     commission_pct = float(t[0] or 0) if t else 0.0
@@ -268,12 +273,12 @@ def loss_share_for_period(cur, p_from, p_to):
         "FROM orders o "
         "JOIN marketplace_prices mp "
         "  ON mp.marketplace_item_id = o.marketplace_item_id "
-        " AND mp.marketplace_code = 'ozon' "
-        "WHERE o.marketplace = 'OZON' AND o.cancelled_at IS NULL "
+        " AND mp.marketplace_code = %s "
+        "WHERE o.marketplace = %s AND o.cancelled_at IS NULL "
         "  AND o.created_at::date >= %s AND o.created_at::date <= %s "
         "  AND mp.price > 0 "
         "GROUP BY o.material, o.width, mp.price",
-        (p_from, p_to),
+        (mp_code, mp_orders, p_from, p_to),
     )
 
     total_units = 0
@@ -567,7 +572,8 @@ def handler(event: dict, context) -> dict:
                 p_to = params.get('to')
                 if not p_from or not p_to:
                     return _resp(400, {'error': 'Укажите from и to'})
-                return _resp(200, loss_share_for_period(cur, p_from, p_to))
+                return _resp(200, loss_share_for_period(
+                    cur, p_from, p_to, params.get('marketplace') or 'ozon'))
 
             settings = _settings(cur)
             sold = _sold_units(cur, 30)

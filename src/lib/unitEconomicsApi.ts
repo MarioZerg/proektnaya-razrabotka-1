@@ -87,6 +87,9 @@ export interface HeightRow {
 export interface EconomicsRow {
   /** Тот же товар по второй схеме — для сравнения FBS и FBO на карточке. */
   altUnit?: UnitCalc | null;
+  /** Разброс логистики внутри группы: размеры весят по-разному. */
+  logisticsMin?: number | null;
+  logisticsMax?: number | null;
   material: string | null;
   width: number | null;
   productsCount: number;
@@ -432,6 +435,12 @@ export const syncAdSpend = async (
     // же, чтобы владелец не искал три разные кнопки.
     onProgress?.('Загружаем отчёты о выплатах…');
     await postAd({ action: 'sync_payouts', actorId, months: 6 }).catch(() => null);
+    // Отчёты WB тянем отдельным вызовом: они построчные и тяжёлые, вместе с
+    // OZON не укладываются в отведённое время и падали обе выгрузки.
+    onProgress?.('Загружаем отчёты Wildberries…');
+    await postAd({ action: 'sync_wb_payouts', actorId, weeks: 4 }).catch(
+      () => null,
+    );
     onProgress?.('Загружаем остатки на складах…');
     await postAd({ action: 'sync_stocks', actorId }).catch(() => null);
 
