@@ -1246,7 +1246,8 @@ def _prices_by_item(cur, code):
         "SELECT marketplace_item_id, price, price_before_discount, "
         "price_with_marketplace_discount, discount_percent, commission_fbo_percent, "
         "commission_fbs_percent, volume_liters, weight_kg, source, synced_at, "
-        "logistics_fbo, logistics_fbs, return_fbo, return_fbs, acquiring_amount "
+        "logistics_fbo, logistics_fbs, return_fbo, return_fbs, acquiring_amount, "
+        "fact_sale_price, fact_sale_count "
         "FROM marketplace_prices WHERE marketplace_code = %s",
         (code,),
     )
@@ -1256,6 +1257,9 @@ def _prices_by_item(cur, code):
             'price': float(r[1]) if r[1] is not None else None,
             'priceBeforeDiscount': float(r[2]) if r[2] is not None else None,
             'priceWithMarketplaceDiscount': float(r[3]) if r[3] is not None else None,
+            # Фактическая цена продажи — точнее витрины.
+            'factSalePrice': float(r[16]) if len(r) > 16 and r[16] is not None else None,
+            'factSaleCount': int(r[17]) if len(r) > 17 and r[17] is not None else 0,
             'discountPercent': float(r[4]) if r[4] is not None else None,
             'commissionFboPercent': float(r[5]) if r[5] is not None else None,
             'commissionFbsPercent': float(r[6]) if r[6] is not None else None,
@@ -1547,13 +1551,35 @@ def _build(cur, code, scheme, buyout_override, shared=None):
         #
         # Если площадка фактическую цену не отдала, берём цену карточки: лучше
         # посчитать по ней, чем не посчитать вовсе.
-        actual = (p or {}).get('priceWithMarketplaceDiscount')
+        # ЦЕНА ДЛЯ РАСЧЁТА — по убыванию точности:
+        #   1) факт продаж — сумма, реально начисленная за проданные вещи;
+        #   2) цена витрины с акциями площадки;
+        #   3) цена карточки.
+        #
+        # Витрина расходится с фактом: покупатель платит картой площадки,
+        # действуют региональные цены и баллы. На сверке разрыв вышел 6,5% —
+        # и всегда в сторону завышения нашей прибыли.
+        #
+        # Факт берём, только если продаж набралось хотя бы две: по одной
+        # случайной сделке судить о цене нельзя.
+        fact = (p or {}).get('factSalePrice')
+        fact_n = (p or {}).get('factSaleCount') or 0
+        actual = fact if (fact and fact_n >= 2) else (
+            (p or {}).get('priceWithMarketplaceDiscount'))
         g['items'].append({
             'id': item_id, 'height': height, 'name': name, 'sku': sku,
             'price': (actual if actual else (p['price'] if p else None)),
             # Помечаем, откуда взялась цена: менеджеру важно видеть, где расчёт
             # идёт по реальной продаже, а где по цене витрины.
             'priceIsActual': bool(actual),
+            # Откуда взята цена: факт продаж, витрина или карточка. Владелец
+            # должен видеть, чему верить.
+            'priceSource': (
+                'fact' if (fact and fact_n >= 2)
+                else ('showcase' if (p or {}).get('priceWithMarketplaceDiscount')
+                      else 'card')
+            ),
+            'factSaleCount': fact_n,
             'cardPrice': p['price'] if p else None,
             'commissionFbo': p['commissionFboPercent'] if p else None,
             'commissionFbs': p['commissionFbsPercent'] if p else None,
@@ -1600,6 +1626,9 @@ def _build(cur, code, scheme, buyout_override, shared=None):
                 'sku': i['sku'], 'source': i['source'],
                 'discountPercent': i['discountPercent'],
                 'priceIsActual': i['priceIsActual'],
+                # Откуда цена: факт продаж точнее витрины.
+                'priceSource2': i.get('priceSource'),
+                'factSaleCount': i.get('factSaleCount') or 0,
                 'cardPrice': i['cardPrice'],
                 'unit': unit,
             })
@@ -1647,6 +1676,9 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             # витрине. Если площадка фактическую цену не отдала, расчёт идёт
             # по завышенной — и убыточный товар выглядит прибыльным.
             'actualPriceCount': sum(1 for i in priced if i['priceIsActual']),
+            # Сколько размеров посчитаны по ФАКТУ продаж — самой точной цене.
+            'factPriceCount': sum(
+                1 for i in priced if i.get('priceSource') == 'fact'),
             # Сколько РАЗМЕРОВ внутри группы убыточны.
             #
             # Карточка показывает среднее по группе, и убыточные высоты за ним

@@ -272,6 +272,79 @@ def _wb_week(day):
     return monday, monday + timedelta(days=6)
 
 
+def _sync_fact_prices(cur, creds, days=30):
+    """Фактическая цена продажи по каждому товару OZON.
+
+    Справочник цен площадки отдаёт marketing_seller_price — цену витрины с
+    учётом акций. Но реальная сумма за проданную вещь отличается: покупатель
+    платит картой площадки, действуют региональные цены и баллы. На сверке за
+    неделю разрыв вышел в среднем 3,2%, по отдельным позициям до 6% — и всегда
+    в сторону завышения нашей прибыли.
+
+    Берём цену из финансовых операций: accruals_for_sale — сумма, начисленная
+    за конкретную продажу. Это свершившийся факт, точнее источника нет.
+    """
+    headers = {'Client-Id': (creds.get('clientId') or '').strip(),
+               'Api-Key': (creds.get('apiKey') or '').strip()}
+    today = datetime.now(timezone.utc).date()
+    since = today - timedelta(days=days)
+
+    by_sku = {}
+    for page in range(1, 15):
+        st, d = _http(
+            f'{OZON_API}/v3/finance/transaction/list', 'POST', headers,
+            {'filter': {
+                'date': {'from': f'{since}T00:00:00.000Z',
+                         'to': f'{today}T23:59:59.000Z'},
+                'operation_type': ['OperationAgentDeliveredToCustomer'],
+                'posting_number': '', 'transaction_type': 'all'},
+             'page': page, 'page_size': 1000},
+            timeout=40,
+        )
+        if not isinstance(d, dict):
+            break
+        ops = ((d.get('result') or {}).get('operations')) or []
+        if not ops:
+            break
+        for o in ops:
+            accrual = float(o.get('accruals_for_sale') or 0)
+            items = o.get('items') or []
+            if accrual <= 0 or not items:
+                continue
+            # В отправлении может быть несколько вещей: делим поровну.
+            per_item = accrual / len(items)
+            for it in items:
+                sku = str(it.get('sku') or '').strip()
+                if not sku:
+                    continue
+                a = by_sku.setdefault(sku, {'sum': 0.0, 'n': 0})
+                a['sum'] += per_item
+                a['n'] += 1
+        if len(ops) < 1000:
+            break
+
+    if not by_sku:
+        return 0
+
+    saved = 0
+    for sku, a in by_sku.items():
+        if a['n'] < 1:
+            continue
+        cur.execute(
+            "UPDATE marketplace_prices mp "
+            "SET fact_sale_price = %s, fact_sale_count = %s, "
+            "    fact_synced_at = now() "
+            "FROM marketplace_items mi "
+            "WHERE mi.id = mp.marketplace_item_id "
+            "  AND mp.marketplace_code = 'ozon' "
+            "  AND mi.ozon_sku::text = %s",
+            (round(a['sum'] / a['n'], 2), a['n'], sku),
+        )
+        saved += cur.rowcount
+
+    return saved
+
+
 def _sync_ym_ads(cur, creds, date_from, date_to):
     """Расходы на продвижение Яндекс Маркета по каждому товару.
 
@@ -1292,6 +1365,17 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return _resp(200, {'ok': True, 'periods': saved,
                                'compensations': comp})
+
+        if action == 'sync_fact_prices':
+            # Фактические цены продаж OZON: витрина расходится с тем, что
+            # реально приходит за вещь.
+            creds, enabled = _credentials(cur, 'ozon')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция OZON не подключена'})
+            saved = _sync_fact_prices(cur, creds,
+                                      int(body_data.get('days') or 30))
+            conn.commit()
+            return _resp(200, {'ok': True, 'items': saved})
 
         if action == 'sync_ym_ads':
             # Расходы на продвижение Яндекса: без них юнит-экономика по этой

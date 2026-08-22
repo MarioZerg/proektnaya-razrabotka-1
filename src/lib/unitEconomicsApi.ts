@@ -86,6 +86,10 @@ export interface HeightRow {
   unit: UnitCalc | null;
   /** Сколько продано за месяц: по этой цифре видно ходовой размер. */
   soldUnits?: number;
+  /** Откуда цена: fact — факт продаж, showcase — витрина, card — карточка. */
+  priceSource2?: 'fact' | 'showcase' | 'card';
+  /** На скольких продажах посчитана фактическая цена. */
+  factSaleCount?: number;
 }
 
 /** Строка расчёта: ткань + ширина. */
@@ -94,6 +98,8 @@ export interface EconomicsRow {
   altUnit?: UnitCalc | null;
   /** Сколько размеров считаются по реальной цене продажи, а не по витрине. */
   actualPriceCount?: number;
+  /** Сколько размеров посчитаны по ФАКТУ продаж — самой точной цене. */
+  factPriceCount?: number;
   /** Сколько размеров внутри группы убыточны: среднее их прячет. */
   lossHeights?: number;
   /** Ходовой размер — тот, что делает оборот. По нему и решают о цене. */
@@ -468,6 +474,12 @@ export const syncAdSpend = async (
     // считает рекламу нулём и завышает прибыль.
     onProgress?.('Загружаем продвижение Яндекса…');
     await postAd({ action: 'sync_ym_ads', actorId }).catch(() => null);
+    // Фактические цены продаж: витрина расходится с тем, что реально
+    // приходит за вещь — на сверке разрыв составил 6,5%.
+    onProgress?.('Сверяем цены с фактическими продажами…');
+    await postAd({ action: 'sync_fact_prices', actorId, days: 7 }).catch(
+      () => null,
+    );
     onProgress?.('Загружаем остатки на складах…');
     await postAd({ action: 'sync_stocks', actorId }).catch(() => null);
 
