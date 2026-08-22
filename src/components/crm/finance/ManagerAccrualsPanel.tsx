@@ -175,6 +175,20 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
                     {a.cancelReason}
                   </p>
                 )}
+
+                {/* Документ фиксирует расчёт: база, ставка, штуки и возвраты.
+                    Раньше сумму присылали текстом, и проверить её было нечем. */}
+                {a.reportUrl && (
+                  <a
+                    href={a.reportUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                  >
+                    <Icon name="FileText" size={13} />
+                    Отчёт за неделю (PDF)
+                  </a>
+                )}
               </div>
             );
           })}

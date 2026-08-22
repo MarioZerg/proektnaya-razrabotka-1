@@ -24,6 +24,8 @@ export interface ManagerAccrual {
   confirmedAt: string | null;
   /** Осталось после возвратов — это и идёт в баланс. */
   net: number;
+  /** PDF-отчёт за неделю: фиксирует расчёт. */
+  reportUrl: string | null;
 }
 
 export interface ManagerBalance {
