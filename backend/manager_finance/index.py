@@ -39,7 +39,9 @@ def _settings(cur):
         return None
     return {
         'percent': float(r[0] or 0),
-        'holdDays': int(r[1] or 15),
+        # Ноль — законное значение: «подтверждать сразу». Через «or 15» он
+        # превращался в 15 дней, и начисления упорно вставали в холд.
+        'holdDays': int(r[1]) if r[1] is not None else 15,
         'userId': r[2],
         'isActive': bool(r[3]),
         # Отчёты раньше этой даты владелец сверяет и оплачивает сам:
@@ -99,65 +101,26 @@ def _accrue(cur):
 
         amount = round(base * st['percent'] / 100.0, 2)
         per_unit = round(amount / units, 4) if units else None
-        hold_until = p_to + timedelta(days=st['holdDays'])
+        # Срок проверки. Ноль — подтверждаем сразу: возвраты площадка вычла
+        # ещё в своём отчёте, и снимать их повторно нечего.
+        hold_days = int(st['holdDays'] or 0)
+        hold_until = p_to + timedelta(days=hold_days)
+        status = 'hold' if hold_days > 0 else 'confirmed'
 
         cur.execute(
             "INSERT INTO manager_accruals (user_id, payout_id, period_start, "
             "  period_end, units, base_amount, percent, amount, per_unit, "
-            "  status, hold_until) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'hold', %s) "
+            "  status, hold_until, confirmed_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "        CASE WHEN %s = 'confirmed' THEN now() END) "
             "ON CONFLICT (user_id, marketplace_code, period_start, period_end) "
             "DO NOTHING",
             (st['userId'], payout_id, p_from, p_to, units, base,
-             st['percent'], amount, per_unit, hold_until),
+             st['percent'], amount, per_unit, status, hold_until, status),
         )
         created += 1
 
     return {'created': created}
-
-
-def _apply_returns(cur):
-    """Уменьшает начисления на вернувшиеся вещи — но только внутри холда.
-
-    Правило простое: пока идут 15 дней, возврат снимает свою долю начисления.
-    После холда деньги закреплены за менеджером и не списываются, даже если
-    покупатель вернул товар позже, — так и договаривались.
-    """
-    cur.execute(
-        "SELECT id, period_start, period_end, per_unit, amount, hold_until "
-        "FROM manager_accruals "
-        "WHERE status = 'hold' AND per_unit IS NOT NULL"
-    )
-    rows = cur.fetchall()
-
-    updated = 0
-    for a_id, p_from, p_to, per_unit, amount, hold_until in rows:
-        # Возвраты по заказам этого периода, зарегистрированные ДО конца холда.
-        cur.execute(
-            "SELECT count(*) FROM marketplace_returns r "
-            "JOIN orders o ON o.ozon_posting_number = r.posting_number "
-            "WHERE o.created_at::date >= %s AND o.created_at::date <= %s "
-            "  AND r.mp_created_at::date <= %s",
-            (p_from, p_to, hold_until),
-        )
-        returned = int(cur.fetchone()[0] or 0)
-        if returned <= 0:
-            continue
-
-        back = round(float(per_unit) * returned, 2)
-        # Больше начисленного не снимаем: иначе менеджер уйдёт в минус
-        # из-за возвратов по заказам, попавшим в отчёт лишь частично.
-        back = min(back, float(amount))
-
-        cur.execute(
-            "UPDATE manager_accruals SET returned_units = %s, "
-            "  returned_amount = %s "
-            "WHERE id = %s AND returned_amount IS DISTINCT FROM %s",
-            (returned, back, a_id, back),
-        )
-        updated += max(0, cur.rowcount)
-
-    return updated
 
 
 def _confirm(cur):
@@ -223,7 +186,7 @@ def _balance(cur, user_id):
     st = _settings(cur)
     return {
         'percent': st['percent'] if st else 0,
-        'holdDays': st['holdDays'] if st else 15,
+        'holdDays': st['holdDays'] if st else 0,
         # С какой даты считает система: до неё отчёты сверяются вручную,
         # и человек должен понимать, почему в списке пусто.
         'accrueFrom': str(st['accrueFrom']) if st and st['accrueFrom'] else None,
@@ -288,7 +251,6 @@ def handler(event: dict, context) -> dict:
 
         if action == 'accrue':
             created = _accrue(cur)
-            updated = _apply_returns(cur)
             confirmed = _confirm(cur)
             # Запись в журнал — по ней страница «Планировщик» понимает, что
             # задание живо. Без неё молчащий планировщик выглядел бы рабочим,
@@ -305,7 +267,6 @@ def handler(event: dict, context) -> dict:
                     f"закрыто холдов: {max(0, confirmed)}",
                     json.dumps({
                         'created': created.get('created', 0),
-                        'returnsApplied': updated,
                         'confirmed': max(0, confirmed),
                     }, ensure_ascii=False),
                 ),
@@ -314,7 +275,6 @@ def handler(event: dict, context) -> dict:
             return _resp(200, {
                 'ok': True,
                 'created': created.get('created', 0),
-                'returnsApplied': updated,
                 'confirmed': max(0, confirmed),
                             })
 
@@ -328,12 +288,11 @@ def handler(event: dict, context) -> dict:
             cur.execute("DELETE FROM manager_accruals WHERE user_id = %s",
                         (st['userId'],))
             created = _accrue(cur)
-            updated = _apply_returns(cur)
             confirmed = _confirm(cur)
             conn.commit()
             return _resp(200, {
                 'ok': True, 'created': created.get('created', 0),
-                'returnsApplied': updated, 'confirmed': confirmed,
+                'confirmed': confirmed,
             })
 
         if action == 'set_user':
@@ -342,7 +301,9 @@ def handler(event: dict, context) -> dict:
                 "  hold_days = %s, updated_at = now(), updated_by = %s "
                 "WHERE id = (SELECT id FROM manager_commission_settings "
                 "            ORDER BY id LIMIT 1)",
-                (body.get('userId'), int(body.get('holdDays') or 15),
+                (body.get('userId'),
+                 int(body.get('holdDays')) if body.get('holdDays') is not None
+                 else 0,
                  body.get('actorId')),
             )
             conn.commit()

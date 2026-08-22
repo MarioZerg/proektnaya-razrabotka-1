@@ -112,20 +112,23 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
               {money(data.confirmed)} ₽
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Проверено, выплата 10 и 25 числа через кассу
+              Выплата 10 и 25 числа через кассу
             </p>
           </CardContent>
         </Card>
-        <Card className="border-border shadow-none">
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">На проверке</p>
-            <p className="mt-1 text-2xl font-bold">{money(data.hold)} ₽</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Ждёт {data.holdDays} дней: если покупатель вернёт товар, сумма
-              уменьшится
-            </p>
-          </CardContent>
-        </Card>
+        {/* Пока срок проверки не задан, второй плашки нет: она показывала бы
+            ноль и путала. Появится сама, если правила вернут холд. */}
+        {data.hold > 0 && (
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">На проверке</p>
+              <p className="mt-1 text-2xl font-bold">{money(data.hold)} ₽</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Ждёт {data.holdDays} дней
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <Card className="border-border shadow-none">
@@ -136,7 +139,9 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
             <Badge variant="secondary">{data.percent}% с перечислений</Badge>
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            Процент считается с денег, пришедших на расчётный счёт за неделю
+            Процент считается с денег, пришедших на расчётный счёт за неделю.
+            Возвраты площадка вычитает сама: они попадают в ближайший отчёт и
+            уменьшают его сумму
           </p>
         </CardHeader>
         <CardContent className="space-y-2">
