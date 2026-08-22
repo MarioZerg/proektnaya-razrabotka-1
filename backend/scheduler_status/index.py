@@ -209,6 +209,7 @@ FUNC_IDS = {
     'unit_economics': '4ebd72ad-8ca4-456c-840c-d2db30ce04cd',
     'promotion': '5fc24d57-7e45-4a1a-898d-a610c310093a',
     'ad_spend': '29442dba-b5a9-4e15-b9ba-5fdc52eef574',
+    'manager_finance': '406daf92-dd75-4e27-946d-e90aa720fe70',
 }
 
 # Разделы страницы: заголовок и пояснение, чем грозит молчание.
@@ -369,7 +370,10 @@ def handler(event: dict, context) -> dict:
                     if job.get('method') == 'POST'
                     else f"{base}/{FUNC_IDS[job['func']]}"
                          f"?action={job['urlAction']}&cronSecret={cron_secret}"
-                ) if (is_admin and cron_secret) else None,
+                ) if (is_admin and cron_secret
+                      # Незнакомая функция не должна ронять всю страницу:
+                      # без адреса задание просто покажется без ссылки.
+                      and job['func'] in FUNC_IDS) else None,
                 # Автозакрытие смен трогает деньги и работает только через POST:
                 # в планировщике для него нужен метод POST и тело запроса.
                 'method': job.get('method', 'GET'),
