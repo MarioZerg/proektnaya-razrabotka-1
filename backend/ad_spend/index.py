@@ -251,8 +251,14 @@ def _sync_payouts(cur, creds, months=6):
                 "  period_start, period_end, orders_amount, returns_amount, "
                 "  commission_amount, services_amount, delivery_amount, "
                 "  accrued_amount, transferred_amount, begin_balance, "
-                "  agency_fee, synced_at) "
-                "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()) "
+                "  agency_fee, withdrawn_amount, transferred_at, synced_at) "
+                "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                # Поступлением считаем вывод, сопоставимый с суммой к переводу.
+                # Просто «больше нуля» не годится: по неделе 10–16.08 вывод
+                # составил 24 893 ₽ при сумме 1 490 035 ₽ — это техническое
+                # движение, а не выплата, и начисление ушло бы в работу раньше
+                # времени. Порог в половину суммы такие случаи отсекает.
+                "        CASE WHEN %s >= %s * 0.5 THEN now() END, now()) "
                 "ON CONFLICT (marketplace_code, period_start, period_end) "
                 "DO UPDATE SET orders_amount = EXCLUDED.orders_amount, "
                 "  returns_amount = EXCLUDED.returns_amount, "
@@ -262,12 +268,22 @@ def _sync_payouts(cur, creds, months=6):
                 "  accrued_amount = EXCLUDED.accrued_amount, "
                 "  transferred_amount = EXCLUDED.transferred_amount, "
                 "  begin_balance = EXCLUDED.begin_balance, "
-                "  agency_fee = EXCLUDED.agency_fee, synced_at = now()",
+                "  agency_fee = EXCLUDED.agency_fee, "
+                "  withdrawn_amount = EXCLUDED.withdrawn_amount, "
+                # Дату поступления ставим ОДИН раз — когда вывод появился.
+                # Перезаписывать нельзя: при каждой синхронизации она бы
+                # сдвигалась на сегодня, и «когда пришли деньги» терялось.
+                "  transferred_at = coalesce(marketplace_payouts.transferred_at, "
+                "                            EXCLUDED.transferred_at), "
+                "  synced_at = now()",
                 (p_from, p_to, round(orders, 2), round(returns, 2),
                  round(commission, 2), round(services, 2), round(delivery, 2),
                  round(accrued, 2),
                  round(float(det.get('transferred') or 0), 2),
-                 round(float(det.get('balance') or 0), 2), round(agency, 2)),
+                 round(float(det.get('balance') or 0), 2), round(agency, 2),
+                 round(float(det.get('withdrawn') or 0), 2),
+                 round(float(det.get('withdrawn') or 0), 2),
+                 round(float(det.get('transferred') or 0), 2)),
             )
             saved += 1
 

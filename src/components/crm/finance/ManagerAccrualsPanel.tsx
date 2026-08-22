@@ -116,8 +116,19 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
             </p>
           </CardContent>
         </Card>
-        {/* Пока срок проверки не задан, второй плашки нет: она показывала бы
-            ноль и путала. Появится сама, если правила вернут холд. */}
+        {/* Деньги ещё на балансе площадки. Показываем отдельно от «к выплате»:
+            начисление посчитано, но получить его пока не с чего. */}
+        {data.pending > 0 && (
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">Ожидает поступления</p>
+              <p className="mt-1 text-2xl font-bold">{money(data.pending)} ₽</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Деньги ещё не пришли от площадки на расчётный счёт
+              </p>
+            </CardContent>
+          </Card>
+        )}
         {data.hold > 0 && (
           <Card className="border-border shadow-none">
             <CardContent className="p-4">
@@ -196,9 +207,24 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
                     {a.status === 'confirmed' && (
                       <p className="text-xs text-emerald-700">подтверждено</p>
                     )}
+                    {a.status === 'pending' && (
+                      <p className="text-xs text-muted-foreground">
+                        ждёт поступления денег
+                      </p>
+                    )}
                   </div>
                 </div>
 
+
+                {/* Почему сумма не в балансе. Без объяснения человек видит
+                    начисление, но не находит его в «к выплате». */}
+                {a.status === 'pending' && (
+                  <p className="mt-1.5 flex items-start gap-1.5 text-xs text-muted-foreground">
+                    <Icon name="Clock" size={12} className="mt-0.5 shrink-0" />
+                    Площадка ещё не перевела деньги за эту неделю. Сумма войдёт
+                    в баланс автоматически, как только они поступят на счёт
+                  </p>
+                )}
 
                 {a.cancelReason && (
                   <p className="mt-1.5 flex items-start gap-1.5 text-xs text-destructive">

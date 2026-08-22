@@ -99,7 +99,8 @@ def _accrue(cur):
         return {'created': 0, 'skipped': 'Не задан сотрудник или расчёт выключен'}
 
     cur.execute(
-        "SELECT id, period_start, period_end, transferred_amount "
+        "SELECT id, period_start, period_end, transferred_amount, "
+        "       withdrawn_amount "
         "FROM marketplace_payouts "
         "WHERE marketplace_code = 'ozon' "
         "  AND transferred_amount > 0 "
@@ -113,7 +114,7 @@ def _accrue(cur):
     rows = cur.fetchall()
 
     created = 0
-    for payout_id, p_from, p_to, transferred in rows:
+    for payout_id, p_from, p_to, transferred, withdrawn in rows:
         base = float(transferred or 0)
         if base <= 0:
             continue
@@ -148,7 +149,22 @@ def _accrue(cur):
         # ещё в своём отчёте, и снимать их повторно нечего.
         hold_days = int(st['holdDays'] or 0)
         hold_until = p_to + timedelta(days=hold_days)
-        status = 'hold' if hold_days > 0 else 'confirmed'
+
+        # Деньги ещё на балансе площадки — начисление ждёт.
+        #
+        # Отчёт менеджер видит сразу: работа сделана, сумма посчитана. Но в
+        # баланс «к выплате» она попадёт только когда деньги уйдут в банк
+        # получателя — иначе мы обещаем то, чего у компании ещё нет.
+        # Признак поступления: по неделе появился вывод с баланса площадки.
+        # Поступлением считаем вывод, сопоставимый с суммой к переводу:
+        # мелкие технические движения по балансу выплатой не являются.
+        money_arrived = float(withdrawn or 0) >= base * 0.5
+        if not money_arrived:
+            status = 'pending'
+        elif hold_days > 0:
+            status = 'hold'
+        else:
+            status = 'confirmed'
 
         cur.execute(
             "INSERT INTO manager_accruals (user_id, payout_id, period_start, "
@@ -166,6 +182,37 @@ def _accrue(cur):
         created += 1
 
     return {'created': created}
+
+
+def _release_pending(cur):
+    """Переводит ожидающие начисления в работу, когда деньги дошли до счёта.
+
+    Начисление создаётся сразу после отчёта, но висит в 'pending', пока сумма
+    лежит на балансе площадки. Как только синхронизация увидела вывод денег
+    на расчётный счёт — начисление становится обычным: либо сразу к выплате,
+    либо на проверку, если срок холда задан.
+    """
+    cur.execute("SELECT hold_days FROM manager_commission_settings LIMIT 1")
+    r = cur.fetchone()
+    hold_days = int(r[0]) if r and r[0] is not None else 0
+
+    cur.execute(
+        "UPDATE manager_accruals a "
+        "SET paid_out_at = coalesce(p.transferred_at, now()), "
+        "    status = CASE WHEN %s > 0 THEN 'hold' ELSE 'confirmed' END, "
+        "    hold_until = a.period_end + (%s || ' days')::interval, "
+        "    confirmed_at = CASE WHEN %s = 0 THEN now() END "
+        "FROM marketplace_payouts p "
+        "WHERE p.marketplace_code = 'ozon' "
+        "  AND p.period_start = a.period_start "
+        "  AND p.period_end = a.period_end "
+        "  AND a.status = 'pending' "
+        "  AND coalesce(p.withdrawn_amount, 0) "
+        "      >= coalesce(p.transferred_amount, 0) * 0.5 "
+        "  AND coalesce(p.transferred_amount, 0) > 0",
+        (hold_days, hold_days, hold_days),
+    )
+    return cur.rowcount
 
 
 def _confirm(cur):
@@ -202,7 +249,7 @@ def _balance(cur, user_id):
         "SELECT id, period_start, period_end, units, base_amount, percent, "
         "  amount, per_unit, status, hold_until, returned_units, "
         "  returned_amount, cancel_reason, confirmed_at, "
-        "  loss_units, loss_amount, payable_base "
+        "  loss_units, loss_amount, payable_base, paid_out_at "
         "FROM manager_accruals WHERE user_id = %s "
         "ORDER BY period_start DESC LIMIT 40",
         (int(user_id),),
@@ -234,6 +281,8 @@ def _balance(cur, user_id):
             'lossUnits': int(r[14] or 0),
             'lossAmount': float(r[15] or 0),
             'payableBase': float(r[16]) if r[16] is not None else None,
+            # Когда деньги за период дошли до расчётного счёта.
+            'paidOutAt': str(r[17]) if r[17] else None,
         })
 
     st = _settings(cur)
@@ -248,6 +297,9 @@ def _balance(cur, user_id):
         # В холде: ещё проверяется, может уменьшиться при возврате.
         'hold': round(by_status.get('hold', {}).get('amount', 0), 2),
         'cancelled': round(by_status.get('cancelled', {}).get('amount', 0), 2),
+        # Посчитано, но деньги ещё на балансе площадки. В сумму к выплате
+        # не входит: обещать то, чего компания не получила, нельзя.
+        'pending': round(by_status.get('pending', {}).get('amount', 0), 2),
         'items': items,
     }
 
@@ -304,6 +356,7 @@ def handler(event: dict, context) -> dict:
 
         if action == 'accrue':
             created = _accrue(cur)
+            released = _release_pending(cur)
             confirmed = _confirm(cur)
             # Запись в журнал — по ней страница «Планировщик» понимает, что
             # задание живо. Без неё молчащий планировщик выглядел бы рабочим,
@@ -341,11 +394,12 @@ def handler(event: dict, context) -> dict:
             cur.execute("DELETE FROM manager_accruals WHERE user_id = %s",
                         (st['userId'],))
             created = _accrue(cur)
+            released = _release_pending(cur)
             confirmed = _confirm(cur)
             conn.commit()
             return _resp(200, {
                 'ok': True, 'created': created.get('created', 0),
-                'confirmed': confirmed,
+                'released': released, 'confirmed': confirmed,
             })
 
         if action == 'set_user':

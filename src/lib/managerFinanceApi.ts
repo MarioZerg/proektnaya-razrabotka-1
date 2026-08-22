@@ -15,7 +15,7 @@ export interface ManagerAccrual {
   /** Сколько приходится на одну вещь. */
   perUnit: number | null;
   /** hold — ждёт проверки, confirmed — подтверждено, cancelled — аннулировано. */
-  status: 'hold' | 'confirmed' | 'cancelled';
+  status: 'pending' | 'hold' | 'confirmed' | 'cancelled';
   /** До этой даты возврат уменьшает начисление. */
   holdUntil: string;
   returnedUnits: number;
@@ -30,6 +30,8 @@ export interface ManagerAccrual {
   lossAmount: number;
   /** База после вычета убыточных — с неё и взят процент. */
   payableBase: number | null;
+  /** Когда деньги за период дошли до расчётного счёта. */
+  paidOutAt: string | null;
 }
 
 export interface ManagerBalance {
@@ -42,6 +44,8 @@ export interface ManagerBalance {
   /** В холде: ещё проверяется, может уменьшиться при возврате. */
   hold: number;
   cancelled: number;
+  /** Посчитано, но деньги ещё на балансе площадки. */
+  pending: number;
   items: ManagerAccrual[];
 }
 

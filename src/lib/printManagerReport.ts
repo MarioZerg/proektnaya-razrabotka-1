@@ -32,6 +32,7 @@ const shortDate = (iso: string) => {
 };
 
 const STATUS_LABEL: Record<string, string> = {
+  pending: 'ожидает поступления денег от площадки',
   hold: 'на проверке',
   confirmed: 'подтверждено',
   cancelled: 'аннулировано',
@@ -132,6 +133,13 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
     ${a.status === 'hold'
       ? `<span style="color:#555;"> · проверка до ${shortDate(a.holdUntil)}</span>`
       : ''}
+    ${a.status === 'pending' ? `
+    <div style="margin-top:10px;padding:12px;background:#fff8e6;
+                border:1px solid #e8d9a8;font-size:13px;color:#6b5410;">
+      Площадка ещё не перевела деньги за этот период на расчётный счёт.
+      Вознаграждение рассчитано, но к выплате будет доступно после поступления
+      средств.
+    </div>` : ''}
   </div>
 
   ${a.cancelReason ? `
