@@ -58,11 +58,30 @@ export interface CostSettings {
   workshopId: number | null;
 }
 
+/** Продажи одной площадки за период: сколько дошло и сколько вернули. */
+export interface SoldByMarketplace {
+  marketplace: string;
+  /** Доставлено покупателю. */
+  delivered: number;
+  /** Из них вернули обратно. */
+  returned: number;
+  /** Осталось продано по факту: доставлено минус возвраты. */
+  net: number;
+}
+
+/** Сколько вещей реально продано — подсказка для делителя расходов. */
+export interface SoldUnits {
+  days: number;
+  total: number;
+  byMarketplace: SoldByMarketplace[];
+}
+
 export interface CostResponse {
   settings: CostSettings;
   groups: CostGroup[];
   extras: ExtraExpense[];
   workshops: { id: number; name: string }[];
+  sold: SoldUnits;
 }
 
 const post = async (payload: Record<string, unknown>) => {

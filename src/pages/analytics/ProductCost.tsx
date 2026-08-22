@@ -121,7 +121,7 @@ const ProductCost = () => {
         )}
 
         {data && canEdit && (
-          <ExtraExpensesPanel expenses={data.extras} onChanged={load} />
+          <ExtraExpensesPanel expenses={data.extras} sold={data.sold} onChanged={load} />
         )}
 
         {/* Менеджеру те же параметры показываем справкой: он должен понимать,

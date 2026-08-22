@@ -12,6 +12,7 @@ import {
   updateExtraExpense,
   deleteExtraExpense,
   type ExtraExpense,
+  type SoldUnits,
 } from '@/lib/productCostApi';
 
 const money = (v: number) =>
@@ -19,6 +20,8 @@ const money = (v: number) =>
 
 interface ExtraExpensesPanelProps {
   expenses: ExtraExpense[];
+  /** Сколько вещей реально продано — подсказка для делителя. */
+  sold?: SoldUnits;
   onChanged: () => void;
 }
 
@@ -36,7 +39,7 @@ interface ExtraExpensesPanelProps {
  * Строку можно выключить, не удаляя: сезонные траты удобнее гасить, чем заводить
  * заново каждый раз.
  */
-const ExtraExpensesPanel = ({ expenses, onChanged }: ExtraExpensesPanelProps) => {
+const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [name, setName] = useState('');
@@ -124,6 +127,43 @@ const ExtraExpensesPanel = ({ expenses, onChanged }: ExtraExpensesPanelProps) =>
           кладовщика, менеджера, уборщицы. Укажите сумму и на сколько штук её делить.
         </p>
 
+        {/* Факт продаж под рукой: оклады раньше делили на прикидку «примерно
+            4000 в месяц», а ошибка в делителе бьёт по всей себестоимости.
+            Оклад 60 000 ₽ на 4000 штук — это 15 ₽ на вещь, на 1460 — уже 41 ₽. */}
+        {sold && sold.total > 0 && (
+          <div className="rounded-lg border border-border bg-muted/30 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="flex items-center gap-1.5 text-sm font-medium">
+                  <Icon name="PackageCheck" size={14} />
+                  Продано за {sold.days} дней:{' '}
+                  <span className="text-lg font-bold">{sold.total}</span> шт
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Только то, за что деньги получены: доставлено покупателю за
+                  вычетом возвратов
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPerItems(String(sold.total))}
+              >
+                <Icon name="ArrowDownToLine" size={14} className="mr-1.5" />
+                Подставить в делитель
+              </Button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              {sold.byMarketplace.map((m) => (
+                <span key={m.marketplace}>
+                  {m.marketplace}: <b className="text-foreground">{m.net}</b> шт
+                  {m.returned > 0 && ` (${m.delivered} − ${m.returned} возврат)`}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {expenses.length > 0 && (
           <div className="space-y-1.5">
             {expenses.map((x) => (
@@ -139,6 +179,17 @@ const ExtraExpensesPanel = ({ expenses, onChanged }: ExtraExpensesPanelProps) =>
                     {money(x.amount)} ₽ ÷ {x.perItems} шт
                     {x.note ? ` · ${x.note}` : ''}
                   </p>
+                  {/* Делитель сильно выше факта — расход недооценён.
+                      Молчать об этом нельзя: себестоимость выглядит ниже
+                      настоящей, а решения по ценам принимаются по ней. */}
+                  {sold && sold.total > 0 && x.isActive
+                    && x.perItems > sold.total * 1.3 && (
+                    <p className="mt-0.5 flex items-center gap-1 text-xs text-amber-700">
+                      <Icon name="TriangleAlert" size={11} className="shrink-0" />
+                      делите на {x.perItems}, а продано {sold.total} — по факту
+                      это {money(x.amount / sold.total)} ₽ на вещь
+                    </p>
+                  )}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="font-semibold">{money(x.perUnit)} ₽</span>

@@ -155,6 +155,69 @@ def _extra_expenses(cur):
     return rows
 
 
+def _sold_units(cur, days=30):
+    """Сколько вещей РЕАЛЬНО продано за период — по всем площадкам.
+
+    Нужно, чтобы делить оклады и прочие постоянные расходы на честное число,
+    а не на прикидку «примерно 4000 в месяц». Ошибка в делителе бьёт по всей
+    себестоимости разом: оклад 60 000 ₽ при делении на 4000 даёт 15 ₽ на вещь,
+    а при делении на 2500 — уже 24 ₽.
+
+    Считаем ТОЛЬКО то, за что деньги получены:
+      - заказ не отменён (cancelled_at пуст);
+      - для OZON статус 'delivered' — товар дошёл до покупателя. Заказ в пути
+        ещё не продажа: его могут не выкупить, и деньги не придут;
+      - для WB и Яндекса статуса доставки в системе нет, поэтому берём
+        отгруженные — это ближайшее, что есть;
+      - из результата вычитаем возвраты: вещь вернулась, деньги ушли обратно.
+    """
+    cur.execute(
+        "SELECT o.marketplace, count(*) "
+        "FROM orders o "
+        "WHERE o.cancelled_at IS NULL "
+        f"  AND o.created_at >= now() - interval '{int(days)} days' "
+        "  AND ("
+        "        (o.marketplace = 'OZON' AND o.ozon_status = 'delivered') "
+        "     OR (o.marketplace <> 'OZON' AND o.status = 'Отгружен') "
+        "  ) "
+        "GROUP BY o.marketplace"
+    )
+    sold = {r[0]: int(r[1]) for r in cur.fetchall()}
+
+    # Возвраты вычитаем: вещь приехала обратно, деньги за неё вернули.
+    #
+    # Считаем возвраты ПО ЗАКАЗАМ ЭТОГО ЖЕ ПЕРИОДА, а не по дате самого возврата.
+    # Возврат приезжает через две-четыре недели после доставки, поэтому «возвраты
+    # за последние 30 дней» — это в основном возвраты по ПРОШЛЫМ продажам.
+    # Вычитая их из текущих, мы занижаем делитель и завышаем расходы на вещь:
+    # на реальных данных выходило 601 вместо 230.
+    cur.execute(
+        "SELECT o.marketplace, coalesce(sum(r.quantity), 0) "
+        "FROM marketplace_returns r "
+        "JOIN orders o ON o.ozon_posting_number = r.posting_number "
+        "WHERE o.cancelled_at IS NULL "
+        f"  AND o.created_at >= now() - interval '{int(days)} days' "
+        "GROUP BY o.marketplace"
+    )
+    returns = {r[0]: int(r[1] or 0) for r in cur.fetchall()}
+
+    by_mp = []
+    total = 0
+    for mp in sorted(set(sold) | set(returns)):
+        delivered = sold.get(mp, 0)
+        returned = returns.get(mp, 0)
+        net = max(0, delivered - returned)
+        total += net
+        by_mp.append({
+            'marketplace': mp,
+            'delivered': delivered,
+            'returned': returned,
+            'net': net,
+        })
+
+    return {'days': int(days), 'total': total, 'byMarketplace': by_mp}
+
+
 def _calc_groups(cur, settings):
     """Себестоимость по ТКАНИ и ШИРИНЕ, а не по каждому товару.
 
@@ -326,6 +389,9 @@ def handler(event: dict, context) -> dict:
                 'groups': groups,
                 'extras': extras,
                 'workshops': workshops,
+                # Сколько вещей реально продано за месяц — подсказка для
+                # делителя постоянных расходов, чтобы его не брали «на глаз».
+                'sold': _sold_units(cur, 30),
             })
 
         if method == 'POST':
