@@ -1553,6 +1553,17 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             # витрине. Если площадка фактическую цену не отдала, расчёт идёт
             # по завышенной — и убыточный товар выглядит прибыльным.
             'actualPriceCount': sum(1 for i in priced if i['priceIsActual']),
+            # Сколько РАЗМЕРОВ внутри группы убыточны.
+            #
+            # Карточка показывает среднее по группе, и убыточные высоты за ним
+            # прячутся: «Вуаль 200 см» в среднем прибыльна, но высоты 285 и
+            # 295 см идут в минус на 70 ₽. По одной средней цифре такие
+            # позиции не найти — а именно с ними и надо работать.
+            'lossHeights': sum(
+                1 for h in heights
+                if (h.get('unit') or {}).get('price')
+                and (h['unit'].get('profit') or 0) <= 0
+            ),
             'minPrice': round(min(i['price'] for i in priced), 2) if priced else None,
             'maxPrice': round(max(i['price'] for i in priced), 2) if priced else None,
             'avgPrice': avg_price,

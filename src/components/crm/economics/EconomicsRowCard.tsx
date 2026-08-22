@@ -79,6 +79,18 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
         </div>
       </div>
 
+      {/* Убыточные размеры внутри прибыльной группы.
+          Шапка показывает среднее, и минусовые высоты за ним прячутся:
+          «Вуаль 200 см» в среднем в плюсе, а высоты 285 и 295 см — минус
+          70 ₽. Именно с такими позициями и надо работать. */}
+      {!!row.lossHeights && row.lossHeights > 0 && (
+        <p className="mt-2 flex items-start gap-1.5 rounded-md bg-rose-100 p-2 text-xs font-medium text-rose-900">
+          <Icon name="TrendingDown" size={13} className="mt-0.5 shrink-0" />
+          {row.lossHeights} из {row.pricedCount} размеров продаются в минус —
+          разверните расчёт по высотам
+        </p>
+      )}
+
       {/* Расчёт по цене витрины — предупреждение.
           Площадка режет цену акциями, и если фактическую она не отдала, мы
           считаем по завышенной: товар в акции выглядит прибыльным, будучи

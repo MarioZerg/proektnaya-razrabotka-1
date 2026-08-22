@@ -89,6 +89,8 @@ export interface EconomicsRow {
   altUnit?: UnitCalc | null;
   /** Сколько размеров считаются по реальной цене продажи, а не по витрине. */
   actualPriceCount?: number;
+  /** Сколько размеров внутри группы убыточны: среднее их прячет. */
+  lossHeights?: number;
   /** Разброс логистики внутри группы: размеры весят по-разному. */
   logisticsMin?: number | null;
   logisticsMax?: number | null;

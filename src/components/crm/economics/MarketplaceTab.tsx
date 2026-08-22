@@ -102,6 +102,11 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
   // Сводка: сколько позиций считается и где мы теряем деньги.
   const priced = rows.filter((r) => r.unit);
   const lossmaking = priced.filter((r) => r.unit!.profit < 0);
+  // Убыточные РАЗМЕРЫ, а не карточки. Карточка показывает среднее по группе,
+  // и минусовые высоты за ним прячутся: групп в минусе три, а конкретных
+  // размеров — сорок четыре. Работать надо именно с ними.
+  const lossSizes = rows.reduce((n, r) => n + (r.lossHeights || 0), 0);
+  const totalSizes = rows.reduce((n, r) => n + (r.pricedCount || 0), 0);
   const avgMargin = priced.length
     ? Math.round((priced.reduce((s, r) => s + r.unit!.margin, 0) / priced.length) * 10) / 10
     : 0;
@@ -164,11 +169,14 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
           </div>
           <div
             className={`rounded-lg border p-3 ${
-              lossmaking.length > 0 ? 'border-destructive/40 bg-destructive/5' : 'border-border'
+              lossSizes > 0 ? 'border-destructive/40 bg-destructive/5' : 'border-border'
             }`}
           >
-            <p className="text-xs text-muted-foreground">Убыточных позиций</p>
-            <p className="text-2xl font-bold">{lossmaking.length}</p>
+            <p className="text-xs text-muted-foreground">Убыточных размеров</p>
+            <p className="text-2xl font-bold">{lossSizes}</p>
+            <p className="text-xs text-muted-foreground">
+              из {totalSizes} · в {lossmaking.length} карточках средняя в минусе
+            </p>
           </div>
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted-foreground">Лучшая позиция</p>
