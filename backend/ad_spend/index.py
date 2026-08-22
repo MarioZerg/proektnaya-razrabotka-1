@@ -188,9 +188,31 @@ def _sync_payouts(cur, creds, months=6):
         )
         if st != 200 or not isinstance(d, dict):
             break
-        flows = ((d.get('result') or {}).get('cash_flows')) or []
+        result = d.get('result') or {}
+        flows = result.get('cash_flows') or []
         if not flows:
             break
+
+        # Детализация идёт отдельным списком, но в том же порядке периодов.
+        # Из неё берём САМОЕ ГЛАВНОЕ — сумму перевода на расчётный счёт.
+        details = {}
+        for det in (result.get('details') or []):
+            d_period = det.get('period') or {}
+            key = (d_period.get('begin') or '')[:10]
+            payments = det.get('payments') or []
+            transferred = sum(abs(float(p.get('payment') or 0)) for p in payments)
+            # Агентское вознаграждение — техническая проводка на миллионы,
+            # деньгами она не является. Держим отдельно, чтобы объяснить,
+            # почему сумма услуг в отчёте выглядит положительной.
+            agency = 0.0
+            for it in ((det.get('services') or {}).get('items') or []):
+                if 'AgencyFee' in (it.get('name') or ''):
+                    agency += float(it.get('price') or 0)
+            details[key] = {
+                'transferred': transferred,
+                'balance': float(det.get('begin_balance_amount') or 0),
+                'agency': agency,
+            }
 
         for f in flows:
             period = f.get('period') or {}
@@ -206,24 +228,35 @@ def _sync_payouts(cur, creds, months=6):
             delivery = float(f.get('item_delivery_and_return_amount') or 0)
 
             # Суммы удержаний приходят отрицательными — просто складываем.
-            accrued = orders + returns + commission + services + delivery
+            det = details.get(p_from) or {}
+            agency = float(det.get('agency') or 0)
+
+            # Начисленное считаем БЕЗ агентского вознаграждения: это проводка,
+            # а не движение денег, и она искажает сумму в разы.
+            accrued = orders + returns + commission + (services - agency) + delivery
 
             cur.execute(
                 "INSERT INTO marketplace_payouts (marketplace_code, "
                 "  period_start, period_end, orders_amount, returns_amount, "
                 "  commission_amount, services_amount, delivery_amount, "
-                "  accrued_amount, synced_at) "
-                "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, %s, now()) "
+                "  accrued_amount, transferred_amount, begin_balance, "
+                "  agency_fee, synced_at) "
+                "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()) "
                 "ON CONFLICT (marketplace_code, period_start, period_end) "
                 "DO UPDATE SET orders_amount = EXCLUDED.orders_amount, "
                 "  returns_amount = EXCLUDED.returns_amount, "
                 "  commission_amount = EXCLUDED.commission_amount, "
                 "  services_amount = EXCLUDED.services_amount, "
                 "  delivery_amount = EXCLUDED.delivery_amount, "
-                "  accrued_amount = EXCLUDED.accrued_amount, synced_at = now()",
+                "  accrued_amount = EXCLUDED.accrued_amount, "
+                "  transferred_amount = EXCLUDED.transferred_amount, "
+                "  begin_balance = EXCLUDED.begin_balance, "
+                "  agency_fee = EXCLUDED.agency_fee, synced_at = now()",
                 (p_from, p_to, round(orders, 2), round(returns, 2),
                  round(commission, 2), round(services, 2), round(delivery, 2),
-                 round(accrued, 2)),
+                 round(accrued, 2),
+                 round(float(det.get('transferred') or 0), 2),
+                 round(float(det.get('balance') or 0), 2), round(agency, 2)),
             )
             saved += 1
 

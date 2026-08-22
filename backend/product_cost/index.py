@@ -264,25 +264,21 @@ def _manager_commission(cur, sold_units):
     m_start, m_end = cur.fetchone()
 
     cur.execute(
-        "SELECT coalesce(sum(accrued_amount), 0), "
+        "SELECT coalesce(sum(transferred_amount), 0), "
         "       coalesce(sum(early_payout_amount), 0), count(*), "
-        # Периоды, где площадка вернула больше, чем удержала: перерасчёты и
-        # компенсации приходят одной строкой и раздувают начисление в разы.
-        # На реальных данных такой период дал 10,5 млн вместо обычных 1,8 млн.
-        # Молча включать его в базу процента нельзя — сумма менеджера скакнёт
-        # без всякой связи с её работой, поэтому помечаем и показываем.
-        "       count(*) FILTER (WHERE services_amount > 0), "
-        "       coalesce(sum(services_amount) FILTER (WHERE services_amount > 0), 0) "
+        "       coalesce(sum(accrued_amount), 0), "
+        "       coalesce(sum(agency_fee), 0) "
         "FROM marketplace_payouts "
         "WHERE period_start >= %s AND period_start <= %s",
         (m_start, m_end),
     )
-    accrued, early, periods, odd_periods, odd_sum = cur.fetchone()
+    transferred, early, periods, accrued, agency = cur.fetchone()
+    transferred = float(transferred or 0)
     accrued = float(accrued or 0)
     early = float(early or 0)
-    odd_sum = float(odd_sum or 0)
+    agency = float(agency or 0)
 
-    payout = round(accrued * percent / 100.0, 2)
+    payout = round(transferred * percent / 100.0, 2)
     per_unit = round(payout / sold_units, 2) if sold_units else None
 
     return {
@@ -292,19 +288,21 @@ def _manager_commission(cur, sold_units):
         'month': str(m_start),
         'monthEnd': str(m_end),
         'periods': int(periods or 0),
-        # Начислено по отчётам — база процента.
+        # Фактически перечислено на расчётный счёт — БАЗА ПРОЦЕНТА.
+        # Раньше базой было «начисленное», которое мы складывали сами из
+        # заказов и удержаний. Оно расходилось с деньгами: в услугах сидит
+        # агентское вознаграждение — техническая проводка на миллионы, из-за
+        # неё июль показывал 17,1 млн вместо реальных перечислений.
+        'transferred': round(transferred, 2),
+        # Расчётная сумма по отчёту — для сверки, но не база.
         'accrued': round(accrued, 2),
+        # Агентское вознаграждение: объясняет разрыв между ними.
+        'agencyFee': round(agency, 2),
         # Удержано досрочными выплатами: на процент менеджера не влияет,
         # но показать надо — это реальные деньги, ушедшие из перевода.
         'earlyPayout': round(early, 2),
         'payout': payout,
         'perUnit': per_unit,
-        # Перерасчёты площадки: их видно отдельно, чтобы цифру можно было
-        # объяснить, а не гадать, почему месяц выбился из ряда.
-        'oddPeriods': int(odd_periods or 0),
-        'oddAmount': round(odd_sum, 2),
-        'payoutWithoutOdd': round((accrued - odd_sum) * percent / 100.0, 2)
-        if odd_sum else None,
     }
 
 

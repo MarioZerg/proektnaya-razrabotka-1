@@ -81,17 +81,17 @@ const ManagerCommissionPanel = ({ manager, onChanged }: Props) => {
           )}
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          Процент с поступлений по отчётам площадок за{' '}
-          {monthLabel(manager.month)} · {manager.periods} отчётов
+          Процент с денег, пришедших на счёт за {monthLabel(manager.month)} ·{' '}
+          {manager.periods} отчётов
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
           <div className="flex justify-between">
             <span className="text-muted-foreground">
-              Начислено по отчётам площадки
+              Перечислено на расчётный счёт
             </span>
-            <span className="font-mono-tech">{money(manager.accrued)} ₽</span>
+            <span className="font-mono-tech">{money(manager.transferred)} ₽</span>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-1.5">
             <span className="flex items-center gap-2">
@@ -153,30 +153,12 @@ const ManagerCommissionPanel = ({ manager, onChanged }: Props) => {
           </p>
         )}
 
-        {/* Перерасчёт площадки раздувает базу в разы. Промолчать нельзя:
-            владелец увидит сумму втрое больше обычной и не поймёт причину. */}
-        {manager.oddPeriods > 0 && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 p-2.5">
-            <p className="flex items-start gap-1.5 text-xs text-amber-900">
-              <Icon name="TriangleAlert" size={13} className="mt-0.5 shrink-0" />
-              <span>
-                В отчётах есть перерасчёт площадки на {money(manager.oddAmount)} ₽
-                (площадка вернула удержания одной строкой). База выросла на эту
-                сумму.
-                {manager.payoutWithoutOdd != null && (
-                  <> Без перерасчёта вышло бы {money(manager.payoutWithoutOdd)} ₽ —
-                  сверьте с менеджером, входит ли это в расчёт</>
-                )}
-              </span>
-            </p>
-          </div>
-        )}
-
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">
-            Считается от начисленного по отчётам, а не от суммы на счёте: сумма
-            досрочных выплат — наше решение по деньгам, а не результат работы
-            менеджера
+            База — деньги, фактически пришедшие на расчётный счёт по отчётам
+            площадки. Расчётный итог отчёта ({money(manager.accrued)} ₽) больше:
+            в нём сидит агентское вознаграждение — техническая проводка, а не
+            перевод
           </Label>
         </div>
       </CardContent>

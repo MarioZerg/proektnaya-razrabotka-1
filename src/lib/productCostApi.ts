@@ -95,18 +95,17 @@ export interface ManagerCommission {
   monthEnd: string;
   /** Сколько отчётов площадки попало в расчёт. */
   periods: number;
-  /** Начислено по отчётам — база процента. */
+  /** Фактически перечислено на расчётный счёт — база процента. */
+  transferred: number;
+  /** Расчётная сумма по отчёту: для сверки, но не база. */
   accrued: number;
+  /** Агентское вознаграждение — техническая проводка, не деньги. */
+  agencyFee: number;
   /** Удержано досрочными выплатами: на процент не влияет. */
   earlyPayout: number;
   payout: number;
   /** Сколько это на одну проданную вещь. */
   perUnit: number | null;
-  /** Периоды с перерасчётом площадки — они раздувают базу. */
-  oddPeriods: number;
-  oddAmount: number;
-  /** Сколько вышло бы без перерасчётов. */
-  payoutWithoutOdd: number | null;
 }
 
 export interface CostResponse {
