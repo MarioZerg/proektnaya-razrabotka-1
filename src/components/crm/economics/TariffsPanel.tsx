@@ -230,7 +230,7 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
               <div>
                 <p className="flex items-center gap-1.5 text-sm font-medium">
                   <Icon name="Megaphone" size={14} />
-                  Реклама по факту
+                  ДРР — доля рекламных расходов
                 </p>
                 {tariffs.promoFactPercent != null ? (
                   <p className="mt-1 text-sm">
@@ -238,7 +238,7 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
                       {tariffs.promoFactPercent}%
                     </span>
                     <span className="ml-2 text-muted-foreground">
-                      от выручки за 30 дней
+                      от оборота за 30 дней
                     </span>
                     {promoSyncedAt && (
                       <span className="ml-2 text-xs text-muted-foreground">
@@ -258,6 +258,17 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
                     : 'OZON списывает рекламу общей суммой, поэтому процент '
                       + 'одинаковый для всех товаров'}
                 </p>
+                {/* Расхождение с кабинетом — не ошибка, а разные знаменатели.
+                    Об этом лучше сказать прямо: иначе человек сверяет две
+                    цифры, видит разницу и перестаёт верить обеим. */}
+                {marketplaceCode === 'ozon' && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Считаем от оборота ВСЕГО магазина. В кабинете OZON
+                    («Аналитика продвижения») процент выше: там в знаменателе
+                    только товары, участвующие в рекламе, а тот ассортимент,
+                    что продаётся сам, в расчёт не попадает
+                  </p>
+                )}
               </div>
               <Button
                 variant="outline"

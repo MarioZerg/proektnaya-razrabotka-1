@@ -103,7 +103,7 @@ def _save_total(cur, code, spend, revenue):
     return pct
 
 
-def _sync_ozon(cur, creds):
+def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
     """Реклама OZON: сколько списали за клики и какая была выручка.
 
     OZON списывает «Оплату за клик» ОБЩИМИ суммами — в операции нет ни товара,
@@ -112,8 +112,13 @@ def _sync_ozon(cur, creds):
     """
     headers = {'Client-Id': (creds.get('clientId') or '').strip(),
                'Api-Key': (creds.get('apiKey') or '').strip()}
+    # По умолчанию — скользящие 30 дней. Даты можно задать явно: тогда цифру
+    # можно сверить с кабинетом OZON за тот же месяц, что смотрит человек.
     today = datetime.now(timezone.utc).date()
     since = today - timedelta(days=PERIOD_DAYS)
+    if date_from and date_to:
+        since = datetime.strptime(date_from, '%Y-%m-%d').date()
+        today = datetime.strptime(date_to, '%Y-%m-%d').date()
 
     spend = 0.0
     revenue = 0.0
@@ -152,16 +157,25 @@ def _sync_ozon(cur, creds):
                 # ДРР во всех кабинетах считают от ОБОРОТА, а не от того, что
                 # осталось после вычетов, — иначе показатели несопоставимы.
                 revenue += float(o.get('accruals_for_sale') or 0)
-            elif 'озврат' in low or 'тмена' in low:
-                # Возврат и отмена уменьшают оборот: товар уехал обратно, денег
-                # за него нет. Не вычитая их, мы завышали бы оборот и занижали
-                # ДРР — ошибка в другую сторону от прежней.
-                revenue -= abs(float(o.get('accruals_for_sale') or 0))
+            # Возвраты из оборота НЕ вычитаем — намеренно.
+            #
+            # ДРР в кабинете OZON считается от ВАЛОВОГО оборота: сколько товара
+            # продано, столько и в знаменателе. Если вычитать возвраты, наш
+            # процент перестанет совпадать с кабинетом, и сверять цифры станет
+            # невозможно. Потери от возвратов видны в юнит-экономике отдельно —
+            # через выкуп, там им и место.
         if len(ops) < 1000:
             break
 
     if revenue <= 0:
         return {'ok': False, 'error': 'Нет данных о выручке за период'}
+
+    # Сверочный запуск за прошлый период в базу не пишем: там должен лежать
+    # актуальный процент за последние 30 дней, а не срез старого месяца.
+    if dry_run:
+        pct = round(spend / revenue * 100, 2) if revenue > 0 else None
+        return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
+                'percent': pct, 'byItem': 0, 'from': str(since), 'to': str(today)}
 
     pct = _save_total(cur, 'ozon', spend, revenue)
     return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
@@ -412,7 +426,11 @@ def handler(event: dict, context) -> dict:
                 return _resp(400, {'error': 'Интеграция не подключена'})
 
             if code == 'ozon':
-                res = _sync_ozon(cur, creds)
+                res = _sync_ozon(
+                    cur, creds,
+                    body_data.get('dateFrom'), body_data.get('dateTo'),
+                    bool(body_data.get('dryRun')),
+                )
             else:
                 # WB считается в два приёма: сначала расход по кампаниям
                 # (порциями, их десятки), потом выручка и сам процент.
