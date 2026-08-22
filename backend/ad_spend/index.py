@@ -112,6 +112,56 @@ def _save_total(cur, code, spend, revenue, units=None):
     return pct
 
 
+# Куда отнести статью удержания в отчёте. Ключ — кусок названия от площадки.
+#
+# Группы нужны, чтобы владелец видел не список из 25 строк, а четыре понятных
+# блока: за что платим складу, за что логистике, за сервисы и за нарушения.
+FEE_CATEGORIES = (
+    ('размещени', 'storage'),
+    ('хранени', 'storage'),
+    ('слот', 'logistics'),
+    ('грузомест', 'logistics'),
+    ('упаковк', 'logistics'),
+    ('вывоз', 'logistics'),
+    ('досрочн', 'service'),
+    ('подписк', 'service'),
+    ('страхован', 'service'),
+    ('обработк', 'service'),
+    ('бронирован', 'service'),
+    ('бейдж', 'marketing'),
+    ('звёздн', 'marketing'),
+    ('превышение индекса', 'penalty'),
+    ('жалоб', 'penalty'),
+    ('брак', 'penalty'),
+    ('потеря', 'penalty'),
+)
+
+# Статьи, которые в отчёт по удержаниям НЕ идут: они уже учтены в другом месте
+# и попали бы в расчёт дважды.
+FEE_SKIP = (
+    'доставка покупателю',      # это выручка
+    'оплата за клик',           # реклама, считается отдельно как ДРР
+    'получение возврата',       # возвраты, учтены в штуках и выкупе
+    'доставка и обработка возврата',
+    'оплата эквайринга',        # уже сидит в юнитке товара
+)
+
+
+def _fee_category(name):
+    """К какой группе отнести статью удержания."""
+    low = name.lower()
+    for key, cat in FEE_CATEGORIES:
+        if key in low:
+            return cat
+    return 'other'
+
+
+def _is_fee(name):
+    """Это удержание, которое нужно показать отдельно?"""
+    low = name.lower()
+    return not any(skip in low for skip in FEE_SKIP)
+
+
 def _load_progress(cur, code):
     """Где остановились в прошлый раз и что успели накопить.
 
@@ -120,7 +170,7 @@ def _load_progress(cur, code):
     """
     cur.execute(
         "SELECT next_page, ad_spend, revenue, delivered_fbo, delivered_fbs, "
-        "  by_month, returned_fbo, returned_fbs "
+        "  by_month, returned_fbo, returned_fbs, fees "
         "FROM marketplace_sync_progress WHERE marketplace_code = %s",
         (code,),
     )
@@ -135,6 +185,7 @@ def _load_progress(cur, code):
         'by_month': r[5] or {},
         'ret_fbo': int(r[6] or 0),
         'ret_fbs': int(r[7] or 0),
+        'fees': r[8] or {},
     }
 
 
@@ -143,8 +194,8 @@ def _save_progress(cur, code, next_page, acc):
     cur.execute(
         "INSERT INTO marketplace_sync_progress (marketplace_code, next_page, "
         "  ad_spend, revenue, delivered_fbo, delivered_fbs, by_month, "
-        "  returned_fbo, returned_fbs, updated_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now()) "
+        "  returned_fbo, returned_fbs, fees, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()) "
         "ON CONFLICT (marketplace_code) DO UPDATE SET "
         "  next_page = EXCLUDED.next_page, ad_spend = EXCLUDED.ad_spend, "
         "  revenue = EXCLUDED.revenue, "
@@ -152,10 +203,11 @@ def _save_progress(cur, code, next_page, acc):
         "  delivered_fbs = EXCLUDED.delivered_fbs, "
         "  returned_fbo = EXCLUDED.returned_fbo, "
         "  returned_fbs = EXCLUDED.returned_fbs, "
-        "  by_month = EXCLUDED.by_month, updated_at = now()",
+        "  by_month = EXCLUDED.by_month, fees = EXCLUDED.fees, "
+        "  updated_at = now()",
         (code, int(next_page), acc['spend'], acc['revenue'],
          acc['deliv_fbo'], acc['deliv_fbs'], json.dumps(acc['by_month']),
-         acc['ret_fbo'], acc['ret_fbs']),
+         acc['ret_fbo'], acc['ret_fbs'], json.dumps(acc.get('fees') or {})),
     )
 
 
@@ -209,6 +261,10 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
     deliv_fbs = int(acc.get('deliv_fbs') or 0)
     ret_fbo = int(acc.get('ret_fbo') or 0)
     ret_fbs = int(acc.get('ret_fbs') or 0)
+    # Удержания площадки по статьям и месяцам:
+    # {'2026-07-01': {'Подписка Premium Plus': [сумма, сколько раз]}}
+    fees = {k: {n: list(v) for n, v in m.items()}
+            for k, m in (acc.get('fees') or {}).items()}
     total_pages = 0
     last_page = start_page + PAGES_PER_CALL - 1
     # Расход и оборот ПО МЕСЯЦАМ: {'2026-06-01': [расход, оборот]}.
@@ -252,6 +308,14 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
             mkey = (op_date[:7] + '-01') if len(op_date) >= 7 else None
             if mkey and mkey not in by_month:
                 by_month[mkey] = [0.0, 0.0]
+
+            # Удержания площадки: всё, что она забрала сверх комиссии и рекламы.
+            # Копим по названию — так цифру можно сверить с отчётом в кабинете.
+            if amount < 0 and mkey and _is_fee(name):
+                bucket = fees.setdefault(mkey, {})
+                row = bucket.setdefault(name[:200], [0.0, 0])
+                row[0] += abs(amount)
+                row[1] += 1
 
             # Всё, что относится к продвижению: клики, бустинг, баннеры.
             if 'клик' in low or 'продвижен' in low or 'реклам' in low:
@@ -326,6 +390,7 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
         'ret_fbo': ret_fbo,
         'ret_fbs': ret_fbs,
         'by_month': merged,
+        'fees': fees,
     }
 
     next_page = last_page + 1
@@ -386,6 +451,27 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
             (mkey, round(m_spend, 2), round(m_rev, 2), m_pct,
              max(0, units_by_month.get(mkey, 0))),
         )
+
+        # Статьи удержаний этого же месяца. Пишем только для месяцев, покрытых
+        # периодом целиком, — по той же причине, что и остальные цифры: кусок
+        # месяца, записанный как весь месяц, затрёт полные данные огрызком.
+        month_fees = fees.get(mkey) or {}
+        if month_fees:
+            cur.execute(
+                "DELETE FROM marketplace_fees_monthly "
+                "WHERE marketplace_code = 'ozon' AND month = %s",
+                (mkey,),
+            )
+            for fee_name, (fee_sum, fee_cnt) in month_fees.items():
+                if fee_sum <= 0:
+                    continue
+                cur.execute(
+                    "INSERT INTO marketplace_fees_monthly (marketplace_code, "
+                    "  month, fee_name, amount, operations, category) "
+                    "VALUES ('ozon', %s, %s, %s, %s, %s)",
+                    (mkey, fee_name, round(fee_sum, 2), int(fee_cnt),
+                     _fee_category(fee_name)),
+                )
 
     net_fbo = max(0, deliv_fbo - ret_fbo)
     net_fbs = max(0, deliv_fbs - ret_fbs)

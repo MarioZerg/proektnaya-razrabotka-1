@@ -18,6 +18,7 @@ import {
 import EconomicsRowCard from './EconomicsRowCard';
 import TariffsPanel from './TariffsPanel';
 import MonthlySizesReport from './MonthlySizesReport';
+import PlatformFeesPanel from './PlatformFeesPanel';
 import { moneyShort } from './economicsShared';
 
 /**
@@ -43,6 +44,8 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
   // Отчёт по месяцам грузим только по требованию: он ходит за отдельными
   // данными, а нужен не при каждом открытии экономики.
   const [showMonthly, setShowMonthly] = useState(false);
+  // Удержания площадки сверх комиссии: подписки, слоты, штрафы.
+  const [showFees, setShowFees] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -249,9 +252,16 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
           <Icon name="TrendingUp" size={14} className="mr-1.5" />
           {showMonthly ? 'Скрыть' : 'Показать'} динамику по месяцам
         </Button>
+        {/* Расходы, которых нет в стоимости товара: они относятся к магазину
+            и месяцу, а не к вещи. Смотреть их надо отдельно. */}
+        <Button variant="ghost" size="sm" onClick={() => setShowFees((v) => !v)}>
+          <Icon name="ReceiptText" size={14} className="mr-1.5" />
+          {showFees ? 'Скрыть' : 'Показать'} расходы площадки
+        </Button>
       </div>
 
       {showMonthly && <MonthlySizesReport marketplace={code} />}
+      {showFees && <PlatformFeesPanel marketplace={code} />}
 
       {showTariffs && data && canEdit && (
         <TariffsPanel marketplaceCode={code} tariffs={data.tariffs} onSaved={load} />

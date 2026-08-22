@@ -1584,6 +1584,126 @@ def handler(event: dict, context) -> dict:
             params = event.get('queryStringParameters') or {}
             action = params.get('action')
 
+            if action == 'fees':
+                """Удержания площадки по статьям и месяцам + чистая прибыль.
+
+                В юнит-экономике товара учтены только комиссия, логистика,
+                эквайринг и реклама — то, что зависит от самой продажи.
+                А площадка удерживает и другое: досрочная выплата, платные
+                слоты, подписка Premium, страхование, штрафы. Эти расходы
+                относятся к МАГАЗИНУ и МЕСЯЦУ, а не к конкретной вещи:
+                подписка не дорожает от того, что продали ещё одну штору.
+
+                Класть их в юнитку товара нельзя — цифра станет ложной.
+                Поэтому показываем отдельно и здесь же считаем, что осталось
+                после ВСЕХ удержаний.
+                """
+                code = params.get('marketplace') or 'ozon'
+                months = int(params.get('months') or 6)
+
+                cur.execute(
+                    "SELECT month::text, fee_name, amount, operations, category "
+                    "FROM marketplace_fees_monthly "
+                    "WHERE marketplace_code = %s "
+                    f"  AND month >= date_trunc('month', now()) "
+                    f"      - interval '{months} months' "
+                    "ORDER BY month DESC, amount DESC",
+                    (code,),
+                )
+                rows = cur.fetchall()
+
+                by_month = {}
+                for m, name, amount, ops, cat in rows:
+                    by_month.setdefault(m, []).append({
+                        'name': name,
+                        'amount': float(amount or 0),
+                        'operations': int(ops or 0),
+                        'category': cat,
+                    })
+
+                # Оборот, реклама и штуки того же месяца — чтобы посчитать,
+                # сколько осталось и сколько это на вещь.
+                cur.execute(
+                    "SELECT month::text, revenue, ad_spend, sold_units "
+                    "FROM marketplace_ad_monthly "
+                    "WHERE marketplace_code = %s "
+                    f"  AND month >= date_trunc('month', now()) "
+                    f"      - interval '{months} months' ",
+                    (code,),
+                )
+                base = {
+                    r[0]: {
+                        'revenue': float(r[1] or 0),
+                        'adSpend': float(r[2] or 0),
+                        'soldUnits': int(r[3] or 0),
+                    }
+                    for r in cur.fetchall()
+                }
+
+                # Средняя прибыль с одной вещи — из самой юнит-экономики,
+                # чтобы не пересчитывать её здесь второй раз и не разойтись
+                # с цифрой, которую владелец видит на экране товаров.
+                avg_profit = 0.0
+                try:
+                    shared = {
+                        'settings': _settings(cur),
+                        'tariffs': _tariffs(cur),
+                        'costs': _cost_by_group(cur),
+                        'buyouts': _buyout_rates(cur),
+                        'mpBuyouts': _buyout_from_marketplaces(cur),
+                    }
+                    ue = _build(cur, code, 'FBS', None, shared)
+                    profits = [r['unit']['profit'] for r in (ue.get('rows') or [])
+                               if r.get('unit')]
+                    if profits:
+                        avg_profit = sum(profits) / len(profits)
+                except Exception:
+                    # Прибыль — приятное дополнение к отчёту, но не он сам.
+                    # Если расчёт не сложился, статьи расходов показать важнее.
+                    avg_profit = 0.0
+
+                out = []
+                for m in sorted(set(by_month) | set(base), reverse=True):
+                    items = by_month.get(m, [])
+                    b = base.get(m, {})
+                    fees_total = sum(i['amount'] for i in items)
+                    units = b.get('soldUnits') or 0
+                    revenue = b.get('revenue') or 0
+
+                    by_cat = {}
+                    for i in items:
+                        by_cat[i['category']] = by_cat.get(i['category'], 0) + i['amount']
+
+                    # ЧИСТАЯ ПРИБЫЛЬ МЕСЯЦА.
+                    #
+                    # Юнитка считает прибыль с одной вещи, но она не знает про
+                    # удержания магазина: подписку, слоты, штрафы. Умножив её
+                    # на количество проданного, владелец получал завышенную
+                    # картину. Здесь вычитаем то, что юнитка не видит.
+                    unit_profit = avg_profit or 0
+                    gross = round(unit_profit * units, 2) if units else 0
+                    net = round(gross - fees_total, 2)
+
+                    out.append({
+                        'month': m,
+                        'revenue': revenue,
+                        'adSpend': b.get('adSpend') or 0,
+                        'soldUnits': units,
+                        # Прибыль по юнитке: продано × прибыль с вещи.
+                        'grossProfit': gross,
+                        # Она же за вычетом удержаний магазина.
+                        'netProfit': net,
+                        'unitProfit': round(unit_profit, 2),
+                        'feesTotal': round(fees_total, 2),
+                        'feesPerUnit': round(fees_total / units, 2) if units else None,
+                        'feesPercent': round(fees_total / revenue * 100, 2)
+                        if revenue else None,
+                        'byCategory': {k: round(v, 2) for k, v in by_cat.items()},
+                        'items': items,
+                    })
+
+                return _resp(200, {'marketplace': code, 'months': out})
+
             if action == 'monthly':
                 """Помесячная динамика по размерам: не упал ли спрос.
 

@@ -203,6 +203,55 @@ export const fetchEconomics = async (params: {
   return data;
 };
 
+/** Одна статья удержания площадки за месяц. */
+export interface FeeItem {
+  name: string;
+  amount: number;
+  /** Сколько раз статья встретилась: разовый платёж или поштучный. */
+  operations: number;
+  category: string;
+}
+
+export interface FeesMonth {
+  month: string;
+  revenue: number;
+  adSpend: number;
+  soldUnits: number;
+  /** Всего удержано за месяц. */
+  feesTotal: number;
+  /** Сколько это на одну проданную вещь. */
+  feesPerUnit: number | null;
+  feesPercent: number | null;
+  byCategory: Record<string, number>;
+  /** Прибыль по юнитке: продано × прибыль с вещи. */
+  grossProfit: number;
+  /** Она же за вычетом удержаний магазина — сколько осталось на самом деле. */
+  netProfit: number;
+  /** Средняя прибыль с одной вещи по юнит-экономике. */
+  unitProfit: number;
+  items: FeeItem[];
+}
+
+/**
+ * Удержания площадки, которых нет в юнит-экономике товара.
+ *
+ * Комиссия и логистика зависят от самой продажи — они в юнитке. А подписка,
+ * досрочная выплата, платные слоты и штрафы относятся к магазину и месяцу:
+ * подписка не дорожает от того, что продали ещё одну штору. Класть их в
+ * стоимость единицы нельзя — цифра станет ложной.
+ */
+export const fetchPlatformFees = async (
+  marketplace: string,
+  months = 6,
+): Promise<FeesMonth[]> => {
+  const res = await fetch(
+    `${UNIT_ECONOMICS_URL}?action=fees&marketplace=${marketplace}&months=${months}`,
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить расходы площадки');
+  return data.months || [];
+};
+
 /** Одна ячейка отчёта: сколько продали этого размера в этом месяце. */
 export interface MonthlySizeCell {
   count: number;
