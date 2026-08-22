@@ -162,22 +162,175 @@ def _is_fee(name):
     return not any(skip in low for skip in FEE_SKIP)
 
 
-def _probe_payouts(headers):
-    """Разведка: какие методы OZON отдают реестры выплат."""
-    out = {}
-    for path, body in (
-        ('/v1/finance/cash-flow-statement/list',
-         {'date': {'from': '2026-07-01T00:00:00.000Z',
-                   'to': '2026-08-22T23:59:59.000Z'},
-          'page': 1, 'page_size': 100, 'with_details': True}),
-        ('/v2/finance/realization', {'date': '2026-07'}),
-    ):
-        st, d = _http(f'{OZON_API}{path}', 'POST', headers, body, timeout=25)
-        out[path] = {'status': st,
-                     'keys': list(d.keys()) if isinstance(d, dict) else str(d)[:200]}
-        if isinstance(d, dict) and st == 200:
-            out[path]['sample'] = json.dumps(d, ensure_ascii=False)[:900]
-    return out
+def _sync_payouts(cur, creds, months=6):
+    """Отчёты OZON о выплатах: сколько начислено и сколько реально пришло.
+
+    Нужны для двух вещей: посчитать вознаграждение менеджера (процент с
+    поступлений) и увидеть, сколько денег забрали досрочные выплаты.
+
+    В отчёте площадка отдаёт продажи и все свои удержания за неделю.
+    Начислено к выплате = заказы − возвраты − комиссия − услуги − логистика.
+    Фактически пришедшее меньше на сумму досрочных выплат, если мы их брали.
+    """
+    headers = {'Client-Id': (creds.get('clientId') or '').strip(),
+               'Api-Key': (creds.get('apiKey') or '').strip()}
+    today = datetime.now(timezone.utc).date()
+    since = (today.replace(day=1) - timedelta(days=31 * months)).replace(day=1)
+
+    saved = 0
+    for page in range(1, 8):
+        st, d = _http(
+            f'{OZON_API}/v1/finance/cash-flow-statement/list', 'POST', headers,
+            {'date': {'from': f'{since}T00:00:00.000Z',
+                      'to': f'{today}T23:59:59.000Z'},
+             'page': page, 'page_size': 100, 'with_details': True},
+            timeout=25,
+        )
+        if st != 200 or not isinstance(d, dict):
+            break
+        flows = ((d.get('result') or {}).get('cash_flows')) or []
+        if not flows:
+            break
+
+        for f in flows:
+            period = f.get('period') or {}
+            p_from = (period.get('begin') or '')[:10]
+            p_to = (period.get('end') or '')[:10]
+            if not p_from or not p_to:
+                continue
+
+            orders = float(f.get('orders_amount') or 0)
+            returns = float(f.get('returns_amount') or 0)
+            commission = float(f.get('commission_amount') or 0)
+            services = float(f.get('services_amount') or 0)
+            delivery = float(f.get('item_delivery_and_return_amount') or 0)
+
+            # Суммы удержаний приходят отрицательными — просто складываем.
+            accrued = orders + returns + commission + services + delivery
+
+            cur.execute(
+                "INSERT INTO marketplace_payouts (marketplace_code, "
+                "  period_start, period_end, orders_amount, returns_amount, "
+                "  commission_amount, services_amount, delivery_amount, "
+                "  accrued_amount, synced_at) "
+                "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, %s, now()) "
+                "ON CONFLICT (marketplace_code, period_start, period_end) "
+                "DO UPDATE SET orders_amount = EXCLUDED.orders_amount, "
+                "  returns_amount = EXCLUDED.returns_amount, "
+                "  commission_amount = EXCLUDED.commission_amount, "
+                "  services_amount = EXCLUDED.services_amount, "
+                "  delivery_amount = EXCLUDED.delivery_amount, "
+                "  accrued_amount = EXCLUDED.accrued_amount, synced_at = now()",
+                (p_from, p_to, round(orders, 2), round(returns, 2),
+                 round(commission, 2), round(services, 2), round(delivery, 2),
+                 round(accrued, 2)),
+            )
+            saved += 1
+
+        if len(flows) < 100:
+            break
+
+    # Досрочные выплаты. Площадка удерживает их из перевода, поэтому на счёт
+    # приходит меньше, чем начислено. На процент менеджера это не влияет, но
+    # знать сумму нужно: это реальные деньги, ушедшие из поступления.
+    #
+    # Статьи удержаний собраны ПО МЕСЯЦАМ, а периоды выплат — недельные.
+    # Поэтому месячную сумму раскладываем на недели ПРОПОРЦИОНАЛЬНО их доле
+    # в обороте месяца: записав в каждую неделю весь месяц, мы завысили бы
+    # удержания в четыре раза.
+    cur.execute(
+        "UPDATE marketplace_payouts p SET "
+        "  early_payout_amount = round(f.amount * p.accrued_amount / f.total, 2), "
+        "  paid_amount = p.accrued_amount "
+        "    - round(f.amount * p.accrued_amount / f.total, 2) "
+        "FROM ("
+        "  SELECT fm.month, sum(fm.amount) AS amount, "
+        "    (SELECT sum(accrued_amount) FROM marketplace_payouts p2 "
+        "     WHERE p2.marketplace_code = 'ozon' "
+        "       AND date_trunc('month', p2.period_start) = fm.month) AS total "
+        "  FROM marketplace_fees_monthly fm "
+        "  WHERE fm.marketplace_code = 'ozon' "
+        "    AND fm.fee_name ILIKE '%досрочн%' "
+        "  GROUP BY fm.month"
+        ") f "
+        "WHERE p.marketplace_code = 'ozon' "
+        "  AND date_trunc('month', p.period_start) = f.month "
+        "  AND f.total > 0"
+    )
+
+    return saved
+
+
+def _sync_stocks(cur, creds):
+    """Остатки на складах площадки — чтобы разнести хранение по товарам.
+
+    Площадка отдаёт по строке на каждый склад, а нам нужен остаток по позиции
+    целиком: хранение считается от общего количества, а не от того, где оно
+    лежит. Поэтому строки одного SKU складываем.
+    """
+    headers = {'Client-Id': (creds.get('clientId') or '').strip(),
+               'Api-Key': (creds.get('apiKey') or '').strip()}
+
+    by_sku = {}
+    for offset in range(0, 10000, 1000):
+        st, d = _http(
+            f'{OZON_API}/v2/analytics/stock_on_warehouses', 'POST', headers,
+            {'limit': 1000, 'offset': offset, 'warehouse_type': 'ALL'},
+            timeout=25,
+        )
+        if st != 200 or not isinstance(d, dict):
+            break
+        rows = ((d.get('result') or {}).get('rows')) or []
+        if not rows:
+            break
+        for r in rows:
+            sku = str(r.get('sku') or '')
+            if not sku:
+                continue
+            cur_row = by_sku.setdefault(sku, {
+                'offer_id': r.get('item_code'),
+                'name': r.get('item_name'),
+                'free': 0, 'reserved': 0, 'warehouses': 0,
+            })
+            cur_row['free'] += int(r.get('free_to_sell_amount') or 0)
+            cur_row['reserved'] += int(r.get('reserved_amount') or 0)
+            cur_row['warehouses'] += 1
+        if len(rows) < 1000:
+            break
+
+    if not by_sku:
+        return 0
+
+    # Сопоставляем с нашими товарами по артикулу продавца.
+    # Артикул продавца у нас лежит в sku, а ozon_sku — это номер карточки
+    # на площадке. Сопоставляем по обоим: часть товаров заведена только с одним.
+    cur.execute("SELECT sku, ozon_sku, id FROM marketplace_items")
+    items = {}
+    for sku_val, ozon_sku, item_id in cur.fetchall():
+        if sku_val:
+            items[str(sku_val)] = item_id
+        if ozon_sku:
+            items[str(ozon_sku)] = item_id
+
+    for sku, v in by_sku.items():
+        cur.execute(
+            "INSERT INTO marketplace_stocks (marketplace_code, sku, offer_id, "
+            "  product_name, marketplace_item_id, free_amount, "
+            "  reserved_amount, warehouses, synced_at) "
+            "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, now()) "
+            "ON CONFLICT (marketplace_code, sku) DO UPDATE SET "
+            "  offer_id = EXCLUDED.offer_id, "
+            "  product_name = EXCLUDED.product_name, "
+            "  marketplace_item_id = EXCLUDED.marketplace_item_id, "
+            "  free_amount = EXCLUDED.free_amount, "
+            "  reserved_amount = EXCLUDED.reserved_amount, "
+            "  warehouses = EXCLUDED.warehouses, synced_at = now()",
+            (sku, v['offer_id'], v['name'],
+             items.get(str(v['offer_id'])) or items.get(sku),
+             v['free'], v['reserved'], v['warehouses']),
+        )
+
+    return len(by_sku)
 
 
 def _load_progress(cur, code):
@@ -736,11 +889,23 @@ def handler(event: dict, context) -> dict:
         elif not _is_admin(cur, body_data.get('actorId')):
             return _resp(403, {'error': 'Доступно администратору'})
 
-        if action == 'probe_payouts':
-            creds, _ = _credentials(cur, 'ozon')
-            h = {'Client-Id': (creds.get('clientId') or '').strip(),
-                 'Api-Key': (creds.get('apiKey') or '').strip()}
-            return _resp(200, _probe_payouts(h))
+        if action == 'sync_stocks':
+            # Остатки: нужны, чтобы разнести хранение по товарам.
+            creds, enabled = _credentials(cur, 'ozon')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция OZON не подключена'})
+            saved = _sync_stocks(cur, creds)
+            conn.commit()
+            return _resp(200, {'ok': True, 'items': saved})
+
+        if action == 'sync_payouts':
+            # Отчёты о выплатах: база для вознаграждения менеджера.
+            creds, enabled = _credentials(cur, 'ozon')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция OZON не подключена'})
+            saved = _sync_payouts(cur, creds, int(body_data.get('months') or 6))
+            conn.commit()
+            return _resp(200, {'ok': True, 'periods': saved})
 
         if action == 'sync_nm_ids':
             creds, enabled = _credentials(cur, 'wildberries')

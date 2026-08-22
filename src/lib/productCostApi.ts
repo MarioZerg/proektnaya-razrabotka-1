@@ -85,12 +85,37 @@ export interface SoldUnits {
   byMarketplace: SoldByMarketplace[];
 }
 
+/** Вознаграждение менеджера маркетплейсов за прошлый месяц. */
+export interface ManagerCommission {
+  percent: number;
+  isActive: boolean;
+  comment: string | null;
+  /** Первое число месяца, за который считаем. */
+  month: string;
+  monthEnd: string;
+  /** Сколько отчётов площадки попало в расчёт. */
+  periods: number;
+  /** Начислено по отчётам — база процента. */
+  accrued: number;
+  /** Удержано досрочными выплатами: на процент не влияет. */
+  earlyPayout: number;
+  payout: number;
+  /** Сколько это на одну проданную вещь. */
+  perUnit: number | null;
+  /** Периоды с перерасчётом площадки — они раздувают базу. */
+  oddPeriods: number;
+  oddAmount: number;
+  /** Сколько вышло бы без перерасчётов. */
+  payoutWithoutOdd: number | null;
+}
+
 export interface CostResponse {
   settings: CostSettings;
   groups: CostGroup[];
   extras: ExtraExpense[];
   workshops: { id: number; name: string }[];
   sold: SoldUnits;
+  manager: ManagerCommission | null;
 }
 
 const post = async (payload: Record<string, unknown>) => {
@@ -134,3 +159,10 @@ export const updateExtraExpense = (payload: {
 
 export const deleteExtraExpense = (id: number, actorId?: number) =>
   post({ action: 'delete_expense', id, actorId });
+
+export const saveManagerCommission = (payload: {
+  percent: number;
+  isActive: boolean;
+  comment?: string;
+  actorId?: number;
+}) => post({ action: 'save_manager', ...payload });

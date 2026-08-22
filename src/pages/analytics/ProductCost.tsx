@@ -9,6 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import FabricCostCard from '@/components/crm/cost/FabricCostCard';
 import CostSettingsPanel from '@/components/crm/cost/CostSettingsPanel';
 import ExtraExpensesPanel from '@/components/crm/cost/ExtraExpensesPanel';
+import ManagerCommissionPanel from '@/components/crm/cost/ManagerCommissionPanel';
 import { fetchProductCosts, type CostResponse, type CostGroup } from '@/lib/productCostApi';
 
 const money = (v: number) =>
@@ -122,6 +123,12 @@ const ProductCost = () => {
 
         {data && canEdit && (
           <ExtraExpensesPanel expenses={data.extras} sold={data.sold} onChanged={load} />
+        )}
+
+        {/* Вознаграждение менеджера маркетплейсов: тоже расход на вещь, но
+            считается от поступлений по отчётам, а не задаётся вручную. */}
+        {data?.manager && canEdit && (
+          <ManagerCommissionPanel manager={data.manager} onChanged={load} />
         )}
 
         {/* Менеджеру те же параметры показываем справкой: он должен понимать,

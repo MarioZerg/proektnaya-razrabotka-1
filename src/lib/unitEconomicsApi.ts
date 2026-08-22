@@ -203,6 +203,51 @@ export const fetchEconomics = async (params: {
   return data;
 };
 
+/** Одна позиция на складе площадки и её доля в счёте за хранение. */
+export interface StorageItem {
+  sku: string;
+  offerId: string | null;
+  name: string | null;
+  itemId: number | null;
+  stock: number;
+  /** Продано за период. */
+  soldPeriod: number;
+  perDay: number;
+  /** На сколько дней хватит остатка при текущих продажах. */
+  daysLeft: number;
+  storageCost: number;
+  storagePerUnit: number | null;
+}
+
+export interface StorageReport {
+  marketplace: string;
+  month: string | null;
+  storageTotal: number;
+  positions: number;
+  totalStock: number;
+  items: StorageItem[];
+}
+
+/**
+ * Хранение по товарам: какие позиции съедают деньги на складе.
+ *
+ * Площадка присылает хранение одной суммой за месяц. Сколько дней лежит
+ * конкретная штука, она не отдаёт, поэтому считаем оборачиваемость и делим
+ * счёт пропорционально «штуко-дням» — залежавшийся товар получает свою долю,
+ * а быстро уходящий не платит за чужой простой.
+ */
+export const fetchStorageReport = async (
+  marketplace: string,
+  days = 30,
+): Promise<StorageReport> => {
+  const res = await fetch(
+    `${UNIT_ECONOMICS_URL}?action=storage&marketplace=${marketplace}&days=${days}`,
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить хранение');
+  return data;
+};
+
 /** Одна статья удержания площадки за месяц. */
 export interface FeeItem {
   name: string;
@@ -364,10 +409,30 @@ export const syncAdSpend = async (
   onProgress?: (stage: string) => void,
 ): Promise<{ percent: number | null; spend: number; revenue: number }> => {
   if (marketplace === 'ozon') {
-    onProgress?.('Считаем траты на рекламу…');
-    const d = await postAd({ action: 'sync', marketplace, actorId });
-    if (!d.ok) throw new Error(d.error || 'Не удалось посчитать');
-    return { percent: d.percent, spend: d.spend, revenue: d.revenue };
+    // Операций за месяц около 30 000 — за один вызов не прочитать, поэтому
+    // ходим порциями, пока функция не скажет, что страницы кончились.
+    // Прогресс она хранит сама, так что параметры передавать не нужно.
+    let last: Record<string, unknown> = {};
+    for (let step = 0; step < 12; step += 1) {
+      onProgress?.(`Читаем операции площадки… (${step + 1})`);
+      const d = await postAd({ action: 'sync', marketplace, actorId });
+      if (!d.ok) throw new Error(d.error || 'Не удалось посчитать');
+      last = d;
+      if (!d.inProgress) break;
+    }
+
+    // Отчёты о выплатах и остатки приходят теми же ключами: считаем их здесь
+    // же, чтобы владелец не искал три разные кнопки.
+    onProgress?.('Загружаем отчёты о выплатах…');
+    await postAd({ action: 'sync_payouts', actorId, months: 6 }).catch(() => null);
+    onProgress?.('Загружаем остатки на складах…');
+    await postAd({ action: 'sync_stocks', actorId }).catch(() => null);
+
+    return {
+      percent: last.percent as number | null,
+      spend: (last.spend as number) || 0,
+      revenue: (last.revenue as number) || 0,
+    };
   }
 
   let spend = 0;

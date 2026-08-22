@@ -231,6 +231,83 @@ def _sold_units(cur, days=30):
     return {'days': int(days), 'total': total, 'byMarketplace': out}
 
 
+def _manager_commission(cur, sold_units):
+    """Вознаграждение менеджера маркетплейсов и сколько это на вещь.
+
+    Менеджер получает процент с поступлений по отчётам площадок. Считали это
+    вручную, и в себестоимость товара расход не попадал вовсе — при том что на
+    каждой вещи он заметен.
+
+    База — НАЧИСЛЕННОЕ по отчёту, а не пришедшее на счёт. Разница между ними
+    появляется, когда мы берём досрочную выплату: площадка удерживает её из
+    перевода. Но досрочная выплата — наше решение по деньгам, а не результат
+    работы менеджера, и урезать из-за неё вознаграждение неправильно.
+
+    Берём ПРОШЛЫЙ ПОЛНЫЙ месяц: текущий ещё идёт, и по нему сумма занижена —
+    себестоимость скакала бы весь месяц вверх по мере поступления отчётов.
+    """
+    cur.execute(
+        "SELECT percent, is_active, comment FROM manager_commission_settings "
+        "ORDER BY id LIMIT 1"
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    percent = float(row[0] or 0)
+    is_active = bool(row[1])
+
+    # Прошлый полный месяц.
+    cur.execute(
+        "SELECT (date_trunc('month', now()) - interval '1 month')::date, "
+        "       (date_trunc('month', now()) - interval '1 day')::date"
+    )
+    m_start, m_end = cur.fetchone()
+
+    cur.execute(
+        "SELECT coalesce(sum(accrued_amount), 0), "
+        "       coalesce(sum(early_payout_amount), 0), count(*), "
+        # Периоды, где площадка вернула больше, чем удержала: перерасчёты и
+        # компенсации приходят одной строкой и раздувают начисление в разы.
+        # На реальных данных такой период дал 10,5 млн вместо обычных 1,8 млн.
+        # Молча включать его в базу процента нельзя — сумма менеджера скакнёт
+        # без всякой связи с её работой, поэтому помечаем и показываем.
+        "       count(*) FILTER (WHERE services_amount > 0), "
+        "       coalesce(sum(services_amount) FILTER (WHERE services_amount > 0), 0) "
+        "FROM marketplace_payouts "
+        "WHERE period_start >= %s AND period_start <= %s",
+        (m_start, m_end),
+    )
+    accrued, early, periods, odd_periods, odd_sum = cur.fetchone()
+    accrued = float(accrued or 0)
+    early = float(early or 0)
+    odd_sum = float(odd_sum or 0)
+
+    payout = round(accrued * percent / 100.0, 2)
+    per_unit = round(payout / sold_units, 2) if sold_units else None
+
+    return {
+        'percent': percent,
+        'isActive': is_active,
+        'comment': row[2],
+        'month': str(m_start),
+        'monthEnd': str(m_end),
+        'periods': int(periods or 0),
+        # Начислено по отчётам — база процента.
+        'accrued': round(accrued, 2),
+        # Удержано досрочными выплатами: на процент менеджера не влияет,
+        # но показать надо — это реальные деньги, ушедшие из перевода.
+        'earlyPayout': round(early, 2),
+        'payout': payout,
+        'perUnit': per_unit,
+        # Перерасчёты площадки: их видно отдельно, чтобы цифру можно было
+        # объяснить, а не гадать, почему месяц выбился из ряда.
+        'oddPeriods': int(odd_periods or 0),
+        'oddAmount': round(odd_sum, 2),
+        'payoutWithoutOdd': round((accrued - odd_sum) * percent / 100.0, 2)
+        if odd_sum else None,
+    }
+
+
 def _calc_groups(cur, settings):
     """Себестоимость по ТКАНИ и ШИРИНЕ, а не по каждому товару.
 
@@ -395,6 +472,7 @@ def handler(event: dict, context) -> dict:
         if method == 'GET':
             settings = _settings(cur)
             groups, extras = _calc_groups(cur, settings)
+            sold = _sold_units(cur, 30)
             cur.execute("SELECT id, name FROM workshops ORDER BY id")
             workshops = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
             return _resp(200, {
@@ -404,7 +482,9 @@ def handler(event: dict, context) -> dict:
                 'workshops': workshops,
                 # Сколько вещей реально продано за месяц — подсказка для
                 # делителя постоянных расходов, чтобы его не брали «на глаз».
-                'sold': _sold_units(cur, 30),
+                'sold': sold,
+                # Вознаграждение менеджера маркетплейсов: процент с поступлений.
+                'manager': _manager_commission(cur, sold['total']),
             })
 
         if method == 'POST':
@@ -462,6 +542,28 @@ def handler(event: dict, context) -> dict:
                     return _resp(400, {'error': 'Укажите id'})
                 cur.execute(
                     "DELETE FROM cost_extra_expenses WHERE id = %s", (int(expense_id),)
+                )
+                conn.commit()
+                return _resp(200, {'ok': True})
+
+            if action == 'save_manager':
+                # Ставка менеджера маркетплейсов. Меняется руками: договорённость
+                # может пересматриваться, а из отчётов площадки её не вывести.
+                try:
+                    percent = float(body_data.get('percent') or 0)
+                except (TypeError, ValueError):
+                    return _resp(400, {'error': 'Процент указан неверно'})
+                if percent < 0 or percent > 50:
+                    return _resp(400, {'error': 'Процент должен быть от 0 до 50'})
+                cur.execute(
+                    "UPDATE manager_commission_settings SET percent = %s, "
+                    "  is_active = %s, comment = %s, updated_at = now(), "
+                    "  updated_by = %s "
+                    "WHERE id = (SELECT id FROM manager_commission_settings "
+                    "            ORDER BY id LIMIT 1)",
+                    (percent, bool(body_data.get('isActive', True)),
+                     (body_data.get('comment') or '').strip() or None,
+                     body_data.get('actorId')),
                 )
                 conn.commit()
                 return _resp(200, {'ok': True})

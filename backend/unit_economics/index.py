@@ -1584,6 +1584,100 @@ def handler(event: dict, context) -> dict:
             params = event.get('queryStringParameters') or {}
             action = params.get('action')
 
+            if action == 'storage':
+                """Хранение по товарам: кто съедает деньги на складе.
+
+                Площадка присылает хранение ОДНОЙ суммой за месяц, и по ней
+                нельзя понять, какие позиции его тянут. Сама она «сколько дней
+                лежит эта штука» не отдаёт, поэтому считаем оборачиваемость:
+                дни запаса = остаток / средние продажи в день.
+
+                Позиция с остатком 300 штук при продаже 2 в день пролежит
+                150 дней и наберёт хранения; такая же при 30 в день уйдёт за
+                декаду. Общую сумму раскладываем пропорционально «штуко-дням»,
+                то есть остатку с поправкой на скорость продаж, — иначе быстрый
+                товар платил бы за чужой простой.
+                """
+                code = params.get('marketplace') or 'ozon'
+                days = int(params.get('days') or 30)
+
+                # Хранение за последний месяц, где оно есть.
+                cur.execute(
+                    "SELECT month::text, sum(amount) FROM marketplace_fees_monthly "
+                    "WHERE marketplace_code = %s AND category = 'storage' "
+                    "GROUP BY month ORDER BY month DESC LIMIT 1",
+                    (code,),
+                )
+                row = cur.fetchone()
+                storage_total = float(row[1]) if row else 0.0
+                storage_month = row[0] if row else None
+
+                # Остатки и продажи по каждой позиции.
+                mp_name = {'ozon': 'OZON', 'wildberries': 'WB'}.get(code, 'OZON')
+                cur.execute(
+                    "SELECT s.sku, s.offer_id, s.product_name, "
+                    "       s.marketplace_item_id, "
+                    "       s.free_amount + s.reserved_amount AS stock, "
+                    "       coalesce(o.sold, 0) AS sold "
+                    "FROM marketplace_stocks s "
+                    "LEFT JOIN ("
+                    "  SELECT marketplace_item_id, count(*) AS sold "
+                    "  FROM orders "
+                    f"  WHERE marketplace = '{mp_name}' AND cancelled_at IS NULL "
+                    f"    AND created_at >= now() - interval '{days} days' "
+                    "  GROUP BY marketplace_item_id"
+                    ") o ON o.marketplace_item_id = s.marketplace_item_id "
+                    "WHERE s.marketplace_code = %s "
+                    "  AND s.free_amount + s.reserved_amount > 0 "
+                    "ORDER BY stock DESC",
+                    (code,),
+                )
+                raw = cur.fetchall()
+
+                # Штуко-дни: остаток × сколько дней он пролежит. Это и есть
+                # доля товара в счёте за хранение.
+                items = []
+                total_weight = 0.0
+                for sku, offer, name, item_id, stock, sold in raw:
+                    stock = int(stock or 0)
+                    sold = int(sold or 0)
+                    per_day = sold / days if sold else 0
+                    # Без продаж товар лежит неопределённо долго. Ограничиваем
+                    # год: иначе одна мёртвая позиция забирает весь счёт на себя
+                    # и остальные выглядят бесплатными.
+                    days_left = min(365, round(stock / per_day)) if per_day else 365
+                    weight = stock * days_left
+                    total_weight += weight
+                    items.append({
+                        'sku': sku,
+                        'offerId': offer,
+                        'name': name,
+                        'itemId': item_id,
+                        'stock': stock,
+                        'soldPeriod': sold,
+                        'perDay': round(per_day, 2),
+                        'daysLeft': days_left,
+                        '_w': weight,
+                    })
+
+                for it in items:
+                    share = (it.pop('_w') / total_weight) if total_weight else 0
+                    cost = storage_total * share
+                    it['storageCost'] = round(cost, 2)
+                    it['storagePerUnit'] = round(cost / it['stock'], 2) \
+                        if it['stock'] else None
+
+                items.sort(key=lambda x: x['storageCost'], reverse=True)
+
+                return _resp(200, {
+                    'marketplace': code,
+                    'month': storage_month,
+                    'storageTotal': round(storage_total, 2),
+                    'positions': len(items),
+                    'totalStock': sum(i['stock'] for i in items),
+                    'items': items[:100],
+                })
+
             if action == 'fees':
                 """Удержания площадки по статьям и месяцам + чистая прибыль.
 

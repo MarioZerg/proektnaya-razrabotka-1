@@ -19,6 +19,7 @@ import EconomicsRowCard from './EconomicsRowCard';
 import TariffsPanel from './TariffsPanel';
 import MonthlySizesReport from './MonthlySizesReport';
 import PlatformFeesPanel from './PlatformFeesPanel';
+import StorageByItemPanel from './StorageByItemPanel';
 import { moneyShort } from './economicsShared';
 
 /**
@@ -46,6 +47,8 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
   const [showMonthly, setShowMonthly] = useState(false);
   // Удержания площадки сверх комиссии: подписки, слоты, штрафы.
   const [showFees, setShowFees] = useState(false);
+  // Хранение в разрезе товаров: видно, какие позиции залежались.
+  const [showStorage, setShowStorage] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -258,10 +261,17 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
           <Icon name="ReceiptText" size={14} className="mr-1.5" />
           {showFees ? 'Скрыть' : 'Показать'} расходы площадки
         </Button>
+        {/* Хранение по товарам: общая сумма ничего не говорит о том, какие
+            позиции залежались, — а это и есть повод для решения. */}
+        <Button variant="ghost" size="sm" onClick={() => setShowStorage((v) => !v)}>
+          <Icon name="Warehouse" size={14} className="mr-1.5" />
+          {showStorage ? 'Скрыть' : 'Показать'} хранение по товарам
+        </Button>
       </div>
 
       {showMonthly && <MonthlySizesReport marketplace={code} />}
       {showFees && <PlatformFeesPanel marketplace={code} />}
+      {showStorage && <StorageByItemPanel marketplace={code} />}
 
       {showTariffs && data && canEdit && (
         <TariffsPanel marketplaceCode={code} tariffs={data.tariffs} onSaved={load} />
