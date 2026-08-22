@@ -58,6 +58,11 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
 
   // Окладные строки с устаревшим делителем. Мелкие расходы вроде «коробка на
   // 50 заказов» не трогаем: там делитель — это норма упаковки, а не продажи.
+  // Обе половины итога по всем площадкам сразу.
+  const delivered = sold?.byMarketplace.reduce((n, m) => n + (m.delivered || 0), 0) || 0;
+  const returned = sold?.byMarketplace.reduce((n, m) => n + (m.returned || 0), 0) || 0;
+  const returnPct = delivered > 0 ? ((returned / delivered) * 100).toFixed(1) : '0';
+
   const staleCount = sold?.total
     ? expenses.filter(
         (e) => e.isActive && e.perItems !== sold.total && e.perItems > 100,
@@ -210,9 +215,17 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
                   Продано за {sold.days} дней:{' '}
                   <span className="text-lg font-bold">{sold.total}</span> шт
                 </p>
+                {/* Показываем ОБЕ половины итога. Иначе непонятно, вычтены
+                    возвраты или нет, — а на это число делятся все оклады. */}
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Только то, за что деньги получены — со своего склада и со
-                  склада площадки, за вычетом возвратов
+                  {delivered > 0 ? (
+                    <>
+                      доставлено покупателю {delivered} − вернулось {returned}
+                      {' '}({returnPct}%) = чисто продано
+                    </>
+                  ) : (
+                    'Только то, за что деньги получены — за вычетом возвратов'
+                  )}
                 </p>
               </div>
               {/* Две разные задачи: подставить число в НОВУЮ строку и

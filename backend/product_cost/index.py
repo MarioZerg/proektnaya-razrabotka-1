@@ -184,7 +184,8 @@ def _sold_units(cur, days=30):
 
     # OZON: обе схемы из данных площадки.
     cur.execute(
-        "SELECT sold_units, sold_units_fbo, sold_units_fbs, period_days "
+        "SELECT sold_units, sold_units_fbo, sold_units_fbs, "
+        "       delivered_units, returned_units "
         "FROM marketplace_ad_spend "
         "WHERE marketplace_code = 'ozon' AND marketplace_item_id IS NULL"
     )
@@ -196,6 +197,11 @@ def _sold_units(cur, days=30):
             'net': int(row[0]),
             'fbo': int(row[1] or 0),
             'fbs': int(row[2] or 0),
+            # Обе половины итога: сколько уехало и сколько вернулось. Без них
+            # нельзя проверить, вычтены возвраты или нет, — а на это число
+            # делятся все постоянные расходы.
+            'delivered': int(row[3] or 0),
+            'returned': int(row[4] or 0),
             'source': 'marketplace',
         })
 
@@ -217,6 +223,8 @@ def _sold_units(cur, days=30):
             'net': int(cnt),
             'fbo': 0,
             'fbs': int(cnt),
+            'delivered': int(cnt),
+            'returned': 0,
             'source': 'orders',
         })
 

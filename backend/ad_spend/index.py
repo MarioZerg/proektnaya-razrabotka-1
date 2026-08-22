@@ -85,21 +85,24 @@ def _save_item_spend(cur, code, item_id, spend, revenue):
 def _save_total(cur, code, spend, revenue, units=None):
     """Расход на всю площадку — когда разбивки по товарам нет."""
     pct = round(spend / revenue * 100, 2) if revenue > 0 else None
-    u_all, u_fbo, u_fbs = units or (None, None, None)
+    u_all, u_fbo, u_fbs, u_deliv, u_ret = units or (None,) * 5
     cur.execute(
         "INSERT INTO marketplace_ad_spend (marketplace_code, marketplace_item_id, "
         "  period_days, ad_spend, revenue, ad_percent, "
-        "  sold_units, sold_units_fbo, sold_units_fbs, calculated_at) "
-        "VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, now()) "
+        "  sold_units, sold_units_fbo, sold_units_fbs, "
+        "  delivered_units, returned_units, calculated_at) "
+        "VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()) "
         "ON CONFLICT (marketplace_code) WHERE marketplace_item_id IS NULL "
         "DO UPDATE SET ad_spend = EXCLUDED.ad_spend, revenue = EXCLUDED.revenue, "
         "  ad_percent = EXCLUDED.ad_percent, period_days = EXCLUDED.period_days, "
         "  sold_units = EXCLUDED.sold_units, "
         "  sold_units_fbo = EXCLUDED.sold_units_fbo, "
         "  sold_units_fbs = EXCLUDED.sold_units_fbs, "
+        "  delivered_units = EXCLUDED.delivered_units, "
+        "  returned_units = EXCLUDED.returned_units, "
         "  calculated_at = now()",
         (code, PERIOD_DAYS, round(spend, 2), round(revenue, 2), pct,
-         u_all, u_fbo, u_fbs),
+         u_all, u_fbo, u_fbs, u_deliv, u_ret),
     )
     cur.execute(
         "UPDATE marketplace_tariffs SET promo_fact_percent = %s, "
@@ -116,7 +119,8 @@ def _load_progress(cur, code):
     с той страницы, на которой закончили.
     """
     cur.execute(
-        "SELECT next_page, ad_spend, revenue, units_fbo, units_fbs, by_month "
+        "SELECT next_page, ad_spend, revenue, delivered_fbo, delivered_fbs, "
+        "  by_month, returned_fbo, returned_fbs "
         "FROM marketplace_sync_progress WHERE marketplace_code = %s",
         (code,),
     )
@@ -126,9 +130,11 @@ def _load_progress(cur, code):
     return int(r[0] or 1), {
         'spend': float(r[1] or 0),
         'revenue': float(r[2] or 0),
-        'units_fbo': int(r[3] or 0),
-        'units_fbs': int(r[4] or 0),
+        'deliv_fbo': int(r[3] or 0),
+        'deliv_fbs': int(r[4] or 0),
         'by_month': r[5] or {},
+        'ret_fbo': int(r[6] or 0),
+        'ret_fbs': int(r[7] or 0),
     }
 
 
@@ -136,15 +142,20 @@ def _save_progress(cur, code, next_page, acc):
     """Откладываем промежуточный итог до следующей порции."""
     cur.execute(
         "INSERT INTO marketplace_sync_progress (marketplace_code, next_page, "
-        "  ad_spend, revenue, units_fbo, units_fbs, by_month, updated_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, now()) "
+        "  ad_spend, revenue, delivered_fbo, delivered_fbs, by_month, "
+        "  returned_fbo, returned_fbs, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now()) "
         "ON CONFLICT (marketplace_code) DO UPDATE SET "
         "  next_page = EXCLUDED.next_page, ad_spend = EXCLUDED.ad_spend, "
-        "  revenue = EXCLUDED.revenue, units_fbo = EXCLUDED.units_fbo, "
-        "  units_fbs = EXCLUDED.units_fbs, by_month = EXCLUDED.by_month, "
-        "  updated_at = now()",
+        "  revenue = EXCLUDED.revenue, "
+        "  delivered_fbo = EXCLUDED.delivered_fbo, "
+        "  delivered_fbs = EXCLUDED.delivered_fbs, "
+        "  returned_fbo = EXCLUDED.returned_fbo, "
+        "  returned_fbs = EXCLUDED.returned_fbs, "
+        "  by_month = EXCLUDED.by_month, updated_at = now()",
         (code, int(next_page), acc['spend'], acc['revenue'],
-         acc['units_fbo'], acc['units_fbs'], json.dumps(acc['by_month'])),
+         acc['deliv_fbo'], acc['deliv_fbs'], json.dumps(acc['by_month']),
+         acc['ret_fbo'], acc['ret_fbs']),
     )
 
 
@@ -191,8 +202,13 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
     acc = acc or {}
     spend = float(acc.get('spend') or 0)
     revenue = float(acc.get('revenue') or 0)
-    units_fbo = int(acc.get('units_fbo') or 0)
-    units_fbs = int(acc.get('units_fbs') or 0)
+    # Доставки и возвраты копим ОТДЕЛЬНО: так видно, из чего сложился итог,
+    # и можно проверить, вычтены ли возвраты. По одному чистому числу этого
+    # не понять, а на него делятся все постоянные расходы.
+    deliv_fbo = int(acc.get('deliv_fbo') or 0)
+    deliv_fbs = int(acc.get('deliv_fbs') or 0)
+    ret_fbo = int(acc.get('ret_fbo') or 0)
+    ret_fbs = int(acc.get('ret_fbs') or 0)
     total_pages = 0
     last_page = start_page + PAGES_PER_CALL - 1
     # Расход и оборот ПО МЕСЯЦАМ: {'2026-06-01': [расход, оборот]}.
@@ -263,9 +279,9 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
                 qty = len(o.get('items') or []) or 1
                 schema = ((o.get('posting') or {}).get('delivery_schema') or '').upper()
                 if schema == 'FBO':
-                    units_fbo += qty
+                    deliv_fbo += qty
                 else:
-                    units_fbs += qty
+                    deliv_fbs += qty
                 if mkey:
                     units_by_month[mkey] = units_by_month.get(mkey, 0) + qty
             elif name.startswith('Получение возврата'):
@@ -279,9 +295,9 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
                 back = len(o.get('items') or []) or 1
                 schema = ((o.get('posting') or {}).get('delivery_schema') or '').upper()
                 if schema == 'FBO':
-                    units_fbo -= back
+                    ret_fbo += back
                 else:
-                    units_fbs -= back
+                    ret_fbs += back
                 if mkey:
                     units_by_month[mkey] = units_by_month.get(mkey, 0) - back
 
@@ -305,8 +321,10 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
     acc_out = {
         'spend': round(spend, 2),
         'revenue': round(revenue, 2),
-        'units_fbo': units_fbo,
-        'units_fbs': units_fbs,
+        'deliv_fbo': deliv_fbo,
+        'deliv_fbs': deliv_fbs,
+        'ret_fbo': ret_fbo,
+        'ret_fbs': ret_fbs,
         'by_month': merged,
     }
 
@@ -329,8 +347,11 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
         pct = round(spend / revenue * 100, 2) if revenue > 0 else None
         return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
                 'percent': pct, 'byItem': 0, 'from': str(since), 'to': str(today),
-                'soldUnits': max(0, units_fbo) + max(0, units_fbs),
-                'soldFbo': max(0, units_fbo), 'soldFbs': max(0, units_fbs)}
+                'soldUnits': max(0, deliv_fbo + deliv_fbs - ret_fbo - ret_fbs),
+                'soldFbo': max(0, deliv_fbo - ret_fbo),
+                'soldFbs': max(0, deliv_fbs - ret_fbs),
+                'delivered': deliv_fbo + deliv_fbs,
+                'returned': ret_fbo + ret_fbs}
 
     # Складываем историю по месяцам.
     #
@@ -366,7 +387,9 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
              max(0, units_by_month.get(mkey, 0))),
         )
 
-    units_total = max(0, units_fbo) + max(0, units_fbs)
+    net_fbo = max(0, deliv_fbo - ret_fbo)
+    net_fbs = max(0, deliv_fbs - ret_fbs)
+    units_total = net_fbo + net_fbs
 
     # Строку «за последние 30 дней» обновляем ТОЛЬКО обычным запуском.
     #
@@ -378,15 +401,17 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False,
         pct = round(spend / revenue * 100, 2) if revenue > 0 else None
         return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
                 'percent': pct, 'byItem': 0, 'months': len(by_month),
-                'soldUnits': units_total, 'soldFbo': max(0, units_fbo),
-                'soldFbs': max(0, units_fbs), 'historyOnly': True}
+                'soldUnits': units_total, 'soldFbo': net_fbo,
+                'soldFbs': net_fbs, 'delivered': deliv_fbo + deliv_fbs,
+                'returned': ret_fbo + ret_fbs, 'historyOnly': True}
 
     pct = _save_total(cur, 'ozon', spend, revenue,
-                      (units_total, max(0, units_fbo), max(0, units_fbs)))
+                      (units_total, net_fbo, net_fbs,
+                       deliv_fbo + deliv_fbs, ret_fbo + ret_fbs))
     return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
             'percent': pct, 'byItem': 0, 'months': len(by_month),
-            'soldUnits': units_total, 'soldFbo': max(0, units_fbo),
-            'soldFbs': max(0, units_fbs)}
+            'soldUnits': units_total, 'soldFbo': net_fbo, 'soldFbs': net_fbs,
+            'delivered': deliv_fbo + deliv_fbs, 'returned': ret_fbo + ret_fbs}
 
 
 def _wb_nm_map(cur):
