@@ -26,6 +26,9 @@ export interface UnitCalc {
   logistics: number;
   /** Базовый тариф логистики до пересчёта на выкуп. */
   logisticsBase: number;
+  /** Скидка постоянного покупателя: её даёт площадка за свой счёт. */
+  sppPercent?: number;
+  sppAmount?: number;
   returnCost: number;
   storage: number;
   acceptance: number;
@@ -449,6 +452,10 @@ export const syncAdSpend = async (
     await postAd({ action: 'sync_wb_payouts', actorId, weeks: 4 }).catch(
       () => null,
     );
+    // Расходы на продвижение Яндекса: без них юнит-экономика по этой площадке
+    // считает рекламу нулём и завышает прибыль.
+    onProgress?.('Загружаем продвижение Яндекса…');
+    await postAd({ action: 'sync_ym_ads', actorId }).catch(() => null);
     onProgress?.('Загружаем остатки на складах…');
     await postAd({ action: 'sync_stocks', actorId }).catch(() => null);
 

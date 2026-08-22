@@ -1294,11 +1294,23 @@ def _ad_percents(cur, marketplace):
         "  AND ad_percent IS NOT NULL",
         (marketplace,),
     )
-    return {r[0]: min(float(r[1]), AD_PERCENT_CAP) for r in cur.fetchall()}
+    # НОЛЬ — не «рекламы нет», а «в кампаниях этот товар не участвовал».
+    #
+    # Деньги на продвижение тратятся общие, и товар, который в кампанию не
+    # попал, всё равно продаётся на площадке, где реклама идёт. Записав ему
+    # ноль, мы делали его прибыльнее соседних размеров той же ткани при
+    # одинаковой цене — отсюда и необъяснимая разница между высотами.
+    #
+    # Такие товары отдаём без своего процента: расчёт подставит им средний
+    # факт по площадке.
+    return {
+        r[0]: min(float(r[1]), AD_PERCENT_CAP)
+        for r in cur.fetchall() if float(r[1]) > 0
+    }
 
 
 def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout,
-               item_fees=None, ad_percent=None):
+               item_fees=None, ad_percent=None, card_price=None):
     """Экономика ОДНОЙ проданной единицы.
 
     Считается по общепринятой для маркетплейсов схеме: из цены продажи вычитаем
@@ -1426,6 +1438,18 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
             and tariff.get('promoFromFact', True)),
         'logistics': logistics,
         'logisticsBase': round(logistics_direct, 2),
+        # СПП — скидка постоянного покупателя. Её платит ПЛОЩАДКА, а не мы:
+        # покупатель видит цену ниже, но продавцу приходит наша цена.
+        #
+        # Комиссия и налог считаются от цены покупателя, поэтому в затратах
+        # она отражается. Но саму разницу мы не теряем — и менеджеру важно
+        # видеть, что низкая цена на витрине не делает товар убыточным, если
+        # скидку даёт площадка.
+        'sppPercent': round(
+            (1 - price / card_price) * 100, 2
+        ) if card_price and card_price > 0 and price < card_price else 0.0,
+        'sppAmount': round(card_price - price, 2)
+        if card_price and card_price > price else 0.0,
         # Логистика взята из общего тарифа, а не по габаритам товара: цифра
         # приблизительная и обычно завышена.
         'logisticsFromTariff': logistics_is_tariff,
@@ -1545,6 +1569,7 @@ def _build(cur, code, scheme, buyout_override, shared=None):
                 i['price'], cost, tariffs, settings,
                 i[comm_key] if i[comm_key] is not None else commission_percent,
                 scheme, buyout, i['fees'], ad_percents.get(i['id']),
+                i.get('cardPrice'),
             )
             heights.append({
                 'itemId': i['id'], 'height': i['height'], 'name': i['name'],
@@ -1578,9 +1603,13 @@ def _build(cur, code, scheme, buyout_override, shared=None):
         # продвигают обычно не все высоты, и брать процент одной из них нельзя.
         g_ads = [ad_percents[i['id']] for i in g['items'] if i['id'] in ad_percents]
         group_ad = round(sum(g_ads) / len(g_ads), 2) if g_ads else None
+        avg_card = round(
+            sum(i['cardPrice'] for i in priced if i.get('cardPrice'))
+            / max(1, sum(1 for i in priced if i.get('cardPrice'))), 2
+        ) if any(i.get('cardPrice') for i in priced) else None
         group_unit = _calc_unit(avg_price, cost, tariffs, settings,
                                 commission_percent, scheme, buyout, group_fees,
-                                group_ad)
+                                group_ad, avg_card)
         rows.append({
             'material': material,
             'width': width,

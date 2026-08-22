@@ -1,4 +1,5 @@
 import json
+import time
 import os
 import urllib.error
 import urllib.request
@@ -7,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg2
 
 OZON_API = 'https://api-seller.ozon.ru'
+YM_API = 'https://api.partner.market.yandex.ru'
 WB_ADVERT_API = 'https://advert-api.wildberries.ru'
 WB_STATS_API = 'https://statistics-api.wildberries.ru'
 WB_CONTENT_API = 'https://content-api.wildberries.ru'
@@ -268,6 +270,103 @@ def _wb_week(day):
     """Отчётная неделя WB: понедельник—воскресенье, в которую попал день."""
     monday = day - timedelta(days=day.weekday())
     return monday, monday + timedelta(days=6)
+
+
+def _sync_ym_ads(cur, creds, date_from, date_to):
+    """Расходы на продвижение Яндекс Маркета по каждому товару.
+
+    Яндекс отдаёт их отчётом boost-consolidated: там по каждому артикулу видно,
+    сколько списано за буст (BILLED_AMOUNT) и какой получился ДРР
+    (COST_REVENUE_RATIO). Без этих цифр юнит-экономика по Яндексу считает
+    рекламу нулём и завышает прибыль.
+
+    Отчёт готовится не сразу, поэтому запрашиваем и ждём готовности.
+    """
+    import io as _io
+    import zipfile as _zip
+    import csv as _csv
+
+    headers = {'Api-Key': (creds.get('apiKey') or '').strip()}
+
+    cur.execute("SELECT value FROM system_settings WHERE key = 'ym_business_id'")
+    row = cur.fetchone()
+    business_id = (row[0] if row else None)
+    if not business_id:
+        return 0
+
+    st, d = _http(
+        f'{YM_API}/reports/boost-consolidated/generate?format=CSV', 'POST',
+        headers, {'businessId': int(business_id), 'dateFrom': date_from,
+                  'dateTo': date_to}, timeout=30)
+    if not isinstance(d, dict):
+        return 0
+    report_id = (d.get('result') or {}).get('reportId')
+    if not report_id:
+        return 0
+
+    file_url = None
+    for _ in range(12):
+        time.sleep(2)
+        st2, d2 = _http(f'{YM_API}/reports/info/{report_id}', 'GET', headers,
+                        None, timeout=25)
+        if not isinstance(d2, dict):
+            break
+        res = d2.get('result') or {}
+        if res.get('status') == 'DONE':
+            file_url = res.get('file')
+            break
+        if res.get('status') == 'FAILED':
+            break
+    if not file_url:
+        return 0
+
+    with urllib.request.urlopen(file_url, timeout=40) as r:
+        raw = r.read()
+    z = _zip.ZipFile(_io.BytesIO(raw))
+    txt = z.read(z.namelist()[0]).decode('utf-8', 'ignore')
+    rows = list(_csv.DictReader(_io.StringIO(txt)))
+    if not rows:
+        return 0
+
+    # Артикул площадки → наш товар.
+    cur.execute(
+        "SELECT mi.sku, mi.id FROM marketplace_items mi "
+        "JOIN marketplace_prices mp ON mp.marketplace_item_id = mi.id "
+        "WHERE mp.marketplace_code = 'yandex_market' AND mi.sku IS NOT NULL")
+    by_sku = {str(r[0]).strip(): r[1] for r in cur.fetchall()}
+
+    def num(v):
+        try:
+            return float(str(v).replace(',', '.').strip())
+        except (TypeError, ValueError):
+            return 0.0
+
+    saved = 0
+    for r in rows:
+        sku = str(r.get('SHOP_SKU') or '').strip()
+        item_id = by_sku.get(sku)
+        spend = num(r.get('BILLED_AMOUNT'))
+        if not item_id or spend <= 0:
+            continue
+        # ДРР площадка считает сама; если не отдала — берём расход к выручке.
+        ratio = num(r.get('COST_REVENUE_RATIO'))
+        revenue = round(spend / (ratio / 100.0), 2) if ratio > 0 else 0.0
+
+        cur.execute(
+            "INSERT INTO marketplace_ad_spend (marketplace_code, "
+            "  marketplace_item_id, period_days, ad_spend, revenue, "
+            "  ad_percent, calculated_at) "
+            "VALUES ('yandex_market', %s, 30, %s, %s, %s, now()) "
+            "ON CONFLICT (marketplace_code, marketplace_item_id) "
+            "WHERE marketplace_item_id IS NOT NULL "
+            "DO UPDATE SET ad_spend = EXCLUDED.ad_spend, "
+            "  revenue = EXCLUDED.revenue, "
+            "  ad_percent = EXCLUDED.ad_percent, calculated_at = now()",
+            (item_id, round(spend, 2), revenue, round(ratio, 2)),
+        )
+        saved += 1
+
+    return saved
 
 
 def _sync_wb_payouts(cur, creds, weeks=12):
@@ -1193,6 +1292,18 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return _resp(200, {'ok': True, 'periods': saved,
                                'compensations': comp})
+
+        if action == 'sync_ym_ads':
+            # Расходы на продвижение Яндекса: без них юнит-экономика по этой
+            # площадке считает рекламу нулём и завышает прибыль.
+            creds, enabled = _credentials(cur, 'yandex_market')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция Яндекса не подключена'})
+            today = datetime.now(timezone.utc).date()
+            saved = _sync_ym_ads(cur, creds,
+                                 str(today - timedelta(days=30)), str(today))
+            conn.commit()
+            return _resp(200, {'ok': True, 'items': saved})
 
         if action == 'sync_wb_payouts':
             # Отдельным действием: отчёт WB построчный и тяжёлый, вместе с

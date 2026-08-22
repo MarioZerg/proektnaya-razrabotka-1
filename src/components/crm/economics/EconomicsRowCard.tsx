@@ -79,6 +79,22 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
         </div>
       </div>
 
+      {/* СПП — скидка постоянного покупателя.
+          Её даёт ПЛОЩАДКА за свой счёт: покупатель видит цену ниже, а нам
+          приходит наша. Менеджеру это важно: можно поднять цену в карточке,
+          сохранив привлекательную цену на витрине за счёт площадки. */}
+      {!!u.sppPercent && u.sppPercent > 0 && (
+        <p className="mt-2 flex items-start gap-1.5 rounded-md bg-sky-50 p-2 text-xs text-sky-900">
+          <Icon name="BadgePercent" size={13} className="mt-0.5 shrink-0" />
+          <span>
+            СПП {u.sppPercent}% — площадка скидывает {money(u.sppAmount || 0)} ₽
+            за свой счёт: в карточке{' '}
+            {money(u.price + (u.sppAmount || 0))} ₽, покупатель платит{' '}
+            {money(u.price)} ₽
+          </span>
+        </p>
+      )}
+
       {/* Убыточные размеры внутри прибыльной группы.
           Шапка показывает среднее, и минусовые высоты за ним прячутся:
           «Вуаль 200 см» в среднем в плюсе, а высоты 285 и 295 см — минус
@@ -245,7 +261,16 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
         )}
         {u.promo > 0 && (
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>Продвижение</span>
+            {/* ДРР — доля рекламы в цене. Показываем процентом: по одной сумме
+                непонятно, много это или мало для конкретного товара. */}
+            <span>
+              Продвижение
+              {u.price > 0 && (
+                <span className="ml-1 font-medium">
+                  · ДРР {Math.round((u.promo / u.price) * 1000) / 10}%
+                </span>
+              )}
+            </span>
             <span>−{money(u.promo)} ₽</span>
           </div>
         )}
