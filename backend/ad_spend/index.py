@@ -162,6 +162,24 @@ def _is_fee(name):
     return not any(skip in low for skip in FEE_SKIP)
 
 
+def _probe_payouts(headers):
+    """Разведка: какие методы OZON отдают реестры выплат."""
+    out = {}
+    for path, body in (
+        ('/v1/finance/cash-flow-statement/list',
+         {'date': {'from': '2026-07-01T00:00:00.000Z',
+                   'to': '2026-08-22T23:59:59.000Z'},
+          'page': 1, 'page_size': 100, 'with_details': True}),
+        ('/v2/finance/realization', {'date': '2026-07'}),
+    ):
+        st, d = _http(f'{OZON_API}{path}', 'POST', headers, body, timeout=25)
+        out[path] = {'status': st,
+                     'keys': list(d.keys()) if isinstance(d, dict) else str(d)[:200]}
+        if isinstance(d, dict) and st == 200:
+            out[path]['sample'] = json.dumps(d, ensure_ascii=False)[:900]
+    return out
+
+
 def _load_progress(cur, code):
     """Где остановились в прошлый раз и что успели накопить.
 
@@ -717,6 +735,12 @@ def handler(event: dict, context) -> dict:
                 return _resp(403, {'error': 'Неверный ключ планировщика'})
         elif not _is_admin(cur, body_data.get('actorId')):
             return _resp(403, {'error': 'Доступно администратору'})
+
+        if action == 'probe_payouts':
+            creds, _ = _credentials(cur, 'ozon')
+            h = {'Client-Id': (creds.get('clientId') or '').strip(),
+                 'Api-Key': (creds.get('apiKey') or '').strip()}
+            return _resp(200, _probe_payouts(h))
 
         if action == 'sync_nm_ids':
             creds, enabled = _credentials(cur, 'wildberries')
