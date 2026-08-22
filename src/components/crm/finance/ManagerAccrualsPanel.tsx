@@ -140,8 +140,8 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
           </CardTitle>
           <p className="text-xs text-muted-foreground">
             Процент считается с денег, пришедших на расчётный счёт за неделю.
-            Возвраты площадка вычитает сама: они попадают в ближайший отчёт и
-            уменьшают его сумму
+            Отмены и возвраты площадка удерживает сама — они уже вычтены из
+            этой суммы
           </p>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -189,15 +189,6 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
                   </div>
                 </div>
 
-                {/* Возвраты показываем строкой, а не молча уменьшаем сумму:
-                    иначе человек видит другое число и не понимает причину. */}
-                {a.returnedUnits > 0 && (
-                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-700">
-                    <Icon name="Undo2" size={12} className="shrink-0" />
-                    покупатели вернули {a.returnedUnits} шт — снято{' '}
-                    {money(a.returnedAmount)} ₽ из {money(a.amount)} ₽
-                  </p>
-                )}
 
                 {a.cancelReason && (
                   <p className="mt-1.5 flex items-start gap-1.5 text-xs text-destructive">

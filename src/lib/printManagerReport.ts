@@ -45,7 +45,6 @@ const STATUS_LABEL: Record<string, string> = {
  * рисует страницу как есть, а html2canvas снимает её картинкой.
  */
 const buildHtml = (a: ManagerAccrual, employeeName: string) => {
-  const gross = money(a.amount);
   const net = money(a.net);
 
   return `
@@ -78,7 +77,12 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
   <div style="margin-top:32px;font-size:17px;font-weight:700;">Расчёт вознаграждения</div>
   <table style="width:100%;margin-top:12px;font-size:15px;border-collapse:collapse;">
     <tr style="background:#f4f4f4;">
-      <td style="padding:11px 12px;">Перечислено на расчётный счёт за период</td>
+      <td style="padding:11px 12px;">
+        Перечислено на расчётный счёт за период<br />
+        <span style="font-size:12px;color:#666;">
+          (за вычетом отмен и возвратов — их удержала площадка)
+        </span>
+      </td>
       <td style="padding:11px 12px;text-align:right;font-weight:600;">
         ${money(a.baseAmount)} ₽
       </td>
@@ -97,20 +101,7 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
       <td style="padding:11px 12px;text-align:right;">${money(a.perUnit)} ₽</td>
     </tr>` : ''}
     <tr>
-      <td style="padding:11px 12px;border-top:1px solid #ddd;">Начислено</td>
-      <td style="padding:11px 12px;text-align:right;border-top:1px solid #ddd;">
-        ${gross} ₽
-      </td>
-    </tr>
-    ${a.returnedUnits > 0 ? `
-    <tr>
-      <td style="padding:11px 12px;color:#a15c00;">
-        Удержано за возвраты покупателей (${a.returnedUnits} шт)
-      </td>
-      <td style="padding:11px 12px;text-align:right;color:#a15c00;">
-        −${money(a.returnedAmount)} ₽
-      </td>
-    </tr>` : ''}
+
     <tr style="background:#111;color:#fff;">
       <td style="padding:14px 12px;font-size:17px;font-weight:700;">Итого к выплате</td>
       <td style="padding:14px 12px;text-align:right;font-size:20px;font-weight:700;">
@@ -138,9 +129,9 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
     Вознаграждение начисляется с суммы, фактически перечисленной площадкой
     на расчётный счёт за отчётную неделю. Комиссия площадки, логистика и услуги
     в базу расчёта не входят.<br />
-    Возвраты покупателей площадка учитывает в своих отчётах: возврат уменьшает
-    сумму к перечислению того периода, в котором он оформлен. Дополнительных
-    удержаний из вознаграждения не производится.<br />
+    Отмены и возвраты покупателей площадка удерживает сама: они уменьшают
+    сумму к перечислению того отчёта, в который попали. Вознаграждение
+    считается уже с этой, итоговой суммы — дополнительных удержаний нет.<br />
     Выплата производится 10 и 25 числа через кассу.
   </div>
 

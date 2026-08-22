@@ -124,21 +124,18 @@ def _accrue(cur):
 
 
 def _confirm(cur):
-    """Подтверждает начисления, у которых холд закончился.
+    """Подтверждает начисления, у которых срок проверки истёк.
 
-    Если возвраты съели всё начисление, помечаем его аннулированным и пишем
-    причину: пустая строка на нуль рублей человеку ничего не объясняет.
+    Нужна, только если холд включён обратно: при нулевом сроке начисление
+    подтверждается сразу при создании и сюда не попадает.
+
+    Возвраты здесь НЕ вычитаются: площадка уже уменьшила на них сумму
+    к перечислению в своём отчёте, и снимать их повторно означало бы
+    наказать менеджера дважды за один возврат.
     """
     cur.execute(
         "UPDATE manager_accruals "
-        "SET status = CASE WHEN amount - returned_amount <= 0 "
-        "                  THEN 'cancelled' ELSE 'confirmed' END, "
-        "    confirmed_at = CASE WHEN amount - returned_amount > 0 "
-        "                        THEN now() END, "
-        "    cancelled_at = CASE WHEN amount - returned_amount <= 0 "
-        "                        THEN now() END, "
-        "    cancel_reason = CASE WHEN amount - returned_amount <= 0 "
-        "        THEN 'Все вещи периода вернули покупатели в течение холда' END "
+        "SET status = 'confirmed', confirmed_at = now() "
         "WHERE status = 'hold' AND hold_until < now()::date"
     )
     return cur.rowcount
@@ -147,7 +144,9 @@ def _confirm(cur):
 def _balance(cur, user_id):
     """Что менеджер видит в своих финансах."""
     cur.execute(
-        "SELECT status, coalesce(sum(amount - returned_amount), 0), count(*) "
+        # Берём начисленное как есть: возвраты уже сидят в сумме
+        # к перечислению, из которой этот процент и посчитан.
+        "SELECT status, coalesce(sum(amount), 0), count(*) "
         "FROM manager_accruals WHERE user_id = %s GROUP BY status",
         (int(user_id),),
     )
@@ -179,8 +178,10 @@ def _balance(cur, user_id):
             'returnedAmount': float(r[11] or 0),
             'cancelReason': r[12],
             'confirmedAt': str(r[13]) if r[13] else None,
-            # Сколько осталось после возвратов — это и идёт в баланс.
-            'net': round(float(r[6] or 0) - float(r[11] or 0), 2),
+            # К выплате за период. Равно начисленному: возвраты площадка
+            # вычла ещё в сумме к перечислению, из которой мы взяли процент.
+            # Вычитать их здесь ещё раз — значит удержать с менеджера дважды.
+            'net': round(float(r[6] or 0), 2),
         })
 
     st = _settings(cur)
