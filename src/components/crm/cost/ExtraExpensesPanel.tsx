@@ -140,8 +140,8 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
                   <span className="text-lg font-bold">{sold.total}</span> шт
                 </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Только то, за что деньги получены: доставлено покупателю за
-                  вычетом возвратов
+                  Только то, за что деньги получены — со своего склада и со
+                  склада площадки, за вычетом возвратов
                 </p>
               </div>
               <Button
@@ -157,10 +157,24 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
               {sold.byMarketplace.map((m) => (
                 <span key={m.marketplace}>
                   {m.marketplace}: <b className="text-foreground">{m.net}</b> шт
-                  {m.returned > 0 && ` (${m.delivered} − ${m.returned} возврат)`}
+                  {/* Разбивку показываем там, где есть обе схемы: FBO — это
+                      больше половины продаж, и его легко не заметить. */}
+                  {m.fbo > 0 && ` (FBO ${m.fbo} + FBS ${m.fbs})`}
                 </span>
               ))}
             </div>
+            {/* По WB и Яндексу выгрузки продаж нет — считаем по отгрузкам.
+                Часть могут не выкупить, поэтому цифра чуть оптимистичнее. */}
+            {sold.byMarketplace.some((m) => m.source === 'orders') && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                OZON — по данным площадки, обе схемы.{' '}
+                {sold.byMarketplace
+                  .filter((m) => m.source === 'orders')
+                  .map((m) => m.marketplace)
+                  .join(', ')}{' '}
+                — по нашим отгрузкам: выгрузки продаж у них нет
+              </p>
+            )}
           </div>
         )}
 

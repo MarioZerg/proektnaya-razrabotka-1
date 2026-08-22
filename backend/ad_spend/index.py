@@ -82,18 +82,24 @@ def _save_item_spend(cur, code, item_id, spend, revenue):
     )
 
 
-def _save_total(cur, code, spend, revenue):
+def _save_total(cur, code, spend, revenue, units=None):
     """Расход на всю площадку — когда разбивки по товарам нет."""
     pct = round(spend / revenue * 100, 2) if revenue > 0 else None
+    u_all, u_fbo, u_fbs = units or (None, None, None)
     cur.execute(
         "INSERT INTO marketplace_ad_spend (marketplace_code, marketplace_item_id, "
-        "  period_days, ad_spend, revenue, ad_percent, calculated_at) "
-        "VALUES (%s, NULL, %s, %s, %s, %s, now()) "
+        "  period_days, ad_spend, revenue, ad_percent, "
+        "  sold_units, sold_units_fbo, sold_units_fbs, calculated_at) "
+        "VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, now()) "
         "ON CONFLICT (marketplace_code) WHERE marketplace_item_id IS NULL "
         "DO UPDATE SET ad_spend = EXCLUDED.ad_spend, revenue = EXCLUDED.revenue, "
         "  ad_percent = EXCLUDED.ad_percent, period_days = EXCLUDED.period_days, "
+        "  sold_units = EXCLUDED.sold_units, "
+        "  sold_units_fbo = EXCLUDED.sold_units_fbo, "
+        "  sold_units_fbs = EXCLUDED.sold_units_fbs, "
         "  calculated_at = now()",
-        (code, PERIOD_DAYS, round(spend, 2), round(revenue, 2), pct),
+        (code, PERIOD_DAYS, round(spend, 2), round(revenue, 2), pct,
+         u_all, u_fbo, u_fbs),
     )
     cur.execute(
         "UPDATE marketplace_tariffs SET promo_fact_percent = %s, "
@@ -128,6 +134,16 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
     # на вопрос «куда движемся». Второй важнее: по одному числу нельзя понять,
     # реклама подорожала или спрос упал.
     by_month = {}
+    # ШТУКИ, за которые получены деньги. Нужны себестоимости: на это число
+    # делятся оклады и прочие постоянные расходы.
+    #
+    # Считать их по нашим заказам нельзя: в системе живут только FBS-отправления.
+    # FBO-продажи (товар лежит на складе OZON и уходит покупателю без нашего
+    # участия) в заказы не попадают вовсе. А здесь, в финансовых операциях,
+    # видно обе схемы — и за каждую заплачено.
+    units_fbo = 0
+    units_fbs = 0
+    units_by_month = {}
     # Транзакции приходят страницами по 1000 — за месяц их бывает несколько.
     for page in range(1, 6):
         st, d = _http(
@@ -174,7 +190,34 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
                 revenue += sale
                 if mkey:
                     by_month[mkey][1] += sale
-            # Возвраты из оборота НЕ вычитаем — намеренно.
+
+                # Сколько вещей уехало этим отправлением и по какой схеме.
+                qty = len(o.get('items') or []) or 1
+                schema = ((o.get('posting') or {}).get('delivery_schema') or '').upper()
+                if schema == 'FBO':
+                    units_fbo += qty
+                else:
+                    units_fbs += qty
+                if mkey:
+                    units_by_month[mkey] = units_by_month.get(mkey, 0) + qty
+            elif name.startswith('Получение возврата'):
+                # ТОЛЬКО «Получение возврата, отмены, невыкупа от покупателя» —
+                # это сам факт того, что вещь приехала обратно.
+                #
+                # Строку «Доставка и обработка возврата» брать НЕЛЬЗЯ: это плата
+                # за услугу обработки, она начисляется отдельно и по тем же
+                # отправлениям. Считая обе, мы вычитали возвраты дважды — из
+                # 1365 проданных штук оставалось 49, а FBO обнулялся полностью.
+                back = len(o.get('items') or []) or 1
+                schema = ((o.get('posting') or {}).get('delivery_schema') or '').upper()
+                if schema == 'FBO':
+                    units_fbo -= back
+                else:
+                    units_fbs -= back
+                if mkey:
+                    units_by_month[mkey] = units_by_month.get(mkey, 0) - back
+
+            # Возвраты из ОБОРОТА не вычитаем — намеренно.
             #
             # ДРР в кабинете OZON считается от ВАЛОВОГО оборота: сколько товара
             # продано, столько и в знаменателе. Если вычитать возвраты, наш
@@ -218,17 +261,23 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
         m_pct = round(m_spend / m_rev * 100, 2) if m_rev > 0 else None
         cur.execute(
             "INSERT INTO marketplace_ad_monthly (marketplace_code, month, "
-            "  ad_spend, revenue, ad_percent, calculated_at) "
-            "VALUES ('ozon', %s, %s, %s, %s, now()) "
+            "  ad_spend, revenue, ad_percent, sold_units, calculated_at) "
+            "VALUES ('ozon', %s, %s, %s, %s, %s, now()) "
             "ON CONFLICT (marketplace_code, month) DO UPDATE SET "
             "  ad_spend = EXCLUDED.ad_spend, revenue = EXCLUDED.revenue, "
-            "  ad_percent = EXCLUDED.ad_percent, calculated_at = now()",
-            (mkey, round(m_spend, 2), round(m_rev, 2), m_pct),
+            "  ad_percent = EXCLUDED.ad_percent, "
+            "  sold_units = EXCLUDED.sold_units, calculated_at = now()",
+            (mkey, round(m_spend, 2), round(m_rev, 2), m_pct,
+             max(0, units_by_month.get(mkey, 0))),
         )
 
-    pct = _save_total(cur, 'ozon', spend, revenue)
+    units_total = max(0, units_fbo) + max(0, units_fbs)
+    pct = _save_total(cur, 'ozon', spend, revenue,
+                      (units_total, max(0, units_fbo), max(0, units_fbs)))
     return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
-            'percent': pct, 'byItem': 0, 'months': len(by_month)}
+            'percent': pct, 'byItem': 0, 'months': len(by_month),
+            'soldUnits': units_total, 'soldFbo': max(0, units_fbo),
+            'soldFbs': max(0, units_fbs)}
 
 
 def _wb_nm_map(cur):

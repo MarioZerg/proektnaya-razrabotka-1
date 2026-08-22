@@ -156,66 +156,71 @@ def _extra_expenses(cur):
 
 
 def _sold_units(cur, days=30):
-    """Сколько вещей РЕАЛЬНО продано за период — по всем площадкам.
+    """Сколько вещей РЕАЛЬНО продано за период — по всем площадкам и схемам.
 
     Нужно, чтобы делить оклады и прочие постоянные расходы на честное число,
     а не на прикидку «примерно 4000 в месяц». Ошибка в делителе бьёт по всей
-    себестоимости разом: оклад 60 000 ₽ при делении на 4000 даёт 15 ₽ на вещь,
-    а при делении на 2500 — уже 24 ₽.
+    себестоимости разом: оклад 60 000 ₽ при делении на 3300 даёт 18 ₽ на вещь,
+    а при делении на 1234 — уже 49 ₽.
 
-    Считаем ТОЛЬКО то, за что деньги получены:
-      - заказ не отменён (cancelled_at пуст);
-      - для OZON статус 'delivered' — товар дошёл до покупателя. Заказ в пути
-        ещё не продажа: его могут не выкупить, и деньги не придут;
-      - для WB и Яндекса статуса доставки в системе нет, поэтому берём
-        отгруженные — это ближайшее, что есть;
-      - из результата вычитаем возвраты: вещь вернулась, деньги ушли обратно.
+    ГЛАВНАЯ ТОНКОСТЬ — FBO.
+
+    По нашим заказам такое число не посчитать. В таблице orders живут только
+    FBS-отправления: их мы собираем и клеим стикеры сами. FBO-продажи — товар
+    заранее увезли на склад площадки, и оттуда он уходит покупателю без нашего
+    участия — в заказы не попадают вовсе. То, что лежит там с пометкой FBO, —
+    это заявки на поставку и оформленные возвраты, а не продажи.
+
+    А FBO — это больше половины оборота: 750 штук против 484 FBS. Считая только
+    по заказам, мы теряли 61% продаж и завышали расходы на вещь.
+
+    Поэтому по OZON берём цифру из финансовых операций площадки (её кладёт
+    синхронизация рекламы, см. backend/ad_spend): там видно обе схемы, и каждая
+    строка означает, что деньги за товар получены. По WB и Яндексу такой
+    выгрузки нет — там считаем по своим заказам.
     """
+    out = []
+    total = 0
+
+    # OZON: обе схемы из данных площадки.
+    cur.execute(
+        "SELECT sold_units, sold_units_fbo, sold_units_fbs, period_days "
+        "FROM marketplace_ad_spend "
+        "WHERE marketplace_code = 'ozon' AND marketplace_item_id IS NULL"
+    )
+    row = cur.fetchone()
+    if row and row[0]:
+        total += int(row[0])
+        out.append({
+            'marketplace': 'OZON',
+            'net': int(row[0]),
+            'fbo': int(row[1] or 0),
+            'fbs': int(row[2] or 0),
+            'source': 'marketplace',
+        })
+
+    # WB и Яндекс: по своим заказам. Статуса доставки у них в системе нет,
+    # поэтому берём отгруженные — это ближайшее, что есть.
     cur.execute(
         "SELECT o.marketplace, count(*) "
         "FROM orders o "
         "WHERE o.cancelled_at IS NULL "
-        f"  AND o.created_at >= now() - interval '{int(days)} days' "
-        "  AND ("
-        "        (o.marketplace = 'OZON' AND o.ozon_status = 'delivered') "
-        "     OR (o.marketplace <> 'OZON' AND o.status = 'Отгружен') "
-        "  ) "
-        "GROUP BY o.marketplace"
-    )
-    sold = {r[0]: int(r[1]) for r in cur.fetchall()}
-
-    # Возвраты вычитаем: вещь приехала обратно, деньги за неё вернули.
-    #
-    # Считаем возвраты ПО ЗАКАЗАМ ЭТОГО ЖЕ ПЕРИОДА, а не по дате самого возврата.
-    # Возврат приезжает через две-четыре недели после доставки, поэтому «возвраты
-    # за последние 30 дней» — это в основном возвраты по ПРОШЛЫМ продажам.
-    # Вычитая их из текущих, мы занижаем делитель и завышаем расходы на вещь:
-    # на реальных данных выходило 601 вместо 230.
-    cur.execute(
-        "SELECT o.marketplace, coalesce(sum(r.quantity), 0) "
-        "FROM marketplace_returns r "
-        "JOIN orders o ON o.ozon_posting_number = r.posting_number "
-        "WHERE o.cancelled_at IS NULL "
+        "  AND o.marketplace <> 'OZON' "
+        "  AND o.status = 'Отгружен' "
         f"  AND o.created_at >= now() - interval '{int(days)} days' "
         "GROUP BY o.marketplace"
     )
-    returns = {r[0]: int(r[1] or 0) for r in cur.fetchall()}
-
-    by_mp = []
-    total = 0
-    for mp in sorted(set(sold) | set(returns)):
-        delivered = sold.get(mp, 0)
-        returned = returns.get(mp, 0)
-        net = max(0, delivered - returned)
-        total += net
-        by_mp.append({
+    for mp, cnt in cur.fetchall():
+        total += int(cnt)
+        out.append({
             'marketplace': mp,
-            'delivered': delivered,
-            'returned': returned,
-            'net': net,
+            'net': int(cnt),
+            'fbo': 0,
+            'fbs': int(cnt),
+            'source': 'orders',
         })
 
-    return {'days': int(days), 'total': total, 'byMarketplace': by_mp}
+    return {'days': int(days), 'total': total, 'byMarketplace': out}
 
 
 def _calc_groups(cur, settings):
