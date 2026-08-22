@@ -22,8 +22,14 @@ export interface ManagerAccrual {
   returnedAmount: number;
   cancelReason: string | null;
   confirmedAt: string | null;
-  /** Осталось после возвратов — это и идёт в баланс. */
+  /** К выплате за период. */
   net: number;
+  /** Вещей продано ниже юнит-экономики — процент с них не платится. */
+  lossUnits: number;
+  /** На сколько уменьшена база из-за убыточных продаж. */
+  lossAmount: number;
+  /** База после вычета убыточных — с неё и взят процент. */
+  payableBase: number | null;
 }
 
 export interface ManagerBalance {

@@ -142,6 +142,15 @@ const FabricCostCard = ({ material, widths }: FabricCostCardProps) => {
               <span>Прочие расходы</span>
               <span className="font-medium">{money(g.overhead)} ₽</span>
             </div>
+            {/* Вознаграждение менеджера показываем отдельной строкой: оно
+                считается от продаж и меняется само, в отличие от статей,
+                которые владелец задаёт руками. */}
+            {!!g.overheadManager && g.overheadManager > 0 && (
+              <div className="mt-0.5 flex justify-between text-xs text-muted-foreground">
+                <span className="pl-2">· менеджер маркетплейсов</span>
+                <span>{money(g.overheadManager)} ₽</span>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -165,6 +165,16 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
                       {money(a.baseAmount)} ₽ на счёт · {a.units} шт
                       {a.perUnit != null && ` · ${a.perUnit.toFixed(2)} ₽ за штуку`}
                     </p>
+                    {/* Убыточные продажи вычитаются из базы. Сказать об этом
+                        надо явно: иначе процент от суммы на счёте не сходится,
+                        и человек считает расчёт ошибочным. */}
+                    {a.lossUnits > 0 && (
+                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-amber-700">
+                        <Icon name="TrendingDown" size={12} className="shrink-0" />
+                        {a.lossUnits} шт продано ниже себестоимости — из базы
+                        вычтено {money(a.lossAmount)} ₽
+                      </p>
+                    )}
                   </div>
                   <div className="text-right">
                     <p

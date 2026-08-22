@@ -231,6 +231,82 @@ def _sold_units(cur, days=30):
     return {'days': int(days), 'total': total, 'byMarketplace': out}
 
 
+def loss_share_for_period(cur, p_from, p_to):
+    """Доля убыточных продаж за период: штук в минусе и их вес в деньгах.
+
+    Нужна для начисления менеджеру: премировать за проданное в убыток не за что.
+    Живёт здесь, а не в финансах менеджера, потому что рядом уже есть весь
+    расчёт себестоимости — считать его во второй раз значит гарантированно
+    разойтись в цифрах.
+
+    Убыточной считаем продажу, где цена не покрывает полных затрат: своя
+    себестоимость (материалы, работа цеха, прочие расходы) плюс удержания
+    площадки — комиссия, эквайринг, логистика.
+
+    Вознаграждение менеджера в затраты НЕ включаем: иначе оно влияет само на
+    себя — чем больше начислено, тем больше товаров становятся убыточными,
+    и расчёт начинает ходить по кругу.
+    """
+    settings = _settings(cur)
+    groups, _ = _calc_groups(cur, settings, 0.0)
+    cost_by_key = {
+        (g['material'], float(g['width'] or 0)): float(g['total'] or 0)
+        for g in groups
+    }
+
+    cur.execute(
+        "SELECT commission_fbs_percent, acquiring_percent, logistics_fbs "
+        "FROM marketplace_tariffs WHERE marketplace_code = 'ozon'"
+    )
+    t = cur.fetchone()
+    commission_pct = float(t[0] or 0) if t else 0.0
+    acquiring_pct = float(t[1] or 0) if t else 0.0
+    logistics = float(t[2] or 0) if t else 0.0
+
+    cur.execute(
+        "SELECT o.material, o.width, mp.price, count(*) "
+        "FROM orders o "
+        "JOIN marketplace_prices mp "
+        "  ON mp.marketplace_item_id = o.marketplace_item_id "
+        " AND mp.marketplace_code = 'ozon' "
+        "WHERE o.marketplace = 'OZON' AND o.cancelled_at IS NULL "
+        "  AND o.created_at::date >= %s AND o.created_at::date <= %s "
+        "  AND mp.price > 0 "
+        "GROUP BY o.material, o.width, mp.price",
+        (p_from, p_to),
+    )
+
+    total_units = 0
+    loss_units = 0
+    # Вес считаем по ВЫРУЧКЕ, а не по штукам: убыточной чаще оказывается
+    # дешёвая позиция, и по количеству её доля выглядит больше, чем по деньгам.
+    total_revenue = 0.0
+    loss_revenue = 0.0
+
+    for material, width, price, cnt in cur.fetchall():
+        price = float(price or 0)
+        cnt = int(cnt or 0)
+        own = cost_by_key.get((material, float(width or 0)))
+        if own is None:
+            # Себестоимость не посчитана — судить об убытке не по чему.
+            continue
+
+        total_units += cnt
+        total_revenue += price * cnt
+
+        platform = price * (commission_pct + acquiring_pct) / 100.0 + logistics
+        if price - (own + platform) <= 0:
+            loss_units += cnt
+            loss_revenue += price * cnt
+
+    share = (loss_revenue / total_revenue) if total_revenue > 0 else 0.0
+    return {
+        'lossUnits': loss_units,
+        'totalUnits': total_units,
+        'share': round(share, 6),
+    }
+
+
 def _manager_commission(cur, sold_units):
     """Вознаграждение менеджера маркетплейсов и сколько это на вещь.
 
@@ -306,7 +382,7 @@ def _manager_commission(cur, sold_units):
     }
 
 
-def _calc_groups(cur, settings):
+def _calc_groups(cur, settings, manager_per_unit=0.0):
     """Себестоимость по ТКАНИ и ШИРИНЕ, а не по каждому товару.
 
     Высота изделия на себестоимость не влияет: полотно кроят по ширине, тесьму
@@ -321,6 +397,11 @@ def _calc_groups(cur, settings):
     cutter_rates, sewer_rates, packer_rate = _rates(cur, settings['workshopId'])
     extras = _extra_expenses(cur)
     extra_per_unit = round(sum(e['perUnit'] for e in extras if e['isActive']), 4)
+    # Вознаграждение менеджера — такой же расход на вещь, как коробка или
+    # оклад кладовщика. Раньше оно считалось отдельной панелью и в стоимость
+    # товара не попадало: себестоимость выглядела ниже настоящей, а решения
+    # по ценам принимались по ней.
+    manager_cost = round(float(manager_per_unit or 0), 4)
 
     # Берём ОДИН товар-образец на каждую пару «ткань + ширина»: расход внутри пары
     # одинаковый, а высоту мы намеренно не различаем.
@@ -393,7 +474,9 @@ def _calc_groups(cur, settings):
         labor_cost = cut_cost + sew_cost + pack_work
 
         # Прочие расходы: список статей владельца плюс старое общее поле.
-        overhead = round(extra_per_unit + settings['overheadPerItem'], 2)
+        overhead = round(
+            extra_per_unit + settings['overheadPerItem'] + manager_cost, 2
+        )
 
         # СЕБЕСТОИМОСТЬ — ТОЛЬКО НАШИ ЗАТРАТЫ.
         #
@@ -425,6 +508,9 @@ def _calc_groups(cur, settings):
             'packWorkCost': pack_work,
             'laborCost': round(labor_cost, 2),
             'overhead': overhead,
+            # Из чего сложились прочие расходы: ручные статьи и менеджер.
+            'overheadExtra': round(extra_per_unit + settings['overheadPerItem'], 2),
+            'overheadManager': round(manager_cost, 2),
             'total': total,
             'missing': [
                 *(['Не задан расход материалов'] if not g['materials'] else []),
@@ -468,9 +554,28 @@ def handler(event: dict, context) -> dict:
         cur = conn.cursor()
 
         if method == 'GET':
+            params = event.get('queryStringParameters') or {}
+
+            # Доля убыточных продаж за период — для начисления менеджеру.
+            # Отдельным действием, чтобы не считать её при каждом открытии
+            # страницы себестоимости: запрос тяжёлый, а нужен раз в неделю.
+            if params.get('action') == 'loss_share':
+                p_from = params.get('from')
+                p_to = params.get('to')
+                if not p_from or not p_to:
+                    return _resp(400, {'error': 'Укажите from и to'})
+                return _resp(200, loss_share_for_period(cur, p_from, p_to))
+
             settings = _settings(cur)
-            groups, extras = _calc_groups(cur, settings)
             sold = _sold_units(cur, 30)
+            manager = _manager_commission(cur, sold['total'])
+            # Вознаграждение включаем в себестоимость только когда расчёт
+            # включён: выключенная договорённость не должна тихо сидеть в цене.
+            manager_per_unit = (
+                manager['perUnit'] or 0
+                if manager and manager.get('isActive') else 0
+            )
+            groups, extras = _calc_groups(cur, settings, manager_per_unit)
             cur.execute("SELECT id, name FROM workshops ORDER BY id")
             workshops = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
             return _resp(200, {
@@ -482,7 +587,7 @@ def handler(event: dict, context) -> dict:
                 # делителя постоянных расходов, чтобы его не брали «на глаз».
                 'sold': sold,
                 # Вознаграждение менеджера маркетплейсов: процент с поступлений.
-                'manager': _manager_commission(cur, sold['total']),
+                'manager': manager,
             })
 
         if method == 'POST':

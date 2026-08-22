@@ -91,6 +91,22 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
       <td style="padding:11px 12px;">Продано товаров</td>
       <td style="padding:11px 12px;text-align:right;">${a.units} шт</td>
     </tr>
+    ${a.lossUnits > 0 ? `
+    <tr>
+      <td style="padding:11px 12px;color:#a15c00;">
+        Продано ниже себестоимости (${a.lossUnits} шт)<br />
+        <span style="font-size:12px;">вознаграждение с убыточных продаж не начисляется</span>
+      </td>
+      <td style="padding:11px 12px;text-align:right;color:#a15c00;">
+        −${money(a.lossAmount)} ₽
+      </td>
+    </tr>
+    <tr style="background:#f4f4f4;">
+      <td style="padding:11px 12px;">База для расчёта</td>
+      <td style="padding:11px 12px;text-align:right;font-weight:600;">
+        ${money(a.payableBase ?? a.baseAmount)} ₽
+      </td>
+    </tr>` : ''}
     <tr style="background:#f4f4f4;">
       <td style="padding:11px 12px;">Ставка вознаграждения</td>
       <td style="padding:11px 12px;text-align:right;">${a.percent} %</td>
@@ -131,7 +147,9 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
     в базу расчёта не входят.<br />
     Отмены и возвраты покупателей площадка удерживает сама: они уменьшают
     сумму к перечислению того отчёта, в который попали. Вознаграждение
-    считается уже с этой, итоговой суммы — дополнительных удержаний нет.<br />
+    считается уже с этой, итоговой суммы.<br />
+    Товары, проданные ниже себестоимости, из базы расчёта исключаются:
+    вознаграждение начисляется только с продаж, принесших доход.<br />
     Выплата производится 10 и 25 числа через кассу.
   </div>
 

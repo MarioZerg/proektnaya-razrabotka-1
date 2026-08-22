@@ -35,6 +35,10 @@ export interface CostGroup {
   packWorkCost: number;
   laborCost: number;
   overhead: number;
+  /** Из чего сложились прочие расходы: ручные статьи. */
+  overheadExtra?: number;
+  /** Вознаграждение менеджера маркетплейсов на одну вещь. */
+  overheadManager?: number;
   /** Во сколько вещь обходится цеху. Без налога и комиссии площадки. */
   total: number;
   /** Чего не хватает для честной цифры. */

@@ -1,5 +1,6 @@
 import json
 import os
+import urllib.request
 from datetime import datetime, timedelta
 
 import psycopg2
@@ -31,7 +32,7 @@ def _is_admin(cur, actor_id):
 def _settings(cur):
     """Ставка менеджера, срок холда и кому начисляем."""
     cur.execute(
-        "SELECT percent, hold_days, user_id, is_active, accrue_from "
+        "SELECT percent, hold_days, user_id, is_active, accrue_from, skip_loss_items "
         "FROM manager_commission_settings ORDER BY id LIMIT 1"
     )
     r = cur.fetchone()
@@ -47,7 +48,39 @@ def _settings(cur):
         # Отчёты раньше этой даты владелец сверяет и оплачивает сам:
         # в них перерасчёты площадки, которые автоматике не разобрать.
         'accrueFrom': r[4],
+        'skipLossItems': bool(r[5]) if len(r) > 5 else True,
     }
+
+
+# Себестоимость живёт в своей функции: там уже есть весь расчёт материалов,
+# работы цеха и тарифов площадки. Считать его здесь во второй раз — значит
+# гарантированно разойтись в цифрах при первой же правке.
+PRODUCT_COST_URL = (
+    'https://functions.poehali.dev/7e85cd3d-e5cd-44e2-a803-5ff07584de12'
+)
+
+
+def _loss_share(p_from, p_to):
+    """Доля убыточных продаж за период — из расчёта себестоимости.
+
+    Возвращает долю в ВЫРУЧКЕ (0..1) и количество вещей, проданных ниже
+    затрат. На эту долю уменьшается база начисления: премировать за
+    убыточную продажу не за что.
+
+    Если расчёт недоступен, считаем, что убыточных нет: лучше начислить
+    как раньше, чем срезать человеку выплату из-за сбоя связи.
+    """
+    try:
+        url = f'{PRODUCT_COST_URL}?action=loss_share&from={p_from}&to={p_to}'
+        req = urllib.request.Request(url, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            d = json.loads(r.read())
+        return {
+            'lossUnits': int(d.get('lossUnits') or 0),
+            'share': float(d.get('share') or 0),
+        }
+    except Exception:
+        return {'lossUnits': 0, 'share': 0.0}
 
 
 def _accrue(cur):
@@ -99,7 +132,17 @@ def _accrue(cur):
         )
         units = int(cur.fetchone()[0] or 0)
 
-        amount = round(base * st['percent'] / 100.0, 2)
+        # Убыточные продажи из базы вычитаем: процент платится только с того,
+        # что принесло доход. Долю берём по выручке, а не по штукам — дешёвая
+        # позиция чаще уходит в минус, и по количеству её вес выглядит больше,
+        # чем в деньгах.
+        loss = _loss_share(p_from, p_to) if st.get('skipLossItems') else {
+            'lossUnits': 0, 'share': 0.0,
+        }
+        loss_amount = round(base * loss['share'], 2)
+        payable = round(base - loss_amount, 2)
+
+        amount = round(payable * st['percent'] / 100.0, 2)
         per_unit = round(amount / units, 4) if units else None
         # Срок проверки. Ноль — подтверждаем сразу: возвраты площадка вычла
         # ещё в своём отчёте, и снимать их повторно нечего.
@@ -110,13 +153,15 @@ def _accrue(cur):
         cur.execute(
             "INSERT INTO manager_accruals (user_id, payout_id, period_start, "
             "  period_end, units, base_amount, percent, amount, per_unit, "
-            "  status, hold_until, confirmed_at) "
+            "  status, hold_until, confirmed_at, "
+            "  loss_units, loss_amount, payable_base) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-            "        CASE WHEN %s = 'confirmed' THEN now() END) "
+            "        CASE WHEN %s = 'confirmed' THEN now() END, %s, %s, %s) "
             "ON CONFLICT (user_id, marketplace_code, period_start, period_end) "
             "DO NOTHING",
             (st['userId'], payout_id, p_from, p_to, units, base,
-             st['percent'], amount, per_unit, status, hold_until, status),
+             st['percent'], amount, per_unit, status, hold_until, status,
+             loss['lossUnits'], loss_amount, payable),
         )
         created += 1
 
@@ -156,7 +201,8 @@ def _balance(cur, user_id):
     cur.execute(
         "SELECT id, period_start, period_end, units, base_amount, percent, "
         "  amount, per_unit, status, hold_until, returned_units, "
-        "  returned_amount, cancel_reason, confirmed_at "
+        "  returned_amount, cancel_reason, confirmed_at, "
+        "  loss_units, loss_amount, payable_base "
         "FROM manager_accruals WHERE user_id = %s "
         "ORDER BY period_start DESC LIMIT 40",
         (int(user_id),),
@@ -182,6 +228,12 @@ def _balance(cur, user_id):
             # вычла ещё в сумме к перечислению, из которой мы взяли процент.
             # Вычитать их здесь ещё раз — значит удержать с менеджера дважды.
             'net': round(float(r[6] or 0), 2),
+            # Убыточные продажи: сколько вещей ушло в минус и на какую сумму
+            # уменьшена база. Показываем обе цифры — иначе непонятно, почему
+            # процент взят не со всей суммы к перечислению.
+            'lossUnits': int(r[14] or 0),
+            'lossAmount': float(r[15] or 0),
+            'payableBase': float(r[16]) if r[16] is not None else None,
         })
 
     st = _settings(cur)
