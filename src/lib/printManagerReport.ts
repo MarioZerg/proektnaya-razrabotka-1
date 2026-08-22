@@ -33,8 +33,7 @@ const shortDate = (iso: string) => {
 
 const STATUS_LABEL: Record<string, string> = {
   pending: 'ожидает поступления денег от площадки',
-  hold: 'на проверке',
-  confirmed: 'подтверждено',
+  confirmed: 'к выплате',
   cancelled: 'аннулировано',
 };
 
@@ -142,9 +141,6 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
   <div style="margin-top:28px;font-size:15px;">
     <span style="color:#555;">Статус:</span>
     <b>${STATUS_LABEL[a.status] || a.status}</b>
-    ${a.status === 'hold'
-      ? `<span style="color:#555;"> · проверка до ${shortDate(a.holdUntil)}</span>`
-      : ''}
     ${a.status === 'pending' ? `
     <div style="margin-top:10px;padding:12px;background:#fff8e6;
                 border:1px solid #e8d9a8;font-size:13px;color:#6b5410;">

@@ -14,10 +14,12 @@ export interface ManagerAccrual {
   amount: number;
   /** Сколько приходится на одну вещь. */
   perUnit: number | null;
-  /** hold — ждёт проверки, confirmed — подтверждено, cancelled — аннулировано. */
-  status: 'pending' | 'hold' | 'confirmed' | 'cancelled';
-  /** До этой даты возврат уменьшает начисление. */
-  holdUntil: string;
+  /**
+   * pending — ждёт денег от площадки, confirmed — готово к выплате,
+   * cancelled — аннулировано. Срока проверки нет: возвраты площадка
+   * вычитает сама, ещё в своём отчёте.
+   */
+  status: 'pending' | 'confirmed' | 'cancelled';
   returnedUnits: number;
   returnedAmount: number;
   cancelReason: string | null;
@@ -40,13 +42,10 @@ export interface ManagerAccrual {
 
 export interface ManagerBalance {
   percent: number;
-  holdDays: number;
   /** С какой даты считает система: раньше отчёты сверяются вручную. */
   accrueFrom: string | null;
-  /** Подтверждено — к выплате. */
+  /** Готово к выплате: деньги от площадки пришли. */
   confirmed: number;
-  /** В холде: ещё проверяется, может уменьшиться при возврате. */
-  hold: number;
   cancelled: number;
   /** Посчитано, но деньги ещё на балансе площадки. */
   pending: number;
@@ -91,6 +90,5 @@ export const payManagerAccrual = (accrualId: number, actorId?: number) =>
 
 export const setManagerUser = (payload: {
   userId: number;
-  holdDays?: number;
   actorId?: number;
 }) => post({ action: 'set_user', ...payload });

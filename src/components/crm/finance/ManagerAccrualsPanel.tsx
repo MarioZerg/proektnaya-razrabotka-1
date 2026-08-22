@@ -20,12 +20,6 @@ const dmy = (iso: string) => {
   return `${d}.${m}.${y.slice(2)}`;
 };
 
-/** Сколько дней осталось до конца холда. */
-const daysLeft = (iso: string) => {
-  const diff = new Date(iso).getTime() - Date.now();
-  return Math.max(0, Math.ceil(diff / 86400000));
-};
-
 /**
  * Начисления менеджера маркетплейсов: процент с проданных вещей.
  *
@@ -33,9 +27,12 @@ const daysLeft = (iso: string) => {
  * расчётный счёт. С ЭТИХ денег — а не с оборота — начисляется процент: комиссию
  * площадки, логистику и услуги мы не получаем, платить с них не с чего.
  *
- * Каждое начисление держится 15 дней. За это время покупатель может вернуть
- * товар: тогда доля вернувшихся вещей снимается. Если вернул позже — деньги
- * остаются у менеджера, так и договаривались.
+ * Срока проверки у начисления нет. Возвраты площадка вычитает сама, ещё в
+ * своём отчёте: сумма к перечислению приходит уже за их вычетом. Держать
+ * деньги второй раз — значит удержать с менеджера дважды за один возврат.
+ *
+ * Единственное ожидание — поступление денег от площадки: пока они на её
+ * балансе, платить не с чего.
  */
 interface Props {
   userId: number;
@@ -170,17 +167,6 @@ const ManagerAccrualsPanel = ({ userId, canPay = false }: Props) => {
             </CardContent>
           </Card>
         )}
-        {data.hold > 0 && (
-          <Card className="border-border shadow-none">
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground">На проверке</p>
-              <p className="mt-1 text-2xl font-bold">{money(data.hold)} ₽</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Ждёт {data.holdDays} дней
-              </p>
-            </CardContent>
-          </Card>
-        )}
       </div>
 
       <Card className="border-border shadow-none">
@@ -198,7 +184,6 @@ const ManagerAccrualsPanel = ({ userId, canPay = false }: Props) => {
         </CardHeader>
         <CardContent className="space-y-2">
           {data.items.map((a) => {
-            const left = daysLeft(a.holdUntil);
             return (
               <div
                 key={a.id}
@@ -249,13 +234,8 @@ const ManagerAccrualsPanel = ({ userId, canPay = false }: Props) => {
                     >
                       {money(a.net)} ₽
                     </p>
-                    {a.status === 'hold' && (
-                      <p className="text-xs text-muted-foreground">
-                        на проверке ещё {left} дн
-                      </p>
-                    )}
-                    {a.status === 'confirmed' && (
-                      <p className="text-xs text-emerald-700">подтверждено</p>
+                    {a.status === 'confirmed' && !a.paidAt && (
+                      <p className="text-xs text-emerald-700">к выплате</p>
                     )}
                     {a.status === 'pending' && (
                       <p className="text-xs text-muted-foreground">

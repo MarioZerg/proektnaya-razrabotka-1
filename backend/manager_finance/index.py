@@ -1,7 +1,7 @@
 import json
 import os
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import psycopg2
 
@@ -32,7 +32,7 @@ def _is_admin(cur, actor_id):
 def _settings(cur):
     """Ставка менеджера, срок холда и кому начисляем."""
     cur.execute(
-        "SELECT percent, hold_days, user_id, is_active, accrue_from, skip_loss_items "
+        "SELECT percent, user_id, is_active, accrue_from, skip_loss_items "
         "FROM manager_commission_settings ORDER BY id LIMIT 1"
     )
     r = cur.fetchone()
@@ -40,15 +40,12 @@ def _settings(cur):
         return None
     return {
         'percent': float(r[0] or 0),
-        # Ноль — законное значение: «подтверждать сразу». Через «or 15» он
-        # превращался в 15 дней, и начисления упорно вставали в холд.
-        'holdDays': int(r[1]) if r[1] is not None else 15,
-        'userId': r[2],
-        'isActive': bool(r[3]),
+        'userId': r[1],
+        'isActive': bool(r[2]),
         # Отчёты раньше этой даты владелец сверяет и оплачивает сам:
         # в них перерасчёты площадки, которые автоматике не разобрать.
-        'accrueFrom': r[4],
-        'skipLossItems': bool(r[5]) if len(r) > 5 else True,
+        'accrueFrom': r[3],
+        'skipLossItems': bool(r[4]) if len(r) > 4 else True,
     }
 
 
@@ -153,10 +150,16 @@ def _accrue(cur):
 
         amount = round(payable * st['percent'] / 100.0, 2)
         per_unit = round(amount / units, 4) if units else None
-        # Срок проверки. Ноль — подтверждаем сразу: возвраты площадка вычла
-        # ещё в своём отчёте, и снимать их повторно нечего.
-        hold_days = int(st['holdDays'] or 0)
-        hold_until = p_to + timedelta(days=hold_days)
+
+        # Срока проверки у вознаграждения нет.
+        #
+        # Раньше начисление держали 15 дней, чтобы успеть снять возвраты. Смысл
+        # отпал: площадка вычитает возвраты сама, ещё в своём отчёте, и сумма к
+        # перечислению приходит уже за их вычетом. Держать деньги второй раз —
+        # значит наказывать менеджера за один возврат дважды.
+        #
+        # Единственное ожидание, которое осталось, — поступление денег от
+        # площадки. Оно не срок, а факт: пришли деньги на счёт — можно платить.
 
         # Деньги ещё на балансе площадки — начисление ждёт.
         #
@@ -167,16 +170,15 @@ def _accrue(cur):
         # Поступлением считаем вывод, сопоставимый с суммой к переводу:
         # мелкие технические движения по балансу выплатой не являются.
         money_arrived = float(withdrawn or 0) >= base * 0.5
-        if not money_arrived:
-            status = 'pending'
-        elif hold_days > 0:
-            status = 'hold'
-        else:
-            status = 'confirmed'
+        status = 'confirmed' if money_arrived else 'pending'
 
         cur.execute(
             "INSERT INTO manager_accruals (user_id, payout_id, period_start, "
             "  period_end, units, base_amount, percent, amount, per_unit, "
+            # hold_until — историческое поле от 15-дневной проверки, которой
+            # больше нет. Колонка обязательная, поэтому пишем в неё конец
+            # отчётной недели: на расчёт это не влияет, а смысл сохраняется —
+            # «начисление относится к этому периоду».
             "  status, hold_until, confirmed_at, "
             "  loss_units, loss_amount, payable_base, compensation_amount) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
@@ -184,7 +186,7 @@ def _accrue(cur):
             "ON CONFLICT (user_id, marketplace_code, period_start, period_end) "
             "DO NOTHING",
             (st['userId'], payout_id, p_from, p_to, units, base,
-             st['percent'], amount, per_unit, status, hold_until, status,
+             st['percent'], amount, per_unit, status, p_to, status,
              loss['lossUnits'], loss_amount, payable, comp),
         )
         created += 1
@@ -193,23 +195,20 @@ def _accrue(cur):
 
 
 def _release_pending(cur):
-    """Переводит ожидающие начисления в работу, когда деньги дошли до счёта.
+    """Переводит ожидающие начисления к выплате, когда деньги дошли до счёта.
 
     Начисление создаётся сразу после отчёта, но висит в 'pending', пока сумма
-    лежит на балансе площадки. Как только синхронизация увидела вывод денег
-    на расчётный счёт — начисление становится обычным: либо сразу к выплате,
-    либо на проверку, если срок холда задан.
-    """
-    cur.execute("SELECT hold_days FROM manager_commission_settings LIMIT 1")
-    r = cur.fetchone()
-    hold_days = int(r[0]) if r and r[0] is not None else 0
+    лежит на балансе площадки. Как только синхронизация увидела вывод денег на
+    расчётный счёт — вознаграждение сразу готово к выплате.
 
+    Срока проверки больше нет: возвраты площадка вычитает сама, ещё в своём
+    отчёте, и держать деньги второй раз незачем.
+    """
     cur.execute(
         "UPDATE manager_accruals a "
         "SET paid_out_at = coalesce(p.transferred_at, now()), "
-        "    status = CASE WHEN %s > 0 THEN 'hold' ELSE 'confirmed' END, "
-        "    hold_until = a.period_end + (%s || ' days')::interval, "
-        "    confirmed_at = CASE WHEN %s = 0 THEN now() END "
+        "    status = 'confirmed', "
+        "    confirmed_at = now() "
         "FROM marketplace_payouts p "
         "WHERE p.marketplace_code = 'ozon' "
         "  AND p.period_start = a.period_start "
@@ -217,26 +216,7 @@ def _release_pending(cur):
         "  AND a.status = 'pending' "
         "  AND coalesce(p.withdrawn_amount, 0) "
         "      >= coalesce(p.transferred_amount, 0) * 0.5 "
-        "  AND coalesce(p.transferred_amount, 0) > 0",
-        (hold_days, hold_days, hold_days),
-    )
-    return cur.rowcount
-
-
-def _confirm(cur):
-    """Подтверждает начисления, у которых срок проверки истёк.
-
-    Нужна, только если холд включён обратно: при нулевом сроке начисление
-    подтверждается сразу при создании и сюда не попадает.
-
-    Возвраты здесь НЕ вычитаются: площадка уже уменьшила на них сумму
-    к перечислению в своём отчёте, и снимать их повторно означало бы
-    наказать менеджера дважды за один возврат.
-    """
-    cur.execute(
-        "UPDATE manager_accruals "
-        "SET status = 'confirmed', confirmed_at = now() "
-        "WHERE status = 'hold' AND hold_until < now()::date"
+        "  AND coalesce(p.transferred_amount, 0) > 0"
     )
     return cur.rowcount
 
@@ -257,7 +237,7 @@ def _balance(cur, user_id):
 
     cur.execute(
         "SELECT id, period_start, period_end, units, base_amount, percent, "
-        "  amount, per_unit, status, hold_until, returned_units, "
+        "  amount, per_unit, status, returned_units, "
         "  returned_amount, cancel_reason, confirmed_at, "
         "  loss_units, loss_amount, payable_base, paid_out_at, "
         "  compensation_amount, paid_at "
@@ -277,11 +257,10 @@ def _balance(cur, user_id):
             'amount': float(r[6] or 0),
             'perUnit': float(r[7]) if r[7] is not None else None,
             'status': r[8],
-            'holdUntil': str(r[9]),
-            'returnedUnits': int(r[10] or 0),
-            'returnedAmount': float(r[11] or 0),
-            'cancelReason': r[12],
-            'confirmedAt': str(r[13]) if r[13] else None,
+            'returnedUnits': int(r[9] or 0),
+            'returnedAmount': float(r[10] or 0),
+            'cancelReason': r[11],
+            'confirmedAt': str(r[12]) if r[12] else None,
             # К выплате за период. Равно начисленному: возвраты площадка
             # вычла ещё в сумме к перечислению, из которой мы взяли процент.
             # Вычитать их здесь ещё раз — значит удержать с менеджера дважды.
@@ -289,28 +268,25 @@ def _balance(cur, user_id):
             # Убыточные продажи: сколько вещей ушло в минус и на какую сумму
             # уменьшена база. Показываем обе цифры — иначе непонятно, почему
             # процент взят не со всей суммы к перечислению.
-            'lossUnits': int(r[14] or 0),
-            'lossAmount': float(r[15] or 0),
-            'payableBase': float(r[16]) if r[16] is not None else None,
+            'lossUnits': int(r[13] or 0),
+            'lossAmount': float(r[14] or 0),
+            'payableBase': float(r[15]) if r[15] is not None else None,
             # Когда деньги за период дошли до расчётного счёта.
-            'paidOutAt': str(r[17]) if r[17] else None,
+            'paidOutAt': str(r[16]) if r[16] else None,
             # Сколько в базе пришло компенсациями площадки.
-            'compensation': float(r[18] or 0),
+            'compensation': float(r[17] or 0),
             # Передано в зарплату — повторно выплатить уже нельзя.
-            'paidAt': str(r[19]) if r[19] else None,
+            'paidAt': str(r[18]) if r[18] else None,
         })
 
     st = _settings(cur)
     return {
         'percent': st['percent'] if st else 0,
-        'holdDays': st['holdDays'] if st else 0,
         # С какой даты считает система: до неё отчёты сверяются вручную,
         # и человек должен понимать, почему в списке пусто.
         'accrueFrom': str(st['accrueFrom']) if st and st['accrueFrom'] else None,
-        # К выплате: подтверждённое.
+        # К выплате: деньги от площадки пришли, вознаграждение готово.
         'confirmed': round(by_status.get('confirmed', {}).get('amount', 0), 2),
-        # В холде: ещё проверяется, может уменьшиться при возврате.
-        'hold': round(by_status.get('hold', {}).get('amount', 0), 2),
         'cancelled': round(by_status.get('cancelled', {}).get('amount', 0), 2),
         # Посчитано, но деньги ещё на балансе площадки. В сумму к выплате
         # не входит: обещать то, чего компания не получила, нельзя.
@@ -372,7 +348,6 @@ def handler(event: dict, context) -> dict:
         if action == 'accrue':
             created = _accrue(cur)
             released = _release_pending(cur)
-            confirmed = _confirm(cur)
             # Запись в журнал — по ней страница «Планировщик» понимает, что
             # задание живо. Без неё молчащий планировщик выглядел бы рабочим,
             # а начисления просто перестали бы появляться.
@@ -385,10 +360,10 @@ def handler(event: dict, context) -> dict:
                     None if by_cron else body.get('actorId'),
                     'Планировщик' if by_cron else None,
                     f"Начислено отчётов: {created.get('created', 0)}, "
-                    f"закрыто холдов: {max(0, confirmed)}",
+                    f"дождались денег: {max(0, released)}",
                     json.dumps({
                         'created': created.get('created', 0),
-                        'confirmed': max(0, confirmed),
+                        'released': max(0, released),
                     }, ensure_ascii=False),
                 ),
             )
@@ -396,8 +371,9 @@ def handler(event: dict, context) -> dict:
             return _resp(200, {
                 'ok': True,
                 'created': created.get('created', 0),
-                'confirmed': max(0, confirmed),
-                            })
+                # Сколько начислений дождались денег от площадки.
+                'released': max(0, released),
+            })
 
         if action == 'recalc':
             # Полный пересчёт: удаляет начисления и считает заново.
@@ -410,11 +386,10 @@ def handler(event: dict, context) -> dict:
                         (st['userId'],))
             created = _accrue(cur)
             released = _release_pending(cur)
-            confirmed = _confirm(cur)
             conn.commit()
             return _resp(200, {
                 'ok': True, 'created': created.get('created', 0),
-                'released': released, 'confirmed': confirmed,
+                'released': released,
             })
 
         if action == 'pay':
@@ -475,13 +450,10 @@ def handler(event: dict, context) -> dict:
         if action == 'set_user':
             cur.execute(
                 "UPDATE manager_commission_settings SET user_id = %s, "
-                "  hold_days = %s, updated_at = now(), updated_by = %s "
+                "  updated_at = now(), updated_by = %s "
                 "WHERE id = (SELECT id FROM manager_commission_settings "
                 "            ORDER BY id LIMIT 1)",
-                (body.get('userId'),
-                 int(body.get('holdDays')) if body.get('holdDays') is not None
-                 else 0,
-                 body.get('actorId')),
+                (body.get('userId'), body.get('actorId')),
             )
             conn.commit()
             return _resp(200, {'ok': True})
