@@ -20,6 +20,12 @@ export interface SchedulerJob {
   /** Сколько минут назад отработало. null — не запускалось ни разу. */
   minutesAgo: number | null;
   runsPerDay: number;
+  /** Реально получается раз в столько минут — по числу запусков за сутки. */
+  factEveryMin: number | null;
+  /** Задание приходит заметно чаще, чем задумано: ошибка в расписании. */
+  tooOften: boolean;
+  /** Во сколько лишних вызовов в месяц обходится эта ошибка. */
+  extraPerMonth: number;
   /** Что задание нашло в последний раз. */
   lastResult: string | null;
   /**
@@ -49,6 +55,10 @@ export const fetchSchedulerStatus = async (
   items: SchedulerJob[];
   groups: SchedulerGroup[];
   problems: number;
+  /** Сколько заданий бьют чаще нормы. */
+  tooOftenCount: number;
+  /** Суммарно лишних вызовов в месяц из-за неверного расписания. */
+  extraPerMonthTotal: number;
   /** Видны ли ссылки запуска: только администратору. */
   canSeeUrls: boolean;
 }> => {

@@ -37,6 +37,9 @@ const SchedulerSettings = () => {
   const [jobs, setJobs] = useState<SchedulerJob[]>([]);
   const [groups, setGroups] = useState<SchedulerGroup[]>([]);
   const [problems, setProblems] = useState(0);
+  // Задания, которые бьют чаще, чем задумано: прямой перерасход на облако.
+  const [tooOften, setTooOften] = useState(0);
+  const [extraPerMonth, setExtraPerMonth] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const load = () => {
@@ -47,6 +50,8 @@ const SchedulerSettings = () => {
         setJobs(d.items);
         setGroups(d.groups);
         setProblems(d.problems);
+        setTooOften(d.tooOftenCount ?? 0);
+        setExtraPerMonth(d.extraPerMonthTotal ?? 0);
       })
       .catch((e) =>
         toast({
@@ -114,6 +119,26 @@ const SchedulerSettings = () => {
                 ? `Все задания работают: ${jobs.length}`
                 : `Не работает заданий: ${problems} — заказы и отмены могут не приходить`}
             </p>
+          </div>
+        )}
+
+        {/* Перерасход из-за расписания. Отдельно от поломок: задания при этом
+            «работают», их просто дёргают в десятки раз чаще нужного — счёт растёт,
+            а база начинает отвечать отказами. В одной карточке это не видно,
+            видно только суммой. */}
+        {!loading && tooOften > 0 && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+            <Icon name="Timer" size={24} className="mt-0.5 shrink-0 text-amber-600" />
+            <div>
+              <p className="font-bold text-amber-900">
+                Заданий запускается слишком часто: {tooOften}
+              </p>
+              <p className="mt-0.5 text-sm text-amber-900">
+                Лишних запусков в месяц: {extraPerMonth.toLocaleString('ru-RU')}. Задания
+                работают, но их дёргают чаще нужного — это оплачивается и перегружает базу.
+                Поправьте расписание в планировщике у отмеченных заданий ниже
+              </p>
+            </div>
           </div>
         )}
 

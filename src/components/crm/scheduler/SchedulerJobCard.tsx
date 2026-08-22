@@ -17,8 +17,25 @@ const agoText = (minutes: number | null) => {
 };
 
 /** Как часто задание должно запускаться. */
+/**
+ * Строка расписания для планировщика.
+ *
+ * Минуты разносим по заданиям (0, 7, 14, …): если все стартуют в одну секунду,
+ * база отвечает отказом «rate limit exceeded» и половина запусков пропадает —
+ * платим за вызовы, которые не сработали.
+ */
+const cronLine = (job: SchedulerJob) => {
+  const shift = (job.key.length * 7) % 60;
+  if (job.everyMin < 60) return `*/${job.everyMin} * * * *`;
+  if (job.everyMin === 60) return `${shift} * * * *`;
+  if (job.everyMin < 1440) return `${shift} */${Math.round(job.everyMin / 60)} * * *`;
+  return `${shift} 3 * * *`;
+};
+
 const everyText = (min: number) => {
-  if (min < 60) return `каждые ${min} мин`;
+  // Дробное значение приходит из фактической частоты: «раз в 1.2 мин».
+  if (min < 2) return 'каждую минуту';
+  if (min < 60) return `каждые ${Math.round(min)} мин`;
   if (min < 1440) return min === 60 ? 'каждый час' : `каждые ${min / 60} ч`;
   return 'раз в сутки';
 };
@@ -83,6 +100,28 @@ const SchedulerJobCard = ({ job }: { job: SchedulerJob }) => {
           <p className="text-muted-foreground">
             Должно запускаться {everyText(job.everyMin)} · за сутки: {job.runsPerDay}
           </p>
+          {/* Задание приходит чаще, чем задумано. Расписание живёт во внешнем
+              планировщике, система его не видит — но видит, сколько раз задание
+              пришло. Ошибку в расписании иначе не заметить: всё «работает», просто
+              счёт за облако растёт, а база начинает отвечать отказами. */}
+          {job.tooOften && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+              <p className="font-medium">
+                Запускается слишком часто: {everyText(job.factEveryMin ?? 0)}
+                {' '}вместо «{everyText(job.everyMin)}»
+              </p>
+              <p className="mt-0.5">
+                Это {job.extraPerMonth.toLocaleString('ru-RU')} лишних запусков в месяц.
+                Поправьте расписание этого задания в планировщике:
+              </p>
+              {/* Готовая строка для планировщика — чтобы не вспоминать синтаксис
+                  cron. Минуту берём из ключа задания, а не ноль: иначе все задания
+                  стартуют одновременно и база отвечает отказом. */}
+              <code className="mt-1 inline-block rounded bg-white/70 px-1.5 py-0.5 font-mono-tech text-[11px]">
+                {cronLine(job)}
+              </code>
+            </div>
+          )}
           {job.lastResult && <p className="text-muted-foreground">{job.lastResult}</p>}
           {/* У ночного задания молчание — норма, и это нужно сказать прямо:
               иначе админ идёт чинить исправное задание. */}
