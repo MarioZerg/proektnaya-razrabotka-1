@@ -287,6 +287,10 @@ def loss_share_for_period(cur, p_from, p_to, mp_code='ozon'):
     # дешёвая позиция, и по количеству её доля выглядит больше, чем по деньгам.
     total_revenue = 0.0
     loss_revenue = 0.0
+    profit_total = 0.0
+    # Разбор убыточных позиций: менеджеру нужен не сухой вычет, а список,
+    # с которым можно работать — какие товары и насколько ушли в минус.
+    details = []
 
     for material, width, price, cnt in cur.fetchall():
         price = float(price or 0)
@@ -300,15 +304,33 @@ def loss_share_for_period(cur, p_from, p_to, mp_code='ozon'):
         total_revenue += price * cnt
 
         platform = price * (commission_pct + acquiring_pct) / 100.0 + logistics
-        if price - (own + platform) <= 0:
+        profit = price - (own + platform)
+        profit_total += profit * cnt
+
+        if profit <= 0:
             loss_units += cnt
             loss_revenue += price * cnt
+            details.append({
+                'material': material,
+                'width': float(width or 0),
+                'price': round(price, 2),
+                'lossPerUnit': round(-profit, 2),
+                'units': cnt,
+                'lossTotal': round(-profit * cnt, 2),
+            })
 
     share = (loss_revenue / total_revenue) if total_revenue > 0 else 0.0
+    # Средняя маржа за период: сколько осталось с рубля выручки.
+    avg_margin = (profit_total / total_revenue * 100.0) if total_revenue else 0.0
+
+    details.sort(key=lambda x: -x['lossTotal'])
     return {
         'lossUnits': loss_units,
         'totalUnits': total_units,
         'share': round(share, 6),
+        'avgMargin': round(avg_margin, 2),
+        # Только заметные позиции: длинный список в отчёте читать невозможно.
+        'details': details[:12],
     }
 
 

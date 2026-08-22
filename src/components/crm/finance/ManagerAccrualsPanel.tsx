@@ -33,6 +33,10 @@ const dmy = (iso: string) => {
  *
  * Единственное ожидание — поступление денег от площадки: пока они на её
  * балансе, платить не с чего.
+ *
+ * Закрытый отчёт не пересматривается. Он посчитан по ценам и себестоимости
+ * той недели: если позже цены опустят и товар станет убыточным, это уже
+ * другой период работы — удерживать деньги задним числом нельзя.
  */
 interface Props {
   userId: number;
@@ -234,6 +238,31 @@ const ManagerAccrualsPanel = ({ userId, canPay = false }: Props) => {
                         из них {money(a.compensation)} ₽ — компенсации площадки
                       </p>
                     )}
+                    {/* Маржинальность периода: главный показатель работы
+                        менеджера. Пока она есть — товары приносят доход. */}
+                    {a.avgMargin != null && (
+                      <p className="mt-0.5 flex items-center gap-1.5 text-xs">
+                        <Icon
+                          name="ChartLine"
+                          size={12}
+                          className="shrink-0 text-muted-foreground"
+                        />
+                        <span className="text-muted-foreground">
+                          средняя маржа
+                        </span>
+                        <span
+                          className={`font-semibold ${
+                            a.avgMargin >= 15
+                              ? 'text-emerald-700'
+                              : a.avgMargin > 0
+                                ? 'text-amber-700'
+                                : 'text-destructive'
+                          }`}
+                        >
+                          {a.avgMargin.toFixed(1)}%
+                        </span>
+                      </p>
+                    )}
                     {a.lossUnits > 0 && (
                       <p className="mt-0.5 flex items-center gap-1.5 text-xs text-amber-700">
                         <Icon name="TrendingDown" size={12} className="shrink-0" />
@@ -274,6 +303,33 @@ const ManagerAccrualsPanel = ({ userId, canPay = false }: Props) => {
                     Площадка ещё не перевела деньги за эту неделю. Сумма войдёт
                     в баланс автоматически, как только они поступят на счёт
                   </p>
+                )}
+
+                {/* Что именно ушло в минус. Сухой вычет ни о чём не говорит:
+                    менеджеру нужен список товаров, по которым надо поднять
+                    цену или снять их с продажи. */}
+                {a.lossDetails?.length > 0 && (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2">
+                    <p className="text-xs font-medium text-amber-900">
+                      Проданы ниже себестоимости
+                    </p>
+                    <div className="mt-1 space-y-0.5">
+                      {a.lossDetails.slice(0, 6).map((d) => (
+                        <p
+                          key={`${d.material}-${d.width}-${d.price}`}
+                          className="flex flex-wrap justify-between gap-x-2 text-xs text-amber-900"
+                        >
+                          <span>
+                            {d.material} {d.width} см · по {money(d.price)} ₽ ·{' '}
+                            {d.units} шт
+                          </span>
+                          <span className="font-medium">
+                            −{money(d.lossPerUnit)} ₽ с вещи
+                          </span>
+                        </p>
+                      ))}
+                    </div>
+                  </div>
                 )}
 
                 {a.cancelReason && (

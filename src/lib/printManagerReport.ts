@@ -78,7 +78,9 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
     </tr>
     <tr>
       <td style="padding:7px 0;color:#555;">Площадка</td>
-      <td style="padding:7px 0;">OZON</td>
+      <td style="padding:7px 0;">
+        ${MARKETPLACE_LABEL[a.marketplace] || a.marketplace}
+      </td>
     </tr>
   </table>
 
@@ -123,6 +125,13 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
       <td style="padding:11px 12px;">Продано товаров</td>
       <td style="padding:11px 12px;text-align:right;">${a.units} шт</td>
     </tr>
+    ${a.avgMargin != null ? `
+    <tr>
+      <td style="padding:11px 12px;">Средняя маржинальность за период</td>
+      <td style="padding:11px 12px;text-align:right;font-weight:600;">
+        ${a.avgMargin.toFixed(1)} %
+      </td>
+    </tr>` : ''}
     ${a.lossUnits > 0 ? `
     <tr>
       <td style="padding:11px 12px;color:#a15c00;">
@@ -161,6 +170,34 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
   <div style="margin-top:28px;font-size:15px;">
     <span style="color:#555;">Статус:</span>
     <b>${STATUS_LABEL[a.status] || a.status}</b>
+    ${a.lossDetails?.length ? `
+    <div style="margin-top:22px;">
+      <div style="font-size:15px;font-weight:700;">
+        Товары, проданные ниже себестоимости
+      </div>
+      <div style="font-size:13px;color:#555;margin-top:4px;">
+        Вознаграждение по ним не начисляется. Цену нужно поднять или снять
+        позицию с продажи
+      </div>
+      <table style="width:100%;margin-top:10px;font-size:13px;
+                    border-collapse:collapse;">
+        <tr style="background:#f4f4f4;">
+          <td style="padding:7px 10px;">Товар</td>
+          <td style="padding:7px 10px;text-align:right;">Цена</td>
+          <td style="padding:7px 10px;text-align:right;">Штук</td>
+          <td style="padding:7px 10px;text-align:right;">Убыток с вещи</td>
+        </tr>
+        ${a.lossDetails.slice(0, 12).map((d) => `
+        <tr style="border-bottom:1px solid #eee;">
+          <td style="padding:7px 10px;">${d.material} ${d.width} см</td>
+          <td style="padding:7px 10px;text-align:right;">${money(d.price)} ₽</td>
+          <td style="padding:7px 10px;text-align:right;">${d.units}</td>
+          <td style="padding:7px 10px;text-align:right;color:#a15c00;">
+            −${money(d.lossPerUnit)} ₽
+          </td>
+        </tr>`).join('')}
+      </table>
+    </div>` : ''}
     ${a.status === 'pending' ? `
     <div style="margin-top:10px;padding:12px;background:#fff8e6;
                 border:1px solid #e8d9a8;font-size:13px;color:#6b5410;">
@@ -187,6 +224,9 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
     считается уже с этой, итоговой суммы.<br />
     Товары, проданные ниже себестоимости, из базы расчёта исключаются:
     вознаграждение начисляется только с продаж, принесших доход.<br />
+    Расчёт сделан по ценам и себестоимости, действовавшим в отчётную неделю.
+    После закрытия отчёта он не пересматривается: изменения цен в следующие
+    периоды на уже выплаченное вознаграждение не влияют.<br />
     Выплата производится 10 и 25 числа через кассу.
   </div>
 

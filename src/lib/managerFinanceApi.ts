@@ -42,6 +42,17 @@ export interface ManagerAccrual {
   marketplace: string;
   /** Сколько площадка удержала за перевод денег продавцу. */
   withdrawFee: number;
+  /** Средняя маржинальность проданного за период, %. */
+  avgMargin: number | null;
+  /** Какие позиции ушли в минус: с ними менеджеру и работать. */
+  lossDetails: {
+    material: string;
+    width: number;
+    price: number;
+    lossPerUnit: number;
+    units: number;
+    lossTotal: number;
+  }[];
 }
 
 export interface ManagerBalance {

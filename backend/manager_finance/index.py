@@ -80,9 +80,11 @@ def _loss_share(p_from, p_to, mp_code='ozon'):
         return {
             'lossUnits': int(d.get('lossUnits') or 0),
             'share': float(d.get('share') or 0),
+            'avgMargin': d.get('avgMargin'),
+            'details': d.get('details') or [],
         }
     except Exception:
-        return {'lossUnits': 0, 'share': 0.0}
+        return {'lossUnits': 0, 'share': 0.0, 'avgMargin': None, 'details': []}
 
 
 def _accrue(cur):
@@ -164,7 +166,7 @@ def _accrue(cur):
         # позиция чаще уходит в минус, и по количеству её вес выглядит больше,
         # чем в деньгах.
         loss = _loss_share(p_from, p_to, mp_code) if st.get('skipLossItems') else {
-            'lossUnits': 0, 'share': 0.0,
+            'lossUnits': 0, 'share': 0.0, 'avgMargin': None, 'details': [],
         }
         # Долю убыточных считаем от ПРОДАЖ, без компенсаций: компенсация —
         # это возмещение за конкретный испорченный товар, к прибыльности
@@ -206,16 +208,17 @@ def _accrue(cur):
             # «начисление относится к этому периоду».
             "  status, hold_until, confirmed_at, "
             "  loss_units, loss_amount, payable_base, compensation_amount, "
-            "  marketplace_code, withdraw_fee) "
+            "  marketplace_code, withdraw_fee, avg_margin, loss_details) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
             "        CASE WHEN %s = 'confirmed' THEN now() END, "
-            "        %s, %s, %s, %s, %s, %s) "
+            "        %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (user_id, marketplace_code, period_start, period_end) "
             "DO NOTHING",
             (st['userId'], payout_id, p_from, p_to, units, base,
              st['percent'], amount, per_unit, status, p_to, status,
              loss['lossUnits'], loss_amount, payable, comp,
-             mp_code, withdraw_fee),
+             mp_code, withdraw_fee, loss.get('avgMargin'),
+             json.dumps(loss.get('details') or [], ensure_ascii=False)),
         )
         created += 1
 
@@ -268,11 +271,13 @@ def _balance(cur, user_id):
         "  amount, per_unit, status, returned_units, "
         "  returned_amount, cancel_reason, confirmed_at, "
         "  loss_units, loss_amount, payable_base, paid_out_at, "
-        "  compensation_amount, paid_at, marketplace_code, withdraw_fee "
+        "  compensation_amount, paid_at, marketplace_code, withdraw_fee, "
+        "  avg_margin, loss_details "
         "FROM manager_accruals WHERE user_id = %s "
         "ORDER BY period_start DESC LIMIT 40",
         (int(user_id),),
     )
+    null_margin = None
     items = []
     for r in cur.fetchall():
         items.append({
@@ -308,6 +313,10 @@ def _balance(cur, user_id):
             # По какой площадке начислено и сколько она удержала за вывод.
             'marketplace': r[19] or 'ozon',
             'withdrawFee': float(r[20] or 0),
+            # Средняя маржа за период и разбор убыточных позиций: менеджеру
+            # нужен не сухой вычет, а список, с которым можно работать.
+            'avgMargin': float(r[21]) if r[21] is not None else null_margin,
+            'lossDetails': r[22] or [],
         })
 
     st = _settings(cur)
@@ -407,14 +416,23 @@ def handler(event: dict, context) -> dict:
             })
 
         if action == 'recalc':
-            # Полный пересчёт: удаляет начисления и считает заново.
-            # Нужен, когда поменялась ставка или способ подсчёта штук —
-            # иначе старые строки остались бы с прежними цифрами.
+            # Пересчёт незакрытых начислений.
+            #
+            # ВЫПЛАЧЕННОЕ НЕ ТРОГАЕМ. Отчёт закрыт по тем ценам и той
+            # себестоимости, что действовали в ту неделю. Если позже мы опустим
+            # цены и товар станет убыточным, это уже другой период работы —
+            # удерживать деньги задним числом нельзя.
+            #
+            # Пересчитываем только то, что ещё не ушло в зарплату: там ставка
+            # или способ подсчёта штук могли поменяться.
             st = _settings(cur)
             if not st or not st['userId']:
                 return _resp(400, {'error': 'Не задан сотрудник'})
-            cur.execute("DELETE FROM manager_accruals WHERE user_id = %s",
-                        (st['userId'],))
+            cur.execute(
+                "DELETE FROM manager_accruals "
+                "WHERE user_id = %s AND paid_at IS NULL",
+                (st['userId'],),
+            )
             created = _accrue(cur)
             released = _release_pending(cur)
             conn.commit()
