@@ -10,6 +10,7 @@ import FabricCostCard from '@/components/crm/cost/FabricCostCard';
 import CostSettingsPanel from '@/components/crm/cost/CostSettingsPanel';
 import ExtraExpensesPanel from '@/components/crm/cost/ExtraExpensesPanel';
 import ManagerCommissionPanel from '@/components/crm/cost/ManagerCommissionPanel';
+import ManagerAccrualsPanel from '@/components/crm/finance/ManagerAccrualsPanel';
 import { fetchProductCosts, type CostResponse, type CostGroup } from '@/lib/productCostApi';
 
 const money = (v: number) =>
@@ -128,7 +129,16 @@ const ProductCost = () => {
         {/* Вознаграждение менеджера маркетплейсов: тоже расход на вещь, но
             считается от поступлений по отчётам, а не задаётся вручную. */}
         {data?.manager && canEdit && (
-          <ManagerCommissionPanel manager={data.manager} onChanged={load} />
+          <div className="space-y-4">
+            <ManagerCommissionPanel manager={data.manager} onChanged={load} />
+
+            {/* Отчёты менеджера с кнопкой выплаты. Показываем здесь, рядом с
+                настройкой процента: владелец видит ставку и тут же закрывает
+                выплату по конкретной неделе, не переключая учётную запись. */}
+            {data.manager.userId && (
+              <ManagerAccrualsPanel userId={data.manager.userId} canPay />
+            )}
+          </div>
         )}
 
         {/* Менеджеру те же параметры показываем справкой: он должен понимать,

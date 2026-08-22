@@ -53,6 +53,7 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
   const load = () => {
     setLoading(true);
     fetchEconomics({
+      withCompare: true,
       marketplace: code,
       scheme,
       buyout: buyoutOverride ? Number(buyoutOverride) : undefined,
@@ -293,7 +294,12 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
           {visible.map((r) => (
-            <EconomicsRowCard key={`${r.material}-${r.width}`} row={r} />
+            <EconomicsRowCard
+              key={`${r.material}-${r.width}`}
+              row={r}
+              scheme={scheme}
+              altScheme={data?.altScheme}
+            />
           ))}
         </div>
       )}

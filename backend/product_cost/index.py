@@ -323,7 +323,7 @@ def _manager_commission(cur, sold_units):
     себестоимость скакала бы весь месяц вверх по мере поступления отчётов.
     """
     cur.execute(
-        "SELECT percent, is_active, comment FROM manager_commission_settings "
+        "SELECT percent, is_active, comment, user_id FROM manager_commission_settings "
         "ORDER BY id LIMIT 1"
     )
     row = cur.fetchone()
@@ -360,6 +360,9 @@ def _manager_commission(cur, sold_units):
     return {
         'percent': percent,
         'isActive': is_active,
+        # Кому начисляем: нужен владельцу, чтобы открыть отчёты менеджера
+        # и выплатить по ним, не переключая учётную запись.
+        'userId': int(row[3]) if len(row) > 3 and row[3] else None,
         'comment': row[2],
         'month': str(m_start),
         'monthEnd': str(m_end),

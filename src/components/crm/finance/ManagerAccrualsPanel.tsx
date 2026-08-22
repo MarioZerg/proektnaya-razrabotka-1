@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +9,7 @@ import {
   type ManagerBalance,
 } from '@/lib/managerFinanceApi';
 import { printManagerReport } from '@/lib/printManagerReport';
+import { payManagerAccrual } from '@/lib/managerFinanceApi';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 
@@ -36,7 +37,13 @@ const daysLeft = (iso: string) => {
  * товар: тогда доля вернувшихся вещей снимается. Если вернул позже — деньги
  * остаются у менеджера, так и договаривались.
  */
-const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
+interface Props {
+  userId: number;
+  /** Режим владельца: показывает кнопку выплаты по каждому отчёту. */
+  canPay?: boolean;
+}
+
+const ManagerAccrualsPanel = ({ userId, canPay = false }: Props) => {
   const { user } = useAuth();
   const { toast } = useToast();
   const [data, setData] = useState<ManagerBalance | null>(null);
@@ -44,6 +51,30 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
   // Какой отчёт сейчас собирается: сборка занимает секунду-другую, и без
   // отметки человек жмёт кнопку повторно.
   const [busyId, setBusyId] = useState<number | null>(null);
+
+  // Выплата по конкретному отчёту: вознаграждение уходит в зарплату и
+  // дальше проходит через кассу вместе с оплатой труда цеха.
+  const [payingId, setPayingId] = useState<number | null>(null);
+
+  const pay = async (a: ManagerAccrual) => {
+    setPayingId(a.id);
+    try {
+      await payManagerAccrual(a.id, user?.id);
+      toast({
+        title: 'Передано в зарплату',
+        description: `${money(a.net)} ₽ за ${dmy(a.periodStart)} — ${dmy(a.periodEnd)}`,
+      });
+      await load(true);
+    } catch (e) {
+      toast({
+        title: 'Не удалось выплатить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setPayingId(null);
+    }
+  };
 
   const download = async (a: ManagerAccrual) => {
     setBusyId(a.id);
@@ -60,13 +91,23 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
     }
   };
 
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        setData(await fetchManagerBalance(userId));
+      } catch {
+        setData(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [userId],
+  );
+
   useEffect(() => {
-    setLoading(true);
-    fetchManagerBalance(userId)
-      .then(setData)
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
-  }, [userId]);
+    load();
+  }, [load]);
 
   if (loading) {
     return (
@@ -244,10 +285,35 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
 
                 {/* Отчёт собирается в браузере и сразу уходит в загрузки:
                     в нём суммы к выплате, и ссылке на него взяться неоткуда. */}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                {/* Выплата доступна владельцу и только по подтверждённому
+                    отчёту: пока деньги не пришли от площадки, платить не с
+                    чего. Выплаченное помечаем, чтобы не заплатить дважды. */}
+                {canPay && a.status === 'confirmed' && !a.paidAt && (
+                  <Button
+                    size="sm"
+                    className="h-8 bg-emerald-600 text-white hover:bg-emerald-700"
+                    onClick={() => pay(a)}
+                    disabled={payingId === a.id}
+                  >
+                    <Icon
+                      name={payingId === a.id ? 'Loader2' : 'Banknote'}
+                      size={13}
+                      className={`mr-1.5 ${payingId === a.id ? 'animate-spin' : ''}`}
+                    />
+                    Выплатить {money(a.net)} ₽
+                  </Button>
+                )}
+                {a.paidAt && (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+                    <Icon name="CircleCheck" size={13} />
+                    выплачено
+                  </span>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
-                  className="mt-2 h-8"
+                  className="h-8"
                   onClick={() => download(a)}
                   disabled={busyId === a.id}
                 >
@@ -258,6 +324,7 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
                   />
                   Скачать отчёт PDF
                 </Button>
+                </div>
 
               </div>
             );

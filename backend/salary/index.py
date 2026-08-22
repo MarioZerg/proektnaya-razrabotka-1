@@ -1010,18 +1010,73 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            if action == 'payout_preview':
+                # Сколько выйдет к выплате за выбранный период — до нажатия
+                # кнопки. Без этого админ выбирает даты вслепую и узнаёт сумму
+                # уже postfactum, когда деньги списаны из кассы.
+                user_id = body_data.get('userId')
+                if not user_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите userId'})}
+                p_from = (body_data.get('periodFrom') or '').strip()
+                p_to = (body_data.get('periodTo') or '').strip()
+
+                where = "user_id = %s AND paid_at IS NULL"
+                params = [int(user_id)]
+                if p_from:
+                    where += " AND accrued_for >= %s"
+                    params.append(p_from)
+                if p_to:
+                    where += " AND accrued_for <= %s"
+                    params.append(p_to)
+
+                cur.execute(
+                    f"SELECT COALESCE(SUM(amount), 0), count(*), "
+                    f"       min(accrued_for), max(accrued_for) "
+                    f"FROM salary_accruals WHERE {where}",
+                    tuple(params),
+                )
+                total, cnt, d_min, d_max = cur.fetchone()
+
+                cur.execute("SELECT COALESCE(SUM(amount), 0) FROM cash_box_transactions")
+                cash = float(cur.fetchone()[0])
+
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'amount': float(total or 0),
+                    'count': int(cnt or 0),
+                    'firstDate': str(d_min) if d_min else None,
+                    'lastDate': str(d_max) if d_max else None,
+                    'cashBalance': cash,
+                })}
+
             if action == 'payout':
                 user_id = body_data.get('userId')
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
 
+                # Период выплаты. Если не задан — выплачиваем всё, что накопилось:
+                # так работала кнопка раньше, и для большинства случаев этого
+                # достаточно. Границы нужны, когда закрывают конкретный отрезок,
+                # например первую половину месяца.
+                p_from = (body_data.get('periodFrom') or '').strip()
+                p_to = (body_data.get('periodTo') or '').strip()
+
+                where = "user_id = %s AND paid_at IS NULL"
+                params = [int(user_id)]
+                if p_from:
+                    where += " AND accrued_for >= %s"
+                    params.append(p_from)
+                if p_to:
+                    where += " AND accrued_for <= %s"
+                    params.append(p_to)
+
                 cur.execute(
-                    "SELECT COALESCE(SUM(amount), 0) FROM salary_accruals WHERE user_id = %s AND paid_at IS NULL",
-                    (int(user_id),),
+                    f"SELECT COALESCE(SUM(amount), 0) FROM salary_accruals WHERE {where}",
+                    tuple(params),
                 )
                 balance = float(cur.fetchone()[0])
                 if balance <= 0:
-                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Нет начислений к выплате'})}
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Нет начислений к выплате за выбранный период'})}
 
                 # Выплата списывается из кассы компании — если денег в кассе недостаточно,
                 # выплата блокируется полностью (частичных выплат нет).
@@ -1036,19 +1091,28 @@ def handler(event: dict, context) -> dict:
 
                 actor_id_sql = int(actor_id) if actor_id not in (None, '') else 'NULL'
                 cur.execute(
-                    f"INSERT INTO salary_payouts (user_id, amount, paid_by) "
-                    f"VALUES ({int(user_id)}, {balance}, {actor_id_sql}) RETURNING id, paid_at"
+                    "INSERT INTO salary_payouts (user_id, amount, paid_by, "
+                    "  period_from, period_to) "
+                    "VALUES (%s, %s, %s, %s, %s) RETURNING id, paid_at",
+                    (int(user_id), balance,
+                     int(actor_id) if actor_id not in (None, '') else None,
+                     p_from or None, p_to or None),
                 )
                 payout_id, paid_at = cur.fetchone()
 
+                # Закрываем ровно те начисления, что попали в период: остальные
+                # останутся невыплаченными и уйдут в следующую выплату.
                 cur.execute(
-                    f"UPDATE salary_accruals SET paid_at = '{paid_at.isoformat()}', payout_id = {payout_id} "
-                    f"WHERE user_id = {int(user_id)} AND paid_at IS NULL"
+                    f"UPDATE salary_accruals SET paid_at = %s, payout_id = %s "
+                    f"WHERE {where}",
+                    tuple([paid_at, payout_id] + params),
                 )
 
                 cur.execute(
                     f"INSERT INTO cash_box_transactions (amount, description, payout_id, created_by) "
-                    f"VALUES ({-balance}, 'Выплата зарплаты сотруднику #{int(user_id)}', {payout_id}, {actor_id_sql})"
+                    f"VALUES ({-balance}, 'Выплата зарплаты сотруднику #{int(user_id)}"
+                    f"{(' за ' + p_from + '—' + p_to) if p_from and p_to else ''}', "
+                    f"{payout_id}, {actor_id_sql})"
                 )
 
                 log_action(

@@ -12,7 +12,15 @@ import { money, moneyShort, profitColor, profitBg } from './economicsShared';
  * налог. Внутри разворачивается расчёт по каждой ВЫСОТЕ: цены у высот свои, и
  * одна высота может быть убыточной, пока соседняя приносит прибыль.
  */
-const EconomicsRowCard = ({ row }: { row: EconomicsRow }) => {
+interface CardProps {
+  row: EconomicsRow;
+  /** Какая схема сейчас открыта — подписываем ей цифры. */
+  scheme?: string;
+  /** Вторая схема для сравнения. */
+  altScheme?: string | null;
+}
+
+const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
   const [open, setOpen] = useState(false);
   const u = row.unit;
 
@@ -58,6 +66,54 @@ const EconomicsRowCard = ({ row }: { row: EconomicsRow }) => {
           </p>
         </div>
       </div>
+
+      {/* Сравнение схем: у FBS и FBO разная логистика и комиссия, и по одной
+          цифре не понять, где товар выгоднее. Показываем обе рядом — видно,
+          какую схему выбрать под конкретный размер. */}
+      {!!row.altUnit && !!altScheme && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="rounded-md border border-primary/40 bg-background/60 p-2">
+            <p className="text-[11px] font-medium text-muted-foreground">
+              {scheme} · открыто
+            </p>
+            <p className={`text-sm font-bold ${profitColor(u.margin)}`}>
+              {u.profit > 0 ? '+' : ''}
+              {money(u.profit)} ₽
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              маржа {u.margin}% · логистика {moneyShort(u.logistics)} ₽
+            </p>
+          </div>
+          <div className="rounded-md border border-border bg-background/40 p-2">
+            <p className="text-[11px] font-medium text-muted-foreground">
+              {altScheme}
+            </p>
+            <p className={`text-sm font-bold ${profitColor(row.altUnit.margin)}`}>
+              {row.altUnit.profit > 0 ? '+' : ''}
+              {money(row.altUnit.profit)} ₽
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              маржа {row.altUnit.margin}% · логистика{' '}
+              {moneyShort(row.altUnit.logistics)} ₽
+            </p>
+          </div>
+          {/* Прямой ответ на вопрос «где выгоднее»: без него владелец
+              сравнивает четыре числа глазами. */}
+          <p className="col-span-2 text-[11px] text-muted-foreground">
+            {row.altUnit.profit > u.profit ? (
+              <span className="font-medium text-emerald-700">
+                По {altScheme} выгоднее на{' '}
+                {money(row.altUnit.profit - u.profit)} ₽ с вещи
+              </span>
+            ) : (
+              <span className="font-medium text-emerald-700">
+                По {scheme} выгоднее на {money(u.profit - row.altUnit.profit)} ₽
+                с вещи
+              </span>
+            )}
+          </p>
+        </div>
+      )}
 
       {/* Куда уходит цена: наглядная полоса. */}
       <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-muted">

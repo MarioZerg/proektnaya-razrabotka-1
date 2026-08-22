@@ -34,6 +34,8 @@ export interface ManagerAccrual {
   paidOutAt: string | null;
   /** Сколько в базе пришло компенсациями площадки. */
   compensation: number;
+  /** Когда вознаграждение передано в зарплату. */
+  paidAt: string | null;
 }
 
 export interface ManagerBalance {
@@ -83,6 +85,10 @@ export const recalcManager = (actorId?: number) =>
   post({ action: 'recalc', actorId });
 
 /** Кому начисляем процент и на сколько дней держим холд. */
+/** Выплатить вознаграждение по конкретному отчёту — уходит в зарплату. */
+export const payManagerAccrual = (accrualId: number, actorId?: number) =>
+  post({ action: 'pay', accrualId, actorId });
+
 export const setManagerUser = (payload: {
   userId: number;
   holdDays?: number;

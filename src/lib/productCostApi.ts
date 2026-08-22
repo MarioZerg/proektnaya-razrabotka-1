@@ -93,6 +93,8 @@ export interface SoldUnits {
 export interface ManagerCommission {
   percent: number;
   isActive: boolean;
+  /** Кому начисляем — по нему открываем отчёты для выплаты. */
+  userId: number | null;
   comment: string | null;
   /** Первое число месяца, за который считаем. */
   month: string;

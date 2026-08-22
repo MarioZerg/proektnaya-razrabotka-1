@@ -85,6 +85,8 @@ export interface HeightRow {
 
 /** Строка расчёта: ткань + ширина. */
 export interface EconomicsRow {
+  /** Тот же товар по второй схеме — для сравнения FBS и FBO на карточке. */
+  altUnit?: UnitCalc | null;
   material: string | null;
   width: number | null;
   productsCount: number;
@@ -134,6 +136,8 @@ export interface AdSpendTotal {
 }
 
 export interface EconomicsResponse {
+  /** Какая схема посчитана для сравнения (FBO, если открыт FBS). */
+  altScheme?: Scheme | null;
   marketplaceCode: string;
   scheme: Scheme;
   settings: { taxPercent: number; vatPercent: number };
@@ -191,10 +195,13 @@ export const fetchEconomics = async (params: {
   scheme: Scheme;
   /** Своё значение выкупа для сценария «а если выкуп упадёт». */
   buyout?: number;
+  /** Посчитать заодно вторую схему — для сравнения FBS и FBO на карточке. */
+  withCompare?: boolean;
 }): Promise<EconomicsResponse> => {
   const qs = new URLSearchParams({
     marketplace: params.marketplace,
     scheme: params.scheme,
+    withCompare: params.withCompare ? '1' : '',
   });
   if (params.buyout) qs.set('buyout', String(params.buyout));
   const res = await fetch(`${UNIT_ECONOMICS_URL}?${qs}`);

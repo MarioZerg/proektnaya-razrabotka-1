@@ -234,10 +234,16 @@ const Finance = () => {
     }
   };
 
-  const handlePayout = async (userId: number) => {
+  const handlePayout = async (
+    userId: number,
+    periodFrom?: string,
+    periodTo?: string,
+  ) => {
     setSavingAccrual(true);
     try {
-      const res = await payoutSalary(userId, user?.id, user?.name);
+      const res = await payoutSalary(
+        userId, user?.id, user?.name, periodFrom, periodTo,
+      );
       toast({ title: 'Зарплата выплачена', description: `Сумма: ${res.amount.toFixed(2)} ₽` });
       loadOperations();
       loadPayouts();

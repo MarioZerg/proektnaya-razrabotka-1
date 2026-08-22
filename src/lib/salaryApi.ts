@@ -206,8 +206,32 @@ export interface PayoutResult {
   amount: number;
 }
 
-export const payoutSalary = (userId: number, actorId?: number, actorName?: string): Promise<PayoutResult> =>
-  postAction({ action: 'payout', userId, actorId, actorName });
+/** Что выйдет к выплате за период — до нажатия кнопки. */
+export interface PayoutPreview {
+  amount: number;
+  count: number;
+  firstDate: string | null;
+  lastDate: string | null;
+  cashBalance: number;
+}
+
+export const previewPayout = (
+  userId: number,
+  periodFrom?: string,
+  periodTo?: string,
+): Promise<PayoutPreview> =>
+  postAction({ action: 'payout_preview', userId, periodFrom, periodTo });
+
+export const payoutSalary = (
+  userId: number,
+  actorId?: number,
+  actorName?: string,
+  periodFrom?: string,
+  periodTo?: string,
+): Promise<PayoutResult> =>
+  postAction({
+    action: 'payout', userId, actorId, actorName, periodFrom, periodTo,
+  });
 
 export const deletePayout = (id: number, actorId?: number, actorName?: string) =>
   postAction({ action: 'delete_payout', id, actorId, actorName });

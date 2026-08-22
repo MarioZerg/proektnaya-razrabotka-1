@@ -1931,7 +1931,30 @@ def handler(event: dict, context) -> dict:
                         buyout_override = v
                 except ValueError:
                     pass
-            return _resp(200, _build(cur, code, scheme, buyout_override))
+            data = _build(cur, code, scheme, buyout_override)
+
+            # Вторая схема — для сравнения прямо на карточке товара.
+            #
+            # Логистика и комиссия у FBS и FBO разные, и по одной цифре нельзя
+            # понять, где товар выгоднее. Считаем обе и отдаём вместе: владелец
+            # видит разницу, не переключая страницу туда-обратно.
+            if params.get('withCompare') == '1':
+                other = 'FBO' if scheme == 'FBS' else 'FBS'
+                try:
+                    alt = _build(cur, code, other, buyout_override)
+                    alt_by_key = {
+                        (r['material'], r['width']): r.get('unit')
+                        for r in (alt.get('rows') or [])
+                    }
+                    for r in (data.get('rows') or []):
+                        r['altUnit'] = alt_by_key.get((r['material'], r['width']))
+                    data['altScheme'] = other
+                except Exception:
+                    # Сравнение — дополнение, а не основа: если вторая схема
+                    # не посчиталась, страница должна открыться без неё.
+                    data['altScheme'] = None
+
+            return _resp(200, data)
 
         body_data = json.loads(event.get('body') or '{}')
         action = body_data.get('action')

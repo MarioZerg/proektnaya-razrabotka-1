@@ -246,8 +246,10 @@ def _balance(cur, user_id):
     cur.execute(
         # Берём начисленное как есть: возвраты уже сидят в сумме
         # к перечислению, из которой этот процент и посчитан.
+        # Выплаченное в баланс не входит: деньги уже ушли в зарплату.
         "SELECT status, coalesce(sum(amount), 0), count(*) "
-        "FROM manager_accruals WHERE user_id = %s GROUP BY status",
+        "FROM manager_accruals WHERE user_id = %s AND paid_at IS NULL "
+        "GROUP BY status",
         (int(user_id),),
     )
     by_status = {r[0]: {'amount': float(r[1] or 0), 'count': int(r[2])}
@@ -258,7 +260,7 @@ def _balance(cur, user_id):
         "  amount, per_unit, status, hold_until, returned_units, "
         "  returned_amount, cancel_reason, confirmed_at, "
         "  loss_units, loss_amount, payable_base, paid_out_at, "
-        "  compensation_amount "
+        "  compensation_amount, paid_at "
         "FROM manager_accruals WHERE user_id = %s "
         "ORDER BY period_start DESC LIMIT 40",
         (int(user_id),),
@@ -294,6 +296,8 @@ def _balance(cur, user_id):
             'paidOutAt': str(r[17]) if r[17] else None,
             # Сколько в базе пришло компенсациями площадки.
             'compensation': float(r[18] or 0),
+            # Передано в зарплату — повторно выплатить уже нельзя.
+            'paidAt': str(r[19]) if r[19] else None,
         })
 
     st = _settings(cur)
@@ -412,6 +416,61 @@ def handler(event: dict, context) -> dict:
                 'ok': True, 'created': created.get('created', 0),
                 'released': released, 'confirmed': confirmed,
             })
+
+        if action == 'pay':
+            # Выплата по конкретному отчёту.
+            #
+            # Вознаграждение уходит в зарплату обычным начислением: дальше оно
+            # проходит через кассу тем же путём, что и оплата труда цеха.
+            # Отдельного кошелька у менеджера нет — иначе деньги пришлось бы
+            # сверять в двух местах.
+            a_id = body.get('accrualId')
+            if not a_id:
+                return _resp(400, {'error': 'Укажите accrualId'})
+
+            cur.execute(
+                "SELECT user_id, amount, period_start, period_end, status, "
+                "       paid_at "
+                "FROM manager_accruals WHERE id = %s",
+                (int(a_id),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return _resp(404, {'error': 'Начисление не найдено'})
+
+            m_user, amount, p_from, p_to, status, paid_at = row
+            if paid_at:
+                return _resp(409, {'error': 'По этому отчёту уже выплачено'})
+            if status != 'confirmed':
+                return _resp(409, {
+                    'error': 'Выплатить можно только подтверждённое начисление. '
+                             'Сейчас оно ждёт поступления денег от площадки',
+                })
+            if float(amount or 0) <= 0:
+                return _resp(409, {'error': 'Нечего выплачивать'})
+
+            # Начисление в зарплате датируем последним днём отчётной недели —
+            # тогда выплата за период находит его по тем же границам, что и
+            # остальные начисления сотрудника.
+            cur.execute(
+                "INSERT INTO salary_accruals (user_id, type, amount, "
+                "  description, accrued_for, created_by) "
+                "VALUES (%s, 'manager_commission', %s, %s, %s, %s) "
+                "RETURNING id",
+                (int(m_user), float(amount),
+                 f'Вознаграждение за отчёт {p_from} — {p_to}',
+                 p_to, body.get('actorId')),
+            )
+            sal_id = cur.fetchone()[0]
+
+            cur.execute(
+                "UPDATE manager_accruals "
+                "SET paid_at = now(), salary_accrual_id = %s WHERE id = %s",
+                (sal_id, int(a_id)),
+            )
+            conn.commit()
+            return _resp(200, {'ok': True, 'salaryAccrualId': sal_id,
+                               'amount': float(amount)})
 
         if action == 'set_user':
             cur.execute(
