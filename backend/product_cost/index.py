@@ -1,4 +1,5 @@
 import json
+import urllib.request
 import os
 
 import psycopg2
@@ -31,6 +32,12 @@ def _is_admin(cur, actor_id):
     cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
     row = cur.fetchone()
     return bool(row and row[0] == 'admin')
+
+
+# Юнит-экономика: там живёт полный расчёт прибыльности товара.
+UNIT_ECONOMICS_URL = (
+    'https://functions.poehali.dev/4ebd72ad-8ca4-456c-840c-d2db30ce04cd'
+)
 
 
 def _settings(cur):
@@ -259,6 +266,17 @@ def loss_share_for_period(cur, p_from, p_to, mp_code='ozon'):
         'ozon': 'OZON', 'wildberries': 'WB', 'yandex_market': 'Yandex',
     }.get(mp_code, mp_code.upper())
 
+    # Прибыльность берём из ЮНИТ-ЭКОНОМИКИ, а не считаем здесь заново.
+    #
+    # Свой упрощённый расчёт (цена минус себестоимость, комиссия и логистика)
+    # давал другую картину: юнитка показывала Лен 200 см в минусе, а здесь он
+    # выходил в плюс на 520 ₽. Она учитывает то, что упрощённая формула
+    # пропускала: продвижение, стоимость возвратов, налог и НДС.
+    #
+    # Два расчёта одного и того же неизбежно расходятся, а решает деньги
+    # именно этот — по нему менеджеру не платят за убыточное. Поэтому источник
+    # правды должен быть один.
+    # Тарифы нужны как запасной вариант, если юнит-экономика не ответит.
     cur.execute(
         "SELECT commission_fbs_percent, acquiring_percent, logistics_fbs "
         "FROM marketplace_tariffs WHERE marketplace_code = %s", (mp_code,)
@@ -268,16 +286,43 @@ def loss_share_for_period(cur, p_from, p_to, mp_code='ozon'):
     acquiring_pct = float(t[1] or 0) if t else 0.0
     logistics = float(t[2] or 0) if t else 0.0
 
+    profit_by_key = {}
+    try:
+        url = (f'{UNIT_ECONOMICS_URL}?marketplace={mp_code}&scheme=FBS')
+        req = urllib.request.Request(url, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=40) as r:
+            ue = json.loads(r.read())
+        for row in (ue.get('rows') or []):
+            # По каждой ВЫСОТЕ своя цена и своя прибыль: внутри группы одна
+            # высота может быть убыточной, пока соседняя приносит доход.
+            for h in (row.get('heights') or []):
+                u = h.get('unit') or {}
+                if u.get('price'):
+                    profit_by_key[(row['material'], float(row['width'] or 0),
+                                   round(float(u['price']), 0))] = float(
+                        u.get('profit') or 0)
+            u = row.get('unit') or {}
+            if u.get('price'):
+                profit_by_key.setdefault(
+                    (row['material'], float(row['width'] or 0), None),
+                    float(u.get('profit') or 0))
+    except Exception:
+        profit_by_key = {}
+
+    # Продажи периода: цена — та, что реально платит покупатель.
     cur.execute(
-        "SELECT o.material, o.width, mp.price, count(*) "
+        "SELECT o.material, o.width, "
+        "       coalesce(mp.price_with_marketplace_discount, mp.price), "
+        "       count(*) "
         "FROM orders o "
         "JOIN marketplace_prices mp "
         "  ON mp.marketplace_item_id = o.marketplace_item_id "
         " AND mp.marketplace_code = %s "
         "WHERE o.marketplace = %s AND o.cancelled_at IS NULL "
         "  AND o.created_at::date >= %s AND o.created_at::date <= %s "
-        "  AND mp.price > 0 "
-        "GROUP BY o.material, o.width, mp.price",
+        "  AND coalesce(mp.price_with_marketplace_discount, mp.price) > 0 "
+        "GROUP BY o.material, o.width, "
+        "         coalesce(mp.price_with_marketplace_discount, mp.price)",
         (mp_code, mp_orders, p_from, p_to),
     )
 
@@ -303,8 +348,17 @@ def loss_share_for_period(cur, p_from, p_to, mp_code='ozon'):
         total_units += cnt
         total_revenue += price * cnt
 
-        platform = price * (commission_pct + acquiring_pct) / 100.0 + logistics
-        profit = price - (own + platform)
+        # Прибыль на вещь: сначала ищем точное совпадение по цене, потом —
+        # среднюю по группе. Если юнит-экономика недоступна, считаем по
+        # упрощённой формуле, чтобы расчёт не встал совсем.
+        profit = profit_by_key.get(
+            (material, float(width or 0), round(price, 0)))
+        if profit is None:
+            profit = profit_by_key.get((material, float(width or 0), None))
+        if profit is None:
+            platform = (price * (commission_pct + acquiring_pct) / 100.0
+                        + logistics)
+            profit = price - (own + platform)
         profit_total += profit * cnt
 
         if profit <= 0:

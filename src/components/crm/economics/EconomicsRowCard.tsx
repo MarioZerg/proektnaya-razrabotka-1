@@ -79,6 +79,20 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
         </div>
       </div>
 
+      {/* Расчёт по цене витрины — предупреждение.
+          Площадка режет цену акциями, и если фактическую она не отдала, мы
+          считаем по завышенной: товар в акции выглядит прибыльным, будучи
+          убыточным. Владелец должен знать, где цифрам верить нельзя. */}
+      {row.actualPriceCount != null &&
+        row.actualPriceCount < row.pricedCount && (
+          <p className="mt-2 flex items-start gap-1.5 rounded-md bg-amber-100 p-2 text-xs text-amber-900">
+            <Icon name="TriangleAlert" size={13} className="mt-0.5 shrink-0" />
+            {row.pricedCount - row.actualPriceCount} из {row.pricedCount}{' '}
+            размеров считаются по цене витрины — площадка не отдала цену с
+            учётом акций. Реальная прибыль может быть ниже
+          </p>
+        )}
+
       {/* Сравнение схем: у FBS и FBO разная логистика и комиссия, и по одной
           цифре не понять, где товар выгоднее. Показываем обе рядом — видно,
           какую схему выбрать под конкретный размер. */}

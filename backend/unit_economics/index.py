@@ -209,7 +209,19 @@ def _sync_ozon(cur, cursor=None):
                 'itemId': item_id,
                 'price': num(price.get('price')),
                 'priceBeforeDiscount': num(price.get('old_price')),
-                'priceWithMarketplaceDiscount': num(price.get('marketing_price')),
+                # Цена, которую РЕАЛЬНО платит покупатель.
+                #
+                # У OZON это marketing_seller_price — цена с учётом акций
+                # площадки. Поле marketing_price, которое читали раньше, в
+                # ответе не приходит вовсе: колонка всегда оставалась пустой,
+                # и расчёт шёл по обычной цене. На реальных данных разрыв
+                # 2471 против 2224 ₽ — 10%. Прибыль завышалась на 123 ₽ с
+                # вещи, и товар в акции мог выглядеть прибыльным, будучи
+                # убыточным.
+                'priceWithMarketplaceDiscount': (
+                    num(price.get('marketing_seller_price'))
+                    or num(price.get('marketing_price'))
+                ),
                 # Комиссия FBO и FBS у Ozon разная — берём обе.
                 'commissionFbo': num(comm.get('sales_percent_fbo')),
                 'commissionFbs': num(comm.get('sales_percent_fbs')),
@@ -1537,6 +1549,10 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             'logisticsMax': round(max(log_vals), 2) if log_vals else None,
             'productsCount': len(g['items']),
             'pricedCount': len(priced),
+            # Сколько размеров считаются по РЕАЛЬНОЙ цене продажи, а не по
+            # витрине. Если площадка фактическую цену не отдала, расчёт идёт
+            # по завышенной — и убыточный товар выглядит прибыльным.
+            'actualPriceCount': sum(1 for i in priced if i['priceIsActual']),
             'minPrice': round(min(i['price'] for i in priced), 2) if priced else None,
             'maxPrice': round(max(i['price'] for i in priced), 2) if priced else None,
             'avgPrice': avg_price,

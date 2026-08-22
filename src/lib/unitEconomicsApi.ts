@@ -87,6 +87,8 @@ export interface HeightRow {
 export interface EconomicsRow {
   /** Тот же товар по второй схеме — для сравнения FBS и FBO на карточке. */
   altUnit?: UnitCalc | null;
+  /** Сколько размеров считаются по реальной цене продажи, а не по витрине. */
+  actualPriceCount?: number;
   /** Разброс логистики внутри группы: размеры весят по-разному. */
   logisticsMin?: number | null;
   logisticsMax?: number | null;
