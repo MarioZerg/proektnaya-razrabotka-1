@@ -1582,6 +1582,84 @@ def handler(event: dict, context) -> dict:
             params = event.get('queryStringParameters') or {}
             action = params.get('action')
 
+            if action == 'monthly':
+                """Помесячная динамика по размерам: не упал ли спрос.
+
+                Отвечает на вопрос, который по одной цифре за 30 дней увидеть
+                нельзя: выручка по размеру просела — это спрос ушёл или мы
+                просто перестали его рекламировать?
+
+                Смотреть надо ПАРУ «выручка + ДРР»:
+                  выручка вниз, ДРР вверх — размер теряет спрос, реклама его
+                    больше не вытягивает: пора менять цену или выводить;
+                  выручка вверх, ДРР вверх сильнее — рост куплен за рекламу
+                    и съедает маржу.
+                """
+                code = params.get('marketplace') or 'ozon'
+                mp_name = {'ozon': 'OZON', 'wildberries': 'WB',
+                           'yandex_market': 'Yandex'}.get(code, 'OZON')
+                months = int(params.get('months') or 6)
+
+                # Выручка и штуки по каждому размеру за каждый месяц.
+                # Цену берём из прайса площадки: в самом заказе её нет.
+                cur.execute(
+                    "SELECT date_trunc('month', o.created_at)::date AS m, "
+                    "       o.width, count(*), sum(mp.price) "
+                    "FROM orders o "
+                    "JOIN marketplace_prices mp "
+                    "  ON mp.marketplace_item_id = o.marketplace_item_id "
+                    f" AND mp.marketplace_code = '{code}' "
+                    f"WHERE o.marketplace = '{mp_name}' "
+                    "  AND o.cancelled_at IS NULL "
+                    "  AND o.width IS NOT NULL "
+                    f" AND o.created_at >= date_trunc('month', now()) "
+                    f"     - interval '{months} months' "
+                    "GROUP BY 1, 2 ORDER BY 1, 2"
+                )
+                by_size = {}
+                for m, width, cnt, rev in cur.fetchall():
+                    key = str(width)
+                    by_size.setdefault(key, {})[str(m)] = {
+                        'count': int(cnt),
+                        'revenue': round(float(rev or 0), 2),
+                    }
+
+                # ДРР по месяцам — общий по площадке. Разложить рекламу по
+                # размерам физически не из чего: OZON списывает её общей суммой
+                # без указания товара.
+                cur.execute(
+                    "SELECT month::text, ad_percent, ad_spend, revenue "
+                    "FROM marketplace_ad_monthly "
+                    "WHERE marketplace_code = %s "
+                    f"  AND month >= date_trunc('month', now()) "
+                    f"      - interval '{months} months' "
+                    "ORDER BY month",
+                    (code,),
+                )
+                ad_by_month = {
+                    r[0]: {
+                        'adPercent': float(r[1]) if r[1] is not None else None,
+                        'adSpend': float(r[2] or 0),
+                        'adRevenue': float(r[3] or 0),
+                    }
+                    for r in cur.fetchall()
+                }
+
+                # Список месяцев по порядку — им подписываем колонки таблицы.
+                all_months = sorted({
+                    m for sizes in by_size.values() for m in sizes
+                } | set(ad_by_month))
+
+                return _resp(200, {
+                    'marketplace': code,
+                    'months': all_months,
+                    'adByMonth': ad_by_month,
+                    'sizes': [
+                        {'width': int(w), 'byMonth': data}
+                        for w, data in sorted(by_size.items(), key=lambda x: int(x[0]))
+                    ],
+                })
+
             if action == 'compare':
                 # Одна ткань и ширина на всех площадках и обеих схемах рядом —
                 # видно, где продавать выгоднее и какая схема лучше.

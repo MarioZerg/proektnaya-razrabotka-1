@@ -17,6 +17,7 @@ import {
 } from '@/lib/unitEconomicsApi';
 import EconomicsRowCard from './EconomicsRowCard';
 import TariffsPanel from './TariffsPanel';
+import MonthlySizesReport from './MonthlySizesReport';
 import { moneyShort } from './economicsShared';
 
 /**
@@ -39,6 +40,9 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
   // Свой процент выкупа — сценарий «а если выкуп упадёт до 70%».
   const [buyoutOverride, setBuyoutOverride] = useState('');
   const [showTariffs, setShowTariffs] = useState(false);
+  // Отчёт по месяцам грузим только по требованию: он ходит за отдельными
+  // данными, а нужен не при каждом открытии экономики.
+  const [showMonthly, setShowMonthly] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -239,7 +243,15 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
             {showTariffs ? 'Скрыть' : 'Настроить'} тарифы площадки
           </Button>
         )}
+        {/* Динамика по месяцам: падение спроса по размеру видно только в
+            сравнении месяцев, в разрезе «за 30 дней» его не разглядеть. */}
+        <Button variant="ghost" size="sm" onClick={() => setShowMonthly((v) => !v)}>
+          <Icon name="TrendingUp" size={14} className="mr-1.5" />
+          {showMonthly ? 'Скрыть' : 'Показать'} динамику по месяцам
+        </Button>
       </div>
+
+      {showMonthly && <MonthlySizesReport marketplace={code} />}
 
       {showTariffs && data && canEdit && (
         <TariffsPanel marketplaceCode={code} tariffs={data.tariffs} onSaved={load} />

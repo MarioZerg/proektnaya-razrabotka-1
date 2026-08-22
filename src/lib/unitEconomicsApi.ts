@@ -201,6 +201,46 @@ export const fetchEconomics = async (params: {
   return data;
 };
 
+/** Одна ячейка отчёта: сколько продали этого размера в этом месяце. */
+export interface MonthlySizeCell {
+  count: number;
+  revenue: number;
+}
+
+/** Реклама за месяц — общая по площадке. */
+export interface MonthlyAd {
+  adPercent: number | null;
+  adSpend: number;
+  adRevenue: number;
+}
+
+export interface MonthlyReport {
+  marketplace: string;
+  /** Месяцы по порядку — ими подписаны колонки. */
+  months: string[];
+  adByMonth: Record<string, MonthlyAd>;
+  sizes: { width: number; byMonth: Record<string, MonthlySizeCell> }[];
+}
+
+/**
+ * Помесячная динамика по размерам: не упал ли спрос.
+ *
+ * По одной цифре за 30 дней этого не увидеть. Смотреть надо пару
+ * «выручка + ДРР»: если выручка падает, а ДРР растёт — размер теряет спрос,
+ * и реклама его больше не вытягивает.
+ */
+export const fetchMonthlyReport = async (
+  marketplace: string,
+  months = 6,
+): Promise<MonthlyReport> => {
+  const res = await fetch(
+    `${UNIT_ECONOMICS_URL}?action=monthly&marketplace=${marketplace}&months=${months}`,
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить отчёт по месяцам');
+  return data;
+};
+
 export const fetchCompare = async (): Promise<CompareRow[]> => {
   const res = await fetch(`${UNIT_ECONOMICS_URL}?action=compare`);
   const data = await res.json();

@@ -122,6 +122,12 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
 
     spend = 0.0
     revenue = 0.0
+    # Расход и оборот ПО МЕСЯЦАМ: {'2026-06-01': [расход, оборот]}.
+    #
+    # Общая цифра за 30 дней отвечает на вопрос «сколько сейчас», а помесячная —
+    # на вопрос «куда движемся». Второй важнее: по одному числу нельзя понять,
+    # реклама подорожала или спрос упал.
+    by_month = {}
     # Транзакции приходят страницами по 1000 — за месяц их бывает несколько.
     for page in range(1, 6):
         st, d = _http(
@@ -141,9 +147,17 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
             name = (o.get('operation_type_name') or '')
             amount = float(o.get('amount') or 0)
             low = name.lower()
+            # Месяц операции: по нему копим историю.
+            op_date = (o.get('operation_date') or '')[:10]
+            mkey = (op_date[:7] + '-01') if len(op_date) >= 7 else None
+            if mkey and mkey not in by_month:
+                by_month[mkey] = [0.0, 0.0]
+
             # Всё, что относится к продвижению: клики, бустинг, баннеры.
             if 'клик' in low or 'продвижен' in low or 'реклам' in low:
                 spend += abs(amount)
+                if mkey:
+                    by_month[mkey][0] += abs(amount)
             elif 'Доставка покупателю' in name:
                 # Выручка — это accruals_for_sale, СТОИМОСТЬ ТОВАРА по чеку.
                 #
@@ -156,7 +170,10 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
                 #
                 # ДРР во всех кабинетах считают от ОБОРОТА, а не от того, что
                 # осталось после вычетов, — иначе показатели несопоставимы.
-                revenue += float(o.get('accruals_for_sale') or 0)
+                sale = float(o.get('accruals_for_sale') or 0)
+                revenue += sale
+                if mkey:
+                    by_month[mkey][1] += sale
             # Возвраты из оборота НЕ вычитаем — намеренно.
             #
             # ДРР в кабинете OZON считается от ВАЛОВОГО оборота: сколько товара
@@ -177,9 +194,41 @@ def _sync_ozon(cur, creds, date_from=None, date_to=None, dry_run=False):
         return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
                 'percent': pct, 'byItem': 0, 'from': str(since), 'to': str(today)}
 
+    # Складываем историю по месяцам.
+    #
+    # Пишем ТОЛЬКО те месяцы, которые попали в запрошенный период ЦЕЛИКОМ.
+    # Обычный запуск берёт скользящие 30 дней (например, 23 июля — 22 августа):
+    # операций июля там всего девять дней. Записав их как «весь июль», мы
+    # затрём полные данные месяца огрызком — именно так и случилось при первой
+    # проверке: 11,54% превратились в 9,38%.
+    #
+    # Текущий месяц — исключение: он ещё идёт, и его цифра законно неполная.
+    # Она обновляется при каждом запуске и застынет сама, когда месяц закончится.
+    this_month = datetime.now(timezone.utc).date().replace(day=1)
+    for mkey, (m_spend, m_rev) in by_month.items():
+        if m_rev <= 0 and m_spend <= 0:
+            continue
+        m_start = datetime.strptime(mkey, '%Y-%m-%d').date()
+        # Последний день месяца: прибавляем 4 дня к 28-му и откатываемся к 1-му.
+        m_end = (m_start.replace(day=28) + timedelta(days=4)).replace(day=1) \
+            - timedelta(days=1)
+        covered = since <= m_start and today >= m_end
+        if not covered and m_start != this_month:
+            continue
+        m_pct = round(m_spend / m_rev * 100, 2) if m_rev > 0 else None
+        cur.execute(
+            "INSERT INTO marketplace_ad_monthly (marketplace_code, month, "
+            "  ad_spend, revenue, ad_percent, calculated_at) "
+            "VALUES ('ozon', %s, %s, %s, %s, now()) "
+            "ON CONFLICT (marketplace_code, month) DO UPDATE SET "
+            "  ad_spend = EXCLUDED.ad_spend, revenue = EXCLUDED.revenue, "
+            "  ad_percent = EXCLUDED.ad_percent, calculated_at = now()",
+            (mkey, round(m_spend, 2), round(m_rev, 2), m_pct),
+        )
+
     pct = _save_total(cur, 'ozon', spend, revenue)
     return {'ok': True, 'spend': round(spend, 2), 'revenue': round(revenue, 2),
-            'percent': pct, 'byItem': 0}
+            'percent': pct, 'byItem': 0, 'months': len(by_month)}
 
 
 def _wb_nm_map(cur):
