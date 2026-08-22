@@ -94,6 +94,16 @@ export interface EconomicsRow {
   actualPriceCount?: number;
   /** Сколько размеров внутри группы убыточны: среднее их прячет. */
   lossHeights?: number;
+  /** Ходовой размер — тот, что делает оборот. По нему и решают о цене. */
+  topHeight?: {
+    height: number;
+    soldUnits: number;
+    price: number | null;
+    profit: number | null;
+    margin: number | null;
+  } | null;
+  /** Сколько вещей этой группы продано за месяц. */
+  soldUnits?: number;
   /** Из них ушли в минус ИЗ-ЗА РЕКЛАМЫ — без неё были бы прибыльны. */
   lossFromPromo?: number;
   /** Размеры, посчитанные по общему тарифу логистики: цифра приблизительная. */

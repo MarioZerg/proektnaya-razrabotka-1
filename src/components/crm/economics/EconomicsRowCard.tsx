@@ -48,7 +48,25 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
         <div className="min-w-0">
           <p className="text-base font-bold leading-tight">
             {row.material} · {row.width} см
+            {/* Ходовая высота. Без неё в шапке только ширина, а какая из
+                шестнадцати высот делает оборот — непонятно. Решение о цене
+                принимают именно по ней. */}
+            {row.topHeight && (
+              <span className="text-primary"> × {row.topHeight.height} см</span>
+            )}
           </p>
+          {row.topHeight && (
+            <p className="text-xs font-medium text-primary">
+              ходовой размер · {row.topHeight.soldUnits} шт за месяц
+              {row.topHeight.profit != null && (
+                <>
+                  {' · '}
+                  {row.topHeight.profit > 0 ? '+' : ''}
+                  {money(row.topHeight.profit)} ₽ с вещи
+                </>
+              )}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             {row.productsCount} размеров по высоте
             {/* Логистика внутри группы разная: объём зависит от высоты.

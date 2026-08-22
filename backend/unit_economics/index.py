@@ -1281,6 +1281,27 @@ def _prices_by_item(cur, code):
 AD_PERCENT_CAP = 40.0
 
 
+def _sold_by_item(cur, marketplace, days=30):
+    """Сколько каждого товара продано за период — чтобы знать ходовой размер.
+
+    В карточке группа «ткань + ширина» объединяет до шестнадцати высот, и по
+    средней цене непонятно, какая из них основная. А решение о цене принимают
+    именно по ходовой: она делает оборот.
+    """
+    mp_orders = {
+        'ozon': 'OZON', 'wildberries': 'WB', 'yandex_market': 'Yandex',
+    }.get(marketplace, marketplace.upper())
+    cur.execute(
+        "SELECT marketplace_item_id, count(*) FROM orders "
+        "WHERE marketplace = %s AND cancelled_at IS NULL "
+        "  AND marketplace_item_id IS NOT NULL "
+        "  AND created_at >= now() - (%s || ' days')::interval "
+        "GROUP BY marketplace_item_id",
+        (mp_orders, days),
+    )
+    return {r[0]: int(r[1]) for r in cur.fetchall()}
+
+
 def _ad_percents(cur, marketplace):
     """Фактическая доля рекламы по каждому товару, %.
 
@@ -1543,6 +1564,7 @@ def _build(cur, code, scheme, buyout_override, shared=None):
 
     # Фактическая реклама по товарам этой площадки.
     ad_percents = _ad_percents(cur, code)
+    sold_by_item = _sold_by_item(cur, code)
 
     rows = []
     for (material, width), g in sorted(groups.items(), key=lambda x: (x[0][0] or '', x[0][1] or 0)):
@@ -1573,6 +1595,8 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             )
             heights.append({
                 'itemId': i['id'], 'height': i['height'], 'name': i['name'],
+                # Сколько продано за месяц: по этой цифре видно ходовой размер.
+                'soldUnits': sold_by_item.get(i['id'], 0),
                 'sku': i['sku'], 'source': i['source'],
                 'discountPercent': i['discountPercent'],
                 'priceIsActual': i['priceIsActual'],
@@ -1642,6 +1666,29 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             # Сколько размеров посчитаны по общему тарифу логистики.
             # Из-за чего размеры ушли в минус: если у убыточных есть реклама,
             # а у прибыльных её нет — дело в ней, а не в цене или логистике.
+            # ХОДОВОЙ РАЗМЕР — тот, что реально делает оборот.
+            #
+            # В группе до шестнадцати высот, и по средней цене непонятно, какая
+            # из них основная. Решение о цене принимают по ходовой: если она
+            # убыточна, страдает вся группа, а если убыточна редкая высота —
+            # это мелочь.
+            'topHeight': (
+                lambda best: {
+                    'height': best['height'],
+                    'soldUnits': best['soldUnits'],
+                    'price': (best.get('unit') or {}).get('price'),
+                    'profit': (best.get('unit') or {}).get('profit'),
+                    'margin': (best.get('unit') or {}).get('margin'),
+                } if best else None
+            )(max(
+                [h for h in heights if (h.get('unit') or {}).get('price')],
+                key=lambda h: (h.get('soldUnits') or 0),
+                default=None,
+            ) if any(
+                (h.get('soldUnits') or 0) > 0 for h in heights
+            ) else None),
+            # Сколько всего вещей этой группы продано за месяц.
+            'soldUnits': sum(h.get('soldUnits') or 0 for h in heights),
             'lossFromPromo': sum(
                 1 for h in heights
                 if (h.get('unit') or {}).get('price')

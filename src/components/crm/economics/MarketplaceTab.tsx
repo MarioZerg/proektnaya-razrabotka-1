@@ -16,6 +16,13 @@ import {
   type Scheme,
 } from '@/lib/unitEconomicsApi';
 import EconomicsRowCard from './EconomicsRowCard';
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  CarouselNext,
+  CarouselPrevious,
+} from '@/components/ui/carousel';
 import TariffsPanel from './TariffsPanel';
 import MonthlySizesReport from './MonthlySizesReport';
 import PlatformFeesPanel from './PlatformFeesPanel';
@@ -300,16 +307,34 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-          {visible.map((r) => (
-            <EconomicsRowCard
-              key={`${r.material}-${r.width}`}
-              row={r}
-              scheme={scheme}
-              altScheme={data?.altScheme}
-            />
-          ))}
-        </div>
+        <>
+          {/* Карточки листаем, а не вываливаем списком.
+              Сочетаний под шестьдесят, и каждое с полным расчётом — страница
+              выходила на десятки экранов, и сравнить соседние позиции было
+              невозможно. Листание держит в поле зрения одну-две карточки. */}
+          <Carousel opts={{ align: 'start' }} className="w-full">
+            <CarouselContent className="-ml-3">
+              {visible.map((r) => (
+                <CarouselItem
+                  key={`${r.material}-${r.width}`}
+                  className="pl-3 md:basis-1/2 2xl:basis-1/3"
+                >
+                  <EconomicsRowCard
+                    row={r}
+                    scheme={scheme}
+                    altScheme={data?.altScheme}
+                  />
+                </CarouselItem>
+              ))}
+            </CarouselContent>
+            {/* Стрелки внутри рамки: за её пределами они наезжают на меню. */}
+            <CarouselPrevious className="left-1" />
+            <CarouselNext className="right-1" />
+          </Carousel>
+          <p className="text-center text-xs text-muted-foreground">
+            {visible.length} карточек · листайте стрелками или свайпом
+          </p>
+        </>
       )}
 
       {data && priced.length > 0 && (
