@@ -35,6 +35,8 @@ export interface UnitCalc {
   tax: number;
   /** НДС, который сидит внутри цены покупателя. */
   vat: number;
+  /** Ставка НДС, % — нужна, чтобы показать формулу расчёта. */
+  vatPercent: number;
   /** Выручка без НДС — база для налога УСН. */
   revenueNet: number;
   profit: number;

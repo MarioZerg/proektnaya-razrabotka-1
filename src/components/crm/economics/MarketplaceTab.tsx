@@ -282,7 +282,15 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
         <p className="text-xs text-muted-foreground">
           Расчёт от суммы, которую платит покупатель · налог УСН
           {' '}{data.settings.taxPercent}%
-          {data.settings.vatPercent > 0 && <> · НДС {data.settings.vatPercent}% в цене</>}
+          {/* Про НДС говорим отдельно: его считают не от цены, а вынимают
+              из неё, и без пояснения цифра выглядит неверной. */}
+          {data.settings.vatPercent > 0 && (
+            <>
+              {' '}· НДС {data.settings.vatPercent}% <b>внутри</b> цены, не сверху:
+              из {100 + data.settings.vatPercent} ₽ цены налог —
+              {' '}{data.settings.vatPercent} ₽
+            </>
+          )}
           {' '}· комиссия и логистика — из кабинета {MARKETPLACE_LABELS[code]} ·
           себестоимость — из раздела «Себестоимость товаров»
         </p>

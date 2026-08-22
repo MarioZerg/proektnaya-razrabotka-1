@@ -147,10 +147,20 @@ const EconomicsRowCard = ({ row }: { row: EconomicsRow }) => {
           <span className="font-medium">−{money(u.productionCost)} ₽</span>
         </div>
         {/* НДС показываем отдельно от УСН: это разные налоги с разной базой,
-            и владельцу важно видеть, сколько забирает каждый. */}
+            и владельцу важно видеть, сколько забирает каждый.
+            
+            Рядом со ставкой пишем саму формулу. Без неё цифра выглядит
+            ошибочной: 5% от 3225 ₽ — это 161 ₽, а в расчёте 154 ₽. Причина
+            в том, что НДС уже сидит ВНУТРИ цены и вынимается из неё, а не
+            начисляется сверху. */}
         {u.vat > 0 && (
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>НДС в цене</span>
+            <span>
+              НДС {u.vatPercent}% в цене
+              <span className="ml-1 text-[11px]">
+                ({money(u.price)} × {u.vatPercent} ÷ {100 + u.vatPercent})
+              </span>
+            </span>
             <span>−{money(u.vat)} ₽</span>
           </div>
         )}

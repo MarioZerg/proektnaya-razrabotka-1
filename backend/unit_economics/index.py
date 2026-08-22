@@ -1383,6 +1383,8 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
         'productionCost': production,
         'tax': tax,
         'vat': vat,
+        # Ставка НДС — нужна карточке, чтобы показать формулу расчёта.
+        'vatPercent': vat_percent,
         # Выручка без НДС — именно с неё считается налог УСН.
         'revenueNet': revenue_net,
         'profit': profit,
