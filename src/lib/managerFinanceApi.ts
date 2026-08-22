@@ -32,6 +32,8 @@ export interface ManagerAccrual {
   payableBase: number | null;
   /** Когда деньги за период дошли до расчётного счёта. */
   paidOutAt: string | null;
+  /** Сколько в базе пришло компенсациями площадки. */
+  compensation: number;
 }
 
 export interface ManagerBalance {

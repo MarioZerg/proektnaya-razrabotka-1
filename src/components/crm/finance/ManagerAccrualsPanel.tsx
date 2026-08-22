@@ -179,6 +179,15 @@ const ManagerAccrualsPanel = ({ userId }: { userId: number }) => {
                     {/* Убыточные продажи вычитаются из базы. Сказать об этом
                         надо явно: иначе процент от суммы на счёте не сходится,
                         и человек считает расчёт ошибочным. */}
+                    {/* Компенсации площадки — тоже выручка, и процент с них
+                        начисляется. Показываем отдельно: иначе непонятно,
+                        почему база больше суммы обычных продаж. */}
+                    {a.compensation > 0 && (
+                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-emerald-700">
+                        <Icon name="Gift" size={12} className="shrink-0" />
+                        из них {money(a.compensation)} ₽ — компенсации площадки
+                      </p>
+                    )}
                     {a.lossUnits > 0 && (
                       <p className="mt-0.5 flex items-center gap-1.5 text-xs text-amber-700">
                         <Icon name="TrendingDown" size={12} className="shrink-0" />

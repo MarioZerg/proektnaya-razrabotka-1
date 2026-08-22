@@ -79,7 +79,7 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
   <table style="width:100%;margin-top:12px;font-size:15px;border-collapse:collapse;">
     <tr style="background:#f4f4f4;">
       <td style="padding:11px 12px;">
-        Перечислено на расчётный счёт за период<br />
+        Поступило на расчётный счёт за период<br />
         <span style="font-size:12px;color:#666;">
           (за вычетом отмен и возвратов — их удержала площадка)
         </span>
@@ -88,6 +88,18 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
         ${money(a.baseAmount)} ₽
       </td>
     </tr>
+    ${a.compensation > 0 ? `
+    <tr>
+      <td style="padding:11px 12px;">
+        В том числе компенсации площадки<br />
+        <span style="font-size:12px;color:#666;">
+          возмещения за утерю, порчу и брак, выкупы площадкой
+        </span>
+      </td>
+      <td style="padding:11px 12px;text-align:right;">
+        ${money(a.compensation)} ₽
+      </td>
+    </tr>` : ''}
     <tr>
       <td style="padding:11px 12px;">Продано товаров</td>
       <td style="padding:11px 12px;text-align:right;">${a.units} шт</td>
@@ -150,9 +162,10 @@ const buildHtml = (a: ManagerAccrual, employeeName: string) => {
 
   <div style="margin-top:36px;padding:16px;background:#f8f8f8;font-size:13px;
               color:#444;line-height:1.6;">
-    Вознаграждение начисляется с суммы, фактически перечисленной площадкой
-    на расчётный счёт за отчётную неделю. Комиссия площадки, логистика и услуги
-    в базу расчёта не входят.<br />
+    Вознаграждение начисляется с суммы, фактически поступившей от площадки
+    на расчётный счёт за отчётную неделю, включая компенсации и выкупы
+    площадкой. Комиссия площадки, логистика и услуги в базу расчёта
+    не входят.<br />
     Отмены и возвраты покупателей площадка удерживает сама: они уменьшают
     сумму к перечислению того отчёта, в который попали. Вознаграждение
     считается уже с этой, итоговой суммы.<br />

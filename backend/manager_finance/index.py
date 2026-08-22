@@ -100,7 +100,7 @@ def _accrue(cur):
 
     cur.execute(
         "SELECT id, period_start, period_end, transferred_amount, "
-        "       withdrawn_amount "
+        "       withdrawn_amount, compensation_amount "
         "FROM marketplace_payouts "
         "WHERE marketplace_code = 'ozon' "
         "  AND transferred_amount > 0 "
@@ -114,8 +114,12 @@ def _accrue(cur):
     rows = cur.fetchall()
 
     created = 0
-    for payout_id, p_from, p_to, transferred, withdrawn in rows:
-        base = float(transferred or 0)
+    for payout_id, p_from, p_to, transferred, withdrawn, compensation in rows:
+        # Компенсации площадки — тоже выручка: возмещения за утерянный,
+        # испорченный или бракованный товар и выкупы невозвратных позиций.
+        # Деньги приходят на счёт, значит входят в базу вознаграждения.
+        comp = float(compensation or 0)
+        base = float(transferred or 0) + comp
         if base <= 0:
             continue
 
@@ -140,7 +144,11 @@ def _accrue(cur):
         loss = _loss_share(p_from, p_to) if st.get('skipLossItems') else {
             'lossUnits': 0, 'share': 0.0,
         }
-        loss_amount = round(base * loss['share'], 2)
+        # Долю убыточных считаем от ПРОДАЖ, без компенсаций: компенсация —
+        # это возмещение за конкретный испорченный товар, к прибыльности
+        # ассортимента она отношения не имеет. Применив долю ко всей базе,
+        # мы бы срезали часть возмещения ни за что.
+        loss_amount = round(float(transferred or 0) * loss['share'], 2)
         payable = round(base - loss_amount, 2)
 
         amount = round(payable * st['percent'] / 100.0, 2)
@@ -170,14 +178,14 @@ def _accrue(cur):
             "INSERT INTO manager_accruals (user_id, payout_id, period_start, "
             "  period_end, units, base_amount, percent, amount, per_unit, "
             "  status, hold_until, confirmed_at, "
-            "  loss_units, loss_amount, payable_base) "
+            "  loss_units, loss_amount, payable_base, compensation_amount) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-            "        CASE WHEN %s = 'confirmed' THEN now() END, %s, %s, %s) "
+            "        CASE WHEN %s = 'confirmed' THEN now() END, %s, %s, %s, %s) "
             "ON CONFLICT (user_id, marketplace_code, period_start, period_end) "
             "DO NOTHING",
             (st['userId'], payout_id, p_from, p_to, units, base,
              st['percent'], amount, per_unit, status, hold_until, status,
-             loss['lossUnits'], loss_amount, payable),
+             loss['lossUnits'], loss_amount, payable, comp),
         )
         created += 1
 
@@ -249,7 +257,8 @@ def _balance(cur, user_id):
         "SELECT id, period_start, period_end, units, base_amount, percent, "
         "  amount, per_unit, status, hold_until, returned_units, "
         "  returned_amount, cancel_reason, confirmed_at, "
-        "  loss_units, loss_amount, payable_base, paid_out_at "
+        "  loss_units, loss_amount, payable_base, paid_out_at, "
+        "  compensation_amount "
         "FROM manager_accruals WHERE user_id = %s "
         "ORDER BY period_start DESC LIMIT 40",
         (int(user_id),),
@@ -283,6 +292,8 @@ def _balance(cur, user_id):
             'payableBase': float(r[16]) if r[16] is not None else None,
             # Когда деньги за период дошли до расчётного счёта.
             'paidOutAt': str(r[17]) if r[17] else None,
+            # Сколько в базе пришло компенсациями площадки.
+            'compensation': float(r[18] or 0),
         })
 
     st = _settings(cur)

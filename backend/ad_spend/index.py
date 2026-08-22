@@ -162,6 +162,108 @@ def _is_fee(name):
     return not any(skip in low for skip in FEE_SKIP)
 
 
+# Типы операций, которыми площадка ВОЗМЕЩАЕТ продавцу деньги.
+#
+# Это выручка: компенсация за утерянный, испорченный или бракованный товар,
+# выкуп площадкой невозвратных позиций. Деньги приходят на расчётный счёт,
+# поэтому входят в базу вознаграждения менеджера наравне с продажами.
+#
+# Сверено со списком операций за июнь–август: сейчас таких начислений не было,
+# но правило заводим заранее — компенсации приходят нерегулярно, и пропустить
+# первую же выплату означало бы недоплатить человеку.
+COMPENSATION_MARKERS = (
+    'компенсац',      # компенсация за товар, за брак, за утерю
+    'возмещен',       # возмещение ущерба
+    'выкуп',          # выкуп товара площадкой
+    'утер',           # компенсация за утерянный товар
+)
+# Слова, по которым операция компенсацией НЕ является, даже если совпала выше.
+# «Декомпенсации и возвращение товаров на сток» — это удержание, а не выплата.
+COMPENSATION_EXCLUDE = ('декомпенс',)
+
+
+def _is_compensation(name):
+    """Компенсация ли это — по названию операции."""
+    low = (name or '').lower()
+    if any(x in low for x in COMPENSATION_EXCLUDE):
+        return False
+    return any(x in low for x in COMPENSATION_MARKERS)
+
+
+def _sync_compensations(cur, creds, date_from, date_to):
+    """Собирает компенсации площадки и раскладывает их по неделям выплат.
+
+    В недельном отчёте компенсации растворены внутри общих статей — отделить
+    их там невозможно. Зато в списке операций каждая видна отдельной строкой
+    со своей датой, по ней и определяем неделю.
+
+    Учитываем только ПОЛОЖИТЕЛЬНЫЕ суммы: одноимённые удержания (например,
+    декомпенсации) выручкой не являются и в базу вознаграждения не входят.
+    """
+    headers = {'Client-Id': (creds.get('clientId') or '').strip(),
+               'Api-Key': (creds.get('apiKey') or '').strip()}
+
+    by_date = {}
+    for page in range(1, 12):
+        st, d = _http(
+            f'{OZON_API}/v3/finance/transaction/list', 'POST', headers,
+            {'filter': {'date': {'from': f'{date_from}T00:00:00.000Z',
+                                 'to': f'{date_to}T23:59:59.000Z'},
+                        'operation_type': [], 'posting_number': '',
+                        'transaction_type': 'all'},
+             'page': page, 'page_size': 1000},
+            timeout=30,
+        )
+        if not isinstance(d, dict):
+            break
+        items = ((d.get('result') or {}).get('operations')) or []
+        if not items:
+            break
+        for op in items:
+            name = op.get('operation_type_name') or op.get('operation_type')
+            amount = float(op.get('amount') or 0)
+            if amount <= 0 or not _is_compensation(name):
+                continue
+            day = (op.get('operation_date') or '')[:10]
+            if day:
+                by_date[day] = by_date.get(day, 0.0) + amount
+        if len(items) < 1000:
+            break
+
+    if not by_date:
+        return 0
+
+    # Раскладываем по неделям выплат. Сначала складываем суммы одной недели
+    # вместе: за неделю компенсаций может быть несколько, и записывать их
+    # поштучно нельзя — каждая следующая затирала бы предыдущую.
+    cur.execute(
+        "SELECT period_start, period_end FROM marketplace_payouts "
+        "WHERE marketplace_code = 'ozon' AND period_end >= %s "
+        "  AND period_start <= %s",
+        (date_from, date_to),
+    )
+    periods = cur.fetchall()
+
+    by_period = {}
+    for day, amount in by_date.items():
+        for p_from, p_to in periods:
+            if str(p_from) <= day <= str(p_to):
+                key = (p_from, p_to)
+                by_period[key] = by_period.get(key, 0.0) + amount
+                break
+
+    updated = 0
+    for (p_from, p_to), amount in by_period.items():
+        cur.execute(
+            "UPDATE marketplace_payouts SET compensation_amount = %s "
+            "WHERE marketplace_code = 'ozon' "
+            "  AND period_start = %s AND period_end = %s",
+            (round(amount, 2), p_from, p_to),
+        )
+        updated += cur.rowcount
+    return updated
+
+
 def _sync_payouts(cur, creds, months=6):
     """Отчёты OZON о выплатах: сколько начислено и сколько реально пришло.
 
@@ -964,8 +1066,20 @@ def handler(event: dict, context) -> dict:
             if not enabled:
                 return _resp(400, {'error': 'Интеграция OZON не подключена'})
             saved = _sync_payouts(cur, creds, int(body_data.get('months') or 6))
+            # Компенсации собираем следом: периоды выплат к этому моменту уже
+            # сохранены, и есть куда раскладывать операции по неделям.
+            comp = 0
+            try:
+                today = datetime.now(timezone.utc).date()
+                comp = _sync_compensations(
+                    cur, creds, str(today - timedelta(days=90)), str(today)
+                )
+            except Exception:
+                # Сбой сбора компенсаций не должен ронять синхронизацию выплат:
+                # без них отчёт неполный, без выплат — пустой.
+                pass
             conn.commit()
-            return _resp(200, {'ok': True, 'periods': saved})
+            return _resp(200, {'ok': True, 'periods': saved, 'compensations': comp})
 
         if action == 'sync_nm_ids':
             creds, enabled = _credentials(cur, 'wildberries')
