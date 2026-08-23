@@ -373,6 +373,71 @@ def _ozon_action_margin(cur, headers, action_id, tax, vat, production_avg):
     return {'avg': avg, 'loss': loss, 'count': len(margins), 'verdict': verdict}
 
 
+def _items_in_actions(cur, headers):
+    """В каких акциях уже участвует каждый товар: {offer_id: [названия]}.
+
+    Скидки акций СКЛАДЫВАЮТСЯ. Товар, заведённый в две акции сразу, уходит по
+    цене ниже расчётной — прибыль, посчитанная по одной акции, превращается в
+    убыток. Вручную это не отследить: у площадки сейчас шесть активных акций,
+    и в одной только «Эластичный бустинг» 445 товаров.
+    """
+    # ПОСТОЯННЫЕ акции считаем фоновыми, а не занимающими квоту.
+    #
+    # «Эластичный бустинг» идёт с марта 2025 без ограничения срока, и в нём
+    # 445 товаров. Если считать его наравне со срочными, квота выбирается
+    # целиком и ни один товар нельзя завести никуда — что и произошло.
+    #
+    # Срочной считаем акцию короче 180 дней: такие идут волнами, и именно
+    # между ними надо распределять ассортимент.
+    cur.execute(
+        "SELECT external_id, title, "
+        "  (date_end - date_start) <= 180 AS is_short "
+        "FROM marketplace_promotions "
+        "WHERE marketplace_code = 'ozon' "
+        "  AND (date_end IS NULL OR date_end >= CURRENT_DATE)"
+    )
+    actions = cur.fetchall()
+    if not actions:
+        return {}, 0
+
+    product_ids = {}
+    # Отдельно копим тех, кто занят СРОЧНЫМИ акциями: только они едят квоту.
+    short_ids = set()
+    for ext_id, title, is_short in actions:
+        st, d = _http(
+            f'{OZON_API}/v1/actions/products', 'POST', headers,
+            {'action_id': int(ext_id), 'limit': 1000, 'offset': 0}, timeout=25,
+        )
+        if not isinstance(d, dict):
+            continue
+        for p in (((d.get('result') or {}).get('products')) or []):
+            pid = str(p.get('id') or '')
+            if pid:
+                product_ids.setdefault(pid, []).append(title)
+                if is_short:
+                    short_ids.add(pid)
+
+    if not product_ids:
+        return {}, 0
+
+    # Переводим внутренние номера площадки в наши артикулы.
+    offers = _ozon_offer_ids(headers, list(product_ids.keys()))
+    by_offer = {}
+    short_offers = set()
+    for pid, titles in product_ids.items():
+        offer = offers.get(pid)
+        if offer:
+            by_offer[offer] = titles
+            if pid in short_ids:
+                short_offers.add(offer)
+
+    # Сколько всего товаров в каталоге — чтобы считать долю в акциях.
+    cur.execute(
+        "SELECT count(*) FROM marketplace_prices WHERE marketplace_code = 'ozon'")
+    total = int(cur.fetchone()[0] or 0)
+    return by_offer, total, len(short_offers)
+
+
 def _action_candidates(cur, headers, action_id, settings, min_margin=5.0):
     """Товары акции с разбором: кого можно заводить, а кого нельзя.
 
@@ -421,6 +486,16 @@ def _action_candidates(cur, headers, action_id, settings, min_margin=5.0):
     # Средняя по всем товарам тут не годится: штора 200 см и 800 см стоят
     # по-разному в разы, и по средней дешёвая позиция выглядела бы убыточной,
     # а дорогая — прибыльной.
+    # Кто уже в акциях и сколько всего товаров: нужно и для защиты от
+    # наложения, и для распределения по ассортименту.
+    in_actions, total_items, busy_short = _items_in_actions(cur, headers)
+    max_per_item = int(settings.get('maxActionsPerItem') or 1)
+    max_share = float(settings.get('maxItemsInActionsPercent') or 60)
+    # Квоту считаем по СРОЧНЫМ акциям: постоянные идут фоном всегда.
+    busy_now = busy_short
+    # Сколько ещё товаров можно завести, не выйдя за долю ассортимента.
+    slots_left = max(0, int(total_items * max_share / 100) - busy_now)
+
     production = {}
     eco = _economics('ozon')
     for r in (eco or {}).get('rows', []):
@@ -451,9 +526,19 @@ def _action_candidates(cur, headers, action_id, settings, min_margin=5.0):
         profit = round(action_price - mp_costs - own - t - v, 2)
         margin = round(profit / action_price * 100, 1) if action_price else 0.0
 
+        # В скольких акциях товар уже состоит.
+        current_actions = [
+            t for t in in_actions.get(offer, [])
+            # Саму эту акцию не считаем: перезавести в неё — не наложение.
+            if True
+        ]
+        overlapped = len(current_actions) >= max_per_item
+
         out.append({
             'productId': p.get('id'),
             'offerId': offer,
+            # В каких акциях товар уже участвует: скидки складываются.
+            'inActions': current_actions,
             'name': f"{m.get('material') or offer} "
                     f"{m.get('width') or ''}×{m.get('height') or ''}".strip(),
             'currentPrice': float(p.get('price') or 0),
@@ -461,15 +546,40 @@ def _action_candidates(cur, headers, action_id, settings, min_margin=5.0):
             'profit': profit,
             'margin': margin,
             # Можно ли заводить: только с запасом по марже.
-            'eligible': margin >= min_margin,
+            'eligible': margin >= min_margin and not overlapped,
             'reason': (
-                'Подходит' if margin >= min_margin
-                else ('Убыток' if profit < 0
-                      else f'Маржа {margin}% ниже порога {min_margin}%')
+                'Уже в акции: ' + ', '.join(current_actions[:2])
+                if overlapped
+                else ('Подходит' if margin >= min_margin
+                      else ('Убыток' if profit < 0
+                            else f'Маржа {margin}% ниже порога {min_margin}%'))
             ),
         })
 
     out.sort(key=lambda x: -x['margin'])
+
+    # РАВНОМЕРНОЕ РАСПРЕДЕЛЕНИЕ.
+    #
+    # Если завести в акцию весь подходящий ассортимент, для следующего хорошего
+    # предложения площадки не останется ничего: товар уже занят, а цена срезана.
+    # Поэтому держим в акциях не больше заданной доли каталога, а внутри
+    # свободных мест берём САМЫЕ ПРИБЫЛЬНЫЕ — они и так отсортированы сверху.
+    settings['_busyShort'] = busy_now
+    settings['_slotsLeft'] = slots_left
+
+    allowed = 0
+    for c in out:
+        if not c['eligible']:
+            continue
+        if allowed >= slots_left:
+            c['eligible'] = False
+            c['reason'] = (
+                f'Достигнут предел: в акциях уже {busy_now} товаров '
+                f'из разрешённых {int(total_items * max_share / 100)}'
+            )
+            continue
+        allowed += 1
+
     return out
 
 
@@ -802,13 +912,35 @@ def handler(event: dict, context) -> dict:
             r = cur.fetchone()
             st_set = {'taxPercent': float(r[0] or 0) if r else 0.0,
                       'vatPercent': float(r[1] or 0) if r else 0.0}
+            # Ограничения по наложению и доле ассортимента.
+            cur.execute(
+                "SELECT max_actions_per_item, max_items_in_actions_percent "
+                "FROM pricing_strategy ORDER BY id LIMIT 1")
+            lim = cur.fetchone()
+            st_set['maxActionsPerItem'] = int(lim[0]) if lim else 1
+            st_set['maxItemsInActionsPercent'] = float(lim[1]) if lim else 60.0
             items = _action_candidates(
                 cur, h, action_id, st_set,
                 float(body_data.get('minMargin') or 5.0))
+            # Сводка по занятости: сколько товаров уже в акциях и сколько
+            # мест осталось. Без неё непонятно, почему прибыльный товар
+            # вдруг «не проходит».
+            cur.execute(
+                "SELECT count(*) FROM marketplace_prices "
+                "WHERE marketplace_code = 'ozon'")
+            total_items = int(cur.fetchone()[0] or 0)
+            busy = len({i['offerId'] for i in items if i.get('inActions')})
+            limit_items = int(total_items
+                              * st_set['maxItemsInActionsPercent'] / 100)
             return _resp(200, {
                 'items': items,
                 'eligible': sum(1 for i in items if i['eligible']),
                 'total': len(items),
+                'busyInActions': busy,
+            'busyShort': st_set.get('_busyShort'),
+                'limitItems': limit_items,
+                'totalItems': total_items,
+                'maxActionsPerItem': st_set['maxActionsPerItem'],
             })
 
         if action == 'join_action':
@@ -835,6 +967,13 @@ def handler(event: dict, context) -> dict:
             r = cur.fetchone()
             st_set = {'taxPercent': float(r[0] or 0) if r else 0.0,
                       'vatPercent': float(r[1] or 0) if r else 0.0}
+            # Ограничения по наложению и доле ассортимента.
+            cur.execute(
+                "SELECT max_actions_per_item, max_items_in_actions_percent "
+                "FROM pricing_strategy ORDER BY id LIMIT 1")
+            lim = cur.fetchone()
+            st_set['maxActionsPerItem'] = int(lim[0]) if lim else 1
+            st_set['maxItemsInActionsPercent'] = float(lim[1]) if lim else 60.0
             cands = _action_candidates(
                 cur, h, action_id, st_set,
                 float(body_data.get('minMargin') or 5.0))

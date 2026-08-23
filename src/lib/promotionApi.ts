@@ -124,6 +124,8 @@ export interface ActionCandidate {
   /** Проходит ли по прибыльности: убыточные заводить нельзя. */
   eligible: boolean;
   reason: string;
+  /** В каких акциях товар уже участвует: скидки складываются. */
+  inActions?: string[];
 }
 
 export const fetchActionCandidates = (
@@ -134,6 +136,12 @@ export const fetchActionCandidates = (
   items: ActionCandidate[];
   eligible: number;
   total: number;
+  /** Сколько товаров занято срочными акциями. */
+  busyShort?: number;
+  /** Предел товаров в акциях и всего в каталоге. */
+  limitItems?: number;
+  totalItems?: number;
+  maxActionsPerItem?: number;
 }> => post({ action: 'action_candidates', actionId, actorId, minMargin });
 
 /** Завести товары в акцию. Убыточные сервер не пропустит. */

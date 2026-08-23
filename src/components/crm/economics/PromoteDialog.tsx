@@ -54,6 +54,12 @@ const PromoteDialog = ({ offerIds, title }: Props) => {
   const [actionId, setActionId] = useState('');
   const [minMargin, setMinMargin] = useState('5');
   const [items, setItems] = useState<ActionCandidate[]>([]);
+  // Сводка по занятости: сколько мест в акциях осталось.
+  const [quota, setQuota] = useState<{
+    busyShort?: number;
+    limitItems?: number;
+    totalItems?: number;
+  }>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -72,7 +78,14 @@ const PromoteDialog = ({ offerIds, title }: Props) => {
     }
     setLoading(true);
     fetchActionCandidates(actionId, user?.id, Number(minMargin) || 0)
-      .then((d) => setItems(d.items))
+      .then((d) => {
+        setItems(d.items);
+        setQuota({
+          busyShort: d.busyShort,
+          limitItems: d.limitItems,
+          totalItems: d.totalItems,
+        });
+      })
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
   }, [actionId, minMargin, user?.id]);
@@ -153,6 +166,17 @@ const PromoteDialog = ({ offerIds, title }: Props) => {
               может просесть ещё и от скидки покупателю
             </p>
           </div>
+
+          {/* Занятость акциями. Без неё непонятно, почему прибыльный товар
+              «не проходит»: место в акциях ограничено намеренно — часть
+              ассортимента бережём для следующих хороших предложений. */}
+          {!loading && !!actionId && quota.limitItems != null && (
+            <p className="rounded-md bg-muted/60 p-2 text-xs text-muted-foreground">
+              В срочных акциях сейчас {quota.busyShort} товаров из{' '}
+              {quota.limitItems} разрешённых (каталог — {quota.totalItems}).
+              Остальное бережём для следующих акций
+            </p>
+          )}
 
           {loading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
