@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import PromoteDialog from './PromoteDialog';
+import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { EconomicsRow } from '@/lib/unitEconomicsApi';
@@ -21,6 +23,9 @@ interface CardProps {
 }
 
 const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
+  const { user } = useAuth();
+  // Заводить в акции может владелец или менеджер: это решение о деньгах.
+  const canPromote = user?.role === 'admin' || user?.role === 'manager';
   const [open, setOpen] = useState(false);
 
   // Высоты с ценой: только по ним есть расчёт.
@@ -127,6 +132,17 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
           </p>
         </div>
         <div className="shrink-0 text-right">
+          {/* Продвижение прямо из карточки: видно прибыль — сразу и решение.
+              Раньше акции жили отдельной страницей, и связать «этот товар
+              убыточен» с «а вот его зовут в акцию» приходилось в голове. */}
+          {canPromote && sizes.length > 0 && (
+            <div className="mb-1 flex justify-end">
+              <PromoteDialog
+                offerIds={sizes.map((h) => h.sku).filter(Boolean) as string[]}
+                title={`${row.material} · ${row.width} см`}
+              />
+            </div>
+          )}
           <p className={`text-2xl font-bold leading-none ${profitColor(u.margin)}`}>
             {u.profit > 0 ? '+' : ''}
             {money(u.profit)} ₽

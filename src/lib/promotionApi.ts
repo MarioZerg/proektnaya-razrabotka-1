@@ -112,6 +112,39 @@ export const fetchPriceHistory = async (itemId: number, actorId?: number) => {
 };
 
 /** Запоминает решение владельца: применил совет или отклонил. */
+/** Товар — кандидат в акцию с готовым расчётом прибыли. */
+export interface ActionCandidate {
+  productId: number;
+  offerId: string;
+  name: string;
+  currentPrice: number;
+  actionPrice: number;
+  profit: number;
+  margin: number;
+  /** Проходит ли по прибыльности: убыточные заводить нельзя. */
+  eligible: boolean;
+  reason: string;
+}
+
+export const fetchActionCandidates = (
+  actionId: number | string,
+  actorId?: number,
+  minMargin = 5,
+): Promise<{
+  items: ActionCandidate[];
+  eligible: number;
+  total: number;
+}> => post({ action: 'action_candidates', actionId, actorId, minMargin });
+
+/** Завести товары в акцию. Убыточные сервер не пропустит. */
+export const joinAction = (payload: {
+  actionId: number | string;
+  offerIds: string[];
+  minMargin?: number;
+  actorId?: number;
+  actorName?: string;
+}) => post({ action: 'join_action', ...payload });
+
 export const decideAdvice = (
   items: Array<Partial<PriceAdvice> & { marketplaceCode: string }>,
   decision: 'applied' | 'skipped',

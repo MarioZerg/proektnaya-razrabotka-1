@@ -373,6 +373,106 @@ def _ozon_action_margin(cur, headers, action_id, tax, vat, production_avg):
     return {'avg': avg, 'loss': loss, 'count': len(margins), 'verdict': verdict}
 
 
+def _action_candidates(cur, headers, action_id, settings, min_margin=5.0):
+    """Товары акции с разбором: кого можно заводить, а кого нельзя.
+
+    Площадка зовёт в акцию списком и называет по каждому товару максимальную
+    цену участия. Считаем по ней настоящую экономику — с комиссией, логистикой,
+    эквайрингом, рекламой, налогом и себестоимостью.
+
+    ГЛАВНОЕ ПРАВИЛО: товар, который в акции уходит в минус, не предлагаем
+    вовсе. Продвижение не стоит того, чтобы продавать себе в убыток, а вручную
+    отследить это в списке на сотни позиций невозможно.
+
+    Порог маржи задаётся: «ноль» значит «лишь бы не в минус», но обычно нужен
+    запас — цена может просесть ещё и от скидки покупателю.
+    """
+    st, data = _http(
+        f'{OZON_API}/v1/actions/candidates', 'POST', headers,
+        {'action_id': int(action_id), 'limit': 1000, 'offset': 0}, timeout=30,
+    )
+    if st != 200 or not isinstance(data, dict):
+        return []
+
+    products = ((data.get('result') or {}).get('products')) or []
+    if not products:
+        return []
+
+    tax = float(settings.get('taxPercent') or 0)
+    vat = float(settings.get('vatPercent') or 0)
+    costs = _cost_by_offer(cur)
+    offers = _ozon_offer_ids(
+        headers, [p.get('id') for p in products if p.get('id')])
+
+    # Себестоимость и реклама по нашим артикулам.
+    cur.execute(
+        "SELECT mi.sku, mi.material, mi.width, mi.height "
+        "FROM marketplace_items mi WHERE mi.sku IS NOT NULL")
+    meta = {str(r[0]).strip(): {'material': r[1], 'width': r[2],
+                                'height': r[3]} for r in cur.fetchall()}
+
+    cur.execute(
+        "SELECT mi.sku, a.ad_percent FROM marketplace_ad_spend a "
+        "JOIN marketplace_items mi ON mi.id = a.marketplace_item_id "
+        "WHERE a.marketplace_code = 'ozon' AND a.ad_percent > 0")
+    ads = {str(r[0]).strip(): float(r[1]) for r in cur.fetchall()}
+
+    # Себестоимость по каждой паре «ткань + ширина» — из юнит-экономики.
+    # Средняя по всем товарам тут не годится: штора 200 см и 800 см стоят
+    # по-разному в разы, и по средней дешёвая позиция выглядела бы убыточной,
+    # а дорогая — прибыльной.
+    production = {}
+    eco = _economics('ozon')
+    for r in (eco or {}).get('rows', []):
+        if r.get('cost'):
+            production[(r['material'], float(r['width'] or 0))] = float(
+                r['cost']['productionCost'] or 0)
+
+    out = []
+    for p in products:
+        action_price = float(p.get('max_action_price') or 0)
+        offer = offers.get(str(p.get('id')))
+        if action_price <= 0 or not offer:
+            continue
+        c = costs.get(offer)
+        m = meta.get(offer) or {}
+        own = production.get((m.get('material'), float(m.get('width') or 0)))
+        if not c or own is None:
+            # Без себестоимости судить о прибыли нельзя — такой товар
+            # в акцию не предлагаем.
+            continue
+
+        ad = ads.get(offer, 0.0)
+        mp_costs = (action_price * c['commission'] / 100
+                    + c['logistics'] + c['acquiring']
+                    + action_price * ad / 100)
+        v = action_price * vat / (100 + vat) if vat else 0.0
+        t = (action_price - v) * tax / 100
+        profit = round(action_price - mp_costs - own - t - v, 2)
+        margin = round(profit / action_price * 100, 1) if action_price else 0.0
+
+        out.append({
+            'productId': p.get('id'),
+            'offerId': offer,
+            'name': f"{m.get('material') or offer} "
+                    f"{m.get('width') or ''}×{m.get('height') or ''}".strip(),
+            'currentPrice': float(p.get('price') or 0),
+            'actionPrice': action_price,
+            'profit': profit,
+            'margin': margin,
+            # Можно ли заводить: только с запасом по марже.
+            'eligible': margin >= min_margin,
+            'reason': (
+                'Подходит' if margin >= min_margin
+                else ('Убыток' if profit < 0
+                      else f'Маржа {margin}% ниже порога {min_margin}%')
+            ),
+        })
+
+    out.sort(key=lambda x: -x['margin'])
+    return out
+
+
 def _sync_ozon_promotions(cur, creds):
     """Акции OZON: во что обойдётся участие.
 
@@ -685,6 +785,94 @@ def handler(event: dict, context) -> dict:
 
         if not _is_admin(cur, actor_id):
             return _resp(403, {'error': 'Раздел доступен администратору'})
+
+        if action == 'action_candidates':
+            # Кто из товаров подходит в акцию, а кто уйдёт в минус.
+            creds, enabled = _credentials(cur, 'ozon')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция OZON не подключена'})
+            action_id = body_data.get('actionId')
+            if not action_id:
+                return _resp(400, {'error': 'Укажите actionId'})
+            h = {'Client-Id': (creds.get('clientId') or '').strip(),
+                 'Api-Key': (creds.get('apiKey') or '').strip()}
+            cur.execute(
+                "SELECT tax_percent, vat_percent FROM unit_economics_settings "
+                "ORDER BY id LIMIT 1")
+            r = cur.fetchone()
+            st_set = {'taxPercent': float(r[0] or 0) if r else 0.0,
+                      'vatPercent': float(r[1] or 0) if r else 0.0}
+            items = _action_candidates(
+                cur, h, action_id, st_set,
+                float(body_data.get('minMargin') or 5.0))
+            return _resp(200, {
+                'items': items,
+                'eligible': sum(1 for i in items if i['eligible']),
+                'total': len(items),
+            })
+
+        if action == 'join_action':
+            # Завести товары в акцию.
+            #
+            # Убыточные не пропускаем НИКОГДА: даже если пришли в списке от
+            # интерфейса. Проверку делаем здесь, на сервере, — интерфейс можно
+            # обойти, а деньги теряются настоящие.
+            if not _is_admin(cur, body_data.get('actorId')):
+                return _resp(403, {'error': 'Доступно администратору'})
+            creds, enabled = _credentials(cur, 'ozon')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция OZON не подключена'})
+            action_id = body_data.get('actionId')
+            offers = body_data.get('offerIds') or []
+            if not action_id or not offers:
+                return _resp(400, {'error': 'Укажите акцию и товары'})
+
+            h = {'Client-Id': (creds.get('clientId') or '').strip(),
+                 'Api-Key': (creds.get('apiKey') or '').strip()}
+            cur.execute(
+                "SELECT tax_percent, vat_percent FROM unit_economics_settings "
+                "ORDER BY id LIMIT 1")
+            r = cur.fetchone()
+            st_set = {'taxPercent': float(r[0] or 0) if r else 0.0,
+                      'vatPercent': float(r[1] or 0) if r else 0.0}
+            cands = _action_candidates(
+                cur, h, action_id, st_set,
+                float(body_data.get('minMargin') or 5.0))
+            allowed = {c['offerId']: c for c in cands if c['eligible']}
+
+            picked = [allowed[o] for o in offers if o in allowed]
+            rejected = [o for o in offers if o not in allowed]
+            if not picked:
+                return _resp(409, {
+                    'error': 'Ни один товар не проходит по прибыльности',
+                    'rejected': rejected,
+                })
+
+            st, d = _http(
+                f'{OZON_API}/v1/actions/products/activate', 'POST', h,
+                {'action_id': int(action_id),
+                 'products': [{'product_id': int(c['productId']),
+                               'action_price': c['actionPrice']}
+                              for c in picked]},
+                timeout=30,
+            )
+            if st != 200:
+                return _resp(502, {'error': f'Площадка отказала: {str(d)[:200]}'})
+
+            cur.execute(
+                "INSERT INTO audit_log (user_id, user_name, category, action, "
+                "  entity_type, description) "
+                "VALUES (%s, %s, 'marketplace', 'action_join', 'promotion', %s)",
+                (body_data.get('actorId'), body_data.get('actorName'),
+                 f'Завёл в акцию {action_id}: {len(picked)} товаров, '
+                 f'отклонено по убытку: {len(rejected)}'),
+            )
+            conn.commit()
+            return _resp(200, {
+                'ok': True, 'joined': len(picked),
+                'rejected': rejected,
+                'items': [c['offerId'] for c in picked],
+            })
 
         if action == 'decide':
             # Владелец согласился с советом или отклонил его. Цену на площадке
