@@ -424,8 +424,12 @@ def _fact_pnl(cur, month=None):
     # Услуги площадки и реклама за тот же месяц: в отчёт о реализации они
     # не входят, а деньги забирают.
     cur.execute(
+        # Подписку Premium исключаем: она уже сидит в себестоимости
+        # отдельной статьёй расходов владельца.
         "SELECT coalesce(sum(amount), 0) FROM marketplace_fees_monthly "
-        "WHERE marketplace_code = 'ozon' AND month = %s", (m,))
+        "WHERE marketplace_code = 'ozon' AND month = %s "
+        "  AND fee_name NOT ILIKE '%%Premium%%' "
+        "  AND fee_name NOT ILIKE '%%подписк%%'", (m,))
     fees = float((cur.fetchone() or [0])[0] or 0)
 
     cur.execute(
@@ -814,10 +818,21 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     # площадка делает раз в месяц. По июлю — 422 тысячи.
     #
     # Раскладываем их на выручку периода: расход общий, а не по товарам.
+    # ПОДПИСКУ PREMIUM ИСКЛЮЧАЕМ — она уже в себестоимости.
+    #
+    # Владелец завёл её отдельной статьёй расходов: 50 000 ₽ в месяц
+    # раскладываются на все проданные вещи и входят в себестоимость каждой.
+    # А площадка списывает ту же подписку строкой «Premium Plus» в отчёте об
+    # удержаниях — 24 990 ₽ в месяц.
+    #
+    # Считать оба раза значит вычесть подписку дважды. Оставляем ту, что в
+    # себестоимости: там она разложена по вещам и видна владельцу.
     cur.execute(
         "SELECT coalesce(sum(f.amount), 0) "
         "FROM marketplace_fees_monthly f "
-        "WHERE f.marketplace_code = 'ozon'"
+        "WHERE f.marketplace_code = 'ozon' "
+        "  AND f.fee_name NOT ILIKE '%Premium%' "
+        "  AND f.fee_name NOT ILIKE '%подписк%'"
         + (f" AND f.month >= date_trunc('month', '{d_from}'::date)"
            if d_from else '')
         + (f" AND f.month <= date_trunc('month', '{d_to}'::date)"
