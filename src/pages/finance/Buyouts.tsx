@@ -96,6 +96,17 @@ const Buyouts = () => {
     setPage(1);
   };
 
+  /** Быстрый выбор периода: вводить даты руками ради «за месяц» утомительно. */
+  const setRange = (days: number) => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    setDateFrom(fmt(from));
+    setDateTo(fmt(to));
+    setPage(1);
+  };
+
   const marginCell = (o: BoughtOrder) => {
     if (o.margin === null || o.margin === undefined) {
       return <span className="text-muted-foreground">—</span>;
@@ -197,6 +208,26 @@ const Buyouts = () => {
                 className="h-9 w-[150px]"
               />
             </div>
+            {/* Готовые отрезки: три месяца истории есть, и сравнивать их
+                между собой удобнее в один клик. */}
+            <div className="flex gap-1">
+              {[
+                { label: '7 дней', days: 7 },
+                { label: 'Месяц', days: 30 },
+                { label: '3 месяца', days: 90 },
+              ].map((r) => (
+                <Button
+                  key={r.days}
+                  variant="outline"
+                  size="sm"
+                  className="h-9 text-xs"
+                  onClick={() => setRange(r.days)}
+                >
+                  {r.label}
+                </Button>
+              ))}
+            </div>
+
             {(dateFrom || dateTo) && (
               <Button
                 variant="ghost"

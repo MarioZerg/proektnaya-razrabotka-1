@@ -428,7 +428,10 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     if sch in ('FBO', 'FBS'):
         where += f" AND s.scheme = '{sch}'"
 
-    cur.execute(f"SELECT count(*) FROM marketplace_sales s {where}")
+    # Считаем ВЕЩИ, а не строки: две одинаковые шторы одним заказом лежат
+    # в одной строке с количеством два.
+    cur.execute(
+        f"SELECT COALESCE(sum(s.quantity), 0) FROM marketplace_sales s {where}")
     total = int(cur.fetchone()[0] or 0)
 
     cur.execute(
@@ -470,13 +473,13 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
 
     # ИТОГ ЗА ПЕРИОД — по всему отбору, а не по видимой странице.
     cur.execute(
-        "SELECT s.material, s.width, s.height, s.sale_price "
+        "SELECT s.material, s.width, s.height, s.sale_price, s.quantity "
         f"FROM marketplace_sales s {where}"
     )
     revenue = 0.0
     profit_sum = 0.0
-    for material, width, height, price in cur.fetchall():
-        pr = float(price or 0)
+    for material, width, height, price, qty in cur.fetchall():
+        pr = float(price or 0) * int(qty or 1)
         if not pr:
             continue
         revenue += pr
@@ -486,7 +489,7 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
 
     # Срезы по площадкам и схемам — для переключателей в шапке.
     cur.execute(
-        "SELECT s.marketplace_code, s.scheme, count(*) "
+        "SELECT s.marketplace_code, s.scheme, sum(s.quantity) "
         "FROM marketplace_sales s "
         "WHERE NOT s.is_return AND s.sale_price > 0 "
         + (f" AND s.sold_at >= '{d_from}'::date" if d_from else '')

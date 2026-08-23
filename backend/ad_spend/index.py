@@ -274,12 +274,19 @@ def _wb_week(day):
 
 SELF_URL = 'https://functions.poehali.dev/29442dba-b5a9-4e15-b9ba-5fdc52eef574'
 
+# За сколько дней тянем отчёт о продажах.
+#
+# Месяца мало: по одному месяцу не видно ни сезонности, ни того, как повели
+# себя цены после смены акций. Три месяца дают сравнить периоды между собой
+# и понять, куда движется прибыль.
+SALES_DAYS = 90
+
 # Сколько страниц отчёта разрешено пройти за одну цепочку.
 #
-# Месяц продаж — это около тридцати страниц по тысяче операций. Берём с
-# запасом, но не бесконечно: если что-то пойдёт не так, цепочка оборвётся
-# сама, а не будет ходить к площадке до скончания века.
-MAX_SALES_PAGES = 40
+# Месяц продаж — около тридцати страниц по тысяче операций, три месяца —
+# под сотню. Берём с запасом, но не бесконечно: если что-то пойдёт не так,
+# цепочка оборвётся сама, а не будет ходить к площадке до скончания века.
+MAX_SALES_PAGES = 130
 
 
 def _claim_sales_page(cur, conn, page):
@@ -303,7 +310,7 @@ def _claim_sales_page(cur, conn, page):
         return False
 
 
-def _continue_sales(page, days):
+def _continue_sales(page, days, month_back=0):
     """Просит систему продолжить выгрузку со следующей страницы.
 
     У функции пять секунд, а отчёт за месяц — три десятка страниц. Раньше
@@ -318,7 +325,8 @@ def _continue_sales(page, days):
     req = urllib.request.Request(
         SELF_URL,
         data=json.dumps({'action': 'sync_sales', 'page': page,
-                         'days': days, 'cronSecret': secret}).encode(),
+                         'days': days, 'monthBack': month_back,
+                         'cronSecret': secret}).encode(),
         headers={'Content-Type': 'application/json'},
         method='POST',
     )
@@ -330,7 +338,8 @@ def _continue_sales(page, days):
     return True
 
 
-def _sync_sales(cur, headers, days=60, start_page=1, pages=4):
+def _sync_sales(cur, headers, days=SALES_DAYS, start_page=1, pages=4,
+                month_back=0):
     """Построчные продажи из финансового отчёта OZON: что и когда выкупили.
 
     Заказы в системе — это работа цеха: что сшить и отправить. По ним видно
@@ -343,8 +352,29 @@ def _sync_sales(cur, headers, days=60, start_page=1, pages=4):
     Берём операции «Доставка покупателю» — это и есть факт выкупа, — и
     «Получение возврата»: вещь приехала обратно, деньги вернулись.
     """
+    # ОКНО ЗАПРОСА — НЕ БОЛЬШЕ МЕСЯЦА.
+    #
+    # OZON отдаёт отчёт о продажах только за короткий отрезок: на запрос в
+    # 45 дней он отвечает ошибкой, на 60 и 90 — пустотой без объяснений.
+    # Поэтому три месяца берём тремя окнами по 30 дней, шагая в прошлое:
+    # month_back=0 — последний месяц, 1 — предыдущий, и так далее.
+    # ОКНО — РОВНО ОДИН КАЛЕНДАРНЫЙ МЕСЯЦ.
+    #
+    # OZON отвечает прямо: «too long period, only one month allowed». И это
+    # именно календарный месяц, а не 30 дней: отрезок с 24 июля по 24 августа
+    # он уже считает слишком длинным, потому что тот задевает два месяца.
+    #
+    # Поэтому шагаем по месяцам целиком: month_back=0 — текущий, 1 —
+    # предыдущий, 2 — позапрошлый. Три шага дают три месяца истории.
     today = datetime.now().date()
-    since = today - timedelta(days=days)
+    anchor = today.replace(day=1)
+    for _ in range(month_back):
+        anchor = (anchor - timedelta(days=1)).replace(day=1)
+    since = anchor
+    # Конец месяца: первое число следующего минус день. Для текущего месяца
+    # дальше сегодняшнего дня не заглядываем — там пусто.
+    nxt = (anchor + timedelta(days=32)).replace(day=1)
+    to_date = min(nxt - timedelta(days=1), today)
     saved = 0
 
     # Размеры по артикулу: в отчёте площадки их нет, а в ленте они нужны —
@@ -360,7 +390,7 @@ def _sync_sales(cur, headers, days=60, start_page=1, pages=4):
         st, d = _http(
             f'{OZON_API}/v3/finance/transaction/list', 'POST', headers,
             {'filter': {'date': {'from': f'{since}T00:00:00.000Z',
-                                 'to': f'{today}T23:59:59.000Z'},
+                                 'to': f'{to_date}T23:59:59.000Z'},
                         'operation_type': [], 'transaction_type': 'all'},
              'page': page, 'page_size': 1000},
             timeout=40,
@@ -391,23 +421,38 @@ def _sync_sales(cur, headers, days=60, start_page=1, pages=4):
             accrual = abs(float(o.get('accruals_for_sale') or 0))
             per_item = accrual / len(items) if items else 0
 
+            # Одинаковые вещи в одном отправлении СЧИТАЕМ, а не теряем.
+            #
+            # Покупатель нередко берёт две одинаковые шторы одним заказом. У
+            # них общий номер отправления и один артикул, поэтому в базе они
+            # ложатся в одну строку. Если не сохранить количество, вторая
+            # вещь просто исчезнет из выручки.
+            by_sku = {}
             for it in items:
-                sku = str(it.get('sku') or '').strip()
-                if not sku:
+                k = str(it.get('sku') or '').strip()
+                if not k:
                     continue
+                if k not in by_sku:
+                    by_sku[k] = {'qty': 0, 'name': it.get('name') or ''}
+                by_sku[k]['qty'] += 1
+
+            for sku, agg in by_sku.items():
+                it = {'name': agg['name']}
+                qty = agg['qty']
                 m = meta.get(sku) or {}
                 cur.execute(
                     "INSERT INTO marketplace_sales "
                     "(marketplace_code, scheme, posting_number, sku, offer_id, "
                     " product_name, material, width, height, quantity, "
                     " sale_price, sold_at, is_return) "
-                    "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, %s, 1, %s, "
+                    "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
                     "        %s, %s) "
                     # Повторная загрузка не должна плодить дубли: тот же
                     # отчёт скачивается снова при каждой синхронизации.
                     "ON CONFLICT (marketplace_code, posting_number, sku, "
                     "             is_return) DO UPDATE "
                     "SET sale_price = EXCLUDED.sale_price, "
+                    "    quantity = EXCLUDED.quantity, "
                     "    sold_at = EXCLUDED.sold_at, "
                     "    material = EXCLUDED.material, "
                     "    width = EXCLUDED.width, "
@@ -415,7 +460,8 @@ def _sync_sales(cur, headers, days=60, start_page=1, pages=4):
                     "    synced_at = now()",
                     (scheme, posting_number, sku, m.get('offer'),
                      (it.get('name') or '')[:500], m.get('material'),
-                     m.get('width'), m.get('height'),
+                     m.get('width'), m.get('height'), qty,
+                     # Цена ЗА ОДНУ вещь: количество хранится отдельно.
                      round(per_item, 2), sold_at, is_return),
                 )
                 saved += 1
@@ -423,7 +469,7 @@ def _sync_sales(cur, headers, days=60, start_page=1, pages=4):
         if len(ops) < 1000:
             break
 
-    return {'saved': saved, 'pages': pages, 'fromPage': start_page}
+    return {'saved': saved, 'window': f'{since}..{to_date}'}
 
 
 def _sync_fact_prices(cur, creds, days=30):
@@ -1532,18 +1578,32 @@ def handler(event: dict, context) -> dict:
             # а у функции пять секунд. Берём по одной и передаём работу
             # дальше: следующий запуск продолжит со следующей страницы.
             page_now = int(body_data.get('page') or 1)
-            # Первая страница — обычный запуск планировщика, её не запираем.
-            if page_now > 1 and not _claim_sales_page(cur, conn, page_now):
+            month_back = int(body_data.get('monthBack') or 0)
+            # Замок неповторим по паре «месяц + страница»: иначе вторая
+            # выгрузка споткнулась бы о замки первой.
+            step = month_back * 1000 + page_now
+            if (page_now > 1 or month_back > 0) and not _claim_sales_page(
+                    cur, conn, step):
                 return _resp(200, {'saved': 0, 'skippedDuplicateRun': True})
-            info = _sync_sales(
-                cur, h, int(body_data.get('days') or 30), page_now, 1)
+
+            info = _sync_sales(cur, h, SALES_DAYS, page_now, 1, month_back)
             conn.commit()
-            # Пустая страница значит, что отчёт кончился — цепочку
-            # останавливаем.
-            days_now = int(body_data.get('days') or 30)
-            more = info.get('saved', 0) > 0 and page_now < MAX_SALES_PAGES
-            info['chained'] = (_continue_sales(page_now + 1, days_now)
-                               if more else False)
+
+            # ЧТО ДАЛЬШЕ.
+            #
+            # Страницы месяца ещё идут — берём следующую. Месяц кончился —
+            # шагаем на месяц назад, пока не наберём три. Так три месяца
+            # собираются окнами, которые площадка соглашается отдавать.
+            info['monthBack'] = month_back
+            if info.get('saved', 0) > 0 and page_now < MAX_SALES_PAGES:
+                info['chained'] = _continue_sales(
+                    page_now + 1, SALES_DAYS, month_back)
+            # Четыре шага, а не три: текущий месяц неполный, и без
+            # четвёртого «последние три месяца» окажутся короче обещанного.
+            elif month_back < 3:
+                info['chained'] = _continue_sales(1, SALES_DAYS, month_back + 1)
+            else:
+                info['chained'] = False
             return _resp(200, info)
 
         if action == 'sync_fact_prices':
