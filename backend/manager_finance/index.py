@@ -822,7 +822,34 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
            if d_from else '')
         + (f" AND f.month <= date_trunc('month', '{d_to}'::date)"
            if d_to else ''))
-    parts['fees'] = round(float((cur.fetchone() or [0])[0] or 0), 2)
+    fees_total = round(float((cur.fetchone() or [0])[0] or 0), 2)
+
+    # ОСТАТОК БАЛЛОВ ГАСИТ УСЛУГИ.
+    #
+    # Баллы идут в зачёт по порядку: сперва вознаграждение площадки за
+    # продажу, а что осталось — на доставку, обработку возвратов, последнюю
+    # милю и эквайринг. Деньгами мы платим только то, на что баллов не
+    # хватило.
+    #
+    # По июлю баллов начислено 10,2 млн, вознаграждение 8,9 млн — остаётся
+    # 1,4 млн, а услуг всего 422 тысячи. То есть за них мы не заплатили ни
+    # рубля живых денег, хотя в расчёте они вычитались полностью.
+    bonus_info = _bonus_in_period(cur, d_from, d_to)
+    # Остаток считаем по ОТЧЁТУ: и баллы, и вознаграждение берём из одного
+    # документа. Вычитать удержание, посчитанное по ленте выкупов, нельзя —
+    # периоды и округления разные, и остаток уходил в минус.
+    cur.execute(
+        "SELECT coalesce(sum(commission), 0) FROM ozon_realization WHERE 1 = 1"
+        + (f" AND period_month >= date_trunc('month', '{d_from}'::date)"
+           if d_from else '')
+        + (f" AND period_month <= date_trunc('month', '{d_to}'::date)"
+           if d_to else ''))
+    fee_in_report = float((cur.fetchone() or [0])[0] or 0)
+    bonus_left = round(
+        bonus_info['points'] + bonus_info['bank'] - fee_in_report, 2)
+    covered = max(0.0, min(fees_total, bonus_left))
+
+    parts['fees'] = round(fees_total - covered, 2)
     profit_sum -= parts['fees']
 
     return {
@@ -844,7 +871,13 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             'feeShare': round((fact_fee_share or 0) * 100, 1),
             # БАЛЛЫ ПЛОЩАДКИ за период: часть цены покупатель платит баллами,
             # а площадка возмещает эту часть продавцу. Половина оборота.
-            'bonus': _bonus_in_period(cur, d_from, d_to),
+            'bonus': {
+                **bonus_info,
+                # Сколько баллов осталось после гашения вознаграждения — из
+                # него и покрываются услуги площадки.
+                'left': bonus_left,
+                'coveredFees': round(covered, 2),
+            },
         },
         'breakdown': breakdown,
     }

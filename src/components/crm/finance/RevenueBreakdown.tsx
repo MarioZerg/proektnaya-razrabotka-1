@@ -17,8 +17,13 @@ interface Props {
   profit: number;
   margin: number;
   breakdown: Record<string, number>;
-  /** Оплачено баллами Ozon — площадка возмещает эту часть продавцу. */
-  bonus?: { points: number; bank: number };
+  /** Баллы Ozon и их зачёт в расходы. */
+  bonus?: {
+    points: number;
+    bank: number;
+    left?: number;
+    coveredFees?: number;
+  };
 }
 
 /** Человеческие названия статей и цвет полосы. */
@@ -82,22 +87,47 @@ const RevenueBreakdown = ({
             Покупатель гасит часть цены баллами Ozon, а площадка возмещает
             эту часть продавцу. По июлю — половина оборота, и без этой
             строки непонятно, почему деньгами пришло вдвое меньше. */}
+        {/* ЗАЧЁТ БАЛЛОВ.
+            Покупатель гасит часть цены баллами Ozon, площадка возмещает эту
+            часть продавцу. Возмещение идёт не деньгами на счёт, а зачётом:
+            сперва закрывается вознаграждение площадки за продажу, а остаток
+            уходит на доставку, возвраты и прочие услуги. Что не покрылось
+            баллами — только то мы платим живыми деньгами. */}
         {!!bonus && bonus.points > 0 && (
-          <div className="rounded-md bg-emerald-50/70 p-2 text-xs">
+          <div className="space-y-1 rounded-md bg-emerald-50/70 p-2 text-xs">
             <p className="flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1.5 font-medium">
                 <Icon name="Coins" size={13} className="text-emerald-700" />
-                Из них оплачено баллами Ozon
+                Оплачено баллами Ozon
               </span>
               <span className="font-bold text-emerald-800">
                 {money(bonus.points + bonus.bank)} ₽
               </span>
             </p>
-            <p className="mt-0.5 text-muted-foreground">
-              Площадка возмещает эту часть нам — это{' '}
+            <p className="text-muted-foreground">
               {(((bonus.points + bonus.bank) / revenue) * 100).toFixed(0)}%
-              оборота, а не скидка за наш счёт
+              оборота — площадка возмещает это нам, а не мы даём скидку
             </p>
+            {bonus.left !== undefined && (
+              <div className="mt-1 space-y-0.5 border-t border-emerald-200 pt-1">
+                <p className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">
+                    Закрыли вознаграждение площадки, осталось
+                  </span>
+                  <span className="font-medium">{money(bonus.left)} ₽</span>
+                </p>
+                {!!bonus.coveredFees && (
+                  <p className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">
+                      Из остатка покрыты услуги площадки
+                    </span>
+                    <span className="font-medium text-emerald-800">
+                      {money(bonus.coveredFees)} ₽
+                    </span>
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
