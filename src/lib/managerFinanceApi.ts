@@ -107,3 +107,42 @@ export const setManagerUser = (payload: {
   userId: number;
   actorId?: number;
 }) => post({ action: 'set_user', ...payload });
+
+/** Выкупленный заказ: что купили, почём и сколько на этом заработали. */
+export interface BoughtOrder {
+  id: number;
+  orderNumber: string | null;
+  marketplace: string;
+  scheme: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  quantity: number;
+  soldAt: string | null;
+  sku: string | null;
+  /** Цена, по которой покупатель оформил заказ. */
+  price: number | null;
+  /** Маржа из юнит-экономики — та же, что в разделе цен. */
+  margin: number | null;
+  profit: number | null;
+}
+
+/**
+ * Лента выкупленных заказов.
+ *
+ * Только те, что покупатель реально забрал: заказ в доставке ещё может
+ * вернуться, и считать его выручкой рано.
+ */
+export const fetchBoughtFeed = (
+  page = 1,
+  perPage = 10,
+): Promise<{
+  items: BoughtOrder[];
+  page: number;
+  perPage: number;
+  total: number;
+  pages: number;
+}> =>
+  fetch(
+    `${MANAGER_FINANCE_URL}?action=bought_feed&page=${page}&perPage=${perPage}`,
+  ).then((r) => r.json());

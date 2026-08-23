@@ -335,8 +335,140 @@ def _balance(cur, user_id):
     }
 
 
+UNIT_ECONOMICS_URL = (
+    'https://functions.poehali.dev/4ebd72ad-8ca4-456c-840c-d2db30ce04cd')
+
+# Статусы, означающие «покупатель забрал товар».
+#
+# У каждой площадки своё слово для одного и того же события. OZON пишет
+# delivered, Яндекс — DELIVERED, а Wildberries отдельного признака выкупа не
+# присылает вовсе: там «Отгружен» значит, что заказ уехал к покупателю.
+BOUGHT_STATUSES = {
+    'OZON': ('delivered',),
+    'Yandex': ('DELIVERED',),
+}
+
+
+def _margin_index():
+    """Маржа по каждому размеру: {sku: {margin, profit, price}}.
+
+    Берём из юнит-экономики, а не считаем заново: там уже учтены комиссия,
+    логистика, реклама, налог, себестоимость и процент выкупа. Дублировать
+    эту арифметику здесь — значит рано или поздно разойтись с основным
+    расчётом и показывать в финансах одну маржу, а в экономике другую.
+    """
+    # Ключ — «ткань + ширина + высота», а не артикул.
+    #
+    # В юнит-экономике размеры лежат под нашим внутренним артикулом
+    # (bambuk2_240), а в заказе хранится номер товара OZON (1579985239). Это
+    # разные системы обозначений, и напрямую они не сходятся. Размер же
+    # одинаков в обеих: по нему и связываем.
+    out = {}
+    for scheme in ('FBS', 'FBO'):
+        try:
+            req = urllib.request.Request(
+                f'{UNIT_ECONOMICS_URL}?marketplace=ozon&scheme={scheme}')
+            with urllib.request.urlopen(req, timeout=25) as r:
+                data = json.loads(r.read().decode())
+        except Exception:
+            continue
+        for row in (data or {}).get('rows', []):
+            for h in (row.get('heights') or []):
+                u = h.get('unit') or {}
+                if u.get('price') and row.get('material'):
+                    key = (row['material'], row.get('width'), h.get('height'))
+                    # FBS считаем основным: по этой схеме шьём сами.
+                    out.setdefault(key, {
+                        'margin': u.get('margin'),
+                        'profit': u.get('profit'),
+                        'unitPrice': u.get('price'),
+                    })
+    return out
+
+
+def _bought_feed(cur, page=1, per_page=10):
+    """Лента выкупленных заказов: что купили, почём и сколько заработали.
+
+    Показываем ТОЛЬКО забранные покупателем заказы — то есть деньги, которые
+    действительно наши. Заказ в доставке ещё может вернуться, и считать его
+    выручкой рано.
+
+    Цену берём ту, по которой покупатель реально оформил заказ, а маржу — из
+    юнит-экономики, чтобы цифра совпадала с той, что видно в разделе цен.
+    """
+    page = max(1, int(page or 1))
+    per_page = min(50, max(1, int(per_page or 10)))
+
+    where = (
+        "WHERE (o.marketplace = 'OZON' AND o.ozon_status = 'delivered') "
+        "   OR (o.marketplace = 'Yandex' AND o.ym_status = 'DELIVERED')"
+    )
+
+    cur.execute(f"SELECT count(*) FROM orders o {where}")
+    total = int(cur.fetchone()[0] or 0)
+
+    cur.execute(
+        "SELECT o.id, o.order_number, o.marketplace, o.order_type, "
+        "       o.material, o.width, o.height, o.quantity, "
+        "       COALESCE(o.completed_at, o.created_at) AS sold_at, "
+        "       COALESCE(o.product_ozon_sku, mi.ozon_sku) AS sku, "
+        "       p.price, p.price_with_marketplace_discount "
+        "FROM orders o "
+        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+        "LEFT JOIN marketplace_prices p "
+        "       ON p.marketplace_item_id = o.marketplace_item_id "
+        "      AND p.marketplace_code = 'ozon' "
+        f"{where} "
+        # Свежие продажи сверху: лента читается сверху вниз.
+        "ORDER BY COALESCE(o.completed_at, o.created_at) DESC, o.id DESC "
+        f"LIMIT {per_page} OFFSET {(page - 1) * per_page}"
+    )
+    rows = cur.fetchall()
+    margins = _margin_index() if rows else {}
+
+    items = []
+    for r in rows:
+        sku = str(r[9]) if r[9] else None
+        m = margins.get((r[4], r[5], r[6])) or {}
+        # ЦЕНА ПОКУПКИ — та, что покупатель видел на витрине: с учётом скидки
+        # площадки. Цена карточки без скидки к деньгам отношения не имеет.
+        price = float(r[11] or r[10] or 0)
+        margin = m.get('margin')
+        profit = m.get('profit')
+        # Прибыль в экономике посчитана от своей цены. Если покупка прошла по
+        # другой, пересчитываем по проценту — иначе цифры не сойдутся.
+        if profit is not None and m.get('unitPrice') and price:
+            profit = round(price * float(margin or 0) / 100, 2)
+        items.append({
+            'id': r[0],
+            'orderNumber': r[1],
+            'marketplace': r[2],
+            'scheme': r[3],
+            'material': r[4],
+            'width': r[5],
+            'height': r[6],
+            'quantity': float(r[7] or 1),
+            'soldAt': r[8].isoformat() if r[8] else None,
+            'sku': sku,
+            'price': round(price, 2) if price else None,
+            'margin': margin,
+            'profit': profit,
+        })
+
+    return {
+        'items': items,
+        'page': page,
+        'perPage': per_page,
+        'total': total,
+        'pages': max(1, (total + per_page - 1) // per_page),
+    }
+
+
 def handler(event: dict, context) -> dict:
     """Финансы менеджера маркетплейсов: начисления с холдом и баланс.
+
+    GET  /?action=bought_feed&page=1 — лента выкупленных заказов: цена
+         покупки и маржа по каждому.
 
     GET  /?action=balance&userId=5 — что показать менеджеру в его финансах:
          подтверждённая сумма, сумма в холде и список недельных отчётов.
@@ -361,6 +493,12 @@ def handler(event: dict, context) -> dict:
             params = event.get('queryStringParameters') or {}
             action = params.get('action') or 'balance'
             user_id = params.get('userId')
+
+            if action == 'bought_feed':
+                # Лента выкупленных заказов: доступна любому, кто видит
+                # финансы, — отдельных прав тут не нужно.
+                return _resp(200, _bought_feed(
+                    cur, params.get('page'), params.get('perPage')))
 
             if action != 'balance':
                 return _resp(400, {'error': 'Неизвестное действие'})

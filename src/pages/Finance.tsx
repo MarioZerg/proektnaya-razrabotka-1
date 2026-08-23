@@ -25,6 +25,7 @@ import {
 } from '@/lib/salaryApi';
 import FinanceSummaryCard from '@/components/crm/finance/FinanceSummaryCard';
 import ManagerAccrualsPanel from '@/components/crm/finance/ManagerAccrualsPanel';
+import BoughtOrdersFeed from '@/components/crm/finance/BoughtOrdersFeed';
 import FinanceToolbar from '@/components/crm/finance/FinanceToolbar';
 import OperationsTable from '@/components/crm/finance/OperationsTable';
 import SalaryPayoutsTable from '@/components/crm/finance/SalaryPayoutsTable';
@@ -313,6 +314,9 @@ const Finance = () => {
             </p>
           </div>
           <ManagerAccrualsPanel userId={user.id} />
+          {/* Менеджер ведёт продажи — ему важно видеть, что выкупают и
+              с какой прибылью. */}
+          <BoughtOrdersFeed />
         </div>
       </CrmLayout>
     );
@@ -430,6 +434,10 @@ const Finance = () => {
           </div>
 
           <div className="space-y-6 lg:col-span-1">
+            {/* Что реально продалось и с какой прибылью. Раньше эти деньги
+                были видны только в разделе цен, отдельно от финансов. */}
+            <BoughtOrdersFeed />
+
             <FinanceSummaryCard
               totalToAccrue={totalToAccrue}
               totalDebts={totalDebts}
