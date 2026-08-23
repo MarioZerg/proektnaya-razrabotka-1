@@ -77,12 +77,7 @@ const Buyouts = () => {
       knownRevenue?: number;
       breakdown?: Record<string, number>;
       feeShare?: number;
-      bonus?: {
-        points: number;
-        bank: number;
-        left?: number;
-        coveredFees?: number;
-      };
+      bonus?: { points: number; bank: number };
     };
     breakdown?: { marketplace: string; scheme: string; count: number }[];
   }>({ items: [], total: 0, pages: 1 });

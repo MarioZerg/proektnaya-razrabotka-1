@@ -17,13 +17,8 @@ interface Props {
   profit: number;
   margin: number;
   breakdown: Record<string, number>;
-  /** Баллы Ozon и их зачёт в расходы. */
-  bonus?: {
-    points: number;
-    bank: number;
-    left?: number;
-    coveredFees?: number;
-  };
+  /** Оплачено баллами Ozon — справочно: это часть цены, а не доход. */
+  bonus?: { points: number; bank: number };
 }
 
 /** Человеческие названия статей и цвет полосы. */
@@ -87,47 +82,28 @@ const RevenueBreakdown = ({
             Покупатель гасит часть цены баллами Ozon, а площадка возмещает
             эту часть продавцу. По июлю — половина оборота, и без этой
             строки непонятно, почему деньгами пришло вдвое меньше. */}
-        {/* ЗАЧЁТ БАЛЛОВ.
-            Покупатель гасит часть цены баллами Ozon, площадка возмещает эту
-            часть продавцу. Возмещение идёт не деньгами на счёт, а зачётом:
-            сперва закрывается вознаграждение площадки за продажу, а остаток
-            уходит на доставку, возвраты и прочие услуги. Что не покрылось
-            баллами — только то мы платим живыми деньгами. */}
+        {/* БАЛЛЫ — СПОСОБ ОПЛАТЫ, А НЕ ДОХОД.
+            Покупатель платит одну и ту же цену, просто часть баллами Ozon.
+            Вознаграждение площадки берётся от полной цены, поэтому баллы не
+            добавляются к прибыли и не гасят наши расходы — они уже внутри
+            выручки. Показываем справочно: видно, какая доля оборота
+            приходит не деньгами. */}
         {!!bonus && bonus.points > 0 && (
-          <div className="space-y-1 rounded-md bg-emerald-50/70 p-2 text-xs">
+          <div className="rounded-md bg-muted/60 p-2 text-xs">
             <p className="flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 font-medium">
-                <Icon name="Coins" size={13} className="text-emerald-700" />
-                Оплачено баллами Ozon
+              <span className="flex items-center gap-1.5">
+                <Icon name="Coins" size={13} />
+                Из оборота оплачено баллами Ozon
               </span>
-              <span className="font-bold text-emerald-800">
+              <span className="font-medium">
                 {money(bonus.points + bonus.bank)} ₽
               </span>
             </p>
-            <p className="text-muted-foreground">
+            <p className="mt-0.5 text-muted-foreground">
               {(((bonus.points + bonus.bank) / revenue) * 100).toFixed(0)}%
-              оборота — площадка возмещает это нам, а не мы даём скидку
+              оборота — это способ оплаты, а не отдельный доход: цена та же,
+              вознаграждение площадки берётся с неё целиком
             </p>
-            {bonus.left !== undefined && (
-              <div className="mt-1 space-y-0.5 border-t border-emerald-200 pt-1">
-                <p className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">
-                    Закрыли вознаграждение площадки, осталось
-                  </span>
-                  <span className="font-medium">{money(bonus.left)} ₽</span>
-                </p>
-                {!!bonus.coveredFees && (
-                  <p className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">
-                      Из остатка покрыты услуги площадки
-                    </span>
-                    <span className="font-medium text-emerald-800">
-                      {money(bonus.coveredFees)} ₽
-                    </span>
-                  </p>
-                )}
-              </div>
-            )}
           </div>
         )}
 
