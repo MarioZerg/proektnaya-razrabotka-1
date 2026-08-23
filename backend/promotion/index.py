@@ -69,15 +69,21 @@ def _strategy(cur):
     """Правила ценообразования: целевой коридор маржи и безопасный шаг."""
     cur.execute(
         "SELECT target_margin_min, target_margin_max, step_percent, step_days, "
-        "min_spp_percent FROM pricing_strategy ORDER BY id LIMIT 1"
+        "min_spp_percent, max_ad_percent, max_actions_per_item, "
+        "max_items_in_actions_percent FROM pricing_strategy ORDER BY id LIMIT 1"
     )
     r = cur.fetchone()
     if not r:
         return {'marginMin': 10.0, 'marginMax': 15.0, 'stepPercent': 2.0,
-                'stepDays': 7, 'minSpp': 0.0}
+                'stepDays': 7, 'minSpp': 0.0, 'maxAdPercent': 12.0,
+                'maxActionsPerItem': 1, 'maxItemsInActionsPercent': 60.0}
     return {'marginMin': float(r[0] or 10), 'marginMax': float(r[1] or 15),
             'stepPercent': float(r[2] or 2), 'stepDays': int(r[3] or 7),
-            'minSpp': float(r[4] or 0)}
+            'minSpp': float(r[4] or 0),
+            # Потолок доли рекламы: выше него продвижение съедает прибыль.
+            'maxAdPercent': float(r[5] or 12),
+            'maxActionsPerItem': int(r[6] or 1),
+            'maxItemsInActionsPercent': float(r[7] or 60)}
 
 
 def _economics(marketplace, scheme='FBS'):
@@ -1042,12 +1048,17 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "UPDATE pricing_strategy SET target_margin_min = %s, "
                 "target_margin_max = %s, step_percent = %s, step_days = %s, "
+                "max_ad_percent = %s, max_actions_per_item = %s, "
+                "max_items_in_actions_percent = %s, "
                 "updated_at = now(), updated_by = %s "
                 "WHERE id = (SELECT id FROM pricing_strategy ORDER BY id LIMIT 1)",
                 (float(body_data.get('marginMin') or 10),
                  float(body_data.get('marginMax') or 15),
                  float(body_data.get('stepPercent') or 2),
                  int(body_data.get('stepDays') or 7),
+                 float(body_data.get('maxAdPercent') or 12),
+                 int(body_data.get('maxActionsPerItem') or 1),
+                 float(body_data.get('maxItemsInActionsPercent') or 60),
                  int(actor_id) if actor_id else None),
             )
             conn.commit()

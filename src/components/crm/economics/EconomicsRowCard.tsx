@@ -203,6 +203,21 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
         </p>
       </div>
 
+      {/* ПЕРЕРАСХОД РЕКЛАМЫ.
+          Кампании живут в кабинете площадки отдельно от экономики, и связь
+          «эта реклама съела всю прибыль» нигде не видна. По WB нашлись
+          позиции, где на продвижение ушло 15 270 ₽ при выручке 1 720 ₽.
+          Показываем в рублях: сколько вернётся, если урезать до нормы. */}
+      {!!u.promoOverspend && !!u.promoWaste && (
+        <p className="mt-2 flex items-start gap-1.5 rounded-md bg-rose-50 p-2 text-xs text-rose-900">
+          <Icon name="TrendingDown" size={13} className="mt-0.5 shrink-0" />
+          <span>
+            Реклама съедает {money(u.promoWaste)} ₽ с вещи сверх нормы —
+            снизьте ставки в кампании, прибыль вырастет на эту сумму
+          </span>
+        </p>
+      )}
+
       {/* Доля площадки в скидке.
           Показываем ТОЛЬКО когда нам начислили больше, чем видит покупатель:
           значит часть скидки площадка взяла на себя, и эти деньги к нам
@@ -386,14 +401,21 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
           </div>
         )}
         {u.promo > 0 && (
-          <div className="flex justify-between text-xs text-muted-foreground">
+          <div
+            className={`flex justify-between text-xs ${
+              u.promoOverspend ? 'text-rose-700' : 'text-muted-foreground'
+            }`}
+          >
             {/* ДРР — доля рекламы в цене. Показываем процентом: по одной сумме
-                непонятно, много это или мало для конкретного товара. */}
+                непонятно, много это или мало для конкретного товара.
+                Выше потолка подсвечиваем красным: такая реклама съедает
+                прибыль быстрее, чем приносит продажи. */}
             <span>
               Продвижение
               {u.price > 0 && (
                 <span className="ml-1 font-medium">
                   · ДРР {Math.round((u.promo / u.price) * 1000) / 10}%
+                  {u.promoOverspend && ` при норме ${u.promoLimit}%`}
                 </span>
               )}
             </span>

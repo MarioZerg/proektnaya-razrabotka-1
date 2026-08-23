@@ -48,6 +48,12 @@ export interface UnitCalc {
   buyoutPercent: number;
   /** Ниже этой цены товар уходит в минус. */
   breakEvenPrice: number | null;
+  /** Реклама выше потолка: съедает прибыль. */
+  promoOverspend?: boolean;
+  /** Потолок доли рекламы, %. */
+  promoLimit?: number;
+  /** Сколько рублей с вещи уходит на рекламу сверх потолка. */
+  promoWaste?: number;
 }
 
 export interface CostBreakdown {
@@ -102,6 +108,10 @@ export interface EconomicsRow {
   actualPriceCount?: number;
   /** Сколько размеров посчитаны по ФАКТУ продаж — самой точной цене. */
   factPriceCount?: number;
+  /** Сколько размеров тратят на рекламу больше потолка. */
+  adOverspendCount?: number;
+  /** Сколько денег уходит на рекламу сверх потолка. */
+  adWaste?: number;
   /** Сколько размеров внутри группы убыточны: среднее их прячет. */
   lossHeights?: number;
   /** Ходовой размер — тот, что делает оборот. По нему и решают о цене. */

@@ -1306,6 +1306,20 @@ def _sold_by_item(cur, marketplace, days=30):
     return {r[0]: int(r[1]) for r in cur.fetchall()}
 
 
+def _max_ad_percent(cur):
+    """Потолок доли рекламы в выручке, %.
+
+    Выше него реклама съедает прибыль: на Бамбук 3 при выручке 1 720 ₽ было
+    потрачено 15 270 ₽ продвижения — каждая продажа обошлась дороже шторы.
+    Заметить такое вручную нельзя: кампании живут в кабинете площадки
+    отдельно от экономики.
+    """
+    cur.execute(
+        "SELECT max_ad_percent FROM pricing_strategy ORDER BY id LIMIT 1")
+    r = cur.fetchone()
+    return float(r[0]) if r and r[0] is not None else 12.0
+
+
 def _ad_percents(cur, marketplace):
     """Фактическая доля рекламы по каждому товару, %.
 
@@ -1335,7 +1349,8 @@ def _ad_percents(cur, marketplace):
 
 
 def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout,
-               item_fees=None, ad_percent=None, card_price=None):
+               item_fees=None, ad_percent=None, card_price=None,
+               max_ad=12.0):
     """Экономика ОДНОЙ проданной единицы.
 
     Считается по общепринятой для маркетплейсов схеме: из цены продажи вычитаем
@@ -1458,6 +1473,14 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
         # Какой процент рекламы применён к этому товару и откуда он взят —
         # экран показывает это рядом с цифрой, чтобы не гадать.
         'promoPercent': round(promo_percent or 0, 2),
+        # ПЕРЕРАСХОД РЕКЛАМЫ. Доля выше потолка означает, что продвижение
+        # съедает прибыль быстрее, чем приносит продажи.
+        'promoOverspend': round(promo_percent or 0, 2) > max_ad,
+        'promoLimit': max_ad,
+        # Сколько денег в цене уходит на рекламу СВЕРХ потолка — то есть
+        # сколько можно вернуть, урезав кампанию до нормы.
+        'promoWaste': round(
+            max(0.0, ((promo_percent or 0) - max_ad) / 100 * (price or 0)), 2),
         'promoIsFact': ad_percent is not None
         or (tariff.get('promoFactPercent') is not None
             and tariff.get('promoFromFact', True)),
@@ -1594,6 +1617,8 @@ def _build(cur, code, scheme, buyout_override, shared=None):
 
     # Фактическая реклама по товарам этой площадки.
     ad_percents = _ad_percents(cur, code)
+    # Потолок ДРР: выше него реклама съедает прибыль.
+    max_ad = _max_ad_percent(cur)
     sold_by_item = _sold_by_item(cur, code)
 
     rows = []
@@ -1621,7 +1646,7 @@ def _build(cur, code, scheme, buyout_override, shared=None):
                 i['price'], cost, tariffs, settings,
                 i[comm_key] if i[comm_key] is not None else commission_percent,
                 scheme, buyout, i['fees'], ad_percents.get(i['id']),
-                i.get('cardPrice'),
+                i.get('cardPrice'), max_ad,
             )
             heights.append({
                 'itemId': i['id'], 'height': i['height'], 'name': i['name'],
@@ -1667,7 +1692,7 @@ def _build(cur, code, scheme, buyout_override, shared=None):
         ) if any(i.get('cardPrice') for i in priced) else None
         group_unit = _calc_unit(avg_price, cost, tariffs, settings,
                                 commission_percent, scheme, buyout, group_fees,
-                                group_ad, avg_card)
+                                group_ad, avg_card, max_ad)
         rows.append({
             'material': material,
             'width': width,
@@ -1681,6 +1706,15 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             # витрине. Если площадка фактическую цену не отдала, расчёт идёт
             # по завышенной — и убыточный товар выглядит прибыльным.
             'actualPriceCount': sum(1 for i in priced if i['priceIsActual']),
+            # Сколько размеров тратят на рекламу больше потолка и сколько
+            # денег с вещи на этом теряется.
+            # У размеров без цены расчёта нет — их пропускаем.
+            'adOverspendCount': sum(
+                1 for h in heights
+                if h.get('unit') and h['unit'].get('promoOverspend')),
+            'adWaste': round(sum(
+                (h['unit'].get('promoWaste') or 0)
+                for h in heights if h.get('unit')), 2),
             # Сколько размеров посчитаны по ФАКТУ продаж — самой точной цене.
             'factPriceCount': sum(
                 1 for i in priced if i.get('priceSource') == 'fact'),
