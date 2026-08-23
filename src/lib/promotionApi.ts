@@ -144,6 +144,47 @@ export const fetchActionCandidates = (
   maxActionsPerItem?: number;
 }> => post({ action: 'action_candidates', actionId, actorId, minMargin });
 
+/** Акция в плане по материалу: что проходит и чем придётся пожертвовать. */
+export interface PlanAction {
+  actionId: string;
+  title: string;
+  dateEnd: string | null;
+  /** Сколько размеров материала проходит по прибыльности. */
+  fits: number;
+  total: number;
+  /** Средняя маржа размеров внутри этой акции. */
+  avgMargin: number;
+  /** Во сколько обходится скидка: теряем рублей с вещи. */
+  profitDrop: number;
+  /** Сколько размеров добавится сверх предыдущих акций. */
+  newItems: number;
+  /** Средняя маржа по всему материалу после входа в эту акцию. */
+  avgAfter: number;
+  /** Стоит ли входить: средняя маржа не должна упасть ниже порога. */
+  recommended: boolean;
+  reason: string;
+  items: ActionCandidate[];
+}
+
+/**
+ * План продвижения по всему материалу.
+ *
+ * Акции идут в порядке очерёдности: сначала та, где скидка обходится дешевле
+ * всего. Как только средняя маржа по ассортименту опускается ниже порога,
+ * остальные помечаются «стоп».
+ */
+export const fetchMaterialPlan = (
+  material: string,
+  actorId?: number,
+  minAvgMargin = 4.5,
+): Promise<{
+  material: string;
+  actions: PlanAction[];
+  minAvgMargin: number;
+  baseAvgMargin: number;
+  sizes: number;
+}> => post({ action: 'material_plan', material, actorId, minAvgMargin });
+
 /** Завести товары в акцию. Убыточные сервер не пропустит. */
 export const joinAction = (payload: {
   actionId: number | string;

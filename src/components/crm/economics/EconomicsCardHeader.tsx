@@ -103,6 +103,7 @@ const EconomicsCardHeader = ({
           <PromoteDialog
             offerIds={sizes.map((h) => h.sku).filter(Boolean) as string[]}
             title={`${row.material} · ${row.width} см`}
+            material={row.material || undefined}
           />
         </div>
       )}

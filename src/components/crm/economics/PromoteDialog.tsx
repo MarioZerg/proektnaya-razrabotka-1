@@ -27,6 +27,7 @@ import {
   type ActionCandidate,
 } from '@/lib/promotionApi';
 import { money } from './economicsShared';
+import PromotePlan from './PromotePlan';
 
 /**
  * Заведение товаров в акцию площадки.
@@ -44,9 +45,11 @@ interface Props {
   offerIds: string[];
   /** Название для заголовка. */
   title: string;
+  /** Материал целиком — для плана по всем размерам сразу. */
+  material?: string;
 }
 
-const PromoteDialog = ({ offerIds, title }: Props) => {
+const PromoteDialog = ({ offerIds, title, material }: Props) => {
   const { user } = useAuth();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -62,6 +65,11 @@ const PromoteDialog = ({ offerIds, title }: Props) => {
   }>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // План по материалу — вкладка по умолчанию: решение о скидках принимается
+  // по материалу целиком, а не по одной ширине.
+  const [tab, setTab] = useState<'plan' | 'single'>(
+    material ? 'plan' : 'single',
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -135,6 +143,36 @@ const PromoteDialog = ({ offerIds, title }: Props) => {
         <DialogHeader>
           <DialogTitle>Продвижение · {title}</DialogTitle>
         </DialogHeader>
+        {/* Две задачи в одном окне.
+            План — стратегия по материалу: во что входить и в какой
+            очерёдности, чтобы средняя маржа не просела.
+            Одна акция — точечное решение по конкретной ширине. */}
+        {!!material && (
+          <div className="flex gap-1 rounded-md bg-muted p-0.5">
+            <button
+              type="button"
+              onClick={() => setTab('plan')}
+              className={`flex-1 rounded px-2 py-1 text-xs font-medium ${
+                tab === 'plan' ? 'bg-background shadow-sm' : 'text-muted-foreground'
+              }`}
+            >
+              План по материалу
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('single')}
+              className={`flex-1 rounded px-2 py-1 text-xs font-medium ${
+                tab === 'single' ? 'bg-background shadow-sm' : 'text-muted-foreground'
+              }`}
+            >
+              Одна акция
+            </button>
+          </div>
+        )}
+
+        {tab === 'plan' && !!material ? (
+          <PromotePlan material={material} onDone={() => setOpen(false)} />
+        ) : (
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label>Акция площадки</Label>
@@ -232,6 +270,7 @@ const PromoteDialog = ({ offerIds, title }: Props) => {
               : `Завести в акцию ${good.length > 0 ? `(${good.length})` : ''}`}
           </Button>
         </div>
+        )}
       </DialogContent>
     </Dialog>
   );

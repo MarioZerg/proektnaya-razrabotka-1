@@ -444,7 +444,121 @@ def _items_in_actions(cur, headers):
     return by_offer, total, len(short_offers)
 
 
-def _action_candidates(cur, headers, action_id, settings, min_margin=5.0):
+def _material_plan(cur, headers, material, settings, min_avg_margin=4.5):
+    """План продвижения по всему материалу: что, куда и в какой очерёдности.
+
+    Раньше окно показывало только размеры одной ширины и одну акцию за раз.
+    Но решение о скидках принимается по материалу целиком: у «Бамбука» полтора
+    десятка ширин и полсотни высот, и заводить их по одной — работа на день.
+
+    Здесь по каждой активной акции считается, какие размеры материала в неё
+    проходят и что останется от прибыли. Акции сортируются от самой выгодной:
+    начинать надо с той, где скидка стоит нам дешевле всего.
+
+    ГЛАВНОЕ ОГРАНИЧЕНИЕ — средняя маржа по ассортименту. Скидка в одной акции
+    ещё терпима, но если завести весь материал во все акции разом, средняя
+    прибыль просядет до нуля. Поэтому акции добавляются по очереди, и как
+    только средняя опускается ниже порога, следующие помечаются «стоп».
+    """
+    cur.execute(
+        "SELECT external_id, title, date_end FROM marketplace_promotions "
+        "WHERE marketplace_code = 'ozon' "
+        "  AND (date_end IS NULL OR date_end >= CURRENT_DATE) "
+        "ORDER BY date_end"
+    )
+    actions = cur.fetchall()
+    if not actions:
+        return {'actions': [], 'material': material}
+
+    # Текущая прибыль размеров материала — точка отсчёта. Без неё непонятно,
+    # чем мы жертвуем, входя в акцию.
+    base = {}
+    eco = _economics('ozon')
+    for r in (eco or {}).get('rows', []):
+        if r.get('material') != material:
+            continue
+        for h in (r.get('heights') or []):
+            u = h.get('unit') or {}
+            if h.get('sku') and u.get('price'):
+                base[str(h['sku'])] = {
+                    'price': float(u['price']),
+                    'profit': float(u.get('profit') or 0),
+                    'margin': float(u.get('margin') or 0),
+                    'name': f"{r['width']}×{h.get('height') or ''}",
+                }
+
+    if not base:
+        return {'actions': [], 'material': material}
+
+    out = []
+    for ext_id, title, date_end in actions:
+        cands = _action_candidates(cur, headers, ext_id, settings, 0.0,
+                                   plan_mode=True)
+        # Только размеры ЭТОГО материала: остальные к решению не относятся.
+        mine = [c for c in cands if c['offerId'] in base]
+        if not mine:
+            continue
+        good = [c for c in mine if c['eligible']]
+        avg = (round(sum(c['margin'] for c in good) / len(good), 1)
+               if good else 0.0)
+        # Во сколько обходится скидка: сколько прибыли теряем на вещи.
+        drop = round(sum(
+            base[c['offerId']]['profit'] - c['profit'] for c in good
+        ) / len(good), 2) if good else 0.0
+        out.append({
+            'actionId': ext_id,
+            'title': title,
+            'dateEnd': str(date_end) if date_end else None,
+            'fits': len(good),
+            'total': len(mine),
+            'avgMargin': avg,
+            'profitDrop': drop,
+            'items': mine,
+        })
+
+    # Сортируем по цене скидки: дешевле всего — первой. Именно с неё и надо
+    # начинать, а дорогие оставить на потом или не трогать вовсе.
+    out.sort(key=lambda a: a['profitDrop'])
+
+    # ОЧЕРЁДНОСТЬ. Добавляем акции одну за другой и следим за средней маржой
+    # по всему материалу. Размер, уже попавший в акцию, повторно не считаем:
+    # скидки складываются, и второй раз он уйдёт ещё дешевле.
+    used = {}
+    for a in out:
+        planned = dict(used)
+        for c in a['items']:
+            if c['eligible'] and c['offerId'] not in planned:
+                planned[c['offerId']] = c['margin']
+        # Средняя по ВСЕМУ материалу: размеры вне акций идут со своей маржой.
+        margins = [planned.get(sku, b['margin']) for sku, b in base.items()]
+        avg_all = round(sum(margins) / len(margins), 2) if margins else 0.0
+        a['avgAfter'] = avg_all
+        a['newItems'] = len(planned) - len(used)
+
+        if avg_all >= min_avg_margin and a['newItems'] > 0:
+            a['recommended'] = True
+            a['reason'] = f'Средняя маржа останется {avg_all}%'
+            used = planned
+        else:
+            a['recommended'] = False
+            a['reason'] = (
+                'Все размеры уже в предыдущих акциях' if a['newItems'] == 0
+                else f'Средняя маржа упадёт до {avg_all}% — ниже порога '
+                     f'{min_avg_margin}%'
+            )
+
+    return {
+        'material': material,
+        'actions': out,
+        'minAvgMargin': min_avg_margin,
+        'baseAvgMargin': round(
+            sum(b['margin'] for b in base.values()) / len(base), 2),
+        'sizes': len(base),
+    }
+
+
+def _action_candidates(cur, headers, action_id, settings, min_margin=5.0,
+                       plan_mode=False):
     """Товары акции с разбором: кого можно заводить, а кого нельзя.
 
     Площадка зовёт в акцию списком и называет по каждому товару максимальную
@@ -494,13 +608,20 @@ def _action_candidates(cur, headers, action_id, settings, min_margin=5.0):
     # а дорогая — прибыльной.
     # Кто уже в акциях и сколько всего товаров: нужно и для защиты от
     # наложения, и для распределения по ассортименту.
-    in_actions, total_items, busy_short = _items_in_actions(cur, headers)
+    # В режиме ПЛАНА ограничители не применяем: план сам решает очерёдность
+    # акций и сам следит за средней маржой. Иначе он видел бы только остатки
+    # после уже занятых позиций и предлагал бы по одному размеру из сотни.
+    if plan_mode:
+        in_actions, total_items, busy_short = {}, 0, 0
+    else:
+        in_actions, total_items, busy_short = _items_in_actions(cur, headers)
     max_per_item = int(settings.get('maxActionsPerItem') or 1)
     max_share = float(settings.get('maxItemsInActionsPercent') or 60)
     # Квоту считаем по СРОЧНЫМ акциям: постоянные идут фоном всегда.
     busy_now = busy_short
     # Сколько ещё товаров можно завести, не выйдя за долю ассортимента.
-    slots_left = max(0, int(total_items * max_share / 100) - busy_now)
+    slots_left = (10 ** 6 if plan_mode
+                  else max(0, int(total_items * max_share / 100) - busy_now))
 
     production = {}
     eco = _economics('ozon')
@@ -948,6 +1069,34 @@ def handler(event: dict, context) -> dict:
                 'totalItems': total_items,
                 'maxActionsPerItem': st_set['maxActionsPerItem'],
             })
+
+        if action == 'material_plan':
+            # Все размеры материала и все акции сразу: решение о скидках
+            # принимается по материалу целиком, а не по одной ширине.
+            creds, enabled = _credentials(cur, 'ozon')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция OZON не подключена'})
+            material = body_data.get('material')
+            if not material:
+                return _resp(400, {'error': 'Укажите материал'})
+            h = {'Client-Id': (creds.get('clientId') or '').strip(),
+                 'Api-Key': (creds.get('apiKey') or '').strip()}
+            cur.execute(
+                "SELECT tax_percent, vat_percent FROM unit_economics_settings "
+                "ORDER BY id LIMIT 1")
+            r = cur.fetchone()
+            st_set = {'taxPercent': float(r[0] or 0) if r else 0.0,
+                      'vatPercent': float(r[1] or 0) if r else 0.0}
+            cur.execute(
+                "SELECT max_actions_per_item, max_items_in_actions_percent "
+                "FROM pricing_strategy ORDER BY id LIMIT 1")
+            lim = cur.fetchone()
+            st_set['maxActionsPerItem'] = int(lim[0]) if lim else 1
+            st_set['maxItemsInActionsPercent'] = float(lim[1]) if lim else 60.0
+            plan = _material_plan(
+                cur, h, material, st_set,
+                float(body_data.get('minAvgMargin') or 4.5))
+            return _resp(200, plan)
 
         if action == 'join_action':
             # Завести товары в акцию.
