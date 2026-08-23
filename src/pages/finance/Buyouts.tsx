@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Table,
   TableBody,
@@ -47,22 +50,42 @@ const fullDate = (iso: string | null) => {
  */
 const Buyouts = () => {
   const [page, setPage] = useState(1);
+  // Границы периода. По умолчанию пусто — показываем все выкупы.
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [data, setData] = useState<{
     items: BoughtOrder[];
     total: number;
     pages: number;
+    totals?: { revenue: number; profit: number; margin: number };
   }>({ items: [], total: 0, pages: 1 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetchBoughtFeed(page, PER_PAGE)
+    fetchBoughtFeed(page, PER_PAGE, dateFrom, dateTo)
       .then((d) =>
-        setData({ items: d.items || [], total: d.total, pages: d.pages }),
+        setData({
+          items: d.items || [],
+          total: d.total,
+          pages: d.pages,
+          totals: d.totals,
+        }),
       )
       .catch(() => setData({ items: [], total: 0, pages: 1 }))
       .finally(() => setLoading(false));
-  }, [page]);
+  }, [page, dateFrom, dateTo]);
+
+  // Смена периода возвращает на первую страницу: оставаться на сотой в новом
+  // отборе бессмысленно — там пусто.
+  const changeFrom = (v: string) => {
+    setDateFrom(v);
+    setPage(1);
+  };
+  const changeTo = (v: string) => {
+    setDateTo(v);
+    setPage(1);
+  };
 
   const marginCell = (o: BoughtOrder) => {
     if (o.margin === null || o.margin === undefined) {
@@ -99,6 +122,74 @@ const Buyouts = () => {
             {data.total.toLocaleString('ru-RU')} выкуплено
           </Badge>
         </div>
+
+        {/* Период и итог по нему. Вопрос «сколько заработали за неделю»
+            решается тут, без выгрузок и калькулятора. */}
+        <Card>
+          <CardContent className="flex flex-wrap items-end gap-3 p-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Выкуплены с</Label>
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => changeFrom(e.target.value)}
+                className="h-9 w-[150px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">по</Label>
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => changeTo(e.target.value)}
+                className="h-9 w-[150px]"
+              />
+            </div>
+            {(dateFrom || dateTo) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9"
+                onClick={() => {
+                  changeFrom('');
+                  changeTo('');
+                }}
+              >
+                <Icon name="X" size={14} className="mr-1" />
+                Сбросить
+              </Button>
+            )}
+
+            {/* Итог считается по всему отбору, а не по видимой странице. */}
+            {data.totals && (
+              <div className="ml-auto flex flex-wrap gap-4 text-right">
+                <div>
+                  <p className="text-xs text-muted-foreground">Выручка</p>
+                  <p className="text-base font-bold">
+                    {money(data.totals.revenue)} ₽
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Заработали</p>
+                  <p
+                    className={`text-base font-bold ${
+                      data.totals.profit > 0
+                        ? 'text-emerald-700'
+                        : 'text-rose-700'
+                    }`}
+                  >
+                    {data.totals.profit > 0 ? '+' : ''}
+                    {money(data.totals.profit)} ₽
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Маржа</p>
+                  <p className="text-base font-bold">{data.totals.margin}%</p>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {loading && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">

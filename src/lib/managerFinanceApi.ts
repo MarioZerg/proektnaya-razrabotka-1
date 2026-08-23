@@ -136,13 +136,21 @@ export interface BoughtOrder {
 export const fetchBoughtFeed = (
   page = 1,
   perPage = 10,
+  /** Отбор по дате выкупа, ГГГГ-ММ-ДД. Обе границы включительно. */
+  dateFrom = '',
+  dateTo = '',
 ): Promise<{
   items: BoughtOrder[];
   page: number;
   perPage: number;
   total: number;
   pages: number;
+  /** Итог по всему отбору, а не по видимой странице. */
+  totals: { revenue: number; profit: number; margin: number };
 }> =>
   fetch(
-    `${MANAGER_FINANCE_URL}?action=bought_feed&page=${page}&perPage=${perPage}`,
+    `${MANAGER_FINANCE_URL}?action=bought_feed&page=${page}` +
+      `&perPage=${perPage}` +
+      (dateFrom ? `&dateFrom=${dateFrom}` : '') +
+      (dateTo ? `&dateTo=${dateTo}` : ''),
   ).then((r) => r.json());

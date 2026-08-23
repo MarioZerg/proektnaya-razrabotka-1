@@ -386,7 +386,7 @@ def _margin_index():
     return out
 
 
-def _bought_feed(cur, page=1, per_page=10):
+def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None):
     """Лента выкупленных заказов: что купили, почём и сколько заработали.
 
     Показываем ТОЛЬКО забранные покупателем заказы — то есть деньги, которые
@@ -399,10 +399,27 @@ def _bought_feed(cur, page=1, per_page=10):
     page = max(1, int(page or 1))
     per_page = min(50, max(1, int(per_page or 10)))
 
+    # Отбор по дате выкупа. Даты приходят от календаря в виде ГГГГ-ММ-ДД;
+    # всё лишнее отсекаем, чтобы в запрос не попало ничего постороннего.
+    def _clean_date(v):
+        v = (v or '').strip()[:10]
+        return v if len(v) == 10 and v[4] == '-' and v[7] == '-' else None
+
+    d_from = _clean_date(date_from)
+    d_to = _clean_date(date_to)
+
     where = (
-        "WHERE (o.marketplace = 'OZON' AND o.ozon_status = 'delivered') "
-        "   OR (o.marketplace = 'Yandex' AND o.ym_status = 'DELIVERED')"
+        "WHERE ((o.marketplace = 'OZON' AND o.ozon_status = 'delivered') "
+        "    OR (o.marketplace = 'Yandex' AND o.ym_status = 'DELIVERED'))"
     )
+    if d_from:
+        where += (" AND COALESCE(o.completed_at, o.created_at) >= "
+                  f"'{d_from}'::date")
+    if d_to:
+        # Верхняя граница включительно: выбрав «по 21 августа», человек ждёт,
+        # что продажи этого дня войдут в отчёт.
+        where += (" AND COALESCE(o.completed_at, o.created_at) < "
+                  f"'{d_to}'::date + interval '1 day'")
 
     cur.execute(f"SELECT count(*) FROM orders o {where}")
     total = int(cur.fetchone()[0] or 0)
@@ -424,7 +441,7 @@ def _bought_feed(cur, page=1, per_page=10):
         f"LIMIT {per_page} OFFSET {(page - 1) * per_page}"
     )
     rows = cur.fetchall()
-    margins = _margin_index() if rows else {}
+    margins = _margin_index()
 
     items = []
     for r in rows:
@@ -455,12 +472,41 @@ def _bought_feed(cur, page=1, per_page=10):
             'profit': profit,
         })
 
+    # ИТОГ ЗА ПЕРИОД — по всем выкупам отбора, а не по видимой странице.
+    #
+    # Считаем отдельным запросом: на экране десять строк, а вопрос «сколько
+    # всего заработали» относится ко всему отобранному.
+    cur.execute(
+        "SELECT o.material, o.width, o.height, "
+        "       COALESCE(p.price_with_marketplace_discount, p.price) "
+        "FROM orders o "
+        "LEFT JOIN marketplace_prices p "
+        "       ON p.marketplace_item_id = o.marketplace_item_id "
+        "      AND p.marketplace_code = 'ozon' "
+        f"{where}"
+    )
+    revenue = 0.0
+    profit_sum = 0.0
+    for material, width, height, price in cur.fetchall():
+        pr = float(price or 0)
+        if not pr:
+            continue
+        revenue += pr
+        mm = margins.get((material, width, height)) or {}
+        if mm.get('margin') is not None:
+            profit_sum += pr * float(mm['margin']) / 100
+
     return {
         'items': items,
         'page': page,
         'perPage': per_page,
         'total': total,
         'pages': max(1, (total + per_page - 1) // per_page),
+        'totals': {
+            'revenue': round(revenue, 2),
+            'profit': round(profit_sum, 2),
+            'margin': round(profit_sum / revenue * 100, 1) if revenue else 0,
+        },
     }
 
 
@@ -498,7 +544,8 @@ def handler(event: dict, context) -> dict:
                 # Лента выкупленных заказов: доступна любому, кто видит
                 # финансы, — отдельных прав тут не нужно.
                 return _resp(200, _bought_feed(
-                    cur, params.get('page'), params.get('perPage')))
+                    cur, params.get('page'), params.get('perPage'),
+                    params.get('dateFrom'), params.get('dateTo')))
 
             if action != 'balance':
                 return _resp(400, {'error': 'Неизвестное действие'})
