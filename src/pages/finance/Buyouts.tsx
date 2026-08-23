@@ -391,9 +391,14 @@ const Buyouts = () => {
                         {fullDate(o.soldAt)}
                       </p>
                     </div>
-                    <p className="shrink-0 text-base font-bold">
-                      {money(o.price)} ₽
-                    </p>
+                    <div className="shrink-0 text-right">
+                      <p className="text-base font-bold">{money(o.price)} ₽</p>
+                      {!!o.cardPrice && !!o.price && o.cardPrice > o.price && (
+                        <p className="text-[11px] text-muted-foreground">
+                          СПП {money(o.cardPrice - o.price)} ₽
+                        </p>
+                      )}
+                    </div>
                   </div>
                   <p className="mt-1.5 border-t border-border pt-1.5 text-sm">
                     {marginCell(o)}
@@ -419,7 +424,7 @@ const Buyouts = () => {
                       Выкуплен
                     </TableHead>
                     <TableHead className="text-right text-primary-foreground">
-                      Цена покупки
+                      Заплатил покупатель
                     </TableHead>
                     <TableHead className="text-right text-primary-foreground">
                       Заработали
@@ -448,8 +453,19 @@ const Buyouts = () => {
                       <TableCell className="whitespace-nowrap">
                         {fullDate(o.soldAt)}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-right font-bold">
-                        {money(o.price)} ₽
+                      <TableCell className="whitespace-nowrap text-right">
+                        <span className="font-bold">{money(o.price)} ₽</span>
+                        {/* СПП: площадка возмещает скидку продавцу, поэтому
+                            начислено меньше цены карточки. Без этой строки
+                            цифра выглядит необъяснимо заниженной. */}
+                        {!!o.cardPrice && !!o.price && o.cardPrice > o.price && (
+                          <span className="block text-[11px] text-muted-foreground">
+                            <span className="line-through">
+                              {money(o.cardPrice)}
+                            </span>{' '}
+                            · СПП {money(o.cardPrice - o.price)} ₽
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right">
                         {marginCell(o)}

@@ -362,6 +362,29 @@ def _share(unit, key):
     return round(float(unit.get(key) or 0) / price, 6)
 
 
+def _profit_at(m, price):
+    """Прибыль и маржа при ЦЕНЕ, ПО КОТОРОЙ ВЕЩЬ РЕАЛЬНО КУПИЛИ.
+
+    Раньше прибыль считалась пропорцией: цена продажи умножалась на процент
+    маржи из экономики. Это неверно, и ошибка была не в пользу правды.
+
+    При падении цены комиссия, реклама и налог падают вместе с ней — они
+    считаются процентом. А себестоимость, логистика и эквайринг остаются
+    прежними: ткань и доставка стоят одинаково, за сколько бы вещь ни ушла.
+    Значит прибыль падает БЫСТРЕЕ цены, а пропорция это скрывала.
+
+    Товар, проданный со скидкой по акции, выглядел прибыльным, хотя на деле
+    уходил в минус. Поэтому считаем по составляющим.
+    """
+    if not price or not m or m.get('margin') is None:
+        return None, None
+    var_share = sum(float(v or 0) for v in (m.get('shares') or {}).values())
+    fixed = float(m.get('production') or 0) + sum(
+        float(v or 0) for v in (m.get('fixed') or {}).values())
+    profit = round(price * (1 - var_share) - fixed, 2)
+    return profit, round(profit / price * 100, 1)
+
+
 def _margin_index():
     """Маржа по каждому размеру: {sku: {margin, profit, price}}.
 
@@ -398,20 +421,32 @@ def _margin_index():
                         # Доли расходов от цены — чтобы разложить выручку по
                         # статьям при любой цене продажи. Хранить рубли нельзя:
                         # в акции вещь ушла дешевле, и суммы будут не те.
+                        # ПЕРЕМЕННЫЕ — считаются процентом от цены и падают
+                        # вместе с ней: комиссия, эквайринг, реклама, налоги.
                         'shares': {
                             'commission': _share(u, 'commission'),
-                            'logistics': _share(u, 'logistics'),
                             'acquiring': _share(u, 'acquiring'),
                             'promo': _share(u, 'promo'),
-                            'storage': _share(u, 'storage'),
-                            'returnCost': _share(u, 'returnCost'),
-                            'acceptance': _share(u, 'acceptance'),
                             'tax': _share(u, 'tax'),
                             'vat': _share(u, 'vat'),
+                        },
+                        # ПОСТОЯННЫЕ — рубли за вещь, от цены не зависят:
+                        # доставка стоит одинаково, за сколько бы вещь ни
+                        # ушла. На скидке они съедают прибыль быстрее всего.
+                        'fixed': {
+                            'logistics': float(u.get('logistics') or 0),
+                            'storage': float(u.get('storage') or 0),
+                            'returnCost': float(u.get('returnCost') or 0),
+                            'acceptance': float(u.get('acceptance') or 0),
                         },
                         # Себестоимость в рублях: она от цены не зависит —
                         # ткань и работа стоят одинаково при любой скидке.
                         'production': float(u.get('productionCost') or 0),
+                        # Цена карточки — чтобы показать СПП: скидку,
+                        # которую площадка даёт покупателю за свой счёт.
+                        # Цена карточки лежит на уровне размера, а не внутри
+                        # расчёта единицы.
+                        'cardPrice': float(h.get('cardPrice') or 0),
                     })
     return out
 
@@ -513,11 +548,7 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     for r in rows:
         price = float(r[10] or 0)
         m = margins.get((r[4], r[5], r[6])) or {}
-        margin = m.get('margin')
-        # Прибыль в экономике посчитана от своей цены. Продажа могла пройти
-        # по другой — пересчитываем по проценту, иначе цифры не сойдутся.
-        profit = (round(price * float(margin) / 100, 2)
-                  if margin is not None and price else None)
+        profit, margin = _profit_at(m, price)
         items.append({
             'id': r[0],
             'orderNumber': r[1],
@@ -532,6 +563,10 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             'price': round(price, 2),
             'margin': margin,
             'profit': profit,
+            # Цена на витрине и СПП — скидка Озон Картой. Покупатель видит
+            # одну цену, платит меньше, а разницу площадка возмещает нам.
+            # Без этой строки непонятно, почему начислено меньше карточки.
+            'cardPrice': round(m.get('cardPrice') or 0, 2) or None,
         })
 
     # ИТОГ ЗА ПЕРИОД — по всему отбору, а не по видимой странице.
@@ -560,12 +595,21 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
         mm = margins.get((material, width, height)) or {}
         if mm.get('margin') is None:
             continue
-        profit_sum += pr * float(mm['margin']) / 100
+        # Прибыль по составляющим, а не пропорцией: постоянные расходы от
+        # цены не зависят, и на скидке они съедают больше, чем кажется.
+        unit_profit, _ = _profit_at(mm, float(price or 0))
+        if unit_profit is None:
+            continue
+        profit_sum += unit_profit * n
         known += pr
         # Расходы от цены пересчитываем по долям, себестоимость берём
         # в рублях: ткань и работа стоят одинаково при любой скидке.
+        # Переменные считаем от фактической цены, постоянные берём рублями:
+        # так разбор сходится с прибылью до копейки.
         for k, share in (mm.get('shares') or {}).items():
             parts[k] += pr * float(share)
+        for k, val in (mm.get('fixed') or {}).items():
+            parts[k] += float(val or 0) * n
         parts['production'] += float(mm.get('production') or 0) * n
 
     # Срезы по площадкам и схемам — для переключателей в шапке.
