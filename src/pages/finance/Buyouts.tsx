@@ -14,7 +14,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
-import { fetchBoughtFeed, type BoughtOrder } from '@/lib/managerFinanceApi';
+import {
+  fetchBoughtFeed,
+  refreshSales,
+  type BoughtOrder,
+} from '@/lib/managerFinanceApi';
+import { useToast } from '@/hooks/use-toast';
 
 const PER_PAGE = 10;
 
@@ -68,6 +73,8 @@ const Buyouts = () => {
     breakdown?: { marketplace: string; scheme: string; count: number }[];
   }>({ items: [], total: 0, pages: 1 });
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     setLoading(true);
@@ -94,6 +101,42 @@ const Buyouts = () => {
   const changeTo = (v: string) => {
     setDateTo(v);
     setPage(1);
+  };
+
+  /**
+   * Подтянуть свежие продажи с площадки.
+   *
+   * Выгрузка идёт страницами несколько минут и продолжает себя сама, поэтому
+   * ждать её окончания незачем: перечитываем ленту через полминуты, когда
+   * первые страницы уже легли в базу.
+   */
+  const sync = async () => {
+    setSyncing(true);
+    try {
+      await refreshSales(3);
+      toast({
+        title: 'Обновляем продажи',
+        description: 'Свежие выкупы появятся в течение пары минут',
+      });
+      setTimeout(() => {
+        setPage(1);
+        fetchBoughtFeed(1, PER_PAGE, dateFrom, dateTo, mp, scheme)
+          .then((d) =>
+            setData({
+              items: d.items || [],
+              total: d.total,
+              pages: d.pages,
+              totals: d.totals,
+              breakdown: d.breakdown,
+            }),
+          )
+          .catch(() => undefined);
+      }, 30000);
+    } catch {
+      toast({ title: 'Не удалось запустить', variant: 'destructive' });
+    } finally {
+      setSyncing(false);
+    }
   };
 
   /** Быстрый выбор периода: вводить даты руками ради «за месяц» утомительно. */
@@ -138,9 +181,26 @@ const Buyouts = () => {
               нам после всех расходов площадки
             </p>
           </div>
-          <Badge variant="outline" className="text-sm">
-            {data.total.toLocaleString('ru-RU')} выкуплено
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-sm">
+              {data.total.toLocaleString('ru-RU')} выкуплено
+            </Badge>
+            {/* Данные обновляет планировщик дважды в сутки. Кнопка — для
+                случая «хочу видеть вчерашние продажи прямо сейчас». */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={syncing}
+              onClick={sync}
+            >
+              <Icon
+                name="RefreshCw"
+                size={14}
+                className={`mr-1 ${syncing ? 'animate-spin' : ''}`}
+              />
+              Обновить
+            </Button>
+          </div>
         </div>
 
         {/* ПЛОЩАДКИ И СХЕМЫ.

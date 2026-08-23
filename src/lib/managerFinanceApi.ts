@@ -162,3 +162,13 @@ export const fetchBoughtFeed = (
       (marketplace ? `&marketplace=${marketplace}` : '') +
       (scheme ? `&scheme=${scheme}` : ''),
   ).then((r) => r.json());
+
+/**
+ * Подтянуть свежие продажи с площадки прямо сейчас.
+ *
+ * Планировщик обновляет их дважды в сутки, но при разборе «сколько заработали
+ * вчера» ждать полсуток незачем. Выгрузка идёт страницами несколько минут и
+ * продолжает себя сама — ответ приходит сразу, до окончания работы.
+ */
+export const refreshSales = (months = 1): Promise<{ started: boolean }> =>
+  post({ action: 'refresh_sales', months });

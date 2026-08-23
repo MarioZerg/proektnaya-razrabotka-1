@@ -296,9 +296,15 @@ def _claim_sales_page(cur, conn, page):
     неудача, и вызов повторяется сам собой. Один запуск превращался в два,
     два в четыре. Замок делает страницу неповторимой.
     """
+    # Замки живут ТРИ МИНУТЫ, а не полчаса.
+    #
+    # Их задача — отсечь мгновенный дубль: повторный вызов приходит в ту же
+    # секунду, что и первый. А получасовой замок мешал делу: повторная
+    # выгрузка того же месяца натыкалась на метки прошлого прогона и
+    # обрывалась. Именно так в июле пропала середина месяца.
     cur.execute(
         "DELETE FROM sync_chain_lock "
-        "WHERE started_at < now() - interval '30 minutes'")
+        "WHERE job = 'ozon_sales' AND started_at < now() - interval '3 minutes'")
     try:
         cur.execute(
             "INSERT INTO sync_chain_lock (job, step) VALUES ('ozon_sales', %s)",
@@ -376,6 +382,9 @@ def _sync_sales(cur, headers, days=SALES_DAYS, start_page=1, pages=4,
     nxt = (anchor + timedelta(days=32)).replace(day=1)
     to_date = min(nxt - timedelta(days=1), today)
     saved = 0
+    # Сколько операций отдала последняя страница. Именно по этому числу
+    # понятно, кончился отчёт или нет.
+    last_ops = 0
 
     # Размеры по артикулу: в отчёте площадки их нет, а в ленте они нужны —
     # по ним же считается маржа.
@@ -398,6 +407,7 @@ def _sync_sales(cur, headers, days=SALES_DAYS, start_page=1, pages=4,
         if not isinstance(d, dict):
             break
         ops = ((d.get('result') or {}).get('operations')) or []
+        last_ops = len(ops)
         if not ops:
             break
 
@@ -469,7 +479,8 @@ def _sync_sales(cur, headers, days=SALES_DAYS, start_page=1, pages=4,
         if len(ops) < 1000:
             break
 
-    return {'saved': saved, 'window': f'{since}..{to_date}'}
+    return {'saved': saved, 'ops': last_ops,
+            'window': f'{since}..{to_date}'}
 
 
 def _sync_fact_prices(cur, creds, days=30):
@@ -504,6 +515,7 @@ def _sync_fact_prices(cur, creds, days=30):
         if not isinstance(d, dict):
             break
         ops = ((d.get('result') or {}).get('operations')) or []
+        last_ops = len(ops)
         if not ops:
             break
         for o in ops:
@@ -1595,7 +1607,16 @@ def handler(event: dict, context) -> dict:
             # шагаем на месяц назад, пока не наберём три. Так три месяца
             # собираются окнами, которые площадка соглашается отдавать.
             info['monthBack'] = month_back
-            if info.get('saved', 0) > 0 and page_now < MAX_SALES_PAGES:
+            # КОНЕЦ МЕСЯЦА ОПРЕДЕЛЯЕМ ПО ОПЕРАЦИЯМ, А НЕ ПО ПРОДАЖАМ.
+            #
+            # Раньше цепочка шла дальше, только если на странице нашлись
+            # продажи. Но страница вполне может состоять из одних эквайрингов
+            # и логистики — продаж ноль, а отчёт продолжается. Цепочка решала,
+            # что месяц кончился, и обрывалась: июнь так оборвался на пятом
+            # числе, май — на двадцать пятом.
+            #
+            # Полная страница (тысяча операций) значит, что впереди есть ещё.
+            if info.get('ops', 0) >= 1000 and page_now < MAX_SALES_PAGES:
                 info['chained'] = _continue_sales(
                     page_now + 1, SALES_DAYS, month_back)
             # Четыре шага, а не три: текущий месяц неполный, и без

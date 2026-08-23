@@ -386,6 +386,39 @@ def _margin_index():
     return out
 
 
+AD_SPEND_URL = (
+    'https://functions.poehali.dev/29442dba-b5a9-4e15-b9ba-5fdc52eef574')
+
+
+def _refresh_sales(months=1):
+    """Просит выгрузку подтянуть свежие продажи с площадки.
+
+    Отчёт обновляется планировщиком дважды в сутки, но при разборе «сколько
+    мы заработали вчера» ждать полсуток незачем. Кнопка на странице запускает
+    ту же цепочку вручную.
+
+    Ответа не ждём: выгрузка идёт страницами несколько минут и продолжает
+    себя сама. Наше дело — дать ей старт.
+    """
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret:
+        return False
+    for m in range(max(1, min(4, months))):
+        req = urllib.request.Request(
+            AD_SPEND_URL,
+            data=json.dumps({'action': 'sync_sales', 'page': 1,
+                             'monthBack': m, 'cronSecret': secret}).encode(),
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        try:
+            urllib.request.urlopen(req, timeout=1)
+        except Exception:
+            # Обрыв по таймауту — норма: запрос принят, выгрузка работает.
+            pass
+    return True
+
+
 def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
                  marketplace=None, scheme=None):
     """Лента выкупов: что покупатели забрали, почём и сколько мы заработали.
@@ -565,6 +598,11 @@ def handler(event: dict, context) -> dict:
 
         body = json.loads(event.get('body') or '{}')
         action = body.get('action')
+
+        if action == 'refresh_sales':
+            # Обновить продажи прямо сейчас, не дожидаясь планировщика.
+            return _resp(200, {
+                'started': _refresh_sales(int(body.get('months') or 1))})
 
         # Планировщик ходит по ключу, а не от имени человека: холды должны
         # закрываться сами, без того чтобы кто-то каждый день нажимал кнопку.
