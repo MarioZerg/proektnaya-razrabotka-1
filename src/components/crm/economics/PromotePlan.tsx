@@ -39,6 +39,12 @@ const PromotePlan = ({ material, onDone }: Props) => {
   });
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState('');
+  // Выбранная глубина скидки по каждой акции.
+  //
+  // По умолчанию 0 — цена по потолку площадки, то есть минимум скидки. Так
+  // товар попадёт в максимум акций, не растратив запас прибыли на первой же.
+  // Углубить можно осознанно, видя, во что это встанет.
+  const [depth, setDepth] = useState<Record<string, number>>({});
 
   useEffect(() => {
     setLoading(true);
@@ -58,6 +64,7 @@ const PromotePlan = ({ material, onDone }: Props) => {
         actionId: a.actionId,
         offerIds: a.items.filter((i) => i.eligible).map((i) => i.offerId),
         minMargin: 0,
+        extraDiscount: depth[a.actionId] || 0,
         actorId: user?.id,
         actorName: user?.name,
       });
@@ -153,17 +160,58 @@ const PromotePlan = ({ material, onDone }: Props) => {
               </div>
             </div>
             {a.recommended && a.newItems > 0 && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="mt-1.5 h-7 w-full text-xs"
-                disabled={!!busyId}
-                onClick={() => join(a)}
-              >
-                {busyId === a.actionId
-                  ? 'Заводим…'
-                  : `Завести ${a.fits} размеров`}
-              </Button>
+              <>
+                {/* ГЛУБИНА СКИДКИ.
+                    Площадка называет потолок цены — минимум, какой она
+                    примет. Заходить всегда по нему значит получать минимум
+                    буста, а сразу глубоко — растратить весь запас прибыли на
+                    одной акции. Показываем варианты с готовой цифрой прибыли:
+                    запас можно разложить между несколькими акциями. */}
+                {!!a.options?.length && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {a.options.map((o) => {
+                      const active = (depth[a.actionId] || 0) === o.extraDiscount;
+                      return (
+                        <button
+                          key={o.extraDiscount}
+                          type="button"
+                          onClick={() =>
+                            setDepth((d) => ({
+                              ...d,
+                              [a.actionId]: o.extraDiscount,
+                            }))
+                          }
+                          className={`rounded border px-1.5 py-1 text-[11px] leading-tight ${
+                            active
+                              ? 'border-primary bg-primary/10 font-medium'
+                              : 'border-border bg-background/60'
+                          }`}
+                        >
+                          <span className="block">
+                            {o.extraDiscount === 0
+                              ? 'минимум'
+                              : `−${o.extraDiscount}%`}
+                          </span>
+                          <span className="block text-muted-foreground">
+                            {money(o.avgProfit)} ₽ · {o.avgMargin}%
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-1.5 h-7 w-full text-xs"
+                  disabled={!!busyId}
+                  onClick={() => join(a)}
+                >
+                  {busyId === a.actionId
+                    ? 'Заводим…'
+                    : `Завести ${a.fits} размеров`}
+                </Button>
+              </>
             )}
           </div>
         ))}

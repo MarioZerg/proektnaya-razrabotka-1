@@ -505,6 +505,47 @@ def _material_plan(cur, headers, material, settings, min_avg_margin=4.5):
         drop = round(sum(
             base[c['offerId']]['profit'] - c['profit'] for c in good
         ) / len(good), 2) if good else 0.0
+        # ВАРИАНТЫ ГЛУБИНЫ СКИДКИ.
+        #
+        # Площадка называет потолок цены, но заходить всегда по нему — значит
+        # отдавать минимум скидки и получать минимум буста. А заходить сразу
+        # глубоко — растратить весь запас прибыли на одной акции.
+        #
+        # Считаем варианты БЕЗ повторных запросов к площадке: список товаров
+        # уже получен, глубина скидки — простая арифметика поверх него.
+        # Иначе четыре варианта на шесть акций складывались в два десятка
+        # обращений, и функция не укладывалась в отведённое время.
+        options = []
+        for extra in (0.0, 3.0, 5.0, 10.0):
+            k = (100 - extra) / 100
+            ok = []
+            for c in mine:
+                price = round(c['ceilingPrice'] * k, 2)
+                if price <= 0:
+                    continue
+                # Часть расходов падает вместе с ценой, часть — нет. Поэтому
+                # прибыль считаем по составляющим, а не пропорцией: иначе
+                # маржа выходит одинаковой при любой скидке.
+                profit = round(
+                    price * (1 - c['varShare']) - c['fixedCost'], 2)
+                margin = round(profit / price * 100, 1) if price else 0.0
+                if profit > 0:
+                    ok.append({'profit': profit, 'margin': margin,
+                               'offerId': c['offerId']})
+            if not ok:
+                continue
+            options.append({
+                'extraDiscount': extra,
+                'fits': len(ok),
+                'avgMargin': round(sum(c['margin'] for c in ok) / len(ok), 1),
+                # Средняя прибыль с вещи при такой глубине скидки. Показываем
+                # именно её, а не «сколько теряем»: разница с текущей ценой
+                # сбивает — в акции работает своя цена, и сравнивать надо
+                # варианты между собой.
+                'avgProfit': round(
+                    sum(c['profit'] for c in ok) / len(ok), 2),
+            })
+
         out.append({
             'actionId': ext_id,
             'title': title,
@@ -513,6 +554,7 @@ def _material_plan(cur, headers, material, settings, min_avg_margin=4.5):
             'total': len(mine),
             'avgMargin': avg,
             'profitDrop': drop,
+            'options': options,
             'items': mine,
         })
 
@@ -558,7 +600,7 @@ def _material_plan(cur, headers, material, settings, min_avg_margin=4.5):
 
 
 def _action_candidates(cur, headers, action_id, settings, min_margin=5.0,
-                       plan_mode=False):
+                       plan_mode=False, extra_discount=0.0):
     """Товары акции с разбором: кого можно заводить, а кого нельзя.
 
     Площадка зовёт в акцию списком и называет по каждому товару максимальную
@@ -632,7 +674,17 @@ def _action_candidates(cur, headers, action_id, settings, min_margin=5.0,
 
     out = []
     for p in products:
-        action_price = float(p.get('max_action_price') or 0)
+        # ЦЕНА УЧАСТИЯ.
+        #
+        # Площадка называет max_action_price — это ПОТОЛОК: выше не пустит,
+        # ниже можно. По умолчанию берём потолок, то есть отдаём минимум
+        # скидки — так товар попадёт в максимум акций, не растратив запас
+        # прибыли на первой же.
+        #
+        # Но иногда скидку хочется углубить: чем ниже цена, тем выше буст в
+        # выдаче. Тогда владелец задаёт глубину сам, видя, во что она встанет.
+        ceiling = float(p.get('max_action_price') or 0)
+        action_price = round(ceiling * (100 - extra_discount) / 100, 2)
         offer = offers.get(str(p.get('id')))
         if action_price <= 0 or not offer:
             continue
@@ -670,6 +722,21 @@ def _action_candidates(cur, headers, action_id, settings, min_margin=5.0,
                     f"{m.get('width') or ''}×{m.get('height') or ''}".strip(),
             'currentPrice': float(p.get('price') or 0),
             'actionPrice': action_price,
+            # Потолок площадки: минимальная скидка, какую она примет.
+            'ceilingPrice': ceiling,
+            # Составляющие расходов — чтобы пересчитать прибыль под любую
+            # цену без повторного обращения к площадке.
+            #   varShare — доля, что падает вместе с ценой (комиссия,
+            #              реклама, НДС, налог);
+            #   fixedCost — что остаётся неизменным (логистика, эквайринг,
+            #              себестоимость).
+            'varShare': round(
+                (c['commission'] + ad) / 100
+                + (vat / (100 + vat) if vat else 0)
+                + (1 - (vat / (100 + vat) if vat else 0)) * tax / 100, 6),
+            'fixedCost': round(c['logistics'] + c['acquiring'] + own, 2),
+            # Насколько цена ниже потолка — то, что мы отдали сверх минимума.
+            'extraDiscount': extra_discount,
             'profit': profit,
             'margin': margin,
             # Можно ли заводить: только с запасом по марже.
@@ -1048,7 +1115,8 @@ def handler(event: dict, context) -> dict:
             st_set['maxItemsInActionsPercent'] = float(lim[1]) if lim else 60.0
             items = _action_candidates(
                 cur, h, action_id, st_set,
-                float(body_data.get('minMargin') or 5.0))
+                float(body_data.get('minMargin') or 5.0),
+                extra_discount=float(body_data.get('extraDiscount') or 0))
             # Сводка по занятости: сколько товаров уже в акциях и сколько
             # мест осталось. Без неё непонятно, почему прибыльный товар
             # вдруг «не проходит».
@@ -1131,7 +1199,8 @@ def handler(event: dict, context) -> dict:
             st_set['maxItemsInActionsPercent'] = float(lim[1]) if lim else 60.0
             cands = _action_candidates(
                 cur, h, action_id, st_set,
-                float(body_data.get('minMargin') or 5.0))
+                float(body_data.get('minMargin') or 5.0),
+                extra_discount=float(body_data.get('extraDiscount') or 0))
             allowed = {c['offerId']: c for c in cands if c['eligible']}
 
             picked = [allowed[o] for o in offers if o in allowed]

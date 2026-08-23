@@ -56,6 +56,9 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
   const [promos, setPromos] = useState<Promotion[]>([]);
   const [actionId, setActionId] = useState('');
   const [minMargin, setMinMargin] = useState('5');
+  // Насколько уйти ниже потолка площадки. Ноль — цена по потолку, то есть
+  // минимум скидки: запас прибыли остаётся на другие акции.
+  const [extra, setExtra] = useState('0');
   const [items, setItems] = useState<ActionCandidate[]>([]);
   // Сводка по занятости: сколько мест в акциях осталось.
   const [quota, setQuota] = useState<{
@@ -85,7 +88,9 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
       return;
     }
     setLoading(true);
-    fetchActionCandidates(actionId, user?.id, Number(minMargin) || 0)
+    fetchActionCandidates(
+      actionId, user?.id, Number(minMargin) || 0, Number(extra) || 0,
+    )
       .then((d) => {
         setItems(d.items);
         setQuota({
@@ -96,7 +101,7 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
       })
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
-  }, [actionId, minMargin, user?.id]);
+  }, [actionId, minMargin, extra, user?.id]);
 
   // Только наши размеры: карточка отвечает за свою ткань и ширину.
   const mine = items.filter((i) => offerIds.includes(i.offerId));
@@ -110,6 +115,7 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
         actionId,
         offerIds: good.map((i) => i.offerId),
         minMargin: Number(minMargin) || 0,
+        extraDiscount: Number(extra) || 0,
         actorId: user?.id,
         actorName: user?.name,
       });
@@ -215,6 +221,23 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
               Остальное бережём для следующих акций
             </p>
           )}
+
+          {/* Глубина скидки. Площадка называет потолок цены — минимум, какой
+              она примет. Ноль значит «войти по потолку»: отдаём минимум
+              скидки и бережём запас прибыли для других акций. */}
+          <div className="space-y-1.5">
+            <Label>Скидка сверх минимума площадки, %</Label>
+            <Input
+              type="number"
+              value={extra}
+              onChange={(e) => setExtra(e.target.value)}
+              className="h-9"
+            />
+            <p className="text-xs text-muted-foreground">
+              Ноль — заходим по цене площадки, отдавая минимум скидки. Больше
+              скидка — выше буст в выдаче, но меньше прибыль
+            </p>
+          </div>
 
           {loading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">

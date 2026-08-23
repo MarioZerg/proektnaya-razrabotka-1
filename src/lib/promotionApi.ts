@@ -132,6 +132,8 @@ export const fetchActionCandidates = (
   actionId: number | string,
   actorId?: number,
   minMargin = 5,
+  /** Насколько уйти ниже потолка площадки, %. */
+  extraDiscount = 0,
 ): Promise<{
   items: ActionCandidate[];
   eligible: number;
@@ -142,7 +144,27 @@ export const fetchActionCandidates = (
   limitItems?: number;
   totalItems?: number;
   maxActionsPerItem?: number;
-}> => post({ action: 'action_candidates', actionId, actorId, minMargin });
+}> => post({
+  action: 'action_candidates', actionId, actorId, minMargin, extraDiscount,
+});
+
+/**
+ * Вариант глубины скидки для акции.
+ *
+ * Площадка называет ПОТОЛОК цены — минимум скидки, какой она примет. Заходить
+ * всегда по нему значит получать минимум буста; заходить сразу глубоко —
+ * растратить весь запас прибыли на одной акции. Варианты дают разложить
+ * запас между несколькими акциями осознанно.
+ */
+export interface PlanOption {
+  /** Сколько отдаём сверх минимума площадки, %. */
+  extraDiscount: number;
+  /** Сколько размеров остаётся прибыльными при такой глубине. */
+  fits: number;
+  avgMargin: number;
+  /** Средняя прибыль с вещи при этой глубине. */
+  avgProfit: number;
+}
 
 /** Акция в плане по материалу: что проходит и чем придётся пожертвовать. */
 export interface PlanAction {
@@ -156,6 +178,8 @@ export interface PlanAction {
   avgMargin: number;
   /** Во сколько обходится скидка: теряем рублей с вещи. */
   profitDrop: number;
+  /** Варианты глубины скидки: минимум площадки и глубже — ради буста. */
+  options?: PlanOption[];
   /** Сколько размеров добавится сверх предыдущих акций. */
   newItems: number;
   /** Средняя маржа по всему материалу после входа в эту акцию. */
@@ -190,6 +214,8 @@ export const joinAction = (payload: {
   actionId: number | string;
   offerIds: string[];
   minMargin?: number;
+  /** Насколько уйти ниже потолка площадки, %. */
+  extraDiscount?: number;
   actorId?: number;
   actorName?: string;
 }) => post({ action: 'join_action', ...payload });
