@@ -20,6 +20,7 @@ import {
   type BoughtOrder,
 } from '@/lib/managerFinanceApi';
 import { useToast } from '@/hooks/use-toast';
+import RevenueBreakdown from '@/components/crm/finance/RevenueBreakdown';
 
 const PER_PAGE = 10;
 
@@ -69,7 +70,13 @@ const Buyouts = () => {
     items: BoughtOrder[];
     total: number;
     pages: number;
-    totals?: { revenue: number; profit: number; margin: number };
+    totals?: {
+      revenue: number;
+      profit: number;
+      margin: number;
+      knownRevenue?: number;
+      breakdown?: Record<string, number>;
+    };
     breakdown?: { marketplace: string; scheme: string; count: number }[];
   }>({ items: [], total: 0, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -333,6 +340,17 @@ const Buyouts = () => {
             )}
           </CardContent>
         </Card>
+
+        {/* Разбор выручки: сколько забрала площадка, сколько стоило
+            производство, сколько ушло налогами и что осталось нам. */}
+        {!loading && data.totals?.breakdown && (
+          <RevenueBreakdown
+            revenue={data.totals.knownRevenue || data.totals.revenue}
+            profit={data.totals.profit}
+            margin={data.totals.margin}
+            breakdown={data.totals.breakdown}
+          />
+        )}
 
         {loading && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">

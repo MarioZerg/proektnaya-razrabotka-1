@@ -349,6 +349,19 @@ BOUGHT_STATUSES = {
 }
 
 
+def _share(unit, key):
+    """Какую долю цены занимает расход — чтобы пересчитать под любую цену.
+
+    В юнит-экономике расходы посчитаны от своей цены. Продажа могла пройти
+    дешевле: в акции, со скидкой площадки. Комиссия и налог при этом падают
+    вместе с ценой, поэтому храним долю, а не рубли.
+    """
+    price = float(unit.get('price') or 0)
+    if price <= 0:
+        return 0.0
+    return round(float(unit.get(key) or 0) / price, 6)
+
+
 def _margin_index():
     """Маржа по каждому размеру: {sku: {margin, profit, price}}.
 
@@ -382,6 +395,23 @@ def _margin_index():
                         'margin': u.get('margin'),
                         'profit': u.get('profit'),
                         'unitPrice': u.get('price'),
+                        # Доли расходов от цены — чтобы разложить выручку по
+                        # статьям при любой цене продажи. Хранить рубли нельзя:
+                        # в акции вещь ушла дешевле, и суммы будут не те.
+                        'shares': {
+                            'commission': _share(u, 'commission'),
+                            'logistics': _share(u, 'logistics'),
+                            'acquiring': _share(u, 'acquiring'),
+                            'promo': _share(u, 'promo'),
+                            'storage': _share(u, 'storage'),
+                            'returnCost': _share(u, 'returnCost'),
+                            'acceptance': _share(u, 'acceptance'),
+                            'tax': _share(u, 'tax'),
+                            'vat': _share(u, 'vat'),
+                        },
+                        # Себестоимость в рублях: она от цены не зависит —
+                        # ткань и работа стоят одинаково при любой скидке.
+                        'production': float(u.get('productionCost') or 0),
                     })
     return out
 
@@ -511,14 +541,32 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     )
     revenue = 0.0
     profit_sum = 0.0
+    # КУДА УХОДИТ ВЫРУЧКА.
+    #
+    # «Заработали 2,5 млн с оборота 72 млн» — цифра без объяснения. Показываем
+    # разбор: сколько забрала площадка, сколько стоило производство, сколько
+    # ушло государству. Тогда видно, на что можно повлиять.
+    parts = {'commission': 0.0, 'logistics': 0.0, 'acquiring': 0.0,
+             'promo': 0.0, 'storage': 0.0, 'returnCost': 0.0,
+             'acceptance': 0.0, 'tax': 0.0, 'vat': 0.0, 'production': 0.0}
+    known = 0.0
+
     for material, width, height, price, qty in cur.fetchall():
-        pr = float(price or 0) * int(qty or 1)
+        n = int(qty or 1)
+        pr = float(price or 0) * n
         if not pr:
             continue
         revenue += pr
         mm = margins.get((material, width, height)) or {}
-        if mm.get('margin') is not None:
-            profit_sum += pr * float(mm['margin']) / 100
+        if mm.get('margin') is None:
+            continue
+        profit_sum += pr * float(mm['margin']) / 100
+        known += pr
+        # Расходы от цены пересчитываем по долям, себестоимость берём
+        # в рублях: ткань и работа стоят одинаково при любой скидке.
+        for k, share in (mm.get('shares') or {}).items():
+            parts[k] += pr * float(share)
+        parts['production'] += float(mm.get('production') or 0) * n
 
     # Срезы по площадкам и схемам — для переключателей в шапке.
     cur.execute(
@@ -543,6 +591,11 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             'revenue': round(revenue, 2),
             'profit': round(profit_sum, 2),
             'margin': round(profit_sum / revenue * 100, 1) if revenue else 0,
+            # Выручка, по которой удалось разложить расходы. Если размера нет
+            # в юнит-экономике, его продажа в разбор не попадает — показываем
+            # это честно, а не подмешиваем нули.
+            'knownRevenue': round(known, 2),
+            'breakdown': {k: round(v, 2) for k, v in parts.items()},
         },
         'breakdown': breakdown,
     }

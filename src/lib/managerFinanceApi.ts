@@ -150,7 +150,15 @@ export const fetchBoughtFeed = (
   total: number;
   pages: number;
   /** Итог по всему отбору, а не по видимой странице. */
-  totals: { revenue: number; profit: number; margin: number };
+  totals: {
+    revenue: number;
+    profit: number;
+    margin: number;
+    /** Выручка, по которой удалось разложить расходы. */
+    knownRevenue?: number;
+    /** Куда ушла выручка: по статьям, в рублях. */
+    breakdown?: Record<string, number>;
+  };
   /** Сколько выкупов по каждой площадке и схеме — для переключателей. */
   breakdown: { marketplace: string; scheme: string; count: number }[];
 }> =>
