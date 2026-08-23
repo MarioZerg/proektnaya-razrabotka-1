@@ -137,32 +137,36 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
         </div>
       </div>
 
-      {/* ОТКУДА ВЗЯЛАСЬ ЦЕНА В РАСЧЁТЕ.
+      {/* ЦЕПОЧКА ЦЕН OZON.
           Самый частый вопрос: «на витрине одна цена, у вас другая». Цен
-          действительно несколько — карточка, витрина с акциями, факт продаж.
+          действительно четыре, и путать их легко:
+            карточка   — что мы выставили;
+            витрина    — что видит покупатель после акций площадки;
+            начислено  — что площадка начислила НАМ за проданную вещь;
+          именно с последней берётся комиссия, и именно она — база расчёта.
           Показываем всю цепочку, чтобы цифру можно было проверить. */}
       <div className="mt-2 rounded-md border border-border bg-background/60 p-2 text-xs">
         <p className="font-medium">Как получена цена в расчёте</p>
         <div className="mt-1 space-y-0.5">
           {!!current?.cardPrice && (
             <p className="flex justify-between gap-2 text-muted-foreground">
-              <span>Цена в карточке</span>
+              <span>Наша цена в карточке</span>
               <span>{money(current.cardPrice)} ₽</span>
             </p>
           )}
-          {!!u.sppAmount && u.sppAmount > 0 && (
+          {!!current?.showcasePrice && (
             <p className="flex justify-between gap-2 text-muted-foreground">
-              <span>− скидка площадки (СПП {u.sppPercent}%)</span>
-              <span>−{money(u.sppAmount)} ₽</span>
+              <span>Покупатель видит на витрине</span>
+              <span>{money(current.showcasePrice)} ₽</span>
             </p>
           )}
           <p className="flex justify-between gap-2 border-t border-border pt-0.5 font-medium">
             <span>
               {current?.priceSource2 === 'fact'
-                ? `Факт продаж (${current.factSaleCount} шт за месяц)`
+                ? `Площадка начислила нам (${current.factSaleCount} продаж)`
                 : current?.priceSource2 === 'showcase'
-                  ? 'Цена на витрине с акциями'
-                  : 'Цена карточки'}
+                  ? 'Считаем по витрине'
+                  : 'Считаем по цене карточки'}
             </span>
             <span>{money(u.price)} ₽</span>
           </p>
@@ -170,30 +174,36 @@ const EconomicsRowCard = ({ row, scheme, altScheme }: CardProps) => {
         <p className="mt-1 text-[11px] text-muted-foreground">
           {current?.priceSource2 === 'fact' ? (
             <>
-              Считаем по деньгам, которые площадка реально начислила за
-              проданные вещи: оплата картой площадки, регион и баллы уже учтены
+              Комиссия площадки считается именно с начисленной суммы, поэтому
+              она и есть база расчёта. Оплата картой площадки, регион и баллы
+              в ней уже учтены
             </>
           ) : (
             <>
-              Площадка не отдала фактическую цену продаж — считаем по витрине.
-              Реальная сумма может быть ниже
+              Продаж за месяц не было — считаем по витрине. Начисленная сумма
+              может отличаться
             </>
           )}
         </p>
       </div>
 
-      {/* СПП объясняем одной строкой: скидку даёт площадка за свой счёт,
-          и низкая цена на витрине не делает товар убыточным. Разбор цены
-          выше уже показал, как она сложилась. */}
-      {!!u.sppPercent && u.sppPercent > 0 && (
-        <p className="mt-2 flex items-start gap-1.5 rounded-md bg-sky-50 p-2 text-xs text-sky-900">
-          <Icon name="BadgePercent" size={13} className="mt-0.5 shrink-0" />
-          <span>
-            {money(u.sppAmount || 0)} ₽ из этой скидки платит площадка, а не мы
-            — можно поднять цену в карточке, не теряя привлекательности
-          </span>
-        </p>
-      )}
+      {/* Доля площадки в скидке.
+          Показываем ТОЛЬКО когда нам начислили больше, чем видит покупатель:
+          значит часть скидки площадка взяла на себя, и эти деньги к нам
+          вернулись. Если начисление совпало с витриной, доли площадки нет —
+          и фраза о ней только путала бы. */}
+      {!!current?.showcasePrice &&
+        current.priceSource2 === 'fact' &&
+        u.price > current.showcasePrice + 1 && (
+          <p className="mt-2 flex items-start gap-1.5 rounded-md bg-sky-50 p-2 text-xs text-sky-900">
+            <Icon name="BadgePercent" size={13} className="mt-0.5 shrink-0" />
+            <span>
+              Покупатель заплатил {money(current.showcasePrice)} ₽, а нам
+              начислили {money(u.price)} ₽ — разницу{' '}
+              {money(u.price - current.showcasePrice)} ₽ площадка взяла на себя
+            </span>
+          </p>
+        )}
 
       {/* Убыточные размеры внутри прибыльной группы.
           Шапка показывает среднее, и минусовые высоты за ним прячутся:

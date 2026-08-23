@@ -90,6 +90,8 @@ export interface HeightRow {
   priceSource2?: 'fact' | 'showcase' | 'card';
   /** На скольких продажах посчитана фактическая цена. */
   factSaleCount?: number;
+  /** Цена на витрине — её видит покупатель. */
+  showcasePrice?: number | null;
 }
 
 /** Строка расчёта: ткань + ширина. */

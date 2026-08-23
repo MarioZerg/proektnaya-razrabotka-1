@@ -1580,6 +1580,10 @@ def _build(cur, code, scheme, buyout_override, shared=None):
                       else 'card')
             ),
             'factSaleCount': fact_n,
+            # Цена на витрине — её видит покупатель. Держим рядом с фактом:
+            # разница между ними показывает, сколько скидки берёт на себя
+            # площадка, а сколько приходит нам.
+            'showcasePrice': (p or {}).get('priceWithMarketplaceDiscount'),
             'cardPrice': p['price'] if p else None,
             'commissionFbo': p['commissionFboPercent'] if p else None,
             'commissionFbs': p['commissionFbsPercent'] if p else None,
@@ -1629,6 +1633,7 @@ def _build(cur, code, scheme, buyout_override, shared=None):
                 # Откуда цена: факт продаж точнее витрины.
                 'priceSource2': i.get('priceSource'),
                 'factSaleCount': i.get('factSaleCount') or 0,
+                'showcasePrice': i.get('showcasePrice'),
                 'cardPrice': i['cardPrice'],
                 'unit': unit,
             })
