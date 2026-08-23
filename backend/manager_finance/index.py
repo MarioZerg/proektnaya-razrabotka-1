@@ -386,21 +386,25 @@ def _margin_index():
     return out
 
 
-def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None):
-    """Лента выкупленных заказов: что купили, почём и сколько заработали.
+def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
+                 marketplace=None, scheme=None):
+    """Лента выкупов: что покупатели забрали, почём и сколько мы заработали.
 
-    Показываем ТОЛЬКО забранные покупателем заказы — то есть деньги, которые
-    действительно наши. Заказ в доставке ещё может вернуться, и считать его
-    выручкой рано.
+    Источник — отчёт площадки, а не заказы цеха. Это принципиально: заказы
+    показывают только схему FBS, то есть вещи, которые мы шьём и отправляем
+    сами. А FBO-продажи (со склада площадки, куда товар отвозится партиями)
+    в заказы не попадают вовсе — там торгует сама площадка.
 
-    Цену берём ту, по которой покупатель реально оформил заказ, а маржу — из
-    юнит-экономики, чтобы цифра совпадала с той, что видно в разделе цен.
+    За месяц по данным OZON выкуплено под семь тысяч вещей, и почти половина
+    из них — FBO. Пока лента строилась по заказам, эта половина выручки была
+    не видна, а цифра расходилась с отчётом по себестоимости вдвое.
+
+    Возвраты в ленту не берём: вещь приехала обратно, деньги вернулись
+    покупателю — продажи не было.
     """
     page = max(1, int(page or 1))
     per_page = min(50, max(1, int(per_page or 10)))
 
-    # Отбор по дате выкупа. Даты приходят от календаря в виде ГГГГ-ММ-ДД;
-    # всё лишнее отсекаем, чтобы в запрос не попало ничего постороннего.
     def _clean_date(v):
         v = (v or '').strip()[:10]
         return v if len(v) == 10 and v[4] == '-' and v[7] == '-' else None
@@ -408,36 +412,32 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None):
     d_from = _clean_date(date_from)
     d_to = _clean_date(date_to)
 
-    where = (
-        "WHERE ((o.marketplace = 'OZON' AND o.ozon_status = 'delivered') "
-        "    OR (o.marketplace = 'Yandex' AND o.ym_status = 'DELIVERED'))"
-    )
+    where = "WHERE NOT s.is_return AND s.sale_price > 0"
     if d_from:
-        where += (" AND COALESCE(o.completed_at, o.created_at) >= "
-                  f"'{d_from}'::date")
+        where += f" AND s.sold_at >= '{d_from}'::date"
     if d_to:
         # Верхняя граница включительно: выбрав «по 21 августа», человек ждёт,
         # что продажи этого дня войдут в отчёт.
-        where += (" AND COALESCE(o.completed_at, o.created_at) < "
-                  f"'{d_to}'::date + interval '1 day'")
+        where += f" AND s.sold_at < '{d_to}'::date + interval '1 day'"
 
-    cur.execute(f"SELECT count(*) FROM orders o {where}")
+    # Площадка и схема: смотреть можно и общую картину, и любой срез.
+    mp = (marketplace or '').strip().lower()
+    if mp in ('ozon', 'wildberries', 'yandex_market'):
+        where += f" AND s.marketplace_code = '{mp}'"
+    sch = (scheme or '').strip().upper()
+    if sch in ('FBO', 'FBS'):
+        where += f" AND s.scheme = '{sch}'"
+
+    cur.execute(f"SELECT count(*) FROM marketplace_sales s {where}")
     total = int(cur.fetchone()[0] or 0)
 
     cur.execute(
-        "SELECT o.id, o.order_number, o.marketplace, o.order_type, "
-        "       o.material, o.width, o.height, o.quantity, "
-        "       COALESCE(o.completed_at, o.created_at) AS sold_at, "
-        "       COALESCE(o.product_ozon_sku, mi.ozon_sku) AS sku, "
-        "       p.price, p.price_with_marketplace_discount "
-        "FROM orders o "
-        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
-        "LEFT JOIN marketplace_prices p "
-        "       ON p.marketplace_item_id = o.marketplace_item_id "
-        "      AND p.marketplace_code = 'ozon' "
-        f"{where} "
+        "SELECT s.id, s.posting_number, s.marketplace_code, s.scheme, "
+        "       s.material, s.width, s.height, s.quantity, s.sold_at, "
+        "       s.sku, s.sale_price, s.product_name "
+        f"FROM marketplace_sales s {where} "
         # Свежие продажи сверху: лента читается сверху вниз.
-        "ORDER BY COALESCE(o.completed_at, o.created_at) DESC, o.id DESC "
+        "ORDER BY s.sold_at DESC, s.id DESC "
         f"LIMIT {per_page} OFFSET {(page - 1) * per_page}"
     )
     rows = cur.fetchall()
@@ -445,45 +445,33 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None):
 
     items = []
     for r in rows:
-        sku = str(r[9]) if r[9] else None
+        price = float(r[10] or 0)
         m = margins.get((r[4], r[5], r[6])) or {}
-        # ЦЕНА ПОКУПКИ — та, что покупатель видел на витрине: с учётом скидки
-        # площадки. Цена карточки без скидки к деньгам отношения не имеет.
-        price = float(r[11] or r[10] or 0)
         margin = m.get('margin')
-        profit = m.get('profit')
-        # Прибыль в экономике посчитана от своей цены. Если покупка прошла по
-        # другой, пересчитываем по проценту — иначе цифры не сойдутся.
-        if profit is not None and m.get('unitPrice') and price:
-            profit = round(price * float(margin or 0) / 100, 2)
+        # Прибыль в экономике посчитана от своей цены. Продажа могла пройти
+        # по другой — пересчитываем по проценту, иначе цифры не сойдутся.
+        profit = (round(price * float(margin) / 100, 2)
+                  if margin is not None and price else None)
         items.append({
             'id': r[0],
             'orderNumber': r[1],
             'marketplace': r[2],
             'scheme': r[3],
-            'material': r[4],
+            'material': r[4] or (r[11] or '')[:40] or None,
             'width': r[5],
             'height': r[6],
             'quantity': float(r[7] or 1),
             'soldAt': r[8].isoformat() if r[8] else None,
-            'sku': sku,
-            'price': round(price, 2) if price else None,
+            'sku': r[9],
+            'price': round(price, 2),
             'margin': margin,
             'profit': profit,
         })
 
-    # ИТОГ ЗА ПЕРИОД — по всем выкупам отбора, а не по видимой странице.
-    #
-    # Считаем отдельным запросом: на экране десять строк, а вопрос «сколько
-    # всего заработали» относится ко всему отобранному.
+    # ИТОГ ЗА ПЕРИОД — по всему отбору, а не по видимой странице.
     cur.execute(
-        "SELECT o.material, o.width, o.height, "
-        "       COALESCE(p.price_with_marketplace_discount, p.price) "
-        "FROM orders o "
-        "LEFT JOIN marketplace_prices p "
-        "       ON p.marketplace_item_id = o.marketplace_item_id "
-        "      AND p.marketplace_code = 'ozon' "
-        f"{where}"
+        "SELECT s.material, s.width, s.height, s.sale_price "
+        f"FROM marketplace_sales s {where}"
     )
     revenue = 0.0
     profit_sum = 0.0
@@ -496,6 +484,19 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None):
         if mm.get('margin') is not None:
             profit_sum += pr * float(mm['margin']) / 100
 
+    # Срезы по площадкам и схемам — для переключателей в шапке.
+    cur.execute(
+        "SELECT s.marketplace_code, s.scheme, count(*) "
+        "FROM marketplace_sales s "
+        "WHERE NOT s.is_return AND s.sale_price > 0 "
+        + (f" AND s.sold_at >= '{d_from}'::date" if d_from else '')
+        + (f" AND s.sold_at < '{d_to}'::date + interval '1 day'"
+           if d_to else '')
+        + " GROUP BY 1, 2"
+    )
+    breakdown = [{'marketplace': a, 'scheme': b, 'count': int(c)}
+                 for a, b, c in cur.fetchall()]
+
     return {
         'items': items,
         'page': page,
@@ -507,6 +508,7 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None):
             'profit': round(profit_sum, 2),
             'margin': round(profit_sum / revenue * 100, 1) if revenue else 0,
         },
+        'breakdown': breakdown,
     }
 
 
@@ -545,7 +547,8 @@ def handler(event: dict, context) -> dict:
                 # финансы, — отдельных прав тут не нужно.
                 return _resp(200, _bought_feed(
                     cur, params.get('page'), params.get('perPage'),
-                    params.get('dateFrom'), params.get('dateTo')))
+                    params.get('dateFrom'), params.get('dateTo'),
+                    params.get('marketplace'), params.get('scheme')))
 
             if action != 'balance':
                 return _resp(400, {'error': 'Неизвестное действие'})

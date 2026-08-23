@@ -272,6 +272,160 @@ def _wb_week(day):
     return monday, monday + timedelta(days=6)
 
 
+SELF_URL = 'https://functions.poehali.dev/29442dba-b5a9-4e15-b9ba-5fdc52eef574'
+
+# Сколько страниц отчёта разрешено пройти за одну цепочку.
+#
+# Месяц продаж — это около тридцати страниц по тысяче операций. Берём с
+# запасом, но не бесконечно: если что-то пойдёт не так, цепочка оборвётся
+# сама, а не будет ходить к площадке до скончания века.
+MAX_SALES_PAGES = 40
+
+
+def _claim_sales_page(cur, conn, page):
+    """Занимает страницу отчёта. Повторный запуск с тем же номером выйдет.
+
+    Запрос «не дожидаясь ответа» ненадёжен: обрыв по таймауту выглядит как
+    неудача, и вызов повторяется сам собой. Один запуск превращался в два,
+    два в четыре. Замок делает страницу неповторимой.
+    """
+    cur.execute(
+        "DELETE FROM sync_chain_lock "
+        "WHERE started_at < now() - interval '30 minutes'")
+    try:
+        cur.execute(
+            "INSERT INTO sync_chain_lock (job, step) VALUES ('ozon_sales', %s)",
+            (page,))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+
+
+def _continue_sales(page, days):
+    """Просит систему продолжить выгрузку со следующей страницы.
+
+    У функции пять секунд, а отчёт за месяц — три десятка страниц. Раньше
+    остаток пришлось бы догружать руками; теперь функция сама зовёт себя и
+    идёт дальше, пока страницы не кончатся.
+
+    Ответа не ждём: наш запуск на этом закончен, следующий работает сам.
+    """
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret:
+        return False
+    req = urllib.request.Request(
+        SELF_URL,
+        data=json.dumps({'action': 'sync_sales', 'page': page,
+                         'days': days, 'cronSecret': secret}).encode(),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    try:
+        urllib.request.urlopen(req, timeout=1)
+    except Exception:
+        # Обрыв по таймауту — обычное дело: запрос принят, функция работает.
+        pass
+    return True
+
+
+def _sync_sales(cur, headers, days=60, start_page=1, pages=4):
+    """Построчные продажи из финансового отчёта OZON: что и когда выкупили.
+
+    Заказы в системе — это работа цеха: что сшить и отправить. По ним видно
+    только схему FBS. А FBO-продажи (со склада площадки, куда мы отвозим
+    товар партиями) в заказы не попадают вовсе: там торгует сама площадка.
+
+    За месяц по данным OZON выкуплено под семь тысяч вещей, из них почти
+    половина — FBO. Без этого отчёта половина выручки была не видна.
+
+    Берём операции «Доставка покупателю» — это и есть факт выкупа, — и
+    «Получение возврата»: вещь приехала обратно, деньги вернулись.
+    """
+    today = datetime.now().date()
+    since = today - timedelta(days=days)
+    saved = 0
+
+    # Размеры по артикулу: в отчёте площадки их нет, а в ленте они нужны —
+    # по ним же считается маржа.
+    cur.execute(
+        "SELECT ozon_sku, sku, material, width, height "
+        "FROM marketplace_items WHERE ozon_sku IS NOT NULL")
+    meta = {str(r[0]).strip(): {'offer': r[1], 'material': r[2],
+                                'width': r[3], 'height': r[4]}
+            for r in cur.fetchall()}
+
+    for page in range(start_page, start_page + pages):
+        st, d = _http(
+            f'{OZON_API}/v3/finance/transaction/list', 'POST', headers,
+            {'filter': {'date': {'from': f'{since}T00:00:00.000Z',
+                                 'to': f'{today}T23:59:59.000Z'},
+                        'operation_type': [], 'transaction_type': 'all'},
+             'page': page, 'page_size': 1000},
+            timeout=40,
+        )
+        if not isinstance(d, dict):
+            break
+        ops = ((d.get('result') or {}).get('operations')) or []
+        if not ops:
+            break
+
+        for o in ops:
+            name = (o.get('operation_type_name') or '')
+            is_sale = 'Доставка покупателю' in name
+            is_return = name.startswith('Получение возврата')
+            if not (is_sale or is_return):
+                continue
+
+            items = o.get('items') or []
+            if not items:
+                continue
+
+            posting = o.get('posting') or {}
+            scheme = (posting.get('delivery_schema') or '').upper() or 'FBS'
+            posting_number = (posting.get('posting_number') or '')[:60]
+            sold_at = (o.get('operation_date') or '')[:19] or None
+
+            # Сумма по чеку делится на вещи отправления поровну.
+            accrual = abs(float(o.get('accruals_for_sale') or 0))
+            per_item = accrual / len(items) if items else 0
+
+            for it in items:
+                sku = str(it.get('sku') or '').strip()
+                if not sku:
+                    continue
+                m = meta.get(sku) or {}
+                cur.execute(
+                    "INSERT INTO marketplace_sales "
+                    "(marketplace_code, scheme, posting_number, sku, offer_id, "
+                    " product_name, material, width, height, quantity, "
+                    " sale_price, sold_at, is_return) "
+                    "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, %s, 1, %s, "
+                    "        %s, %s) "
+                    # Повторная загрузка не должна плодить дубли: тот же
+                    # отчёт скачивается снова при каждой синхронизации.
+                    "ON CONFLICT (marketplace_code, posting_number, sku, "
+                    "             is_return) DO UPDATE "
+                    "SET sale_price = EXCLUDED.sale_price, "
+                    "    sold_at = EXCLUDED.sold_at, "
+                    "    material = EXCLUDED.material, "
+                    "    width = EXCLUDED.width, "
+                    "    height = EXCLUDED.height, "
+                    "    synced_at = now()",
+                    (scheme, posting_number, sku, m.get('offer'),
+                     (it.get('name') or '')[:500], m.get('material'),
+                     m.get('width'), m.get('height'),
+                     round(per_item, 2), sold_at, is_return),
+                )
+                saved += 1
+
+        if len(ops) < 1000:
+            break
+
+    return {'saved': saved, 'pages': pages, 'fromPage': start_page}
+
+
 def _sync_fact_prices(cur, creds, days=30):
     """Фактическая цена продажи по каждому товару OZON.
 
@@ -1365,6 +1519,32 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return _resp(200, {'ok': True, 'periods': saved,
                                'compensations': comp})
+
+        if action == 'sync_sales':
+            # Построчные продажи со всех схем, включая FBO: заказы цеха
+            # показывают только то, что мы шьём сами.
+            creds, enabled = _credentials(cur, 'ozon')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция OZON не подключена'})
+            h = {'Client-Id': (creds.get('clientId') or '').strip(),
+                 'Api-Key': (creds.get('apiKey') or '').strip()}
+            # Отчёт за месяц — это три десятка страниц по тысяче операций,
+            # а у функции пять секунд. Берём по одной и передаём работу
+            # дальше: следующий запуск продолжит со следующей страницы.
+            page_now = int(body_data.get('page') or 1)
+            # Первая страница — обычный запуск планировщика, её не запираем.
+            if page_now > 1 and not _claim_sales_page(cur, conn, page_now):
+                return _resp(200, {'saved': 0, 'skippedDuplicateRun': True})
+            info = _sync_sales(
+                cur, h, int(body_data.get('days') or 30), page_now, 1)
+            conn.commit()
+            # Пустая страница значит, что отчёт кончился — цепочку
+            # останавливаем.
+            days_now = int(body_data.get('days') or 30)
+            more = info.get('saved', 0) > 0 and page_now < MAX_SALES_PAGES
+            info['chained'] = (_continue_sales(page_now + 1, days_now)
+                               if more else False)
+            return _resp(200, info)
 
         if action == 'sync_fact_prices':
             # Фактические цены продаж OZON: витрина расходится с тем, что

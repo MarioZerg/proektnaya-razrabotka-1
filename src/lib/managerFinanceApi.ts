@@ -139,6 +139,10 @@ export const fetchBoughtFeed = (
   /** Отбор по дате выкупа, ГГГГ-ММ-ДД. Обе границы включительно. */
   dateFrom = '',
   dateTo = '',
+  /** Площадка: ozon, wildberries, yandex_market. Пусто — все. */
+  marketplace = '',
+  /** Схема: FBO (со склада площадки) или FBS (со своего). Пусто — обе. */
+  scheme = '',
 ): Promise<{
   items: BoughtOrder[];
   page: number;
@@ -147,10 +151,14 @@ export const fetchBoughtFeed = (
   pages: number;
   /** Итог по всему отбору, а не по видимой странице. */
   totals: { revenue: number; profit: number; margin: number };
+  /** Сколько выкупов по каждой площадке и схеме — для переключателей. */
+  breakdown: { marketplace: string; scheme: string; count: number }[];
 }> =>
   fetch(
     `${MANAGER_FINANCE_URL}?action=bought_feed&page=${page}` +
       `&perPage=${perPage}` +
       (dateFrom ? `&dateFrom=${dateFrom}` : '') +
-      (dateTo ? `&dateTo=${dateTo}` : ''),
+      (dateTo ? `&dateTo=${dateTo}` : '') +
+      (marketplace ? `&marketplace=${marketplace}` : '') +
+      (scheme ? `&scheme=${scheme}` : ''),
   ).then((r) => r.json());

@@ -18,7 +18,11 @@ import { fetchBoughtFeed, type BoughtOrder } from '@/lib/managerFinanceApi';
 
 const PER_PAGE = 10;
 
+/** Имена площадок: в отчёте они приходят кодами. */
 const MP: Record<string, { label: string; className: string }> = {
+  ozon: { label: 'OZON', className: 'text-blue-700' },
+  wildberries: { label: 'WB', className: 'text-fuchsia-700' },
+  yandex_market: { label: 'Яндекс', className: 'text-amber-600' },
   OZON: { label: 'OZON', className: 'text-blue-700' },
   WB: { label: 'WB', className: 'text-fuchsia-700' },
   Yandex: { label: 'Яндекс', className: 'text-amber-600' },
@@ -53,28 +57,33 @@ const Buyouts = () => {
   // Границы периода. По умолчанию пусто — показываем все выкупы.
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // Площадка и схема. Пусто — смотрим всё вместе.
+  const [mp, setMp] = useState('');
+  const [scheme, setScheme] = useState('');
   const [data, setData] = useState<{
     items: BoughtOrder[];
     total: number;
     pages: number;
     totals?: { revenue: number; profit: number; margin: number };
+    breakdown?: { marketplace: string; scheme: string; count: number }[];
   }>({ items: [], total: 0, pages: 1 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetchBoughtFeed(page, PER_PAGE, dateFrom, dateTo)
+    fetchBoughtFeed(page, PER_PAGE, dateFrom, dateTo, mp, scheme)
       .then((d) =>
         setData({
           items: d.items || [],
           total: d.total,
           pages: d.pages,
           totals: d.totals,
+          breakdown: d.breakdown,
         }),
       )
       .catch(() => setData({ items: [], total: 0, pages: 1 }))
       .finally(() => setLoading(false));
-  }, [page, dateFrom, dateTo]);
+  }, [page, dateFrom, dateTo, mp, scheme]);
 
   // Смена периода возвращает на первую страницу: оставаться на сотой в новом
   // отборе бессмысленно — там пусто.
@@ -122,6 +131,49 @@ const Buyouts = () => {
             {data.total.toLocaleString('ru-RU')} выкуплено
           </Badge>
         </div>
+
+        {/* ПЛОЩАДКИ И СХЕМЫ.
+            Смотреть нужно и общую картину, и отдельные срезы: FBO — это
+            продажи со склада площадки, FBS — то, что мы отправляем сами.
+            Экономика у них разная, и мешать их в одну цифру нельзя. */}
+        {!!data.breakdown?.length && (
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              variant={!mp && !scheme ? 'default' : 'outline'}
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => {
+                setMp('');
+                setScheme('');
+                setPage(1);
+              }}
+            >
+              Все площадки
+              <span className="ml-1 opacity-70">
+                {data.breakdown.reduce((a, b) => a + b.count, 0)}
+              </span>
+            </Button>
+            {data.breakdown.map((b) => {
+              const active = mp === b.marketplace && scheme === b.scheme;
+              return (
+                <Button
+                  key={`${b.marketplace}-${b.scheme}`}
+                  variant={active ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => {
+                    setMp(active ? '' : b.marketplace);
+                    setScheme(active ? '' : b.scheme);
+                    setPage(1);
+                  }}
+                >
+                  {MP[b.marketplace]?.label || b.marketplace} {b.scheme}
+                  <span className="ml-1 opacity-70">{b.count}</span>
+                </Button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Период и итог по нему. Вопрос «сколько заработали за неделю»
             решается тут, без выгрузок и калькулятора. */}

@@ -169,6 +169,18 @@ JOBS = [
         'optional': True,
     },
     {
+        'key': 'sales_sync',
+        'title': 'Продажи с площадок',
+        'func': 'ad_spend',
+        'urlAction': 'sync_sales',
+        'method': 'POST',
+        'purpose': 'Тянет отчёт о выкупах, включая FBO — их в заказах цеха нет',
+        'group': 'service',
+        'everyMin': 720,
+        'lateAfter': 2880,
+        'optional': True,
+    },
+    {
         'key': 'promotions_sync',
         'title': 'Акции площадок',
         'func': 'promotion',
