@@ -344,6 +344,102 @@ def _continue_sales(page, days, month_back=0):
     return True
 
 
+def _sync_realization(cur, headers, month_back=1, offset=0, limit=1000):
+    """Отчёт о реализации OZON: официальные цифры по каждой проданной вещи.
+
+    Это документ, по которому площадка платит: там цена продажи, комиссия
+    и сумма к перечислению построчно. Не наш расчёт по тарифам, а бумага.
+
+    Зачем он нужен, когда есть юнит-экономика. Та считает по карточкам и
+    даёт СРЕДНЮЮ по ассортименту: размер, проданный девяносто раз, весит в
+    ней столько же, сколько ни разу не проданный. Умножать такую среднюю на
+    количество продаж нельзя — получается несуществующая сумма.
+
+    Здесь же каждая строка — реальная продажа с реальной комиссией.
+    """
+    today = datetime.now().date()
+    anchor = today.replace(day=1)
+    for _ in range(month_back):
+        anchor = (anchor - timedelta(days=1)).replace(day=1)
+
+    st, d = _http(
+        f'{OZON_API}/v2/finance/realization', 'POST', headers,
+        {'month': anchor.month, 'year': anchor.year}, timeout=40)
+    if st != 200 or not isinstance(d, dict):
+        return {'saved': 0, 'error': f'OZON вернул {st}'}
+
+    res = d.get('result') or {}
+    rows = res.get('rows') or []
+    if not rows:
+        return {'saved': 0, 'month': str(anchor)}
+
+    doc = ((res.get('header') or {}).get('number') or '')[:40]
+
+    # Размеры по артикулу: в отчёте их нет, а для сверки с экономикой нужны.
+    cur.execute(
+        "SELECT sku, material, width, height FROM marketplace_items "
+        "WHERE sku IS NOT NULL")
+    meta = {str(r[0]).strip(): (r[1], r[2], r[3]) for r in cur.fetchall()}
+
+    # ОТЧЁТ ПИШЕМ ПОРЦИЯМИ.
+    #
+    # В нём почти пять тысяч строк, а у функции пять секунд. Целиком она не
+    # успевала и обрывалась на середине, записав только первую четверть.
+    # Берём по тысяче строк и передаём остаток следующему запуску.
+    total_rows = len(rows)
+    chunk = rows[offset:offset + limit]
+
+    saved = 0
+    for r in chunk:
+        item = r.get('item') or {}
+        dc = r.get('delivery_commission') or {}
+        rc = r.get('return_commission') or {}
+        offer = str(item.get('offer_id') or '').strip()
+        m = meta.get(offer) or (None, None, None)
+
+        cur.execute(
+            "INSERT INTO ozon_realization "
+            "(period_month, doc_number, row_number, sku, offer_id, "
+            " product_name, material, width, height, quantity, seller_price, "
+            " price_per_instance, amount, commission, commission_ratio, "
+            " bonus, bank_coinvestment, return_amount, total) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "        %s, %s, %s, %s, %s) "
+            # Отчёт скачивается повторно при каждой синхронизации: месяц
+            # может ещё дополняться, пока он не закрыт.
+            "ON CONFLICT (period_month, row_number) DO UPDATE SET "
+            "  amount = EXCLUDED.amount, commission = EXCLUDED.commission, "
+            "  total = EXCLUDED.total, return_amount = EXCLUDED.return_amount, "
+            "  bonus = EXCLUDED.bonus, "
+            "  bank_coinvestment = EXCLUDED.bank_coinvestment, "
+            "  synced_at = now()",
+            (anchor, doc, r.get('rowNumber'),
+             str(item.get('sku') or '')[:80], offer[:120],
+             (item.get('name') or '')[:500],
+             m[0], m[1], m[2],
+             int(dc.get('quantity') or 1),
+             r.get('seller_price_per_instance'),
+             dc.get('price_per_instance'), dc.get('amount'),
+             # КОМИССИЯ — это standard_fee, отдельное поле отчёта.
+             #
+             # Разница «начислено минус итог» комиссией не является: в итог
+             # входят ещё баллы и софинансирование банка, которые площадка
+             # ДОПЛАЧИВАЕТ продавцу за предоставленные скидки. Из-за этого
+             # комиссия выходила отрицательной.
+             #
+             # Формула отчёта: total = amount + bonus + bank − standard_fee.
+             dc.get('standard_fee'),
+             r.get('commission_ratio'),
+             dc.get('bonus'), dc.get('bank_coinvestment'),
+             (rc or {}).get('amount'), dc.get('total')),
+        )
+        saved += 1
+
+    return {'saved': saved, 'month': str(anchor), 'doc': doc,
+            'totalRows': total_rows,
+            'nextOffset': offset + limit if offset + limit < total_rows else 0}
+
+
 def _real_pnl(cur, headers, month_back=1):
     """Фактическая прибыль за месяц — по деньгам, а не по расчёту.
 
@@ -1674,6 +1770,19 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return _resp(200, {'ok': True, 'periods': saved,
                                'compensations': comp})
+
+        if action == 'sync_realization':
+            # Официальный отчёт о реализации — по нему площадка платит.
+            creds, enabled = _credentials(cur, 'ozon')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция OZON не подключена'})
+            h = {'Client-Id': (creds.get('clientId') or '').strip(),
+                 'Api-Key': (creds.get('apiKey') or '').strip()}
+            info = _sync_realization(
+                cur, h, int(body_data.get('monthBack') or 1),
+                int(body_data.get('offset') or 0))
+            conn.commit()
+            return _resp(200, info)
 
         if action == 'real_pnl':
             # Фактическая прибыль по движению денег — для сверки с расчётом.

@@ -362,6 +362,123 @@ def _share(unit, key):
     return round(float(unit.get(key) or 0) / price, 6)
 
 
+def _fact_pnl(cur, month=None):
+    """Прибыль по ОФИЦИАЛЬНОМУ отчёту OZON, а не по нашему расчёту.
+
+    Три источника давали три разные цифры, и ни одна не была правдой:
+
+    Юнит-экономика считает по карточкам и даёт среднюю по ассортименту —
+    245 рублей с вещи. Но размер, проданный девяносто раз, весит в этой
+    средней столько же, сколько ни разу не проданный. Умножать её на
+    количество продаж бессмысленно.
+
+    Лента выкупов берёт цену из финансовых операций и раскладывает расходы
+    по долям из юнит-экономики — то есть опять по тарифам, а не по факту.
+
+    Отчёт о реализации — документ, по которому площадка платит. В нём по
+    каждой позиции: сколько начислено, какая комиссия, сколько баллов
+    компенсировано и что причитается продавцу. Спорить с ним нельзя.
+
+    Себестоимость и налог добавляем свои: их площадка не знает.
+    """
+    cur.execute(
+        "SELECT coalesce(max(period_month), CURRENT_DATE) FROM ozon_realization"
+        + (" WHERE period_month = %s" if month else ""),
+        (month,) if month else None)
+    m = cur.fetchone()[0]
+
+    cur.execute(
+        "SELECT coalesce(sum(quantity), 0), coalesce(sum(amount), 0), "
+        "       coalesce(sum(commission), 0), coalesce(sum(bonus), 0), "
+        "       coalesce(sum(bank_coinvestment), 0), "
+        "       coalesce(sum(total), 0) "
+        "FROM ozon_realization WHERE period_month = %s", (m,))
+    units, amount, commission, bonus, bank, total = [
+        float(v or 0) for v in cur.fetchone()]
+    units = int(units)
+    if units <= 0:
+        return None
+
+    # Себестоимость: считаем по размерам из отчёта — так учитывается, что
+    # продавалось на самом деле, а не «в среднем по каталогу».
+    cur.execute(
+        "SELECT r.material, r.width, r.height, sum(r.quantity) "
+        "FROM ozon_realization r WHERE r.period_month = %s "
+        "  AND r.material IS NOT NULL "
+        "GROUP BY 1, 2, 3", (m,))
+    sold_mix = cur.fetchall()
+    margins = _margin_index()
+    production = 0.0
+    matched = 0
+    for material, width, height, qty in sold_mix:
+        mm = margins.get((material, width, height)) or {}
+        cost = float(mm.get('production') or 0)
+        if cost:
+            production += cost * int(qty or 0)
+            matched += int(qty or 0)
+    # Размеры без себестоимости добираем по средней: иначе прибыль выйдет
+    # завышенной ровно на их долю.
+    if matched and units > matched:
+        production += production / matched * (units - matched)
+
+    # Услуги площадки и реклама за тот же месяц: в отчёт о реализации они
+    # не входят, а деньги забирают.
+    cur.execute(
+        "SELECT coalesce(sum(amount), 0) FROM marketplace_fees_monthly "
+        "WHERE marketplace_code = 'ozon' AND month = %s", (m,))
+    fees = float((cur.fetchone() or [0])[0] or 0)
+
+    cur.execute(
+        "SELECT coalesce(sum(ad_spend), 0) FROM marketplace_ad_spend "
+        "WHERE marketplace_code = 'ozon' AND marketplace_item_id IS NULL")
+    ad = float((cur.fetchone() or [0])[0] or 0)
+
+    cur.execute(
+        "SELECT tax_percent, vat_percent FROM unit_economics_settings "
+        "ORDER BY id LIMIT 1")
+    ts = cur.fetchone()
+    tax_pct = float(ts[0] or 0) if ts else 0.0
+    vat_pct = float(ts[1] or 0) if ts else 0.0
+
+    # ОБОРОТ ПО ЧЕКАМ = amount + bonus + bank.
+    #
+    # amount в отчёте — это то, что осталось от цены ПОСЛЕ скидки по баллам,
+    # а bonus — компенсация этой скидки от площадки. Покупатель заплатил
+    # сумму целиком, просто часть баллами. Считать оборотом один amount
+    # значит недосчитаться половины: по июлю это 10 млн вместо 20 млн, и
+    # маржа выходила фантастические 35%.
+    #
+    # Проверено по отчёту: total = amount + bonus + bank − комиссия,
+    # сходится до трёхсот рублей на четырёх тысячах строк.
+    revenue = amount + bonus + bank
+
+    # Налоги считаем от оборота — так же, как в юнит-экономике.
+    vat = round(revenue * vat_pct / (100 + vat_pct), 2) if vat_pct else 0.0
+    tax = round((revenue - vat) * tax_pct / 100, 2)
+
+    profit = round(total - fees - ad - production - tax - vat, 2)
+
+    return {
+        'month': str(m),
+        'units': units,
+        # Оборот по чекам покупателей: с учётом оплаченного баллами.
+        'revenue': round(revenue, 2),
+        'commission': round(commission, 2),
+        # Баллы и софинансирование: площадка ДОПЛАЧИВАЕТ за наши скидки.
+        'bonus': round(bonus + bank, 2),
+        # Причитается по отчёту — до вычета услуг и рекламы.
+        'realizationTotal': round(total, 2),
+        'fees': round(fees, 2),
+        'ad': round(ad, 2),
+        'production': round(production, 2),
+        'tax': tax,
+        'vat': vat,
+        'profit': profit,
+        'perUnit': round(profit / units, 2),
+        'margin': round(profit / revenue * 100, 2) if revenue else 0,
+    }
+
+
 def _profit_at(m, price):
     """Прибыль и маржа при ЦЕНЕ, ПО КОТОРОЙ ВЕЩЬ РЕАЛЬНО КУПИЛИ.
 
@@ -674,6 +791,10 @@ def handler(event: dict, context) -> dict:
             params = event.get('queryStringParameters') or {}
             action = params.get('action') or 'balance'
             user_id = params.get('userId')
+
+            if action == 'fact_pnl':
+                # Прибыль по официальному отчёту площадки.
+                return _resp(200, _fact_pnl(cur, params.get('month')) or {})
 
             if action == 'bought_feed':
                 # Лента выкупленных заказов: доступна любому, кто видит
