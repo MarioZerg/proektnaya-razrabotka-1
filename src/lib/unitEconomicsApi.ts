@@ -165,6 +165,8 @@ export interface Tariffs {
   promoFromFact?: boolean;
   /** Сколько реально ушло на рекламу за месяц, % от выручки площадки. */
   promoFactPercent?: number | null;
+  /** Режим ДРР: item — по каждому товару, shared — единый процент на всех. */
+  adMode?: 'item' | 'shared';
   /** Когда факт по рекламе последний раз обновлялся. */
   promoSyncedAt?: string | null;
 }

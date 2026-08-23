@@ -42,6 +42,8 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
   const [saving, setSaving] = useState(false);
   const [adBusy, setAdBusy] = useState(false);
   const [adStage, setAdStage] = useState('');
+  // Режим ДРР меняет чтение всей экономики площадки — это решение владельца.
+  const isAdmin = user?.role === 'admin';
 
   useEffect(() => setForm(tariffs), [tariffs]);
 
@@ -253,11 +255,46 @@ const TariffsPanel = ({ marketplaceCode, tariffs, onSaved }: TariffsPanelProps) 
                 )}
                 <p className="mt-1 text-xs text-muted-foreground">
                   {marketplaceCode === 'wildberries'
-                    ? 'По каждому товару отдельно: что продвигали — платит за себя, '
-                      + 'остальные за чужой бустинг не отвечают'
+                    ? form.adMode === 'shared'
+                      ? 'Единый процент на весь ассортимент — как на OZON'
+                      : 'По каждому товару отдельно: что продвигали — платит '
+                        + 'за себя, остальные за чужой бустинг не отвечают'
                     : 'OZON списывает рекламу общей суммой, поэтому процент '
                       + 'одинаковый для всех товаров'}
                 </p>
+
+                {/* ВЫБОР РЕЖИМА — только для WB: OZON и так списывает рекламу
+                    общей суммой, выбирать там нечего.
+
+                    Расход по каждому товару звучит справедливо, но даёт дикий
+                    разброс: у одной шторы ДРР 888%, у соседнего размера той же
+                    ткани — ноль. Сравнить размеры между собой невозможно, и
+                    решение о цене принимается по случайной цифре. */}
+                {marketplaceCode === 'wildberries' && isAdmin && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant={form.adMode === 'shared' ? 'default' : 'outline'}
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setForm({ ...form, adMode: 'shared' })}
+                    >
+                      Общий процент
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={form.adMode !== 'shared' ? 'default' : 'outline'}
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setForm({ ...form, adMode: 'item' })}
+                    >
+                      По каждому товару
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      не забудьте сохранить
+                    </span>
+                  </div>
+                )}
                 {/* Расхождение с кабинетом — не ошибка, а разные знаменатели.
                     Об этом лучше сказать прямо: иначе человек сверяет две
                     цифры, видит разницу и перестаёт верить обеим. */}

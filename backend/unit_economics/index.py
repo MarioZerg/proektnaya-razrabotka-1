@@ -884,7 +884,7 @@ def _tariffs(cur):
         "storage_per_month, acceptance_fee, acquiring_percent, promo_percent, "
         "storage_months, commission_fbo_percent, commission_fbs_percent, "
         "synced_at, synced_fields, promo_from_fact, promo_fact_percent, "
-        "promo_synced_at FROM marketplace_tariffs"
+        "promo_synced_at, ad_mode FROM marketplace_tariffs"
     )
     out = {}
     for r in cur.fetchall():
@@ -908,6 +908,8 @@ def _tariffs(cur):
             # Реклама по факту: сколько площадка реально списала за месяц.
             'promoFromFact': bool(r[13]) if r[13] is not None else True,
             'promoFactPercent': float(r[14]) if r[14] is not None else None,
+            # Режим ДРР: по каждому товару или единый процент на всех.
+            'adMode': r[16] if len(r) > 16 and r[16] else 'item',
             'promoSyncedAt': r[15].isoformat() + 'Z' if r[15] else None,
         }
     for code in MARKETPLACES:
@@ -917,7 +919,7 @@ def _tariffs(cur):
             'acquiringPercent': 0.0, 'promoPercent': 0.0, 'storageMonths': 1.0,
             'commissionFboPercent': 0.0, 'commissionFbsPercent': 0.0,
             'syncedAt': None, 'syncedFields': [],
-            'promoFromFact': True, 'promoFactPercent': None,
+            'promoFromFact': True, 'promoFactPercent': None, 'adMode': 'item',
             'promoSyncedAt': None,
         })
     return out
@@ -1380,6 +1382,18 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
     #   1) сколько реально потрачено на ЭТОТ товар (WB отдаёт по каждому);
     #   2) если по товару данных нет — средний факт по площадке;
     #   3) если факта нет совсем — ручное значение как запасной вариант.
+    # РЕЖИМ «ЕДИНЫЙ ПРОЦЕНТ».
+    #
+    # Wildberries отдаёт расход по каждому товару, но разброс выходит дикий:
+    # у одной шторы ДРР 888%, у соседнего размера той же ткани — ноль.
+    # Сравнить размеры между собой становится невозможно, а решение о цене
+    # принимается по случайной цифре.
+    #
+    # В этом режиме реклама размазывается ровно по всему ассортименту — как
+    # это делает OZON, который списывает её общей суммой.
+    if tariff.get('adMode') == 'shared':
+        ad_percent = None
+
     promo_percent = ad_percent
     if promo_percent is None:
         promo_percent = tariff.get('promoFactPercent')
@@ -2256,6 +2270,18 @@ def handler(event: dict, context) -> dict:
                     editable[key] = body_data.get(param)
 
             editable = {k: float(v or 0) for k, v in editable.items() if v is not None}
+
+            # Режим ДРР — не число, поэтому сохраняем отдельно. Менять его
+            # может только владелец: это решение о том, как читать всю
+            # экономику площадки.
+            ad_mode = body_data.get('adMode')
+            if ad_mode in ('item', 'shared') and _is_admin(cur, actor_id):
+                cur.execute(
+                    "UPDATE marketplace_tariffs SET ad_mode = %s, "
+                    "updated_at = now() WHERE marketplace_code = %s",
+                    (ad_mode, code),
+                )
+
             if editable:
                 sets = ', '.join(f"{k} = %s" for k in editable)
                 cur.execute(
