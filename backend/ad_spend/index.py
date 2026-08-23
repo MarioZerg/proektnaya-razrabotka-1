@@ -344,6 +344,103 @@ def _continue_sales(page, days, month_back=0):
     return True
 
 
+def _real_pnl(cur, headers, month_back=1):
+    """Фактическая прибыль за месяц — по деньгам, а не по расчёту.
+
+    Юнит-экономика считает прибыль по каждой карточке и даёт среднюю: 245
+    рублей с вещи. Но это средняя по ассортименту, где размер, проданный
+    девяносто раз, весит столько же, сколько ни разу не проданный. В жизни
+    продаются ходовые позиции, часто по акции, и маржа у них ниже.
+
+    Здесь берём другой источник — движение денег в кабинете OZON. Складываем
+    всё, что площадка начислила за продажи, и всё, что удержала: комиссию,
+    логистику, рекламу, подписку, хранение, услуги упаковки. Разница и есть
+    настоящие деньги от площадки — их не надо ни во что пересчитывать.
+
+    Себестоимость и налоги вычитаются отдельно: они наши, а не площадки.
+    """
+    today = datetime.now().date()
+    anchor = today.replace(day=1)
+    for _ in range(month_back):
+        anchor = (anchor - timedelta(days=1)).replace(day=1)
+    since = anchor
+    nxt = (anchor + timedelta(days=32)).replace(day=1)
+    to_date = min(nxt - timedelta(days=1), today)
+
+    accruals = 0.0       # начислено за проданные вещи
+    held = 0.0           # удержано площадкой (всё, что со знаком минус)
+    ad = 0.0             # реклама отдельно — на неё можно влиять
+    units = 0            # сколько вещей продано
+    returns_amount = 0.0  # возвращено покупателям
+    commission = 0.0     # комиссия площадки — внутри операций продажи
+    net_flow = 0.0       # движение денег: сумма всех операций
+
+    for page in range(1, 60):
+        st, d = _http(
+            f'{OZON_API}/v3/finance/transaction/list', 'POST', headers,
+            {'filter': {'date': {'from': f'{since}T00:00:00.000Z',
+                                 'to': f'{to_date}T23:59:59.000Z'},
+                        'operation_type': [], 'transaction_type': 'all'},
+             'page': page, 'page_size': 1000},
+            timeout=40,
+        )
+        if not isinstance(d, dict):
+            break
+        ops = ((d.get('result') or {}).get('operations')) or []
+        if not ops:
+            break
+
+        for o in ops:
+            name = (o.get('operation_type_name') or '')
+            low = name.lower()
+            amount = float(o.get('amount') or 0)
+            sale = float(o.get('accruals_for_sale') or 0)
+            items = o.get('items') or []
+
+            # ГЛАВНОЕ ПРАВИЛО: amount — это ДВИЖЕНИЕ ДЕНЕГ по операции.
+            #
+            # У продажи accruals_for_sale — цена по чеку, а amount — то, что
+            # реально осталось нам после комиссии площадки. Комиссия не идёт
+            # отдельной строкой с минусом, она уже вычтена внутри операции.
+            # Поэтому просто складываем amount по всем операциям: получится
+            # ровно то, что пришло на счёт.
+            net_flow += amount
+
+            if 'Доставка покупателю' in name:
+                accruals += sale
+                units += len(items) or 1
+                # Комиссия — разница между чеком и тем, что нам оставили.
+                commission += max(0.0, sale - amount)
+            elif name.startswith('Получение возврата'):
+                returns_amount += abs(sale)
+                units -= len(items) or 1
+
+            # Реклама — отдельной строкой: единственный расход, который
+            # владелец может убрать одним решением.
+            if 'клик' in low or 'продвижен' in low or 'реклам' in low:
+                ad += abs(amount)
+            elif amount < 0:
+                held += abs(amount)
+
+        if len(ops) < 1000:
+            break
+
+    return {
+        'month': str(since),
+        'monthEnd': str(to_date),
+        # Оборот: сколько заплатили покупатели за вещи.
+        'accruals': round(accruals, 2),
+        'commission': round(commission, 2),
+        'returns': round(returns_amount, 2),
+        # Услуги площадки сверх комиссии: хранение, упаковка, подписка.
+        'held': round(held, 2),
+        'ad': round(ad, 2),
+        'units': max(0, units),
+        # ЧТО РЕАЛЬНО ПРИШЛО НА СЧЁТ — сумма всех движений денег.
+        'netFromMarketplace': round(net_flow, 2),
+    }
+
+
 def _sync_sales(cur, headers, days=SALES_DAYS, start_page=1, pages=4,
                 month_back=0):
     """Построчные продажи из финансового отчёта OZON: что и когда выкупили.
@@ -1577,6 +1674,16 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return _resp(200, {'ok': True, 'periods': saved,
                                'compensations': comp})
+
+        if action == 'real_pnl':
+            # Фактическая прибыль по движению денег — для сверки с расчётом.
+            creds, enabled = _credentials(cur, 'ozon')
+            if not enabled:
+                return _resp(400, {'error': 'Интеграция OZON не подключена'})
+            h = {'Client-Id': (creds.get('clientId') or '').strip(),
+                 'Api-Key': (creds.get('apiKey') or '').strip()}
+            return _resp(200, _real_pnl(
+                cur, h, int(body_data.get('monthBack') or 1)))
 
         if action == 'sync_sales':
             # Построчные продажи со всех схем, включая FBO: заказы цеха
