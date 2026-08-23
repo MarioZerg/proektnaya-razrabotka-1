@@ -444,6 +444,114 @@ def _items_in_actions(cur, headers):
     return by_offer, total, len(short_offers)
 
 
+def _current_participation(cur, headers, material, settings):
+    """Размеры материала, которые УЖЕ в акциях: по какой цене и с какой маржой.
+
+    До сих пор окно показывало только «кого можно завести». Но половина
+    вопросов — про уже заведённых: по какой цене они там сидят и не работаем
+    ли мы в убыток. Проверить это можно было лишь в кабинете площадки, товар
+    за товаром.
+
+    Здесь по каждой активной акции берём её реальный состав, оставляем размеры
+    нужного материала и считаем настоящую экономику по ЦЕНЕ УЧАСТИЯ — с
+    комиссией, логистикой, эквайрингом, налогом и себестоимостью.
+    """
+    cur.execute(
+        "SELECT external_id, title FROM marketplace_promotions "
+        "WHERE marketplace_code = 'ozon' "
+        "  AND (date_end IS NULL OR date_end >= CURRENT_DATE)"
+    )
+    actions = cur.fetchall()
+    if not actions:
+        return []
+
+    tax = float(settings.get('taxPercent') or 0)
+    vat = float(settings.get('vatPercent') or 0)
+    costs = _cost_by_offer(cur)
+
+    cur.execute(
+        "SELECT mi.sku, mi.material, mi.width FROM marketplace_items mi "
+        "WHERE mi.sku IS NOT NULL")
+    meta = {str(r[0]).strip(): {'material': r[1], 'width': r[2]}
+            for r in cur.fetchall()}
+
+    cur.execute(
+        "SELECT mi.sku, a.ad_percent FROM marketplace_ad_spend a "
+        "JOIN marketplace_items mi ON mi.id = a.marketplace_item_id "
+        "WHERE a.marketplace_code = 'ozon' AND a.ad_percent > 0")
+    ads = {str(r[0]).strip(): float(r[1]) for r in cur.fetchall()}
+
+    # Себестоимость и человеческое имя размера берём из юнит-экономики.
+    production, names = {}, {}
+    eco = _economics('ozon')
+    for r in (eco or {}).get('rows', []):
+        if r.get('cost'):
+            production[(r['material'], float(r['width'] or 0))] = float(
+                r['cost']['productionCost'] or 0)
+        if r.get('material') == material:
+            for h in (r.get('heights') or []):
+                if h.get('sku'):
+                    names[str(h['sku'])] = f"{r['width']}×{h.get('height') or ''}"
+
+    out = []
+    for ext_id, title in actions:
+        st, d = _http(
+            f'{OZON_API}/v1/actions/products', 'POST', headers,
+            {'action_id': int(ext_id), 'limit': 1000, 'offset': 0}, timeout=25)
+        prods = (((d or {}).get('result') or {}).get('products')) or []
+        if not prods:
+            continue
+        offers = _ozon_offer_ids(headers, [str(p.get('id')) for p in prods])
+
+        items = []
+        for p in prods:
+            offer = offers.get(str(p.get('id')))
+            # Только размеры ЭТОГО материала: остальные к вопросу не относятся.
+            if not offer or offer not in names:
+                continue
+            # ЦЕНА УЧАСТИЯ — по ней товар реально продаётся в акции.
+            price = float(p.get('action_price') or 0)
+            if price <= 0:
+                continue
+            c = costs.get(offer)
+            m = meta.get(offer) or {}
+            own = production.get((m.get('material'), float(m.get('width') or 0)))
+            if not c or own is None:
+                continue
+            ad = ads.get(offer, 0.0)
+            mp = (price * c['commission'] / 100 + c['logistics']
+                  + c['acquiring'] + price * ad / 100)
+            v = price * vat / (100 + vat) if vat else 0.0
+            t = (price - v) * tax / 100
+            profit = round(price - mp - own - t - v, 2)
+            items.append({
+                'offerId': offer,
+                'name': names.get(offer, offer),
+                'actionPrice': price,
+                'profit': profit,
+                'margin': round(profit / price * 100, 1) if price else 0.0,
+            })
+
+        if not items:
+            continue
+        loss = [i for i in items if i['profit'] <= 0]
+        out.append({
+            'actionId': ext_id,
+            'title': title,
+            'count': len(items),
+            'lossCount': len(loss),
+            'avgMargin': round(
+                sum(i['margin'] for i in items) / len(items), 1),
+            'avgProfit': round(
+                sum(i['profit'] for i in items) / len(items), 2),
+            'items': sorted(items, key=lambda i: i['margin']),
+        })
+
+    # Убыточные акции — первыми: с ними и надо разбираться.
+    out.sort(key=lambda a: (-a['lossCount'], a['avgMargin']))
+    return out
+
+
 def _material_plan(cur, headers, material, settings, min_avg_margin=4.5):
     """План продвижения по всему материалу: что, куда и в какой очерёдности.
 
@@ -589,9 +697,27 @@ def _material_plan(cur, headers, material, settings, min_avg_margin=4.5):
                      f'{min_avg_margin}%'
             )
 
+    # ПОМЕЧАЕМ АКЦИИ, ГДЕ РАЗМЕРЫ УЖЕ СИДЯТ.
+    #
+    # План считает экономику по цене участия и честно предлагает выгодную
+    # акцию — но если товар в ней уже состоит, «завести» значит перезавести,
+    # а не расширить охват. Без пометки это выглядит как новая возможность,
+    # и владелец второй раз отдаёт скидку там, где она уже отдана.
+    current = _current_participation(cur, headers, material, settings)
+    joined = {a['actionId']: a['count'] for a in current}
+    for a in out:
+        a['alreadyIn'] = joined.get(a['actionId'], 0)
+        if a['alreadyIn']:
+            a['recommended'] = False
+            a['reason'] = f"Уже участвуют {a['alreadyIn']} размеров"
+
     return {
         'material': material,
         'actions': out,
+        # Кто уже в акциях: по какой цене сидит и с какой маржой. Половина
+        # вопросов именно про них, а проверить это можно было только в
+        # кабинете площадки, товар за товаром.
+        'current': current,
         'minAvgMargin': min_avg_margin,
         'baseAvgMargin': round(
             sum(b['margin'] for b in base.values()) / len(base), 2),

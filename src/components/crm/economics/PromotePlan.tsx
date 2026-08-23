@@ -8,8 +8,10 @@ import { useToast } from '@/hooks/use-toast';
 import {
   fetchMaterialPlan,
   joinAction,
+  type CurrentAction,
   type PlanAction,
 } from '@/lib/promotionApi';
+import PromoteCurrent from './PromoteCurrent';
 import { money } from './economicsShared';
 
 /**
@@ -33,6 +35,8 @@ const PromotePlan = ({ material, onDone }: Props) => {
   const { toast } = useToast();
   const [minAvg, setMinAvg] = useState('4.5');
   const [plan, setPlan] = useState<PlanAction[]>([]);
+  // Кто уже в акциях: по какой цене сидит и с какой маржой.
+  const [current, setCurrent] = useState<CurrentAction[]>([]);
   const [base, setBase] = useState<{ margin: number; sizes: number }>({
     margin: 0,
     sizes: 0,
@@ -51,9 +55,13 @@ const PromotePlan = ({ material, onDone }: Props) => {
     fetchMaterialPlan(material, user?.id, Number(minAvg) || 0)
       .then((d) => {
         setPlan(d.actions);
+        setCurrent(d.current || []);
         setBase({ margin: d.baseAvgMargin, sizes: d.sizes });
       })
-      .catch(() => setPlan([]))
+      .catch(() => {
+        setPlan([]);
+        setCurrent([]);
+      })
       .finally(() => setLoading(false));
   }, [material, minAvg, user?.id]);
 
@@ -115,6 +123,21 @@ const PromotePlan = ({ material, onDone }: Props) => {
         </div>
       )}
 
+      {/* СНАЧАЛА — что уже происходит.
+          Прежде чем заводить новое, надо видеть текущую картину: где товар
+          уже продаётся со скидкой и во что это обходится. Иначе решение
+          принимается вслепую. */}
+      {!loading && (
+        <div className="space-y-1.5">
+          <p className="text-xs font-medium">Уже участвуют</p>
+          <PromoteCurrent actions={current} />
+        </div>
+      )}
+
+      {!loading && plan.length > 0 && (
+        <p className="pt-1 text-xs font-medium">Можно завести</p>
+      )}
+
       {!loading && plan.length === 0 && (
         <p className="text-xs text-muted-foreground">
           Площадка не предлагает размеры этого материала ни в одну акцию
@@ -139,6 +162,13 @@ const PromotePlan = ({ material, onDone }: Props) => {
                   {a.title}
                 </p>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  {/* Уже заведённые отмечаем: «завести» здесь значило бы
+                      перезавести, а не расширить охват. */}
+                  {!!a.alreadyIn && (
+                    <span className="mr-1 font-medium text-foreground">
+                      В акции уже {a.alreadyIn} ·
+                    </span>
+                  )}
                   Проходят {a.fits} из {a.total} размеров
                   {a.newItems > 0 && ` · новых ${a.newItems}`}
                   {a.dateEnd && ` · до ${a.dateEnd}`}

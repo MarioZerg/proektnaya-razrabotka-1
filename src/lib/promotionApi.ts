@@ -148,6 +148,35 @@ export const fetchActionCandidates = (
   action: 'action_candidates', actionId, actorId, minMargin, extraDiscount,
 });
 
+/** Размер, который уже продаётся в акции. */
+export interface CurrentItem {
+  offerId: string;
+  /** Человеческое имя: ширина × высота. */
+  name: string;
+  /** Цена, по которой товар реально идёт в акции. */
+  actionPrice: number;
+  profit: number;
+  margin: number;
+}
+
+/**
+ * Акция, в которой размеры материала уже участвуют.
+ *
+ * Половина вопросов о продвижении — про уже заведённые товары: по какой цене
+ * они сидят и не работаем ли мы в убыток. Раньше это проверялось только в
+ * кабинете площадки, товар за товаром.
+ */
+export interface CurrentAction {
+  actionId: string;
+  title: string;
+  count: number;
+  /** Сколько размеров продаётся в минус — с них и надо начинать. */
+  lossCount: number;
+  avgMargin: number;
+  avgProfit: number;
+  items: CurrentItem[];
+}
+
 /**
  * Вариант глубины скидки для акции.
  *
@@ -180,6 +209,8 @@ export interface PlanAction {
   profitDrop: number;
   /** Варианты глубины скидки: минимум площадки и глубже — ради буста. */
   options?: PlanOption[];
+  /** Сколько размеров материала УЖЕ сидят в этой акции. */
+  alreadyIn?: number;
   /** Сколько размеров добавится сверх предыдущих акций. */
   newItems: number;
   /** Средняя маржа по всему материалу после входа в эту акцию. */
@@ -204,6 +235,8 @@ export const fetchMaterialPlan = (
 ): Promise<{
   material: string;
   actions: PlanAction[];
+  /** Акции, где размеры материала уже участвуют. */
+  current: CurrentAction[];
   minAvgMargin: number;
   baseAvgMargin: number;
   sizes: number;
