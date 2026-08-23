@@ -352,7 +352,162 @@ def match_from_stock(cur, order_id, item_id) -> bool:
     return True
 
 
-def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name):
+# Ссылка на саму себя: нужна, чтобы продолжить работу следующим запуском.
+SELF_FUNC_URL = 'https://functions.poehali.dev/c1ec58fb-3291-4827-a469-11a1e7019684'
+
+# Сколько раз подряд загрузка может передать работу дальше.
+#
+# Защита от бесконечной цепочки: если из-за ошибки остаток не будет убывать,
+# цепочка оборвётся сама, а не будет дёргать площадку до скончания века.
+MAX_CHAIN = 12
+
+# Сколько всего запусков цепочки разрешено за десять минут.
+#
+# Второй рубеж защиты после замка: даже если раздвоение как-то просочится,
+# счётчик оборвёт лавину. Двенадцать шагов по восемьдесят заказов — это почти
+# тысяча отправлений, больше очереди не бывает.
+CHAIN_BUDGET_PER_10MIN = 15
+
+
+def _claim_chain_step(cur, conn, job, step):
+    """Занимает шаг цепочки. Второй запуск с тем же шагом получит отказ.
+
+    Запрос «не дожидаясь ответа» оказался ненадёжен: обрыв по таймауту
+    выглядит как неудача, и вызов повторяется — сам urllib или платформа.
+    Один запуск превращался в два, два в четыре, и за минуту набегало три
+    десятка одновременных загрузок.
+
+    Замок делает шаг неповторимым: пара «задание + номер шага» уникальна в
+    базе. Кто записался первым — работает, остальные молча выходят.
+    """
+    # Старые замки убираем: цепочка живёт минуты, и вчерашние метки только
+    # мешали бы новой очереди стартовать.
+    cur.execute(
+        "DELETE FROM sync_chain_lock WHERE started_at < now() - interval '30 minutes'")
+
+    # Общий счётчик запусков: страховка на случай, если замок обойдут.
+    cur.execute(
+        "SELECT count(*) FROM sync_chain_lock "
+        "WHERE job = %s AND started_at > now() - interval '10 minutes'", (job,))
+    if int(cur.fetchone()[0] or 0) >= CHAIN_BUDGET_PER_10MIN:
+        return False
+
+    try:
+        cur.execute(
+            "INSERT INTO sync_chain_lock (job, step) VALUES (%s, %s)",
+            (job, step))
+        conn.commit()
+        return True
+    except Exception:
+        # Шаг уже занят другим запуском — значит работа идёт без нас.
+        conn.rollback()
+        return False
+
+
+def _continue_later(payload):
+    """Просит систему запустить эту же функцию ещё раз — доделать остаток.
+
+    У функции всего пять секунд, а работы бывает на минуту: сотня новых
+    отправлений, каждое надо забрать у OZON, разделить и записать. Раньше
+    остаток просто ждал следующего запуска планировщика — то есть 15 минут,
+    и при потоке в три сотни заказов в час очередь росла быстрее, чем
+    разбиралась. Приходилось вручную жать «Сверить и догрузить».
+
+    Теперь функция, упершись в свой лимит, сама зовёт себя снова и передаёт
+    место остановки. Цепочка идёт, пока остаток не кончится.
+
+    Ответа НЕ ЖДЁМ: наш запуск на этом заканчивается, а следующий работает
+    самостоятельно. Ждать — значит упереться в тот же таймаут.
+    """
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret:
+        return False
+    body = dict(payload)
+    body['cronSecret'] = secret
+    req = urllib.request.Request(
+        SELF_FUNC_URL,
+        data=json.dumps(body).encode(),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    try:
+        # Секунда на отправку: нам важно только, что запрос ушёл.
+        urllib.request.urlopen(req, timeout=1)
+    except Exception:
+        # Обрыв по таймауту — обычное дело: функция уже приняла запрос и
+        # работает, а мы просто не стали дожидаться ответа.
+        pass
+    return True
+
+
+def _verify_and_pull(cur, client_id, api_key, chain):
+    """Сверяет очередь сборки с OZON и добирает недостающее.
+
+    Это тот самый обход, который раньше приходилось запускать руками кнопкой
+    «Сверить и догрузить». Загрузка могла отработать без единой ошибки и всё
+    равно недосчитаться заказов: отправление не сопоставилось с товаром,
+    проскочило мимо листания или пришло, пока шла запись.
+
+    Спрашиваем у OZON все отправления в «ожидает сборки», сверяем с нашей
+    базой и, если чего-то нет, забираем поимённо — не листая ленту заново.
+
+    Возвращаем итог сверки: сошлось или сколько недостаёт.
+    """
+    on_mp = set()
+    offset = 0
+    for _ in range(6):
+        sc, d = ozon_post(
+            '/v3/posting/fbs/unfulfilled/list', client_id, api_key,
+            {'dir': 'DESC',
+             # Даты обязательны: без них OZON отдаёт пустой список. Берём
+             # заведомо широкий отрезок — нам нужна вся очередь сборки.
+             'filter': {'cutoff_from': '2020-01-01T00:00:00Z',
+                        'cutoff_to': '2030-01-01T00:00:00Z'},
+             'limit': 1000, 'offset': offset,
+             'with': {'legal_info': False}},
+        )
+        if sc != 200 or not isinstance(d, dict):
+            break
+        items = ((d.get('result') or {}).get('postings')) or []
+        for p in items:
+            if (p.get('status') or '') in OZON_WORK_STATUSES:
+                num = p.get('posting_number')
+                if num:
+                    on_mp.add(num)
+        if len(items) < 1000:
+            break
+        offset += 1000
+
+    if not on_mp:
+        return {'checked': False}
+
+    cur.execute(
+        "SELECT ozon_posting_number FROM orders "
+        "WHERE ozon_posting_number = ANY(%s)", (list(on_mp),))
+    have = {r[0] for r in cur.fetchall()}
+    missing = sorted(on_mp - have)
+
+    if not missing:
+        # Всё сошлось — это и есть сигнал «работа закончена».
+        return {'checked': True, 'onMarketplace': len(on_mp),
+                'inSystem': len(have), 'missing': 0, 'pulling': False}
+
+    # Расхождение есть: добираем недостающие поимённо следующим запуском.
+    pulling = False
+    if chain < MAX_CHAIN:
+        pulling = _continue_later({
+            'action': 'sync_orders',
+            'postingNumbers': missing[:OZON_CREATE_PER_RUN],
+            'chain': chain + 1,
+        })
+
+    return {'checked': True, 'onMarketplace': len(on_mp),
+            'inSystem': len(have), 'missing': len(missing),
+            'pulling': pulling}
+
+
+def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name,
+                         body_data=None):
     """Делит на OZON отправления, которые попали в систему ДО появления деления.
 
     Такие заказы лежат в «Новых» слипшимися: три шторы одного покупателя едут одним
@@ -363,6 +518,12 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name):
     отправлению уже начали шить, трогать его нельзя: деление необратимо, а часть
     вещей уже привязана к работе и оплате.
     """
+    body_data = body_data or {}
+
+    chain_now = int(body_data.get('chain') or 0)
+    if chain_now > 0 and not _claim_chain_step(cur, conn, 'ozon_split', chain_now):
+        return _resp(200, {'splitDone': 0, 'skippedDuplicateRun': True})
+
     cur.execute(
         "SELECT o.ozon_posting_number, count(*) "
         "FROM orders o "
@@ -486,22 +647,51 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name):
     )
     pending = int(cur.fetchone()[0] or 0)
 
+    # ДОДЕЛЫВАЕМ ОСТАТОК СРАЗУ.
+    #
+    # За запуск делим всего пару отправлений — каждое деление это отдельный
+    # запрос к OZON. Раньше остальные ждали следующего часа, и при десятке
+    # слипшихся заказов очередь разбиралась полсуток: упаковщица успевала
+    # застикеровать первую штору, и отправление уезжало недошитым.
+    #
+    # Теперь, если делить ещё есть что, зовём себя снова.
+    chain = int(body_data.get('chain') or 0)
+    chained = False
+    if pending > 0 and split_done > 0 and chain < MAX_CHAIN:
+        chained = _continue_later({
+            'action': 'split_pending',
+            'chain': chain + 1,
+        })
+
     return _resp(200, {
         'splitDone': split_done,
         'splitFailed': split_failed,
         'renamed': renamed,
         'pending': pending,
+        'chained': chained,
+        'chainStep': chain,
     })
 
 
 def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
-                       only_numbers=None):
+                       only_numbers=None, body_data=None):
     """Тянет новые FBS-заказы OZON (status=awaiting_packaging) и создаёт их в системе.
 
     only_numbers — точечная догрузка: забрать конкретные отправления по номерам,
     не перебирая ленту. Так сверка закрывает найденное расхождение сразу, а не ждёт
     планировщика. Обычный запуск (only_numbers=None) работает как раньше.
     """
+    body_data = body_data or {}
+
+    # ЗАМОК ЦЕПОЧКИ.
+    #
+    # Шаг ноль — это обычный запуск планировщика, его пропускаем всегда.
+    # Шаги дальше идут из цепочки, и вот их надо защищать от повтора: один
+    # вызов «не дожидаясь ответа» легко превращается в два.
+    chain_now = int(body_data.get('chain') or 0)
+    if chain_now > 0 and not _claim_chain_step(cur, conn, 'ozon_sync', chain_now):
+        return _resp(200, {'created': 0, 'skippedDuplicateRun': True})
+
     # Часы запускаем ДО первого обращения к OZON: ответ маркетплейса — самая долгая
     # часть запуска, и раньше он не учитывался в бюджете вообще.
     run_started = time.monotonic()
@@ -964,8 +1154,66 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
 
     conn.commit()
 
+    # ПРОДОЛЖАЕМ, ПОКА ЕСТЬ РАБОТА.
+    #
+    # Работа осталась, если мы упёрлись в лимит создания, отложили отправления
+    # до деления или не дошли до конца очереди. Раньше остаток ждал следующего
+    # запуска планировщика — пятнадцать минут, и при потоке в три сотни заказов
+    # в час очередь росла быстрее, чем разбиралась.
+    #
+    # Теперь зовём себя снова и доделываем. Цепочка обрывается сама, когда
+    # брать больше нечего.
+    chain = int(body_data.get('chain') or 0)
+    has_more = (
+        created >= OZON_CREATE_PER_RUN
+        or len(postponed_split) > 0
+        or not reached_end
+    )
+    chained = False
+    verified = None
+    # ПОСЛЕДНИЙ ШАГ — ВСЕГДА СВЕРКА.
+    #
+    # Цепочка может упереться в свой предел раньше, чем разберёт очередь.
+    # Раньше в этом случае она просто обрывалась, и расхождение оставалось
+    # незамеченным до ручной проверки. Теперь на последнем шаге вместо
+    # продолжения делаем сверку: она и покажет, всё ли на месте.
+    if has_more and chain >= MAX_CHAIN - 1 and not only_numbers:
+        has_more = False
+
+    if only_numbers and chain < MAX_CHAIN and created > 0:
+        # Догрузка по номерам тоже продолжается: за раз берём восемьдесят, а
+        # недостающих после долгого простоя бывает больше. Следующий запуск
+        # пересверится и заберёт остальных.
+        chained = _continue_later({
+            'action': 'sync_orders',
+            'chain': chain + 1,
+        })
+    elif has_more and chain < MAX_CHAIN and not only_numbers:
+        chained = _continue_later({
+            'action': 'sync_orders',
+            'chain': chain + 1,
+        })
+    elif not only_numbers:
+        # РАБОТА КОНЧИЛАСЬ — СВЕРЯЕМСЯ.
+        #
+        # Цепочка дошла до конца, но это ещё не значит, что всё на месте:
+        # отправление могло не сопоставиться с товаром или проскочить мимо
+        # листания. Раньше расхождение всплывало только когда кто-то вручную
+        # нажимал «Сверить и догрузить» на странице планировщика.
+        #
+        # Теперь загрузка сама пересчитывает, сколько отправлений ждёт сборки
+        # на OZON и сколько их у нас. Сошлось — работа закончена. Не сошлось —
+        # недостающие забираются по номерам тут же, следующим запуском.
+        verified = _verify_and_pull(cur, client_id, api_key, chain)
+        chained = bool(verified.get('pulling'))
+
     return _resp(200, {
         'created': created,
+        # Передана ли работа следующему запуску и какой это шаг цепочки.
+        'chained': chained,
+        'chainStep': chain,
+        # Итог сверки с площадкой: сошлось ли и что делаем с расхождением.
+        'verified': verified,
         'matchedFromStock': matched,
         'skippedExisting': skipped_existing,
         'skippedNoItem': skipped_no_item,
@@ -1543,10 +1791,12 @@ def handler(event: dict, context) -> dict:
             only = body_data.get('postingNumbers') or None
             if isinstance(only, str):
                 only = [n.strip() for n in only.split(',') if n.strip()]
-            return handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
-                                      only_numbers=only)
+            return handle_sync_orders(cur, conn, client_id, api_key, actor_id,
+                                      actor_name, only_numbers=only,
+                                      body_data=body_data)
         if action == 'split_pending':
-            return handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name)
+            return handle_split_pending(cur, conn, client_id, api_key,
+                                        actor_id, actor_name, body_data)
         if action == 'refresh_status':
             return handle_refresh_status(cur, conn, client_id, api_key, body_data)
         if action == 'refresh_all_statuses':
