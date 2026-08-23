@@ -24,8 +24,18 @@ const EconomicsCostBreakdown = ({ u, share }: Props) => (
       />
       <div
         className="bg-orange-400"
-        style={{ width: `${share(u.logistics + u.returnCost + u.storage + u.acceptance)}%` }}
-        title={`Логистика и хранение ${money(u.logistics + u.returnCost + u.storage + u.acceptance)} ₽`}
+        style={{
+          width: `${share(
+            (u.logisticsInFee ? 0 : u.logistics + u.returnCost) +
+              u.storage +
+              u.acceptance,
+          )}%`,
+        }}
+        title={`Логистика и хранение ${money(
+          (u.logisticsInFee ? 0 : u.logistics + u.returnCost) +
+            u.storage +
+            u.acceptance,
+        )} ₽`}
       />
       <div
         className="bg-sky-500"
@@ -54,21 +64,41 @@ const EconomicsCostBreakdown = ({ u, share }: Props) => (
         <span>{money(u.price)} ₽</span>
       </div>
       <div className="flex justify-between text-xs text-muted-foreground">
-        <span>Комиссия площадки {u.commissionPercent}%</span>
-        <span>−{money(u.commission)} ₽</span>
-      </div>
-      <div className="flex justify-between text-xs text-muted-foreground">
         <span>
-          Логистика
-          {u.buyoutPercent < 100 && (
+          {/* У OZON площадка удерживает всё одной суммой: доставка и
+              обработка возвратов уже внутри ставки. Раньше они вычитались
+              ещё и отдельно — выходило 56% вместо реальных 43,6%. */}
+          {u.logisticsInFee ? 'Удержание площадки' : 'Комиссия площадки'}{' '}
+          {u.commissionPercent}%
+          {u.logisticsInFee && (
             <span className="ml-1 text-[11px]">
-              (тариф {money(u.logisticsBase)} ÷ выкуп {u.buyoutPercent}%)
+              (с доставкой и возвратами)
             </span>
           )}
         </span>
-        <span>−{money(u.logistics)} ₽</span>
+        <span>−{money(u.commission)} ₽</span>
       </div>
-      {u.returnCost > 0 && (
+      {!u.logisticsInFee && (
+        <div className="flex justify-between text-xs text-muted-foreground">
+          <span>
+            Логистика
+            {u.buyoutPercent < 100 && (
+              <span className="ml-1 text-[11px]">
+                (тариф {money(u.logisticsBase)} ÷ выкуп {u.buyoutPercent}%)
+              </span>
+            )}
+          </span>
+          <span>−{money(u.logistics)} ₽</span>
+        </div>
+      )}
+      {/* Справочно: во сколько обходится доставка внутри удержания. */}
+      {u.logisticsInFee && u.logistics > 0 && (
+        <div className="flex justify-between text-[11px] text-muted-foreground/70">
+          <span className="pl-2">· из них доставка</span>
+          <span>{money(u.logistics)} ₽</span>
+        </div>
+      )}
+      {!u.logisticsInFee && u.returnCost > 0 && (
         <div className="flex justify-between text-xs text-muted-foreground">
           <span>Возвраты и отказы</span>
           <span>−{money(u.returnCost)} ₽</span>

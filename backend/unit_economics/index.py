@@ -1422,7 +1422,7 @@ def _ad_percents(cur, marketplace):
 
 def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout,
                item_fees=None, ad_percent=None, card_price=None,
-               max_ad=12.0):
+               max_ad=12.0, marketplace='ozon'):
     """Экономика ОДНОЙ проданной единицы.
 
     Считается по общепринятой для маркетплейсов схеме: из цены продажи вычитаем
@@ -1497,8 +1497,31 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
     returns_per_sale = (1.0 / share) - 1.0
     return_cost = round(return_tariff * returns_per_sale, 2)
 
+    # У OZON ЛОГИСТИКА УЖЕ ВНУТРИ СТАВКИ КОМИССИИ.
+    #
+    # Площадка удерживает всё одной суммой: в отчёте о реализации цена минус
+    # удержание в точности равны сумме к выплате, никаких отдельных списаний
+    # за доставку там нет.
+    #
+    # Доказательство на данных: один и тот же товар в одном месяце проходил
+    # по ставкам 42%, 46% и 48%. Комиссия категории у товара одна и меняться
+    # не может — значит разница и есть логистика, зашитая в ставку. FBO идёт
+    # по 42%, FBS дороже ровно на стоимость доставки.
+    #
+    # Складывая ставку 48% с отдельной логистикой и возвратами, мы получали
+    # 56% вместо реальных 43,6%: «Бамбук 200×230» показывал маржу 2,2% при
+    # настоящих 15,8%. Цены назначались по заниженной картине.
+    fee_includes_logistics = (marketplace == 'ozon')
+    if fee_includes_logistics:
+        logistics_billed = 0.0
+        return_billed = 0.0
+    else:
+        logistics_billed = logistics
+        return_billed = return_cost
+
     marketplace_costs = round(
-        commission + acquiring + promo + logistics + return_cost + storage + acceptance, 2
+        commission + acquiring + promo + logistics_billed + return_billed
+        + storage + acceptance, 2
     )
 
     # Себестоимость возвращённых вещей НЕ теряется: вещь приезжает обратно и
@@ -1568,7 +1591,11 @@ def _calc_unit(price, cost, tariff, settings, commission_percent, scheme, buyout
         'promoIsFact': ad_percent is not None
         or (tariff.get('promoFactPercent') is not None
             and tariff.get('promoFromFact', True)),
+        # Логистика: у OZON она ВНУТРИ ставки комиссии и отдельно из цены
+        # не вычитается — показываем справочно, чтобы было видно, во что
+        # обходится доставка.
         'logistics': logistics,
+        'logisticsInFee': fee_includes_logistics,
         'logisticsBase': round(logistics_direct, 2),
         # СПП — скидка постоянного покупателя. Её платит ПЛОЩАДКА, а не мы:
         # покупатель видит цену ниже, но продавцу приходит наша цена.
@@ -1730,7 +1757,7 @@ def _build(cur, code, scheme, buyout_override, shared=None):
                 i['price'], cost, tariffs, settings,
                 i[comm_key] if i[comm_key] is not None else commission_percent,
                 scheme, buyout, i['fees'], ad_percents.get(i['id']),
-                i.get('cardPrice'), max_ad,
+                i.get('cardPrice'), max_ad, code,
             )
             heights.append({
                 'itemId': i['id'], 'height': i['height'], 'name': i['name'],
@@ -1776,7 +1803,7 @@ def _build(cur, code, scheme, buyout_override, shared=None):
         ) if any(i.get('cardPrice') for i in priced) else None
         group_unit = _calc_unit(avg_price, cost, tariffs, settings,
                                 commission_percent, scheme, buyout, group_fees,
-                                group_ad, avg_card, max_ad)
+                                group_ad, avg_card, max_ad, code)
         rows.append({
             'material': material,
             'width': width,
