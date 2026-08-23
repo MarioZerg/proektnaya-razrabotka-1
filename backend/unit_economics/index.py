@@ -1216,6 +1216,36 @@ def _manager_per_unit(cur):
     return round(transferred * percent / 100.0 / sold, 4)
 
 
+def _realization_prices(cur, months=2):
+    """Цена продажи по официальному отчёту OZON: {sku: (цена, продаж)}.
+
+    Это ЦЕНА ПРОДАВЦА из отчёта о реализации — полная сумма, которую заплатил
+    покупатель, включая часть, погашенную баллами. Проверено на строках
+    отчёта: «деньгами + баллами» в точности равно цене продавца.
+
+    Почему берём именно её, а не сумму к перечислению. При УСН доход селлера —
+    вся цена покупателя, а не то, что площадка прислала на счёт: комиссию она
+    удерживает уже из нашего дохода. Считать налог от перечисленного значит
+    занизить базу вдвое, и это вопрос уже не к марже.
+
+    Витрина тоже не годится: там цена без учёта акций, в которых товар
+    реально продавался. Разрыв доходит до 5%, и всегда в сторону завышения
+    нашей прибыли.
+    """
+    cur.execute(
+        "SELECT offer_id, "
+        "       sum(seller_price * quantity) / nullif(sum(quantity), 0), "
+        "       sum(quantity) "
+        "FROM ozon_realization "
+        "WHERE offer_id IS NOT NULL AND seller_price > 0 "
+        "  AND period_month >= (date_trunc('month', now()) "
+        f"                      - interval '{int(months)} months')::date "
+        "GROUP BY offer_id"
+    )
+    return {str(r[0]).strip(): (float(r[1] or 0), int(r[2] or 0))
+            for r in cur.fetchall() if r[1]}
+
+
 def _cost_by_group(cur):
     """Себестоимость производства по паре «ткань + ширина».
 
@@ -1644,6 +1674,9 @@ def _build(cur, code, scheme, buyout_override, shared=None):
     tariffs = (s.get('tariffs') or _tariffs(cur))[code]
     costs = s.get('costs') or _cost_by_group(cur)
     prices = _prices_by_item(cur, code)
+    # Цены из официального отчёта — только для OZON: у остальных площадок
+    # такого документа нет.
+    realization = _realization_prices(cur) if code == 'ozon' else {}
     buyouts = s.get('buyouts') or _buyout_rates(cur)
 
     orders_mp = ORDERS_CODE.get(code)
@@ -1696,10 +1729,21 @@ def _build(cur, code, scheme, buyout_override, shared=None):
         #
         # Факт берём, только если продаж набралось хотя бы две: по одной
         # случайной сделке судить о цене нельзя.
+        # ПЕРВЫЙ ИСТОЧНИК — ОФИЦИАЛЬНЫЙ ОТЧЁТ О РЕАЛИЗАЦИИ.
+        #
+        # Там цена продавца по каждой продаже: полная сумма покупателя, в том
+        # числе оплаченная баллами. Это и налоговая база, и настоящая выручка.
+        # Витрина её не знает — в ней нет ни акций, ни региональных цен.
+        rp = realization.get(str(sku).strip()) if sku else None
         fact = (p or {}).get('factSalePrice')
         fact_n = (p or {}).get('factSaleCount') or 0
-        actual = fact if (fact and fact_n >= 2) else (
-            (p or {}).get('priceWithMarketplaceDiscount'))
+
+        if rp and rp[1] >= 2:
+            actual = rp[0]
+        elif fact and fact_n >= 2:
+            actual = fact
+        else:
+            actual = (p or {}).get('priceWithMarketplaceDiscount')
         g['items'].append({
             'id': item_id, 'height': height, 'name': name, 'sku': sku,
             'price': (actual if actual else (p['price'] if p else None)),
@@ -1709,11 +1753,13 @@ def _build(cur, code, scheme, buyout_override, shared=None):
             # Откуда взята цена: факт продаж, витрина или карточка. Владелец
             # должен видеть, чему верить.
             'priceSource': (
-                'fact' if (fact and fact_n >= 2)
+                'realization' if (rp and rp[1] >= 2)
+                else 'fact' if (fact and fact_n >= 2)
                 else ('showcase' if (p or {}).get('priceWithMarketplaceDiscount')
                       else 'card')
             ),
             'factSaleCount': fact_n,
+            'realizationCount': rp[1] if rp else 0,
             # Цена на витрине — её видит покупатель. Держим рядом с фактом:
             # разница между ними показывает, сколько скидки берёт на себя
             # площадка, а сколько приходит нам.
@@ -1769,6 +1815,9 @@ def _build(cur, code, scheme, buyout_override, shared=None):
                 # Откуда цена: факт продаж точнее витрины.
                 'priceSource2': i.get('priceSource'),
                 'factSaleCount': i.get('factSaleCount') or 0,
+            # Сколько продаж в отчёте: по одной случайной сделке о цене
+            # судить нельзя, поэтому берём факт только от двух.
+            'realizationCount': i.get('realizationCount') or 0,
                 'showcasePrice': i.get('showcasePrice'),
                 'cardPrice': i['cardPrice'],
                 'unit': unit,

@@ -52,17 +52,29 @@ const EconomicsCardAlerts = ({
         )}
         <p className="flex justify-between gap-2 border-t border-border pt-0.5 font-medium">
           <span>
-            {current?.priceSource2 === 'fact'
-              ? `Площадка начислила нам (${current.factSaleCount} продаж)`
-              : current?.priceSource2 === 'showcase'
-                ? 'Считаем по витрине'
-                : 'Считаем по цене карточки'}
+            {current?.priceSource2 === 'realization'
+              ? `Цена продажи по отчёту OZON (${current.realizationCount} продаж)`
+              : current?.priceSource2 === 'fact'
+                ? `Площадка начислила нам (${current.factSaleCount} продаж)`
+                : current?.priceSource2 === 'showcase'
+                  ? 'Считаем по витрине'
+                  : 'Считаем по цене карточки'}
           </span>
           <span>{money(u.price)} ₽</span>
         </p>
       </div>
       <p className="mt-1 text-[11px] text-muted-foreground">
-        {current?.priceSource2 === 'fact' ? (
+        {current?.priceSource2 === 'realization' ? (
+          <>
+            {/* Цена продавца из официального отчёта — полная сумма
+                покупателя, включая оплаченную баллами. Это и налоговая
+                база: при УСН доход считается со всей цены, а не с того,
+                что площадка перечислила на счёт. */}
+            Полная цена покупателя из отчёта о реализации — включая часть,
+            оплаченную баллами. С неё же считается налог: комиссия площадки
+            налоговую базу не уменьшает
+          </>
+        ) : current?.priceSource2 === 'fact' ? (
           <>
             Комиссия площадки считается именно с начисленной суммы, поэтому
             она и есть база расчёта. Оплата картой площадки, регион и баллы
