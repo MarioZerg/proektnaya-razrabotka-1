@@ -76,6 +76,8 @@ const Buyouts = () => {
       margin: number;
       knownRevenue?: number;
       breakdown?: Record<string, number>;
+      feeShare?: number;
+      bonus?: { points: number; bank: number };
     };
     breakdown?: { marketplace: string; scheme: string; count: number }[];
   }>({ items: [], total: 0, pages: 1 });
@@ -349,6 +351,7 @@ const Buyouts = () => {
             profit={data.totals.profit}
             margin={data.totals.margin}
             breakdown={data.totals.breakdown}
+            bonus={data.totals.bonus}
           />
         )}
 

@@ -17,26 +17,42 @@ interface Props {
   profit: number;
   margin: number;
   breakdown: Record<string, number>;
+  /** Оплачено баллами Ozon — площадка возмещает эту часть продавцу. */
+  bonus?: { points: number; bank: number };
 }
 
 /** Человеческие названия статей и цвет полосы. */
-const PARTS: { key: string; label: string; color: string }[] = [
-  { key: 'commission', label: 'Комиссия площадки', color: 'bg-rose-500' },
+const PARTS: { key: string; label: string; hint?: string; color: string }[] = [
+  {
+    key: 'commission',
+    label: 'Удержание площадки',
+    // Площадка снимает всё одной строкой — отдельно логистику и эквайринг
+    // вычитать нельзя, иначе они посчитаются дважды.
+    hint: 'комиссия, логистика, обработка, эквайринг',
+    color: 'bg-rose-500',
+  },
   { key: 'production', label: 'Себестоимость', color: 'bg-amber-500' },
   { key: 'promo', label: 'Реклама и продвижение', color: 'bg-orange-400' },
   { key: 'tax', label: 'Налог УСН', color: 'bg-slate-500' },
   { key: 'vat', label: 'НДС', color: 'bg-slate-400' },
-  { key: 'logistics', label: 'Логистика', color: 'bg-sky-500' },
-  { key: 'returnCost', label: 'Возвраты и невыкупы', color: 'bg-violet-400' },
-  { key: 'acquiring', label: 'Эквайринг', color: 'bg-teal-500' },
-  { key: 'storage', label: 'Хранение', color: 'bg-cyan-500' },
-  { key: 'acceptance', label: 'Приёмка', color: 'bg-lime-500' },
+  {
+    key: 'fees',
+    label: 'Услуги площадки',
+    hint: 'подписка, слоты, страхование, упаковка',
+    color: 'bg-violet-400',
+  },
 ];
 
 const money = (v: number) =>
   Math.round(v).toLocaleString('ru-RU', { maximumFractionDigits: 0 });
 
-const RevenueBreakdown = ({ revenue, profit, margin, breakdown }: Props) => {
+const RevenueBreakdown = ({
+  revenue,
+  profit,
+  margin,
+  breakdown,
+  bonus,
+}: Props) => {
   if (!revenue) return null;
 
   const rows = PARTS.map((p) => ({
@@ -61,6 +77,29 @@ const RevenueBreakdown = ({ revenue, profit, margin, breakdown }: Props) => {
             с оборота {money(revenue)} ₽
           </p>
         </div>
+
+        {/* БАЛЛЫ — не расход, а часть выручки.
+            Покупатель гасит часть цены баллами Ozon, а площадка возмещает
+            эту часть продавцу. По июлю — половина оборота, и без этой
+            строки непонятно, почему деньгами пришло вдвое меньше. */}
+        {!!bonus && bonus.points > 0 && (
+          <div className="rounded-md bg-emerald-50/70 p-2 text-xs">
+            <p className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5">
+                <Icon name="Coins" size={13} className="text-emerald-700" />
+                Из них оплачено баллами Ozon
+              </span>
+              <span className="font-bold text-emerald-800">
+                {money(bonus.points + bonus.bank)} ₽
+              </span>
+            </p>
+            <p className="mt-0.5 text-muted-foreground">
+              Площадка возмещает эту часть нам — это{' '}
+              {(((bonus.points + bonus.bank) / revenue) * 100).toFixed(0)}%
+              оборота, а не скидка за наш счёт
+            </p>
+          </div>
+        )}
 
         {/* Полоса целиком: каждая статья своим куском, прибыль в конце.
             Сразу видно, что почти всё съедают комиссия и производство. */}
@@ -89,7 +128,12 @@ const RevenueBreakdown = ({ revenue, profit, margin, breakdown }: Props) => {
               className="flex items-center gap-2 text-xs"
             >
               <span className={`h-2 w-2 shrink-0 rounded-full ${r.color}`} />
-              <span className="min-w-0 flex-1 truncate">{r.label}</span>
+              <span className="min-w-0 flex-1 truncate">
+                {r.label}
+                {r.hint && (
+                  <span className="ml-1 text-muted-foreground">· {r.hint}</span>
+                )}
+              </span>
               <span className="shrink-0 tabular-nums text-muted-foreground">
                 {r.percent.toFixed(1)}%
               </span>

@@ -165,6 +165,10 @@ export const fetchBoughtFeed = (
     knownRevenue?: number;
     /** Куда ушла выручка: по статьям, в рублях. */
     breakdown?: Record<string, number>;
+    /** Фактическая доля удержания площадки, % — из отчёта о реализации. */
+    feeShare?: number;
+    /** Оплачено баллами Ozon: площадка возмещает эту часть продавцу. */
+    bonus?: { points: number; bank: number };
   };
   /** Сколько выкупов по каждой площадке и схеме — для переключателей. */
   breakdown: { marketplace: string; scheme: string; count: number }[];

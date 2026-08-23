@@ -464,8 +464,18 @@ def _fact_pnl(cur, month=None):
         # Оборот по чекам покупателей: с учётом оплаченного баллами.
         'revenue': round(revenue, 2),
         'commission': round(commission, 2),
-        # Баллы и софинансирование: площадка ДОПЛАЧИВАЕТ за наши скидки.
-        'bonus': round(bonus + bank, 2),
+        # БАЛЛЫ И СОФИНАНСИРОВАНИЕ — не расход, а поступление.
+        #
+        # Покупатель платит часть цены баллами Ozon, а площадка возмещает эту
+        # часть продавцу: строки bonus и bank_coinvestment в отчёте идут со
+        # знаком плюс. По июлю это 10,2 млн — половина оборота.
+        #
+        # Пока их не учитывали, оборот выходил вдвое меньше настоящего, и
+        # любая маржа считалась от половины выручки.
+        'bonus': round(bonus, 2),
+        'bankCoinvestment': round(bank, 2),
+        # Начислено деньгами, без баллов: для сверки с движением по счёту.
+        'accrued': round(amount, 2),
         # Причитается по отчёту — до вычета услуг и рекламы.
         'realizationTotal': round(total, 2),
         'fees': round(fees, 2),
@@ -479,7 +489,30 @@ def _fact_pnl(cur, month=None):
     }
 
 
-def _profit_at(m, price):
+def _bonus_in_period(cur, d_from, d_to):
+    """Сколько покупатели заплатили баллами Ozon, а площадка возместила нам.
+
+    Это не расход и не подарок: часть цены покупатель гасит баллами, а
+    продавец получает эти деньги от площадки — строки bonus и
+    bank_coinvestment в отчёте идут со знаком плюс.
+
+    Показываем отдельно, потому что цифра огромная: по июлю 10,2 миллиона
+    при обороте 20,2. Пока её не видно, непонятно, почему начисление
+    деньгами вдвое меньше оборота по чекам.
+    """
+    cur.execute(
+        "SELECT coalesce(sum(bonus), 0), coalesce(sum(bank_coinvestment), 0) "
+        "FROM ozon_realization WHERE 1 = 1"
+        + (f" AND period_month >= date_trunc('month', '{d_from}'::date)"
+           if d_from else '')
+        + (f" AND period_month <= date_trunc('month', '{d_to}'::date)"
+           if d_to else ''))
+    r = cur.fetchone() or (0, 0)
+    return {'points': round(float(r[0] or 0), 2),
+            'bank': round(float(r[1] or 0), 2)}
+
+
+def _profit_at(m, price, fee_share=None):
     """Прибыль и маржа при ЦЕНЕ, ПО КОТОРОЙ ВЕЩЬ РЕАЛЬНО КУПИЛИ.
 
     Раньше прибыль считалась пропорцией: цена продажи умножалась на процент
@@ -495,9 +528,17 @@ def _profit_at(m, price):
     """
     if not price or not m or m.get('margin') is None:
         return None, None
-    var_share = sum(float(v or 0) for v in (m.get('shares') or {}).values())
-    fixed = float(m.get('production') or 0) + sum(
-        float(v or 0) for v in (m.get('fixed') or {}).values())
+    shares = m.get('shares') or {}
+    if fee_share is not None:
+        # Комиссия по факту, а логистика и эквайринг отдельно НЕ вычитаются:
+        # площадка удерживает их одной строкой вместе с комиссией.
+        var_share = fee_share + sum(
+            float(v or 0) for k, v in shares.items() if k != 'commission')
+        fixed = float(m.get('production') or 0)
+    else:
+        var_share = sum(float(v or 0) for v in shares.values())
+        fixed = float(m.get('production') or 0) + sum(
+            float(v or 0) for v in (m.get('fixed') or {}).values())
     profit = round(price * (1 - var_share) - fixed, 2)
     return profit, round(profit / price * 100, 1)
 
@@ -661,11 +702,21 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     rows = cur.fetchall()
     margins = _margin_index()
 
+    # Фактическая доля удержания площадки — из отчёта о реализации. Нужна и
+    # строкам ленты, и итогам: считать по-разному нельзя.
+    cur.execute(
+        "SELECT coalesce(sum(commission), 0), "
+        "       coalesce(sum(amount + bonus + bank_coinvestment), 0) "
+        "FROM ozon_realization")
+    fr = cur.fetchone()
+    fact_fee_share = (float(fr[0] or 0) / float(fr[1])
+                      if fr and float(fr[1] or 0) > 0 else None)
+
     items = []
     for r in rows:
         price = float(r[10] or 0)
         m = margins.get((r[4], r[5], r[6])) or {}
-        profit, margin = _profit_at(m, price)
+        profit, margin = _profit_at(m, price, fact_fee_share)
         items.append({
             'id': r[0],
             'orderNumber': r[1],
@@ -698,9 +749,18 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     # «Заработали 2,5 млн с оборота 72 млн» — цифра без объяснения. Показываем
     # разбор: сколько забрала площадка, сколько стоило производство, сколько
     # ушло государству. Тогда видно, на что можно повлиять.
-    parts = {'commission': 0.0, 'logistics': 0.0, 'acquiring': 0.0,
-             'promo': 0.0, 'storage': 0.0, 'returnCost': 0.0,
-             'acceptance': 0.0, 'tax': 0.0, 'vat': 0.0, 'production': 0.0}
+    # ЛОГИСТИКУ, ЭКВАЙРИНГ И ВОЗВРАТЫ ОТДЕЛЬНО НЕ СЧИТАЕМ.
+    #
+    # OZON удерживает всё это ОДНОЙ строкой — standard_fee, те самые 44% от
+    # цены. Туда уже входят и доставка, и обработка возвратов, и приём
+    # платежа: чистая комиссия за продажу в категории «Шторы» около 20%,
+    # остальное — услуги.
+    #
+    # Юнит-экономика расписывает их по отдельности, потому что считает по
+    # тарифам. Если сложить и то и другое, расходы задвоятся: по июлю это
+    # два миллиона лишних вычетов, и прибыль падала с 2,3 млн до 295 тысяч.
+    parts = {'commission': 0.0, 'promo': 0.0,
+             'tax': 0.0, 'vat': 0.0, 'production': 0.0, 'fees': 0.0}
     known = 0.0
 
     for material, width, height, price, qty in cur.fetchall():
@@ -714,7 +774,7 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             continue
         # Прибыль по составляющим, а не пропорцией: постоянные расходы от
         # цены не зависят, и на скидке они съедают больше, чем кажется.
-        unit_profit, _ = _profit_at(mm, float(price or 0))
+        unit_profit, _ = _profit_at(mm, float(price or 0), fact_fee_share)
         if unit_profit is None:
             continue
         profit_sum += unit_profit * n
@@ -724,9 +784,13 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
         # Переменные считаем от фактической цены, постоянные берём рублями:
         # так разбор сходится с прибылью до копейки.
         for k, share in (mm.get('shares') or {}).items():
-            parts[k] += pr * float(share)
-        for k, val in (mm.get('fixed') or {}).items():
-            parts[k] += float(val or 0) * n
+            if k in parts and k != 'commission':
+                parts[k] += pr * float(share)
+        # Комиссию берём по факту: тарифная занижена, в удержание площадки
+        # входит больше, чем один процент за продажу.
+        parts['commission'] += pr * (
+            fact_fee_share if fact_fee_share is not None
+            else float((mm.get('shares') or {}).get('commission') or 0))
         parts['production'] += float(mm.get('production') or 0) * n
 
     # Срезы по площадкам и схемам — для переключателей в шапке.
@@ -741,6 +805,25 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     )
     breakdown = [{'marketplace': a, 'scheme': b, 'count': int(c)}
                  for a, b, c in cur.fetchall()]
+
+    # УСЛУГИ ПЛОЩАДКИ СВЕРХ КОМИССИИ.
+    #
+    # Подписка Premium Plus, отгрузка в нерекомендованный слот, страхование,
+    # упаковка партнёрами, бейдж «Оригинал». В отчёт о реализации они не
+    # входят и в тарифы юнит-экономики тоже: это отдельные списания, которые
+    # площадка делает раз в месяц. По июлю — 422 тысячи.
+    #
+    # Раскладываем их на выручку периода: расход общий, а не по товарам.
+    cur.execute(
+        "SELECT coalesce(sum(f.amount), 0) "
+        "FROM marketplace_fees_monthly f "
+        "WHERE f.marketplace_code = 'ozon'"
+        + (f" AND f.month >= date_trunc('month', '{d_from}'::date)"
+           if d_from else '')
+        + (f" AND f.month <= date_trunc('month', '{d_to}'::date)"
+           if d_to else ''))
+    parts['fees'] = round(float((cur.fetchone() or [0])[0] or 0), 2)
+    profit_sum -= parts['fees']
 
     return {
         'items': items,
@@ -757,6 +840,11 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             # это честно, а не подмешиваем нули.
             'knownRevenue': round(known, 2),
             'breakdown': {k: round(v, 2) for k, v in parts.items()},
+            # Фактическая доля удержания площадки — из отчёта о реализации.
+            'feeShare': round((fact_fee_share or 0) * 100, 1),
+            # БАЛЛЫ ПЛОЩАДКИ за период: часть цены покупатель платит баллами,
+            # а площадка возмещает эту часть продавцу. Половина оборота.
+            'bonus': _bonus_in_period(cur, d_from, d_to),
         },
         'breakdown': breakdown,
     }
