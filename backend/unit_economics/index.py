@@ -1154,6 +1154,68 @@ def _rates(cur, workshop_id):
     return cutter, sewer, packer
 
 
+def _manager_per_unit(cur):
+    """Доля менеджера маркетплейсов в себестоимости одной вещи.
+
+    Менеджер получает процент с денег, реально пришедших на счёт. Сумма за
+    месяц раскладывается на все проданные за месяц вещи — это такой же
+    постоянный расход, как аренда или зарплата кладовщика.
+
+    Считаем ровно так же, как страница себестоимости: одна и та же цифра
+    должна выходить с обеих сторон. Пока эта доля здесь не учитывалась,
+    юнит-экономика показывала прибыль на 25 рублей с вещи больше настоящей,
+    и цены назначались с оглядкой на завышенный запас.
+    """
+    cur.execute(
+        "SELECT percent, is_active FROM manager_commission_settings "
+        "ORDER BY id LIMIT 1")
+    row = cur.fetchone()
+    if not row or not row[1]:
+        return 0.0
+    percent = float(row[0] or 0)
+    if percent <= 0:
+        return 0.0
+
+    # База — прошлый ПОЛНЫЙ месяц: за текущий деньги ещё приходят, и делить
+    # неполную сумму на неполные продажи бессмысленно.
+    cur.execute(
+        "SELECT coalesce(sum(transferred_amount), 0) "
+        "FROM marketplace_payouts "
+        "WHERE period_start >= (date_trunc('month', now()) "
+        "                       - interval '1 month')::date "
+        "  AND period_start <= (date_trunc('month', now()) "
+        "                       - interval '1 day')::date")
+    transferred = float((cur.fetchone() or [0])[0] or 0)
+    if transferred <= 0:
+        return 0.0
+
+    # Сколько вещей продано за месяц — та же база, что на странице
+    # себестоимости. Считать по-разному нельзя: цифры разойдутся, и станет
+    # непонятно, какой из двух себестоимостей верить.
+    #
+    # OZON отдаёт продажи в финансовом отчёте (обе схемы), а по WB и Яндексу
+    # такого отчёта нет — там считаем отгруженные заказы.
+    cur.execute(
+        "SELECT coalesce(sold_units, 0) FROM marketplace_ad_spend "
+        "WHERE marketplace_code = 'ozon' AND marketplace_item_id IS NULL "
+        "ORDER BY calculated_at DESC LIMIT 1")
+    r = cur.fetchone()
+    sold = int(r[0] or 0) if r else 0
+
+    cur.execute(
+        "SELECT count(*) FROM orders "
+        "WHERE cancelled_at IS NULL AND marketplace <> 'OZON' "
+        "  AND status = 'Отгружен' "
+        "  AND created_at >= now() - interval '30 days'")
+    r2 = cur.fetchone()
+    sold += int(r2[0] or 0) if r2 else 0
+
+    if sold <= 0:
+        return 0.0
+
+    return round(transferred * percent / 100.0 / sold, 4)
+
+
 def _cost_by_group(cur):
     """Себестоимость производства по паре «ткань + ширина».
 
@@ -1176,6 +1238,11 @@ def _cost_by_group(cur):
     for amount, per_items in cur.fetchall():
         per = int(per_items or 1) or 1
         extra_per_unit += float(amount or 0) / per
+
+    # Вознаграждение менеджера — такой же постоянный расход на вещь, как
+    # коробка или зарплата кладовщика. Страница себестоимости его учитывает,
+    # а здесь он терялся: прибыль выходила завышенной.
+    manager_cost = _manager_per_unit(cur)
 
     prices = _material_prices(cur)
     cutter_rates, sewer_rates, packer_rate = _rates(cur, workshop_id)
@@ -1222,13 +1289,16 @@ def _cost_by_group(cur):
         sew = round(sewer_rates.get(int(width), 0.0), 2) if width else 0.0
         pack = round(meters * packer_rate, 2)
         labor = cut + sew + pack
-        overhead = round(extra_per_unit + overhead_legacy, 2)
+        overhead = round(extra_per_unit + overhead_legacy + manager_cost, 2)
         out[(material, width_raw)] = {
             'materials': g['materials'],
             'materialsCost': round(materials_cost, 2),
             'cutCost': cut, 'sewCost': sew, 'packWorkCost': pack,
             'laborCost': round(labor, 2),
             'overhead': overhead,
+            # Доля менеджера отдельной строкой: в разборе расходов должно
+            # быть видно, из чего сложилась накладная часть.
+            'overheadManager': round(manager_cost, 2),
             # Полная себестоимость производства — без комиссии и налога.
             'productionCost': round(materials_cost + labor + overhead, 2),
             'missing': [
