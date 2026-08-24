@@ -537,6 +537,45 @@ def _real_pnl(cur, headers, month_back=1):
     }
 
 
+def _flush_sales(cur, rows):
+    """Сохраняет накопленные продажи ОДНИМ запросом.
+
+    Раньше на каждую продажу шёл отдельный INSERT: на странице до тысячи
+    операций, и синхронизация упиралась в ограничение базы по частоте
+    обращений — обрывалась ошибкой «rate limit exceeded», не сохранив ничего.
+
+    Возвращает количество записанных строк.
+    """
+    if not rows:
+        return 0
+    values_sql = ','.join(['(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'] * len(rows))
+    flat = [x for r in rows for x in r]
+    cur.execute(
+        "INSERT INTO marketplace_sales "
+        "(marketplace_code, scheme, posting_number, sku, offer_id, "
+        " product_name, material, width, height, quantity, "
+        " sale_price, sold_at, is_return) "
+        "SELECT 'ozon', v.scheme::varchar, v.posting::varchar, v.sku::varchar, "
+        "       v.offer::varchar, v.name::text, v.material::varchar, "
+        "       v.width::int, v.height::int, v.qty::int, v.price::numeric, "
+        "       v.sold_at::timestamp, v.is_return::boolean "
+        f"FROM (VALUES {values_sql}) AS v(scheme, posting, sku, offer, name, "
+        "        material, width, height, qty, price, sold_at, is_return) "
+        # Повторная загрузка не должна плодить дубли: тот же отчёт
+        # скачивается снова при каждой синхронизации.
+        "ON CONFLICT (marketplace_code, posting_number, sku, is_return) DO UPDATE "
+        "SET sale_price = EXCLUDED.sale_price, "
+        "    quantity = EXCLUDED.quantity, "
+        "    sold_at = EXCLUDED.sold_at, "
+        "    material = EXCLUDED.material, "
+        "    width = EXCLUDED.width, "
+        "    height = EXCLUDED.height, "
+        "    synced_at = now()",
+        flat,
+    )
+    return len(rows)
+
+
 def _sync_sales(cur, headers, days=SALES_DAYS, start_page=1, pages=4,
                 month_back=0):
     """Построчные продажи из финансового отчёта OZON: что и когда выкупили.
@@ -587,6 +626,9 @@ def _sync_sales(cur, headers, days=SALES_DAYS, start_page=1, pages=4,
     meta = {str(r[0]).strip(): {'offer': r[1], 'material': r[2],
                                 'width': r[3], 'height': r[4]}
             for r in cur.fetchall()}
+
+    # Строки текущей страницы: пишем их одной пачкой, а не по одной.
+    pending_rows = []
 
     for page in range(start_page, start_page + pages):
         st, d = _http(
@@ -640,34 +682,21 @@ def _sync_sales(cur, headers, days=SALES_DAYS, start_page=1, pages=4,
                 by_sku[k]['qty'] += 1
 
             for sku, agg in by_sku.items():
-                it = {'name': agg['name']}
-                qty = agg['qty']
                 m = meta.get(sku) or {}
-                cur.execute(
-                    "INSERT INTO marketplace_sales "
-                    "(marketplace_code, scheme, posting_number, sku, offer_id, "
-                    " product_name, material, width, height, quantity, "
-                    " sale_price, sold_at, is_return) "
-                    "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                    "        %s, %s) "
-                    # Повторная загрузка не должна плодить дубли: тот же
-                    # отчёт скачивается снова при каждой синхронизации.
-                    "ON CONFLICT (marketplace_code, posting_number, sku, "
-                    "             is_return) DO UPDATE "
-                    "SET sale_price = EXCLUDED.sale_price, "
-                    "    quantity = EXCLUDED.quantity, "
-                    "    sold_at = EXCLUDED.sold_at, "
-                    "    material = EXCLUDED.material, "
-                    "    width = EXCLUDED.width, "
-                    "    height = EXCLUDED.height, "
-                    "    synced_at = now()",
-                    (scheme, posting_number, sku, m.get('offer'),
-                     (it.get('name') or '')[:500], m.get('material'),
-                     m.get('width'), m.get('height'), qty,
-                     # Цена ЗА ОДНУ вещь: количество хранится отдельно.
-                     round(per_item, 2), sold_at, is_return),
-                )
-                saved += 1
+                # Копим строки и пишем их одной пачкой в конце страницы: на
+                # странице до тысячи операций, и отдельный запрос на каждую
+                # продажу упирал синхронизацию в ограничение базы по частоте
+                # обращений — она обрывалась, не сохранив ничего.
+                pending_rows.append((
+                    scheme, posting_number, sku, m.get('offer'),
+                    (agg['name'] or '')[:500], m.get('material'),
+                    m.get('width'), m.get('height'), agg['qty'],
+                    # Цена ЗА ОДНУ вещь: количество хранится отдельно.
+                    round(per_item, 2), sold_at, is_return,
+                ))
+
+        saved += _flush_sales(cur, pending_rows)
+        pending_rows = []
 
         if len(ops) < 1000:
             break
@@ -1163,23 +1192,44 @@ def _sync_stocks(cur, creds):
         if ozon_sku:
             items[str(ozon_sku)] = item_id
 
+    # ОДИН ЗАПРОС НА ВСЕ ОСТАТКИ, а не по запросу на товар.
+    #
+    # Раньше здесь шёл INSERT в цикле: под тысячу отдельных обращений к базе за
+    # один запуск. Это занимало почти двенадцать секунд и упиралось в ограничение
+    # базы по частоте запросов — синхронизация обрывалась ошибкой, не сохранив
+    # ничего. Теперь все строки уходят одним запросом.
+    if not by_sku:
+        return 0
+
+    rows = []
     for sku, v in by_sku.items():
-        cur.execute(
-            "INSERT INTO marketplace_stocks (marketplace_code, sku, offer_id, "
-            "  product_name, marketplace_item_id, free_amount, "
-            "  reserved_amount, warehouses, synced_at) "
-            "VALUES ('ozon', %s, %s, %s, %s, %s, %s, %s, now()) "
-            "ON CONFLICT (marketplace_code, sku) DO UPDATE SET "
-            "  offer_id = EXCLUDED.offer_id, "
-            "  product_name = EXCLUDED.product_name, "
-            "  marketplace_item_id = EXCLUDED.marketplace_item_id, "
-            "  free_amount = EXCLUDED.free_amount, "
-            "  reserved_amount = EXCLUDED.reserved_amount, "
-            "  warehouses = EXCLUDED.warehouses, synced_at = now()",
-            (sku, v['offer_id'], v['name'],
-             items.get(str(v['offer_id'])) or items.get(sku),
-             v['free'], v['reserved'], v['warehouses']),
-        )
+        rows.append((
+            sku, v['offer_id'], v['name'],
+            items.get(str(v['offer_id'])) or items.get(sku),
+            v['free'], v['reserved'], v['warehouses'],
+        ))
+
+    values_sql = ','.join(['(%s, %s, %s, %s, %s, %s, %s)'] * len(rows))
+    flat = [x for r in rows for x in r]
+    cur.execute(
+        "INSERT INTO marketplace_stocks (marketplace_code, sku, offer_id, "
+        "  product_name, marketplace_item_id, free_amount, "
+        "  reserved_amount, warehouses, synced_at) "
+        # Типы указываем явно: в списке значений Postgres выводит их сам и на
+        # NULL-ах (товар без карточки) ошибается.
+        "SELECT 'ozon', v.sku::varchar, v.offer_id::varchar, v.name::text, "
+        "       v.item_id::int, v.free::int, v.reserved::int, v.warehouses::int, now() "
+        f"FROM (VALUES {values_sql}) AS v(sku, offer_id, name, item_id, "
+        "        free, reserved, warehouses) "
+        "ON CONFLICT (marketplace_code, sku) DO UPDATE SET "
+        "  offer_id = EXCLUDED.offer_id, "
+        "  product_name = EXCLUDED.product_name, "
+        "  marketplace_item_id = EXCLUDED.marketplace_item_id, "
+        "  free_amount = EXCLUDED.free_amount, "
+        "  reserved_amount = EXCLUDED.reserved_amount, "
+        "  warehouses = EXCLUDED.warehouses, synced_at = now()",
+        flat,
+    )
 
     return len(by_sku)
 

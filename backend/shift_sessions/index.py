@@ -1142,11 +1142,31 @@ def handler(event: dict, context) -> dict:
                         f'Автозакрытие смен: закрыто {len(closed)}',
                     ),
                 )
+
+                # ЗАОДНО ЧИСТИМ СЛУЖЕБНЫЕ ОТМЕТКИ ПЛАНИРОВЩИКА.
+                #
+                # Журнал пишет строку на каждый запуск фоновых заданий: пятнадцать
+                # заданий круглосуточно дают около тысячи записей в сутки. Нужны они
+                # ровно для одного — показать на странице планировщика, когда задание
+                # отработало последний раз. Через две недели такая отметка бесполезна,
+                # а таблица тем временем растёт и замедляет всё, что её читает.
+                #
+                # Действия сотрудников (раскрой, стикеровка, закрытие заказа) НЕ
+                # трогаем: по ним разбирают спорные ситуации и считают выработку.
+                # Свежие две недели служебных записей тоже оставляем — чтобы админ
+                # видел историю запусков, а не только последний.
+                cur.execute(
+                    "DELETE FROM audit_log WHERE category = 'integration' "
+                    "AND created_at < now() - interval '14 days'"
+                )
+                purged = cur.rowcount or 0
+
                 conn.commit()
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'success': True, 'closedCount': len(closed), 'closed': closed}),
+                    'body': json.dumps({'success': True, 'closedCount': len(closed),
+                                        'closed': closed, 'auditPurged': purged}),
                 }
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
