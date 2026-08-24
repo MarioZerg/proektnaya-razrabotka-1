@@ -57,14 +57,25 @@ const MarketplaceSupplyAssemble = () => {
   // Поставку собирает кто-то другой: показываем предупреждение вместо рабочего экрана.
   const [lockedByOther, setLockedByOther] = useState<string | null>(null);
 
-  const load = () => {
-    setLoading(true);
+  /**
+   * Перечитать поставку.
+   *
+   * silent — обновление ПОСЛЕ скана. Экран «Загрузка…» в этот момент подменяет
+   * собой всю страницу: коробы исчезают, поле ввода пересоздаётся и теряет
+   * фокус, и кладовщик ждёт, пока всё вернётся. Сканер в это время стреляет в
+   * пустоту. Поэтому при сканировании обновляем данные молча — картинка на
+   * экране просто меняется на новую, поле остаётся живым.
+   */
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     fetchSupplyDetail(supplyId)
       .then((data) => {
         setSupply(data);
         setCargoType(data.ozonCargoType === 'PALLET' ? 'PALLET' : 'BOX');
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   };
 
   useEffect(() => {
@@ -149,7 +160,9 @@ const MarketplaceSupplyAssemble = () => {
       await addOrderToBox(boxId, orderNumber);
       playScanSound();
       toast({ title: `Заказ ${orderNumber} добавлен в короб` });
-      load();
+      // Молча: без подмены экрана «Загрузка…» — кладовщик сканирует дальше,
+      // пока список обновляется сам.
+      load(true);
       if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
     } catch (e) {
       playScanErrorSound();

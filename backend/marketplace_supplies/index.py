@@ -80,7 +80,10 @@ def ensure_ozon_assembled(cur, goods_id):
         req.add_header('Client-Id', client_id)
         req.add_header('Api-Key', api_key)
         req.add_header('Content-Type', 'application/json')
-        with urllib.request.urlopen(req, timeout=15) as r:
+        # 5 секунд вместо 15. Кладовщик стоит с пакетом в руках и ждёт ответа:
+        # если OZON тормозит, лучше быстро отпустить его сканировать дальше —
+        # статус отправления всё равно подтянется ближайшей синхронизацией.
+        with urllib.request.urlopen(req, timeout=5) as r:
             return json.loads(r.read().decode('utf-8') or '{}')
 
     try:
@@ -253,7 +256,9 @@ def resolve_ozon_barcode(cur, barcode):
     req.add_header('Api-Key', api_key)
     req.add_header('Content-Type', 'application/json')
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        # 6 секунд: это запасной путь, когда штрихкод не нашёлся в своей базе.
+        # Ждать четверть минуты ради него нельзя — сканирование встаёт.
+        with urllib.request.urlopen(req, timeout=6) as r:
             data = json.loads(r.read().decode('utf-8') or '{}')
         return ((data.get('result') or {}).get('posting_number')) or None
     except Exception:
