@@ -12,10 +12,19 @@ interface KioskIdleTimerProps {
   countdownSec?: number;
 }
 
-/** Автовыход из профиля на терминале при бездействии: через минуту без действий появляется
- * предупреждение с обратным отсчётом, и если сотрудник не отреагировал — профиль закрывается,
- * чтобы терминал не остался открытым под чужой учётной записью. */
-const KioskIdleTimer = ({ onTimeout, idleMs = 60000, countdownSec = 30 }: KioskIdleTimerProps) => {
+/**
+ * Автовыход из профиля на терминале при бездействии.
+ *
+ * Планшет стоит в цехе на проходе: сотрудник отошёл за тканью, а его профиль
+ * остался открытым — следующий подошедший спишет брак и закроет заказы от его
+ * имени, и в отчётах это будет его работа. Поэтому через 30 секунд без действий
+ * появляется предупреждение с отсчётом, а ещё через 15 профиль закрывается и
+ * терминал ждёт нового скана QR.
+ *
+ * Пороги короткие намеренно: работа за терминалом занимает секунды — отсканировал,
+ * напечатал, закрыл. Полминуты неподвижного экрана означают, что человек ушёл.
+ */
+const KioskIdleTimer = ({ onTimeout, idleMs = 30000, countdownSec = 15 }: KioskIdleTimerProps) => {
   const [warning, setWarning] = useState(false);
   const [left, setLeft] = useState(countdownSec);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -37,11 +46,24 @@ const KioskIdleTimer = ({ onTimeout, idleMs = 60000, countdownSec = 30 }: KioskI
     idleTimer.current = setTimeout(() => setWarning(true), idleMs);
   };
 
+  // Показано ли окно — держим в ссылке, а не только в состоянии.
+  //
+  // Иначе подписка на события ниже зависела бы от warning и пересоздавалась при
+  // каждом его изменении. А это ломало автовыход целиком: как только окно
+  // появлялось, эффект перезапускался, вызывал startIdle() и тут же гасил
+  // окно обратно. Сотрудник ничего не видел, и профиль не закрывался НИКОГДА —
+  // терминал так и стоял открытым под чужой учётной записью.
+  const warningRef = useRef(false);
+  warningRef.current = warning;
+
   // Любая активность сбрасывает таймер бездействия.
   useEffect(() => {
     startIdle();
     const reset = () => {
-      if (!warning) startIdle();
+      // Пока окно на экране, случайное касание планшета его НЕ снимает: остаться
+      // в системе можно только кнопкой. Иначе задетый локтем экран продлевал бы
+      // чужую сессию бесконечно.
+      if (!warningRef.current) startIdle();
     };
     const events = ['mousedown', 'keydown', 'touchstart', 'wheel'];
     events.forEach((e) => window.addEventListener(e, reset));
@@ -50,7 +72,7 @@ const KioskIdleTimer = ({ onTimeout, idleMs = 60000, countdownSec = 30 }: KioskI
       clearAll();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [warning, idleMs, countdownSec]);
+  }, [idleMs, countdownSec]);
 
   // Обратный отсчёт в окне предупреждения.
   useEffect(() => {
@@ -73,13 +95,24 @@ const KioskIdleTimer = ({ onTimeout, idleMs = 60000, countdownSec = 30 }: KioskI
   return (
     <Dialog open={warning} onOpenChange={(open) => !open && startIdle()}>
       <DialogContent className="kiosk-root sm:max-w-md" confirmClose={false}>
-        <DialogTitle className="sr-only">Профиль скоро закроется</DialogTitle>
+        <DialogTitle className="sr-only">Терминал скоро закроется</DialogTitle>
         <div className="flex flex-col items-center gap-4 py-4 text-center">
           <Icon name="TimerReset" size={56} className="text-amber-500" />
-          <p className="text-2xl font-bold">Профиль закроется через {left} сек.</p>
-          <p className="text-muted-foreground">Нажмите «Я тут», чтобы остаться в системе</p>
-          <Button size="lg" className="h-16 w-full text-lg" onClick={startIdle}>
-            Я тут
+          <p className="text-2xl font-bold">Терминал закроется через</p>
+          {/* Секунды крупно и отдельной строкой: планшет висит на стене, и
+              сотрудник смотрит на него от рабочего места, за пару метров. */}
+          <p className="font-mono-tech text-7xl font-bold text-amber-600">{left}</p>
+          <p className="text-lg text-muted-foreground">
+            Нажмите «Остаться на странице» — иначе придётся заново сканировать свой
+            QR-код сотрудника
+          </p>
+          <Button
+            size="lg"
+            className="h-20 w-full bg-emerald-600 text-xl text-white hover:bg-emerald-700"
+            onClick={startIdle}
+          >
+            <Icon name="Hand" size={26} className="mr-2" />
+            Остаться на странице
           </Button>
         </div>
       </DialogContent>
