@@ -32,13 +32,28 @@ const PARTS: { key: string; label: string; hint?: string; color: string }[] = [
     color: 'bg-rose-500',
   },
   { key: 'production', label: 'Себестоимость', color: 'bg-amber-500' },
-  { key: 'promo', label: 'Реклама и продвижение', color: 'bg-orange-400' },
+  {
+    key: 'promo',
+    label: 'Реклама и продвижение',
+    hint: 'по факту из кабинета',
+    color: 'bg-orange-400',
+  },
+  {
+    key: 'returns',
+    label: 'Потери на возвратах',
+    // Вещь вернулась, деньги покупателю отданы, а ткань и работа потрачены.
+    hint: 'ткань и работа по вернувшимся вещам',
+    color: 'bg-red-700',
+  },
   { key: 'tax', label: 'Налог УСН', color: 'bg-slate-500' },
   { key: 'vat', label: 'НДС', color: 'bg-slate-400' },
+  { key: 'acquiring', label: 'Приём платежа', color: 'bg-cyan-600' },
   {
     key: 'fees',
     label: 'Услуги площадки',
-    hint: 'подписка, слоты, страхование, упаковка',
+    // Подписку Premium сюда НЕ берём: она уже сидит в себестоимости вещи,
+    // иначе одни и те же 50 000 ₽ вычитались бы дважды.
+    hint: 'слоты, страхование, упаковка — без подписки',
     color: 'bg-violet-400',
   },
 ];

@@ -646,6 +646,27 @@ def _refresh_sales(months=1):
     return True
 
 
+def _ad_fact(cur, d_from=None, d_to=None, mp_code='ozon'):
+    """Фактические траты на рекламу за период — из кабинета площадки.
+
+    Раньше реклама считалась долей от цены по нормативу из юнит-экономики.
+    Норматив — это план, а тратим мы по факту: в июле план дал 2 258 327 ₽,
+    а кабинет показал 2 292 239 ₽. Разница небольшая, но она каждый месяц
+    своя, и прибыль от неё гуляет.
+
+    Берём то, что реально списано. Расход общий на весь оборот — по вещам
+    он не разложен, поэтому в разбор идёт одной суммой.
+    """
+    where = f"WHERE marketplace_code = '{mp_code}'"
+    if d_from:
+        where += f" AND month >= date_trunc('month', '{d_from}'::date)"
+    if d_to:
+        where += f" AND month <= date_trunc('month', '{d_to}'::date)"
+    cur.execute(
+        f"SELECT coalesce(sum(ad_spend), 0) FROM marketplace_ad_monthly {where}")
+    return float((cur.fetchone() or [0])[0] or 0)
+
+
 def _fee_shares(cur, d_from=None, d_to=None):
     """Доля удержания площадки ПО ВЕЩИ И СХЕМЕ + средние по каждой схеме.
 
@@ -842,13 +863,22 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     # тарифам. Если сложить и то и другое, расходы задвоятся: по июлю это
     # два миллиона лишних вычетов, и прибыль падала с 2,3 млн до 295 тысяч.
     parts = {'commission': 0.0, 'promo': 0.0,
-             'tax': 0.0, 'vat': 0.0, 'production': 0.0, 'fees': 0.0}
+             'tax': 0.0, 'vat': 0.0, 'production': 0.0, 'fees': 0.0,
+             # Себестоимость вернувшихся вещей: труд и материал потрачены,
+             # а денег за них не будет.
+             'returns': 0.0,
+             # Приём платежа. Вычитался из прибыли, но в разборе его не было —
+             # выручка не сходилась со статьями на 227 тысяч по июлю.
+             'acquiring': 0.0}
     known = 0.0
     # Средний процент удержания для шапки считаем ПО ЭТОМУ ЖЕ ОТБОРУ, а не по
     # всей таблице: выбрав май или схему FBS, человек ждёт процент по маю и по
     # FBS. Раньше там всегда стояла одна общая цифра.
     fee_rev = 0.0
     fee_amt = 0.0
+    # Реклама по нормативу — сколько её заложено в уже посчитанную прибыль.
+    # Ниже вычтем норматив и подставим факт из кабинета площадки.
+    promo_plan = 0.0
     # ТО ЖЕ САМОЕ, НО ОТДЕЛЬНО ПО КАЖДОЙ СХЕМЕ.
     #
     # FBO и FBS — это два разных бизнеса под одной вывеской. Со склада
@@ -860,7 +890,7 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     def _slot(name):
         return by_scheme.setdefault(name, {
             'revenue': 0.0, 'profit': 0.0, 'known': 0.0,
-            'feeRev': 0.0, 'feeAmt': 0.0, 'qty': 0,
+            'feeRev': 0.0, 'feeAmt': 0.0, 'qty': 0, 'promoPlan': 0.0,
         })
 
     for material, width, height, price, qty, sch in cur.fetchall():
@@ -889,9 +919,16 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
         # в рублях: ткань и работа стоят одинаково при любой скидке.
         # Переменные считаем от фактической цены, постоянные берём рублями:
         # так разбор сходится с прибылью до копейки.
+        # Рекламу здесь НЕ считаем: норматив из юнит-экономики — это план,
+        # а ниже подставляется факт из кабинета площадки.
         for k, share in (mm.get('shares') or {}).items():
-            if k in parts and k != 'commission':
+            if k in parts and k not in ('commission', 'promo'):
                 parts[k] += pr * float(share)
+        # Плановая реклама — её ниже заменим фактом из кабинета. Копим, чтобы
+        # знать, сколько норматива уже сидит внутри посчитанной прибыли.
+        promo_plan_item = pr * float((mm.get('shares') or {}).get('promo') or 0)
+        promo_plan += promo_plan_item
+        sl['promoPlan'] += promo_plan_item
         # Комиссию берём по факту: тарифная занижена, в удержание площадки
         # входит больше, чем один процент за продажу.
         parts['commission'] += pr * (
@@ -968,6 +1005,56 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     # Услуги площадки платятся живыми деньгами и вычитаются полностью.
     bonus_info = _bonus_in_period(cur, d_from, d_to)
 
+    # РЕКЛАМА — ПО ФАКТУ ИЗ КАБИНЕТА, А НЕ ПО НОРМАТИВУ.
+    #
+    # Норматив из юнит-экономики — это план на вещь. Тратим мы по факту, и
+    # каждый месяц по-своему: в июле план дал 2 258 327 ₽, кабинет — 2 292 239.
+    # Убираем норматив из прибыли и ставим вместо него живые деньги.
+    ad_all = _ad_fact(cur, d_from, d_to)
+    ad_share = ad_all
+    if sch in ('FBO', 'FBS') and ad_all:
+        cur.execute(
+            "SELECT coalesce(sum(s.sale_price * s.quantity), 0) "
+            f"FROM marketplace_sales s {where_all_schemes}")
+        rev_all_sch = float((cur.fetchone() or [0])[0] or 0)
+        ad_share = ad_all * (revenue / rev_all_sch) if rev_all_sch > 0 else 0.0
+    parts['promo'] = round(ad_share, 2)
+    profit_sum += promo_plan - ad_share
+    for sl in by_scheme.values():
+        sl['profit'] += sl['promoPlan']
+    if ad_all and revenue > 0 and sch not in ('FBO', 'FBS'):
+        for sl in by_scheme.values():
+            sl['profit'] -= ad_all * (sl['revenue'] / revenue)
+
+    # ВОЗВРАТЫ — ГЛАВНАЯ ПОТЕРЯ, КОТОРОЙ В РАСЧЁТЕ НЕ БЫЛО.
+    #
+    # Вещь уехала к покупателю и вернулась: деньги ему возвращены, продажи не
+    # было. Но ткань раскроена, швея отшила, упаковщица собрала — эти рубли
+    # потрачены и назад не придут. Вернувшийся товар едет на склад и чаще
+    # всего продаётся снова, но труд и материал первого круга уже потеряны.
+    #
+    # В июле вернулось 529 вещей из 7213 — это 7.3% и примерно 300 тысяч
+    # себестоимости, которых в прибыли не хватало.
+    ret_where = where.replace('NOT s.is_return', 's.is_return')
+    cur.execute(
+        "SELECT s.material, s.width, s.height, sum(s.quantity) "
+        f"FROM marketplace_sales s {ret_where} "
+        "GROUP BY 1, 2, 3")
+    returns_cost = 0.0
+    returns_qty = 0
+    for material, width, height, qty in cur.fetchall():
+        n = int(qty or 0)
+        mm = margins.get((material, width, height)) or {}
+        returns_qty += n
+        returns_cost += float(mm.get('production') or 0) * n
+    parts['returns'] = round(returns_cost, 2)
+    profit_sum -= returns_cost
+    # Потери на возвратах — тоже по схемам: у FBS их больше, и прибыль там
+    # без этого выглядела бы лучше, чем есть.
+    if returns_cost and revenue > 0 and sch not in ('FBO', 'FBS'):
+        for sl in by_scheme.values():
+            sl['profit'] -= returns_cost * (sl['revenue'] / revenue)
+
     # УСЛУГИ ПЛОЩАДКИ — РАСХОД НА ВЕСЬ ОБОРОТ, А НЕ НА ВЫБРАННУЮ СХЕМУ.
     #
     # Подписка, слоты, страхование приходят одной суммой за месяц по всему
@@ -1024,12 +1111,30 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
                 continue
             sl['profit'] += unit_profit * n
             sl['known'] += pr
+            # Плановая реклама сидит внутри unit_profit — возвращаем её, ниже
+            # вместо неё вычтем факт из кабинета.
+            sl['profit'] += pr * float((mm.get('shares') or {}).get('promo') or 0)
             if item_fee is not None:
                 sl['feeRev'] += pr
                 sl['feeAmt'] += pr * item_fee
-        if fees_total and all_rev > 0:
+        # Себестоимость возвратов по схемам — за тот же период, но без
+        # ограничения по схеме: сравнение должно быть полным.
+        ret_all_where = where_all_schemes.replace(
+            'NOT s.is_return', 's.is_return')
+        cur.execute(
+            "SELECT s.material, s.width, s.height, s.scheme, sum(s.quantity) "
+            f"FROM marketplace_sales s {ret_all_where} "
+            "GROUP BY 1, 2, 3, 4")
+        for material, width, height, s_sch, qty in cur.fetchall():
+            mm = margins.get((material, width, height)) or {}
+            sl = by_scheme.get(s_sch if s_sch in ('FBO', 'FBS') else 'Прочее')
+            if sl:
+                sl['profit'] -= float(mm.get('production') or 0) * int(qty or 0)
+        if all_rev > 0:
             for sl in by_scheme.values():
-                sl['profit'] -= fees_total * (sl['revenue'] / all_rev)
+                part = sl['revenue'] / all_rev
+                sl['profit'] -= fees_total * part
+                sl['profit'] -= ad_all * part
 
     schemes = []
     for name, v in sorted(by_scheme.items(), key=lambda x: -x[1]['revenue']):
