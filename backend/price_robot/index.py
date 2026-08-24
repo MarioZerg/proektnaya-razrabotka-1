@@ -37,6 +37,16 @@ def _msk_now():
     return datetime.utcnow() + MSK_OFFSET
 
 
+def _utc_now():
+    """Время в том же счёте, что и метки в базе.
+
+    База пишет now() по UTC, и сравнивать её метки с московским временем
+    нельзя: разница в три часа превратилась бы в «прошло 3 часа» сразу после
+    шага, и робот двинул бы цены раньше срока.
+    """
+    return datetime.utcnow()
+
+
 def _msk_hour():
     return _msk_now().hour
 
@@ -352,7 +362,9 @@ def _push(mp, items, actor_id):
     предохранители, что и у кнопки владельца.
     """
     payload = {'action': 'push', 'marketplace': mp, 'items': items,
-               'actorId': actor_id}
+               'actorId': actor_id,
+               # Присылаем «Вашу цену» — пересчитывать её не нужно.
+               'sellerPrice': True}
     body = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(PRICE_PUSH_URL, method='POST', data=body)
     req.add_header('Content-Type', 'application/json')
@@ -414,7 +426,9 @@ def _decide(cur, st, mp='ozon'):
     """
     drift = _total_drift(cur, mp, st['dryRun'])
     last = _last_run(cur, mp, st['dryRun'])
-    now = _msk_now()
+    # Метки шагов в базе — по UTC, поэтому и «сейчас» берём по UTC.
+    # Иначе разница часовых поясов дала бы роботу лишние три часа.
+    now = _utc_now()
     target = st['targetTotalPercent']
 
     # 1. Цель взята.
@@ -594,21 +608,20 @@ def _continue_step(cur, mp, actor_id):
     # Цены берём из базы прямо сейчас: между пачками их мог поменять кто-то ещё.
     id_list = ','.join(str(int(i)) for i in batch)
     #
-    # БЕРЁМ ЦЕНУ ПОКУПАТЕЛЯ, А НЕ СВОЮ.
+    # ДВИГАЕМ «ВАШУ ЦЕНУ» — нашу цену продавца из кабинета.
     #
-    # Функция отправки ждёт цену, которую видит покупатель (со скидкой
-    # площадки), и сама пересчитывает её в нашу цену продавца. Если прислать
-    # ей свою цену, она разделит её на покупательскую и умножит на нашу —
-    # выйдет двойной подъём. 24 августа так и случилось: вместо 0.5% цены
-    # выросли на 5-18%, потому что скидка площадки местами доходит до 30%.
+    # Это основная цена товара: от неё площадка считает свою скидку для
+    # покупателя. Поднять на 5% нужно именно её.
+    #
+    # Отправляем с пометкой sellerPrice, чтобы функция отправки взяла цену как
+    # есть. Без пометки она считает присланное ценой покупателя и пересчитывает
+    # ещё раз — 24 августа из-за этого вместо 0.5% магазин подорожал на 5-18%.
     cur.execute(
-        "SELECT marketplace_item_id, price, "
-        "  coalesce(price_with_marketplace_discount, price) "
-        "FROM marketplace_prices "
+        "SELECT marketplace_item_id, price FROM marketplace_prices "
         f"WHERE marketplace_code = %s AND marketplace_item_id IN ({id_list}) "
         "  AND price > 0", (mp,))
     k = 1 + step / 100
-    payload = [{'itemId': int(r[0]), 'newPrice': round(float(r[2]) * k, 2)}
+    payload = [{'itemId': int(r[0]), 'newPrice': round(float(r[1]) * k, 2)}
                for r in cur.fetchall()]
 
     if payload:
@@ -649,6 +662,34 @@ def _pending_left(cur, mp):
         "WHERE marketplace_code = %s", (mp,))
     r = cur.fetchone()
     return int(r[0]) if r else 0
+
+
+def _repair_to(cur, mp, actor_id, baseline_date, uplift, limit=200):
+    """Выправляет цены к эталону: цена на дату baseline_date плюс uplift %.
+
+    Нужна после сбоя: 24 августа шаг ушёл на площадку с двойным пересчётом,
+    и часть магазина подорожала на 5-18% вместо 0.5%. Возвращаем каждую
+    карточку к тому значению, которое и должно было получиться.
+    """
+    cur.execute(
+        "SELECT mp.marketplace_item_id, round(h.price * %s, 2) "
+        "FROM marketplace_prices mp "
+        "JOIN price_history h ON h.marketplace_item_id = mp.marketplace_item_id "
+        "  AND h.marketplace_code = %s AND h.captured_on = %s "
+        "WHERE mp.marketplace_code = %s AND h.price > 0 "
+        "  AND abs(round(h.price * %s, 2) - mp.price) > 0.5 "
+        f"ORDER BY mp.marketplace_item_id LIMIT {int(limit)}",
+        (1 + uplift / 100, mp, baseline_date, mp, 1 + uplift / 100))
+    rows = cur.fetchall()
+    if not rows:
+        return 0, 0, 0
+    payload = [{'itemId': int(r[0]), 'newPrice': float(r[1])} for r in rows]
+    res = _push(mp, payload, actor_id)
+    if res.get('error'):
+        return 0, 0, len(rows)
+    pushed = int(res.get('pushed') or 0)
+    failed = len(res.get('failed') or []) + len(res.get('skipped') or [])
+    return pushed, failed, len(rows)
 
 
 def _manual_move(cur, mp, step, actor_id, note=''):
@@ -907,6 +948,28 @@ def handler(event: dict, context) -> dict:
                  bool(body.get('requireSecondSignal', True)),
                  body.get('actorId'), mp))
             return _resp(200, {'ok': True, 'settings': _settings(cur, mp)})
+
+        if action == 'repair':
+            # Разовое выправление цен после сбоя 24 августа.
+            if not _is_admin(cur, body.get('actorId')):
+                return _resp(403, {'error': 'Только для администратора'})
+            pushed, failed, total = _repair_to(
+                cur, mp, body.get('actorId'),
+                body.get('baseline') or '2026-08-20',
+                float(body.get('uplift') or 0.5),
+                int(body.get('limit') or 200))
+            cur.execute(
+                "SELECT count(*) FROM marketplace_prices mp "
+                "JOIN price_history h "
+                "  ON h.marketplace_item_id = mp.marketplace_item_id "
+                "  AND h.marketplace_code = %s AND h.captured_on = %s "
+                "WHERE mp.marketplace_code = %s AND h.price > 0 "
+                "  AND abs(round(h.price * %s, 2) - mp.price) > 0.5",
+                (mp, body.get('baseline') or '2026-08-20', mp,
+                 1 + float(body.get('uplift') or 0.5) / 100))
+            left = int((cur.fetchone() or [0])[0] or 0)
+            return _resp(200, {'ok': True, 'pushed': pushed, 'failed': failed,
+                               'batch': total, 'left': left})
 
         if action == 'move':
             # Ручной сдвиг цен — вне расписания, по кнопке владельца.

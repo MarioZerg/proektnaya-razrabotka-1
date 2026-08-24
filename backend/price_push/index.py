@@ -67,12 +67,19 @@ def _is_admin(cur, actor_id):
     return bool(row and row[0] == 'admin')
 
 
-def _prepare(cur, marketplace, items):
+def _prepare(cur, marketplace, items, seller_price=False):
     """Сверяет присланные цены с базой и отсеивает опасные.
 
     Экран мог показывать данные, посчитанные несколько минут назад, а цена за
     это время изменилась. Поэтому текущую цену берём из базы, а не верим
     присланной, и заодно проверяем размер шага.
+
+    seller_price=True — прислана НАША цена («Ваша цена» в кабинете), её и
+    отправляем как есть. Так работает робот: он двигает именно эту цену.
+    По умолчанию False — прислана цена покупателя (со скидкой площадки), её
+    нужно перевести в нашу. Перепутать эти два случая дорого: 24 августа
+    цену продавца приняли за покупательскую, пересчитали второй раз, и
+    вместо 0.5% магазин подорожал на 5-18%.
     """
     ids = [int(i['itemId']) for i in items if i.get('itemId')]
     if not ids:
@@ -124,7 +131,7 @@ def _prepare(cur, marketplace, items):
         # на деле снизила бы витрину на размер СПП. Поэтому переводим шаг в свою
         # цену: берём процент изменения и применяем его к цене продавца.
         shown = info['shownPrice'] or current
-        if shown > 0 and abs(shown - current) > 0.01:
+        if not seller_price and shown > 0 and abs(shown - current) > 0.01:
             ratio = new_price / shown
             new_price = round(current * ratio, 2)
 
@@ -294,7 +301,9 @@ def handler(event: dict, context) -> dict:
         if not enabled:
             return _resp(400, {'error': 'Интеграция с площадкой не подключена'})
 
-        ready, skipped = _prepare(cur, marketplace, items)
+        # Робот присылает нашу цену продавца и просит не пересчитывать её.
+        ready, skipped = _prepare(cur, marketplace, items,
+                                  seller_price=bool(body_data.get('sellerPrice')))
         if not ready:
             return _resp(200, {'ok': True, 'pushed': 0, 'skipped': skipped,
                                'failed': []})

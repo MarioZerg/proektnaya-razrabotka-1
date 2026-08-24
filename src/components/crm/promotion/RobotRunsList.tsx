@@ -34,13 +34,23 @@ const LOOK: Record<
   manual: { icon: 'Hand', label: 'Сдвинули вручную', className: 'text-blue-700' },
 };
 
-const when = (iso: string) =>
-  new Date(iso).toLocaleString('ru-RU', {
+/**
+ * Время шага по Москве.
+ *
+ * Сервер пишет метки по UTC и отдаёт их без часового пояса. Браузер такую
+ * строку считает местным временем, и шаг, сделанный в 23:17 по Москве,
+ * показывался бы как 20:17 — на три часа раньше, чем было на самом деле.
+ */
+const when = (iso: string) => {
+  const utc = iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`;
+  return new Date(utc).toLocaleString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Europe/Moscow',
   });
+};
 
 const RobotRunsList = ({ runs }: Props) => {
   if (!runs.length) {

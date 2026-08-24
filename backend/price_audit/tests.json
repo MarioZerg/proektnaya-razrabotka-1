@@ -1,0 +1,7 @@
+{
+  "tests": [
+    {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
+    {"name": "Unknown action fails", "method": "GET", "path": "/?action=nope", "expectedStatus": 400},
+    {"name": "Check without admin forbidden", "method": "GET", "path": "/?action=check&offerIds=x", "expectedStatus": 403}
+  ]
+}
