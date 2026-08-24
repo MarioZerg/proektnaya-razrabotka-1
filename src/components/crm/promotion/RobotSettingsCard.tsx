@@ -9,6 +9,10 @@ import type { RobotSettings } from '@/lib/priceRobotApi';
 /**
  * Настройки робота подъёма цен.
  *
+ * Цель простая — поднять цены на заданный процент. Ориентир один: спрос.
+ * Пока продажи держатся, робот идёт вверх; просели сильнее порога — откатывает
+ * шаг назад и ждёт.
+ *
  * Робот меняет цены на витрине сам, поэтому здесь два переключателя, а не
  * один: «включён» и «наблюдение». В наблюдении он считает и пишет в журнал,
  * что сделал бы, но витрину не трогает — так владелец видит его решения
@@ -109,12 +113,14 @@ const RobotSettingsCard = ({ value, onChange, onSave, busy }: Props) => {
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-1.5">
-            <Label>Цель — маржа FBS, %</Label>
+            <Label>Цель — поднять на, %</Label>
             <Input
               type="number"
               step="0.5"
-              value={value.targetMargin}
-              onChange={(e) => set('targetMargin', Number(e.target.value))}
+              value={value.targetTotalPercent}
+              onChange={(e) =>
+                set('targetTotalPercent', Number(e.target.value))
+              }
             />
             <p className="text-[11px] text-muted-foreground">
               Дошли — робот остановится сам

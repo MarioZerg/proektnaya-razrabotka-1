@@ -22,9 +22,6 @@ CORS_HEADERS = {
 PRICE_PUSH_URL = (
     'https://functions.poehali.dev/fc1cfb34-b57c-41d4-97d9-fcee27c9af6a')
 
-# Выкупы: оттуда берём маржу FBS — ту самую, что видит владелец на экране.
-BUYOUTS_URL = (
-    'https://functions.poehali.dev/406daf92-dd75-4e27-946d-e90aa720fe70')
 
 # Робот двигает цены всего ассортимента разом, поэтому шаг ограничен жёстко:
 # 3% за раз по всему магазину — уже заметное движение для выдачи.
@@ -65,7 +62,8 @@ def _is_admin(cur, actor_id):
 def _settings(cur, mp='ozon'):
     cur.execute(
         "SELECT is_active, dry_run, step_percent, step_days, run_hour, "
-        "       target_margin, drop_percent, max_total_percent, updated_at "
+        "       target_total_percent, drop_percent, max_total_percent, "
+        "       updated_at "
         "FROM price_robot_settings WHERE marketplace_code = %s", (mp,))
     r = cur.fetchone()
     if not r:
@@ -73,39 +71,12 @@ def _settings(cur, mp='ozon'):
     return {
         'isActive': bool(r[0]), 'dryRun': bool(r[1]),
         'stepPercent': float(r[2]), 'stepDays': int(r[3]),
-        'runHour': int(r[4]), 'targetMargin': float(r[5]),
+        'runHour': int(r[4]),
+        # ЦЕЛЬ: на сколько всего поднять цены. Не маржа — просто процент.
+        'targetTotalPercent': float(r[5]),
         'dropPercent': float(r[6]), 'maxTotalPercent': float(r[7]),
         'updatedAt': r[8],
     }
-
-
-def _margin_fbs():
-    """Маржа по схеме FBS за последние 30 дней — цель, к которой идём.
-
-    Берём её из «Выкупов», а не считаем заново. Там уже учтено всё: фактическое
-    удержание площадки из отчёта о реализации, себестоимость, реклама по факту
-    из кабинета, налоги, услуги и обработка возвратов. Повторить эту арифметику
-    здесь — значит однажды с ней разойтись, и робот целился бы в одну цифру,
-    а владелец видел на экране другую.
-
-    Окно скользящее, от сегодня назад. Календарный месяц в первых числах
-    опирается на два-три дня продаж: цифра скакала бы так, что робот успевал бы
-    и разогнаться, и остановиться на пустом месте.
-    """
-    d_from = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-    d_to = datetime.now().strftime('%Y-%m-%d')
-    url = (f'{BUYOUTS_URL}?action=bought_feed&page=1&perPage=1'
-           f'&dateFrom={d_from}&dateTo={d_to}&scheme=FBS')
-    try:
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=25) as r:
-            data = json.loads(r.read().decode())
-    except Exception:
-        return None
-    totals = (data or {}).get('totals') or {}
-    if not totals.get('revenue'):
-        return None
-    return float(totals.get('margin') or 0)
 
 
 def _units_in_period(cur, d_from, d_to):
@@ -118,18 +89,21 @@ def _units_in_period(cur, d_from, d_to):
     return int((cur.fetchone() or [0])[0] or 0)
 
 
-def _last_run(cur, mp='ozon'):
+def _last_run(cur, mp='ozon', dry_run=False):
     """Последний РЕЗУЛЬТАТИВНЫЙ шаг: подъём или откат.
 
     Прогоны с решением «рано» и «цель достигнута» цену не двигали, и отсчитывать
     паузу от них нельзя — иначе робот, запускаемый ежедневно, никогда бы не
     дождался своих двух дней.
+
+    Режим тоже разделён: шаги наблюдения и боевые живут отдельными дорожками.
     """
     cur.execute(
         "SELECT ran_at, decision, step_percent, units_after "
         "FROM price_robot_runs "
         "WHERE marketplace_code = %s AND decision IN ('raise', 'rollback') "
-        "ORDER BY ran_at DESC LIMIT 1", (mp,))
+        "  AND dry_run = %s "
+        "ORDER BY ran_at DESC LIMIT 1", (mp, bool(dry_run)))
     r = cur.fetchone()
     if not r:
         return None
@@ -137,26 +111,34 @@ def _last_run(cur, mp='ozon'):
             'stepPercent': float(r[2] or 0), 'unitsAfter': int(r[3] or 0)}
 
 
-def _total_drift(cur, mp='ozon'):
+def _total_drift(cur, mp='ozon', dry_run=False):
     """Насколько цены уже уехали от точки старта, %.
 
-    Мелкие шаги копятся: двадцать подъёмов по 0.5% — это уже +10%. Без этого
-    счётчика робот способен незаметно увести витрину далеко от разумного.
+    Мелкие шаги копятся: двадцать подъёмов по 0.5% — это уже +10%. По этому
+    счётчику робот понимает, дошёл ли до цели, и не даёт себе уйти дальше
+    предела.
+
+    Считаем ОТДЕЛЬНО для наблюдения и для боевого режима. В наблюдении цены
+    не двигались, но робот должен вести себя как настоящий: иначе счётчик
+    стоял бы на нуле, и он вечно повторял бы первый шаг, а владелец так и не
+    увидел бы, как робот доходит до цели и останавливается. При этом смешивать
+    их нельзя — переключившись в бой, робот считал бы уже поднятыми те
+    проценты, которых на витрине никогда не было.
     """
     cur.execute(
         "SELECT coalesce(sum(step_percent), 0) FROM price_robot_runs "
         "WHERE marketplace_code = %s AND decision IN ('raise', 'rollback') "
-        "  AND NOT dry_run", (mp,))
-    return float((cur.fetchone() or [0])[0] or 0)
+        "  AND dry_run = %s", (mp, bool(dry_run)))
+    return round(float((cur.fetchone() or [0])[0] or 0), 2)
 
 
 def _log_run(cur, mp, decision, reason, **kw):
     cur.execute(
         "INSERT INTO price_robot_runs (marketplace_code, decision, reason, "
-        "  step_percent, margin_fbs, units_after, units_before, units_change, "
+        "  step_percent, drift_percent, units_after, units_before, units_change, "
         "  items_pushed, items_failed, dry_run) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-        (mp, decision, reason, kw.get('step'), kw.get('margin'),
+        (mp, decision, reason, kw.get('step'), kw.get('drift'),
          kw.get('unitsAfter'), kw.get('unitsBefore'), kw.get('unitsChange'),
          kw.get('pushed', 0), kw.get('failed', 0), kw.get('dryRun', True)))
     return (cur.fetchone() or [None])[0]
@@ -312,8 +294,8 @@ def _notify_admins(cur, decision, d, pushed, dry_run):
         head += ' (наблюдение)'
 
     lines = [head, '', d.get('reason') or '']
-    if d.get('margin') is not None:
-        lines.append(f'Маржа FBS за 30 дней: {d["margin"]}%')
+    if d.get('drift') is not None:
+        lines.append(f'Цены подняты на {d["drift"]}% от старта')
     if d.get('unitsChange') is not None:
         lines.append(
             f'Продажи: {d.get("unitsBefore")} → {d.get("unitsAfter")} шт '
@@ -373,46 +355,45 @@ def _push(mp, items, actor_id):
 def _decide(cur, st, mp='ozon'):
     """РЕШЕНИЕ РОБОТА: поднимать, откатывать или ждать.
 
+    Ориентир один — СПРОС. Не маржа, не юнит-экономика: там своя длинная
+    арифметика, которая ломается, стоит площадке задержать отчёт. Спрос —
+    вещь прямая: сколько штук продали за столько же дней до и после шага.
+
     Логика по шагам:
 
-    1. ЦЕЛЬ ДОСТИГНУТА. Маржа FBS за 30 дней дошла до целевой — робот
-       останавливается сам. Ради этого он и работает.
+    1. ЦЕЛЬ ВЗЯТА. Цены подняты на заданный процент — робот останавливается.
 
     2. ПАУЗА НЕ ВЫШЛА. После шага нужно накопить продажи, иначе сравнивать
        не с чем. Ждём столько дней, сколько задал владелец.
 
-    3. ПРОВЕРКА СПРОСА. Сравниваем продажи за period ПОСЛЕ шага с равным
-       периодом ДО него. Упали сильнее порога — откатываем цену назад тем же
-       шагом. Это главная защита: подъём цены не должен убить продажи.
+    3. СПРОС УПАЛ. Сравниваем продажи за период ПОСЛЕ шага с равным периодом
+       ДО него. Просели сильнее порога — откатываем цену назад тем же шагом.
+       Это главная защита: подъём не должен убить продажи.
 
-    4. ПОТОЛОК. Если цены уже уехали от старта дальше предела — стоп.
+    4. СПРОС ДЕРЖИТСЯ — идём дальше вверх.
 
-    5. ИНАЧЕ — очередной шаг вверх.
+    Откат не «стирает» цель: подняли на 3%, откатили до 2.5% — до цели снова
+    не хватает, и робот попробует ещё раз, когда спрос восстановится.
     """
-    margin = _margin_fbs()
-    last = _last_run(cur, mp)
-    now = datetime.now()
+    drift = _total_drift(cur, mp, st['dryRun'])
+    last = _last_run(cur, mp, st['dryRun'])
+    now = _msk_now()
+    target = st['targetTotalPercent']
 
-    if margin is None:
-        return {'decision': 'hold',
-                'reason': 'Нет данных о продажах FBS за 30 дней — считать не от чего',
-                'margin': None}
-
-    # 1. Цель достигнута — дальше не идём.
-    if margin >= st['targetMargin']:
-        return {'decision': 'stop', 'margin': margin,
-                'reason': f'Цель достигнута: маржа FBS {margin}% — '
-                          f'это не ниже целевых {st["targetMargin"]}%. '
-                          f'Робот остановлен'}
+    # 1. Цель взята.
+    if drift >= target - 0.001:
+        return {'decision': 'stop', 'drift': drift,
+                'reason': f'Цель достигнута: цены подняты на {drift}% '
+                          f'при цели {target}%. Робот остановлен'}
 
     step_days = max(1, st['stepDays'])
+    extra = {}
 
-    # 2. Пауза между шагами.
     if last:
         waited = (now - last['ranAt']).total_seconds() / 86400
         if waited < step_days:
             left = round(step_days - waited, 1)
-            return {'decision': 'skip', 'margin': margin,
+            return {'decision': 'skip', 'drift': drift,
                     'reason': f'Рано: после прошлого шага прошло '
                               f'{waited:.1f} дн. из {step_days}. '
                               f'Ждём ещё {left} дн.'}
@@ -428,42 +409,48 @@ def _decide(cur, st, mp='ozon'):
         if units_before > 0:
             change = round((units_after - units_before) / units_before * 100, 1)
 
-        # Откат: продажи просели сильнее порога, и последним шагом был подъём.
+        extra = {'unitsAfter': units_after, 'unitsBefore': units_before,
+                 'unitsChange': change}
+
+        # Откат: спрос просел сильнее порога после подъёма.
         if (change is not None and change <= -st['dropPercent']
                 and last['decision'] == 'raise'):
             return {
-                'decision': 'rollback', 'margin': margin,
-                'step': -st['stepPercent'],
-                'unitsAfter': units_after, 'unitsBefore': units_before,
-                'unitsChange': change,
-                'reason': f'Продажи упали на {abs(change)}% '
+                'decision': 'rollback', 'drift': drift,
+                'step': -st['stepPercent'], **extra,
+                'reason': f'Спрос упал на {abs(change)}% '
                           f'({units_before} → {units_after} шт) — '
                           f'подъём цены не окупился. Возвращаем цены на '
                           f'{st["stepPercent"]}% назад',
             }
 
-        extra = {'unitsAfter': units_after, 'unitsBefore': units_before,
-                 'unitsChange': change}
-    else:
-        extra = {}
+        # Откат был, а спрос так и не вернулся — не давим дальше.
+        if (last['decision'] == 'rollback' and change is not None
+                and change <= -st['dropPercent']):
+            return {'decision': 'hold', 'drift': drift, **extra,
+                    'reason': f'Спрос всё ещё падает ({change}%) — '
+                              f'после отката ждём восстановления, '
+                              f'цену не трогаем'}
 
     # 4. Предохранитель: как далеко цены уже уехали от старта.
-    drift = _total_drift(cur, mp)
     if drift + st['stepPercent'] > st['maxTotalPercent']:
-        return {'decision': 'hold', 'margin': margin, **extra,
-                'reason': f'Достигнут предел: цены уже подняты на {drift}% '
-                          f'от старта при пределе {st["maxTotalPercent"]}%. '
+        return {'decision': 'hold', 'drift': drift, **extra,
+                'reason': f'Достигнут предел: цены подняты на {drift}% '
+                          f'при пределе {st["maxTotalPercent"]}%. '
                           f'Поднимите предел вручную, если это осознанно'}
 
-    # 5. Очередной шаг вверх.
-    reason = (f'Маржа FBS {margin}% ниже цели {st["targetMargin"]}% — '
-              f'поднимаем цены на {st["stepPercent"]}%')
+    # Последний шаг подгоняем, чтобы не перескочить цель.
+    step = min(st['stepPercent'], round(target - drift, 2))
+
+    reason = (f'Спрос держится — поднимаем цены на {step}%. '
+              f'Сейчас {drift}% от старта, цель {target}%')
     if extra.get('unitsChange') is not None:
-        reason += (f'. Продажи после прошлого шага: '
-                   f'{extra["unitsBefore"]} → {extra["unitsAfter"]} шт '
-                   f'({extra["unitsChange"]:+}%)')
-    return {'decision': 'raise', 'margin': margin,
-            'step': st['stepPercent'], **extra, 'reason': reason}
+        reason = (f'Спрос {extra["unitsChange"]:+}% '
+                  f'({extra["unitsBefore"]} → {extra["unitsAfter"]} шт) — '
+                  f'поднимаем цены на {step}%. '
+                  f'Сейчас {drift}% от старта, цель {target}%')
+    return {'decision': 'raise', 'drift': drift, 'step': step, **extra,
+            'reason': reason}
 
 
 def _run(cur, mp, actor_id, force=False):
@@ -498,7 +485,7 @@ def _run(cur, mp, actor_id, force=False):
                      'reason': f'Площадка не приняла цены: {res["error"]}'}
 
     run_id = _log_run(cur, mp, d['decision'], d['reason'],
-                      step=d.get('step'), margin=d.get('margin'),
+                      step=d.get('step'), drift=d.get('drift'),
                       unitsAfter=d.get('unitsAfter'),
                       unitsBefore=d.get('unitsBefore'),
                       unitsChange=d.get('unitsChange'),
@@ -561,7 +548,7 @@ def handler(event: dict, context) -> dict:
             mp = params.get('marketplace') or 'ozon'
             st = _settings(cur, mp)
             cur.execute(
-                "SELECT ran_at, decision, reason, step_percent, margin_fbs, "
+                "SELECT ran_at, decision, reason, step_percent, drift_percent, "
                 "  units_after, units_before, units_change, items_pushed, "
                 "  dry_run FROM price_robot_runs "
                 "WHERE marketplace_code = %s ORDER BY ran_at DESC LIMIT 30",
@@ -569,7 +556,8 @@ def handler(event: dict, context) -> dict:
             runs = [{
                 'ranAt': r[0], 'decision': r[1], 'reason': r[2],
                 'stepPercent': float(r[3]) if r[3] is not None else None,
-                'marginFbs': float(r[4]) if r[4] is not None else None,
+                # В этой колонке теперь сдвиг цен от старта, а не маржа.
+                'driftPercent': float(r[4]) if r[4] is not None else None,
                 'unitsAfter': r[5], 'unitsBefore': r[6],
                 'unitsChange': float(r[7]) if r[7] is not None else None,
                 'itemsPushed': r[8], 'dryRun': r[9],
@@ -582,8 +570,8 @@ def handler(event: dict, context) -> dict:
 
             return _resp(200, {
                 'settings': st,
-                'marginFbs': _margin_fbs(),
-                'driftPercent': round(_total_drift(cur, mp), 2),
+                # Сдвиг показываем для того режима, в котором робот сейчас.
+                'driftPercent': _total_drift(cur, mp, st['dryRun'] if st else False),
                 'itemsCount': items_count,
                 'runs': runs,
             })
@@ -602,13 +590,13 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "UPDATE price_robot_settings SET is_active = %s, dry_run = %s, "
                 "  step_percent = %s, step_days = %s, run_hour = %s, "
-                "  target_margin = %s, drop_percent = %s, "
+                "  target_total_percent = %s, drop_percent = %s, "
                 "  max_total_percent = %s, updated_at = now(), updated_by = %s "
                 "WHERE marketplace_code = %s",
                 (bool(body.get('isActive')), bool(body.get('dryRun', True)),
                  step, max(1, int(body.get('stepDays') or 2)),
                  int(body.get('runHour') or 3),
-                 float(body.get('targetMargin') or 10),
+                 float(body.get('targetTotalPercent') or 10),
                  float(body.get('dropPercent') or 30),
                  float(body.get('maxTotalPercent') or 20),
                  body.get('actorId'), mp))

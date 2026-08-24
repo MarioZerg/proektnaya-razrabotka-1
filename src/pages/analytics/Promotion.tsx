@@ -265,21 +265,23 @@ const PromotionPage = () => {
             {robot?.settings ? (
               <>
                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  {/* Главная цифра: сколько прошли из заданного подъёма. */}
                   <div className="rounded-lg border border-border p-3">
                     <p className="text-xs text-muted-foreground">
-                      Маржа FBS за 30 дней
+                      Путь к цели
                     </p>
                     <p
                       className={`text-2xl font-bold ${
-                        (robot.marginFbs ?? 0) >= robot.settings.targetMargin
+                        robot.driftPercent >= robot.settings.targetTotalPercent
                           ? 'text-emerald-700'
                           : 'text-amber-700'
                       }`}
                     >
-                      {robot.marginFbs ?? '—'}%
+                      {robot.driftPercent > 0 ? '+' : ''}
+                      {robot.driftPercent}%
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      цель {robot.settings.targetMargin}%
+                      цель +{robot.settings.targetTotalPercent}%
                     </p>
                   </div>
                   <div className="rounded-lg border border-border p-3">
@@ -299,14 +301,13 @@ const PromotionPage = () => {
                   </div>
                   <div className="rounded-lg border border-border p-3">
                     <p className="text-xs text-muted-foreground">
-                      Цены сдвинуты
+                      Откат при падении
                     </p>
                     <p className="text-2xl font-bold">
-                      {robot.driftPercent > 0 ? '+' : ''}
-                      {robot.driftPercent}%
+                      −{robot.settings.dropPercent}%
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      предел {robot.settings.maxTotalPercent}%
+                      спроса — вернём цену
                     </p>
                   </div>
                   <div className="rounded-lg border border-border p-3">

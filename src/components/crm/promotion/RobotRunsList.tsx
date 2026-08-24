@@ -88,17 +88,18 @@ const RobotRunsList = ({ runs }: Props) => {
                   {r.reason}
                 </p>
                 <div className="mt-1 flex flex-wrap gap-x-4 text-xs text-muted-foreground">
-                  {r.marginFbs !== null && (
+                  {r.driftPercent !== null && (
                     <span>
-                      Маржа FBS{' '}
+                      Цены от старта{' '}
                       <span className="font-medium text-foreground">
-                        {r.marginFbs}%
+                        {r.driftPercent > 0 ? '+' : ''}
+                        {r.driftPercent}%
                       </span>
                     </span>
                   )}
                   {r.unitsChange !== null && (
                     <span>
-                      Продажи {r.unitsBefore} → {r.unitsAfter} шт{' '}
+                      Спрос {r.unitsBefore} → {r.unitsAfter} шт{' '}
                       <span
                         className={`font-medium ${
                           r.unitsChange < 0 ? 'text-rose-700' : 'text-emerald-700'

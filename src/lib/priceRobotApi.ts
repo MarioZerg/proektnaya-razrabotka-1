@@ -10,7 +10,8 @@ export interface RobotSettings {
   stepPercent: number;
   stepDays: number;
   runHour: number;
-  targetMargin: number;
+  /** Цель: на сколько процентов всего поднять цены. Дошли — робот встал. */
+  targetTotalPercent: number;
   dropPercent: number;
   maxTotalPercent: number;
   updatedAt?: string;
@@ -23,7 +24,8 @@ export interface RobotRun {
   decision: string;
   reason: string;
   stepPercent: number | null;
-  marginFbs: number | null;
+  /** Сдвиг цен от старта на момент этого шага, %. */
+  driftPercent: number | null;
   unitsAfter: number | null;
   unitsBefore: number | null;
   unitsChange: number | null;
@@ -33,8 +35,6 @@ export interface RobotRun {
 
 export interface RobotStatus {
   settings: RobotSettings | null;
-  /** Маржа FBS за последние 30 дней — та же, что в Выкупах. */
-  marginFbs: number | null;
   /** Насколько цены уже уехали от точки старта, %. */
   driftPercent: number;
   itemsCount: number;
