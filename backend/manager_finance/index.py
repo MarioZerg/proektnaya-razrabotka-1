@@ -646,6 +646,37 @@ def _refresh_sales(months=1):
     return True
 
 
+def _prorate_months(rows, d_from, d_to):
+    """Берёт от каждой месячной суммы долю, попавшую в период.
+
+    Кабинет площадки отдаёт расходы помесячно, а период на экране произвольный.
+    Для «последних 30 дней» это два разных месяца, и брать оба целиком нельзя:
+    получится расход за 60 дней внутри 30-дневной выручки, а маржа рухнет в
+    ноль на ровном месте. Считаем по числу дней пересечения.
+
+    rows: [(month_date, amount), ...]
+    """
+    from datetime import date as _date, timedelta as _td
+    p_from = _date.fromisoformat(d_from) if d_from else None
+    p_to = _date.fromisoformat(d_to) if d_to else None
+
+    total = 0.0
+    for month, amount in rows:
+        amount = float(amount or 0)
+        m_start = month if isinstance(month, _date) else month.date()
+        # Последний день месяца: +4 дня к 28-му и откат к 1-му.
+        nxt = (m_start.replace(day=28) + _td(days=4)).replace(day=1)
+        days_in_month = (nxt - m_start).days
+        m_end = nxt - _td(days=1)
+        lo = max(m_start, p_from) if p_from else m_start
+        hi = min(m_end, p_to) if p_to else m_end
+        covered = (hi - lo).days + 1
+        if covered <= 0:
+            continue
+        total += amount * (min(covered, days_in_month) / days_in_month)
+    return total
+
+
 def _ad_fact(cur, d_from=None, d_to=None, mp_code='ozon'):
     """Фактические траты на рекламу за период — из кабинета площадки.
 
@@ -656,6 +687,12 @@ def _ad_fact(cur, d_from=None, d_to=None, mp_code='ozon'):
 
     Берём то, что реально списано. Расход общий на весь оборот — по вещам
     он не разложен, поэтому в разбор идёт одной суммой.
+
+    ВАЖНО: кабинет отдаёт траты помесячно, а период на экране — произвольный.
+    Для «последних 30 дней» (25 июля — 24 августа) это два разных месяца, и
+    брать оба целиком нельзя: получится реклама за 60 дней внутри 30-дневной
+    выручки, а маржа рухнет в ноль на ровном месте. Поэтому от каждого месяца
+    берём только ту долю, которая попала в период — по числу дней.
     """
     where = f"WHERE marketplace_code = '{mp_code}'"
     if d_from:
@@ -663,8 +700,8 @@ def _ad_fact(cur, d_from=None, d_to=None, mp_code='ozon'):
     if d_to:
         where += f" AND month <= date_trunc('month', '{d_to}'::date)"
     cur.execute(
-        f"SELECT coalesce(sum(ad_spend), 0) FROM marketplace_ad_monthly {where}")
-    return float((cur.fetchone() or [0])[0] or 0)
+        f"SELECT month, coalesce(ad_spend, 0) FROM marketplace_ad_monthly {where}")
+    return _prorate_months(cur.fetchall(), d_from, d_to)
 
 
 def _fee_shares(cur, d_from=None, d_to=None):
@@ -973,8 +1010,11 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     #
     # Считать оба раза значит вычесть подписку дважды. Оставляем ту, что в
     # себестоимости: там она разложена по вещам и видна владельцу.
+    #
+    # Как и реклама, услуги приходят помесячно — берём долю по дням периода,
+    # иначе «последние 30 дней» захватили бы два месяца услуг целиком.
     cur.execute(
-        "SELECT coalesce(sum(f.amount), 0) "
+        "SELECT f.month, sum(f.amount) "
         "FROM marketplace_fees_monthly f "
         "WHERE f.marketplace_code = 'ozon' "
         "  AND f.fee_name NOT ILIKE '%Premium%' "
@@ -982,8 +1022,9 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
         + (f" AND f.month >= date_trunc('month', '{d_from}'::date)"
            if d_from else '')
         + (f" AND f.month <= date_trunc('month', '{d_to}'::date)"
-           if d_to else ''))
-    fees_total = round(float((cur.fetchone() or [0])[0] or 0), 2)
+           if d_to else '')
+        + " GROUP BY 1")
+    fees_total = round(_prorate_months(cur.fetchall(), d_from, d_to), 2)
 
     # БАЛЛЫ — НЕ ДОХОД И НЕ СКИДКА, А СПОСОБ ОПЛАТЫ.
     #
