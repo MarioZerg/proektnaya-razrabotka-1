@@ -646,6 +646,47 @@ def _refresh_sales(months=1):
     return True
 
 
+def _fee_shares(cur, d_from=None, d_to=None):
+    """Доля удержания площадки ПО КАЖДОЙ ВЕЩИ и средняя по отбору.
+
+    Раньше на все товары шла одна средняя доля, посчитанная по ВСЕЙ таблице
+    реализации разом. Она не менялась ни от выбранного месяца, ни от площадки,
+    ни от схемы: на экране всегда стояли одни и те же 43.6%.
+
+    А площадка удерживает по-разному: у нас в отчёте три ставки — 42%, 46% и
+    48% в зависимости от товара. Средняя завышала удержание дешёвым позициям
+    и занижала дорогим, и вслед за ней врала прибыль каждой строки ленты.
+
+    Теперь доля считается отдельно для каждого размера и месяца, а средняя
+    берётся только как запасной вариант — для вещей, которых в отчёте ещё нет
+    (реализация приходит раз в месяц, свежие продажи в неё не попали).
+    """
+    where = "WHERE commission IS NOT NULL"
+    if d_from:
+        where += (" AND period_month >= date_trunc('month', "
+                  f"'{d_from}'::date)")
+    if d_to:
+        where += (" AND period_month <= date_trunc('month', "
+                  f"'{d_to}'::date)")
+    cur.execute(
+        "SELECT material, width, height, "
+        "       sum(commission), sum(amount + bonus + bank_coinvestment) "
+        f"FROM ozon_realization {where} "
+        "GROUP BY 1, 2, 3")
+    by_item = {}
+    tot_comm = 0.0
+    tot_base = 0.0
+    for material, width, height, comm, base in cur.fetchall():
+        c = float(comm or 0)
+        b = float(base or 0)
+        tot_comm += c
+        tot_base += b
+        if b > 0:
+            by_item[(material, width, height)] = c / b
+    avg = tot_comm / tot_base if tot_base > 0 else None
+    return by_item, avg
+
+
 def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
                  marketplace=None, scheme=None):
     """Лента выкупов: что покупатели забрали, почём и сколько мы заработали.
@@ -708,19 +749,22 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
 
     # Фактическая доля удержания площадки — из отчёта о реализации. Нужна и
     # строкам ленты, и итогам: считать по-разному нельзя.
-    cur.execute(
-        "SELECT coalesce(sum(commission), 0), "
-        "       coalesce(sum(amount + bonus + bank_coinvestment), 0) "
-        "FROM ozon_realization")
-    fr = cur.fetchone()
-    fact_fee_share = (float(fr[0] or 0) / float(fr[1])
-                      if fr and float(fr[1] or 0) > 0 else None)
+    #
+    # Берём долю ПО КАЖДОЙ ВЕЩИ и только за выбранный период: у площадки
+    # разные ставки на разные товары, и одна средняя на всех искажала прибыль
+    # каждой строки.
+    fee_by_item, fact_fee_share = _fee_shares(cur, d_from, d_to)
+
+    def _fee_for(material, width, height):
+        """Ставка удержания для вещи, со средней как запасным вариантом."""
+        v = fee_by_item.get((material, width, height))
+        return v if v is not None else fact_fee_share
 
     items = []
     for r in rows:
         price = float(r[10] or 0)
         m = margins.get((r[4], r[5], r[6])) or {}
-        profit, margin = _profit_at(m, price, fact_fee_share)
+        profit, margin = _profit_at(m, price, _fee_for(r[4], r[5], r[6]))
         items.append({
             'id': r[0],
             'orderNumber': r[1],
@@ -766,6 +810,11 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     parts = {'commission': 0.0, 'promo': 0.0,
              'tax': 0.0, 'vat': 0.0, 'production': 0.0, 'fees': 0.0}
     known = 0.0
+    # Средний процент удержания для шапки считаем ПО ЭТОМУ ЖЕ ОТБОРУ, а не по
+    # всей таблице: выбрав май или схему FBS, человек ждёт процент по маю и по
+    # FBS. Раньше там всегда стояла одна общая цифра.
+    fee_rev = 0.0
+    fee_amt = 0.0
 
     for material, width, height, price, qty in cur.fetchall():
         n = int(qty or 1)
@@ -778,7 +827,8 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             continue
         # Прибыль по составляющим, а не пропорцией: постоянные расходы от
         # цены не зависят, и на скидке они съедают больше, чем кажется.
-        unit_profit, _ = _profit_at(mm, float(price or 0), fact_fee_share)
+        item_fee = _fee_for(material, width, height)
+        unit_profit, _ = _profit_at(mm, float(price or 0), item_fee)
         if unit_profit is None:
             continue
         profit_sum += unit_profit * n
@@ -793,8 +843,13 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
         # Комиссию берём по факту: тарифная занижена, в удержание площадки
         # входит больше, чем один процент за продажу.
         parts['commission'] += pr * (
-            fact_fee_share if fact_fee_share is not None
+            item_fee if item_fee is not None
             else float((mm.get('shares') or {}).get('commission') or 0))
+        # Выручка, по которой удержание известно по факту, — из неё считаем
+        # средний процент для шапки. Иначе он снова стал бы «средним по всему».
+        if item_fee is not None:
+            fee_rev += pr
+            fee_amt += pr * item_fee
         parts['production'] += float(mm.get('production') or 0) * n
 
     # Срезы по площадкам и схемам — для переключателей в шапке.
@@ -876,8 +931,12 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             # это честно, а не подмешиваем нули.
             'knownRevenue': round(known, 2),
             'breakdown': {k: round(v, 2) for k, v in parts.items()},
-            # Фактическая доля удержания площадки — из отчёта о реализации.
-            'feeShare': round((fact_fee_share or 0) * 100, 1),
+            # Фактическая доля удержания площадки — из отчёта о реализации,
+            # взвешенная по выручке ЭТОГО отбора: процент меняется вместе с
+            # выбранным месяцем, площадкой и схемой.
+            'feeShare': round(
+                (fee_amt / fee_rev * 100) if fee_rev > 0
+                else (fact_fee_share or 0) * 100, 1),
             # БАЛЛЫ ПЛОЩАДКИ за период: часть цены покупатель платит баллами,
             # а площадка возмещает эту часть продавцу. Половина оборота.
             'bonus': bonus_info,
