@@ -647,19 +647,27 @@ def _refresh_sales(months=1):
 
 
 def _fee_shares(cur, d_from=None, d_to=None):
-    """Доля удержания площадки ПО КАЖДОЙ ВЕЩИ и средняя по отбору.
+    """Доля удержания площадки ПО ВЕЩИ И СХЕМЕ + средние по каждой схеме.
 
-    Раньше на все товары шла одна средняя доля, посчитанная по ВСЕЙ таблице
-    реализации разом. Она не менялась ни от выбранного месяца, ни от площадки,
-    ни от схемы: на экране всегда стояли одни и те же 43.6%.
+    Тут две ошибки, которые долго прятались одна за другой.
 
-    А площадка удерживает по-разному: у нас в отчёте три ставки — 42%, 46% и
-    48% в зависимости от товара. Средняя завышала удержание дешёвым позициям
-    и занижала дорогим, и вслед за ней врала прибыль каждой строки ленты.
+    Сначала на все товары шла ОДНА средняя доля по всей таблице реализации.
+    Она не менялась ни от месяца, ни от схемы: на экране всегда стояли одни
+    и те же 43.6%.
 
-    Теперь доля считается отдельно для каждого размера и месяца, а средняя
-    берётся только как запасной вариант — для вещей, которых в отчёте ещё нет
-    (реализация приходит раз в месяц, свежие продажи в неё не попали).
+    Потом выяснилось главное: ставка зависит не от товара, а от СХЕМЫ. Один
+    и тот же размер «Бамбук 200×240» встречается в отчёте и с 42%, и с 46%,
+    и с 48% — со склада площадки (FBO) удержание 42%, со своего склада (FBS)
+    46-48%. Разница в пять процентных пунктов: со своего склада мы платим
+    площадке заметно больше, потому что доставку она делает сама.
+
+    Схемы в отчёте о реализации нет, но ставка её и определяет: 42% — FBO,
+    46% и 48% — FBS. Сверка по количеству это подтвердила: 11597 вещей с
+    42% против 11767 проданных по FBO, 5434 с 46-48% против 5470 по FBS.
+
+    Поэтому доля считается отдельно по каждой связке «размер + схема», а
+    средняя — своя для FBO и своя для FBS: подставлять общую нельзя, она
+    занизит удержание для FBS и завысит для FBO.
     """
     where = "WHERE commission IS NOT NULL"
     if d_from:
@@ -668,23 +676,30 @@ def _fee_shares(cur, d_from=None, d_to=None):
     if d_to:
         where += (" AND period_month <= date_trunc('month', "
                   f"'{d_to}'::date)")
+    # Схему определяем по самой ставке: в отчёте о реализации её нет, а
+    # тарифы площадки для FBO и FBS различаются — этим и пользуемся.
     cur.execute(
         "SELECT material, width, height, "
+        "       CASE WHEN commission_ratio <= 0.44 THEN 'FBO' ELSE 'FBS' END, "
         "       sum(commission), sum(amount + bonus + bank_coinvestment) "
         f"FROM ozon_realization {where} "
-        "GROUP BY 1, 2, 3")
+        "GROUP BY 1, 2, 3, 4")
     by_item = {}
-    tot_comm = 0.0
-    tot_base = 0.0
-    for material, width, height, comm, base in cur.fetchall():
+    tot = {'FBO': [0.0, 0.0], 'FBS': [0.0, 0.0]}
+    for material, width, height, sch, comm, base in cur.fetchall():
         c = float(comm or 0)
         b = float(base or 0)
-        tot_comm += c
-        tot_base += b
+        if sch in tot:
+            tot[sch][0] += c
+            tot[sch][1] += b
         if b > 0:
-            by_item[(material, width, height)] = c / b
-    avg = tot_comm / tot_base if tot_base > 0 else None
-    return by_item, avg
+            by_item[(material, width, height, sch)] = c / b
+    avg_by_scheme = {
+        k: (v[0] / v[1]) if v[1] > 0 else None for k, v in tot.items()}
+    all_comm = sum(v[0] for v in tot.values())
+    all_base = sum(v[1] for v in tot.values())
+    avg_all = all_comm / all_base if all_base > 0 else None
+    return by_item, avg_by_scheme, avg_all
 
 
 def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
@@ -753,18 +768,32 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     # Берём долю ПО КАЖДОЙ ВЕЩИ и только за выбранный период: у площадки
     # разные ставки на разные товары, и одна средняя на всех искажала прибыль
     # каждой строки.
-    fee_by_item, fact_fee_share = _fee_shares(cur, d_from, d_to)
+    fee_by_item, fee_avg_scheme, fact_fee_share = _fee_shares(cur, d_from, d_to)
 
-    def _fee_for(material, width, height):
-        """Ставка удержания для вещи, со средней как запасным вариантом."""
-        v = fee_by_item.get((material, width, height))
-        return v if v is not None else fact_fee_share
+    def _fee_for(material, width, height, sch):
+        """Ставка удержания для вещи с учётом СХЕМЫ продажи.
+
+        Порядок отступления: точная ставка этого размера по этой схеме →
+        средняя по схеме → общая средняя. Схему не теряем ни на одном шаге:
+        у FBO и FBS удержание различается на пять пунктов, и подстановка
+        общей средней сама по себе даёт ошибку в прибыли.
+        """
+        sch = sch if sch in ('FBO', 'FBS') else None
+        if sch:
+            v = fee_by_item.get((material, width, height, sch))
+            if v is not None:
+                return v
+            v = fee_avg_scheme.get(sch)
+            if v is not None:
+                return v
+        return fact_fee_share
 
     items = []
     for r in rows:
         price = float(r[10] or 0)
         m = margins.get((r[4], r[5], r[6])) or {}
-        profit, margin = _profit_at(m, price, _fee_for(r[4], r[5], r[6]))
+        profit, margin = _profit_at(
+            m, price, _fee_for(r[4], r[5], r[6], r[3]))
         items.append({
             'id': r[0],
             'orderNumber': r[1],
@@ -787,7 +816,8 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
 
     # ИТОГ ЗА ПЕРИОД — по всему отбору, а не по видимой странице.
     cur.execute(
-        "SELECT s.material, s.width, s.height, s.sale_price, s.quantity "
+        "SELECT s.material, s.width, s.height, s.sale_price, s.quantity, "
+        "       s.scheme "
         f"FROM marketplace_sales s {where}"
     )
     revenue = 0.0
@@ -816,7 +846,7 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     fee_rev = 0.0
     fee_amt = 0.0
 
-    for material, width, height, price, qty in cur.fetchall():
+    for material, width, height, price, qty, sch in cur.fetchall():
         n = int(qty or 1)
         pr = float(price or 0) * n
         if not pr:
@@ -827,7 +857,7 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             continue
         # Прибыль по составляющим, а не пропорцией: постоянные расходы от
         # цены не зависят, и на скидке они съедают больше, чем кажется.
-        item_fee = _fee_for(material, width, height)
+        item_fee = _fee_for(material, width, height, sch)
         unit_profit, _ = _profit_at(mm, float(price or 0), item_fee)
         if unit_profit is None:
             continue
