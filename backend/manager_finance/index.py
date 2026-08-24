@@ -1026,27 +1026,30 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
         for sl in by_scheme.values():
             sl['profit'] -= ad_all * (sl['revenue'] / revenue)
 
-    # ВОЗВРАТЫ — ГЛАВНАЯ ПОТЕРЯ, КОТОРОЙ В РАСЧЁТЕ НЕ БЫЛО.
+    # ВОЗВРАТЫ — СТОИТ ТОЛЬКО ПОВТОРНАЯ ОБРАБОТКА, А НЕ ВЕЩЬ ЦЕЛИКОМ.
     #
-    # Вещь уехала к покупателю и вернулась: деньги ему возвращены, продажи не
-    # было. Но ткань раскроена, швея отшила, упаковщица собрала — эти рубли
-    # потрачены и назад не придут. Вернувшийся товар едет на склад и чаще
-    # всего продаётся снова, но труд и материал первого круга уже потеряны.
+    # Сначала здесь вычиталась полная себестоимость вернувшейся вещи — и это
+    # было неверно. Вещь возвращается НА СКЛАД и продаётся снова: ткань никуда
+    # не делась, работа швеи уже в товаре. Списывать её второй раз — значит
+    # хоронить вещь, которая на самом деле лежит на полке и ждёт покупателя.
     #
-    # В июле вернулось 529 вещей из 7213 — это 7.3% и примерно 300 тысяч
-    # себестоимости, которых в прибыли не хватало.
+    # Проверка по данным: из всех обработанных возвратов 75% уходят «на склад»,
+    # 25% — «на перепаковку», и НИ ОДИН не утилизирован. Товар возвращается
+    # в оборот целиком.
+    #
+    # Реальный расход — только повторная обработка: упаковщица разбирает
+    # возврат, проверяет вещь и переупаковывает её. Это отдельный вид оплаты
+    # (packer_repack) — около 11 ₽ за вещь против 572 ₽ полной себестоимости.
     ret_where = where.replace('NOT s.is_return', 's.is_return')
     cur.execute(
-        "SELECT s.material, s.width, s.height, sum(s.quantity) "
-        f"FROM marketplace_sales s {ret_where} "
-        "GROUP BY 1, 2, 3")
-    returns_cost = 0.0
-    returns_qty = 0
-    for material, width, height, qty in cur.fetchall():
-        n = int(qty or 0)
-        mm = margins.get((material, width, height)) or {}
-        returns_qty += n
-        returns_cost += float(mm.get('production') or 0) * n
+        f"SELECT coalesce(sum(s.quantity), 0) FROM marketplace_sales s {ret_where}")
+    returns_qty = int((cur.fetchone() or [0])[0] or 0)
+    # Ставка перепаковки — средняя по действующим тарифам упаковщицы.
+    cur.execute(
+        "SELECT coalesce(avg(rate), 0) FROM salary_rates "
+        "WHERE role = 'packer_repack' AND rate > 0")
+    repack_rate = float((cur.fetchone() or [0])[0] or 0)
+    returns_cost = returns_qty * repack_rate
     parts['returns'] = round(returns_cost, 2)
     profit_sum -= returns_cost
     # Потери на возвратах — тоже по схемам: у FBS их больше, и прибыль там
@@ -1117,19 +1120,18 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             if item_fee is not None:
                 sl['feeRev'] += pr
                 sl['feeAmt'] += pr * item_fee
-        # Себестоимость возвратов по схемам — за тот же период, но без
+        # Повторная обработка возвратов по схемам — за тот же период, но без
         # ограничения по схеме: сравнение должно быть полным.
         ret_all_where = where_all_schemes.replace(
             'NOT s.is_return', 's.is_return')
         cur.execute(
-            "SELECT s.material, s.width, s.height, s.scheme, sum(s.quantity) "
+            "SELECT s.scheme, sum(s.quantity) "
             f"FROM marketplace_sales s {ret_all_where} "
-            "GROUP BY 1, 2, 3, 4")
-        for material, width, height, s_sch, qty in cur.fetchall():
-            mm = margins.get((material, width, height)) or {}
+            "GROUP BY 1")
+        for s_sch, qty in cur.fetchall():
             sl = by_scheme.get(s_sch if s_sch in ('FBO', 'FBS') else 'Прочее')
             if sl:
-                sl['profit'] -= float(mm.get('production') or 0) * int(qty or 0)
+                sl['profit'] -= int(qty or 0) * repack_rate
         if all_rev > 0:
             for sl in by_scheme.values():
                 part = sl['revenue'] / all_rev
