@@ -63,6 +63,25 @@ export const saveRobotSettings = async (
     }),
   );
 
+/**
+ * Сдвинуть цены вручную, вне расписания робота.
+ *
+ * Плюс — вверх, минус — вниз. Учитывается в общем счётчике пути к цели:
+ * опустили руками на 2% — роботу до цели снова дальше.
+ */
+export const moveRobotPrices = async (
+  step: number,
+  note: string,
+  actorId?: number,
+): Promise<{ reason: string; pushed: number; drift: number }> =>
+  check(
+    await fetch(URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'move', step, note, actorId }),
+    }),
+  );
+
 /** Прогнать цикл сейчас, не дожидаясь ночного запуска. */
 export const runRobotNow = async (
   actorId?: number,

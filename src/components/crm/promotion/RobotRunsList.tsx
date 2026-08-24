@@ -30,6 +30,8 @@ const LOOK: Record<
   hold: { icon: 'Pause', label: 'Выждали', className: 'text-muted-foreground' },
   skip: { icon: 'Clock', label: 'Рано', className: 'text-muted-foreground' },
   test: { icon: 'FlaskConical', label: 'Проверка', className: 'text-muted-foreground' },
+  // Ручной шаг владельца — выделяем, чтобы не путать с решением робота.
+  manual: { icon: 'Hand', label: 'Сдвинули вручную', className: 'text-blue-700' },
 };
 
 const when = (iso: string) =>

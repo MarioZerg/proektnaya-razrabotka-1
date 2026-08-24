@@ -12,8 +12,10 @@ import PriceAdviceTable from '@/components/crm/promotion/PriceAdviceTable';
 import PricePushConfirm from '@/components/crm/promotion/PricePushConfirm';
 import RobotSettingsCard from '@/components/crm/promotion/RobotSettingsCard';
 import RobotRunsList from '@/components/crm/promotion/RobotRunsList';
+import RobotManualMove from '@/components/crm/promotion/RobotManualMove';
 import {
   fetchRobotStatus,
+  moveRobotPrices,
   runRobotNow,
   saveRobotSettings,
   type RobotStatus,
@@ -109,6 +111,24 @@ const PromotionPage = () => {
     } catch (e) {
       toast({
         title: 'Не удалось сохранить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Ручной сдвиг цен: двинуть прямо сейчас, вне расписания робота. */
+  const moveNow = async (step: number, note: string) => {
+    setBusy(true);
+    try {
+      const r = await moveRobotPrices(step, note, user?.id);
+      toast({ title: 'Цены сдвинуты', description: r.reason });
+      loadRobot();
+    } catch (e) {
+      toast({
+        title: 'Не удалось сдвинуть',
         description: e instanceof Error ? e.message : undefined,
         variant: 'destructive',
       });
@@ -326,6 +346,12 @@ const PromotionPage = () => {
                   onChange={(v) => setRobot({ ...robot, settings: v })}
                   onSave={saveRobot}
                   busy={busy}
+                />
+
+                <RobotManualMove
+                  onMove={moveNow}
+                  busy={busy}
+                  dryRun={robot.settings.dryRun}
                 />
 
                 <div className="flex flex-wrap items-center justify-between gap-2">
