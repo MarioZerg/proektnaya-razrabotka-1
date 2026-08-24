@@ -183,15 +183,18 @@ JOBS = [
         'optional': True,
     },
     {
-        'key': 'promotions_sync',
-        'title': 'Акции площадок',
-        'func': 'promotion',
-        'urlAction': 'sync_promotions',
+        'key': 'price_robot',
+        'title': 'Робот цен',
+        'func': 'price_robot',
+        'urlAction': 'run',
         'method': 'POST',
-        'purpose': 'Тянет акции с площадок, чтобы не пропустить выгодные',
+        'purpose': 'Поднимает цены к целевой марже и откатывает, если упали продажи',
         'group': 'service',
-        'everyMin': 720,
-        'lateAfter': 2880,
+        # Дёргаем каждый час, а робот сам смотрит на свой час запуска и паузу
+        # между шагами. Так владелец меняет время в настройках робота, не
+        # трогая планировщик.
+        'everyMin': 60,
+        'lateAfter': 240,
         'optional': True,
     },
     {
@@ -222,6 +225,7 @@ FUNC_IDS = {
     'shift_sessions': '6143d29d-094c-4dc6-a520-eb0eeb10d8a0',
     'unit_economics': '4ebd72ad-8ca4-456c-840c-d2db30ce04cd',
     'promotion': '5fc24d57-7e45-4a1a-898d-a610c310093a',
+    'price_robot': 'd117616e-e8d0-49de-b551-740097f74141',
     'ad_spend': '29442dba-b5a9-4e15-b9ba-5fdc52eef574',
     'manager_finance': '406daf92-dd75-4e27-946d-e90aa720fe70',
 }

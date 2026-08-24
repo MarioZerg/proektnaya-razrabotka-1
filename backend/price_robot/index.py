@@ -334,6 +334,18 @@ def _run(cur, mp, actor_id, force=False):
             "UPDATE price_robot_settings SET is_active = false "
             "WHERE marketplace_code = %s", (mp,))
 
+    # Отметка в общем журнале: по ней экран «Планировщик» понимает, что задание
+    # живо. Без неё робот выглядел бы там молчащим, даже когда исправно
+    # отрабатывает каждую ночь.
+    cur.execute(
+        "INSERT INTO audit_log (user_id, user_name, category, action, "
+        "  entity_type, entity_id, description, details, created_at) "
+        "VALUES (%s, 'Робот цен', 'prices', 'price_robot', 'price_robot', "
+        "  %s, %s, %s, now())",
+        (actor_id, run_id, d['reason'][:500], json.dumps(
+            {'decision': d['decision'], 'reason': d['reason'],
+             'pushed': pushed, 'dryRun': st['dryRun']}, ensure_ascii=False)))
+
     return {'ok': True, 'runId': run_id, 'pushed': pushed, 'failed': failed,
             'dryRun': st['dryRun'], **d}
 

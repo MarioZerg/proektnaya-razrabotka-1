@@ -9,19 +9,22 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import PriceAdviceTable from '@/components/crm/promotion/PriceAdviceTable';
-import PromotionsList from '@/components/crm/promotion/PromotionsList';
 import PricePushConfirm from '@/components/crm/promotion/PricePushConfirm';
+import RobotSettingsCard from '@/components/crm/promotion/RobotSettingsCard';
+import RobotRunsList from '@/components/crm/promotion/RobotRunsList';
+import {
+  fetchRobotStatus,
+  runRobotNow,
+  saveRobotSettings,
+  type RobotStatus,
+} from '@/lib/priceRobotApi';
 import {
   decideAdvice,
   fetchOverview,
-  fetchPromotions,
   pushPrices,
   saveStrategy,
-  scorePromotions,
-  syncPromotions,
   type MarketplaceCode,
   type OverviewResponse,
-  type Promotion,
 } from '@/lib/promotionApi';
 
 const MARKETPLACES: { code: MarketplaceCode; label: string }[] = [
@@ -31,13 +34,14 @@ const MARKETPLACES: { code: MarketplaceCode; label: string }[] = [
 ];
 
 /**
- * Продвижение: как вести цены к целевой марже и куда идти из акций.
+ * Продвижение: два способа вести цены к нужной марже.
  *
- * Цены меняются прямо отсюда — система отправляет их на площадку сама, и
- * ходить в кабинет больше не нужно. Но никогда по своей инициативе: только
- * после того, как владелец отметил позиции и подтвердил в отдельном окне.
- * Ошибка, разошедшаяся по восьмистам карточкам, стоит дороже, чем минута на
- * проверку списка.
+ * РОБОТ поднимает цены всего магазина сам, мелкими шагами с паузой, и
+ * останавливается, когда маржа FBS дошла до цели. Если после подъёма продажи
+ * просели — откатывает цену назад. Поднимать восемьсот карточек руками и
+ * следить за спросом после каждого шага человек не может, машина может.
+ *
+ * СОВЕТЫ — точечная работа по конкретным товарам, с подтверждением владельца.
  *
  * Цену двигаем мелкими шагами. Резкий подъём выбрасывает товар из скидки
  * площадки (СПП) и из выдачи — потерять позицию легко, вернуть трудно.
@@ -49,7 +53,6 @@ const PromotionPage = () => {
 
   const [marketplace, setMarketplace] = useState<MarketplaceCode>('ozon');
   const [data, setData] = useState<OverviewResponse | null>(null);
-  const [promos, setPromos] = useState<Promotion[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -60,6 +63,9 @@ const PromotionPage = () => {
   const [stepPercent, setStepPercent] = useState('2');
   const [stepDays, setStepDays] = useState('7');
   const [showSettings, setShowSettings] = useState(false);
+
+  // Робот: настройки, журнал шагов и текущая маржа FBS.
+  const [robot, setRobot] = useState<RobotStatus | null>(null);
 
   const load = useCallback(() => {
     if (!isAdmin) return;
@@ -79,10 +85,55 @@ const PromotionPage = () => {
 
   useEffect(() => load(), [load]);
 
-  useEffect(() => {
+  const loadRobot = useCallback(() => {
     if (!isAdmin) return;
-    fetchPromotions(user?.id).then(setPromos).catch(() => setPromos([]));
+    fetchRobotStatus(user?.id)
+      .then(setRobot)
+      .catch(() => setRobot(null));
   }, [isAdmin, user?.id]);
+
+  useEffect(() => loadRobot(), [loadRobot]);
+
+  const saveRobot = async () => {
+    if (!robot?.settings) return;
+    setBusy(true);
+    try {
+      await saveRobotSettings({ ...robot.settings, actorId: user?.id });
+      toast({
+        title: 'Настройки робота сохранены',
+        description: robot.settings.dryRun
+          ? 'Режим наблюдения: цены на витрине не изменятся'
+          : 'Боевой режим: робот будет менять цены сам',
+      });
+      loadRobot();
+    } catch (e) {
+      toast({
+        title: 'Не удалось сохранить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Прогон вручную: посмотреть решение робота, не дожидаясь ночи. */
+  const runRobot = async () => {
+    setBusy(true);
+    try {
+      const r = await runRobotNow(user?.id);
+      toast({ title: 'Робот отработал', description: r.reason });
+      loadRobot();
+    } catch (e) {
+      toast({
+        title: 'Не удалось запустить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const toggle = (itemId: number) =>
     setSelected((s) => {
@@ -177,25 +228,6 @@ const PromotionPage = () => {
     }
   };
 
-  const refreshPromos = async () => {
-    setBusy(true);
-    try {
-      await syncPromotions(user?.id);
-      await scorePromotions(user?.id);
-      const list = await fetchPromotions(user?.id);
-      setPromos(list);
-      toast({ title: 'Акции обновлены', description: `Найдено: ${list.length}` });
-    } catch (e) {
-      toast({
-        title: 'Не удалось обновить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (!isAdmin) {
     return (
       <CrmLayout>
@@ -216,25 +248,126 @@ const PromotionPage = () => {
             <h1 className="text-xl font-bold">Продвижение</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Ведём маржу к цели мелкими шагами, чтобы не потерять скидку
-              площадки. Отметьте позиции — и система сама изменит цены на
-              витрине, в кабинет заходить не нужно.
+              площадки. Робот делает это сам, советы — точечно и с вашим
+              подтверждением.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowSettings((v) => !v)}>
-              <Icon name="Settings" size={14} className="mr-1.5" />
-              Правила
-            </Button>
-            <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-              <Icon
-                name={loading ? 'Loader2' : 'RefreshCw'}
-                size={14}
-                className={`mr-1.5 ${loading ? 'animate-spin' : ''}`}
-              />
-              Пересчитать
-            </Button>
-          </div>
         </div>
+
+        <Tabs defaultValue="robot" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="robot">Робот цен</TabsTrigger>
+            <TabsTrigger value="advice">Советы по товарам</TabsTrigger>
+          </TabsList>
+
+          {/* РОБОТ: поднимает цены всего магазина сам и сам останавливается. */}
+          <TabsContent value="robot" className="space-y-4">
+            {robot?.settings ? (
+              <>
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-xs text-muted-foreground">
+                      Маржа FBS за 30 дней
+                    </p>
+                    <p
+                      className={`text-2xl font-bold ${
+                        (robot.marginFbs ?? 0) >= robot.settings.targetMargin
+                          ? 'text-emerald-700'
+                          : 'text-amber-700'
+                      }`}
+                    >
+                      {robot.marginFbs ?? '—'}%
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      цель {robot.settings.targetMargin}%
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-xs text-muted-foreground">Состояние</p>
+                    <p className="text-2xl font-bold">
+                      {!robot.settings.isActive
+                        ? 'Выключен'
+                        : robot.settings.dryRun
+                          ? 'Наблюдает'
+                          : 'Работает'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {robot.settings.isActive
+                        ? `в ${robot.settings.runHour}:00 МСК, раз в ${robot.settings.stepDays} дн.`
+                        : 'шаги не делаются'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-xs text-muted-foreground">
+                      Цены сдвинуты
+                    </p>
+                    <p className="text-2xl font-bold">
+                      {robot.driftPercent > 0 ? '+' : ''}
+                      {robot.driftPercent}%
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      предел {robot.settings.maxTotalPercent}%
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-xs text-muted-foreground">
+                      Товаров под управлением
+                    </p>
+                    <p className="text-2xl font-bold">{robot.itemsCount}</p>
+                    <p className="text-xs text-muted-foreground">
+                      шаг {robot.settings.stepPercent}%
+                    </p>
+                  </div>
+                </div>
+
+                <RobotSettingsCard
+                  value={robot.settings}
+                  onChange={(v) => setRobot({ ...robot, settings: v })}
+                  onSave={saveRobot}
+                  busy={busy}
+                />
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="font-semibold">Журнал шагов</h2>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={runRobot}
+                    disabled={busy}
+                  >
+                    <Icon
+                      name={busy ? 'Loader2' : 'Play'}
+                      size={14}
+                      className={`mr-1.5 ${busy ? 'animate-spin' : ''}`}
+                    />
+                    Прогнать сейчас
+                  </Button>
+                </div>
+                <RobotRunsList runs={robot.runs} />
+              </>
+            ) : (
+              <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+                <Icon name="Loader2" size={16} className="animate-spin" />
+                Загружаем робота…
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="advice" className="space-y-4">
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowSettings((v) => !v)}>
+                <Icon name="Settings" size={14} className="mr-1.5" />
+                Правила
+              </Button>
+              <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+                <Icon
+                  name={loading ? 'Loader2' : 'RefreshCw'}
+                  size={14}
+                  className={`mr-1.5 ${loading ? 'animate-spin' : ''}`}
+                />
+                Пересчитать
+              </Button>
+            </div>
 
         {showSettings && (
           <Card className="border-border shadow-none">
@@ -391,6 +524,8 @@ const PromotionPage = () => {
               )}
             </TabsContent>
           ))}
+            </Tabs>
+          </TabsContent>
         </Tabs>
 
         <PricePushConfirm
@@ -404,25 +539,6 @@ const PromotionPage = () => {
           onConfirm={handlePush}
         />
 
-        <div className="space-y-3 pt-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="font-semibold">Акции площадок</h2>
-              <p className="text-xs text-muted-foreground">
-                Что останется от заработка, если пойти в акцию по ценам площадки
-              </p>
-            </div>
-            <Button variant="outline" size="sm" onClick={refreshPromos} disabled={busy}>
-              <Icon
-                name={busy ? 'Loader2' : 'RefreshCw'}
-                size={14}
-                className={`mr-1.5 ${busy ? 'animate-spin' : ''}`}
-              />
-              Обновить акции
-            </Button>
-          </div>
-          <PromotionsList items={promos} />
-        </div>
       </div>
     </CrmLayout>
   );
