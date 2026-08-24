@@ -1460,8 +1460,10 @@ def fill_exemplars(client_id, api_key, posting_number, products, debug=None):
 
     # OZON проверяет экземпляры не мгновенно: сразу после отправки сборка ещё
     # отбивается. Ждём готовности, иначе упаковщице пришлось бы жать кнопку повторно.
-    for _ in range(4):
-        time.sleep(0.8)
+    # Проверяем готовность реже и с коротким первым ожиданием: обычно OZON
+    # успевает за полсекунды, и держать упаковщицу лишние секунды незачем.
+    for attempt in range(4):
+        time.sleep(0.4 if attempt == 0 else 0.8)
         st_status, st_data = None, None
         for version in ('v6', 'v5', 'v4'):
             st_status, st_data = ozon_post(
@@ -1523,20 +1525,6 @@ def assemble_posting(client_id, api_key, posting_number, debug=None):
     if not items:
         return 'У товаров отправления нет кода OZON — собрать не получится', None
 
-    # ЗАКАЗ ЮРЛИЦА: OZON не даёт собрать отправление, пока не заполнены «экземпляры».
-    #
-    # Для компаний OZON выставляет счёт-фактуру и потому требует по КАЖДОЙ единице
-    # товара данные о таможенной декларации (ГТД). Пока их нет, сборка отбивается
-    # ошибкой EXEMPLAR_INFO_NOT_FILLED_COMPLETELY, а упаковщица на терминале видит
-    # только «не удалось получить ярлык» — заказ намертво зависает на стикеровке.
-    #
-    # Товар нашего производства (шторы шьём сами), импорта нет — значит ГТД
-    # отсутствует, и это законный вариант ответа: отправляем признак «ГТД нет».
-    # Розничных заказов это не касается — там экземпляры не требуются.
-    exemplar_err = fill_exemplars(client_id, api_key, posting_number, products, debug)
-    if exemplar_err:
-        return exemplar_err, None
-
     # OZON принимает сборку в двух форматах, и какой именно — зависит от схемы работы
     # продавца. Пробуем оба: сначала с перечислением товаров (обычная схема), затем
     # упрощённый вызов без состава. Так упаковщица не упрётся в ошибку формата.
@@ -1544,22 +1532,51 @@ def assemble_posting(client_id, api_key, posting_number, debug=None):
         {'posting_number': posting_number, 'packages': [{'products': items}]},
         {'posting_number': posting_number},
     ]
-    last_status, last_data = None, None
-    for payload in attempts:
-        ship_status, ship_data = ozon_post(
-            '/v4/posting/fbs/ship', client_id, api_key, payload
-        )
-        if ship_status == 200:
+
+    def _try_ship():
+        last_status, last_data = None, None
+        for payload in attempts:
+            ship_status, ship_data = ozon_post(
+                '/v4/posting/fbs/ship', client_id, api_key, payload
+            )
+            if ship_status == 200:
+                return None, None
+            last_status, last_data = ship_status, ship_data
+            if debug is not None:
+                debug.setdefault('shipAttempts', []).append({
+                    'status': ship_status, 'response': str(ship_data)[:400],
+                })
+        return last_status, last_data
+
+    ship_status, ship_data = _try_ship()
+    if ship_status is None:
+        return None, 'awaiting_deliver'
+
+    # ЗАКАЗ ЮРЛИЦА: OZON не даёт собрать отправление, пока не заполнены «экземпляры».
+    #
+    # Для компаний OZON выставляет счёт-фактуру и потому требует по КАЖДОЙ единице
+    # товара данные о таможенной декларации (ГТД). Пока их нет, сборка отбивается
+    # ошибкой EXEMPLAR_INFO_NOT_FILLED_COMPLETELY, а упаковщица на терминале видит
+    # только «не удалось получить ярлык» — заказ намертво зависает на стикеровке.
+    #
+    # Заполняем экземпляры ТОЛЬКО когда OZON реально об этом попросил.
+    #
+    # Раньше их заполняли всегда, заранее, перед каждой сборкой: это до девяти
+    # обращений к OZON плюс ожидание готовности — примерно три лишние секунды на
+    # КАЖДУЮ вещь. А заказы юрлиц — единицы: остальные упаковщицы просто стояли
+    # у терминала и ждали чужую проверку. Теперь обычный заказ собирается сразу,
+    # а экземпляры подставляются только тому отправлению, которое их требует.
+    if 'EXEMPLAR' in str(ship_data).upper():
+        exemplar_err = fill_exemplars(client_id, api_key, posting_number, products, debug)
+        if exemplar_err:
+            return exemplar_err, None
+        ship_status, ship_data = _try_ship()
+        if ship_status is None:
             return None, 'awaiting_deliver'
-        last_status, last_data = ship_status, ship_data
-        if debug is not None:
-            debug.setdefault('shipAttempts', []).append({
-                'status': ship_status, 'response': str(ship_data)[:400],
-            })
 
     return (
-        f'OZON не принял сборку отправления (код {last_status}): '
-        f'{ozon_error_text(last_status, last_data)}'
+        f'OZON не принял сборку отправления (код {ship_status}): '
+        f'{ozon_error_text(ship_status, ship_data)}'
     ), None
 
 
@@ -1631,11 +1648,8 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
         'driver_pickup': 'передано водителю',
     }
     # Статус у себя обновляем всегда: терминал должен знать, где отправление.
-    if new_status in gone:
-        cur.execute(
-            "UPDATE orders SET ozon_status = %s WHERE ozon_posting_number = %s",
-            (new_status, posting_number),
-        )
+    # Один UPDATE вместо двух: раньше для «уехавших» отправлений один и тот же
+    # статус записывался дважды подряд — вторая запись просто повторяла первую.
     if new_status:
         cur.execute(
             "UPDATE orders SET ozon_status = %s, "
