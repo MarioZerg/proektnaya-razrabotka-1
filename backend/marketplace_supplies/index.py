@@ -2380,7 +2380,11 @@ def handler(event: dict, context) -> dict:
                 # отправления: на ярлыке напечатан общий номер отправления, а одно
                 # отправление у нас может быть разбито на несколько заказов-вещей.
                 box_find_sql = (
-                    "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
+                    # Тянем и статус заказа: отменённую вещь в короб класть нельзя,
+                    # кладовщик должен узнать об этом на скане, а не на приёмке.
+                    "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at, "
+                    "       o.status, o.ozon_status, o.ym_status, o.marketplace, "
+                    "       o.material, o.width, o.height, gw.storage_barcode "
                     "FROM orders o "
                     "JOIN goods_warehouse gw "
                     "  ON gw.reserved_order_id = o.id "
@@ -2411,8 +2415,40 @@ def handler(event: dict, context) -> dict:
                                      f'«Сборка товара с полок»'
                         }, ensure_ascii=False),
                     }
-                goods_id, goods_status, goods_order_number, labeled_at = gw_row
+                (goods_id, goods_status, goods_order_number, labeled_at,
+                 ord_status, ord_ozon_status, ord_ym_status, ord_mp,
+                 ord_material, ord_width, ord_height, ord_gw_barcode) = gw_row
                 order_number = goods_order_number or order_number
+
+                # ЗАКАЗ ОТМЕНЁН ПОКУПАТЕЛЕМ.
+                #
+                # Раньше такую вещь кладовщик просто клал в короб: отмену никто не
+                # показывал, и она уезжала на площадку. Там её не принимали, и вещь
+                # возвращалась назад через возвратный цикл — недели пути и потери.
+                #
+                # Теперь отвечаем отдельным признаком: терминал играет звук отмены и
+                # показывает, что вещь идёт НЕ в короб, а на полку хранения.
+                cancelled = (
+                    (ord_status or '') == 'Отменён'
+                    or 'cancel' in (ord_ozon_status or '').lower()
+                    or 'cancel' in (ord_ym_status or '').lower()
+                )
+                if cancelled:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Заказ {order_number} ОТМЕНЁН покупателем — '
+                                     f'в поставку его класть нельзя',
+                            'cancelled': True,
+                            'orderNumber': order_number,
+                            'material': ord_material,
+                            'width': ord_width,
+                            'height': ord_height,
+                            'storageBarcode': ord_gw_barcode,
+                            'marketplace': ord_mp,
+                        }, ensure_ascii=False),
+                    }
 
                 # Ярлык маркетплейса ещё не наклеен: вещь лежит на полке, в короб её
                 # класть нельзя — на приёмке маркетплейса её не опознают.

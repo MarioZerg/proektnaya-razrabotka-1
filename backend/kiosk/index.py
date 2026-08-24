@@ -962,6 +962,9 @@ def handler(event: dict, context) -> dict:
                 # в статусе awaiting_shelf: упаковщик клеит стикер хранения, а кладовщик потом
                 # заберёт вещь из цеха и отсканирует на конкретную полку у себя на компьютере.
                 storage_barcode = None
+                # Код связки: заполняется для FBS-вещи из заказа Яндекса
+                # (несколько вещей под одним ярлыком).
+                bundle_barcode = None
                 if is_cancelled or is_individual:
                     cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
                     gw_existing = cur.fetchone()
@@ -985,11 +988,25 @@ def handler(event: dict, context) -> dict:
                         "SELECT id FROM goods_warehouse WHERE order_id = %s", (int(order_id),)
                     )
                     if not cur.fetchone():
+                        # Вещь из СВЯЗКИ (заказ Яндекса из нескольких вещей) получает свой
+                        # код YM-… .
+                        #
+                        # У связки ярлык маркетплейса ОДИН на все вещи: на каждой наклейке
+                        # один и тот же номер грузоместа. Отсканировать им четыре разные
+                        # вещи в поставку невозможно — поэтому связку собирают по этому
+                        # коду, он у каждой вещи свой.
+                        #
+                        # Раньше код проставлялся только при стикеровке вещи СО СКЛАДА, а
+                        # заказы из цеха закрываются здесь, на терминале. Из-за этого у
+                        # новых связок кода не было вовсе: в строке товара не показывалась
+                        # кнопка стикера, а упаковщице нечего было наклеить на вещь.
+                        if group_key and (group_size or 0) > 1:
+                            bundle_barcode = f"{group_key}-{group_position or 1}"
                         cur.execute(
                             "INSERT INTO goods_warehouse (order_id, status, storage_barcode, "
-                            "receive_reason, shipping_labeled_at) "
-                            "VALUES (%s, 'awaiting_supply', %s, 'fbs_ready', now())",
-                            (int(order_id), next_storage_barcode(cur)),
+                            "receive_reason, shipping_labeled_at, bundle_barcode) "
+                            "VALUES (%s, 'awaiting_supply', %s, 'fbs_ready', now(), %s)",
+                            (int(order_id), next_storage_barcode(cur), bundle_barcode),
                         )
 
                 # Швея получает фиксированную ставку за штуку по ширине товара — именно сейчас,
@@ -1098,6 +1115,10 @@ def handler(event: dict, context) -> dict:
                         'isCancelled': is_cancelled,
                         'isIndividual': is_individual,
                         'storageBarcode': storage_barcode,
+                        # Стикер связки: упаковщица клеит его на вещь ВТОРЫМ, после
+                        # ярлыка маркетплейса. Ярлык у связки один на все вещи, и
+                        # собрать ими поставку нельзя — сканируют именно этот код.
+                        'bundleBarcode': bundle_barcode,
                         # Данные связки: сколько вещей заказа ещё ждут стикеровки.
                         'groupSize': group_size,
                         'groupPosition': group_position,

@@ -286,6 +286,30 @@ const currentUserId = (): number | undefined => {
   }
 };
 
+/**
+ * Отсканирована вещь ОТМЕНЁННОГО заказа.
+ *
+ * Отдельная ошибка, а не просто текст: кладовщику нужно показать, что именно за
+ * вещь у него в руках и куда её деть. Такая вещь едет не в короб, а на полку
+ * хранения — если она уедет на площадку, там её не примут.
+ */
+export class CancelledOrderError extends Error {
+  constructor(
+    message: string,
+    public readonly info: {
+      orderNumber?: string | null;
+      material?: string | null;
+      width?: number | null;
+      height?: number | null;
+      storageBarcode?: string | null;
+      marketplace?: string | null;
+    },
+  ) {
+    super(message);
+    this.name = 'CancelledOrderError';
+  }
+}
+
 const postAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(SUPPLIES_URL, {
     method: 'POST',
@@ -294,6 +318,11 @@ const postAction = async (payload: Record<string, unknown>) => {
   });
   const data = await res.json();
   if (!res.ok) {
+    // Отменённый заказ: пробрасываем данные вещи, чтобы терминал показал
+    // кладовщику размер и штрихкод для полки хранения.
+    if (data.cancelled) {
+      throw new CancelledOrderError(data.error || 'Заказ отменён', data);
+    }
     throw new Error(data.error || 'Ошибка запроса');
   }
   return data;

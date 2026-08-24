@@ -23,6 +23,7 @@ import {
   updateSupply,
   lockSupply,
   unlockSupply,
+  CancelledOrderError,
   type SupplyDetail,
   type SupplyCandidate,
 } from '@/lib/marketplaceSuppliesApi';
@@ -32,8 +33,9 @@ import {
   statusVariant,
 } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import { closeOzonBoxes } from '@/lib/ozonFboApi';
-import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import { playScanSound, playScanErrorSound, playCancelSound } from '@/lib/scanSound';
 import SupplyBoxCard from '@/components/crm/marketplaceSupplies/SupplyBoxCard';
+import CancelledScanDialog from '@/components/crm/marketplaceSupplies/CancelledScanDialog';
 import SupplyCandidatesPanel from '@/components/crm/marketplaceSupplies/SupplyCandidatesPanel';
 import PassStickerCard from '@/components/crm/marketplaceSupplies/PassStickerCard';
 
@@ -56,6 +58,16 @@ const MarketplaceSupplyAssemble = () => {
 
   // Поставку собирает кто-то другой: показываем предупреждение вместо рабочего экрана.
   const [lockedByOther, setLockedByOther] = useState<string | null>(null);
+
+  // Отсканирована вещь отменённого заказа — показываем, что с ней делать.
+  const [cancelledScan, setCancelledScan] = useState<{
+    orderNumber?: string | null;
+    material?: string | null;
+    width?: number | null;
+    height?: number | null;
+    storageBarcode?: string | null;
+    marketplace?: string | null;
+  } | null>(null);
 
   /**
    * Перечитать поставку.
@@ -165,6 +177,14 @@ const MarketplaceSupplyAssemble = () => {
       load(true);
       if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
     } catch (e) {
+      // ЗАКАЗ ОТМЕНЁН покупателем. Отдельный звук и отдельное окно: вещь едет не в
+      // короб, а на полку хранения. Молчаливая ошибка тут не годится — кладовщик
+      // сканирует подряд и уложил бы вещь в поставку, а площадка её не приняла бы.
+      if (e instanceof CancelledOrderError) {
+        playCancelSound();
+        setCancelledScan(e.info);
+        return;
+      }
       playScanErrorSound();
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
@@ -415,6 +435,10 @@ const MarketplaceSupplyAssemble = () => {
           )}
         </div>
       </div>
+
+      {/* Отсканирована вещь отменённого заказа: показываем, что с ней делать.
+          Без этого окна она уехала бы в коробе на площадку. */}
+      <CancelledScanDialog info={cancelledScan} onClose={() => setCancelledScan(null)} />
     </CrmLayout>
   );
 };

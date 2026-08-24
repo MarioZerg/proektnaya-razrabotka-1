@@ -171,7 +171,24 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         } else if (mp === 'OZON') {
           await printLabelPdf(await fetchOzonLabel(order.orderNumber), 'Ярлык OZON');
         } else if (mp === 'YANDEX') {
-          await printLabelPdf(await fetchYandexLabel(order.orderNumber), 'Ярлык Яндекс Маркета');
+          // СВЯЗКА ЯНДЕКСА: ярлык отправления ОДИН на весь заказ, а вещей в нём
+          // несколько. Печатаем его только у ПОСЛЕДНЕЙ вещи — она уходит в пакет
+          // сверху, ярлык клеится на этот пакет. Печатать его на каждой вещи
+          // нельзя: одинаковых ярлыков наберётся четыре, и на складе площадки
+          // посылку примут как четыре отправления вместо одного.
+          //
+          // На каждую вещь клеится стикер связки (YM-…) — он свой у каждой, и
+          // именно им кладовщик собирает поставку.
+          const inBundle = (order.groupSize || 0) > 1;
+          const isLast = (order.groupPosition || 1) >= (order.groupSize || 1);
+          if (!inBundle || isLast) {
+            await printLabelPdf(await fetchYandexLabel(order.orderNumber), 'Ярлык Яндекс Маркета');
+          } else {
+            toast({
+              title: `Вещь ${order.groupPosition} из ${order.groupSize} — ярлык не нужен`,
+              description: 'Ярлык у связки один, он печатается на последней вещи',
+            });
+          }
         } else {
           printFboSticker(await fetchOrderDetail(order.id));
         }
@@ -282,6 +299,20 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
       // и не отправила связку по частям. Когда осталось ноль, связка собрана целиком.
       if (res.groupSize && res.groupSize > 1) {
         const left = res.groupLeft ?? 0;
+        // Стикер связки на КАЖДУЮ вещь. Ярлык площадки у связки один на всех, и
+        // собрать им поставку нельзя — кладовщик сканирует именно этот код,
+        // поэтому он должен быть на каждой вещи заказа.
+        if (res.bundleBarcode) {
+          printStorageSticker({
+            storageBarcode: res.bundleBarcode,
+            title:
+              order.material && order.width
+                ? `${order.material} ${order.width}×${order.height}`
+                : order.product,
+            orderNumber: order.orderNumber,
+            groupLabel: `Связка ${res.groupPosition || 1} из ${res.groupSize}`,
+          });
+        }
         toast({
           title:
             left > 0
@@ -289,7 +320,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
               : `Связка собрана полностью: ${res.groupSize} вещи`,
           description:
             left > 0
-              ? `Осталось застикеровать ещё ${left} — не уносите пакет, заказ уезжает целиком`
+              ? `Наклейте стикер связки. Осталось ещё ${left} — не уносите пакет`
               : 'Все вещи заказа готовы — можно отправлять',
         });
       } else {

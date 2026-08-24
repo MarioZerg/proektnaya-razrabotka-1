@@ -42,11 +42,15 @@ const FbsChecklistRow = ({
                   className={
                     item?.isCancelled
                       ? 'bg-destructive/10'
-                      : row.scanned
-                        ? group && !group.isComplete
-                          ? 'bg-amber-50'
-                          : 'bg-emerald-50'
-                        : undefined
+                      : row.justScanned
+                        // Только что отсканированная вещь: яркая рамка, чтобы
+                        // кладовщик сразу проверил размер, который положил в короб.
+                        ? 'bg-emerald-100 ring-2 ring-inset ring-emerald-500'
+                        : row.scanned
+                          ? group && !group.isComplete
+                            ? 'bg-amber-50'
+                            : 'bg-emerald-50'
+                          : undefined
                   }
                 >
                   <TableCell>
@@ -97,8 +101,14 @@ const FbsChecklistRow = ({
                       </Button>
                     )}
                   </TableCell>
-                  <TableCell>{row.material || '—'}</TableCell>
-                  <TableCell>{sizeOf(row.width, row.height)}</TableCell>
+                  <TableCell className={row.justScanned ? 'text-base font-bold' : undefined}>
+                    {row.material || '—'}
+                  </TableCell>
+                  {/* Размер только что отсканированной вещи — крупно: именно его
+                      кладовщик и сверяет с тем, что держит в руках. */}
+                  <TableCell className={row.justScanned ? 'text-lg font-bold' : undefined}>
+                    {sizeOf(row.width, row.height)}
+                  </TableCell>
                   <TableCell className="text-sm">{row.labeledByName || '—'}</TableCell>
                   <TableCell>
                     {item?.isCancelled ? (

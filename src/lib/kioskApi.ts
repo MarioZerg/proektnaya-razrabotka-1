@@ -319,6 +319,14 @@ export const closeKioskOrder = async (
   groupSize?: number | null;
   groupPosition?: number | null;
   groupLeft?: number;
+  /**
+   * Стикер связки (YM-…) — свой у каждой вещи заказа.
+   *
+   * Ярлык площадки у связки ОДИН на все вещи, собрать им поставку нельзя.
+   * Кладовщик сканирует в поставку именно этот код, поэтому упаковщица клеит
+   * его на вещь вторым стикером.
+   */
+  bundleBarcode?: string | null;
   /** Заказ уже был закрыт раньше — повторное нажатие просто закрывает окно. */
   alreadyClosed?: boolean;
 }> => {
