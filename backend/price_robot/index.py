@@ -542,25 +542,113 @@ def _decide(cur, st, mp='ozon'):
             'reason': reason}
 
 
-def _apply_step(cur, mp, step, actor_id):
-    """Двигает цены всего ассортимента на step процентов.
+# Сколько карточек отправляем за один вызов.
+#
+# Функции отведено 5 секунд, а весь магазин — 674 карточки: 24 августа шаг
+# оборвался на 559-й, и магазин остался в разнобое. Идём пачками и запоминаем
+# место остановки, чтобы следующий вызов продолжил, а не начал заново.
+BATCH_SIZE = 200
 
-    Плюс — вверх, минус — вниз. Пишет не сама: зовёт ту же функцию отправки,
-    что и кнопка владельца, чтобы работали её предохранители (сверка с базой,
-    потолок изменения, журнал).
-    """
+
+def _start_step(cur, mp, step, decision, reason, actor_id):
+    """Начинает шаг: запоминает список товаров и отправляет первую пачку."""
     items = _all_items(cur, mp)
     if not items:
-        return 0, 0, 'Нет товаров с ценой — двигать нечего'
+        return 0, 0, 0, 'Нет товаров с ценой — двигать нечего'
+    cur.execute(
+        "INSERT INTO price_robot_pending (marketplace_code, step_percent, "
+        "  decision, reason, remaining_ids, started_by) "
+        "VALUES (%s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (marketplace_code) DO UPDATE SET "
+        "  step_percent = EXCLUDED.step_percent, "
+        "  decision = EXCLUDED.decision, reason = EXCLUDED.reason, "
+        "  remaining_ids = EXCLUDED.remaining_ids, pushed = 0, failed = 0, "
+        "  started_at = now(), started_by = EXCLUDED.started_by",
+        (mp, step, decision, reason,
+         json.dumps([i['itemId'] for i in items]), actor_id))
+    return _continue_step(cur, mp, actor_id)
+
+
+def _continue_step(cur, mp, actor_id):
+    """Отправляет очередную пачку цен незавершённого шага.
+
+    Возвращает (отправлено, отклонено, осталось, ошибка). Пока осталось больше
+    нуля, шаг не закончен и в журнал не пишется: незачем плодить записи об
+    одном и том же движении цен.
+    """
+    cur.execute(
+        "SELECT step_percent, remaining_ids, pushed, failed "
+        "FROM price_robot_pending WHERE marketplace_code = %s", (mp,))
+    row = cur.fetchone()
+    if not row:
+        return 0, 0, 0, 'Нет незавершённого шага'
+    step = float(row[0])
+    remaining = row[1] if isinstance(row[1], list) else json.loads(row[1] or '[]')
+    pushed_total, failed_total = int(row[2] or 0), int(row[3] or 0)
+    if not remaining:
+        return pushed_total, failed_total, 0, None
+
+    batch = remaining[:BATCH_SIZE]
+    rest = remaining[len(batch):]
+
+    # Цены берём из базы прямо сейчас: между пачками их мог поменять кто-то ещё.
+    id_list = ','.join(str(int(i)) for i in batch)
+    #
+    # БЕРЁМ ЦЕНУ ПОКУПАТЕЛЯ, А НЕ СВОЮ.
+    #
+    # Функция отправки ждёт цену, которую видит покупатель (со скидкой
+    # площадки), и сама пересчитывает её в нашу цену продавца. Если прислать
+    # ей свою цену, она разделит её на покупательскую и умножит на нашу —
+    # выйдет двойной подъём. 24 августа так и случилось: вместо 0.5% цены
+    # выросли на 5-18%, потому что скидка площадки местами доходит до 30%.
+    cur.execute(
+        "SELECT marketplace_item_id, price, "
+        "  coalesce(price_with_marketplace_discount, price) "
+        "FROM marketplace_prices "
+        f"WHERE marketplace_code = %s AND marketplace_item_id IN ({id_list}) "
+        "  AND price > 0", (mp,))
     k = 1 + step / 100
-    payload = [{'itemId': i['itemId'],
-                'newPrice': round(i['price'] * k, 2)} for i in items]
-    res = _push(mp, payload, actor_id)
-    if res.get('error'):
-        return 0, 0, f'Площадка не приняла цены: {res["error"]}'
-    pushed = int(res.get('pushed') or 0)
-    failed = len(res.get('failed') or []) + len(res.get('skipped') or [])
-    return pushed, failed, None
+    payload = [{'itemId': int(r[0]), 'newPrice': round(float(r[2]) * k, 2)}
+               for r in cur.fetchall()]
+
+    if payload:
+        res = _push(mp, payload, actor_id)
+        if res.get('error'):
+            return pushed_total, failed_total, len(remaining), \
+                f'Площадка не приняла цены: {res["error"]}'
+        pushed_total += int(res.get('pushed') or 0)
+        failed_total += len(res.get('failed') or []) + len(res.get('skipped') or [])
+
+    cur.execute(
+        "UPDATE price_robot_pending SET remaining_ids = %s, pushed = %s, "
+        "  failed = %s WHERE marketplace_code = %s",
+        (json.dumps(rest), pushed_total, failed_total, mp))
+    return pushed_total, failed_total, len(rest), None
+
+
+def _finish_step(cur, mp):
+    """Забирает итог завершённого шага и убирает его из очереди."""
+    cur.execute(
+        "SELECT step_percent, decision, reason, pushed, failed, started_by "
+        "FROM price_robot_pending "
+        "WHERE marketplace_code = %s AND remaining_ids = '[]'::jsonb", (mp,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    cur.execute("DELETE FROM price_robot_pending WHERE marketplace_code = %s",
+                (mp,))
+    return {'step': float(row[0]), 'decision': row[1], 'reason': row[2],
+            'pushed': int(row[3] or 0), 'failed': int(row[4] or 0),
+            'actorId': row[5]}
+
+
+def _pending_left(cur, mp):
+    """Сколько карточек ждёт отправки в незавершённом шаге."""
+    cur.execute(
+        "SELECT jsonb_array_length(remaining_ids) FROM price_robot_pending "
+        "WHERE marketplace_code = %s", (mp,))
+    r = cur.fetchone()
+    return int(r[0]) if r else 0
 
 
 def _manual_move(cur, mp, step, actor_id, note=''):
@@ -590,13 +678,25 @@ def _manual_move(cur, mp, step, actor_id, note=''):
     reason = (f'Ручной сдвиг: {direction} цены на {abs(step)}%'
               + (f'. {note}' if note else ''))
 
+    if _pending_left(cur, mp):
+        return {'error': 'Предыдущий шаг ещё отправляется — подождите минуту'}
+
     pushed = failed = 0
     if st['dryRun']:
         reason += '. Наблюдение: цены на витрине не менялись'
     else:
-        pushed, failed, err = _apply_step(cur, mp, step, actor_id)
+        # Отправка идёт пачками: весь магазин за один вызов не успевает.
+        pushed, failed, left, err = _start_step(
+            cur, mp, step, 'manual', reason, actor_id)
         if err:
             return {'error': err}
+        if left:
+            # Шаг не закончен: в журнал попадёт, когда уйдут все карточки.
+            return {'ok': True, 'inProgress': True, 'step': step,
+                    'pushed': pushed, 'left': left,
+                    'reason': f'{reason}. Отправлено {pushed}, '
+                              f'осталось {left} — продолжаем'}
+        _finish_step(cur, mp)
         reason += f'. Карточек изменено: {pushed}'
 
     run_id = _log_run(cur, mp, 'manual', reason, step=step,
@@ -628,28 +728,60 @@ def _run(cur, mp, actor_id, force=False):
     if not st['isActive'] and not force:
         return {'ok': True, 'decision': 'off', 'reason': 'Робот выключен'}
 
+    # СНАЧАЛА ДОСЫЛАЕМ НЕЗАКОНЧЕННЫЙ ШАГ.
+    #
+    # Магазин не должен оставаться в разнобое: часть цен поднята, часть нет.
+    # Пока остаток не ушёл, новых решений не принимаем.
+    if _pending_left(cur, mp):
+        pushed, failed, left, err = _continue_step(cur, mp, actor_id)
+        if err:
+            return {'ok': True, 'decision': 'hold', 'reason': err,
+                    'pushed': pushed, 'left': left}
+        if left:
+            return {'ok': True, 'decision': 'sending', 'pushed': pushed,
+                    'left': left,
+                    'reason': f'Досылаем цены: отправлено {pushed}, '
+                              f'осталось {left}'}
+        done = _finish_step(cur, mp)
+        if done:
+            reason = f'{done["reason"]}. Карточек изменено: {done["pushed"]}'
+            drift = _total_drift(cur, mp, st['dryRun']) + done['step']
+            run_id = _log_run(cur, mp, done['decision'], reason,
+                              step=done['step'], drift=round(drift, 2),
+                              pushed=done['pushed'], failed=done['failed'],
+                              dryRun=st['dryRun'])
+            notify = _notify_admins(cur, done['decision'],
+                                    {'reason': reason, 'drift': round(drift, 2)},
+                                    done['pushed'], st['dryRun'])
+            return {'ok': True, 'runId': run_id, 'decision': done['decision'],
+                    'reason': reason, 'pushed': done['pushed'],
+                    'failed': done['failed'], 'drift': round(drift, 2),
+                    'notify': notify}
+
     d = _decide(cur, st, mp)
     pushed = failed = 0
 
     if d['decision'] in ('raise', 'rollback'):
-        items = _all_items(cur, mp)
-        if not items:
-            d = {**d, 'decision': 'hold',
-                 'reason': 'Нет товаров с ценой — двигать нечего'}
-        elif st['dryRun']:
+        if st['dryRun']:
             # РЕЖИМ НАБЛЮДЕНИЯ: считаем и пишем в журнал, витрину не трогаем.
+            items = _all_items(cur, mp)
             d = {**d, 'reason': d['reason'] + f'. Наблюдение: цены не менялись '
                                               f'(товаров было бы {len(items)})'}
         else:
-            k = 1 + d['step'] / 100
-            payload = [{'itemId': i['itemId'],
-                        'newPrice': round(i['price'] * k, 2)} for i in items]
-            res = _push(mp, payload, actor_id)
-            pushed = int(res.get('pushed') or 0)
-            failed = len(res.get('failed') or []) + len(res.get('skipped') or [])
-            if res.get('error'):
-                d = {**d, 'decision': 'hold',
-                     'reason': f'Площадка не приняла цены: {res["error"]}'}
+            pushed, failed, left, err = _start_step(
+                cur, mp, d['step'], d['decision'], d['reason'], actor_id)
+            if err:
+                d = {**d, 'decision': 'hold', 'reason': err}
+            elif left:
+                # Не успели за один вызов — остаток уйдёт следующим запуском.
+                return {'ok': True, 'decision': 'sending', 'pushed': pushed,
+                        'left': left,
+                        'reason': f'{d["reason"]}. Отправлено {pushed}, '
+                                  f'осталось {left} — продолжаем'}
+            else:
+                _finish_step(cur, mp)
+                d = {**d, 'reason': d['reason'] +
+                     f'. Карточек изменено: {pushed}'}
 
     run_id = _log_run(cur, mp, d['decision'], d['reason'],
                       step=d.get('step'), drift=d.get('drift'),
@@ -740,6 +872,8 @@ def handler(event: dict, context) -> dict:
                 # Сдвиг показываем для того режима, в котором робот сейчас.
                 'driftPercent': _total_drift(cur, mp, st['dryRun'] if st else False),
                 'itemsCount': items_count,
+                # Сколько карточек ждёт отправки: шаг идёт пачками.
+                'pendingLeft': _pending_left(cur, mp),
                 'runs': runs,
             })
 
@@ -796,7 +930,10 @@ def handler(event: dict, context) -> dict:
             #
             # Владелец задаёт час по Москве, а сервер живёт по UTC — без
             # поправки «3:00» означало бы 6 утра по Москве.
-            if by_cron and st and _msk_hour() != st['runHour']:
+            # Незаконченный шаг досылаем в любой час: магазин не должен
+            # висеть в разнобое до следующей ночи.
+            if (by_cron and st and _msk_hour() != st['runHour']
+                    and not _pending_left(cur, mp)):
                 return _resp(200, {'ok': True, 'decision': 'skip',
                                    'reason': 'Не час запуска'})
             return _resp(200, _run(cur, mp, actor_id,
