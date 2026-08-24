@@ -558,10 +558,10 @@ def _decide(cur, st, mp='ozon'):
 
 # Сколько карточек отправляем за один вызов.
 #
-# Функции отведено 5 секунд, а весь магазин — 674 карточки: 24 августа шаг
-# оборвался на 559-й, и магазин остался в разнобое. Идём пачками и запоминаем
-# место остановки, чтобы следующий вызов продолжил, а не начал заново.
-BATCH_SIZE = 200
+# Функции отведено 5 секунд, и в них должен уложиться поход на площадку.
+# Пачка в 200 карточек не укладывалась: Ozon отвечал 5-9 секунд, вызов
+# обрывался, и магазин оставался в разнобое. Пачка в 60 проходит с запасом.
+BATCH_SIZE = 60
 
 
 def _start_step(cur, mp, step, decision, reason, actor_id):
@@ -624,18 +624,28 @@ def _continue_step(cur, mp, actor_id):
     payload = [{'itemId': int(r[0]), 'newPrice': round(float(r[1]) * k, 2)}
                for r in cur.fetchall()]
 
+    # ВЫЧЁРКИВАЕМ ПАЧКУ ДО ПОХОДА НА ПЛОЩАДКУ.
+    #
+    # Если функцию оборвёт по таймауту после отправки, но до записи прогресса,
+    # эти же карточки уйдут повторно и подорожают дважды. Так и случилось:
+    # 200 цен ушли на Ozon, а в очереди осталось 674 — следующий вызов поднял
+    # бы их ещё раз. Лучше потерять пачку, чем сдвинуть её дважды: пропущенное
+    # видно при сверке, а двойной подъём уже на витрине.
+    cur.execute(
+        "UPDATE price_robot_pending SET remaining_ids = %s "
+        "WHERE marketplace_code = %s", (json.dumps(rest), mp))
+
     if payload:
         res = _push(mp, payload, actor_id)
         if res.get('error'):
-            return pushed_total, failed_total, len(remaining), \
+            return pushed_total, failed_total, len(rest), \
                 f'Площадка не приняла цены: {res["error"]}'
         pushed_total += int(res.get('pushed') or 0)
         failed_total += len(res.get('failed') or []) + len(res.get('skipped') or [])
 
     cur.execute(
-        "UPDATE price_robot_pending SET remaining_ids = %s, pushed = %s, "
-        "  failed = %s WHERE marketplace_code = %s",
-        (json.dumps(rest), pushed_total, failed_total, mp))
+        "UPDATE price_robot_pending SET pushed = %s, failed = %s "
+        "WHERE marketplace_code = %s", (pushed_total, failed_total, mp))
     return pushed_total, failed_total, len(rest), None
 
 
@@ -719,8 +729,28 @@ def _manual_move(cur, mp, step, actor_id, note=''):
     reason = (f'Ручной сдвиг: {direction} цены на {abs(step)}%'
               + (f'. {note}' if note else ''))
 
+    # Незаконченный шаг сначала дожимаем, а не отказываем: владелец нажал
+    # кнопку и ждёт результата, а не сообщения «подождите».
     if _pending_left(cur, mp):
-        return {'error': 'Предыдущий шаг ещё отправляется — подождите минуту'}
+        pushed, failed, left, err = _continue_step(cur, mp, actor_id)
+        if err:
+            return {'error': err}
+        if left:
+            return {'ok': True, 'inProgress': True, 'pushed': pushed,
+                    'left': left,
+                    'reason': f'Досылаем прошлый шаг: отправлено {pushed}, '
+                              f'осталось {left}. Нажмите ещё раз'}
+        done = _finish_step(cur, mp)
+        if done:
+            drift = _total_drift(cur, mp, st['dryRun']) + done['step']
+            reason = f'{done["reason"]}. Карточек изменено: {done["pushed"]}'
+            run_id = _log_run(cur, mp, done['decision'], reason,
+                              step=done['step'], drift=round(drift, 2),
+                              pushed=done['pushed'], failed=done['failed'],
+                              dryRun=st['dryRun'])
+            return {'ok': True, 'runId': run_id, 'step': done['step'],
+                    'pushed': done['pushed'], 'reason': reason,
+                    'drift': round(drift, 2)}
 
     pushed = failed = 0
     if st['dryRun']:
