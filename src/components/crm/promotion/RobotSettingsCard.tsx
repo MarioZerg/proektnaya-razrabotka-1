@@ -138,6 +138,20 @@ const RobotSettingsCard = ({ value, onChange, onSave, busy }: Props) => {
             </p>
           </div>
           <div className="space-y-1.5">
+            <Label>Окно спроса, дней</Label>
+            <Input
+              type="number"
+              min={3}
+              value={value.demandWindowDays}
+              onChange={(e) =>
+                set('demandWindowDays', Number(e.target.value))
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Сравниваем столько дней до и после шага
+            </p>
+          </div>
+          <div className="space-y-1.5">
             <Label>Предел от старта, %</Label>
             <Input
               type="number"
@@ -149,6 +163,22 @@ const RobotSettingsCard = ({ value, onChange, onSave, busy }: Props) => {
             </p>
           </div>
         </div>
+
+        {/* Подтверждение падения: защита от «плохого дня». Одиночный слабый
+            замер не должен дёргать цены всего магазина. */}
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3">
+          <Switch
+            checked={value.requireSecondSignal}
+            onCheckedChange={(v) => set('requireSecondSignal', v)}
+          />
+          <span className="text-sm">
+            <span className="font-medium">Ждать подтверждения падения</span>
+            <span className="block text-xs text-muted-foreground">
+              Откат только если спрос просел два замера подряд. Резкое падение
+              (вдвое глубже порога) откатываем сразу
+            </span>
+          </span>
+        </label>
 
         {/* Предупреждение только в боевом режиме: в наблюдении пугать нечем. */}
         {!value.dryRun && value.isActive && (

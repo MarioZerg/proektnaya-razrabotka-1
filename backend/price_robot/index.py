@@ -63,7 +63,7 @@ def _settings(cur, mp='ozon'):
     cur.execute(
         "SELECT is_active, dry_run, step_percent, step_days, run_hour, "
         "       target_total_percent, drop_percent, max_total_percent, "
-        "       updated_at "
+        "       updated_at, demand_window_days, require_second_signal "
         "FROM price_robot_settings WHERE marketplace_code = %s", (mp,))
     r = cur.fetchone()
     if not r:
@@ -76,6 +76,11 @@ def _settings(cur, mp='ozon'):
         'targetTotalPercent': float(r[5]),
         'dropPercent': float(r[6]), 'maxTotalPercent': float(r[7]),
         'updatedAt': r[8],
+        # Сколько дней продаж сравнивать. Короткое окно шумит: один слабый
+        # день даёт минус 30% и откат цены на ровном месте.
+        'demandWindowDays': max(3, int(r[9] or 3)),
+        # Откатывать только после второго падения подряд.
+        'requireSecondSignal': bool(r[10]),
     }
 
 
@@ -360,6 +365,30 @@ def _push(mp, items, actor_id):
         return {'error': str(e)}
 
 
+def _weak_before(cur, mp, dry_run, hours=20):
+    """Было ли падение спроса замечено и на прошлой проверке.
+
+    По этой отметке робот отличает случайный провал от настоящего падения:
+    решение «ждём подтверждения» пишется в журнал, и если спрос просел снова,
+    второй сигнал уже приводит к откату.
+
+    Отметка должна быть не свежее указанного числа часов: замер скользящий,
+    и два прогона подряд с разницей в минуту дали бы одни и те же цифры —
+    подтверждением это считать нельзя.
+    """
+    cur.execute(
+        "SELECT decision, reason, "
+        "  extract(epoch from (now() - ran_at)) / 3600 "
+        "FROM price_robot_runs "
+        "WHERE marketplace_code = %s AND dry_run = %s "
+        "  AND decision IN ('raise', 'rollback', 'manual', 'hold') "
+        "ORDER BY ran_at DESC LIMIT 1", (mp, bool(dry_run)))
+    r = cur.fetchone()
+    return bool(r and r[0] == 'hold'
+                and 'Ждём подтверждения' in (r[1] or '')
+                and float(r[2] or 0) >= hours)
+
+
 def _decide(cur, st, mp='ozon'):
     """РЕШЕНИЕ РОБОТА: поднимать, откатывать или ждать.
 
@@ -406,12 +435,38 @@ def _decide(cur, st, mp='ozon'):
                               f'{waited:.1f} дн. из {step_days}. '
                               f'Ждём ещё {left} дн.'}
 
-        # 3. Спрос: продажи после шага против равного периода до него.
-        after_from = last['ranAt'].strftime('%Y-%m-%d')
+        # 3. СПРОС: одинаковые отрезки до и после шага.
+        #
+        # Окно шире шага и не короче трёх дней. При шаге в 2 дня сравнение
+        # «двое суток против двух» слишком шумное: 12 августа продали 82
+        # штуки, 13-го — 141. Такой провал давал минус 30% и откат цены,
+        # хотя со спросом ничего не случилось.
+        #
+        # Окно ждём целиком: пока после шага не набралось нужных дней,
+        # сравнивать не с чем — цену не трогаем.
+        win = st['demandWindowDays']
+        if waited < win:
+            left = round(win - waited, 1)
+            return {'decision': 'skip', 'drift': drift,
+                    'reason': f'Копим данные о спросе: прошло '
+                              f'{waited:.1f} дн. из {win}. '
+                              f'Ждём ещё {left} дн.'}
+
+        # ЭТАЛОН — окно ДО шага: как продавалось на прежней цене. Он
+        # неподвижен, с ним и сравниваем.
+        #
+        # СВЕЖИЙ ЗАМЕР — последние win дней от сегодня. Он скользит: каждую
+        # ночь это новые данные. Если бы окно после шага было фиксированным,
+        # завтрашняя проверка вернула бы ровно тот же результат, и ждать
+        # подтверждения было бы бессмысленно — второй сигнал повторял бы
+        # первый слово в слово.
+        shift_day = last['ranAt']
+        before_from = (shift_day - timedelta(days=win)).strftime('%Y-%m-%d')
+        before_to = shift_day.strftime('%Y-%m-%d')
+        after_from = (now - timedelta(days=win)).strftime('%Y-%m-%d')
         after_to = now.strftime('%Y-%m-%d')
-        before_from = (last['ranAt'] - timedelta(days=step_days)).strftime('%Y-%m-%d')
         units_after = _units_in_period(cur, after_from, after_to)
-        units_before = _units_in_period(cur, before_from, after_from)
+        units_before = _units_in_period(cur, before_from, before_to)
 
         change = None
         if units_before > 0:
@@ -428,13 +483,34 @@ def _decide(cur, st, mp='ozon'):
         raised = last['decision'] == 'raise' or (
             last['decision'] == 'manual' and last['stepPercent'] > 0)
         if change is not None and change <= -st['dropPercent'] and raised:
+            # ПОДТВЕРЖДЕНИЕ ПАДЕНИЯ.
+            #
+            # Одного сигнала мало: спрос гуляет сам по себе, и цена не должна
+            # прыгать туда-сюда из-за пары слабых дней. Первое падение — это
+            # пауза без подъёма: ждём следующего замера и смотрим, повторится
+            # ли. Повторилось — откатываем.
+            #
+            # Резкое падение — вдвое глубже порога — откатываем сразу: тут
+            # уже не шум, и ждать подтверждения значит терять продажи.
+            sharp = change <= -st['dropPercent'] * 2
+            # Второй сигнал засчитываем не раньше следующих суток: замер
+            # скользящий, и за пару часов данные почти не меняются.
+            confirmed = _weak_before(cur, mp, st['dryRun'], hours=20)
+            if st['requireSecondSignal'] and not sharp and not confirmed:
+                return {'decision': 'hold', 'drift': drift, **extra,
+                        'reason': f'Спрос упал на {abs(change)}% '
+                                  f'({units_before} → {units_after} шт). '
+                                  f'Ждём подтверждения: цену не поднимаем, '
+                                  f'но и не откатываем — один слабый замер '
+                                  f'ещё не падение спроса'}
             return {
                 'decision': 'rollback', 'drift': drift,
                 'step': -st['stepPercent'], **extra,
-                'reason': f'Спрос упал на {abs(change)}% '
-                          f'({units_before} → {units_after} шт) — '
-                          f'подъём цены не окупился. Возвращаем цены на '
-                          f'{st["stepPercent"]}% назад',
+                'reason': (f'Спрос упал на {abs(change)}% '
+                           f'({units_before} → {units_after} шт)'
+                           + (' — падение резкое' if sharp
+                              else ' второй раз подряд')
+                           + f'. Возвращаем цены на {st["stepPercent"]}% назад'),
             }
 
         # Откат был, а спрос так и не вернулся — не давим дальше.
@@ -682,7 +758,9 @@ def handler(event: dict, context) -> dict:
                 "UPDATE price_robot_settings SET is_active = %s, dry_run = %s, "
                 "  step_percent = %s, step_days = %s, run_hour = %s, "
                 "  target_total_percent = %s, drop_percent = %s, "
-                "  max_total_percent = %s, updated_at = now(), updated_by = %s "
+                "  max_total_percent = %s, demand_window_days = %s, "
+                "  require_second_signal = %s, "
+                "  updated_at = now(), updated_by = %s "
                 "WHERE marketplace_code = %s",
                 (bool(body.get('isActive')), bool(body.get('dryRun', True)),
                  step, max(1, int(body.get('stepDays') or 2)),
@@ -690,6 +768,9 @@ def handler(event: dict, context) -> dict:
                  float(body.get('targetTotalPercent') or 10),
                  float(body.get('dropPercent') or 30),
                  float(body.get('maxTotalPercent') or 20),
+                 # Окно короче трёх дней не пускаем: слишком шумно.
+                 max(3, int(body.get('demandWindowDays') or 3)),
+                 bool(body.get('requireSecondSignal', True)),
                  body.get('actorId'), mp))
             return _resp(200, {'ok': True, 'settings': _settings(cur, mp)})
 

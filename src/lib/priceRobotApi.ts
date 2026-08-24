@@ -14,6 +14,10 @@ export interface RobotSettings {
   targetTotalPercent: number;
   dropPercent: number;
   maxTotalPercent: number;
+  /** Сколько дней продаж сравнивать до и после шага. Меньше 3 — шумно. */
+  demandWindowDays: number;
+  /** Откатывать только после второго падения подряд. Резкое — сразу. */
+  requireSecondSignal: boolean;
   updatedAt?: string;
 }
 
