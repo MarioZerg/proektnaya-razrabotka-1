@@ -741,6 +741,10 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     if mp in ('ozon', 'wildberries', 'yandex_market'):
         where += f" AND s.marketplace_code = '{mp}'"
     sch = (scheme or '').strip().upper()
+    # Отбор БЕЗ схемы — по нему считаем сравнение FBO и FBS. Оно должно быть
+    # на экране всегда: выбрав FBS, человек как раз и хочет видеть, насколько
+    # он хуже FBO, а не терять вторую цифру из виду.
+    where_all_schemes = where
     if sch in ('FBO', 'FBS'):
         where += f" AND s.scheme = '{sch}'"
 
@@ -845,6 +849,19 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     # FBS. Раньше там всегда стояла одна общая цифра.
     fee_rev = 0.0
     fee_amt = 0.0
+    # ТО ЖЕ САМОЕ, НО ОТДЕЛЬНО ПО КАЖДОЙ СХЕМЕ.
+    #
+    # FBO и FBS — это два разных бизнеса под одной вывеской. Со склада
+    # площадки удержание 42%, со своего 47% — и маржа отличается почти вдвое.
+    # Общая цифра усредняет их в одну и прячет главное: где мы зарабатываем,
+    # а где работаем почти в ноль.
+    by_scheme = {}
+
+    def _slot(name):
+        return by_scheme.setdefault(name, {
+            'revenue': 0.0, 'profit': 0.0, 'known': 0.0,
+            'feeRev': 0.0, 'feeAmt': 0.0, 'qty': 0,
+        })
 
     for material, width, height, price, qty, sch in cur.fetchall():
         n = int(qty or 1)
@@ -852,6 +869,9 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
         if not pr:
             continue
         revenue += pr
+        sl = _slot(sch if sch in ('FBO', 'FBS') else 'Прочее')
+        sl['revenue'] += pr
+        sl['qty'] += n
         mm = margins.get((material, width, height)) or {}
         if mm.get('margin') is None:
             continue
@@ -863,6 +883,8 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             continue
         profit_sum += unit_profit * n
         known += pr
+        sl['profit'] += unit_profit * n
+        sl['known'] += pr
         # Расходы от цены пересчитываем по долям, себестоимость берём
         # в рублях: ткань и работа стоят одинаково при любой скидке.
         # Переменные считаем от фактической цены, постоянные берём рублями:
@@ -880,6 +902,8 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
         if item_fee is not None:
             fee_rev += pr
             fee_amt += pr * item_fee
+            sl['feeRev'] += pr
+            sl['feeAmt'] += pr * item_fee
         parts['production'] += float(mm.get('production') or 0) * n
 
     # Срезы по площадкам и схемам — для переключателей в шапке.
@@ -943,8 +967,84 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     #
     # Услуги площадки платятся живыми деньгами и вычитаются полностью.
     bonus_info = _bonus_in_period(cur, d_from, d_to)
-    parts['fees'] = fees_total
-    profit_sum -= fees_total
+
+    # УСЛУГИ ПЛОЩАДКИ — РАСХОД НА ВЕСЬ ОБОРОТ, А НЕ НА ВЫБРАННУЮ СХЕМУ.
+    #
+    # Подписка, слоты, страхование приходят одной суммой за месяц по всему
+    # кабинету. Выбрав FBO, нельзя вычесть их целиком из него: FBO-продажи
+    # тогда платят и за себя, и за FBS, а прибыль среза занижается.
+    #
+    # Берём долю по выручке: сколько этот срез весит в обороте — столько
+    # услуг на него и приходится.
+    if sch in ('FBO', 'FBS') and fees_total:
+        cur.execute(
+            "SELECT coalesce(sum(s.sale_price * s.quantity), 0) "
+            f"FROM marketplace_sales s {where_all_schemes}")
+        total_rev_all = float((cur.fetchone() or [0])[0] or 0)
+        fees_share = (fees_total * (revenue / total_rev_all)
+                      if total_rev_all > 0 else 0.0)
+    else:
+        fees_share = fees_total
+    parts['fees'] = round(fees_share, 2)
+    profit_sum -= fees_share
+
+    # Услуги площадки — общий расход на всё, отдельной схемы у них нет.
+    # Раскладываем по выручке: иначе прибыль FBS оказалась бы завышена, а
+    # сумма двух схем не сошлась бы с общим итогом.
+    if fees_total and revenue > 0 and sch not in ('FBO', 'FBS'):
+        for sl in by_scheme.values():
+            sl['profit'] -= fees_total * (sl['revenue'] / revenue)
+
+    # СРАВНЕНИЕ СХЕМ — по отбору БЕЗ схемы, но с тем же периодом и площадкой.
+    #
+    # Когда выбран конкретный срез, цикл выше посчитал только его. Чтобы обе
+    # схемы всё равно стояли рядом, проходим продажи ещё раз без этого условия.
+    if sch in ('FBO', 'FBS'):
+        by_scheme = {}
+        cur.execute(
+            "SELECT s.material, s.width, s.height, s.sale_price, s.quantity, "
+            "       s.scheme "
+            f"FROM marketplace_sales s {where_all_schemes}")
+        all_rev = 0.0
+        for material, width, height, price, qty, s_sch in cur.fetchall():
+            n = int(qty or 1)
+            pr = float(price or 0) * n
+            if not pr:
+                continue
+            all_rev += pr
+            sl = _slot(s_sch if s_sch in ('FBO', 'FBS') else 'Прочее')
+            sl['revenue'] += pr
+            sl['qty'] += n
+            mm = margins.get((material, width, height)) or {}
+            if mm.get('margin') is None:
+                continue
+            item_fee = _fee_for(material, width, height, s_sch)
+            unit_profit, _ = _profit_at(mm, float(price or 0), item_fee)
+            if unit_profit is None:
+                continue
+            sl['profit'] += unit_profit * n
+            sl['known'] += pr
+            if item_fee is not None:
+                sl['feeRev'] += pr
+                sl['feeAmt'] += pr * item_fee
+        if fees_total and all_rev > 0:
+            for sl in by_scheme.values():
+                sl['profit'] -= fees_total * (sl['revenue'] / all_rev)
+
+    schemes = []
+    for name, v in sorted(by_scheme.items(), key=lambda x: -x[1]['revenue']):
+        schemes.append({
+            'scheme': name,
+            'quantity': v['qty'],
+            'revenue': round(v['revenue'], 2),
+            'profit': round(v['profit'], 2),
+            'margin': (round(v['profit'] / v['revenue'] * 100, 1)
+                       if v['revenue'] else 0),
+            # Удержание площадки по этой схеме — та самая цифра, ради которой
+            # схемы и разделили: 42% против 47%.
+            'feeShare': (round(v['feeAmt'] / v['feeRev'] * 100, 1)
+                         if v['feeRev'] > 0 else None),
+        })
 
     return {
         'items': items,
@@ -967,6 +1067,10 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
             'feeShare': round(
                 (fee_amt / fee_rev * 100) if fee_rev > 0
                 else (fact_fee_share or 0) * 100, 1),
+            # ИТОГИ ПО КАЖДОЙ СХЕМЕ — считаются всегда, даже когда выбран
+            # один срез: сравнивать FBO и FBS нужно рядом, а не переключаясь
+            # между вкладками и запоминая цифры.
+            'schemes': schemes,
             # БАЛЛЫ ПЛОЩАДКИ за период: часть цены покупатель платит баллами,
             # а площадка возмещает эту часть продавцу. Половина оборота.
             'bonus': bonus_info,

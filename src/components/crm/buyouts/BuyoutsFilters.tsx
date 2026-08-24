@@ -43,43 +43,76 @@ const BuyoutsFilters = ({
   onRange,
 }: Props) => (
   <>
-    {/* ПЛОЩАДКИ И СХЕМЫ.
-        Смотреть нужно и общую картину, и отдельные срезы: FBO — это
-        продажи со склада площадки, FBS — то, что мы отправляем сами.
-        Экономика у них разная, и мешать их в одну цифру нельзя. */}
+    {/* ПЛОЩАДКИ И СХЕМЫ — ДВУМЯ ОТДЕЛЬНЫМИ РЯДАМИ.
+        Раньше это была одна кнопка «OZON FBS»: посмотреть все продажи по
+        схеме, не выбирая площадку, было нельзя. А вопрос звучит именно так —
+        «сколько мы заработали на FBS», без привязки к площадке. */}
     {!!breakdown?.length && (
-      <div className="flex flex-wrap gap-1.5">
-        <Button
-          variant={!mp && !scheme ? 'default' : 'outline'}
-          size="sm"
-          className="h-8 text-xs"
-          onClick={() => onSlice('', '')}
-        >
-          Все площадки
-          <span className="ml-1 opacity-70">
-            {breakdown.reduce((a, b) => a + b.count, 0)}
-          </span>
-        </Button>
-        {breakdown.map((b) => {
-          const active = mp === b.marketplace && scheme === b.scheme;
-          return (
+      <div className="space-y-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="w-16 text-xs text-muted-foreground">Площадка</span>
+          <Button
+            variant={!mp ? 'default' : 'outline'}
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => onSlice('', scheme)}
+          >
+            Все
+            <span className="ml-1 opacity-70">
+              {breakdown.reduce((a, b) => a + b.count, 0)}
+            </span>
+          </Button>
+          {[...new Set(breakdown.map((b) => b.marketplace))].map((code) => (
             <Button
-              key={`${b.marketplace}-${b.scheme}`}
-              variant={active ? 'default' : 'outline'}
+              key={code}
+              variant={mp === code ? 'default' : 'outline'}
               size="sm"
               className="h-8 text-xs"
-              onClick={() =>
-                onSlice(
-                  active ? '' : b.marketplace,
-                  active ? '' : b.scheme,
-                )
-              }
+              onClick={() => onSlice(mp === code ? '' : code, scheme)}
             >
-              {MP[b.marketplace]?.label || b.marketplace} {b.scheme}
-              <span className="ml-1 opacity-70">{b.count}</span>
+              {MP[code]?.label || code}
+              <span className="ml-1 opacity-70">
+                {breakdown
+                  .filter((b) => b.marketplace === code)
+                  .reduce((a, b) => a + b.count, 0)}
+              </span>
             </Button>
-          );
-        })}
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="w-16 text-xs text-muted-foreground">Схема</span>
+          <Button
+            variant={!scheme ? 'default' : 'outline'}
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => onSlice(mp, '')}
+          >
+            Все
+            <span className="ml-1 opacity-70">
+              {breakdown
+                .filter((b) => !mp || b.marketplace === mp)
+                .reduce((a, b) => a + b.count, 0)}
+            </span>
+          </Button>
+          {[...new Set(breakdown.map((b) => b.scheme))].map((code) => (
+            <Button
+              key={code}
+              variant={scheme === code ? 'default' : 'outline'}
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => onSlice(mp, scheme === code ? '' : code)}
+            >
+              {code}
+              <span className="ml-1 opacity-70">
+                {breakdown
+                  .filter((b) => b.scheme === code)
+                  .filter((b) => !mp || b.marketplace === mp)
+                  .reduce((a, b) => a + b.count, 0)}
+              </span>
+            </Button>
+          ))}
+        </div>
       </div>
     )}
 

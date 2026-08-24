@@ -27,6 +27,22 @@ export const fullDate = (iso: string | null) => {
   });
 };
 
+/**
+ * Итог по схеме продажи.
+ *
+ * FBO — со склада площадки, FBS — со своего. Это два разных бизнеса под одной
+ * вывеской: удержание отличается на пять пунктов, а маржа — почти вдвое.
+ */
+export interface BuyoutsScheme {
+  scheme: string;
+  quantity: number;
+  revenue: number;
+  profit: number;
+  margin: number;
+  /** Сколько забрала площадка, % — главная причина разницы между схемами. */
+  feeShare: number | null;
+}
+
 /** Итог по всему отбору, а не по видимой странице. */
 export interface BuyoutsTotals {
   revenue: number;
@@ -35,6 +51,8 @@ export interface BuyoutsTotals {
   knownRevenue?: number;
   breakdown?: Record<string, number>;
   feeShare?: number;
+  /** Итоги по каждой схеме — приходят всегда, даже когда выбран один срез. */
+  schemes?: BuyoutsScheme[];
   bonus?: { points: number; bank: number };
 }
 

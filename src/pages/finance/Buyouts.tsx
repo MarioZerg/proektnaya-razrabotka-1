@@ -5,6 +5,7 @@ import { useToast } from '@/hooks/use-toast';
 import RevenueBreakdown from '@/components/crm/finance/RevenueBreakdown';
 import BuyoutsHeader from '@/components/crm/buyouts/BuyoutsHeader';
 import BuyoutsFilters from '@/components/crm/buyouts/BuyoutsFilters';
+import BuyoutsSchemes from '@/components/crm/buyouts/BuyoutsSchemes';
 import BuyoutsList from '@/components/crm/buyouts/BuyoutsList';
 import BuyoutsPager from '@/components/crm/buyouts/BuyoutsPager';
 import { PER_PAGE, type BuyoutsData } from '@/components/crm/buyouts/buyoutsShared';
@@ -134,6 +135,17 @@ const Buyouts = () => {
           onTo={changeTo}
           onRange={setRange}
         />
+
+        {/* FBO против FBS: где мы зарабатываем, а где почти в ноль.
+            Схемы показываем всегда — сравнивать их нужно рядом, а не
+            переключаясь между срезами и запоминая цифры. */}
+        {!loading && !!data.totals?.schemes?.length && (
+          <BuyoutsSchemes
+            schemes={data.totals.schemes}
+            active={scheme}
+            onSelect={(s) => changeSlice(mp, s)}
+          />
+        )}
 
         {/* Разбор выручки: сколько забрала площадка, сколько стоило
             производство, сколько ушло налогами и что осталось нам. */}
