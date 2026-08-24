@@ -956,7 +956,10 @@ def handler(event: dict, context) -> dict:
             pushed, failed, total = _repair_to(
                 cur, mp, body.get('actorId'),
                 body.get('baseline') or '2026-08-20',
-                float(body.get('uplift') or 0.5),
+                # Ноль — законная надбавка «вернуть ровно к эталону».
+                # Через `or` он превратился бы в 0.5 и вернул не туда.
+                float(body.get('uplift') if body.get('uplift') is not None
+                      else 0.5),
                 int(body.get('limit') or 200))
             cur.execute(
                 "SELECT count(*) FROM marketplace_prices mp "
@@ -966,7 +969,8 @@ def handler(event: dict, context) -> dict:
                 "WHERE mp.marketplace_code = %s AND h.price > 0 "
                 "  AND abs(round(h.price * %s, 2) - mp.price) > 0.5",
                 (mp, body.get('baseline') or '2026-08-20', mp,
-                 1 + float(body.get('uplift') or 0.5) / 100))
+                 1 + float(body.get('uplift') if body.get('uplift') is not None
+                           else 0.5) / 100))
             left = int((cur.fetchone() or [0])[0] or 0)
             return _resp(200, {'ok': True, 'pushed': pushed, 'failed': failed,
                                'batch': total, 'left': left})
