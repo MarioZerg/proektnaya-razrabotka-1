@@ -1255,11 +1255,15 @@ def _cost_by_group(cur):
     себестоимости считает ровно так же — обе стороны показывают одну цифру.
     """
     cur.execute(
-        "SELECT overhead_per_item, workshop_id FROM cost_settings ORDER BY id LIMIT 1"
+        "SELECT overhead_per_item, workshop_id, shortage_percent "
+        "FROM cost_settings ORDER BY id LIMIT 1"
     )
     cs = cur.fetchone()
     workshop_id = cs[1] if cs else None
     overhead_legacy = float(cs[0] or 0) if cs else 0.0
+    # Надбавка на недостачи материалов — та же, что на странице
+    # себестоимости. Без неё прибыль здесь выглядела бы выше настоящей.
+    shortage_pct = float(cs[2]) if cs and cs[2] is not None else 5.0
 
     cur.execute(
         "SELECT amount, per_items FROM cost_extra_expenses WHERE is_active = true"
@@ -1320,9 +1324,13 @@ def _cost_by_group(cur):
         pack = round(meters * packer_rate, 2)
         labor = cut + sew + pack
         overhead = round(extra_per_unit + overhead_legacy + manager_cost, 2)
+        # Обрезки, брак и пересорт: материал оплачен, а в изделие не попал.
+        shortage = round(materials_cost * shortage_pct / 100, 2)
         out[(material, width_raw)] = {
             'materials': g['materials'],
             'materialsCost': round(materials_cost, 2),
+            'shortageCost': shortage,
+            'shortagePercent': shortage_pct,
             'cutCost': cut, 'sewCost': sew, 'packWorkCost': pack,
             'laborCost': round(labor, 2),
             'overhead': overhead,
@@ -1330,7 +1338,8 @@ def _cost_by_group(cur):
             # быть видно, из чего сложилась накладная часть.
             'overheadManager': round(manager_cost, 2),
             # Полная себестоимость производства — без комиссии и налога.
-            'productionCost': round(materials_cost + labor + overhead, 2),
+            'productionCost': round(materials_cost + shortage + labor
+                                    + overhead, 2),
             'missing': [
                 *(['Не задан расход материалов'] if not g['materials'] else []),
                 *(['Нет тарифа закройщика'] if cut == 0 else []),

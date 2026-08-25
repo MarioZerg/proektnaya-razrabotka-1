@@ -48,13 +48,17 @@ def _settings(cur):
     их читают старые расчёты, но себестоимость их не использует.
     """
     cur.execute(
-        "SELECT overhead_per_item, workshop_id FROM cost_settings ORDER BY id LIMIT 1"
+        "SELECT overhead_per_item, workshop_id, shortage_percent "
+        "FROM cost_settings ORDER BY id LIMIT 1"
     )
     r = cur.fetchone()
     if not r:
-        return {'overheadPerItem': 0.0, 'workshopId': None}
+        return {'overheadPerItem': 0.0, 'workshopId': None,
+                'shortagePercent': 5.0}
     return {
         'overheadPerItem': float(r[0] or 0),
+        # Надбавка на недостачи: обрезки, брак и пересорт материалов.
+        'shortagePercent': float(r[2] if r[2] is not None else 5),
         'workshopId': r[1],
     }
 
@@ -545,6 +549,8 @@ def _calc_groups(cur, settings, manager_per_unit=0.0):
     )
     fabric_by_name = {r[1]: r[0] for r in cur.fetchall()}
 
+    shortage_pct = settings.get('shortagePercent', 5.0)
+
     result = []
     for (material, width_raw), g in groups.items():
         width = float(width_raw or 0)
@@ -554,6 +560,14 @@ def _calc_groups(cur, settings, manager_per_unit=0.0):
         trim_cost = sum(m['sum'] for m in g['materials'] if m['typeName'] == 'Аксессуары')
         pack_cost = sum(m['sum'] for m in g['materials'] if m['typeName'] == 'Упаковка')
         materials_cost = fabric_cost + trim_cost + pack_cost
+
+        # НЕДОСТАЧИ МАТЕРИАЛОВ — отдельной строкой.
+        #
+        # Ткань, тесьма, пакеты и этикетки уходят не только в изделие: обрезки
+        # при раскрое, брак, пересорт. Эти метры оплачены поставщику, но в
+        # готовой вещи их нет. Без этой надбавки себестоимость занижена, и
+        # прибыль на бумаге выглядит больше настоящей.
+        shortage_cost = round(materials_cost * shortage_pct / 100, 2)
 
         # РАБОТА — по тем же формулам, по которым система начисляет зарплату:
         # закройщику за метраж ширины, швее за штуку по ширине, упаковщице за метраж.
@@ -582,7 +596,8 @@ def _calc_groups(cur, settings, manager_per_unit=0.0):
         # Оба расхода теперь считает юнит-экономика — от цены продажи, как и
         # положено. Здесь остаётся честный ответ на вопрос «во сколько вещь
         # обходится цеху»: материалы, работа и накладные.
-        total = round(materials_cost + labor_cost + overhead, 2)
+        total = round(materials_cost + shortage_cost + labor_cost
+                      + overhead, 2)
 
         result.append({
             'material': material,
@@ -593,6 +608,8 @@ def _calc_groups(cur, settings, manager_per_unit=0.0):
             'trimCost': round(trim_cost, 2),
             'packCost': round(pack_cost, 2),
             'materialsCost': round(materials_cost, 2),
+            'shortageCost': shortage_cost,
+            'shortagePercent': shortage_pct,
             'cutCost': cut_cost,
             'sewCost': sew_cost,
             'packWorkCost': pack_work,
@@ -776,23 +793,27 @@ def handler(event: dict, context) -> dict:
             # версия страницы их пришлёт, они просто игнорируются.
             overhead = num('overheadPerItem')
             workshop_id = body_data.get('workshopId')
+            # Надбавку на недостачи держим в разумных рамках: выше 50% это
+            # уже не потери, а ошибка ввода.
+            shortage = num('shortagePercent', 5.0)
+            shortage = min(max(shortage, 0.0), 50.0)
 
             cur.execute("SELECT id FROM cost_settings ORDER BY id LIMIT 1")
             row = cur.fetchone()
             if row:
                 cur.execute(
                     "UPDATE cost_settings SET overhead_per_item = %s, "
-                    "  workshop_id = %s, updated_at = now(), "
-                    "  updated_by = %s WHERE id = %s",
+                    "  workshop_id = %s, shortage_percent = %s, "
+                    "  updated_at = now(), updated_by = %s WHERE id = %s",
                     (overhead, int(workshop_id) if workshop_id else None,
-                     body_data.get('actorId'), row[0]),
+                     shortage, body_data.get('actorId'), row[0]),
                 )
             else:
                 cur.execute(
                     "INSERT INTO cost_settings (overhead_per_item, workshop_id, "
-                    "  updated_by) VALUES (%s, %s, %s)",
+                    "  shortage_percent, updated_by) VALUES (%s, %s, %s, %s)",
                     (overhead, int(workshop_id) if workshop_id else None,
-                     body_data.get('actorId')),
+                     shortage, body_data.get('actorId')),
                 )
             conn.commit()
             return _resp(200, {'ok': True})

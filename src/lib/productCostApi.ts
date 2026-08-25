@@ -30,6 +30,10 @@ export interface CostGroup {
   trimCost: number;
   packCost: number;
   materialsCost: number;
+  /** Надбавка на недостачи материалов: обрезки, брак, пересорт. */
+  shortageCost?: number;
+  /** Процент, по которому посчитана надбавка. */
+  shortagePercent?: number;
   cutCost: number;
   sewCost: number;
   packWorkCost: number;
@@ -60,6 +64,8 @@ export interface ExtraExpense {
 export interface CostSettings {
   overheadPerItem: number;
   workshopId: number | null;
+  /** Надбавка на недостачи материалов, % от стоимости ткани и упаковки. */
+  shortagePercent?: number;
 }
 
 /** Продажи одной площадки за период, с разбивкой по схемам. */

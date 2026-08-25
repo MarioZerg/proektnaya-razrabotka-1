@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Select,
@@ -36,6 +37,9 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
   const [workshopId, setWorkshopId] = useState(
     settings.workshopId ? String(settings.workshopId) : '',
   );
+  const [shortage, setShortage] = useState(
+    String(settings.shortagePercent ?? 5),
+  );
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -45,6 +49,7 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
         // Старое общее поле держим нулевым: расходы теперь ведутся списком статей.
         overheadPerItem: settings.overheadPerItem,
         workshopId: workshopId ? Number(workshopId) : null,
+        shortagePercent: Number(shortage) || 0,
         actorId: user?.id,
       });
       toast({ title: 'Параметры сохранены', description: 'Себестоимость пересчитана' });
@@ -81,6 +86,22 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Недостачи материалов, %</Label>
+            <Input
+              type="number"
+              min={0}
+              max={50}
+              step={0.5}
+              value={shortage}
+              onChange={(e) => setShortage(e.target.value)}
+            />
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Обрезки, брак и пересорт ткани, тесьмы, пакетов и этикеток.
+              Начисляется от стоимости материалов.
+            </p>
           </div>
         </div>
 

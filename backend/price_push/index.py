@@ -144,8 +144,19 @@ def _prepare(cur, marketplace, items, seller_price=False):
             })
             continue
 
+        # ЗАЧЁРКНУТУЮ ЦЕНУ ДВИГАЕМ ТЕМ ЖЕ ПРОЦЕНТОМ.
+        #
+        # В карточке две цены: «Ваша цена» и «Цена до скидки» — та, что
+        # показана зачёркнутой. Если поднимать только первую, выгода для
+        # покупателя молча тает, а через несколько шагов зачёркнутая цена
+        # окажется ниже основной, и площадка отклонит товар.
+        new_old_price = None
+        if info.get('oldPrice'):
+            new_old_price = round(info['oldPrice'] * (new_price / current), 2)
+
         ready.append({**info, 'itemId': item_id, 'newPrice': new_price,
-                      'oldMyPrice': current, 'shown': shown})
+                      'oldMyPrice': current, 'shown': shown,
+                      'newOldPrice': new_old_price})
     return ready, skipped
 
 
@@ -162,7 +173,9 @@ def _push_ozon(creds, ready):
     for r in ready:
         if not r.get('sku'):
             continue
-        old = r.get('oldPrice') or 0
+        # Берём поднятую зачёркнутую цену, а не прежнюю: она растёт вместе
+        # с основной, поэтому скидка для покупателя остаётся той же.
+        old = r.get('newOldPrice') or r.get('oldPrice') or 0
         if old <= r['newPrice'] * 1.05:
             old = round(r['newPrice'] * 1.2, 2)
         prices.append({
@@ -323,10 +336,12 @@ def handler(event: dict, context) -> dict:
 
         for r in pushed:
             cur.execute(
-                "UPDATE marketplace_prices SET price = %s, source = 'api', "
-                "  updated_at = now() WHERE marketplace_item_id = %s "
-                "  AND marketplace_code = %s",
-                (r['newPrice'], r['itemId'], marketplace),
+                "UPDATE marketplace_prices SET price = %s, "
+                "  price_before_discount = coalesce(%s, price_before_discount), "
+                "  source = 'api', updated_at = now() "
+                "WHERE marketplace_item_id = %s AND marketplace_code = %s",
+                (r['newPrice'], r.get('newOldPrice'), r['itemId'],
+                 marketplace),
             )
             # Записываем как уже применённое: пауза до следующего шага по
             # этому товару начинает идти с этого момента.

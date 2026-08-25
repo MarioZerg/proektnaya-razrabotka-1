@@ -77,6 +77,11 @@ const FabricCostCard = ({ material, widths }: FabricCostCardProps) => {
             title={`Материалы ${money(g.materialsCost)} ₽`}
           />
           <div
+            className="bg-amber-400"
+            style={{ width: `${share(g.shortageCost || 0)}%` }}
+            title={`Недостачи ${money(g.shortageCost || 0)} ₽`}
+          />
+          <div
             className="bg-emerald-500"
             style={{ width: `${share(g.laborCost)}%` }}
             title={`Работа ${money(g.laborCost)} ₽`}
@@ -117,6 +122,26 @@ const FabricCostCard = ({ material, widths }: FabricCostCardProps) => {
             ))
           )}
         </div>
+
+        {/* Недостачи — отдельной строкой, а не спрятаны внутри материалов:
+            владелец должен видеть, сколько уносят обрезки и брак. */}
+        {!!g.shortageCost && (
+          <div className="flex items-center justify-between gap-2 rounded-md bg-amber-50 px-2 py-1.5 dark:bg-amber-950/30">
+            <span className="flex min-w-0 items-center gap-1.5 text-xs">
+              <Icon name="Scissors" size={13} className="shrink-0 text-amber-600" />
+              <span className="truncate">
+                Недостачи материалов
+                <span className="text-muted-foreground">
+                  {' '}
+                  {g.shortagePercent ?? 5}% от материалов
+                </span>
+              </span>
+            </span>
+            <span className="shrink-0 text-xs font-semibold text-amber-700 dark:text-amber-500">
+              {money(g.shortageCost)} ₽
+            </span>
+          </div>
+        )}
 
         <div>
           <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
