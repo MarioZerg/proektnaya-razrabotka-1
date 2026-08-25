@@ -1,18 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
-import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import PriceAdviceTable from '@/components/crm/promotion/PriceAdviceTable';
 import PricePushConfirm from '@/components/crm/promotion/PricePushConfirm';
-import RobotSettingsCard from '@/components/crm/promotion/RobotSettingsCard';
-import RobotRunsList from '@/components/crm/promotion/RobotRunsList';
-import RobotManualMove from '@/components/crm/promotion/RobotManualMove';
+import RobotTabPanel from '@/components/crm/promotion/RobotTabPanel';
+import AdviceTabPanel from '@/components/crm/promotion/AdviceTabPanel';
 import {
   fetchRobotStatus,
   moveRobotPrices,
@@ -258,8 +251,6 @@ const PromotionPage = () => {
     );
   }
 
-  const s = data?.summary;
-
   return (
     <CrmLayout>
       <div className="space-y-5">
@@ -282,276 +273,42 @@ const PromotionPage = () => {
 
           {/* РОБОТ: поднимает цены всего магазина сам и сам останавливается. */}
           <TabsContent value="robot" className="space-y-4">
-            {robot?.settings ? (
-              <>
-                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  {/* Главная цифра: сколько прошли из заданного подъёма. */}
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-xs text-muted-foreground">
-                      Путь к цели
-                    </p>
-                    <p
-                      className={`text-2xl font-bold ${
-                        robot.driftPercent >= robot.settings.targetTotalPercent
-                          ? 'text-emerald-700'
-                          : 'text-amber-700'
-                      }`}
-                    >
-                      {robot.driftPercent > 0 ? '+' : ''}
-                      {robot.driftPercent}%
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      цель +{robot.settings.targetTotalPercent}%
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-xs text-muted-foreground">Состояние</p>
-                    <p className="text-2xl font-bold">
-                      {!robot.settings.isActive
-                        ? 'Выключен'
-                        : robot.settings.dryRun
-                          ? 'Наблюдает'
-                          : 'Работает'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {robot.settings.isActive
-                        ? `в ${robot.settings.runHour}:00 МСК, раз в ${robot.settings.stepDays} дн.`
-                        : 'шаги не делаются'}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-xs text-muted-foreground">
-                      Откат при падении
-                    </p>
-                    <p className="text-2xl font-bold">
-                      −{robot.settings.dropPercent}%
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      спроса — вернём цену
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-xs text-muted-foreground">
-                      Товаров под управлением
-                    </p>
-                    <p className="text-2xl font-bold">{robot.itemsCount}</p>
-                    <p className="text-xs text-muted-foreground">
-                      шаг {robot.settings.stepPercent}%
-                    </p>
-                  </div>
-                </div>
-
-                <RobotSettingsCard
-                  value={robot.settings}
-                  onChange={(v) => setRobot({ ...robot, settings: v })}
-                  onSave={saveRobot}
-                  busy={busy}
-                />
-
-                <RobotManualMove
-                  onMove={moveNow}
-                  busy={busy}
-                  dryRun={robot.settings.dryRun}
-                />
-
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="font-semibold">Журнал шагов</h2>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={runRobot}
-                    disabled={busy}
-                  >
-                    <Icon
-                      name={busy ? 'Loader2' : 'Play'}
-                      size={14}
-                      className={`mr-1.5 ${busy ? 'animate-spin' : ''}`}
-                    />
-                    Прогнать сейчас
-                  </Button>
-                </div>
-                <RobotRunsList runs={robot.runs} />
-              </>
-            ) : (
-              <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
-                <Icon name="Loader2" size={16} className="animate-spin" />
-                Загружаем робота…
-              </div>
-            )}
+            <RobotTabPanel
+              robot={robot}
+              busy={busy}
+              onSettingsChange={(v) => robot && setRobot({ ...robot, settings: v })}
+              onSave={saveRobot}
+              onMove={moveNow}
+              onRun={runRobot}
+            />
           </TabsContent>
 
           <TabsContent value="advice" className="space-y-4">
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowSettings((v) => !v)}>
-                <Icon name="Settings" size={14} className="mr-1.5" />
-                Правила
-              </Button>
-              <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-                <Icon
-                  name={loading ? 'Loader2' : 'RefreshCw'}
-                  size={14}
-                  className={`mr-1.5 ${loading ? 'animate-spin' : ''}`}
-                />
-                Пересчитать
-              </Button>
-            </div>
-
-        {showSettings && (
-          <Card className="border-border shadow-none">
-            <CardContent className="space-y-3 pt-6">
-              <div className="grid gap-3 sm:grid-cols-4">
-                <div className="space-y-1.5">
-                  <Label>Маржа от, %</Label>
-                  <Input
-                    type="number"
-                    value={marginMin}
-                    onChange={(e) => setMarginMin(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Маржа до, %</Label>
-                  <Input
-                    type="number"
-                    value={marginMax}
-                    onChange={(e) => setMarginMax(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Шаг цены, %</Label>
-                  <Input
-                    type="number"
-                    step="0.5"
-                    value={stepPercent}
-                    onChange={(e) => setStepPercent(e.target.value)}
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Мелкий шаг бережёт СПП
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Пауза, дней</Label>
-                  <Input
-                    type="number"
-                    value={stepDays}
-                    onChange={(e) => setStepDays(e.target.value)}
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Между шагами по одному товару
-                  </p>
-                </div>
-              </div>
-              <Button onClick={handleSaveStrategy} disabled={busy}>
-                <Icon name="Check" size={16} className="mr-1.5" />
-                Сохранить
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        <Tabs value={marketplace} onValueChange={(v) => setMarketplace(v as MarketplaceCode)}>
-          <TabsList>
-            {MARKETPLACES.map((m) => (
-              <TabsTrigger key={m.code} value={m.code}>
-                {m.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-
-          {MARKETPLACES.map((m) => (
-            <TabsContent key={m.code} value={m.code} className="space-y-4 pt-4">
-              {s && (
-                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-xs text-muted-foreground">Поднять цену</p>
-                    <p className="text-2xl font-bold text-emerald-700">{s.raise}</p>
-                    <p className="text-xs text-muted-foreground">маржа ниже цели</p>
-                  </div>
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-xs text-muted-foreground">Снизить цену</p>
-                    <p className="text-2xl font-bold text-amber-700">{s.lower}</p>
-                    <p className="text-xs text-muted-foreground">цена завышена</p>
-                  </div>
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-xs text-muted-foreground">В норме</p>
-                    <p className="text-2xl font-bold">{s.hold}</p>
-                    <p className="text-xs text-muted-foreground">трогать не нужно</p>
-                  </div>
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-xs text-muted-foreground">Реклама съедает</p>
-                    <p className="text-2xl font-bold">{s.avgAdPercent ?? 0}%</p>
-                    <p className="text-xs text-muted-foreground">от цены в среднем</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Эти товары прибыльны сами по себе — их топит только реклама.
-                  Поднимать им цену бесполезно: надо выключать бустинг. */}
-              {!!s?.killedByAds && s.killedByAds > 0 && (
-                <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
-                  <Icon
-                    name="TriangleAlert"
-                    size={16}
-                    className="mt-0.5 shrink-0 text-amber-700"
-                  />
-                  <div className="text-sm">
-                    <p className="font-medium text-amber-900">
-                      {s.killedByAds} позиций убыточны только из-за рекламы
-                    </p>
-                    <p className="text-amber-800">
-                      Без продвижения они были бы в плюсе. Поднимать цену тут
-                      бесполезно — выгоднее отключить им рекламу в кабинете
-                      площадки
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {selected.size > 0 && (
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 p-3">
-                  <span className="text-sm font-medium">Выбрано: {selected.size}</span>
-                  {/* Главное действие: система сама меняет цену на витрине.
-                      Раньше приходилось идти в кабинет площадки руками. */}
-                  <Button size="sm" onClick={() => setPushOpen(true)} disabled={busy}>
-                    <Icon name="Upload" size={14} className="mr-1.5" />
-                    Изменить цены на площадке
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => decide('applied')}
-                    disabled={busy}
-                  >
-                    <Icon name="Check" size={14} className="mr-1.5" />
-                    Уже менял сам
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => decide('skipped')}
-                    disabled={busy}
-                  >
-                    <Icon name="X" size={14} className="mr-1.5" />
-                    Не буду менять
-                  </Button>
-                </div>
-              )}
-
-              {loading ? (
-                <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
-                  <Icon name="Loader2" size={16} className="animate-spin" />
-                  Считаем советы…
-                </div>
-              ) : (
-                <PriceAdviceTable
-                  items={data?.items || []}
-                  selected={selected}
-                  onToggle={toggle}
-                  onToggleAll={toggleAll}
-                />
-              )}
-            </TabsContent>
-          ))}
-            </Tabs>
+            <AdviceTabPanel
+              marketplaces={MARKETPLACES}
+              marketplace={marketplace}
+              setMarketplace={setMarketplace}
+              data={data}
+              selected={selected}
+              loading={loading}
+              busy={busy}
+              showSettings={showSettings}
+              onToggleSettings={() => setShowSettings((v) => !v)}
+              onReload={load}
+              marginMin={marginMin}
+              marginMax={marginMax}
+              stepPercent={stepPercent}
+              stepDays={stepDays}
+              setMarginMin={setMarginMin}
+              setMarginMax={setMarginMax}
+              setStepPercent={setStepPercent}
+              setStepDays={setStepDays}
+              onSaveStrategy={handleSaveStrategy}
+              onToggle={toggle}
+              onToggleAll={toggleAll}
+              onPushOpen={() => setPushOpen(true)}
+              onDecide={decide}
+            />
           </TabsContent>
         </Tabs>
 
