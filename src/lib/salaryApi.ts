@@ -113,6 +113,9 @@ export interface SalaryPayout {
   paidAt: string;
   periodFrom: string | null;
   periodTo: string | null;
+  /** Реквизиты на момент выплаты. */
+  sbpPhone?: string;
+  sbpBank?: string;
 }
 
 export const fetchSalaryPayouts = async (userId?: number): Promise<SalaryPayout[]> => {
@@ -234,6 +237,14 @@ export interface PayoutPreview {
   firstDate: string | null;
   lastDate: string | null;
   cashBalance: number;
+  fullName?: string | null;
+  /** Номер для перевода по СБП — сотрудник указал его при оформлении документов. */
+  sbpPhone?: string;
+  sbpBank?: string;
+  /** Реквизиты сверены администратором. */
+  sbpConfirmed?: boolean;
+  /** Телефон входа: ориентир, если СБП не заполнен. */
+  loginPhone?: string;
 }
 
 export const previewPayout = (

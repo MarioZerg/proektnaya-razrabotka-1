@@ -596,7 +596,10 @@ def handler(event: dict, context) -> dict:
                 user_id_filter = params.get('userId')
                 cond = f"WHERE sp.user_id = {int(user_id_filter)}" if user_id_filter else ""
                 cur.execute(
-                    f"SELECT sp.id, sp.user_id, u.full_name, sp.amount, sp.paid_at, sp.period_from, sp.period_to "
+                    f"SELECT sp.id, sp.user_id, u.full_name, sp.amount, sp.paid_at, sp.period_from, sp.period_to, "
+                    # Реквизиты на момент выплаты. Если снимка нет (выплаты до
+                    # этой доработки) — показываем текущие из профиля.
+                    f"COALESCE(sp.sbp_phone, u.sbp_phone), COALESCE(sp.sbp_bank, u.sbp_bank) "
                     f"FROM salary_payouts sp JOIN users u ON u.id = sp.user_id "
                     f"{cond} ORDER BY sp.paid_at DESC LIMIT 100"
                 )
@@ -609,6 +612,8 @@ def handler(event: dict, context) -> dict:
                         'paidAt': r[4].isoformat() + 'Z',
                         'periodFrom': (r[5].isoformat() + 'Z') if r[5] else None,
                         'periodTo': (r[6].isoformat() + 'Z') if r[6] else None,
+                        'sbpPhone': r[7] or '',
+                        'sbpBank': r[8] or '',
                     }
                     for r in cur.fetchall()
                 ]
@@ -1067,12 +1072,33 @@ def handler(event: dict, context) -> dict:
                 cur.execute("SELECT COALESCE(SUM(amount), 0) FROM cash_box_transactions")
                 cash = float(cur.fetchone()[0])
 
+                # РЕКВИЗИТЫ ДЛЯ ПЕРЕВОДА.
+                #
+                # Деньги уходят по СБП, а номер лежал только в профиле: чтобы
+                # перевести, бухгалтер открывал вторую вкладку и переписывал
+                # телефон руками. Лишний шаг — лишний шанс отправить деньги не
+                # тому человеку. Отдаём номер сразу вместе с суммой.
+                cur.execute(
+                    "SELECT full_name, sbp_phone, sbp_bank, sbp_confirmed, phone "
+                    "FROM users WHERE id = %s",
+                    (int(user_id),),
+                )
+                u = cur.fetchone()
+
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
                     'amount': float(total or 0),
                     'count': int(cnt or 0),
                     'firstDate': str(d_min) if d_min else None,
                     'lastDate': str(d_max) if d_max else None,
                     'cashBalance': cash,
+                    'fullName': u[0] if u else None,
+                    'sbpPhone': (u[1] or '') if u else '',
+                    'sbpBank': (u[2] or '') if u else '',
+                    # Реквизиты, подтверждённые администратором, безопасны.
+                    # Неподтверждённые показываем, но с оговоркой.
+                    'sbpConfirmed': bool(u[3]) if u else False,
+                    # Телефон входа — запасной ориентир, если СБП не заполнен.
+                    'loginPhone': (u[4] or '') if u else '',
                 })}
 
             if action == 'payout':
@@ -1118,11 +1144,17 @@ def handler(event: dict, context) -> dict:
                 actor_id_sql = int(actor_id) if actor_id not in (None, '') else 'NULL'
                 cur.execute(
                     "INSERT INTO salary_payouts (user_id, amount, paid_by, "
-                    "  period_from, period_to) "
-                    "VALUES (%s, %s, %s, %s, %s) RETURNING id, paid_at",
+                    "  period_from, period_to, sbp_phone, sbp_bank) "
+                    "VALUES (%s, %s, %s, %s, %s, "
+                    # Снимок реквизитов: сотрудник может сменить номер, а
+                    # вопрос «куда ушли деньги в марте» останется.
+                    "  (SELECT sbp_phone FROM users WHERE id = %s), "
+                    "  (SELECT sbp_bank FROM users WHERE id = %s)) "
+                    "RETURNING id, paid_at",
                     (int(user_id), balance,
                      int(actor_id) if actor_id not in (None, '') else None,
-                     p_from or None, p_to or None),
+                     p_from or None, p_to or None,
+                     int(user_id), int(user_id)),
                 )
                 payout_id, paid_at = cur.fetchone()
 

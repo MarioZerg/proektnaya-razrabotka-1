@@ -60,7 +60,18 @@ const SalaryPayoutsTable = ({ payouts, loading, onDelete }: SalaryPayoutsTablePr
                     <TableCell>{p.id}</TableCell>
                     <TableCell className="whitespace-nowrap">{formatDateTime(p.paidAt)}</TableCell>
                     <TableCell className="whitespace-nowrap">{formatMoney(p.amount)} ₽</TableCell>
-                    <TableCell>{p.userName}</TableCell>
+                    <TableCell>
+                      <div>{p.userName}</div>
+                      {/* Реквизиты на момент перевода: если сотрудник потом
+                          сменит номер, здесь останется тот, на который ушли
+                          деньги. */}
+                      {!!p.sbpPhone && (
+                        <div className="text-xs text-muted-foreground">
+                          {p.sbpPhone}
+                          {p.sbpBank ? ` · ${p.sbpBank}` : ''}
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <ConfirmDeleteButton
                         title="Удалить выплату?"
