@@ -32,7 +32,7 @@ def _resp(status, body):
 def get_wb_credentials(cur):
     """Возвращает (api_key, use_sandbox, is_enabled) для WildBerries из marketplace_integrations."""
     cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'wildberries'"
+        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'wildberries' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
     )
     row = cur.fetchone()
     if not row:
@@ -1654,8 +1654,9 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                 "quantity, source, material, width, height, wb_order_id, marketplace_created_at, "
-                "marketplace_item_id) "
-                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s) "
+                "marketplace_item_id, shop_id) "
+                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, "
+                "(SELECT shop_id FROM marketplace_integrations WHERE marketplace_code = 'wildberries' AND is_enabled = true ORDER BY shop_id LIMIT 1)) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (
                     order_number,

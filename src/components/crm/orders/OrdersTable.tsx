@@ -17,6 +17,7 @@ import {
   PaginationLink,
 } from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
+import ShopBadge from '@/components/crm/ShopBadge';
 import type { Order } from '@/lib/ordersApi';
 import OrdersCards from '@/components/crm/orders/OrdersCards';
 
@@ -134,7 +135,12 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete, canManage }: OrdersTab
               <TableCell>
                 <Badge variant={statusVariant(o.status)}>{o.status}</Badge>
               </TableCell>
-              <TableCell className="font-medium">{o.orderNumber}</TableCell>
+              <TableCell className="font-medium">
+                <div className="flex items-center gap-1.5">
+                  {o.orderNumber}
+                  <ShopBadge name={o.shopName} color={o.shopColor} />
+                </div>
+              </TableCell>
               <TableCell>
                 <span className={marketplaceLogo[o.marketplace]?.className}>
                   {marketplaceLogo[o.marketplace]?.label || o.marketplace}

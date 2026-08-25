@@ -122,7 +122,7 @@ def _resp(status, body):
 def get_ozon_credentials(cur):
     """Возвращает (client_id, api_key, is_enabled) для OZON из marketplace_integrations."""
     cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon'"
+        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
     )
     row = cur.fetchone()
     if not row:
@@ -984,9 +984,9 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
                         "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                         "quantity, source, material, width, height, ozon_posting_number, ozon_status, "
                         "marketplace_created_at, marketplace_item_id, "
-                        "is_legal_entity, legal_company_name, legal_inn) "
+                        "is_legal_entity, legal_company_name, legal_inn, shop_id) "
                         "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, "
-                        "%s, %s, %s) "
+                        "%s, %s, %s, (SELECT shop_id FROM marketplace_integrations WHERE marketplace_code = 'ozon' AND is_enabled = true ORDER BY shop_id LIMIT 1)) "
                         "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                         (
                             unit_number, product_name, material, width, height,
@@ -1061,9 +1061,9 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
                     "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                     "quantity, source, material, width, height, ozon_posting_number, ozon_status, "
                     "marketplace_created_at, marketplace_item_id, "
-                    "is_legal_entity, legal_company_name, legal_inn) "
+                    "is_legal_entity, legal_company_name, legal_inn, shop_id) "
                     "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, "
-                    "%s, %s, %s) "
+                    "%s, %s, %s, (SELECT shop_id FROM marketplace_integrations WHERE marketplace_code = 'ozon' AND is_enabled = true ORDER BY shop_id LIMIT 1)) "
                     "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                     (
                         unique_number,

@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
+import ShopBadge from '@/components/crm/ShopBadge';
 import type { Order } from '@/lib/ordersApi';
 import {
   formatDate,
@@ -40,7 +41,10 @@ const OrdersCards = ({
           >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-semibold">{o.orderNumber}</div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-semibold">{o.orderNumber}</span>
+                  <ShopBadge name={o.shopName} color={o.shopColor} />
+                </div>
                 <div className="text-xs text-muted-foreground">#{o.id}</div>
               </div>
               <Badge variant={statusVariant(o.status)}>{o.status}</Badge>

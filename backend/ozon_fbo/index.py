@@ -37,7 +37,7 @@ def _resp(status, body):
 
 def get_ozon_credentials(cur):
     cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon'"
+        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
     )
     row = cur.fetchone()
     if not row:
@@ -375,10 +375,11 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
             cur,
             "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
             "quantity, source, material, width, height, cluster, product_barcode, marketplace_item_id, "
-            "product_ozon_sku, marketplace_created_at, supply_id) VALUES %s "
+            "product_ozon_sku, marketplace_created_at, supply_id, shop_id) VALUES %s "
             "ON CONFLICT (order_number) DO NOTHING RETURNING id",
             rows,
-            template="(%s, 'OZON', 'FBO', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            template="(%s, 'OZON', 'FBO', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                     "(SELECT shop_id FROM marketplace_integrations WHERE marketplace_code = 'ozon' AND is_enabled = true ORDER BY shop_id LIMIT 1))",
             fetch=True,
         )
         created = len(result)

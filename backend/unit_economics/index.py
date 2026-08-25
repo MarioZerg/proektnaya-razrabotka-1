@@ -95,7 +95,7 @@ def _credentials(cur, code):
     """Ключи доступа к кабинету площадки."""
     cur.execute(
         "SELECT is_enabled, credentials FROM marketplace_integrations "
-        "WHERE marketplace_code = %s",
+        "WHERE marketplace_code = %s ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1",
         (code,),
     )
     row = cur.fetchone()
@@ -254,7 +254,7 @@ def _sync_ozon(cur, cursor=None):
             "SELECT AVG(commission_fbo_percent), AVG(commission_fbs_percent), "
             "AVG(logistics_fbo), AVG(logistics_fbs), AVG(return_fbo), "
             "AVG(return_fbs) FROM marketplace_prices "
-            "WHERE marketplace_code = 'ozon'"
+            "WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
         )
         r = cur.fetchone() or ()
         keys = ('commission_fbo_percent', 'commission_fbs_percent',
@@ -2122,7 +2122,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT month::text, fee_name, amount, operations, category "
                     "FROM marketplace_fees_monthly "
-                    "WHERE marketplace_code = %s "
+                    "WHERE marketplace_code = %s ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
                     f"  AND month >= date_trunc('month', now()) "
                     f"      - interval '{months} months' "
                     "ORDER BY month DESC, amount DESC",
@@ -2144,7 +2144,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT month::text, revenue, ad_spend, sold_units "
                     "FROM marketplace_ad_monthly "
-                    "WHERE marketplace_code = %s "
+                    "WHERE marketplace_code = %s ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
                     f"  AND month >= date_trunc('month', now()) "
                     f"      - interval '{months} months' ",
                     (code,),
@@ -2270,7 +2270,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT month::text, ad_percent, ad_spend, revenue "
                     "FROM marketplace_ad_monthly "
-                    "WHERE marketplace_code = %s "
+                    "WHERE marketplace_code = %s ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
                     f"  AND month >= date_trunc('month', now()) "
                     f"      - interval '{months} months' "
                     "ORDER BY month",
@@ -2410,7 +2410,7 @@ def handler(event: dict, context) -> dict:
             # прочее он может задать сам — площадка их не отдаёт.
             cur.execute(
                 "SELECT synced_fields FROM marketplace_tariffs "
-                "WHERE marketplace_code = %s",
+                "WHERE marketplace_code = %s ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1",
                 (code,),
             )
             row = cur.fetchone()

@@ -12,7 +12,7 @@ def get_ozon_credentials(cur):
     """Ключи OZON из настроек интеграций."""
     cur.execute(
         "SELECT is_enabled, credentials FROM marketplace_integrations "
-        "WHERE marketplace_code = 'ozon'"
+        "WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
     )
     row = cur.fetchone()
     if not row:

@@ -53,7 +53,7 @@ def _parse_dt(value):
 # ---------- Креды ----------
 
 def get_ozon_credentials(cur):
-    cur.execute("SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon'")
+    cur.execute("SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1")
     row = cur.fetchone()
     if not row:
         return None, None, False
@@ -62,7 +62,7 @@ def get_ozon_credentials(cur):
 
 
 def get_wb_credentials(cur):
-    cur.execute("SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'wildberries'")
+    cur.execute("SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'wildberries' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1")
     row = cur.fetchone()
     if not row:
         return None, False

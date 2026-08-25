@@ -48,7 +48,7 @@ def parse_size_from_sku(sku):
 
 def get_ozon_credentials(cur):
     cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon'"
+        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
     )
     row = cur.fetchone()
     if not row:
@@ -138,7 +138,7 @@ def _ozon_err(status, data):
 
 def get_wb_credentials(cur):
     cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'wildberries'"
+        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'wildberries' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
     )
     row = cur.fetchone()
     if not row:

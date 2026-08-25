@@ -60,6 +60,9 @@ export interface Order {
   hangerNumber: number;
   /** Название вешалки, если задано. Пусто — показываем номер. */
   hangerName?: string | null;
+  /** Магазин заказа: МЕГАТЮЛЬ или ДЮНА. Цех общий, но вещи разные. */
+  shopName?: string | null;
+  shopColor?: string | null;
   /** Статус отправления на стороне OZON (только чтение, для FBS-заказов OZON). */
   ozonStatus?: string | null;
   ozonPostingNumber?: string | null;

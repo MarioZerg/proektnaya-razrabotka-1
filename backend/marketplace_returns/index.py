@@ -49,7 +49,7 @@ def log_action(cur, actor_id, actor_name, action, description, details=None):
 def get_credentials(cur, code):
     """Учётные данные маркетплейса из marketplace_integrations."""
     cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = %s",
+        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = %s ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1",
         (code,),
     )
     row = cur.fetchone()

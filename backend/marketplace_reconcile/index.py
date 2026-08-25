@@ -26,7 +26,7 @@ def _resp(code, body):
 def _creds(cur, code):
     cur.execute(
         "SELECT is_enabled, credentials FROM marketplace_integrations "
-        "WHERE marketplace_code = %s", (code,)
+        "WHERE marketplace_code = %s ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1", (code,)
     )
     row = cur.fetchone()
     if not row or not row[0] or not row[1]:

@@ -689,7 +689,10 @@ def handler(event: dict, context) -> dict:
                 "o.cut_at, o.sewn_at, "
                 # Название вешалки — последним полем, чтобы не сдвигать индексы
                 # остальных колонок (их читают по номерам).
-                "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number) "
+                "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number), "
+                # Магазин заказа: цех общий, но швея должна видеть, чью вещь
+                # шьёт — у МЕГАТЮЛЬ и ДЮНА разные упаковка и вложения.
+                "shp.name, shp.color "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -697,6 +700,7 @@ def handler(event: dict, context) -> dict:
                 "LEFT JOIN users su ON su.id = o.sewer_user_id "
                 "LEFT JOIN users pu ON pu.id = o.packer_user_id "
                 "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                "LEFT JOIN shops shp ON shp.id = o.shop_id "
                 # Берём все активные заказы и только свежую часть истории (см. CTE выше).
                 "WHERE o.sewing_status NOT IN ('Готовые', 'Со склада') "
                 "   OR o.id IN (SELECT id FROM recent_closed) "
@@ -761,7 +765,11 @@ def handler(event: dict, context) -> dict:
                     'cutterUserId': r[19],
                     'cutterUserName': r[20],
                     'hangerNumber': r[21],
-                    'hangerName': r[-1],
+                    # Три последних поля: вешалка, магазин и его цвет. Отсчёт с
+                    # конца, потому что колонок много и номера легко сбить.
+                    'hangerName': r[-3],
+                    'shopName': r[-2],
+                    'shopColor': r[-1],
                     'sewerUserId': r[22],
                     'sewerUserName': r[23],
                     'packerUserId': r[24],

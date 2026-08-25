@@ -13,12 +13,29 @@ export interface MarketplaceIntegration {
   isEnabled: boolean;
   credentials: Record<string, string>;
   updatedAt: string;
+  /** Какому магазину принадлежат ключи: МЕГАТЮЛЬ или ДЮНА. */
+  shopId: number;
 }
 
-export const fetchMarketplaceIntegrations = async (): Promise<MarketplaceIntegration[]> => {
+/**
+ * Магазин — отдельный кабинет на площадках со своими ключами и товарами.
+ * Производство при этом общее: заказы обоих магазинов шьёт один цех.
+ */
+export interface Shop {
+  id: number;
+  code: string;
+  name: string;
+  /** Цвет метки, чтобы заказы двух магазинов различались одним взглядом. */
+  color: string;
+}
+
+export const fetchMarketplaceIntegrations = async (): Promise<{
+  integrations: MarketplaceIntegration[];
+  shops: Shop[];
+}> => {
   const res = await fetch(MARKETPLACE_INTEGRATIONS_URL);
   const data = await res.json();
-  return data.integrations || [];
+  return { integrations: data.integrations || [], shops: data.shops || [] };
 };
 
 const postAction = async (payload: Record<string, unknown>) => {
@@ -36,6 +53,7 @@ const postAction = async (payload: Record<string, unknown>) => {
 
 export const updateMarketplaceIntegration = (
   marketplaceCode: MarketplaceCode,
+  shopId: number,
   fields: Partial<{ isEnabled: boolean; credentials: Record<string, string> }>,
   actorId?: number
-) => postAction({ action: 'update', marketplaceCode, actorId, ...fields });
+) => postAction({ action: 'update', marketplaceCode, shopId, actorId, ...fields });

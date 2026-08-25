@@ -34,7 +34,7 @@ def get_ym_credentials(cur):
     """Возвращает (api_key, campaign_id, is_enabled) для Яндекс Маркета."""
     cur.execute(
         "SELECT is_enabled, credentials FROM marketplace_integrations "
-        "WHERE marketplace_code = 'yandex_market'"
+        "WHERE marketplace_code = 'yandex_market' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
     )
     row = cur.fetchone()
     if not row:
@@ -280,8 +280,9 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                 "quantity, source, material, width, height, ym_order_id, ym_status, "
-                "marketplace_created_at, marketplace_item_id, group_key, group_size, group_position) "
-                "VALUES (%s, 'Yandex', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "marketplace_created_at, marketplace_item_id, group_key, group_size, group_position, shop_id) "
+                "VALUES (%s, 'Yandex', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                "(SELECT shop_id FROM marketplace_integrations WHERE marketplace_code = 'yandex_market' AND is_enabled = true ORDER BY shop_id LIMIT 1)) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (
                     unique_number,
