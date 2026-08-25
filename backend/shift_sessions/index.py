@@ -437,6 +437,17 @@ def handler(event: dict, context) -> dict:
             )
             latest_by_user = {r[0]: (r[1], r[2], r[3], r[4], r[5], r[6]) for r in cur.fetchall()}
 
+            # СКОЛЬКО ПРИНЕСЁТ СМЕНА.
+            #
+            # Оклад за смену начисляется при её ЗАКРЫТИИ, но человек об этом не
+            # знал: смена открыта, а денег нигде не видно — казалось, что работа
+            # не считается. Отдаём ставку заранее, чтобы показать сумму сразу.
+            cur.execute(
+                "SELECT sr.role, w.name, sr.rate FROM salary_rates sr "
+                "JOIN workshops w ON w.id = sr.workshop_id WHERE sr.rate > 0"
+            )
+            rate_by_role_workshop = {(r[0], r[1]): float(r[2]) for r in cur.fetchall()}
+
             employees = []
             for (uid, full_name, role, shift_number, shift_from, shift_to, workshop_name,
                  shift_free, emp_work_hours, emp_late_tol) in employee_rows:
@@ -487,6 +498,11 @@ def handler(event: dict, context) -> dict:
                     'homeWorkshopName': workshop_name,
                     'isGuest': is_guest,
                     'sessionRole': (latest[4] if is_open else None) or (role if is_open else None),
+                    # Ставка за смену — для повременных ролей (кладовщик, уборщица).
+                    # Сдельщики (швея, закройщик) получают за объём, у них пусто.
+                    'shiftRate': rate_by_role_workshop.get((role, workshop_name)),
+                    'shiftFrom': str(shift_from) if shift_from else None,
+                    'shiftTo': str(shift_to) if shift_to else None,
                 })
         finally:
             conn.close()
@@ -1022,17 +1038,33 @@ def handler(event: dict, context) -> dict:
                             # закрытие смены, поэтому проверяем день заранее и просто не
                             # начисляем второй оклад.
                             accrual_type = f'{shift_role}_shift'
+
+                            # ДЕНЬ НАЧИСЛЕНИЯ СЧИТАЕМ ОДИН РАЗ.
+                            #
+                            # Тут была ловушка: наличие оклада проверяли по
+                            # МОСКОВСКОЙ дате, а колонка accrued_for заполнялась
+                            # значением по умолчанию — датой UTC. После 21:00 по
+                            # Москве это уже разные сутки: проверка смотрела в
+                            # завтра, ничего не находила и шла вставлять, а
+                            # уникальный индекс по сегодняшней дате падал с
+                            # ошибкой — и смена вообще не закрывалась.
+                            #
+                            # Поэтому берём дату один раз и подставляем её и в
+                            # проверку, и в саму запись.
+                            cur.execute(f"SELECT {SQL_MSK_TODAY}")
+                            accrual_day = cur.fetchone()[0]
+
                             cur.execute(
                                 "SELECT 1 FROM salary_accruals WHERE user_id = %s "
-                                f"AND type = %s AND accrued_for = {SQL_MSK_TODAY}",
-                                (int(user_id), accrual_type),
+                                "AND type = %s AND accrued_for = %s",
+                                (int(user_id), accrual_type, accrual_day),
                             )
                             if not cur.fetchone():
                                 cur.execute(
-                                    "INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
-                                    "VALUES (%s, %s, %s, %s, 'Оклад за смену') "
+                                    "INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, accrued_for, description) "
+                                    "VALUES (%s, %s, %s, %s, %s, 'Оклад за смену') "
                                     "ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING",
-                                    (int(user_id), accrual_type, rate, session_id),
+                                    (int(user_id), accrual_type, rate, session_id, accrual_day),
                                 )
 
                 conn.commit()

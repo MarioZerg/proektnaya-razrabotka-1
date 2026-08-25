@@ -25,6 +25,7 @@ import VarikiPurchasesCard from '@/components/crm/variki/VarikiPurchasesCard';
 import WorkingTodayCard from '@/components/crm/dashboard/WorkingTodayCard';
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
+import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
 import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
 import FboShipmentsCard from '@/components/crm/dashboard/FboShipmentsCard';
@@ -43,6 +44,8 @@ const CrmDashboard = () => {
   const isCutter = user?.role === 'cutter';
   const isSewer = user?.role === 'sewer';
   const canSeeWarehouseWidgets = user?.role === 'admin' || isStorekeeperRole(user?.role);
+  // Кладовщик и старший кладовщик: у них общее рабочее пространство склада.
+  const isStorekeeper = isStorekeeperRole(user?.role);
   // Кладовщик и менеджер видят календарь-график смен (какие смены сегодня работают),
   // но без управления сменами сотрудников — это только для админа.
   const canSeeShiftCalendar = isAdmin || isStorekeeperRole(user?.role) || user?.role === 'manager';
@@ -373,11 +376,25 @@ const CrmDashboard = () => {
   const content = (
     <div className="space-y-8">
       <div>
-        <h1 className="text-xl font-bold">Главная</h1>
+        {/* Кладовщику это не «Главная» вообще, а ЕГО рабочее место: он
+            открывает смену и весь день работает на складе. Обращение по имени
+            и своя смена сразу под заголовком превращают общий дашборд в
+            личное пространство. */}
+        <h1 className="text-xl font-bold">
+          {isStorekeeper ? `Склад · ${user?.name || ''}`.trim() : 'Главная'}
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Обзор производства и складских процессов на сегодня
+          {isStorekeeper
+            ? 'Ваша смена, приёмка и отгрузки на сегодня'
+            : 'Обзор производства и складских процессов на сегодня'}
         </p>
       </div>
+
+      {/* Своя смена — первое, что видит кладовщик: идёт ли она и сколько
+          принесёт при закрытии. */}
+      {isStorekeeper && (
+        <MyShiftCard me={myShiftStatus} loading={shiftsLoading} />
+      )}
 
       {/* Решения склада, которые стоят денег, — сразу перед виджетами: админ видит их
           первыми, ещё до сводки по цеху. */}

@@ -14,6 +14,11 @@ export interface EmployeeShiftStatus {
    * профиля), если сотрудник зашёл гостем в другую смену. */
   sessionWorkshopId: number | null;
   sessionShiftNumber: number | null;
+  /** Оклад за смену для повременных ролей (кладовщик, уборщица). У сдельщиков пусто. */
+  shiftRate?: number | null;
+  /** График по профилю: с какого по какое время смена. */
+  shiftFrom?: string | null;
+  shiftTo?: string | null;
   /** Должность, в которой сотрудник работает в текущей открытой смене. */
   sessionRole?: string | null;
   /** Название цеха, в котором сотрудник работает прямо сейчас. */
