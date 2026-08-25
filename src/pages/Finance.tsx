@@ -11,6 +11,7 @@ import {
   fetchCashBox,
   createManualAccrual,
   createPenalty,
+  createDeduction,
   updateAccrual,
   deleteAccrual,
   payoutSalary,
@@ -57,6 +58,9 @@ const Finance = () => {
   const [totalPenalties, setTotalPenalties] = useState(0);
   const [penaltiesCount, setPenaltiesCount] = useState(0);
   const [penaltiesUsers, setPenaltiesUsers] = useState(0);
+  // Часть списаний — обычные удержания без вины: спецодежда, товар, аванс.
+  const [totalDeductions, setTotalDeductions] = useState(0);
+  const [deductionsCount, setDeductionsCount] = useState(0);
   const [period1Total, setPeriod1Total] = useState(0);
   const [period2Total, setPeriod2Total] = useState(0);
   const [operationsLoading, setOperationsLoading] = useState(true);
@@ -157,6 +161,8 @@ const Finance = () => {
         setTotalPenalties(data.totalPenalties);
         setPenaltiesCount(data.penaltiesCount);
         setPenaltiesUsers(data.penaltiesUsers);
+        setTotalDeductions(data.totalDeductions);
+        setDeductionsCount(data.deductionsCount);
         setPeriod1Total(data.period1Total);
         setPeriod2Total(data.period2Total);
       })
@@ -213,6 +219,22 @@ const Finance = () => {
     try {
       await createPenalty({ userId, amount, description, actorId: user?.id, actorName: user?.name });
       toast({ title: 'Штраф выписан' });
+      loadOperations();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSavingAccrual(false);
+    }
+  };
+
+  // Удержание — обычное списание с сотрудника, без вины: спецодежда, выкуп
+  // товара, аванс. Отдельно от штрафа, чтобы человек не видел у себя
+  // «наказание» там, где он просто рассчитался за покупку.
+  const handleDeduction = async (userId: number, amount: number, description: string) => {
+    setSavingAccrual(true);
+    try {
+      await createDeduction({ userId, amount, description, actorId: user?.id, actorName: user?.name });
+      toast({ title: 'Удержание проведено' });
       loadOperations();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
@@ -400,6 +422,7 @@ const Finance = () => {
               savingAccrual={savingAccrual}
               onManualAccrual={handleManualAccrual}
               onPenalty={handlePenalty}
+              onDeduction={handleDeduction}
               onPayout={handlePayout}
             />
             {/* Итог по выбранному фильтру: главный смысл фильтра по датам — увидеть,
@@ -436,6 +459,8 @@ const Finance = () => {
               totalPenalties={totalPenalties}
               penaltiesCount={penaltiesCount}
               penaltiesUsers={penaltiesUsers}
+              totalDeductions={totalDeductions}
+              deductionsCount={deductionsCount}
               // Клик по «Показать все штрафы» ставит фильтр таблицы слева:
               // админ сразу видит, кому и за что начислено удержание.
               onShowPenalties={() => {

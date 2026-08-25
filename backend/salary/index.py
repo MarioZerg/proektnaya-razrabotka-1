@@ -793,6 +793,19 @@ def handler(event: dict, context) -> dict:
             penalties_count = int(pen_row[1])
             penalties_users = int(pen_row[2])
 
+            # Из общей суммы списаний отделяем удержания без вины: спецодежда,
+            # выкупленный товар, аванс. Смешивать их со штрафами нельзя — иначе
+            # по сводке кажется, что в цехе вал нарушений, хотя люди просто
+            # рассчитываются за покупки.
+            cur.execute(
+                "SELECT COALESCE(SUM(amount), 0), COUNT(*) "
+                "FROM salary_accruals "
+                "WHERE type = 'deduction' AND paid_at IS NULL"
+            )
+            ded_row = cur.fetchone()
+            total_deductions = float(ded_row[0])
+            deductions_count = int(ded_row[1])
+
             today = date.today()
             if today.day >= 20:
                 period1_from = today.replace(day=20)
@@ -850,6 +863,9 @@ def handler(event: dict, context) -> dict:
                 'totalPenalties': total_penalties,
                 'penaltiesCount': penalties_count,
                 'penaltiesUsers': penalties_users,
+                # Удержания без вины — отдельно от штрафов.
+                'totalDeductions': total_deductions,
+                'deductionsCount': deductions_count,
                 'period1Total': period1_total,
                 'period2Total': period2_total,
             }),
@@ -933,7 +949,16 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 
-            if action == 'penalty':
+            # Два способа списать деньги с сотрудника — и это РАЗНЫЕ вещи.
+            #
+            #  · penalty  — штраф: наказание за нарушение, с виной работника;
+            #  · deduction — удержание: человек просто должен компании. Спецодежда,
+            #    материал для себя, товар из магазина, погашение аванса. Вины нет.
+            #
+            # Раньше любое списание проходило штрафом. Из-за этого удержание за
+            # купленную ткань выглядело в отчёте наказанием, а в сводке
+            # «дисциплина» копились суммы, к дисциплине отношения не имеющие.
+            if action in ('penalty', 'deduction'):
                 user_id = body_data.get('userId')
                 amount = body_data.get('amount')
                 description = (body_data.get('description') or '').strip()
@@ -949,13 +974,14 @@ def handler(event: dict, context) -> dict:
                 actor_id_sql = int(actor_id) if actor_id not in (None, '') else 'NULL'
                 cur.execute(
                     f"INSERT INTO salary_accruals (user_id, type, amount, description, created_by) "
-                    f"VALUES ({int(user_id)}, 'penalty', {penalty_amount}, '{description_esc}', {actor_id_sql}) "
+                    f"VALUES ({int(user_id)}, '{action}', {penalty_amount}, '{description_esc}', {actor_id_sql}) "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
+                word = 'Штраф' if action == 'penalty' else 'Удержание'
                 log_action(
-                    cur, actor_id, actor_name, 'penalty', 'salary_accrual', new_id,
-                    f'Штраф сотруднику #{user_id}: {penalty_amount} ({description})',
+                    cur, actor_id, actor_name, action, 'salary_accrual', new_id,
+                    f'{word} сотруднику #{user_id}: {penalty_amount} ({description})',
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}

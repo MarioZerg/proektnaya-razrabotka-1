@@ -26,6 +26,8 @@ interface FinanceToolbarProps {
   savingAccrual: boolean;
   onManualAccrual: (userId: number, amount: number, description: string) => Promise<void>;
   onPenalty: (userId: number, amount: number, description: string) => Promise<void>;
+  /** Списание без вины: спецодежда, выкуп товара, аванс. */
+  onDeduction: (userId: number, amount: number, description: string) => Promise<void>;
   onPayout: (userId: number) => Promise<void>;
 }
 
@@ -42,6 +44,7 @@ const FinanceToolbar = ({
   savingAccrual,
   onManualAccrual,
   onPenalty,
+  onDeduction,
   onPayout,
 }: FinanceToolbarProps) => {
   const handleReset = () => {
@@ -77,6 +80,7 @@ const FinanceToolbar = ({
     <div className="space-y-4">
       <div className="flex flex-wrap gap-3">
         <ManualAccrualDialog employees={employees} mode="accrual" saving={savingAccrual} onSubmit={onManualAccrual} />
+        <ManualAccrualDialog employees={employees} mode="deduction" saving={savingAccrual} onSubmit={onDeduction} />
         <ManualAccrualDialog employees={employees} mode="penalty" saving={savingAccrual} onSubmit={onPenalty} />
         <PayoutDialog employees={employees} saving={savingAccrual} onSubmit={onPayout} />
       </div>
@@ -111,6 +115,7 @@ const FinanceToolbar = ({
             <SelectItem value="admin_daily">Оклад администратора</SelectItem>
             <SelectItem value="manual">Ручное начисление</SelectItem>
             <SelectItem value="penalty">Штраф</SelectItem>
+            <SelectItem value="deduction">Удержание</SelectItem>
             <SelectItem value="bonus">Бонус за выработку</SelectItem>
           </SelectContent>
         </Select>

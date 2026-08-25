@@ -20,14 +20,55 @@ import {
 import Icon from '@/components/ui/icon';
 import type { Employee } from '@/lib/usersApi';
 
+/**
+ * Три вида ручной операции с зарплатой сотрудника.
+ *
+ *  · accrual   — начислить деньги (премия, доплата);
+ *  · penalty   — штраф: наказание за нарушение, есть вина;
+ *  · deduction — удержание: человек должен компании. Спецодежда, выкупленный
+ *    товар, материал для себя, погашение аванса. Вины нет, и называть это
+ *    штрафом нельзя: сотрудник видит запись в своём кабинете.
+ *
+ * Деньги списываются одинаково, разница — в смысле и в отчётах.
+ */
+type DialogMode = 'accrual' | 'penalty' | 'deduction';
+
+const MODE_TEXT: Record<
+  DialogMode,
+  { button: string; title: string; submit: string; hint: string; icon: string }
+> = {
+  accrual: {
+    button: 'Ручное начисление',
+    title: 'Ручное начисление средств',
+    submit: 'Начислить',
+    hint: 'За что начисление',
+    icon: 'Plus',
+  },
+  penalty: {
+    button: 'Выписать штраф',
+    title: 'Выписать штраф',
+    submit: 'Выписать штраф',
+    hint: 'Причина штрафа',
+    icon: 'TriangleAlert',
+  },
+  deduction: {
+    button: 'Удержание',
+    title: 'Удержать из зарплаты',
+    submit: 'Удержать',
+    hint: 'За что удержание: спецодежда, товар, аванс',
+    icon: 'Wallet',
+  },
+};
+
 interface ManualAccrualDialogProps {
   employees: Employee[];
-  mode: 'accrual' | 'penalty';
+  mode: DialogMode;
   saving: boolean;
   onSubmit: (userId: number, amount: number, description: string) => Promise<void>;
 }
 
 const ManualAccrualDialog = ({ employees, mode, saving, onSubmit }: ManualAccrualDialogProps) => {
+  const text = MODE_TEXT[mode];
   const [open, setOpen] = useState(false);
   const [userId, setUserId] = useState('');
   const [amount, setAmount] = useState('');
@@ -45,14 +86,16 @@ const ManualAccrualDialog = ({ employees, mode, saving, onSubmit }: ManualAccrua
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant={mode === 'penalty' ? 'destructive' : 'default'}>
-          <Icon name={mode === 'penalty' ? 'AlertTriangle' : 'Plus'} size={16} className="mr-2" />
-          {mode === 'penalty' ? 'Выписать штраф' : 'Ручное начисление'}
+        {/* Удержание — не наказание, поэтому кнопка не красная: красным
+            выделяем только штраф, чтобы его нельзя было нажать по инерции. */}
+        <Button variant={mode === 'penalty' ? 'destructive' : mode === 'deduction' ? 'outline' : 'default'}>
+          <Icon name={text.icon} size={16} className="mr-2" />
+          {text.button}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{mode === 'penalty' ? 'Выписать штраф' : 'Ручное начисление средств'}</DialogTitle>
+          <DialogTitle>{text.title}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-1.5">
@@ -80,11 +123,20 @@ const ManualAccrualDialog = ({ employees, mode, saving, onSubmit }: ManualAccrua
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              placeholder={mode === 'penalty' ? 'Причина штрафа' : 'За что начисление'}
+              placeholder={text.hint}
             />
           </div>
+          {/* Сотрудник увидит эту запись у себя. Объясняем разницу прямо в
+              форме, чтобы обычный расчёт за спецодежду не ушёл штрафом. */}
+          {mode === 'deduction' && (
+            <p className="flex items-start gap-1.5 rounded-md bg-muted/60 p-2 text-xs text-muted-foreground">
+              <Icon name="Info" size={13} className="mt-0.5 shrink-0" />
+              Сумма вычтется из зарплаты, но это не штраф: в кабинете сотрудника
+              запись будет называться «Удержание»
+            </p>
+          )}
           <Button className="w-full" onClick={handleSubmit} disabled={saving || !userId || !amount || !description.trim()}>
-            {saving ? 'Сохранение...' : mode === 'penalty' ? 'Выписать штраф' : 'Начислить'}
+            {saving ? 'Сохранение...' : text.submit}
           </Button>
         </div>
       </DialogContent>

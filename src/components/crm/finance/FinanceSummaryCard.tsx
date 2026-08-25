@@ -9,6 +9,9 @@ interface FinanceSummaryCardProps {
   totalPenalties: number;
   penaltiesCount: number;
   penaltiesUsers: number;
+  /** Часть удержаний БЕЗ вины: спецодежда, выкуп товара, аванс. */
+  totalDeductions: number;
+  deductionsCount: number;
   period1Total: number;
   period2Total: number;
   loading: boolean;
@@ -32,11 +35,18 @@ const FinanceSummaryCard = ({
   totalPenalties,
   penaltiesCount,
   penaltiesUsers,
+  totalDeductions,
+  deductionsCount,
   period1Total,
   period2Total,
   loading,
   onShowPenalties,
 }: FinanceSummaryCardProps) => {
+  // Настоящие штрафы — это всё списанное МИНУС удержания без вины. Складывать
+  // их в одну строку нельзя: расчёт за спецодежду выглядел бы нарушением.
+  const fines = totalPenalties - totalDeductions;
+  const finesCount = penaltiesCount - deductionsCount;
+
   return (
     <Card className="border-border shadow-none">
       <CardHeader>
@@ -63,7 +73,7 @@ const FinanceSummaryCard = ({
                 считал, что удержание не прошло. */}
             {totalPenalties < 0 && (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
-                <p className="text-muted-foreground">Удержания (штрафы, ещё не выплачено)</p>
+                <p className="text-muted-foreground">Списано с сотрудников (ещё не выплачено)</p>
                 <p className="text-xl font-bold text-destructive">
                   {formatMoney(totalPenalties)} ₽
                 </p>
@@ -71,13 +81,39 @@ const FinanceSummaryCard = ({
                   {penaltiesCount} шт. у {penaltiesUsers} {personWord(penaltiesUsers)} · уже
                   вычтено из суммы к выплате
                 </p>
+
+                {/* Штрафы и удержания разделены: по одной сумме нельзя понять,
+                    это нарушения в цехе или люди рассчитались за спецодежду. */}
+                {totalDeductions < 0 && (
+                  <div className="mt-2 space-y-1 border-t border-destructive/20 pt-2 text-xs">
+                    {fines < 0 && (
+                      <p className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5 text-muted-foreground">
+                          <Icon name="TriangleAlert" size={12} className="text-destructive" />
+                          Штрафы · {finesCount} шт.
+                        </span>
+                        <span className="font-semibold text-destructive">
+                          {formatMoney(fines)} ₽
+                        </span>
+                      </p>
+                    )}
+                    <p className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-muted-foreground">
+                        <Icon name="Wallet" size={12} />
+                        Удержания без вины · {deductionsCount} шт.
+                      </span>
+                      <span className="font-semibold">{formatMoney(totalDeductions)} ₽</span>
+                    </p>
+                  </div>
+                )}
+
                 {onShowPenalties && (
                   <button
                     type="button"
                     onClick={onShowPenalties}
                     className="mt-1.5 text-xs font-medium text-destructive underline underline-offset-2"
                   >
-                    Показать все штрафы
+                    Показать все списания
                   </button>
                 )}
               </div>

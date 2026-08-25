@@ -58,6 +58,10 @@ export interface SalarySummary {
   /** Сколько всего записей-удержаний и по скольким сотрудникам. */
   penaltiesCount: number;
   penaltiesUsers: number;
+  /** Удержания БЕЗ вины (спецодежда, выкуп товара, аванс) — часть totalPenalties,
+   * но показывается отдельно: это не нарушения, а расчёты с сотрудником. */
+  totalDeductions: number;
+  deductionsCount: number;
   period1Total: number;
   period2Total: number;
   /** Сумма по ВСЕМ записям текущего фильтра (не только видимой страницы). */
@@ -93,6 +97,8 @@ export const fetchSalarySummary = async (filters?: {
     totalPenalties: data.totalPenalties ?? 0,
     penaltiesCount: data.penaltiesCount ?? 0,
     penaltiesUsers: data.penaltiesUsers ?? 0,
+    totalDeductions: data.totalDeductions ?? 0,
+    deductionsCount: data.deductionsCount ?? 0,
     period1Total: data.period1Total ?? 0,
     period2Total: data.period2Total ?? 0,
     filteredTotal: data.filteredTotal ?? 0,
@@ -189,6 +195,21 @@ export const createPenalty = (payload: {
   actorId?: number;
   actorName?: string;
 }) => postAction({ action: 'penalty', ...payload });
+
+/**
+ * Удержание — списание БЕЗ вины сотрудника.
+ *
+ * Спецодежда, купленный у компании товар, материал для себя, погашение аванса.
+ * Деньги вычитаются так же, как по штрафу, но в отчётах и в личном кабинете
+ * это не наказание: человек рассчитывается за покупку, а не нарушил правило.
+ */
+export const createDeduction = (payload: {
+  userId: number;
+  amount: number;
+  description: string;
+  actorId?: number;
+  actorName?: string;
+}) => postAction({ action: 'deduction', ...payload });
 
 export const deleteAccrual = (id: number, actorId?: number, actorName?: string) =>
   postAction({ action: 'delete_accrual', id, actorId, actorName });

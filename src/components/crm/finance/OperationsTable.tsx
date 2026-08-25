@@ -62,10 +62,18 @@ const OperationsTable = ({
             <div key={op.id} className="rounded-md border border-border bg-card p-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-1.5">
+                  {/* Штраф — красный, удержание — янтарное: по цвету сразу
+                      видно, наказание это или обычный расчёт. */}
                   <Icon
                     name={op.amount < 0 ? 'MinusCircle' : 'PlusCircle'}
                     size={15}
-                    className={op.amount < 0 ? 'text-destructive' : 'text-emerald-600'}
+                    className={
+                      op.type === 'penalty'
+                        ? 'text-destructive'
+                        : op.amount < 0
+                          ? 'text-amber-600'
+                          : 'text-emerald-600'
+                    }
                   />
                   <span className="text-sm font-medium">
                     {accrualTypeLabels[op.type] || op.type}
@@ -73,7 +81,11 @@ const OperationsTable = ({
                 </div>
                 <span
                   className={`whitespace-nowrap text-base font-bold ${
-                    op.amount < 0 ? 'text-destructive' : 'text-emerald-600'
+                    op.type === 'penalty'
+                      ? 'text-destructive'
+                      : op.amount < 0
+                        ? 'text-amber-600'
+                        : 'text-emerald-600'
                   }`}
                 >
                   {formatMoney(op.amount)} ₽
@@ -151,7 +163,13 @@ const OperationsTable = ({
                       <Icon
                         name={op.amount < 0 ? 'MinusCircle' : 'PlusCircle'}
                         size={14}
-                        className={op.amount < 0 ? 'text-destructive' : 'text-emerald-600'}
+                        className={
+                          op.type === 'penalty'
+                            ? 'text-destructive'
+                            : op.amount < 0
+                              ? 'text-amber-600'
+                              : 'text-emerald-600'
+                        }
                       />
                       <span className="text-xs">{accrualTypeLabels[op.type] || op.type}</span>
                     </div>

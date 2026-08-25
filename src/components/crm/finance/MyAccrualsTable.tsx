@@ -44,9 +44,15 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
               <span className="text-sm font-medium">
                 {accrualTypeLabels[a.type] || a.type}
               </span>
+              {/* Красным — только штраф. Удержание за спецодежду или товар
+                  тоже минус, но это не наказание, и пугать им не нужно. */}
               <span
                 className={`whitespace-nowrap font-semibold ${
-                  a.amount < 0 ? 'text-destructive' : ''
+                  a.type === 'penalty'
+                    ? 'text-destructive'
+                    : a.amount < 0
+                      ? 'text-amber-700'
+                      : ''
                 }`}
               >
                 {formatMoney(a.amount)} ₽
@@ -112,7 +118,15 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
                     </p>
                   )}
                 </TableCell>
-                <TableCell className={`whitespace-nowrap font-medium ${a.amount < 0 ? 'text-destructive' : ''}`}>
+                <TableCell
+                  className={`whitespace-nowrap font-medium ${
+                    a.type === 'penalty'
+                      ? 'text-destructive'
+                      : a.amount < 0
+                        ? 'text-amber-700'
+                        : ''
+                  }`}
+                >
                   {formatMoney(a.amount)} ₽
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-xs">{formatDate(a.accruedFor)}</TableCell>
