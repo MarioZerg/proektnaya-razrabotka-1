@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import CrmLayout from '@/components/crm/CrmLayout';
-import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
@@ -25,18 +23,9 @@ import {
   type CashBoxTransaction,
   type PendingPayout,
 } from '@/lib/salaryApi';
-import FinanceSummaryCard from '@/components/crm/finance/FinanceSummaryCard';
-import ManagerAccrualsPanel from '@/components/crm/finance/ManagerAccrualsPanel';
-import FinanceToolbar from '@/components/crm/finance/FinanceToolbar';
-import OperationsTable from '@/components/crm/finance/OperationsTable';
-import SalaryPayoutsTable from '@/components/crm/finance/SalaryPayoutsTable';
-import SalaryRatesCard from '@/components/crm/finance/SalaryRatesCard';
-import MyAccrualsTable from '@/components/crm/finance/MyAccrualsTable';
-import MyAccrualsFilter from '@/components/crm/finance/MyAccrualsFilter';
-import MyPayoutsCard from '@/components/crm/finance/MyPayoutsCard';
-import CashBoxCard from '@/components/crm/finance/CashBoxCard';
-import MissedAccrualsAlert from '@/components/crm/finance/MissedAccrualsAlert';
-import { formatMoney } from '@/components/crm/finance/financeShared';
+import ManagerFinanceView from '@/components/crm/finance/ManagerFinanceView';
+import MySalaryView from '@/components/crm/finance/MySalaryView';
+import AdminFinanceView from '@/components/crm/finance/AdminFinanceView';
 
 const Finance = () => {
   const { user } = useAuth();
@@ -330,171 +319,71 @@ const Finance = () => {
   // процент с денег, пришедших на счёт по недельным отчётам площадки.
   // Показывать ему экран цеховых начислений бессмысленно — он там пустой.
   if (user?.role === 'manager' && user?.id) {
-    return (
-      <CrmLayout>
-        <div className="space-y-6">
-          <div>
-            <h1 className="text-xl font-bold">Мои финансы</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Процент с продаж по недельным отчётам маркетплейсов
-            </p>
-          </div>
-          <ManagerAccrualsPanel userId={user.id} />
-        </div>
-      </CrmLayout>
-    );
+    return <ManagerFinanceView userId={user.id} />;
   }
 
   if (user?.role !== 'admin') {
     return (
-      <CrmLayout>
-        <div className="space-y-6">
-          <div>
-            <h1 className="text-xl font-bold">Моя зарплата</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Начисления за выполненную работу и история выплат
-            </p>
-          </div>
-
-          {myLocked && !myLoading ? (
-            // Первые две недели зарплата скрыта: новичок только осваивается, суммы
-            // прыгают, а ранние сравнения с коллегами демотивируют. Откроется сама.
-            <div className="rounded-md border border-dashed border-border bg-muted/40 p-8 text-center">
-              <Icon name="Lock" size={40} className="mx-auto text-muted-foreground" />
-              <p className="mt-3 text-lg font-semibold">Зарплата пока закрыта</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Раздел откроется автоматически через {myDaysLeft}{' '}
-                {myDaysLeft % 10 === 1 && myDaysLeft % 100 !== 11
-                  ? 'день'
-                  : [2, 3, 4].includes(myDaysLeft % 10) && ![12, 13, 14].includes(myDaysLeft % 100)
-                    ? 'дня'
-                    : 'дней'}{' '}
-                — через две недели после начала работы
-              </p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Все начисления сохраняются, ничего не потеряется
-              </p>
-            </div>
-          ) : (
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
-            <div className="space-y-4 lg:col-span-3">
-              <MyAccrualsFilter
-                dateFrom={myDateFrom}
-                dateTo={myDateTo}
-                setDateFrom={setMyDateFrom}
-                setDateTo={setMyDateTo}
-                earned={myEarned}
-                penalties={myPenalties}
-                count={myFiltered.length}
-              />
-              <MyAccrualsTable accruals={myFiltered} loading={myLoading} />
-            </div>
-            <div className="space-y-6 lg:col-span-1">
-              <div className="rounded-md border border-border p-4">
-                <p className="text-sm text-muted-foreground">К выплате</p>
-                <p className="text-xl font-bold">{formatMoney(myBalance)} ₽</p>
-              </div>
-              <MyPayoutsCard payouts={myPayouts} loading={myLoading} />
-            </div>
-          </div>
-          )}
-        </div>
-      </CrmLayout>
+      <MySalaryView
+        myLocked={myLocked}
+        myLoading={myLoading}
+        myDaysLeft={myDaysLeft}
+        myDateFrom={myDateFrom}
+        myDateTo={myDateTo}
+        setMyDateFrom={setMyDateFrom}
+        setMyDateTo={setMyDateTo}
+        myEarned={myEarned}
+        myPenalties={myPenalties}
+        myFiltered={myFiltered}
+        myBalance={myBalance}
+        myPayouts={myPayouts}
+      />
     );
   }
 
   return (
-    <CrmLayout>
-      <div className="space-y-6">
-        <h1 className="text-xl font-bold">Финансы компании</h1>
-
-        {/* Люди работали, а денег им не начислили. Молчаливая потеря: ошибки нет,
-            человек просто остаётся без зарплаты. Показываем сразу под шапкой. */}
-        <MissedAccrualsAlert />
-
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
-          <div className="space-y-4 lg:col-span-3">
-            <FinanceToolbar
-              employees={employees}
-              userFilter={userFilter}
-              setUserFilter={setUserFilter}
-              typeFilter={typeFilter}
-              setTypeFilter={setTypeFilter}
-              dateFrom={dateFrom}
-              setDateFrom={setDateFrom}
-              dateTo={dateTo}
-              setDateTo={setDateTo}
-              savingAccrual={savingAccrual}
-              onManualAccrual={handleManualAccrual}
-              onPenalty={handlePenalty}
-              onDeduction={handleDeduction}
-              pendingPayouts={pendingPayouts}
-              onPayout={handlePayout}
-            />
-            {/* Итог по выбранному фильтру: главный смысл фильтра по датам — увидеть,
-                сколько сотрудник заработал за период. Считается по всем записям
-                выборки, а не по видимой странице. */}
-            {(userFilter !== 'all' || typeFilter !== 'all' || dateFrom || dateTo) &&
-              !operationsLoading && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
-                  <span className="text-sm text-muted-foreground">
-                    Начислено по выбранному фильтру
-                    {userFilter !== 'all' &&
-                      `: ${employees.find((e) => String(e.id) === userFilter)?.fullName || ''}`}
-                  </span>
-                  <span className="text-lg font-bold">{formatMoney(filteredTotal)}</span>
-                </div>
-              )}
-
-            <OperationsTable
-              operations={operations}
-              loading={operationsLoading}
-              page={operationsPage}
-              setPage={setOperationsPage}
-              totalPages={totalPages}
-              savingAccrual={savingAccrual}
-              onDelete={handleDeleteAccrual}
-              onEdit={handleEditAccrual}
-            />
-          </div>
-
-          <div className="space-y-6 lg:col-span-1">
-            <FinanceSummaryCard
-              totalToAccrue={totalToAccrue}
-              totalDebts={totalDebts}
-              totalPenalties={totalPenalties}
-              penaltiesCount={penaltiesCount}
-              penaltiesUsers={penaltiesUsers}
-              totalDeductions={totalDeductions}
-              deductionsCount={deductionsCount}
-              // Клик по «Показать все штрафы» ставит фильтр таблицы слева:
-              // админ сразу видит, кому и за что начислено удержание.
-              onShowPenalties={() => {
-                setTypeFilter('penalty');
-                setUserFilter('all');
-                setOperationsPage(1);
-              }}
-              period1Total={period1Total}
-              period2Total={period2Total}
-              loading={operationsLoading}
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <CashBoxCard
-            balance={cashBalance}
-            transactions={cashTransactions}
-            loading={cashLoading}
-            saving={savingAccrual}
-            onDeposit={handleCashDeposit}
-          />
-          <SalaryRatesCard onUpdate={handleUpdateRate} />
-        </div>
-
-        <SalaryPayoutsTable payouts={payouts} loading={payoutsLoading} onDelete={handleDeletePayout} />
-      </div>
-    </CrmLayout>
+    <AdminFinanceView
+      employees={employees}
+      userFilter={userFilter}
+      setUserFilter={setUserFilter}
+      typeFilter={typeFilter}
+      setTypeFilter={setTypeFilter}
+      dateFrom={dateFrom}
+      setDateFrom={setDateFrom}
+      dateTo={dateTo}
+      setDateTo={setDateTo}
+      savingAccrual={savingAccrual}
+      onManualAccrual={handleManualAccrual}
+      onPenalty={handlePenalty}
+      onDeduction={handleDeduction}
+      pendingPayouts={pendingPayouts}
+      onPayout={handlePayout}
+      operations={operations}
+      operationsLoading={operationsLoading}
+      operationsPage={operationsPage}
+      setOperationsPage={setOperationsPage}
+      totalPages={totalPages}
+      filteredTotal={filteredTotal}
+      onDeleteAccrual={handleDeleteAccrual}
+      onEditAccrual={handleEditAccrual}
+      totalToAccrue={totalToAccrue}
+      totalDebts={totalDebts}
+      totalPenalties={totalPenalties}
+      penaltiesCount={penaltiesCount}
+      penaltiesUsers={penaltiesUsers}
+      totalDeductions={totalDeductions}
+      deductionsCount={deductionsCount}
+      period1Total={period1Total}
+      period2Total={period2Total}
+      cashBalance={cashBalance}
+      cashTransactions={cashTransactions}
+      cashLoading={cashLoading}
+      onCashDeposit={handleCashDeposit}
+      onUpdateRate={handleUpdateRate}
+      payouts={payouts}
+      payoutsLoading={payoutsLoading}
+      onDeletePayout={handleDeletePayout}
+    />
   );
 };
 
