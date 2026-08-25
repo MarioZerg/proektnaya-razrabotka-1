@@ -23,6 +23,7 @@ import {
   type MyAccrual,
   type MyPayout,
   type CashBoxTransaction,
+  type PendingPayout,
 } from '@/lib/salaryApi';
 import FinanceSummaryCard from '@/components/crm/finance/FinanceSummaryCard';
 import ManagerAccrualsPanel from '@/components/crm/finance/ManagerAccrualsPanel';
@@ -60,6 +61,9 @@ const Finance = () => {
   const [penaltiesUsers, setPenaltiesUsers] = useState(0);
   // Часть списаний — обычные удержания без вины: спецодежда, товар, аванс.
   const [totalDeductions, setTotalDeductions] = useState(0);
+  // Кому реально есть что выплатить. Список сам обновляется после каждой
+  // выплаты: рассчитанный сотрудник из него пропадает.
+  const [pendingPayouts, setPendingPayouts] = useState<PendingPayout[]>([]);
   const [deductionsCount, setDeductionsCount] = useState(0);
   const [period1Total, setPeriod1Total] = useState(0);
   const [period2Total, setPeriod2Total] = useState(0);
@@ -163,6 +167,7 @@ const Finance = () => {
         setPenaltiesUsers(data.penaltiesUsers);
         setTotalDeductions(data.totalDeductions);
         setDeductionsCount(data.deductionsCount);
+        setPendingPayouts(data.pendingPayouts);
         setPeriod1Total(data.period1Total);
         setPeriod2Total(data.period2Total);
       })
@@ -423,6 +428,7 @@ const Finance = () => {
               onManualAccrual={handleManualAccrual}
               onPenalty={handlePenalty}
               onDeduction={handleDeduction}
+              pendingPayouts={pendingPayouts}
               onPayout={handlePayout}
             />
             {/* Итог по выбранному фильтру: главный смысл фильтра по датам — увидеть,

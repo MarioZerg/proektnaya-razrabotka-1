@@ -62,6 +62,8 @@ export interface SalarySummary {
    * но показывается отдельно: это не нарушения, а расчёты с сотрудником. */
   totalDeductions: number;
   deductionsCount: number;
+  /** Кому реально есть что выплатить — с суммой остатка. */
+  pendingPayouts: PendingPayout[];
   period1Total: number;
   period2Total: number;
   /** Сумма по ВСЕМ записям текущего фильтра (не только видимой страницы). */
@@ -99,6 +101,7 @@ export const fetchSalarySummary = async (filters?: {
     penaltiesUsers: data.penaltiesUsers ?? 0,
     totalDeductions: data.totalDeductions ?? 0,
     deductionsCount: data.deductionsCount ?? 0,
+    pendingPayouts: data.pendingPayouts ?? [],
     period1Total: data.period1Total ?? 0,
     period2Total: data.period2Total ?? 0,
     filteredTotal: data.filteredTotal ?? 0,
@@ -231,6 +234,13 @@ export interface PayoutResult {
 }
 
 /** Что выйдет к выплате за период — до нажатия кнопки. */
+/** Сотрудник с невыплаченным остатком: только такие попадают в выбор выплаты. */
+export interface PendingPayout {
+  userId: number;
+  fullName: string;
+  amount: number;
+}
+
 export interface PayoutPreview {
   amount: number;
   count: number;

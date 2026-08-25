@@ -12,6 +12,7 @@ import Icon from '@/components/ui/icon';
 import type { Employee } from '@/lib/usersApi';
 import ManualAccrualDialog from '@/components/crm/finance/ManualAccrualDialog';
 import PayoutDialog from '@/components/crm/finance/PayoutDialog';
+import type { PendingPayout } from '@/lib/salaryApi';
 
 interface FinanceToolbarProps {
   employees: Employee[];
@@ -28,6 +29,8 @@ interface FinanceToolbarProps {
   onPenalty: (userId: number, amount: number, description: string) => Promise<void>;
   /** Списание без вины: спецодежда, выкуп товара, аванс. */
   onDeduction: (userId: number, amount: number, description: string) => Promise<void>;
+  /** Кому есть что выплатить — только они попадают в выбор выплаты. */
+  pendingPayouts: PendingPayout[];
   onPayout: (userId: number) => Promise<void>;
 }
 
@@ -45,6 +48,7 @@ const FinanceToolbar = ({
   onManualAccrual,
   onPenalty,
   onDeduction,
+  pendingPayouts,
   onPayout,
 }: FinanceToolbarProps) => {
   const handleReset = () => {
@@ -82,7 +86,7 @@ const FinanceToolbar = ({
         <ManualAccrualDialog employees={employees} mode="accrual" saving={savingAccrual} onSubmit={onManualAccrual} />
         <ManualAccrualDialog employees={employees} mode="deduction" saving={savingAccrual} onSubmit={onDeduction} />
         <ManualAccrualDialog employees={employees} mode="penalty" saving={savingAccrual} onSubmit={onPenalty} />
-        <PayoutDialog employees={employees} saving={savingAccrual} onSubmit={onPayout} />
+        <PayoutDialog pending={pendingPayouts} saving={savingAccrual} onSubmit={onPayout} />
       </div>
 
       <div className="flex flex-wrap items-end gap-3">

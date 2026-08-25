@@ -780,6 +780,25 @@ def handler(event: dict, context) -> dict:
             )
             total_to_accrue_row = cur.fetchone()
             total_to_accrue = float(total_to_accrue_row[0])
+
+            # КОМУ РЕАЛЬНО ЕСТЬ ЧТО ПЛАТИТЬ.
+            #
+            # В списке на выплату раньше стояли ВСЕ сотрудники компании, включая
+            # уволенных и тех, у кого ничего не начислено. Админ выбирал человека
+            # наугад и узнавал «нет начислений к выплате» только после нажатия.
+            # Отдаём тех, у кого остаток положительный, и сразу с суммой.
+            cur.execute(
+                "SELECT a.user_id, u.full_name, SUM(a.amount) AS due "
+                "FROM salary_accruals a JOIN users u ON u.id = a.user_id "
+                "WHERE a.paid_at IS NULL "
+                "GROUP BY a.user_id, u.full_name "
+                "HAVING SUM(a.amount) > 0 "
+                "ORDER BY SUM(a.amount) DESC"
+            )
+            pending_payouts = [
+                {'userId': r[0], 'fullName': r[1], 'amount': float(r[2])}
+                for r in cur.fetchall()
+            ]
             total_debts = float(total_to_accrue_row[1])
 
             # Сумма ВСЕХ невыплаченных удержаний по компании.
@@ -868,6 +887,8 @@ def handler(event: dict, context) -> dict:
                 'totalPenalties': total_penalties,
                 'penaltiesCount': penalties_count,
                 'penaltiesUsers': penalties_users,
+                # Кому есть что выплатить — с суммами, чтобы не выбирать вслепую.
+                'pendingPayouts': pending_payouts,
                 # Удержания без вины — отдельно от штрафов.
                 'totalDeductions': total_deductions,
                 'deductionsCount': deductions_count,

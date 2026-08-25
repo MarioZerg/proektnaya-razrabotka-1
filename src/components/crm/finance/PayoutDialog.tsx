@@ -17,12 +17,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
-import type { Employee } from '@/lib/usersApi';
-import { previewPayout, type PayoutPreview } from '@/lib/salaryApi';
+import {
+  previewPayout,
+  type PayoutPreview,
+  type PendingPayout,
+} from '@/lib/salaryApi';
 import { formatMoney } from '@/components/crm/finance/financeShared';
 
 interface PayoutDialogProps {
-  employees: Employee[];
+  /** Только те, у кого есть невыплаченный остаток — с суммой. */
+  pending: PendingPayout[];
   saving: boolean;
   onSubmit: (
     userId: number,
@@ -61,7 +65,7 @@ const quickPeriods = () => {
   ];
 };
 
-const PayoutDialog = ({ employees, saving, onSubmit }: PayoutDialogProps) => {
+const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
   const [open, setOpen] = useState(false);
   const [userId, setUserId] = useState('');
   const [from, setFrom] = useState('');
@@ -91,10 +95,15 @@ const PayoutDialog = ({ employees, saving, onSubmit }: PayoutDialogProps) => {
   const handleSubmit = async () => {
     if (!userId) return;
     await onSubmit(Number(userId), from || undefined, to || undefined);
-    setOpen(false);
+
+    // ОКНО НЕ ЗАКРЫВАЕМ.
+    //
+    // Зарплату платят пачкой: десять человек подряд, один за другим. Раньше
+    // после каждой выплаты окно захлопывалось, и приходилось заново открывать
+    // его, заново выставлять период — десять раз. Оставляем окно и период,
+    // сбрасываем только выбранного сотрудника: он уже получил деньги и из
+    // списка пропадёт, а следующего выбирают тут же.
     setUserId('');
-    setFrom('');
-    setTo('');
     setPreview(null);
   };
 
@@ -122,11 +131,26 @@ const PayoutDialog = ({ employees, saving, onSubmit }: PayoutDialogProps) => {
                 <SelectValue placeholder="Выберите сотрудника" />
               </SelectTrigger>
               <SelectContent>
-                {employees.map((e) => (
-                  <SelectItem key={e.id} value={String(e.id)}>
-                    {e.fullName}
-                  </SelectItem>
-                ))}
+                {/* В списке только те, кому правда есть что выплатить.
+                    Раньше стояли все сотрудники компании, включая уволенных и
+                    тех, у кого ничего не начислено: админ выбирал наугад и
+                    получал отказ «нет начислений» уже после нажатия. */}
+                {pending.length === 0 ? (
+                  <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+                    Невыплаченных начислений нет
+                  </div>
+                ) : (
+                  pending.map((e) => (
+                    <SelectItem key={e.userId} value={String(e.userId)}>
+                      <span className="flex w-full items-center justify-between gap-3">
+                        <span className="truncate">{e.fullName}</span>
+                        <span className="shrink-0 text-xs font-semibold text-muted-foreground">
+                          {formatMoney(e.amount)} ₽
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </div>
