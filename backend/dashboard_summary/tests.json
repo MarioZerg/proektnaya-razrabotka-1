@@ -1,0 +1,40 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Summary for admin",
+      "method": "GET",
+      "path": "/?role=admin&userId=10",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Summary for sewer",
+      "method": "GET",
+      "path": "/?role=sewer&userId=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Summary for storekeeper",
+      "method": "GET",
+      "path": "/?role=storekeeper&userId=30",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Summary without role works",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "POST not allowed",
+      "method": "POST",
+      "path": "/",
+      "expectedStatus": 405
+    }
+  ]
+}

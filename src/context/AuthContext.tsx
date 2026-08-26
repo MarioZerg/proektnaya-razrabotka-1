@@ -118,7 +118,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (!user || user.isDemo) return;
 
     let stopped = false;
-    const verify = async () => {
+    // Когда доступ проверяли в прошлый раз. Сотрудник за смену десятки раз
+    // переключается между вкладкой системы и кабинетом маркетплейса, и каждое
+    // возвращение уходило в сервер отдельной проверкой — при том что доступ
+    // отзывают в лучшем случае раз в месяц.
+    let lastCheckAt = 0;
+
+    const verify = async (force = true) => {
+      // Вернулись на вкладку (force = false) — проверяем, только если с прошлой
+      // проверки прошло больше пяти минут. По таймеру проверяем всегда.
+      if (!force && Date.now() - lastCheckAt < 5 * 60 * 1000) return;
+      lastCheckAt = Date.now();
       try {
         const res = await checkAccess(user.id, user.role);
         if (!stopped && res.active === false) {
@@ -151,7 +161,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
-        verify();
+        verify(false);
         start();
       } else {
         stop();

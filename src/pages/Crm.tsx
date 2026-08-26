@@ -3,11 +3,7 @@ import { format } from 'date-fns';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { fetchOrders, type Order } from '@/lib/ordersApi';
-import { fetchRolls, type Roll } from '@/lib/rollsApi';
-import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
-import { fetchMarketplaceReturns } from '@/lib/marketplaceReturnsApi';
-import { fetchShipments, type Shipment } from '@/lib/shipmentsApi';
+import { fetchDashboardSummary, type DashboardSummary } from '@/lib/dashboardSummaryApi';
 import { updateEmployee } from '@/lib/usersApi';
 import {
   fetchEmployeeShifts,
@@ -29,10 +25,8 @@ import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
 import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
 import FboShipmentsCard from '@/components/crm/dashboard/FboShipmentsCard';
-import { ROLL_LOW_STOCK_THRESHOLD, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
-import { isMetersUnit } from '@/lib/stockLevels';
+import { type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import { isStorekeeperRole } from '@/lib/roles';
-import { countDuplicateOrders } from '@/lib/findDuplicateOrders';
 import SewerBonusCard from '@/components/crm/dashboard/SewerBonusCard';
 import SewerDailyCard from '@/components/crm/dashboard/SewerDailyCard';
 
@@ -56,12 +50,10 @@ const CrmDashboard = () => {
   const canSeeWorkingToday = canSeeShiftCalendar;
 
   const [dataLoading, setDataLoading] = useState(true);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [rolls, setRolls] = useState<Roll[]>([]);
-  const [goodsItems, setGoodsItems] = useState<GoodsWarehouseItem[]>([]);
-  const [shipmentsToWorkshop, setShipmentsToWorkshop] = useState<Shipment[]>([]);
-  // Возвраты, забранные с пункта выдачи, но ещё не осмотренные кладовщиком.
-  const [returnsPickedUp, setReturnsPickedUp] = useState(0);
+  // Готовые цифры для плиток. Раньше здесь лежали ПОЛНЫЕ списки — все заказы,
+  // весь склад, все рулоны — и панель считала плитки сама, перебирая тысячи
+  // записей в браузере. Теперь считает база, а сюда приходит десяток чисел.
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
 
   const [shiftsLoading, setShiftsLoading] = useState(true);
   const [employeeShifts, setEmployeeShifts] = useState<EmployeeShiftStatus[]>([]);
@@ -71,38 +63,26 @@ const CrmDashboard = () => {
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [calendarDays, setCalendarDays] = useState<ShiftCalendarDay[]>([]);
 
-  // Данные для виджетов — загружаются только если у роли есть хоть один виджет
+  // Цифры для плиток: ОДИН запрос вместо пяти.
+  //
+  // Раньше панель выкачивала все заказы, весь товар на складе, все рулоны,
+  // поставки и возвраты — около 4.5 МБ на каждое открытие — и считала плитки
+  // прямо в браузере. Главную открывают все и держат открытой всю смену, так
+  // что платили за это дважды: сервер собирал мегабайты, а планшет в цехе
+  // потом их разбирал и подтормаживал. Теперь всё считает база, а сюда
+  // приходит около килобайта готовых чисел.
   useEffect(() => {
     if (isCleaner) {
       setDataLoading(false);
       return;
     }
     setDataLoading(true);
-    // Каждый блок панели грузится сам по себе. Раньше все запросы шли одной связкой:
-    // стоило одному не дойти (связь моргнула), и панель оставалась пустой целиком —
-    // ни заказов, ни смен, ни поставок. Теперь сбой одного запроса гасит только свой
-    // виджет, остальная панель работает.
-    // Кружок снимаем по главному запросу панели — заказам. Остальное подтягивается
-    // следом и само показывает свои цифры, каждое в свой срок.
-    fetchOrders()
-      .then(setOrders)
+    fetchDashboardSummary(user?.role, user?.id)
+      .then(setSummary)
       .catch(() => {})
       .finally(() => setDataLoading(false));
-    fetchShipments('to_workshop').then(setShipmentsToWorkshop).catch(() => {});
-    if (canSeeWarehouseWidgets) {
-      fetchRolls({ status: 'in_workshop' }).then(setRolls).catch(() => {});
-      fetchGoodsWarehouse().then(setGoodsItems).catch(() => {});
-      // Вещи, которые кладовщик сам отсканировал и привёз с пункта выдачи, но ещё
-      // не разобрал. Запрашиваем именно их: по статусу 'new' сервер отдавал полторы
-      // тысячи записей всей истории маркетплейса ради одного числа.
-      fetchMarketplaceReturns({ status: 'picked_up' })
-        .then((returnsData) => {
-          setReturnsPickedUp(returnsData.counts.picked_up || 0);
-        })
-        .catch(() => {});
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.role]);
+  }, [user?.role, user?.id]);
 
   // Смены: у админа — список всех сотрудников, у остальных — только свой статус
   const loadShifts = () => {
@@ -208,91 +188,29 @@ const CrmDashboard = () => {
 
   const widgets: DashboardWidgetData[] = useMemo(() => {
     if (isCleaner) return [];
+    if (!summary) return [];
 
-    // Швея и закройщик видят на панели ТОЛЬКО свою работу.
-    //
-    // Раньше виджеты считали заказы всего цеха: швея открывала панель, видела
-    // «Товары в пошиве: 30» и шла искать их в списке, а там был один её заказ —
-    // остальные 29 держали другие швеи. Чужая работа в личной сводке только путает.
-    const isMine = (o: (typeof orders)[number]) => o.assignedUserId === user?.id;
-    const inSewing = orders.filter(
-      (o) => o.sewingStatus === 'В работе' && (!isSewer || isMine(o))
-    ).length;
-    const inCutting = orders.filter(
-      (o) => o.sewingStatus === 'На раскрое' && (!isCutter || isMine(o))
-    ).length;
-    // «Новые задания» — общая очередь, её разбирают все: это работа, которую ещё
-    // никто не взял, и швее полезно видеть, сколько её ждёт.
-    //
-    // Считаем ТОЛЬКО заказы, реально пришедшие с площадок (source: 'api'). Раньше сюда
-    // попадал и ручной импорт — виджет показывал 537, тогда как в кабинетах OZON и WB
-    // новых заказов было 449. Разницу давали 88 старых строк, загруженных файлом:
-    // это не заказы покупателей, и планировать по ним работу цеха нельзя.
-    const newOrders = orders.filter(
-      (o) => o.sewingStatus === 'Новый' && o.source === 'api'
-    ).length;
-    // Считаем ТОЛЬКО то, что реально ждёт работы в цехе.
-    //
-    // Раньше сюда попадали все незакрытые FBS, включая уже отшитые и лежащие на
-    // складе: виджет показывал 271, а на конвейере в работе было 137. Кладовщик
-    // видел гору срочных заказов, которой на самом деле нет.
-    const urgentFbs = orders.filter(
-      (o) =>
-        o.orderType === 'FBS' &&
-        ['Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка'].includes(
-          o.sewingStatus
-        ) &&
-        // Вещи, которые уже не горят: покупатель отказался, либо отправление
-        // собрано и уехало. Шить там нечего, а в счётчике срочных они создавали
-        // ложную гору работы.
-        !['cancelled', 'delivering', 'delivered', 'not_accepted', 'driver_pickup',
-          'awaiting_deliver'].includes(o.ozonStatus || '')
-    ).length;
-    // На стикеровке швея видит то, что отшила сама: там она уже записана исполнителем
-    // этапа (sewerUserId), а assignedUserId перешёл к упаковщице.
-    const inStickering = orders.filter(
-      (o) =>
-        o.sewingStatus === 'Стикеровка' &&
-        (!isSewer || o.sewerUserId === user?.id) &&
-        (!isCutter || o.cutterUserId === user?.id)
-    ).length;
-    // «Раскроено» — общий пул: закройщики сдали работу, швеи разбирают её в пошив.
-    const cut = orders.filter((o) => o.sewingStatus === 'Раскроено').length;
-    const notShippedToWorkshop = shipmentsToWorkshop.filter((s) => s.status === 'Новый').length;
-    const notReceivedInWorkshop = shipmentsToWorkshop.filter((s) => s.status === 'Отправлено').length;
-
+    // Все цифры уже посчитаны базой по тем же правилам, что раньше применялись
+    // здесь: швея и закройщик видят ТОЛЬКО свою работу (сервер получил роль и id
+    // и отфильтровал), «Новые задания» и «Раскроено» — общая очередь на всех.
     const list: DashboardWidgetData[] = [
-      { label: 'Новые задания на пошив', value: newOrders, icon: 'ListPlus', tone: 'default', path: '/crm/marketplace/sewing-items' },
+      { label: 'Новые задания на пошив', value: summary.newOrders, icon: 'ListPlus', tone: 'default', path: '/crm/marketplace/sewing-items' },
       // Швее и закройщику подписываем «У меня», чтобы цифра не читалась как объём
       // всего цеха: у них в этих виджетах теперь только собственные заказы.
-      { label: isSewer ? 'У меня в пошиве' : 'Товары в пошиве', value: inSewing, icon: 'Shirt', tone: 'default', path: '/crm/marketplace/sewing-items' },
-      { label: isCutter ? 'У меня в закрое' : 'Товары в закрое', value: inCutting, icon: 'Scissors', tone: 'default', path: '/crm/marketplace/sewing-items' },
+      { label: isSewer ? 'У меня в пошиве' : 'Товары в пошиве', value: summary.inSewing, icon: 'Shirt', tone: 'default', path: '/crm/marketplace/sewing-items' },
+      { label: isCutter ? 'У меня в закрое' : 'Товары в закрое', value: summary.inCutting, icon: 'Scissors', tone: 'default', path: '/crm/marketplace/sewing-items' },
       // ?type=FBS — страница откроется сразу с фильтром по FBS, иначе показывала все заказы
-      { label: 'Срочные заказы (FBS)', value: urgentFbs, icon: 'Zap', tone: 'urgent', path: '/crm/marketplace/sewing-items?type=FBS' },
-      { label: 'Не отгруженные поставки в цех', value: notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop' },
-      { label: 'Не принятые поставки в цехе', value: notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop' },
-      { label: isSewer || isCutter ? 'Мои на стикеровке' : 'Товары на стикеровке', value: inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items' },
-      { label: 'Раскроено', value: cut, icon: 'CheckCircle2', tone: 'default', path: '/crm/marketplace/sewing-items' },
+      { label: 'Срочные заказы (FBS)', value: summary.urgentFbs, icon: 'Zap', tone: 'urgent', path: '/crm/marketplace/sewing-items?type=FBS' },
+      { label: 'Не отгруженные поставки в цех', value: summary.notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop' },
+      { label: 'Не принятые поставки в цехе', value: summary.notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop' },
+      { label: isSewer || isCutter ? 'Мои на стикеровке' : 'Товары на стикеровке', value: summary.inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items' },
+      { label: 'Раскроено', value: summary.cut, icon: 'CheckCircle2', tone: 'default', path: '/crm/marketplace/sewing-items' },
     ];
 
     if (canSeeWarehouseWidgets) {
-      // Малый остаток считаем только по рулонам в погонных метрах и только среди активных
-      // (не завершённых) — меньше 20 пог.м.
-      const lowStockRolls = rolls.filter(
-        (r) =>
-          r.status !== 'completed' &&
-          isMetersUnit(r.unit) &&
-          r.remainingQuantity < ROLL_LOW_STOCK_THRESHOLD
-      ).length;
-      // Вещи, отменённые клиентом: упаковщик наклеил стикер хранения, но кладовщик ещё не
-      // забрал их из цеха и не положил на полку — это его прямая задача на сегодня.
-      const awaitingShelf = goodsItems.filter(
-        (g) => g.status === 'awaiting_shelf' || g.status === 'mp_return',
-      ).length;
-      // Заказы, которые закрываются вещью с полки и ждут стикера отправления от кладовщика.
-      const awaitingShipLabel = goodsItems.filter(
-        (g) => g.reservedOrderId && !g.shippingLabeledAt && g.status === 'picking',
-      ).length;
+      const awaitingShelf = summary.awaitingShelf || 0;
+      const awaitingShipLabel = summary.awaitingShipLabel || 0;
+      const returnsPickedUp = summary.returnsPickedUp || 0;
       // Виджета «Товары к подбору со склада» больше нет: он показывал ВЕСЬ товар на
       // полках (сотни штук) и выглядел как гора работы, хотя это просто остаток.
       // Реальная задача кладовщика — вещи, подобранные под заказы: их и показываем
@@ -334,7 +252,7 @@ const CrmDashboard = () => {
       // виджете ниже.
       list.push({
         label: 'Рулоны с малым остатком',
-        value: lowStockRolls,
+        value: summary.lowStockRolls || 0,
         icon: 'AlertTriangle',
         tone: 'urgent',
         path: '/crm/inventory/rolls',
@@ -344,7 +262,7 @@ const CrmDashboard = () => {
     // Задвоенные заказы: одна вещь попала в систему дважды. Показываем плитку ТОЛЬКО
     // когда такие есть — в обычной ситуации она не занимает место на дашборде.
     // Молчать нельзя: на лишнюю вещь спишется материал и начислится зарплата.
-    const duplicates = countDuplicateOrders(orders);
+    const duplicates = summary.duplicateOrders;
     if (duplicates > 0) {
       list.unshift({
         label: 'Задвоенные заказы — проверить',
@@ -371,7 +289,7 @@ const CrmDashboard = () => {
     }
 
     return list;
-  }, [isCleaner, isCutter, isSewer, user?.id, canSeeWarehouseWidgets, orders, rolls, goodsItems, shipmentsToWorkshop, returnsPickedUp]);
+  }, [isCleaner, isCutter, isSewer, canSeeWarehouseWidgets, summary]);
 
   const content = (
     <div className="space-y-8">
