@@ -23,6 +23,13 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import ReturnScanCard from '@/components/crm/returns/ReturnScanCard';
+import { useTablePage } from '@/components/crm/finance/useTablePage';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+} from '@/components/ui/pagination';
 import {
   fetchMarketplaceReturns,
   syncMarketplaceReturns,
@@ -95,6 +102,25 @@ const ReceiveReturns = () => {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, marketplaceFilter]);
+
+  // Заявок на возврат в статусе «ждёт решения» скапливаются сотни: сервер отдаёт
+  // до пятисот за раз, и все они рисовались одним полотном. На планшете такая
+  // таблица заметно тормозит, а глазами в ней всё равно ничего не найти —
+  // показываем по двадцать строк. Данные уже загружены, лишних запросов нет.
+  const {
+    visible: pagedReturns,
+    page,
+    setPage,
+    totalPages,
+    total,
+  } = useTablePage(returns, 20);
+
+  // Сменили фильтр — возвращаемся на первую страницу, иначе человек остаётся
+  // на пятой странице нового, короткого списка и видит пустоту.
+  useEffect(() => {
+    setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, marketplaceFilter]);
 
@@ -317,7 +343,7 @@ const ReceiveReturns = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {returns.map((r) => (
+                {pagedReturns.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell>
                       <span className={marketplaceClass[r.marketplace] || 'font-bold'}>
@@ -396,6 +422,46 @@ const ReceiveReturns = () => {
                 ))}
               </TableBody>
             </Table>
+
+            {totalPages > 1 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2">
+                <span className="text-sm text-muted-foreground">
+                  {/* Сервер отдаёт последние 500 заявок, а в счётчике сверху —
+                      всё количество. Без этой подписи админ видел «1750» на
+                      плитке и 500 строк в списке и решал, что заявки потерялись.
+                      Показываем честно: это самые свежие, старые ниже по списку. */}
+                  Показано {total}
+                  {(counts[statusFilter] || 0) > total
+                    ? ` из ${counts[statusFilter]} — самые свежие`
+                    : ''}
+                </span>
+                <Pagination className="mx-0 w-auto justify-end">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationLink
+                        onClick={() => setPage(Math.max(1, page - 1))}
+                        className="cursor-pointer"
+                      >
+                        <Icon name="ChevronLeft" size={16} />
+                      </PaginationLink>
+                    </PaginationItem>
+                    <PaginationItem>
+                      <span className="px-3 text-sm text-muted-foreground">
+                        {page} / {totalPages}
+                      </span>
+                    </PaginationItem>
+                    <PaginationItem>
+                      <PaginationLink
+                        onClick={() => setPage(Math.min(totalPages, page + 1))}
+                        className="cursor-pointer"
+                      >
+                        <Icon name="ChevronRight" size={16} />
+                      </PaginationLink>
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              </div>
+            )}
           </div>
         )}
       </div>
