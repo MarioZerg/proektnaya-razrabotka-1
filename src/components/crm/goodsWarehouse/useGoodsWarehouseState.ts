@@ -9,6 +9,7 @@ import {
   deleteGoods,
   fetchStuckCancelled,
   type GoodsWarehouseItem,
+  type GoodsStatusFilter,
   type StuckCancelledItem,
 } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
@@ -38,6 +39,9 @@ export const useGoodsWarehouseState = () => {
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState('');
+  // То, что реально ушло в запрос. Отделено от search: поле ввода меняется на
+  // каждую букву, а в базу уходит только устоявшийся текст.
+  const searchQuery = search.trim();
   const [statusFilter, setStatusFilter] = useState('in_stock');
   const [materialFilter, setMaterialFilter] = useState('');
   const [widthFilter, setWidthFilter] = useState('');
@@ -82,15 +86,36 @@ export const useGoodsWarehouseState = () => {
     // склад всё равно покажется. Раньше один сбой оставлял страницу пустой.
     fetchShelves().then(setShelves).catch(() => {});
     // Кружок загрузки снимаем по главному запросу страницы.
-    fetchGoodsWarehouse()
+    //
+    // ГРУЗИМ ТОЛЬКО ВЫБРАННЫЙ СТАТУС, А НЕ ВЕСЬ СКЛАД.
+    //
+    // Раньше сюда уезжали все 5292 записи (2.5 МБ), хотя страница открывается с
+    // фильтром «на складе» — а это 274 вещи. Остальные 95% были отгружены и
+    // уехали к покупателям: на полках их нет, в работе они не участвуют, и
+    // кладовщик их даже не видел — фильтр отсекал их сразу после загрузки.
+    // Планшет в цехе разбирал два с половиной мегабайта, чтобы показать
+    // две сотни строк.
+    //
+    // Поиск отправляем на сервер: кладовщик пикает сканером стикер и ждёт одну
+    // вещь. База найдёт её среди всех статусов за любой срок — как и раньше,
+    // когда перебор шёл в браузере.
+    fetchGoodsWarehouse(
+      searchQuery
+        ? { search: searchQuery }
+        : { status: statusFilter === 'all' ? undefined : (statusFilter as GoodsStatusFilter) },
+    )
       .then(setItems)
       .catch(() => {})
       .finally(() => setLoading(false));
   };
 
+  // Перезагружаем список при смене статуса и при поиске. Поиск ждёт паузы в
+  // наборе: иначе каждая буква уходила бы в базу отдельным запросом.
   useEffect(() => {
-    load();
-  }, []);
+    const t = setTimeout(load, searchQuery ? 350 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, searchQuery]);
 
   // Возвраты, забранные с пункта выдачи, но ещё не осмотренные: товар привезли,
   // а решение (полка / перепаковка / утиль) кладовщик ещё не принял. Пока вещь не
@@ -186,6 +211,11 @@ export const useGoodsWarehouseState = () => {
 
   const q = search.trim().toLowerCase();
 
+  // Фильтр НЕ УБРАН намеренно, хотя сервер уже отдаёт нужный статус и результат
+  // поиска. Он оставлен вторым слоем по двум причинам: во-первых, поиск умеет
+  // искать ещё и по названию полки — этого поля в запросе к базе нет; во-вторых,
+  // между сменой фильтра и приходом ответа на экране секунду живут прежние
+  // данные, и без этой проверки кладовщик успевал увидеть чужие строки.
   const filtered = items.filter((i) => {
     // Поиск идёт по всему, чем вещь можно назвать: стикер хранения (его пикают сканером),
     // номер заказа — свой и тот, под который вещь подобрана, название и материал.

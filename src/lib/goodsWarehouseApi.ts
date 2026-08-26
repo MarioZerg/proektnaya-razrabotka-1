@@ -93,6 +93,8 @@ export interface GoodsWarehouseFilters {
   width?: number;
   height?: number;
   shelfId?: number;
+  /** Поиск по стикеру, номеру заказа, названию и материалу — идёт в базу. */
+  search?: string;
 }
 
 export const fetchGoodsWarehouse = async (
@@ -105,6 +107,7 @@ export const fetchGoodsWarehouse = async (
   if (f.width) params.set('width', String(f.width));
   if (f.height) params.set('height', String(f.height));
   if (f.shelfId) params.set('shelf_id', String(f.shelfId));
+  if (f.search) params.set('search', f.search);
   const qs = params.toString();
   const res = await fetch(qs ? `${GOODS_WAREHOUSE_URL}?${qs}` : GOODS_WAREHOUSE_URL);
   const data = await res.json();

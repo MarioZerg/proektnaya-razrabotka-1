@@ -508,6 +508,7 @@ def handler(event: dict, context) -> dict:
         width = params.get('width')
         height = params.get('height')
         shelf_id_filter = params.get('shelf_id')
+        search = (params.get('search') or '').strip()
 
         conn = psycopg2.connect(dsn)
         try:
@@ -1127,6 +1128,24 @@ def handler(event: dict, context) -> dict:
                 conditions.append(f"o.height = {int(height)}")
             if shelf_id_filter:
                 conditions.append(f"gw.shelf_id = {int(shelf_id_filter)}")
+
+            # ПОИСК ИЩЕТ В БАЗЕ, А НЕ В БРАУЗЕРЕ.
+            #
+            # Кладовщик пикает сканером стикер хранения и ждёт одну вещь. Раньше
+            # ради этого на планшет уезжал весь склад (5292 записи, 2.5 МБ), и
+            # перебор шёл уже там. Теперь ищет база — по тем же полям: стикер
+            # хранения, номер заказа (свой и тот, под который вещь подобрана),
+            # название и материал.
+            if search:
+                q = search.replace("'", "''").replace('%', r'\%').replace('_', r'\_').lower()
+                conditions.append(
+                    "(LOWER(COALESCE(gw.storage_barcode, '')) LIKE '%%" + q + "%%' "
+                    " OR LOWER(COALESCE(o.order_number, '')) LIKE '%%" + q + "%%' "
+                    " OR LOWER(COALESCE(ro.order_number, '')) LIKE '%%" + q + "%%' "
+                    " OR LOWER(COALESCE(o.product, '')) LIKE '%%" + q + "%%' "
+                    " OR LOWER(COALESCE(o.material, '')) LIKE '%%" + q + "%%')"
+                )
+
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
             cur.execute(
