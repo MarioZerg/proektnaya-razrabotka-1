@@ -408,6 +408,13 @@ def handler(event: dict, context) -> dict:
     if method == 'GET':
         params = event.get('queryStringParameters') or {}
         order_id = params.get('id')
+        # Чью историю показываем. Производственник на вкладке «Готовые» смотрит
+        # СВОЮ выработку, и брать ради этого общий архив бессмысленно.
+        try:
+            history_for = int(params.get('historyFor') or 0)
+        except (TypeError, ValueError):
+            history_for = 0
+        history_role = (params.get('historyRole') or '').strip()
 
         conn = psycopg2.connect(dsn)
         try:
@@ -646,6 +653,24 @@ def handler(event: dict, context) -> dict:
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'order': detail})}
 
+            # ИСТОРИЯ — ТОЛЬКО СВОЯ, ЕСЛИ СПРАШИВАЕТ ПРОИЗВОДСТВЕННИК.
+            #
+            # Общий архив закрытых заказов делится между всеми: в лимит попадают
+            # свежие заказы ВСЕГО цеха, а швея на вкладке «Готовые» видит только
+            # свои. На практике это значило, что её выработка обрывалась на
+            # нескольких днях — остальное место в лимите занимали чужие заказы,
+            # которые ей всё равно не показывались. Швея с семью сотнями заказов
+            # за месяц видела около двух сотен и считала, что работа пропала.
+            #
+            # Спрашиваем историю по исполнителю: швея — по своему пошиву,
+            # закройщик — по своему раскрою. Тогда весь лимит достаётся ему
+            # одному, и выработка видна за куда больший срок.
+            history_filter = ""
+            if history_for and history_role == 'sewer':
+                history_filter = f"  AND sewer_user_id = {history_for} "
+            elif history_for and history_role == 'cutter':
+                history_filter = f"  AND cutter_user_id = {history_for} "
+
             cur.execute(
                 # Активные заказы отдаём ВСЕ, историю — только свежую часть.
                 #
@@ -656,6 +681,7 @@ def handler(event: dict, context) -> dict:
                 # отобрать место у работы.
                 "WITH recent_closed AS ("
                 "  SELECT id FROM orders WHERE sewing_status IN ('Готовые', 'Со склада') "
+                + history_filter +
                 f"  ORDER BY id DESC LIMIT {CLOSED_ORDERS_LIMIT}"
                 ") "
                 # Историю режем заранее (CTE выше), поэтому здесь обычная выборка —

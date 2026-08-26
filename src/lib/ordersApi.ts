@@ -134,8 +134,27 @@ export const fetchStackPreview = async (workshopId: number): Promise<StackPrevie
   };
 };
 
-export const fetchOrders = async (): Promise<Order[]> => {
-  const res = await fetch(ORDERS_URL);
+/**
+ * Список заказов цеха.
+ *
+ * historyFor / historyRole — чью историю подмешивать к активным заказам.
+ * Архив закрытых заказов ограничен по объёму и раньше делился между всеми
+ * сотрудниками сразу: место в нём занимали чужие заказы, а швея на вкладке
+ * «Готовые» видела только свои — и её выработка обрывалась на нескольких днях.
+ * Передав исполнителя, забираем историю именно по нему: весь запас достаётся
+ * одному человеку, и он видит свою работу за куда больший срок.
+ */
+export const fetchOrders = async (
+  historyFor?: number,
+  historyRole?: string,
+): Promise<Order[]> => {
+  const params = new URLSearchParams();
+  if (historyFor && (historyRole === 'sewer' || historyRole === 'cutter')) {
+    params.set('historyFor', String(historyFor));
+    params.set('historyRole', historyRole);
+  }
+  const qs = params.toString();
+  const res = await fetch(qs ? `${ORDERS_URL}?${qs}` : ORDERS_URL);
   const data = await res.json();
   return data.orders || [];
 };
