@@ -37,7 +37,7 @@ import ContractGate from '@/components/crm/contracts/ContractGate';
 import DocsGate from '@/components/crm/personal/DocsGate';
 import DocsCountdownBanner from '@/components/crm/personal/DocsCountdownBanner';
 import CloseSidebarOnNavigate from '@/components/crm/CloseSidebarOnNavigate';
-import { fetchStartupInfo } from '@/lib/authApi';
+import { fetchStartupInfo, resetStartupInfoCache } from '@/lib/authApi';
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
   const { user, login, logout, switchRole } = useAuth();
@@ -110,13 +110,29 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   // Есть неподписанные документы — вместо системы показываем экран подписания.
   // Страницу «Договоры» не запираем: с неё человек и подписывает.
   if (pendingContracts !== null && pendingContracts > 0 && location.pathname !== '/crm/contracts') {
-    return <ContractGate onAllSigned={() => setPendingContracts(0)} />;
+    return (
+      <ContractGate
+        onAllSigned={() => {
+          // Ответ про договоры запомнен на несколько минут — после подписания
+          // его надо забыть, иначе человек останется за той же дверью.
+          resetStartupInfoCache();
+          setPendingContracts(0);
+        }}
+      />
+    );
   }
 
   // Документы не сданы в срок — вместо системы экран с загрузкой документов.
   // Вернуть в работу может только администратор.
   if (docsBlocked) {
-    return <DocsGate onSubmitted={() => setDocsBlocked(false)} />;
+    return (
+      <DocsGate
+        onSubmitted={() => {
+          resetStartupInfoCache();
+          setDocsBlocked(false);
+        }}
+      />
+    );
   }
 
   const nav = navByRole[user.role] || [{ label: 'Главная', icon: 'LayoutDashboard', path: '/crm' }];

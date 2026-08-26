@@ -52,17 +52,47 @@ export interface StartupInfo {
  * облачным функциям: договоры, документы и счётчик работы. Все три — про одного
  * человека, и все три решаются одним походом в базу.
  */
+/**
+ * Ответ на прошлый вопрос «есть ли неподписанные договоры и просрочены ли
+ * документы» — вместе с тем, кого спрашивали, и временем ответа.
+ *
+ * Оболочка системы (меню, шапка) живёт ВНУТРИ каждой страницы, а не над ними:
+ * при каждом переходе по разделам она создаётся заново и заново задаёт этот
+ * вопрос. Кладовщик за смену обходит десятки экранов — и получал десятки
+ * одинаковых ответов подряд, хотя договор подписывают один раз при устройстве,
+ * а срок документов меряется месяцами.
+ *
+ * Держим ответ пять минут: за это время он не успеет устареть, а переходы по
+ * разделам перестают дёргать сервер вовсе.
+ */
+let startupCache: { userId: number; role: string; at: number; data: StartupInfo } | null = null;
+const STARTUP_TTL_MS = 5 * 60 * 1000;
+
+/** Сбрасывает запомненный ответ — после подписания договора или загрузки документов. */
+export const resetStartupInfoCache = () => {
+  startupCache = null;
+};
+
 export const fetchStartupInfo = async (
   userId: number,
   role: string,
 ): Promise<StartupInfo> => {
+  const fresh =
+    startupCache &&
+    startupCache.userId === userId &&
+    startupCache.role === role &&
+    Date.now() - startupCache.at < STARTUP_TTL_MS;
+  if (fresh && startupCache) return startupCache.data;
+
   const res = await fetchWithTimeout(AUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'startup', userId, role }),
   });
   if (!res.ok) throw new Error('Не удалось загрузить данные входа');
-  return res.json();
+  const data = (await res.json()) as StartupInfo;
+  startupCache = { userId, role, at: Date.now(), data };
+  return data;
 };
 
 export const fetchTestAccounts = async (): Promise<TestAccount[]> => {

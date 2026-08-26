@@ -14,6 +14,7 @@ import {
   cancelContract,
   type Contract,
 } from '@/lib/contractsApi';
+import { resetStartupInfoCache } from '@/lib/authApi';
 import SignContractDialog from '@/components/crm/contracts/SignContractDialog';
 import TerminationPanel from '@/components/crm/contracts/TerminationPanel';
 import TerminationsAdmin from '@/components/crm/contracts/TerminationsAdmin';
@@ -209,7 +210,12 @@ const Contracts = () => {
             contract={signing}
             userId={user.id}
             onOpenChange={(v) => !v && setSigning(null)}
-            onSigned={load}
+            onSigned={() => {
+              // Ответ про неподписанные договоры запомнен на несколько минут —
+              // после подписи забываем его, чтобы оболочка сразу узнала правду.
+              resetStartupInfoCache();
+              load();
+            }}
           />
         )}
 
