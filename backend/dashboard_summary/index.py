@@ -94,8 +94,18 @@ def handler(event: dict, context) -> dict:
 
         not_urgent = ', '.join(f"'{s}'" for s in NOT_URGENT_OZON)
 
-        cur.execute(
-            "SELECT "
+        # ВСЁ ОДНИМ ЗАПРОСОМ.
+        #
+        # Раньше здесь было шесть отдельных обращений к базе подряд. Главную
+        # открывают все сотрудники разом в начале смены, и база, получив пачку
+        # запросов сразу от десятка планшетов, начинала отказывать: в логах
+        # «rate limit exceeded», а у человека вместо цифр — пустая панель.
+        #
+        # Каждый кусок считает свою таблицу и возвращает ровно одну строку,
+        # поэтому их можно просто соединить между собой: получается один поход
+        # в базу вместо шести, при том же количестве работы внутри.
+        parts = [
+            "orders_part AS (SELECT "
             # «Новые задания» — общая очередь, её разбирают все. Считаем только
             # заказы, реально пришедшие с площадок: ручной импорт сюда попадать
             # не должен, иначе цифра расходится с кабинетом маркетплейса.
@@ -108,42 +118,25 @@ def handler(event: dict, context) -> dict:
             "COUNT(*) FILTER (WHERE order_type = 'FBS' "
             "  AND sewing_status IN ('Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка') "
             f"  AND COALESCE(ozon_status, '') NOT IN ({not_urgent})) AS urgent_fbs "
-            "FROM orders"
-        )
-        o = cur.fetchone()
+            "FROM orders)",
 
-        result = {
-            'newOrders': o[0],
-            'inSewing': o[1],
-            'inCutting': o[2],
-            'inStickering': o[3],
-            'cut': o[4],
-            'urgentFbs': o[5],
-        }
-
-        # Поставки в цех: их всего пара сотен, но и это лишние 126 КБ ради двух чисел.
-        cur.execute(
-            "SELECT "
+            # Поставки в цех: их всего пара сотен, но и это лишние 126 КБ ради двух чисел.
+            "ship_part AS (SELECT "
             "COUNT(*) FILTER (WHERE status = 'Новый') AS not_shipped, "
             "COUNT(*) FILTER (WHERE status = 'Отправлено') AS not_received "
-            "FROM shipments WHERE type = 'to_workshop'"
-        )
-        sh = cur.fetchone()
-        result['notShippedToWorkshop'] = sh[0]
-        result['notReceivedInWorkshop'] = sh[1]
+            "FROM shipments WHERE type = 'to_workshop')",
 
-        # ЗАДВОЕННЫЕ ЗАКАЗЫ: одна вещь попала в систему дважды.
-        #
-        # Отличаем задвоение от нормального отправления с несколькими вещами по
-        # образцу номера: раньше в номер подставлялся артикул («…-vyal3_265-1»),
-        # сейчас — только порядковый номер. Если внутри ОДНОГО отправления
-        # встречаются оба образца сразу, значит вещи заехали повторно после смены
-        # формата. Отправление, где все номера сделаны одинаково, — нормальный
-        # заказ на несколько вещей.
-        #
-        # Лишних вещей столько, сколько записей сверх одной, — их и надо отменить.
-        cur.execute(
-            "SELECT COALESCE(SUM(cnt - 1), 0) FROM ("
+            # ЗАДВОЕННЫЕ ЗАКАЗЫ: одна вещь попала в систему дважды.
+            #
+            # Отличаем задвоение от нормального отправления с несколькими вещами по
+            # образцу номера: раньше в номер подставлялся артикул («…-vyal3_265-1»),
+            # сейчас — только порядковый номер. Если внутри ОДНОГО отправления
+            # встречаются оба образца сразу, значит вещи заехали повторно после смены
+            # формата. Отправление, где все номера сделаны одинаково, — нормальный
+            # заказ на несколько вещей.
+            #
+            # Лишних вещей столько, сколько записей сверх одной, — их и надо отменить.
+            "dup_part AS (SELECT COALESCE(SUM(cnt - 1), 0) AS duplicates FROM ("
             "  SELECT COUNT(*) AS cnt "
             "  FROM orders "
             "  WHERE marketplace = 'OZON' AND status <> 'Отменён' "
@@ -152,9 +145,14 @@ def handler(event: dict, context) -> dict:
             "  HAVING COUNT(*) >= 2 "
             "     AND COUNT(*) FILTER (WHERE order_number LIKE '%\\_%') > 0 "
             "     AND COUNT(*) FILTER (WHERE order_number LIKE '%\\_%') < COUNT(*)"
-            ") d"
-        )
-        result['duplicateOrders'] = int(cur.fetchone()[0] or 0)
+            ") d)",
+        ]
+        select_cols = [
+            "orders_part.new_orders", "orders_part.in_sewing", "orders_part.in_cutting",
+            "orders_part.in_stickering", "orders_part.cut", "orders_part.urgent_fbs",
+            "ship_part.not_shipped", "ship_part.not_received", "dup_part.duplicates",
+        ]
+        from_parts = ["orders_part", "ship_part", "dup_part"]
 
         if warehouse:
             # Убираем ВСЕ пробелы, а не только крайние: в базе встречается
@@ -162,11 +160,11 @@ def handler(event: dict, context) -> dict:
             not_meters = ' AND '.join(
                 f"u.v NOT LIKE '{p}%'" for p in NOT_METERS_PREFIXES
             )
-            # Единица измерения хранится не у рулона, а у материала, из которого
-            # он смотан, — поэтому join. Материал может быть не указан: тогда
-            # единица пустая, а пустая по правилам интерфейса считается метрами.
-            cur.execute(
-                "SELECT COUNT(*) FROM rolls r "
+            parts += [
+                # Единица измерения хранится не у рулона, а у материала, из которого
+                # он смотан, — поэтому join. Материал может быть не указан: тогда
+                # единица пустая, а пустая по правилам интерфейса считается метрами.
+                "rolls_part AS (SELECT COUNT(*) AS low_stock FROM rolls r "
                 "LEFT JOIN materials m ON m.id = r.material_id, "
                 "  LATERAL (SELECT LOWER(REPLACE(COALESCE(m.unit, ''), ' ', '')) AS v) u "
                 # ТОЛЬКО рулоны в цехе: панель и раньше запрашивала их с
@@ -174,29 +172,52 @@ def handler(event: dict, context) -> dict:
                 # не входят — там остаток нормальный, это запас, а не работа.
                 "WHERE r.status = 'in_workshop' "
                 f"  AND ({not_meters}) "
-                f"  AND r.remaining_quantity < {ROLL_LOW_STOCK_THRESHOLD}"
-            )
-            result['lowStockRolls'] = cur.fetchone()[0]
+                f"  AND r.remaining_quantity < {ROLL_LOW_STOCK_THRESHOLD})",
 
-            cur.execute(
-                "SELECT "
+                "goods_part AS (SELECT "
                 # Вещи, отменённые клиентом: упаковщик наклеил стикер хранения, но
                 # кладовщик ещё не забрал их из цеха и не положил на полку.
                 "COUNT(*) FILTER (WHERE status IN ('awaiting_shelf', 'mp_return')) AS awaiting_shelf, "
                 # Заказы, которые закрываются вещью с полки и ждут стикера отправления.
                 "COUNT(*) FILTER (WHERE reserved_order_id IS NOT NULL "
                 "  AND shipping_labeled_at IS NULL AND status = 'picking') AS awaiting_ship_label "
-                "FROM goods_warehouse"
-            )
-            g = cur.fetchone()
-            result['awaitingShelf'] = g[0]
-            result['awaitingShipLabel'] = g[1]
+                "FROM goods_warehouse)",
 
-            # Вещи, привезённые кладовщиком с ПВЗ, но ещё не разобранные.
-            cur.execute(
-                "SELECT COUNT(*) FROM marketplace_returns WHERE status = 'picked_up'"
-            )
-            result['returnsPickedUp'] = cur.fetchone()[0]
+                # Вещи, привезённые кладовщиком с ПВЗ, но ещё не разобранные.
+                "returns_part AS (SELECT COUNT(*) AS picked_up "
+                "FROM marketplace_returns WHERE status = 'picked_up')",
+            ]
+            select_cols += [
+                "rolls_part.low_stock",
+                "goods_part.awaiting_shelf", "goods_part.awaiting_ship_label",
+                "returns_part.picked_up",
+            ]
+            from_parts += ["rolls_part", "goods_part", "returns_part"]
+
+        cur.execute(
+            "WITH " + ", ".join(parts)
+            + " SELECT " + ", ".join(select_cols)
+            + " FROM " + ", ".join(from_parts)
+        )
+        row = cur.fetchone()
+
+        result = {
+            'newOrders': row[0],
+            'inSewing': row[1],
+            'inCutting': row[2],
+            'inStickering': row[3],
+            'cut': row[4],
+            'urgentFbs': row[5],
+            'notShippedToWorkshop': row[6],
+            'notReceivedInWorkshop': row[7],
+            'duplicateOrders': int(row[8] or 0),
+        }
+
+        if warehouse:
+            result['lowStockRolls'] = row[9]
+            result['awaitingShelf'] = row[10]
+            result['awaitingShipLabel'] = row[11]
+            result['returnsPickedUp'] = row[12]
     finally:
         conn.close()
 

@@ -39,7 +39,33 @@ export const fetchDashboardSummary = async (
   if (role) params.set('role', role);
   if (userId) params.set('userId', String(userId));
   const qs = params.toString();
-  const res = await fetch(qs ? `${URL}?${qs}` : URL);
-  if (!res.ok) throw new Error('Не удалось загрузить сводку');
-  return res.json();
+  const url = qs ? `${URL}?${qs}` : URL;
+
+  // ПОВТОР ПРИ ОТКАЗЕ.
+  //
+  // В начале смены главную открывают все разом — полтора десятка планшетов в одну
+  // секунду. Сервер держит ограниченное число одновременных обращений и лишним
+  // отвечает отказом: у человека вместо цифр пустая панель, хотя всё исправно и
+  // достаточно повторить через мгновение.
+  //
+  // Ждём с увеличением паузы и вразнобой (случайная добавка): если все планшеты
+  // повторят одновременно, они снова столкнутся лбами. Разводим их по времени.
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      const backoff = 300 * 2 ** (attempt - 1) + Math.random() * 400;
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+    try {
+      const res = await fetch(url);
+      if (res.ok) return res.json();
+      // 5xx — сервер перегружен, имеет смысл повторить. Остальное (например,
+      // неверный запрос) от повтора не исправится — выходим сразу.
+      if (res.status < 500) throw new Error('Не удалось загрузить сводку');
+      lastError = new Error('Не удалось загрузить сводку');
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Не удалось загрузить сводку');
 };
