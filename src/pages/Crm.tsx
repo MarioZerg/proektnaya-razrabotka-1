@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { useAuth } from '@/context/AuthContext';
@@ -8,6 +8,7 @@ import { updateEmployee } from '@/lib/usersApi';
 import {
   fetchEmployeeShifts,
   fetchShiftCalendar,
+  fetchShiftsWithCalendar,
   openShift,
   closeShift,
   moveShiftToWorkshop,
@@ -92,19 +93,44 @@ const CrmDashboard = () => {
       .finally(() => setShiftsLoading(false));
   };
 
+  // Какой месяц календаря уже лежит в памяти. Нужен, чтобы не запрашивать заново
+  // тот, что приехал вместе со статусами смен при открытии страницы.
+  const loadedCalendarMonth = useRef<string | null>(null);
+
   useEffect(() => {
     if (isCleaner) {
       setShiftsLoading(false);
       return;
     }
-    loadShifts();
+
+    // Статусы смен и календарь — ОДНИМ запросом вместо двух к одной и той же
+    // функции. Смена начинается тем, что все разом открывают главную, и база от
+    // такого залпа отказывала: часть людей видела пустой экран вместо смен.
+    const month =
+      canSeeShiftCalendar && selectedDate ? format(selectedDate, 'yyyy-MM') : undefined;
+
+    setShiftsLoading(true);
+    fetchShiftsWithCalendar(month)
+      .then(({ employees, days }) => {
+        setEmployeeShifts(employees);
+        if (month) {
+          setCalendarDays(days);
+          loadedCalendarMonth.current = month;
+        }
+      })
+      .finally(() => setShiftsLoading(false));
+
     if (isAdmin) fetchShifts().then(setAllShifts);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.role]);
 
+  // Человек листает календарь на другой месяц — доносим только его.
+  // Месяц, приехавший вместе со статусами выше, повторно не запрашиваем.
   useEffect(() => {
     if (!canSeeShiftCalendar || !selectedDate) return;
     const month = format(selectedDate, 'yyyy-MM');
+    if (loadedCalendarMonth.current === month) return;
+    loadedCalendarMonth.current = month;
     fetchShiftCalendar(month).then(setCalendarDays);
   }, [canSeeShiftCalendar, selectedDate]);
 

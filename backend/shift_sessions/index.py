@@ -210,6 +210,29 @@ def apply_penalty(cur, user_id, amount, description, shift_session_id=None):
     )
 
 
+def _calendar_days(cur, month: str) -> list:
+    """Кто в какой день месяца выходил на смену — для календаря на главной."""
+    month_esc = month.replace("'", "''")
+    cur.execute(
+        # Дату смены берём по Москве: смена, открытая 1-го числа в 02:00 МСК,
+        # в UTC приходится ещё на 31-е и попадала бы в прошлый месяц.
+        f"SELECT (ss.opened_at + interval '3 hours')::date, u.full_name, "
+        f"       ss.shift_number "
+        f"FROM shift_sessions ss "
+        f"JOIN users u ON u.id = ss.user_id "
+        f"WHERE to_char(ss.opened_at + interval '3 hours', 'YYYY-MM') "
+        f"      = '{month_esc}' "
+        f"ORDER BY ss.opened_at"
+    )
+    days: dict = {}
+    for opened_date, full_name, shift_number in cur.fetchall():
+        key = opened_date.isoformat()
+        if key not in days:
+            days[key] = {'date': key, 'employees': [], 'activeShift': shift_number}
+        days[key]['employees'].append(full_name)
+    return list(days.values())
+
+
 def handler(event: dict, context) -> dict:
     """Управляет открытием/закрытием смен сотрудников (shift_sessions).
 
@@ -323,25 +346,11 @@ def handler(event: dict, context) -> dict:
                 month = params.get('month')  # 'YYYY-MM'
                 if not month:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите month=YYYY-MM'})}
-                month_esc = month.replace("'", "''")
-                cur.execute(
-                    # Дату смены берём по Москве: смена, открытая 1-го числа в 02:00 МСК,
-                    # в UTC приходится ещё на 31-е и попадала бы в прошлый месяц.
-                    f"SELECT (ss.opened_at + interval '3 hours')::date, u.full_name, "
-                    f"       ss.shift_number "
-                    f"FROM shift_sessions ss "
-                    f"JOIN users u ON u.id = ss.user_id "
-                    f"WHERE to_char(ss.opened_at + interval '3 hours', 'YYYY-MM') "
-                    f"      = '{month_esc}' "
-                    f"ORDER BY ss.opened_at"
-                )
-                days: dict = {}
-                for opened_date, full_name, shift_number in cur.fetchall():
-                    key = opened_date.isoformat()
-                    if key not in days:
-                        days[key] = {'date': key, 'employees': [], 'activeShift': shift_number}
-                    days[key]['employees'].append(full_name)
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'days': list(days.values())})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'days': _calendar_days(cur, month)}),
+                }
 
             if params.get('guest_history'):
                 # История гостевых смен: кто выходил в чужой цех и когда. Нужна отчётом,
@@ -504,10 +513,24 @@ def handler(event: dict, context) -> dict:
                     'shiftFrom': str(shift_from) if shift_from else None,
                     'shiftTo': str(shift_to) if shift_to else None,
                 })
+
+            # Главная просит статусы и календарь ОДНИМ запросом (?withCalendar=YYYY-MM).
+            #
+            # Раньше она делала это двумя отдельными обращениями к одной и той же
+            # функции. Смена начинается тем, что все разом открывают главную, и база,
+            # получив от каждого планшета пачку запросов, упиралась в предел
+            # одновременных подключений — часть людей видела пустой экран.
+            #
+            # Соединение уже открыто и данные лежат рядом: досыпать календарь в
+            # этот же ответ дешевле, чем идти в базу второй раз.
+            result = {'employees': employees}
+            with_calendar = (params.get('withCalendar') or '').strip()
+            if with_calendar:
+                result['days'] = _calendar_days(cur, with_calendar)
         finally:
             conn.close()
 
-        return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'employees': employees})}
+        return {'statusCode': 200, 'headers': headers, 'body': json.dumps(result)}
 
     if method == 'POST':
         body_data = json.loads(event.get('body') or '{}')

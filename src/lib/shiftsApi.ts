@@ -1,3 +1,4 @@
+import fetchWithRetry from '@/lib/fetchWithRetry';
 const SHIFTS_URL = 'https://functions.poehali.dev/88851192-9090-480d-b9f7-aecfea5e7bdf';
 
 export interface ShiftListItem {
@@ -26,7 +27,9 @@ export interface ShiftDetail extends ShiftListItem {
 
 export const fetchShifts = async (workshopId?: number): Promise<ShiftListItem[]> => {
   const qs = workshopId ? `?workshop_id=${workshopId}` : '';
-  const res = await fetch(`${SHIFTS_URL}${qs}`);
+  // Запрос уходит при открытии главной вместе с остальными — в начале смены
+  // сервер захлёбывается от залпа, поэтому с повтором.
+  const res = await fetchWithRetry(`${SHIFTS_URL}${qs}`);
   const data = await res.json();
   return data.shifts || [];
 };

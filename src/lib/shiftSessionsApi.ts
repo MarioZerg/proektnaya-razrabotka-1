@@ -1,3 +1,5 @@
+import fetchWithRetry from '@/lib/fetchWithRetry';
+
 const SHIFT_SESSIONS_URL = 'https://functions.poehali.dev/6143d29d-094c-4dc6-a520-eb0eeb10d8a0';
 
 export interface EmployeeShiftStatus {
@@ -67,6 +69,26 @@ export const fetchShiftCalendar = async (month: string): Promise<ShiftCalendarDa
   const res = await fetch(`${SHIFT_SESSIONS_URL}?calendar=1&month=${month}`);
   const data = await res.json();
   return data.days || [];
+};
+
+/**
+ * Статусы смен и календарь — ОДНИМ запросом.
+ *
+ * Главная спрашивала это двумя отдельными обращениями к одной и той же функции.
+ * Смена начинается тем, что все разом открывают главную: база получала от
+ * каждого планшета пачку запросов сразу и упиралась в предел одновременных
+ * подключений — часть людей вместо смен видела пустой экран.
+ *
+ * Календарь нужен не всем ролям, поэтому месяц передаётся по желанию: без него
+ * ответ прежний, только статусы.
+ */
+export const fetchShiftsWithCalendar = async (
+  month?: string,
+): Promise<{ employees: EmployeeShiftStatus[]; days: ShiftCalendarDay[] }> => {
+  const qs = month ? `?withCalendar=${month}` : '';
+  const res = await fetchWithRetry(`${SHIFT_SESSIONS_URL}${qs}`);
+  const data = await res.json();
+  return { employees: data.employees || [], days: data.days || [] };
 };
 
 export interface AvailableShift {
