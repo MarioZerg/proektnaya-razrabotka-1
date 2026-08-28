@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
@@ -86,6 +87,31 @@ const ReturnsInspectionList = ({
         </div>
       )}
 
+      {/* Явная кнопка выбора всех: галочка в шапке маленькая и на тёмном фоне
+          терялась, поэтому полсотни вещей отмечали по одной. Здесь же видно,
+          сколько строк сейчас в списке. */}
+      {!loading && visible.length > 0 && (
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={onToggleAll}>
+            <Icon
+              name={
+                selected.length === visible.length ? 'SquareMinus' : 'SquareCheckBig'
+              }
+              size={16}
+              className="mr-2"
+            />
+            {selected.length === visible.length
+              ? 'Снять выделение'
+              : `Выбрать все (${visible.length})`}
+          </Button>
+          {selected.length > 0 && (
+            <span className="text-sm text-muted-foreground">
+              Отмечено: {selected.length} из {visible.length}
+            </span>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
@@ -103,10 +129,20 @@ const ReturnsInspectionList = ({
           <Table>
             <TableHeader>
               <TableRow className="bg-primary hover:bg-primary">
+                {/* Галочка «выбрать все» стоит на ТЁМНОЙ шапке, а рамка у неё по
+                    умолчанию тоже тёмная — на этом фоне её попросту не было видно,
+                    и админ отмечал полсотни вещей по одной. Перекрашиваем в светлый
+                    цвет шапки. */}
                 <TableHead className="w-10">
                   <Checkbox
                     checked={selected.length === visible.length && visible.length > 0}
                     onCheckedChange={onToggleAll}
+                    title={
+                      selected.length === visible.length && visible.length > 0
+                        ? 'Снять выделение со всех'
+                        : `Выбрать все (${visible.length})`
+                    }
+                    className="border-primary-foreground data-[state=checked]:border-primary-foreground data-[state=checked]:bg-primary-foreground data-[state=checked]:text-primary"
                   />
                 </TableHead>
                 <TableHead className="text-primary-foreground">Товар</TableHead>

@@ -1218,6 +1218,77 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            if action == 'suitable_rolls':
+                # Какие рулоны годятся под возврат куска.
+                #
+                # Упаковщица держит кусок в руках и не должна гадать, на какой
+                # рулон его класть: показываем только подходящие — тот же
+                # материал, её цех и её смена. Раньше она сканировала любой
+                # рулон и узнавала об ошибке уже после отказа.
+                gw_id = body_data.get('goodsWarehouseId')
+                actor_id = body_data.get('userId') or body_data.get('actorId')
+                if not gw_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Не указана вещь'}, ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT o.material, o.width FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = gw.order_id WHERE gw.id = %s",
+                    (int(gw_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Вещь не найдена'}, ensure_ascii=False)}
+                gw_material, gw_width = row[0], row[1]
+
+                my_workshop = my_shift = None
+                if actor_id:
+                    cur.execute(
+                        "SELECT workshop_id, shift_number FROM shift_sessions "
+                        "WHERE user_id = %s AND closed_at IS NULL "
+                        "ORDER BY opened_at DESC LIMIT 1",
+                        (int(actor_id),),
+                    )
+                    sess = cur.fetchone()
+                    if sess:
+                        my_workshop, my_shift = sess[0], sess[1]
+
+                conds = ["r.status <> 'completed'"]
+                params = []
+                if gw_material:
+                    conds.append("lower(trim(m.name)) = lower(trim(%s))")
+                    params.append(gw_material)
+                if my_workshop:
+                    conds.append("r.workshop_id = %s")
+                    params.append(my_workshop)
+                if my_shift:
+                    conds.append("r.shift_number = %s")
+                    params.append(my_shift)
+
+                cur.execute(
+                    "SELECT r.id, r.barcode, m.name, r.remaining_quantity, m.unit "
+                    "FROM rolls r LEFT JOIN materials m ON m.id = r.material_id "
+                    "WHERE " + " AND ".join(conds) + " ORDER BY r.id DESC LIMIT 20",
+                    tuple(params),
+                )
+                rolls_list = [
+                    {'id': x[0], 'barcode': x[1], 'materialName': x[2],
+                     'remainingQuantity': float(x[3]) if x[3] is not None else 0,
+                     'unit': x[4]}
+                    for x in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({
+                        'rolls': rolls_list,
+                        'material': gw_material,
+                        'width': gw_width,
+                        # Готовый метраж: ширина вещи в погонных метрах.
+                        'quantity': round(float(gw_width) / 100, 2) if gw_width else None,
+                    }, ensure_ascii=False),
+                }
+
             if action == 'packer_return':
                 # Упаковщица возвращает годный кусок материала на рулон.
                 #
@@ -1243,12 +1314,36 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers,
                             'body': json.dumps({'error': 'Отсканируйте рулон'},
                                                ensure_ascii=False)}
-                try:
-                    qty = float(str(quantity).replace(',', '.'))
-                except (TypeError, ValueError):
-                    return {'statusCode': 400, 'headers': headers,
-                            'body': json.dumps({'error': 'Метраж должен быть числом'},
-                                               ensure_ascii=False)}
+                # МЕТРАЖ СЧИТАЕТСЯ САМ — ПО ШИРИНЕ ВЕЩИ.
+                #
+                # Раньше упаковщица набирала его руками на сенсорной клавиатуре.
+                # Это лишний шаг и источник ошибок: промахнулась цифрой — и на
+                # рулоне появились метры, которых нет, а недостача уехала.
+                #
+                # Ширина вещи и есть длина куска: полотно кроят поперёк рулона,
+                # поэтому кусок шириной 200 см — это ровно 2 погонных метра.
+                # Формула width/100 уже используется в расчёте оплаты упаковщицы.
+                gw_material = None
+                gw_width = None
+                if gw_id:
+                    cur.execute(
+                        "SELECT o.material, o.width FROM goods_warehouse gw "
+                        "LEFT JOIN orders o ON o.id = gw.order_id WHERE gw.id = %s",
+                        (int(gw_id),),
+                    )
+                    gw_row = cur.fetchone()
+                    if gw_row:
+                        gw_material, gw_width = gw_row[0], gw_row[1]
+
+                if quantity in (None, '', 0) and gw_width:
+                    qty = round(float(gw_width) / 100, 2)
+                else:
+                    try:
+                        qty = float(str(quantity).replace(',', '.'))
+                    except (TypeError, ValueError):
+                        return {'statusCode': 400, 'headers': headers,
+                                'body': json.dumps({'error': 'Метраж должен быть числом'},
+                                                   ensure_ascii=False)}
                 if qty <= 0:
                     return {'statusCode': 400, 'headers': headers,
                             'body': json.dumps({'error': 'Метраж должен быть больше нуля'},
@@ -1266,7 +1361,8 @@ def handler(event: dict, context) -> dict:
                     roll_id = found[0]
 
                 cur.execute(
-                    "SELECT r.id, r.barcode, r.status, m.name, m.unit "
+                    "SELECT r.id, r.barcode, r.status, m.name, m.unit, "
+                    "       r.workshop_id, r.shift_number "
                     "FROM rolls r LEFT JOIN materials m ON m.id = r.material_id "
                     "WHERE r.id = %s",
                     (int(roll_id),),
@@ -1280,6 +1376,51 @@ def handler(event: dict, context) -> dict:
                             'body': json.dumps(
                                 {'error': 'Рулон уже закрыт — вернуть на него материал нельзя'},
                                 ensure_ascii=False)}
+
+                # ВОЗВРАЩАТЬ МОЖНО ТОЛЬКО НА ПОДХОДЯЩИЙ РУЛОН.
+                #
+                # Кусок ткани физически ложится на конкретный рулон, и рулон
+                # должен быть тем же материалом, что и вещь: вуаль нельзя
+                # прицепить к сетке. Плюс он должен лежать в цехе упаковщицы и
+                # относиться к её смене — иначе метры уедут чужой бригаде, а у
+                # той разойдётся остаток на закрытии смены.
+                roll_material, roll_workshop, roll_shift = roll[3], roll[5], roll[6]
+
+                if gw_material and roll_material and \
+                        gw_material.strip().lower() != roll_material.strip().lower():
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': f'Рулон другого материала: на рулоне «{roll_material}», '
+                                          f'а вещь из «{gw_material}». Отсканируйте рулон '
+                                          f'с тем же материалом'},
+                                ensure_ascii=False)}
+
+                # Смену и цех берём из ОТКРЫТОЙ смены упаковщицы, а не из её
+                # профиля: она может работать гостем в чужом цехе, и тогда
+                # рулоны там — её рабочие рулоны на сегодня.
+                if actor_id:
+                    cur.execute(
+                        "SELECT workshop_id, shift_number FROM shift_sessions "
+                        "WHERE user_id = %s AND closed_at IS NULL "
+                        "ORDER BY opened_at DESC LIMIT 1",
+                        (int(actor_id),),
+                    )
+                    sess = cur.fetchone()
+                    if sess:
+                        my_workshop, my_shift = sess[0], sess[1]
+                        if my_workshop and roll_workshop and my_workshop != roll_workshop:
+                            return {'statusCode': 409, 'headers': headers,
+                                    'body': json.dumps(
+                                        {'error': 'Этот рулон из другого цеха. Возвращать '
+                                                  'материал можно только на рулоны своего цеха'},
+                                        ensure_ascii=False)}
+                        if my_shift and roll_shift and my_shift != roll_shift:
+                            return {'statusCode': 409, 'headers': headers,
+                                    'body': json.dumps(
+                                        {'error': f'Этот рулон со смены №{roll_shift}, '
+                                                  f'а у вас смена №{my_shift}. Возвращать '
+                                                  f'материал можно только на рулоны своей смены'},
+                                        ensure_ascii=False)}
 
                 cur.execute(
                     "UPDATE rolls SET remaining_quantity = remaining_quantity + %s, "

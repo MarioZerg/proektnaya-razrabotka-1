@@ -241,10 +241,35 @@ export const writeOffRoll = (
  * Такой метраж числится ОТДЕЛЬНО от основного: в расчёт штрафа за недостачу он
  * не входит, иначе закройщица получила бы удержание за чужой материал.
  */
+/**
+ * Рулоны, на которые можно вернуть кусок от этой вещи.
+ *
+ * Отбор делает сервер: тот же материал, цех и смена упаковщицы. Заодно
+ * присылает готовый метраж — ширина вещи в погонных метрах, руками вводить
+ * ничего не нужно.
+ */
+export const fetchSuitableRolls = (payload: {
+  goodsWarehouseId: number;
+  userId?: number;
+}) =>
+  postAction({ action: 'suitable_rolls', ...payload }) as Promise<{
+    rolls: {
+      id: number;
+      barcode: string;
+      materialName: string | null;
+      remainingQuantity: number;
+      unit: string | null;
+    }[];
+    material: string | null;
+    width: number | null;
+    quantity: number | null;
+  }>;
+
 export const packerReturnToRoll = (payload: {
   barcode?: string;
   rollId?: number;
-  quantity: number;
+  /** Не передаём — сервер посчитает сам по ширине вещи. */
+  quantity?: number;
   goodsWarehouseId?: number;
   userId?: number;
   userName?: string;

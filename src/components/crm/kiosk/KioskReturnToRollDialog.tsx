@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import { packerReturnToRoll } from '@/lib/rollsApi';
+import { packerReturnToRoll, fetchSuitableRolls } from '@/lib/rollsApi';
 
 interface KioskReturnToRollDialogProps {
   open: boolean;
@@ -19,19 +19,33 @@ interface KioskReturnToRollDialogProps {
   goodsWarehouseId?: number;
 }
 
+interface SuitableRoll {
+  id: number;
+  barcode: string;
+  materialName: string | null;
+  remainingQuantity: number;
+  unit: string | null;
+}
+
 /**
  * Возврат годного куска материала на рулон при перепаковке.
  *
  * Зачем. Иногда при перепаковке нужен перекрой, и на руках остаётся целый кусок
- * материала. Выбрасывать его жалко — упаковщица пикает рулон, указывает метраж,
- * и кусок возвращается в оборот.
+ * материала. Выбрасывать его жалко — упаковщица кладёт его на рулон, и кусок
+ * возвращается в оборот свободным остатком.
  *
- * Этот метраж числится ОТДЕЛЬНО от основного метража рулона: расход по нему
- * виден сам по себе, а в расчёт штрафа за недостачу он не входит — иначе
- * закройщица получила бы удержание за материал, которого не брала.
+ * МЕТРАЖ НЕ ВВОДИТСЯ РУКАМИ. Раньше упаковщица набирала его на сенсорной
+ * клавиатуре — лишний шаг и источник ошибок: промахнулась цифрой, и на рулоне
+ * появились метры, которых нет. Теперь метраж считается сам: полотно кроят
+ * поперёк рулона, поэтому кусок шириной 200 см — это ровно 2 погонных метра.
  *
- * Экран сенсорный, поэтому всё крупное: цифры набираются кнопками, клавиатуру
- * на киоске не вызвать.
+ * РУЛОН ТОЛЬКО ПОДХОДЯЩИЙ. Показываем лишь рулоны того же материала, из её цеха
+ * и её смены: вуаль нельзя прицепить к сетке, а чужие метры разошлись бы с
+ * остатком другой бригады на закрытии смены.
+ *
+ * Этот метраж числится ОТДЕЛЬНО от основного метража рулона: в расчёт штрафа за
+ * недостачу он не входит — иначе закройщица получила бы удержание за материал,
+ * которого не брала.
  */
 const KioskReturnToRollDialog = ({
   open,
@@ -42,44 +56,46 @@ const KioskReturnToRollDialog = ({
   const { user } = useAuth();
 
   const [barcode, setBarcode] = useState('');
-  const [quantity, setQuantity] = useState('');
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [rolls, setRolls] = useState<SuitableRoll[]>([]);
+  const [material, setMaterial] = useState<string | null>(null);
+  const [width, setWidth] = useState<number | null>(null);
+  const [quantity, setQuantity] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Открыли окно — курсор сразу в поле сканера: упаковщица пикает рулон,
-  // не касаясь экрана руками в перчатках.
+  // Открыли окно — сразу спрашиваем, какие рулоны подходят, и ставим курсор
+  // в поле сканера: упаковщица пикает рулон, не касаясь экрана в перчатках.
   useEffect(() => {
-    if (open) {
-      setBarcode('');
-      setQuantity('');
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
-  }, [open]);
+    if (!open) return;
+    setBarcode('');
+    setRolls([]);
+    setTimeout(() => inputRef.current?.focus(), 100);
 
-  const addDigit = (d: string) =>
-    setQuantity((prev) => {
-      if (d === '.' && prev.includes('.')) return prev;
-      if (d === '.' && !prev) return '0.';
-      return (prev + d).slice(0, 8);
-    });
+    if (!goodsWarehouseId) return;
+    setLoading(true);
+    fetchSuitableRolls({ goodsWarehouseId, userId: user?.id })
+      .then((d) => {
+        setRolls(d.rolls || []);
+        setMaterial(d.material);
+        setWidth(d.width);
+        setQuantity(d.quantity);
+      })
+      .catch(() => setRolls([]))
+      .finally(() => setLoading(false));
+  }, [open, goodsWarehouseId, user?.id]);
 
-  const handleSave = async () => {
-    const qty = Number(quantity.replace(',', '.'));
-    if (!barcode.trim()) {
+  const save = async (code: string) => {
+    if (!code.trim()) {
       toast({ title: 'Отсканируйте рулон', variant: 'destructive' });
       inputRef.current?.focus();
       return;
     }
-    if (!qty || qty <= 0) {
-      toast({ title: 'Укажите метраж больше нуля', variant: 'destructive' });
-      return;
-    }
-
     setSaving(true);
     try {
+      // Метраж не передаём: сервер посчитает его сам по ширине вещи.
       const res = await packerReturnToRoll({
-        barcode: barcode.trim(),
-        quantity: qty,
+        barcode: code.trim(),
         goodsWarehouseId,
         userId: user?.id,
         userName: user?.name,
@@ -108,47 +124,76 @@ const KioskReturnToRollDialog = ({
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Что именно вернётся — видно сразу, без подсчётов в уме. */}
+          <div className="rounded-md border-2 border-violet-300 bg-violet-50 p-4">
+            <div className="text-sm text-violet-900">Вернётся на рулон</div>
+            <div className="mt-1 text-3xl font-bold text-violet-900">
+              {quantity != null ? `${quantity} м` : '—'}
+            </div>
+            <div className="mt-1 text-sm text-violet-800">
+              {material || 'материал не указан'}
+              {width ? ` · ширина вещи ${width} см` : ''}
+            </div>
+          </div>
+
           <div className="space-y-1.5">
-            <p className="text-base font-medium">1. Отсканируйте рулон</p>
+            <p className="text-base font-medium">Отсканируйте рулон</p>
             <Input
               ref={inputRef}
               value={barcode}
               onChange={(e) => setBarcode(e.target.value)}
+              onKeyDown={(e) => {
+                // Сканер сам жмёт Enter — сохраняем без лишнего касания экрана.
+                if (e.key === 'Enter' && barcode.trim() && !saving) save(barcode);
+              }}
               placeholder="Штрихкод рулона"
               className="h-16 font-mono-tech text-xl"
               autoComplete="off"
+              disabled={saving}
             />
           </div>
 
+          {/* Подходящие рулоны — чтобы не гадать и не бегать проверять.
+              Нажатие работает как скан: на киоске это быстрее. */}
           <div className="space-y-1.5">
-            <p className="text-base font-medium">2. Сколько метров возвращаете</p>
-            <div className="flex h-16 items-center justify-center rounded-md border-2 border-violet-300 bg-violet-50 text-3xl font-bold">
-              {quantity || '0'}
-            </div>
-            {/* Цифры кнопками: сенсорный киоск без клавиатуры. */}
-            <div className="grid grid-cols-3 gap-2">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0'].map((d) => (
-                <Button
-                  key={d}
-                  type="button"
-                  variant="outline"
-                  className="h-14 text-2xl"
-                  onClick={() => addDigit(d)}
-                  disabled={saving}
-                >
-                  {d}
-                </Button>
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                className="h-14 text-2xl"
-                onClick={() => setQuantity((p) => p.slice(0, -1))}
-                disabled={saving}
-              >
-                <Icon name="Delete" size={24} />
-              </Button>
-            </div>
+            <p className="text-base font-medium">
+              Подходящие рулоны{rolls.length > 0 ? ` (${rolls.length})` : ''}
+            </p>
+            {loading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Icon name="Loader2" size={18} className="animate-spin" />
+                Ищем рулоны вашей смены...
+              </div>
+            ) : rolls.length === 0 ? (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                В вашем цехе и смене нет открытых рулонов
+                {material ? ` из «${material}»` : ''}. Спросите закройщицу — кусок
+                можно вернуть только на рулон того же материала.
+              </p>
+            ) : (
+              <div className="max-h-56 space-y-2 overflow-y-auto">
+                {rolls.map((r) => (
+                  <Button
+                    key={r.id}
+                    type="button"
+                    variant="outline"
+                    className="h-auto w-full justify-between px-4 py-3 text-left"
+                    onClick={() => save(r.barcode)}
+                    disabled={saving}
+                  >
+                    <span>
+                      <span className="block font-mono-tech text-base">{r.barcode}</span>
+                      <span className="block text-sm text-muted-foreground">
+                        {r.materialName || '—'}
+                      </span>
+                    </span>
+                    <span className="whitespace-nowrap text-sm text-muted-foreground">
+                      осталось {r.remainingQuantity} {r.unit || ''}
+                    </span>
+                  </Button>
+                ))}
+              </div>
+            )}
           </div>
 
           <p className="rounded-md border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">
@@ -160,8 +205,8 @@ const KioskReturnToRollDialog = ({
             <Button
               size="lg"
               className="h-20 bg-violet-600 text-xl text-white hover:bg-violet-700"
-              onClick={handleSave}
-              disabled={saving}
+              onClick={() => save(barcode)}
+              disabled={saving || !barcode.trim()}
             >
               <Icon
                 name={saving ? 'Loader2' : 'Check'}
