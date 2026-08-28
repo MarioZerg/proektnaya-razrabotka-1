@@ -19,9 +19,11 @@ interface Props {
   onMove: (step: number, note: string) => void;
   busy: boolean;
   dryRun: boolean;
+  /** Ход отправки: цены уходят пачками, и владелец должен видеть движение. */
+  progress?: string | null;
 }
 
-const RobotManualMove = ({ onMove, busy, dryRun }: Props) => {
+const RobotManualMove = ({ onMove, busy, dryRun, progress }: Props) => {
   const [step, setStep] = useState('1');
   const [note, setNote] = useState('');
 
@@ -33,7 +35,7 @@ const RobotManualMove = ({ onMove, busy, dryRun }: Props) => {
         <div>
           <h3 className="font-semibold">Сдвинуть цены вручную</h3>
           <p className="text-xs text-muted-foreground">
-            Разово, не дожидаясь ночного запуска. Робот учтёт этот шаг
+            Цены двигаются только отсюда — сами по себе они не меняются
           </p>
         </div>
 
@@ -77,6 +79,15 @@ const RobotManualMove = ({ onMove, busy, dryRun }: Props) => {
             </Button>
           </div>
         </div>
+
+        {/* Пока идут пачки — показываем счётчик, иначе кажется, что кнопка
+            не сработала: на восьмистах карточках отправка занимает время. */}
+        {busy && progress && (
+          <p className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 p-2 text-sm font-medium">
+            <Icon name="Loader2" size={15} className="animate-spin" />
+            {progress}
+          </p>
+        )}
 
         <p className="text-xs text-muted-foreground">
           {dryRun

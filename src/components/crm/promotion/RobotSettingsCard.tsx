@@ -9,8 +9,9 @@ import type { RobotSettings } from '@/lib/priceRobotApi';
 /**
  * Настройки робота подъёма цен.
  *
- * Цель простая — поднять цены на заданный процент. Ориентир один: спрос.
- * Пока продажи держатся, робот идёт вверх; просели сильнее порога — откатывает
+ * Автоматика по спросу убрана: она откатывала цены, когда выгрузка продаж
+ * отставала и в базе за вчера стоял ноль. Цены двигает только владелец
+ * кнопкой; здесь задаётся цель и предел, дальше которого подъём не уйдёт
  * шаг назад и ждёт.
  *
  * Робот меняет цены на витрине сам, поэтому здесь два переключателя, а не
@@ -127,31 +128,6 @@ const RobotSettingsCard = ({ value, onChange, onSave, busy }: Props) => {
             </p>
           </div>
           <div className="space-y-1.5">
-            <Label>Откат при падении, %</Label>
-            <Input
-              type="number"
-              value={value.dropPercent}
-              onChange={(e) => set('dropPercent', Number(e.target.value))}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Продажи просели сильнее — вернём цену
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Окно спроса, дней</Label>
-            <Input
-              type="number"
-              min={3}
-              value={value.demandWindowDays}
-              onChange={(e) =>
-                set('demandWindowDays', Number(e.target.value))
-              }
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Сравниваем столько дней до и после шага
-            </p>
-          </div>
-          <div className="space-y-1.5">
             <Label>Предел от старта, %</Label>
             <Input
               type="number"
@@ -164,21 +140,6 @@ const RobotSettingsCard = ({ value, onChange, onSave, busy }: Props) => {
           </div>
         </div>
 
-        {/* Подтверждение падения: защита от «плохого дня». Одиночный слабый
-            замер не должен дёргать цены всего магазина. */}
-        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3">
-          <Switch
-            checked={value.requireSecondSignal}
-            onCheckedChange={(v) => set('requireSecondSignal', v)}
-          />
-          <span className="text-sm">
-            <span className="font-medium">Ждать подтверждения падения</span>
-            <span className="block text-xs text-muted-foreground">
-              Откат только если спрос просел два замера подряд. Резкое падение
-              (вдвое глубже порога) откатываем сразу
-            </span>
-          </span>
-        </label>
 
         {/* Предупреждение только в боевом режиме: в наблюдении пугать нечем. */}
         {!value.dryRun && value.isActive && (

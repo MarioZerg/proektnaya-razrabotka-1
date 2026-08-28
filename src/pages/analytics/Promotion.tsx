@@ -8,7 +8,7 @@ import RobotTabPanel from '@/components/crm/promotion/RobotTabPanel';
 import AdviceTabPanel from '@/components/crm/promotion/AdviceTabPanel';
 import {
   fetchRobotStatus,
-  moveRobotPrices,
+  moveRobotPricesAll,
   runRobotNow,
   saveRobotSettings,
   type RobotStatus,
@@ -31,10 +31,13 @@ const MARKETPLACES: { code: MarketplaceCode; label: string }[] = [
 /**
  * Продвижение: два способа вести цены к нужной марже.
  *
- * РОБОТ поднимает цены всего магазина сам, мелкими шагами с паузой, и
- * останавливается, когда маржа FBS дошла до цели. Если после подъёма продажи
- * просели — откатывает цену назад. Поднимать восемьсот карточек руками и
- * следить за спросом после каждого шага человек не может, машина может.
+ * ПОДЪЁМ ЦЕН — только вручную, кнопкой владельца. Автоматика по спросу убрана:
+ * она судила о продажах по выгрузке, а выгрузка может отстать. 28 августа
+ * из-за этого откатились 613 карточек, поднятых четырьмя днями раньше, —
+ * робот увидел в базе ноль и счёл это обвалом спроса.
+ *
+ * Одно нажатие поднимает ВЕСЬ ассортимент: цены уходят пачками, но досыл идёт
+ * сам, без повторных нажатий.
  *
  * СОВЕТЫ — точечная работа по конкретным товарам, с подтверждением владельца.
  *
@@ -51,6 +54,8 @@ const PromotionPage = () => {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  /** Ход отправки цен: «Отправлено 120, осталось 554». */
+  const [moveProgress, setMoveProgress] = useState<string | null>(null);
   const [pushOpen, setPushOpen] = useState(false);
 
   const [marginMin, setMarginMin] = useState('10');
@@ -112,12 +117,24 @@ const PromotionPage = () => {
     }
   };
 
-  /** Ручной сдвиг цен: двинуть прямо сейчас, вне расписания робота. */
+  /**
+   * Ручной сдвиг цен по ВСЕМУ ассортименту за одно нажатие.
+   *
+   * Сервер отправляет цены пачками — весь магазин за один вызов не успевает.
+   * Раньше кнопку приходилось жать по десятку раз, пока не кончится очередь.
+   * Теперь досыл идёт сам, а в сообщении видно, сколько карточек уже ушло.
+   */
   const moveNow = async (step: number, note: string) => {
     setBusy(true);
+    setMoveProgress(null);
     try {
-      const r = await moveRobotPrices(step, note, user?.id);
-      toast({ title: 'Цены сдвинуты', description: r.reason });
+      const r = await moveRobotPricesAll(step, note, user?.id, (pushed, left) =>
+        setMoveProgress(`Отправлено ${pushed}, осталось ${left}`),
+      );
+      toast({
+        title: 'Цены сдвинуты',
+        description: `Карточек изменено: ${r.pushed}. ${r.reason}`,
+      });
       loadRobot();
     } catch (e) {
       toast({
@@ -127,6 +144,7 @@ const PromotionPage = () => {
       });
     } finally {
       setBusy(false);
+      setMoveProgress(null);
     }
   };
 
@@ -280,6 +298,7 @@ const PromotionPage = () => {
               onSave={saveRobot}
               onMove={moveNow}
               onRun={runRobot}
+              moveProgress={moveProgress}
             />
           </TabsContent>
 

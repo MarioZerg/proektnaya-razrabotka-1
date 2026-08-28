@@ -12,14 +12,17 @@ interface RobotTabPanelProps {
   onSave: () => void;
   onMove: (step: number, note: string) => void;
   onRun: () => void;
+  /** Ход отправки цен, пока идут пачки: «Отправлено 120, осталось 554». */
+  moveProgress?: string | null;
 }
 
 /**
  * Вкладка «Робот цен»: сводка по подъёму, настройки, ручной сдвиг и журнал.
  *
- * Робот поднимает цены всего магазина сам, мелкими шагами с паузой, и
- * останавливается, когда маржа дошла до цели. Здесь видно, где он сейчас на
- * этом пути и что делал на прошлых шагах.
+ * Цены двигает ВЛАДЕЛЕЦ кнопкой — сами по себе они не меняются. Автоматика
+ * по спросу убрана: она откатывала подъём, когда выгрузка продаж отставала и
+ * в базе за вчера стоял ноль. Здесь видно, на сколько цены подняты от старта
+ * и что происходило на прошлых шагах.
  */
 const RobotTabPanel = ({
   robot,
@@ -28,6 +31,7 @@ const RobotTabPanel = ({
   onSave,
   onMove,
   onRun,
+  moveProgress,
 }: RobotTabPanelProps) => {
   if (!robot?.settings) {
     return (
@@ -77,17 +81,6 @@ const RobotTabPanel = ({
         </div>
         <div className="rounded-lg border border-border p-3">
           <p className="text-xs text-muted-foreground">
-            Откат при падении
-          </p>
-          <p className="text-2xl font-bold">
-            −{robot.settings.dropPercent}%
-          </p>
-          <p className="text-xs text-muted-foreground">
-            спроса — вернём цену
-          </p>
-        </div>
-        <div className="rounded-lg border border-border p-3">
-          <p className="text-xs text-muted-foreground">
             Товаров под управлением
           </p>
           <p className="text-2xl font-bold">{robot.itemsCount}</p>
@@ -108,6 +101,7 @@ const RobotTabPanel = ({
         onMove={onMove}
         busy={busy}
         dryRun={robot.settings.dryRun}
+        progress={moveProgress}
       />
 
       <div className="flex flex-wrap items-center justify-between gap-2">

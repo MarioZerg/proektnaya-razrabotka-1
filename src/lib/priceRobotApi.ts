@@ -77,7 +77,7 @@ export const moveRobotPrices = async (
   step: number,
   note: string,
   actorId?: number,
-): Promise<{ reason: string; pushed: number; drift: number }> =>
+): Promise<{ reason: string; pushed: number; drift: number; inProgress?: boolean; left?: number }> =>
   check(
     await fetch(URL, {
       method: 'POST',
@@ -85,6 +85,39 @@ export const moveRobotPrices = async (
       body: JSON.stringify({ action: 'move', step, note, actorId }),
     }),
   );
+
+/**
+ * Сдвинуть цены ВЕСЬ ассортимент за одно нажатие.
+ *
+ * Почему это нужно. Серверу отведено пять секунд на вызов, и весь магазин за
+ * раз он отправить не успевает — цены уходят пачками по 60 карточек. Раньше
+ * владельцу приходилось жать кнопку снова и снова, пока не кончится очередь:
+ * восемьсот карточек — больше десятка нажатий, и легко бросить на середине,
+ * оставив магазин с разными ценами.
+ *
+ * Теперь досыл идёт сам: повторяем вызов, пока сервер не скажет, что очередь
+ * пуста, и по ходу сообщаем, сколько карточек уже ушло.
+ */
+export const moveRobotPricesAll = async (
+  step: number,
+  note: string,
+  actorId?: number,
+  onProgress?: (pushed: number, left: number) => void,
+): Promise<{ reason: string; pushed: number; drift: number }> => {
+  let total = 0;
+  let last = await moveRobotPrices(step, note, actorId);
+  total += last.pushed || 0;
+
+  // Предохранитель от бесконечного круга: даже на самом большом ассортименте
+  // пачек по 60 хватит с запасом, а зациклиться на ошибке сервера нельзя.
+  for (let guard = 0; last.inProgress && last.left && guard < 200; guard++) {
+    onProgress?.(total, last.left);
+    last = await moveRobotPrices(step, note, actorId);
+    total += last.pushed || 0;
+  }
+
+  return { ...last, pushed: total };
+};
 
 /** Прогнать цикл сейчас, не дожидаясь ночного запуска. */
 export const runRobotNow = async (
