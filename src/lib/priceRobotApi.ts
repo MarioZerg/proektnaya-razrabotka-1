@@ -104,19 +104,21 @@ export const moveRobotPricesAll = async (
   actorId?: number,
   onProgress?: (pushed: number, left: number) => void,
 ): Promise<{ reason: string; pushed: number; drift: number }> => {
-  let total = 0;
   let last = await moveRobotPrices(step, note, actorId);
-  total += last.pushed || 0;
 
+  // Счётчик сервера УЖЕ НАКОПИТЕЛЬНЫЙ: он возвращает, сколько ушло с начала
+  // шага (60, потом 120, потом 180...). Складывать эти ответы нельзя — так
+  // получается сумма ряда: на 674 карточках выходило «изменено 4634».
+  // Просто берём последнее значение, оно и есть итог.
+  //
   // Предохранитель от бесконечного круга: даже на самом большом ассортименте
   // пачек по 60 хватит с запасом, а зациклиться на ошибке сервера нельзя.
   for (let guard = 0; last.inProgress && last.left && guard < 200; guard++) {
-    onProgress?.(total, last.left);
+    onProgress?.(last.pushed || 0, last.left);
     last = await moveRobotPrices(step, note, actorId);
-    total += last.pushed || 0;
   }
 
-  return { ...last, pushed: total };
+  return last;
 };
 
 /** Прогнать цикл сейчас, не дожидаясь ночного запуска. */
