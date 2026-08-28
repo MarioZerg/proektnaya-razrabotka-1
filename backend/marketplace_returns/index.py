@@ -467,7 +467,21 @@ def sync_yandex(cur, days):
 
 
 def next_storage_barcode(cur):
-    cur.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM goods_warehouse")
+    """Следующий свободный стикер хранения GW-XXXXXX.
+
+    Номер берём от МАКСИМАЛЬНОГО УЖЕ ВЫДАННОГО СТИКЕРА, а не от номера строки
+    в таблице. Раньше считали от номера строки — и это ломало приёмку: стикеры
+    давно ушли вперёд (GW-727474), а генератор предлагал GW-006231, который был
+    занят много месяцев назад. Стикер обязан быть уникальным, база отклоняла
+    запись целиком, и заведение возвратов на склад падало с ошибкой.
+
+    Видно это было только кладовщику: он отмечал привезённые коробки, а во
+    вкладке «Разобрать возвраты» они не появлялись.
+    """
+    cur.execute(
+        "SELECT COALESCE(MAX((substring(storage_barcode from 4))::bigint), 0) + 1 "
+        "FROM goods_warehouse WHERE storage_barcode ~ '^GW-[0-9]+$'"
+    )
     return 'GW-' + str(cur.fetchone()[0]).zfill(6)
 
 
@@ -507,6 +521,10 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
     created = 0
 
     for r_id, order_id, marketplace, external_id, product_name, material, width, height, item_name in rows:
+        # Ни один шаг ниже не должен ронять приёмку целиком: спотыкались на
+        # одной вещи — на складе не появлялось НИ ОДНОЙ коробки, включая
+        # нормальные, и кладовщик шёл принимать руками. Поэтому спорные случаи
+        # проверяем заранее и молча пропускаем (см. ниже), а не ловим ошибку.
         if not order_id:
             product = (
                 f'{material} {width}x{height}'
@@ -557,6 +575,70 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
             (order_id, r_id),
         )
         gw_row = cur.fetchone()
+
+        # СВОБОДНОЙ КАРТОЧКИ НЕТ — ЗАВОДИМ ВЕЩИ ОТДЕЛЬНУЮ.
+        #
+        # На складе действует правило: одна карточка на заказ. А в одном заказе
+        # бывает две-три вернувшихся вещи (покупатель заказал три тюля и вернул
+        # все три). Карточку занимает первая, для остальных места нет — и попытка
+        # завести их падала с ошибкой. Из-за этого ВСЯ приёмка обрывалась: не
+        # попадали во вкладку даже те возвраты, у которых с карточкой всё в порядке.
+        # Так у нас зависли 42 забранные вещи.
+        #
+        # Поэтому для второй и следующих вещей заводим собственный заказ-возврат:
+        # он не идёт на конвейер, а служит карточкой вещи (ткань, размер, номер).
+        # Каждая вещь получает свой стикер хранения и видна на складе отдельно —
+        # кладовщик разбирает ровно столько штук, сколько привёз.
+        if not gw_row:
+            own_number = f'RET-{marketplace}-{external_id}'
+            cur.execute(
+                "INSERT INTO orders (order_number, marketplace, order_type, status, "
+                "sewing_status, product, quantity, source, material, width, height) "
+                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s) "
+                "ON CONFLICT (order_number) DO NOTHING RETURNING id",
+                (own_number, marketplace,
+                 (f'{material} {width}x{height}' if material and width and height
+                  else (product_name or item_name or 'Возврат')),
+                 material, width, height),
+            )
+            own = cur.fetchone()
+            if not own:
+                cur.execute("SELECT id FROM orders WHERE order_number = %s", (own_number,))
+                own = cur.fetchone()
+            if own and own[0] != order_id:
+                order_id = own[0]
+                cur.execute(
+                    "UPDATE marketplace_returns SET order_id = %s WHERE id = %s",
+                    (order_id, r_id),
+                )
+                # У собственного заказа-возврата карточка тоже может уже быть —
+                # если эту вещь принимали раньше. Тогда переиспользуем её.
+                cur.execute(
+                    "SELECT gw.id, gw.storage_barcode FROM goods_warehouse gw "
+                    "WHERE gw.order_id = %s AND NOT EXISTS ("
+                    "  SELECT 1 FROM marketplace_returns mr "
+                    "  WHERE mr.goods_warehouse_id = gw.id AND mr.id <> %s"
+                    ") LIMIT 1",
+                    (order_id, r_id),
+                )
+                gw_row = cur.fetchone()
+
+        # ПРОВЕРЯЕМ ЗАРАНЕЕ, А НЕ ЛОВИМ ОШИБКУ.
+        #
+        # На складе действует правило: одна карточка на заказ. Если свободной
+        # карточки нет, а место под заказ уже занято — вставка упадёт и оборвёт
+        # ВСЮ приёмку: на склад не попадёт ни одна коробка, включая нормальные.
+        # Кладовщик видел пустую вкладку «Разобрать возвраты» и шёл принимать
+        # вещи руками. Поэтому такую вещь просто пропускаем: она дождётся, пока
+        # освободится карточка, а остальные коробки встанут на склад сейчас.
+        if not gw_row:
+            cur.execute(
+                "SELECT 1 FROM goods_warehouse WHERE order_id = %s LIMIT 1",
+                (order_id,),
+            )
+            if cur.fetchone():
+                continue
+
         if gw_row:
             gw_id = gw_row[0]
             cur.execute(
@@ -631,6 +713,19 @@ def handler(event: dict, context) -> dict:
             try:
                 cur = conn.cursor()
                 days = int(params.get('days') or 30)
+                # ДОБИРАЕМ ЗАВИСШИЕ ВОЗВРАТЫ.
+                #
+                # Забранная с ПВЗ вещь попадает в «Разобрать возвраты» только после
+                # того, как её заведут на склад. Заведение идёт порциями по 25, и
+                # остаток ждал ПОВТОРНОГО нажатия кнопки. Кладовщик об этом не знал:
+                # привёз коробки, отметил их — а во вкладке пусто. Так у нас скопилось
+                # 42 возврата, которые числятся забранными, но нигде не показывались.
+                #
+                # Теперь каждый час загрузка сама подбирает всё, что осталось
+                # незаведённым. Нажимать ничего не нужно.
+                stock_picked_up_returns(cur, limit=25)
+                conn.commit()
+
                 ozon = sync_ozon(cur, days)
                 wb = sync_wb(cur, days)
                 yandex = sync_yandex(cur, days)
@@ -1027,6 +1122,15 @@ def handler(event: dict, context) -> dict:
                             'created': 0,
                             'skipped': True,
                         })
+
+                # ДОБИРАЕМ ЗАВИСШИЕ ВОЗВРАТЫ (см. пояснение в ветке планировщика).
+                #
+                # Вещь попадает в «Разобрать возвраты» только после заведения на
+                # склад, а оно шло порциями по 25 и ждало повторного нажатия кнопки.
+                # Кладовщик об этом не знал: привёз коробки, отметил — а вкладка
+                # пустая. Теперь остаток подбирается сам, при каждой загрузке.
+                stock_picked_up_returns(cur, limit=25)
+                conn.commit()
 
                 ozon = sync_ozon(cur, days)
                 wb = sync_wb(cur, days)
