@@ -53,15 +53,19 @@ const GoodsCardActions = ({
         Раньше это был тупик: запись оставалась мёртвой навсегда, вещь заводили
         заново с новым стикером, а история движения обрывалась. Теперь админ
         возвращает её на полку одной кнопкой — со всей прежней историей. */}
-    {card.status === 'lost' && (
+    {(card.status === 'lost' || card.status === 'to_dispose') && (
       <Card className="border-emerald-300 bg-emerald-50 shadow-none">
         <CardContent className="space-y-3 pt-6">
           <div className="flex items-start gap-2.5">
             <Icon name="PackageSearch" size={20} className="mt-0.5 text-emerald-700" />
             <div>
-              <p className="font-semibold text-emerald-900">Товар списан со склада</p>
+              <p className="font-semibold text-emerald-900">
+                {card.status === 'to_dispose'
+                  ? 'Товар отправлен на утилизацию'
+                  : 'Товар списан со склада'}
+              </p>
               <p className="text-sm text-emerald-800">
-                {card.lostReason || 'Причина не указана'}
+                {card.lostReason || card.disposeReason || 'Причина не указана'}
               </p>
             </div>
           </div>

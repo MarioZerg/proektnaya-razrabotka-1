@@ -619,6 +619,9 @@ export interface GoodsCard {
   reservedMarketplace: string | null;
   reservedOrderType: string | null;
   lostReason: string | null;
+  /** За что вещь отправили на утилизацию. Нужна на карточке: по ней видно,
+   * почему вещь списали, и можно ли вернуть её, если она нашлась. */
+  disposeReason?: string | null;
   supplyId: number | null;
   supplyStatus: string | null;
   history: GoodsHistoryEntry[];

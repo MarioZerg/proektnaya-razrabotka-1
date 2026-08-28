@@ -984,7 +984,9 @@ def handler(event: dict, context) -> dict:
                     "       src.order_number, src.product, src.material, src.width, src.height, "
                     "       src.marketplace, "
                     "       res.id, res.order_number, res.marketplace, res.order_type, "
-                    "       gw.lost_reason "
+                    # Причина утилизации — рядом с причиной списания: у вещи в
+                    # карточке должно быть видно, за что её отправили в утиль.
+                    "       gw.lost_reason, gw.dispose_reason "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
                     "LEFT JOIN orders src ON src.id = gw.order_id "
@@ -1061,6 +1063,7 @@ def handler(event: dict, context) -> dict:
                         'reservedMarketplace': r[17],
                         'reservedOrderType': r[18],
                         'lostReason': r[19],
+                        'disposeReason': r[20],
                         'supplyId': sup[0] if sup else None,
                         'supplyStatus': sup[1] if sup else None,
                         'history': history,
@@ -2351,6 +2354,20 @@ def handler(event: dict, context) -> dict:
                     f"WHERE id IN ({ids_csv}) RETURNING id"
                 )
                 moved = len(cur.fetchall())
+                # ЗАКРЫВАЕМ И САМУ ЗАЯВКУ ВОЗВРАТА.
+                #
+                # Раньше менялся только статус вещи на складе, а заявка возврата
+                # оставалась как есть. В отчёте по возвратам такая вещь продолжала
+                # числиться «на складе» или «на перепаковке», хотя её уже списали —
+                # цифры расходились с реальностью, и было непонятно, сколько товара
+                # мы на самом деле потеряли.
+                cur.execute(
+                    "UPDATE marketplace_returns SET status = 'processed', "
+                    "outcome = 'utilized', outcome_at = now(), outcome_by = %s, "
+                    "damage_note = COALESCE(damage_note, %s) "
+                    f"WHERE goods_warehouse_id IN ({ids_csv})",
+                    (int(actor_id) if actor_id else None, reason),
+                )
                 log_action(
                     cur, actor_id, actor_name, 'send_to_dispose', 'goods_warehouse', None,
                     f'Отправил на утилизацию вещей: {moved}. Причина: {reason}',
@@ -3442,11 +3459,20 @@ def handler(event: dict, context) -> dict:
                 (rl_status, rl_barcode, rl_lost_reason, rl_order,
                  rl_product, rl_material, rl_width, rl_height) = row
 
-                if rl_status != 'lost':
+                # Возвращаем и списанные, и отправленные на утилизацию.
+                #
+                # На утилизацию вещь нередко уходит не потому, что она бракованная, а
+                # потому что её не могут найти: числится за складом, а на полке пусто.
+                # Потом вещь находится — лежала не на своём месте или её отложили и
+                # забыли. Раньше вернуть её было нечем: возврат работал только для
+                # статуса «утеряно», и приходилось заводить вещь заново с новым
+                # стикером, обрывая историю движения.
+                if rl_status not in ('lost', 'to_dispose'):
                     return {
                         'statusCode': 409, 'headers': headers,
                         'body': json.dumps(
-                            {'error': 'Вернуть на полку можно только списанный товар'},
+                            {'error': 'Вернуть на полку можно только списанный товар '
+                                      'или отправленный на утилизацию'},
                             ensure_ascii=False),
                     }
 
@@ -3464,6 +3490,9 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         "UPDATE goods_warehouse SET status = 'in_stock', shelf_id = %s, "
                         "lost_reason = NULL, lost_at = NULL, shipped_at = NULL, "
+                        # Снимаем и пометку утилизации: вещь вернулась в оборот
+                        # целой, причина списания к ней больше не относится.
+                        "dispose_reason = NULL, "
                         "reserved_order_id = NULL, matched_at = NULL, "
                         "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
                         "shipping_labeled_by_name = NULL "
@@ -3474,6 +3503,9 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         "UPDATE goods_warehouse SET status = 'in_stock', "
                         "lost_reason = NULL, lost_at = NULL, shipped_at = NULL, "
+                        # Снимаем и пометку утилизации: вещь вернулась в оборот
+                        # целой, причина списания к ней больше не относится.
+                        "dispose_reason = NULL, "
                         "reserved_order_id = NULL, matched_at = NULL, "
                         "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
                         "shipping_labeled_by_name = NULL "
@@ -3487,6 +3519,16 @@ def handler(event: dict, context) -> dict:
                     )
                     sh_row = cur.fetchone()
                     shelf_name = sh_row[0] if sh_row else None
+
+                # Заявка возврата тоже возвращается в оборот: вещь нашлась и лежит
+                # на полке, а в отчёте она значилась утилизированной. Иначе цифры
+                # по возвратам остались бы завышенными на найденный товар.
+                cur.execute(
+                    "UPDATE marketplace_returns SET outcome = 'stored', "
+                    "outcome_at = now(), outcome_by = %s, damage_note = NULL "
+                    "WHERE goods_warehouse_id = %s AND outcome = 'utilized'",
+                    (int(actor_id) if actor_id else None, int(item_id)),
+                )
 
                 item_txt = ' '.join(str(x) for x in [
                     rl_material,
