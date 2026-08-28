@@ -2713,11 +2713,15 @@ def handler(event: dict, context) -> dict:
                 if not supply_id or new_status not in VALID_STATUSES:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректный статус'})}
 
-                cur.execute("SELECT status FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
+                # Тип забираем сразу: от него зависит, ставить ли отметку о
+                # Газельке — она возит только FBO.
+                cur.execute("SELECT status, type FROM marketplace_supplies WHERE id = %s",
+                            (int(supply_id),))
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
                 current_status = row[0]
+                supply_type = row[1]
                 current_idx = VALID_STATUSES.index(current_status) if current_status in VALID_STATUSES else -1
                 new_idx = VALID_STATUSES.index(new_status)
                 if new_idx != current_idx + 1:
@@ -2798,7 +2802,15 @@ def handler(event: dict, context) -> dict:
                             }, ensure_ascii=False),
                         }
 
-                    extra_sql = ", ship_to_gazelka_at = COALESCE(ship_to_gazelka_at, now())"
+                    # Газелька возит ТОЛЬКО поставки FBO — на склад маркетплейса.
+                    #
+                    # FBS уезжает напрямую в пункт приёма, никакой Газельки в этом
+                    # пути нет. Раньше дату проставляли обеим схемам подряд, и в
+                    # списке у FBS-поставок висело «В Газельку 28.08» — перевозки,
+                    # которой не было.
+                    extra_sql = ''
+                    if (supply_type or '').upper() == 'FBO':
+                        extra_sql = ", ship_to_gazelka_at = COALESCE(ship_to_gazelka_at, now())"
                     cur.execute(
                         "SELECT goods_warehouse_id FROM marketplace_supply_items WHERE supply_id = %s",
                         (int(supply_id),),
@@ -2925,10 +2937,13 @@ def handler(event: dict, context) -> dict:
                 if not supply_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите supplyId'})}
 
-                cur.execute("SELECT status FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
+                # Тип нужен ниже: отметку о Газельке ставим только FBO.
+                cur.execute("SELECT status, type FROM marketplace_supplies WHERE id = %s",
+                            (int(supply_id),))
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
+                supply_type = row[1]
                 if row[0] == 'Выполнена':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Поставка уже выполнена'})}
 
@@ -2982,9 +2997,14 @@ def handler(event: dict, context) -> dict:
                         ")"
                     )
 
+                # Отметку о Газельке ставим только поставкам FBO: FBS едет в
+                # пункт приёма напрямую, перевозчика в этом пути нет.
+                gazelka_sql = ''
+                if (supply_type or '').upper() == 'FBO':
+                    gazelka_sql = "ship_to_gazelka_at = COALESCE(ship_to_gazelka_at, now()), "
                 cur.execute(
                     f"UPDATE marketplace_supplies SET status = 'Выполнена', "
-                    f"ship_to_gazelka_at = COALESCE(ship_to_gazelka_at, now()), "
+                    f"{gazelka_sql}"
                     f"completed_at = now(), "
                     f"locked_by = NULL, locked_at = NULL, "
                     f"ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now()) "
