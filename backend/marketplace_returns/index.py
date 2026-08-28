@@ -1166,12 +1166,26 @@ def handler(event: dict, context) -> dict:
                         'orderNumber': o[1],
                     }})
 
+                # Берём заявку, с которой ЕЩЁ МОЖНО работать.
+                #
+                # Один и тот же штрихкод часто висит на нескольких заявках: в
+                # отправлении бывает несколько вещей, и площадка выдаёт им общий
+                # код. Раньше здесь стоял LIMIT 1 без порядка, и база отдавала
+                # любую — обычно самую старую, уже обработанную. Кладовщик пикал
+                # стикер, получал «этот возврат уже обработан», и вещь не
+                # принималась, хотя рядом по тому же коду ждали три рабочие заявки.
+                #
+                # Поэтому сначала ставим необработанные (new/approved/picked_up),
+                # и лишь если рабочих не осталось — отдаём последнюю, чтобы
+                # человек увидел понятную причину отказа.
                 cur.execute(
                     "SELECT r.id, r.marketplace, r.external_id, r.posting_number, r.product_name, "
                     "r.return_reason, r.status, r.outcome, mi.material, mi.width, mi.height "
                     "FROM marketplace_returns r "
                     "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
                     "WHERE r.return_barcode = %s OR r.posting_number = %s OR r.external_id = %s "
+                    "ORDER BY CASE WHEN r.status IN ('new', 'approved', 'picked_up') THEN 0 ELSE 1 END, "
+                    "         CASE WHEN r.goods_warehouse_id IS NULL THEN 0 ELSE 1 END, r.id "
                     "LIMIT 1",
                     (code, code, code),
                 )

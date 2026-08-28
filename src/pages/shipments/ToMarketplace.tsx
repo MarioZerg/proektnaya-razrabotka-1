@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
@@ -67,8 +67,7 @@ const ToMarketplace = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [supplies, setSupplies] = useState<Supply[]>([]);
-  /** Тот же список, но без фильтра по схеме — по нему считаются плашки FBS/FBO. */
+  /** Полный список по текущим фильтрам, кроме схемы: по нему считаются плашки FBS/FBO. */
   const [allSupplies, setAllSupplies] = useState<Supply[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -87,10 +86,16 @@ const ToMarketplace = () => {
   const [dateTo, setDateTo] = useState('');
   const [search, setSearch] = useState('');
 
+  // ОДИН запрос вместо двух.
+  //
+  // Раньше страница дважды спрашивала сервер об одном и том же: первый раз без
+  // фильтра по схеме — ради цифр в плашках FBS/FBO, второй раз с фильтром — ради
+  // таблицы. Отличались они ровно одним условием, а платили мы за два похода.
+  //
+  // Теперь забираем полный список один раз, а таблицу отбираем по схеме уже на
+  // месте: список поставок небольшой, отобрать его в браузере мгновенно.
   const load = () => {
     setLoading(true);
-    // Плашки считаем по списку БЕЗ фильтра по схеме. Иначе, выбрав FBS, кладовщик
-    // увидел бы в плашке FBO ноль поставок — и решил, что они куда-то делись.
     fetchSupplies({
       status: statusFilter === 'open' ? undefined : statusFilter,
       marketplace: marketplaceFilter !== 'all' ? marketplaceFilter : undefined,
@@ -103,33 +108,39 @@ const ToMarketplace = () => {
           statusFilter === 'open' ? data.filter((s) => s.status !== 'Выполнена') : data,
         ),
       )
-      .catch(() => undefined);
-
-    fetchSupplies({
-      status: statusFilter === 'open' ? undefined : statusFilter,
-      type: typeFilter !== 'all' ? (typeFilter as SupplyType) : undefined,
-      marketplace: marketplaceFilter !== 'all' ? marketplaceFilter : undefined,
-      dateFrom: dateFrom || undefined,
-      dateTo: dateTo || undefined,
-      search: search || undefined,
-    })
-      .then((data) => {
-        const filtered =
-          statusFilter === 'open' ? data.filter((s) => s.status !== 'Выполнена') : data;
-        setSupplies(filtered);
-      })
+      .catch(() => undefined)
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, typeFilter, marketplaceFilter, dateFrom, dateTo]);
+  }, [statusFilter, marketplaceFilter, dateFrom, dateTo]);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    load();
-  };
+  // Плашки FBS/FBO считаем по полному списку: выбрав FBS, кладовщик должен
+  // видеть в плашке FBO реальное число, а не ноль — иначе кажется, что поставки
+  // пропали. А таблица показывает только выбранную схему.
+  const supplies = useMemo(
+    () => (typeFilter === 'all' ? allSupplies : allSupplies.filter((s) => s.type === typeFilter)),
+    [allSupplies, typeFilter],
+  );
+
+  // Поиск не дёргает сервер на каждую букву: ждём, пока человек допечатает.
+  // Раньше искали только по кнопке, и набранный, но не отправленный запрос
+  // молча игнорировался — человек думал, что поставок нет.
+  //
+  // Первый проход пропускаем: при открытии страницы список уже грузится
+  // обработчиком фильтров выше, и без этой проверки запрос ушёл бы дважды.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    const t = setTimeout(load, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const handleCreate = async (marketplace: string, type: SupplyType) => {
     if (marketplace === 'OZON' && type === 'FBO') {
@@ -202,7 +213,7 @@ const ToMarketplace = () => {
     <CrmLayout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-xl font-bold">Поставки маркетплейса</h1>
+          <h1 className="text-xl font-bold">Поставка в маркет</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Формирование отгрузки готового товара со склада на маркетплейс
           </p>
@@ -286,20 +297,24 @@ const ToMarketplace = () => {
             <Label className="text-xs">Отгрузка до</Label>
             <Input type="date" className="w-full sm:w-[150px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
-          <form onSubmit={handleSearch} className="flex items-end gap-1.5">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Поиск</Label>
+          {/* Ищем по ходу набора — кнопка больше не нужна. Раньше без нажатия на
+              неё набранный запрос не применялся, и человек видел старый список. */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Поиск</Label>
+            <div className="relative">
+              <Icon
+                name="Search"
+                size={14}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
               <Input
-                className="w-full sm:w-[180px]"
+                className="w-full pl-8 sm:w-[180px]"
                 placeholder="Номер поставки"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <Button type="submit" size="icon" variant="outline">
-              <Icon name="Search" size={14} />
-            </Button>
-          </form>
+          </div>
           <Button variant="ghost" size="sm" onClick={resetFilters}>
             <Icon name="X" size={14} className="mr-1" />
             Сбросить фильтр
@@ -314,30 +329,58 @@ const ToMarketplace = () => {
         ) : supplies.length === 0 ? (
           <p className="text-sm text-muted-foreground">Поставок пока нет</p>
         ) : (
-          <div className="rounded-md border border-border">
-            <Table>
+          // Таблица без горизонтальной прокрутки.
+          // Раньше колонок было тринадцать, и кнопка открытия стояла последней —
+          // за краем экрана. Кладовщик на планшете сначала листал таблицу вправо
+          // и только потом мог зайти в поставку. Теперь связанные данные собраны
+          // в одну ячейку (номер с штрихкодом, четыре даты — в колонку «Сроки»),
+          // всё помещается на экран, а открывается поставка нажатием на строку.
+          <div className="overflow-hidden rounded-md border border-border">
+            <Table className="min-w-0 table-fixed">
               <TableHeader>
                 <TableRow className="bg-primary hover:bg-primary">
-                  <TableHead className="text-primary-foreground">#</TableHead>
-                  <TableHead className="text-primary-foreground">Статус</TableHead>
-                  <TableHead className="text-primary-foreground">Номер поставки</TableHead>
-                  <TableHead className="text-primary-foreground">id Газельки</TableHead>
-                  <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
-                  <TableHead className="text-primary-foreground">Тип</TableHead>
-                  <TableHead className="text-primary-foreground">Товаров</TableHead>
-                  <TableHead className="text-primary-foreground">Сшито</TableHead>
-                  <TableHead className="text-primary-foreground">Создан</TableHead>
-                  <TableHead className="text-primary-foreground">Отгрузка в Газельку</TableHead>
-                  <TableHead className="text-primary-foreground">Отгрузка в маркетплейс</TableHead>
-                  <TableHead className="text-primary-foreground">Выполнен</TableHead>
-                  <TableHead className="text-primary-foreground"></TableHead>
+                  <TableHead className="w-[26%] whitespace-normal text-primary-foreground">Поставка</TableHead>
+                  <TableHead className="w-[16%] whitespace-normal text-primary-foreground">Статус</TableHead>
+                  <TableHead className="w-[14%] whitespace-normal text-primary-foreground">Маркетплейс</TableHead>
+                  <TableHead className="w-[13%] whitespace-normal text-primary-foreground">Товаров</TableHead>
+                  <TableHead className="w-[13%] whitespace-normal text-primary-foreground">Сшито</TableHead>
+                  <TableHead className="w-[18%] whitespace-normal text-primary-foreground">Сроки</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {supplies.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell>{s.id}</TableCell>
-                    <TableCell>
+                  <TableRow
+                    key={s.id}
+                    // Открываем по нажатию на всю строку: попасть в неё пальцем на
+                    // планшете проще, чем в маленькую кнопку у края экрана.
+                    role="button"
+                    tabIndex={0}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/crm/shipments/to-marketplace/${s.id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        navigate(`/crm/shipments/to-marketplace/${s.id}`);
+                      }
+                    }}
+                  >
+                    <TableCell className="whitespace-normal break-words align-top">
+                      <div className="font-semibold">
+                        {s.supplyNumber || `Поставка №${s.id}`}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        #{s.id}
+                        {s.type ? ` · ${s.type}` : ''}
+                        {s.gazelkaId ? ` · Газелька ${s.gazelkaId}` : ''}
+                      </div>
+                      {s.supplyBarcode && (
+                        <div className="text-xs text-muted-foreground">{s.supplyBarcode}</div>
+                      )}
+                      {s.cluster && (
+                        <div className="text-xs text-muted-foreground">({s.cluster})</div>
+                      )}
+                    </TableCell>
+                    <TableCell className="whitespace-normal align-top">
                       <div className="flex flex-col items-start gap-1">
                         <Badge className={statusVariant[s.status]?.className}>{s.status}</Badge>
                         {/* Поставку уже собирает другой кладовщик — видно сразу в списке,
@@ -350,27 +393,12 @@ const ToMarketplace = () => {
                         )}
                       </div>
                     </TableCell>
-                    <TableCell>
-                      {s.supplyNumber ? (
-                        <>
-                          <div className="font-semibold">{s.supplyNumber}</div>
-                          {s.supplyBarcode && (
-                            <div className="text-xs text-muted-foreground">{s.supplyBarcode}</div>
-                          )}
-                          {s.cluster && <div className="text-xs text-muted-foreground">({s.cluster})</div>}
-                        </>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell>{s.gazelkaId || '—'}</TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-normal align-top">
                       <span className={marketplaceLogo[s.marketplace]?.className}>
                         {marketplaceLogo[s.marketplace]?.label || s.marketplace}
                       </span>
                     </TableCell>
-                    <TableCell>{s.type}</TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-normal align-top">
                       {s.marketplace === 'WB' && s.type === 'FBS' ? (
                         <Badge variant={s.itemsCount > 0 ? 'default' : 'outline'}>
                           {s.itemsCount} шт.
@@ -401,21 +429,30 @@ const ToMarketplace = () => {
                         </div>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-normal align-top">
                       <SupplySewingProgress total={s.sewingTotal || 0} done={s.sewingDone || 0} />
                     </TableCell>
-                    <TableCell>{formatDateTime(s.createdAt)}</TableCell>
-                    <TableCell>{s.shipToGazelkaAt ? formatDate(s.shipToGazelkaAt) : '—'}</TableCell>
-                    <TableCell>{s.shipToMarketplaceAt ? formatDate(s.shipToMarketplaceAt) : '—'}</TableCell>
-                    <TableCell>{s.completedAt ? formatDate(s.completedAt) : '—'}</TableCell>
-                    <TableCell>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={() => navigate(`/crm/shipments/to-marketplace/${s.id}`)}
-                      >
-                        <Icon name="Pencil" size={14} />
-                      </Button>
+                    {/* Четыре даты в одной ячейке. Пустые не печатаем: у открытой
+                        поставки три прочерка из четырёх — это шум, а не информация. */}
+                    <TableCell className="whitespace-normal align-top text-xs">
+                      <div className="text-muted-foreground">
+                        Создан: {formatDateTime(s.createdAt)}
+                      </div>
+                      {s.shipToGazelkaAt && (
+                        <div className="text-muted-foreground">
+                          В Газельку: {formatDate(s.shipToGazelkaAt)}
+                        </div>
+                      )}
+                      {s.shipToMarketplaceAt && (
+                        <div className="text-muted-foreground">
+                          В маркет: {formatDate(s.shipToMarketplaceAt)}
+                        </div>
+                      )}
+                      {s.completedAt && (
+                        <div className="font-medium text-emerald-600">
+                          Выполнен: {formatDate(s.completedAt)}
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

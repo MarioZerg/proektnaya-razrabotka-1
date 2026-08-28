@@ -809,7 +809,23 @@ def handler(event: dict, context) -> dict:
                         "       mr.return_barcode, mr.product_name "
                         "FROM goods_warehouse gw "
                         "LEFT JOIN orders o ON o.id = gw.order_id "
-                        "LEFT JOIN marketplace_returns mr ON mr.goods_warehouse_id = gw.id "
+                        # Заявка на возврат берётся ОДНА, самая свежая.
+                        #
+                        # Раньше здесь был обычный LEFT JOIN, и если к вещи
+                        # привязано несколько заявок (в одном отправлении бывает
+                        # две одинаковые вещи, а к некоторым карточкам их цеплялось
+                        # до пяти), строка размножалась. В списке появлялись
+                        # СТРОКИ-БЛИЗНЕЦЫ С ОДНИМ И ТЕМ ЖЕ id — и галочка отмечала
+                        # их разом: кладовщик выбирал одну вещь, а выделялись две.
+                        #
+                        # LATERAL с LIMIT 1 даёт ровно одну строку на вещь, сколько
+                        # бы заявок к ней ни было. Каждая вещь проверяется отдельно.
+                        "LEFT JOIN LATERAL ("
+                        "  SELECT mr.return_barcode, mr.product_name "
+                        "  FROM marketplace_returns mr "
+                        "  WHERE mr.goods_warehouse_id = gw.id "
+                        "  ORDER BY mr.id DESC LIMIT 1"
+                        ") mr ON true "
                         "LEFT JOIN users ins ON ins.id = gw.inspected_by "
                         "LEFT JOIN users tk ON tk.id = gw.taken_by "
                         f"WHERE {where_stage} "

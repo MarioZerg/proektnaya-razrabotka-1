@@ -232,6 +232,35 @@ export const writeOffRoll = (
     reason: opts?.reason,
   }) as Promise<{ success: true; remainingQuantity: number }>;
 
+/**
+ * Упаковщица возвращает годный кусок материала на рулон.
+ *
+ * При перепаковке иногда нужен перекрой, и на руках остаётся целый кусок.
+ * Вместо утилизации он возвращается на рулон и кроится дальше.
+ *
+ * Такой метраж числится ОТДЕЛЬНО от основного: в расчёт штрафа за недостачу он
+ * не входит, иначе закройщица получила бы удержание за чужой материал.
+ */
+export const packerReturnToRoll = (payload: {
+  barcode?: string;
+  rollId?: number;
+  quantity: number;
+  goodsWarehouseId?: number;
+  userId?: number;
+  userName?: string;
+  note?: string;
+}) =>
+  postAction({ action: 'packer_return', ...payload }) as Promise<{
+    success: true;
+    rollId: number;
+    barcode: string;
+    materialName: string | null;
+    unit: string | null;
+    added: number;
+    remainingQuantity: number;
+    packerReturnedQuantity: number;
+  }>;
+
 export const deleteRoll = (id: number) => postAction({ action: 'delete', id });
 
 /** Закрытие рулона в цехе: рулон закончился. Если ткани не хватило — передаётся недостача. */

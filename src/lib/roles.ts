@@ -264,7 +264,7 @@ const storekeeperNav: NavItem[] = [
       { label: 'Возврат поставщику', path: '/crm/shipments/return-to-supplier' },
       { label: 'Списание брака', path: '/crm/shipments/defect-writeoff' },
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
-      { label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' },
+      { label: 'Поставка в маркет', path: '/crm/shipments/to-marketplace' },
       // «Приём возвратов» убран: там видно всё движение возврата и принимаются решения
       // по нему. Кладовщику это не нужно — он забирает вещи по кодам для ПВЗ и заводит
       // их на склад кнопкой «Привёз с пункта выдачи» на складе товара.
@@ -301,7 +301,7 @@ const managerNav: NavItem[] = [
   {
     label: 'Отгрузки',
     icon: 'Truck',
-    children: [{ label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' }],
+    children: [{ label: 'Поставка в маркет', path: '/crm/shipments/to-marketplace' }],
   },
   {
     label: 'Маркетплейсы',
@@ -370,7 +370,7 @@ const adminNav: NavItem[] = [
       { label: 'Возврат поставщику', path: '/crm/shipments/return-to-supplier' },
       { label: 'Списание брака', path: '/crm/shipments/defect-writeoff' },
       { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
-      { label: 'Поставки в маркетплейс', path: '/crm/shipments/to-marketplace' },
+      { label: 'Поставка в маркет', path: '/crm/shipments/to-marketplace' },
       { label: 'Приём возвратов', path: '/crm/shipments/receive-returns' },
       // Штрихкоды продавца: без них возвраты на ПВЗ не выдают.
       { label: 'Коды для ПВЗ', path: '/crm/shipments/return-codes' },

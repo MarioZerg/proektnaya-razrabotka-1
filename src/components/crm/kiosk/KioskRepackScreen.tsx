@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
+import KioskReturnToRollDialog from '@/components/crm/kiosk/KioskReturnToRollDialog';
 import { useToast } from '@/hooks/use-toast';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printDisposeSticker } from '@/lib/printDisposeSticker';
@@ -49,6 +50,8 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
   const [note, setNote] = useState('');
   /** Спрашиваем про новый пакет перед закрытием перепаковки. */
   const [bagAsk, setBagAsk] = useState(false);
+  /** Окно возврата годного куска материала на рулон при перекрое. */
+  const [rollReturnOpen, setRollReturnOpen] = useState(false);
   const [barcode, setBarcode] = useState('');
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -237,6 +240,12 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
 
       {/* Новый пакет? Спрашиваем перед закрытием перепаковки — по этим ответам видно
           реальный расход упаковки на возвратах. Кнопки крупные: экран сенсорный. */}
+      <KioskReturnToRollDialog
+        open={rollReturnOpen}
+        onOpenChange={setRollReturnOpen}
+        goodsWarehouseId={item?.id}
+      />
+
       <Dialog open={bagAsk} onOpenChange={(v) => !v && setBagAsk(false)}>
         <DialogContent className="kiosk-root sm:max-w-lg">
           <DialogHeader>
@@ -369,6 +378,19 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
                 Брак — печать стикера
               </Button>
             </div>
+
+            {/* Перекроила материал и остался годный кусок — вместо утилизации
+                возвращаем его на рулон. Метраж пойдёт отдельной строкой и на
+                штрафы за недостачу не повлияет. */}
+            <Button
+              variant="outline"
+              className="h-14 w-full border-violet-300 text-base text-violet-700 hover:bg-violet-50 hover:text-violet-800"
+              onClick={() => setRollReturnOpen(true)}
+              disabled={processing}
+            >
+              <Icon name="Undo2" size={20} className="mr-2" />
+              Вернуть материал на рулон
+            </Button>
 
             {/* Ошиблась вещью — можно вернуть экран к сканеру, ничего не закрывая. */}
             <Button

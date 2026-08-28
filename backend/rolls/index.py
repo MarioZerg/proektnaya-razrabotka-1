@@ -40,7 +40,10 @@ def calc_shortage_penalty(cur, roll_id):
         "r.cost_per_unit, mt.name, r.barcode, m.name, m.unit, r.penalty_total, "
         # Сколько метров числилось на рулоне, когда закройщик назвал недостачу.
         # Без этой цифры администратор не может перепроверить заявленную недостачу.
-        "r.remaining_at_close, r.closed_by_name, r.completed_at "
+        "r.remaining_at_close, r.closed_by_name, r.completed_at, "
+        # Метраж, возвращённый упаковщицами при перепаковке. В недостачу он не
+        # входит — см. ниже, где он вычитается.
+        "COALESCE(r.packer_returned_quantity, 0) "
         "FROM rolls r "
         "JOIN materials m ON m.id = r.material_id "
         "LEFT JOIN material_types mt ON mt.id = m.type_id "
@@ -75,6 +78,20 @@ def calc_shortage_penalty(cur, roll_id):
     # поставщик), но деньги считаем по факту.
     shortage = remaining_at_close if remaining_at_close is not None else declared_shortage
 
+    # ВОЗВРАТЫ УПАКОВЩИЦ ИЗ НЕДОСТАЧИ ВЫЧИТАЕМ.
+    #
+    # При перепаковке упаковщица возвращает на рулон годный кусок материала —
+    # он ложится в остаток и кроится дальше. Но это НЕ материал поставщика:
+    # штраф считается за то, что поставщик недомотал, а закройщица не выкроила.
+    #
+    # Не вычти мы эти метры — они осели бы в остатке на момент закрытия, раздули
+    # «недостачу», и человек получил бы удержание за материал, которого никогда
+    # не брал. Поэтому расход по возвращённому куску виден отдельной строкой, а
+    # в деньги не превращается.
+    packer_returned = float(row[12] or 0)
+    if packer_returned > 0:
+        shortage = max(0.0, shortage - packer_returned)
+
     info = {
         'rollId': roll_id,
         'barcode': row[5],
@@ -82,6 +99,9 @@ def calc_shortage_penalty(cur, roll_id):
         'unit': row[7],
         'initialQuantity': initial_qty,
         'shortage': round(shortage, 3),
+        # Сколько вернули упаковщицы — показываем администратору отдельно,
+        # чтобы было видно, почему недостача меньше остатка при закрытии.
+        'packerReturned': round(packer_returned, 3),
         # Что сотрудница вписала руками — для сверки с фактом.
         'declaredShortage': round(declared_shortage, 3),
         'normPercent': norm_percent,
@@ -1197,6 +1217,109 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"UPDATE rolls SET {', '.join(fields)} WHERE id = {int(item_id)}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'packer_return':
+                # Упаковщица возвращает годный кусок материала на рулон.
+                #
+                # При перепаковке иногда нужен перекрой, и на руках остаётся
+                # целый кусок. Выбрасывать его жалко: он возвращается на рулон и
+                # дальше кроится как обычный материал.
+                #
+                # ВАЖНО, почему метраж идёт в ОТДЕЛЬНОЕ поле, а не плюсом к
+                # остатку рулона. Штраф за недостачу считается от фактического
+                # остатка при закрытии. Подмешай мы сюда возвращённые метры —
+                # они раздули бы «недостачу», и закройщица получила бы удержание
+                # за материал, которого в глаза не видела. Поэтому возвраты
+                # упаковщиц живут своей строкой и в расчёт штрафа не входят.
+                roll_id = body_data.get('rollId') or body_data.get('id')
+                barcode = (body_data.get('barcode') or '').strip()
+                quantity = body_data.get('quantity')
+                gw_id = body_data.get('goodsWarehouseId')
+                actor_id = body_data.get('userId') or body_data.get('actorId')
+                actor_name = (body_data.get('userName') or '').strip() or None
+                note = (body_data.get('note') or '').strip() or None
+
+                if not roll_id and not barcode:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Отсканируйте рулон'},
+                                               ensure_ascii=False)}
+                try:
+                    qty = float(str(quantity).replace(',', '.'))
+                except (TypeError, ValueError):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Метраж должен быть числом'},
+                                               ensure_ascii=False)}
+                if qty <= 0:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Метраж должен быть больше нуля'},
+                                               ensure_ascii=False)}
+
+                # Рулон ищем по штрихкоду: упаковщица его пикает сканером,
+                # а не выбирает из списка — так быстрее и без ошибок.
+                if barcode and not roll_id:
+                    cur.execute("SELECT id FROM rolls WHERE barcode = %s", (barcode,))
+                    found = cur.fetchone()
+                    if not found:
+                        return {'statusCode': 404, 'headers': headers,
+                                'body': json.dumps({'error': f'Рулон {barcode} не найден'},
+                                                   ensure_ascii=False)}
+                    roll_id = found[0]
+
+                cur.execute(
+                    "SELECT r.id, r.barcode, r.status, m.name, m.unit "
+                    "FROM rolls r LEFT JOIN materials m ON m.id = r.material_id "
+                    "WHERE r.id = %s",
+                    (int(roll_id),),
+                )
+                roll = cur.fetchone()
+                if not roll:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Рулон не найден'}, ensure_ascii=False)}
+                if roll[2] == 'completed':
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Рулон уже закрыт — вернуть на него материал нельзя'},
+                                ensure_ascii=False)}
+
+                cur.execute(
+                    "UPDATE rolls SET remaining_quantity = remaining_quantity + %s, "
+                    "packer_returned_quantity = COALESCE(packer_returned_quantity, 0) + %s "
+                    "WHERE id = %s "
+                    "RETURNING remaining_quantity, packer_returned_quantity",
+                    (qty, qty, int(roll_id)),
+                )
+                upd = cur.fetchone()
+
+                cur.execute(
+                    "INSERT INTO roll_packer_returns "
+                    "(roll_id, quantity, goods_warehouse_id, user_id, user_name, note) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (int(roll_id), qty, int(gw_id) if gw_id else None,
+                     int(actor_id) if actor_id else None, actor_name, note),
+                )
+
+                cur.execute(
+                    "INSERT INTO audit_log (category, user_id, user_name, action, "
+                    "entity_type, entity_id, description) VALUES "
+                    "('warehouse', %s, %s, 'roll_packer_return', 'roll', %s, %s)",
+                    (int(actor_id) if actor_id else None, actor_name, int(roll_id),
+                     f'Упаковщица вернула на рулон {roll[1]}: '
+                     f'{round(qty, 2)} {roll[4] or ""}'.strip()),
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'rollId': int(roll_id),
+                        'barcode': roll[1],
+                        'materialName': roll[3],
+                        'unit': roll[4],
+                        'added': qty,
+                        'remainingQuantity': float(upd[0]),
+                        'packerReturnedQuantity': float(upd[1]),
+                    }, ensure_ascii=False),
+                }
 
             if action == 'write_off':
                 # Ручное списание метража с конкретного рулона.
