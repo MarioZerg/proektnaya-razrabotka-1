@@ -289,13 +289,17 @@ const ToMarketplace = () => {
               </SelectContent>
             </Select>
           </div>
+          {/* 170px, а не 150: в поле даты браузер рисует свою кнопку календаря
+              справа, и при 150px её обрезало краем — виден был только левый
+              край значка. Дата с разделителями и кнопка вместе требуют больше
+              места, чем обычное поле такой же ширины. */}
           <div className="space-y-1.5">
             <Label className="text-xs">Отгрузка от</Label>
-            <Input type="date" className="w-full sm:w-[150px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            <Input type="date" className="w-full sm:w-[170px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Отгрузка до</Label>
-            <Input type="date" className="w-full sm:w-[150px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <Input type="date" className="w-full sm:w-[170px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
           {/* Ищем по ходу набора — кнопка больше не нужна. Раньше без нажатия на
               неё набранный запрос не применялся, и человек видел старый список. */}

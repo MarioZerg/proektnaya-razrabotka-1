@@ -72,11 +72,11 @@ const SuppliesFilters = ({
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs">Дата от</Label>
-        <Input type="date" className="w-full sm:w-[160px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        <Input type="date" className="w-full sm:w-[170px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs">Дата до</Label>
-        <Input type="date" className="w-full sm:w-[160px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        <Input type="date" className="w-full sm:w-[170px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
       </div>
       {activeFiltersCount > 0 && (
         <Button variant="ghost" size="sm" onClick={onReset}>
