@@ -1520,6 +1520,62 @@ def handler(event: dict, context) -> dict:
                                 conn.rollback()
                                 return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': err})}
 
+                # ЗАРПЛАТА ЗА ПОШИВ ПРИ РУЧНОМ ЗАКРЫТИИ ЗАКАЗА.
+                #
+                # Обычно заказ закрывает упаковщица на терминале — там начисление и
+                # создаётся. Но заказ можно закрыть и отсюда, из карточки: терминал
+                # был занят, вещь потерялась и нашлась, статус поправили руками.
+                # Начисление в этом случае НЕ создавалось: швея заказ отшила, а
+                # денег за него не получала. Ошибки никто не видел — заказ выглядел
+                # закрытым, и потеря всплывала только в блоке «Работа без
+                # начисления», причём люди уверены, что ничего не трогали.
+                #
+                # Логика та же, что на терминале: ставка за штуку по ширине из
+                # тарифов цеха заказа, а если цех у заказа не проставлен (FBO
+                # приходит в пошив мимо раскроя) — из штатного цеха самой швеи.
+                # Повторное начисление невозможно: ON CONFLICT по (order_id, type).
+                if 'sewingStatus' in body_data and body_data['sewingStatus'] == 'Готовые':
+                    cur.execute(
+                        "SELECT assigned_user_id, width, workshop_id, order_number, sewing_status "
+                        "FROM orders WHERE id = %s",
+                        (int(item_id),),
+                    )
+                    sew_row = cur.fetchone()
+                    if sew_row:
+                        (sew_user, sew_width, sew_workshop,
+                         sew_order_number, sew_status) = sew_row
+
+                        # «Со склада» — вещь взяли готовой, её никто не шил.
+                        if sew_user and sew_width and sew_status != 'Со склада':
+                            if not sew_workshop:
+                                cur.execute(
+                                    "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                                    "WHERE u.id = %s",
+                                    (int(sew_user),),
+                                )
+                                sw_row = cur.fetchone()
+                                sew_workshop = sw_row[0] if sw_row else None
+
+                            if sew_workshop:
+                                cur.execute(
+                                    "SELECT rate FROM salary_rates WHERE role = 'sewer' "
+                                    "AND width = %s AND workshop_id = %s",
+                                    (int(sew_width), sew_workshop),
+                                )
+                                rate_row = cur.fetchone()
+                                sew_rate = float(rate_row[0]) if rate_row else 0
+                                if sew_rate > 0:
+                                    cur.execute(
+                                        "INSERT INTO salary_accruals "
+                                        "(user_id, type, amount, order_id, description) "
+                                        "VALUES (%s, 'sewer_piece', %s, %s, %s) "
+                                        "ON CONFLICT (order_id, type) "
+                                        "WHERE order_id IS NOT NULL DO NOTHING",
+                                        (int(sew_user), sew_rate, int(item_id),
+                                         f'Пошив заказа #{sew_order_number or item_id} '
+                                         f'({int(sew_width)} см)'),
+                                    )
+
                 log_action(
                     cur, actor_id, actor_name, 'update_order', 'order', item_id,
                     f'Изменил заказ #{item_id}',
@@ -1910,7 +1966,25 @@ def handler(event: dict, context) -> dict:
                     # доходят до цеха нераскроенными, и человек делает по ним полноценную
                     # работу — а в балансе она не появлялась. Так же оплачиваются пошив
                     # и стикеровка: этап выполнен — этап оплачен.
-                    if fabric_material_id and order_assigned_user_id and order_workshop_id and width:
+                    # Цех для ставки: у заказа, если проставлен, иначе штатный цех
+                    # самого закройщика.
+                    #
+                    # Без этой подстраховки заказ БЕЗ ЦЕХА давал нулевую ставку, и
+                    # начисление молча не создавалось — закройщица кроила бесплатно.
+                    # А цех у заказа проставляется ПОЗЖЕ, на терминале упаковщицы:
+                    # в момент раскроя его у заказа ещё нет. Такая же подстраховка
+                    # давно стоит у пошива — у раскроя её просто забыли поставить.
+                    cutter_workshop_for_rate = order_workshop_id
+                    if order_assigned_user_id and not cutter_workshop_for_rate:
+                            cur.execute(
+                                    "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                                    "WHERE u.id = %s",
+                                    (int(order_assigned_user_id),),
+                            )
+                            cw_row = cur.fetchone()
+                            cutter_workshop_for_rate = cw_row[0] if cw_row else None
+
+                    if fabric_material_id and order_assigned_user_id and cutter_workshop_for_rate and width:
                             # Ставка задаётся ОДНА на ткань (width IS NULL) — раньше её
                             # требовалось заводить на каждую пару «ткань + ширина», то есть
                             # 56 полей на цех при одинаковом значении внутри ткани. Ширина
@@ -1918,7 +1992,7 @@ def handler(event: dict, context) -> dict:
                             cur.execute(
                                     "SELECT rate FROM salary_rates WHERE role = 'cutter' AND material_id = %s "
                                     "AND width IS NULL AND workshop_id = %s",
-                                    (fabric_material_id, order_workshop_id),
+                                    (fabric_material_id, cutter_workshop_for_rate),
                             )
                             rate_row = cur.fetchone()
                             rate = float(rate_row[0]) if rate_row else 0
