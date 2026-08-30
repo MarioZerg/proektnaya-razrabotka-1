@@ -103,6 +103,43 @@ export const printLabelPdf = async (pdfBase64: string, title = 'Ярлык от�
 };
 
 /**
+ * Печать стикера отправления по ССЫЛКЕ на наклейке 58×40 мм.
+ *
+ * Стикеры WB (QR поставки, ярлыки коробов) лежат у нас файлами в хранилище, и раньше
+ * их просто открывали ссылкой в новой вкладке. Дальше кладовщик жал печать уже в
+ * просмотрщике браузера — а тот ничего не знает про наклейку: брал A4, книжную
+ * ориентацию и поля. Стикер выходил маленьким пятном в углу листа, и его переклеивали
+ * вручную.
+ *
+ * Здесь размер листа задан явно. Формат файла определяем сами: PDF пересобираем в
+ * картинку (см. printLabelPdf), картинку печатаем как есть.
+ */
+export const printLabelFromUrl = async (url: string, title = 'Стикер отправления') => {
+  if (!url) return;
+
+  const res = await fetch(url);
+  const blob = await res.blob();
+
+  const base64: string = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
+  // По расширению ориентироваться нельзя: WB отдаёт файлы без него, а тип в ссылке
+  // не всегда честный. Смотрим сигнатуру самого файла — %PDF в первых байтах.
+  const isPdf = atob(base64.slice(0, 8)).startsWith('%PDF');
+  if (isPdf) {
+    await printLabelPdf(base64, title);
+    return;
+  }
+
+  const type = blob.type || 'image/png';
+  openPrintWindow(title, `<img src="data:${type};base64,${base64}" alt="${title}" />`);
+};
+
+/**
  * Печать стикера короба FBO на наклейке 75×120 мм.
  *
  * OZON отдаёт готовый стикер короба PDF-ссылкой. Раньше её просто открывали в новой

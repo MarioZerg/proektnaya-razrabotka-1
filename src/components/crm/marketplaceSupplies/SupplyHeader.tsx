@@ -13,6 +13,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import Icon from '@/components/ui/icon';
+import { printLabelFromUrl } from '@/lib/printMarketplaceLabel';
 import type { SupplyDetail, SupplyStatus } from '@/lib/marketplaceSuppliesApi';
 import {
   formatDateTime,
@@ -207,12 +208,27 @@ const SupplyHeader = ({
               // Если WB тогда ответил не сразу — даём кнопку запросить повторно,
               // чтобы кладовщик не искал стикер в кабинете маркетплейса вручную.
               supply.passStickerUrl ? (
-                <Button variant="outline" size="sm" asChild>
-                  <a href={supply.passStickerUrl} target="_blank" rel="noopener noreferrer">
-                    <Icon name="Download" size={14} className="mr-1.5" />
-                    Открыть стикер
-                  </a>
-                </Button>
+                // Печатаем сами на наклейке 58×40. Раньше стикер открывался ссылкой,
+                // и кладовщик печатал его из просмотрщика браузера — тот брал A4 с
+                // полями, и стикер выходил пятном в углу листа.
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      printLabelFromUrl(supply.passStickerUrl!, 'Стикер поставки WB')
+                    }
+                  >
+                    <Icon name="Printer" size={14} className="mr-1.5" />
+                    Печать 58×40
+                  </Button>
+                  <Button variant="ghost" size="sm" asChild>
+                    <a href={supply.passStickerUrl} target="_blank" rel="noopener noreferrer">
+                      <Icon name="ExternalLink" size={14} className="mr-1.5" />
+                      Открыть
+                    </a>
+                  </Button>
+                </div>
               ) : (
                 <Button
                   variant="outline"

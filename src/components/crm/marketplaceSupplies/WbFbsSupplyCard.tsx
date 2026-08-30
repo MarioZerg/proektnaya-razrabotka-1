@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import printHtmlInIframe from '@/lib/printInIframe';
+import { printLabelFromUrl } from '@/lib/printMarketplaceLabel';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
@@ -353,15 +354,18 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
                   <TableCell className="font-mono-tech">{o.wbTrbxId || '—'}</TableCell>
                   <TableCell>
                     {o.stickerUrl ? (
-                      <a
-                        href={o.stickerUrl}
-                        target="_blank"
-                        rel="noreferrer"
+                      // Печать на наклейке 58×40. Открытие ссылкой оставляем рядом:
+                      // из просмотрщика браузера стикер печатался на A4 с полями.
+                      <button
+                        type="button"
+                        onClick={() =>
+                          printLabelFromUrl(o.stickerUrl!, 'Стикер короба WB')
+                        }
                         className="inline-flex items-center gap-1 text-primary hover:underline"
                       >
-                        <Icon name="QrCode" size={16} />
-                        Открыть
-                      </a>
+                        <Icon name="Printer" size={16} />
+                        Печать
+                      </button>
                     ) : (
                       '—'
                     )}
