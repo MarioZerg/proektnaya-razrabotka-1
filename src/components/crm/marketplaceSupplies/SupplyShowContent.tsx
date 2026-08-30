@@ -47,6 +47,7 @@ interface SupplyShowContentProps {
   };
   actions: {
     saving: boolean;
+    ozonShipping: number;
     importingFbo: boolean;
     loadingQr: boolean;
     forceCompleting: boolean;
@@ -99,6 +100,7 @@ const SupplyShowContent = ({
         nextStatus={flags.nextStatus}
         nextStatusLabel={flags.nextStatusLabel}
         saving={actions.saving}
+        ozonShipping={actions.ozonShipping}
         forceCompleting={actions.forceCompleting}
         onBack={() => navigate('/crm/shipments/to-marketplace')}
         onDelete={actions.handleDelete}

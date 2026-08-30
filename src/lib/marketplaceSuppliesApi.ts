@@ -490,8 +490,24 @@ export const updateSupply = (
   }>
 ) => postAction({ action: 'update', supplyId, ...fields });
 
+export interface OzonShipResult {
+  ozonShipped?: number;
+  ozonProblems?: string[];
+  ozonRemaining?: number;
+}
+
 export const moveSupplyStatus = (supplyId: number, status: SupplyStatus) =>
-  postAction({ action: 'move_status', supplyId, status });
+  postAction({ action: 'move_status', supplyId, status }) as Promise<OzonShipResult>;
+
+/**
+ * Досылает в OZON отправления, не влезшие в закрытие поставки.
+ *
+ * OZON принимает отправления строго по одному, а в поставке их бывает сотня —
+ * за один вызов все не проходят. Поставка при этом уже закрыта: здесь только
+ * «дожимаем» остаток. Вызывать, пока ozonRemaining не станет нулём.
+ */
+export const shipOzonPostings = (supplyId: number) =>
+  postAction({ action: 'ship_ozon_postings', supplyId }) as Promise<OzonShipResult>;
 
 export const forceCompleteSupply = (supplyId: number) =>
   postAction({ action: 'force_complete', supplyId });

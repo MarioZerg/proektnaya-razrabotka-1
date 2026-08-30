@@ -6,6 +6,7 @@ import {
   scanOrderToSupply,
   updateSupply,
   moveSupplyStatus,
+  shipOzonPostings,
   forceCompleteSupply,
   deleteSupply,
   addSewingOrdersToSupply,
@@ -54,6 +55,9 @@ export const useSupplyActions = ({
   const { user } = useAuth();
 
   const [saving, setSaving] = useState(false);
+  // Сколько отправлений OZON ещё осталось передать. Больше нуля — идёт досылка,
+  // кладовщик видит прогресс и понимает, что кнопка работает, просто долго.
+  const [ozonShipping, setOzonShipping] = useState(0);
   const [importingFbo, setImportingFbo] = useState(false);
   const [loadingQr, setLoadingQr] = useState(false);
   const [forceCompleting, setForceCompleting] = useState(false);
@@ -221,12 +225,49 @@ export const useSupplyActions = ({
     if (!next) return;
     setSaving(true);
     try {
-      await moveSupplyStatus(supplyId, next);
-      toast({ title: `Статус изменён на «${next}»` });
+      const res = await moveSupplyStatus(supplyId, next);
+
+      // Отправления OZON уходят порциями: площадка принимает их строго по одному,
+      // и сотня отправлений в одно нажатие не проходит — раньше запрос обрывался,
+      // поставка не закрывалась, и кнопка выглядела сломанной. Теперь поставка уже
+      // закрыта, а хвост дожимаем здесь, показывая кладовщику, сколько осталось.
+      let shipped = res?.ozonShipped || 0;
+      const problems = [...(res?.ozonProblems || [])];
+      let remaining = res?.ozonRemaining || 0;
+
+      // Предохранитель: сколько бы ни было отправлений, кругов не больше сотни.
+      // Защита от ситуации, когда остаток по какой-то причине перестал убывать —
+      // кладовщик не должен получить вечно крутящуюся кнопку.
+      let guard = 100;
+      while (remaining > 0 && guard-- > 0) {
+        setOzonShipping(remaining);
+        const more = await shipOzonPostings(supplyId);
+        // Площадка не приняла ни одного и меньше не стало — дальше долбить
+        // бессмысленно, иначе цикл никогда не кончится.
+        if (!more?.ozonShipped && (more?.ozonRemaining || 0) >= remaining) {
+          problems.push(...(more?.ozonProblems || []));
+          break;
+        }
+        shipped += more?.ozonShipped || 0;
+        problems.push(...(more?.ozonProblems || []));
+        remaining = more?.ozonRemaining || 0;
+      }
+      setOzonShipping(0);
+
+      const parts = [`Статус изменён на «${next}»`];
+      if (shipped) parts.push(`в доставку на OZON передано ${shipped}`);
+      toast({
+        title: parts.join(', '),
+        description: problems.length
+          ? `OZON не принял ${problems.length}: ${problems.slice(0, 3).join('; ')}`
+          : undefined,
+        variant: problems.length ? 'destructive' : undefined,
+      });
       load(true);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
+      setOzonShipping(0);
       setSaving(false);
     }
   };
@@ -301,6 +342,7 @@ export const useSupplyActions = ({
 
   return {
     saving,
+    ozonShipping,
     importingFbo,
     loadingQr,
     forceCompleting,

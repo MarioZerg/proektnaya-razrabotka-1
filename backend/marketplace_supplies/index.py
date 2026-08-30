@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -173,19 +174,69 @@ OZON_DEAD_STATUSES = {
 }
 
 
-def ozon_ship_postings(cur, supply_id):
+# Сколько отправлений передаём в OZON за один вызов и сколько секунд на это
+# отводим. OZON принимает их строго по одному, а функция живёт считанные секунды —
+# поэтому берём небольшую порцию и останавливаемся по часам, не дожидаясь обрыва.
+# Остаток досылается следующими вызовами: это дольше по количеству нажатий, но
+# поставка закрывается сразу и ничего не теряется.
+# Порция намеренно большая: главный ограничитель — часы (deadline), а не счётчик.
+# Когда OZON отвечает быстро, за окно проходит много отправлений и поставка на 400
+# позиций закрывается за считанные заходы; когда площадка тормозит — успеем сколько
+# успеем и честно вернём остаток. Слишком мелкая порция растянула бы такую поставку
+# на полсотни кругов.
+# Сколько отправлений уходит в OZON за один вызов функции и за один HTTP-запрос.
+# Метод last-mile принимает список, поэтому поставка на сотни отправлений
+# укладывается в считанные запросы. Окно по времени — страховка от медленного
+# ответа площадки: успели меньше — остаток досылается следующим вызовом.
+# Коды отказа OZON человеческим языком: кладовщик должен понимать, что делать,
+# а не пересылать администратору строку HAS_INCORRECT_TPL_INTEGRATION_TYPE.
+# Отказы, которые отказами не являются: OZON сам подтверждает отгрузку этих
+# отправлений (везёт его логистика, водитель принимает короб по акту).
+# Показывать их кладовщику как проблему — только пугать.
+OZON_SHIP_SELF_CONFIRMED = {'HAS_INCORRECT_TPL_INTEGRATION_TYPE'}
+
+OZON_SHIP_ERRORS = {
+    'HAS_INCORRECT_TPL_INTEGRATION_TYPE':
+        'отгрузку подтверждает водитель OZON при приёмке — из CRM не требуется',
+    'POSTING_NOT_FOUND': 'OZON не нашёл это отправление',
+    'STATE_NOT_VALID': 'отправление в другом статусе, отгрузить нельзя',
+}
+
+OZON_SHIP_BATCH = 500
+# 20 — жёсткий предел самого OZON: «value must contain between 1 and 20 items».
+# Больше в один запрос он не принимает и отвергает пачку целиком.
+OZON_SHIP_CHUNK = 20
+OZON_SHIP_WINDOW_SEC = 3.0
+
+
+def ozon_ship_postings(cur, supply_id, limit=None, deadline=None):
     """Передаёт отправления поставки в доставку на стороне OZON.
 
     Кладовщик закрывает поставку — значит, короб уехал. На OZON отправления должны
     уйти из «ожидает отгрузки» в «доставляется», иначе площадка считает, что товар
     всё ещё у продавца, и начисляет просрочку.
 
-    Возвращает (сколько передано, список проблем).
+    ОТПРАВЛЯЕМ ПАЧКАМИ. Метод last-mile принимает СПИСОК отправлений за раз.
+    Раньше мы слали по одному — и не просто медленно: в поле posting_number
+    уходила строка вместо списка, OZON отвечал «syntax error» и НЕ принимал
+    ничего. Поставка на 400 отправлений давала 400 бесполезных запросов, функция
+    обрывалась по таймауту, откатывая даже закрытие поставки, — кнопка выглядела
+    нерабочей. Теперь одна пачка на сотню отправлений: вся поставка уходит за
+    считанные запросы.
+
+    limit/deadline — страховка на случай, если OZON начнёт отвечать медленно:
+    берём сколько успеваем и честно возвращаем остаток, а не обрываемся молча.
+
+    Возвращает (сколько передано, список проблем, сколько осталось).
     """
     client_id, api_key = _ozon_creds(cur)
     if not client_id or not api_key:
-        return 0, []
+        return 0, [], 0
 
+    # Берём только те отправления, что ещё НЕ переданы. Признак передачи —
+    # ozon_status: мы сами ставим его в 'delivering' после успешного ответа
+    # площадки. Без этого условия каждая следующая порция начинала бы список
+    # заново, гоняя по кругу уже отправленное.
     cur.execute(
         "SELECT DISTINCT COALESCE(ro.ozon_posting_number, o.ozon_posting_number) "
         "FROM marketplace_supply_items msi "
@@ -194,16 +245,26 @@ def ozon_ship_postings(cur, supply_id):
         "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
         "WHERE msi.supply_id = %s "
         "AND COALESCE(ro.marketplace, o.marketplace) = 'OZON' "
-        "AND COALESCE(ro.ozon_posting_number, o.ozon_posting_number) IS NOT NULL",
+        "AND COALESCE(ro.ozon_posting_number, o.ozon_posting_number) IS NOT NULL "
+        "AND COALESCE(ro.ozon_status, o.ozon_status, '') NOT IN "
+        "    ('delivering', 'delivered', 'cancelled')",
         (int(supply_id),),
     )
     numbers = [r[0] for r in cur.fetchall() if r[0]]
     if not numbers:
-        return 0, []
+        return 0, [], 0
 
-    shipped, problems = 0, []
-    for number in numbers:
-        body = json.dumps({'posting_number': number}).encode('utf-8')
+    total = len(numbers)
+    if limit:
+        numbers = numbers[:int(limit)]
+
+    shipped, problems, handled = 0, [], 0
+    for start in range(0, len(numbers), OZON_SHIP_CHUNK):
+        if deadline and time.time() >= deadline:
+            break
+        chunk = numbers[start:start + OZON_SHIP_CHUNK]
+
+        body = json.dumps({'posting_number': chunk}).encode('utf-8')
         req = urllib.request.Request(
             'https://api-seller.ozon.ru/v2/fbs/posting/last-mile',
             method='POST', data=body,
@@ -211,20 +272,63 @@ def ozon_ship_postings(cur, supply_id):
         req.add_header('Client-Id', client_id)
         req.add_header('Api-Key', api_key)
         req.add_header('Content-Type', 'application/json')
+
         try:
-            with urllib.request.urlopen(req, timeout=15) as r:
-                r.read()
-            shipped += 1
-            cur.execute(
-                "UPDATE orders SET ozon_status = 'delivering' WHERE ozon_posting_number = %s",
-                (number,),
-            )
+            with urllib.request.urlopen(req, timeout=20) as r:
+                answer = json.loads(r.read().decode('utf-8', 'replace') or '{}')
         except urllib.error.HTTPError as e:
-            detail = e.read().decode('utf-8', 'replace')[:120]
-            problems.append(f'{number}: {detail}')
+            detail = e.read().decode('utf-8', 'replace')[:160]
+            problems.append(f'пачка из {len(chunk)}: {detail}')
+            handled += len(chunk)
+            continue
         except Exception as e:
-            problems.append(f'{number}: {str(e)[:80]}')
-    return shipped, problems
+            problems.append(f'пачка из {len(chunk)}: {str(e)[:120]}')
+            handled += len(chunk)
+            continue
+
+        handled += len(chunk)
+
+        # OZON отвечает построчно: по каждому отправлению — принято или нет.
+        # Отмечаем доставленными ТОЛЬКО принятые, иначе отвергнутые молча
+        # выпали бы из повторной отправки и остались бы у продавца.
+        rows = answer.get('result')
+        ok_numbers = []
+        if isinstance(rows, list) and rows:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                number = row.get('posting_number')
+                if row.get('result'):
+                    ok_numbers.append(number)
+                    continue
+
+                code = row.get('error')
+                # Отгрузку этих отправлений подтверждает сам OZON — водитель при
+                # приёмке короба. Из CRM подтверждать нечего, и это НЕ ошибка:
+                # раньше кладовщик видел пугающий красный список на всю поставку,
+                # хотя всё шло правильно. Молча пропускаем.
+                if code in OZON_SHIP_SELF_CONFIRMED:
+                    continue
+
+                problems.append(
+                    f"{number}: {OZON_SHIP_ERRORS.get(code, code or 'не принято')}"
+                )
+        else:
+            # Ответ без построчного результата — считаем пачку принятой целиком.
+            ok_numbers = chunk
+
+        if ok_numbers:
+            ids_sql = ','.join(
+                "'" + str(n).replace("'", "''") + "'" for n in ok_numbers if n
+            )
+            if ids_sql:
+                cur.execute(
+                    f"UPDATE orders SET ozon_status = 'delivering' "
+                    f"WHERE ozon_posting_number IN ({ids_sql})"
+                )
+            shipped += len(ok_numbers)
+
+    return shipped, problems, max(0, total - handled)
 
 
 def resolve_ozon_barcode(cur, barcode):
@@ -2707,6 +2811,34 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            # Досылка отправлений в OZON.
+            #
+            # Поставка уже закрыта — здесь только «дожать» то, что не влезло в
+            # окно при закрытии. Фронт вызывает это подряд, пока ozonRemaining не
+            # станет нулём. Отдельным действием, чтобы каждая порция сохранялась
+            # своей транзакцией: обрыв на любой из них не откатывает предыдущие.
+            if action == 'ship_ozon_postings':
+                supply_id = body_data.get('supplyId')
+                if not supply_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите supplyId'})}
+
+                shipped, problems, remaining = ozon_ship_postings(
+                    cur, supply_id, limit=OZON_SHIP_BATCH,
+                    deadline=time.time() + OZON_SHIP_WINDOW_SEC,
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'ozonShipped': shipped,
+                        'ozonProblems': problems,
+                        'ozonRemaining': remaining,
+                    }, ensure_ascii=False),
+                }
+
             if action == 'move_status':
                 supply_id = body_data.get('supplyId')
                 new_status = body_data.get('status')
@@ -2732,7 +2864,7 @@ def handler(event: dict, context) -> dict:
                     }
 
                 extra_sql = ""
-                ozon_shipped, ozon_problems = 0, []
+                ozon_shipped, ozon_problems, ozon_remaining = 0, [], 0
                 if new_status == 'Отгрузка':
                     # Отменённые заказы отгружать нельзя: на маркетплейсе их больше нет.
                     # Кладовщик должен сначала отправить такие вещи на полку хранения —
@@ -2854,7 +2986,17 @@ def handler(event: dict, context) -> dict:
                     # Сообщаем OZON, что короб уехал: отправления уходят из «ожидает
                     # отгрузки» в «доставляется». Без этого площадка считает товар у
                     # продавца и начисляет просрочку, хотя вещь уже в пути.
-                    ozon_shipped, ozon_problems = ozon_ship_postings(cur, supply_id)
+                    #
+                    # Успеваем сколько успеваем. OZON принимает отправления по одному,
+                    # в поставке их бывает сотня — целиком в одно нажатие они не влезают.
+                    # Раньше пробовали слать все сразу: функция обрывалась по таймауту,
+                    # откатывая ВСЁ, — поставка не закрывалась вовсе, и кнопка выглядела
+                    # нерабочей. Теперь берём часть, а остаток (ozonRemaining) фронт
+                    # досылает следующими вызовами, уже при закрытой поставке.
+                    ozon_shipped, ozon_problems, ozon_remaining = ozon_ship_postings(
+                        cur, supply_id, limit=OZON_SHIP_BATCH,
+                        deadline=time.time() + OZON_SHIP_WINDOW_SEC,
+                    )
                 elif new_status == 'Выполнена':
                     extra_sql = ", completed_at = now(), ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now())"
 
@@ -2929,6 +3071,9 @@ def handler(event: dict, context) -> dict:
                         # кладовщик должен видеть, если площадка часть не приняла.
                         'ozonShipped': ozon_shipped,
                         'ozonProblems': ozon_problems,
+                        # Сколько отправлений ещё не передано — фронт досылает их
+                        # отдельными вызовами ship_ozon_postings.
+                        'ozonRemaining': ozon_remaining,
                     }, ensure_ascii=False),
                 }
 

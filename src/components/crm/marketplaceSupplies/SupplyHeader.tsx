@@ -31,6 +31,8 @@ interface SupplyHeaderProps {
   nextStatus: SupplyStatus | undefined;
   nextStatusLabel: Record<string, string>;
   saving: boolean;
+  /** Сколько отправлений OZON ещё осталось передать (0 — досылка не идёт). */
+  ozonShipping?: number;
   forceCompleting: boolean;
   /** Идёт запрос QR поставки у WB. */
   loadingQr?: boolean;
@@ -49,6 +51,7 @@ const SupplyHeader = ({
   nextStatus,
   nextStatusLabel,
   saving,
+  ozonShipping = 0,
   forceCompleting,
   loadingQr = false,
   onBack,
@@ -177,8 +180,16 @@ const SupplyHeader = ({
           )}
           {!readOnly && nextStatus && (
             <Button onClick={onMoveStatus} disabled={saving}>
-              <Icon name="ArrowRight" size={16} className="mr-2" />
-              {nextStatusLabel[nextStatus] || nextStatus}
+              {/* Отправления уходят на OZON порциями и это долго. Без счётчика
+                  кладовщик не понимал, работает кнопка или зависла, и жал ещё раз. */}
+              <Icon
+                name={ozonShipping ? 'Loader2' : 'ArrowRight'}
+                size={16}
+                className={ozonShipping ? 'mr-2 animate-spin' : 'mr-2'}
+              />
+              {ozonShipping
+                ? `Передаём на OZON… осталось ${ozonShipping}`
+                : nextStatusLabel[nextStatus] || nextStatus}
             </Button>
           )}
         </div>
