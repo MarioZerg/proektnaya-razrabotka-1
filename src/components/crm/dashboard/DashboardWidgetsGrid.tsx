@@ -1,7 +1,10 @@
 import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
-import { type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
+import {
+  STAGE_ORDER,
+  type DashboardWidgetData,
+} from '@/components/crm/dashboard/dashboardShared';
 
 interface DashboardWidgetsGridProps {
   widgets: DashboardWidgetData[];
@@ -31,77 +34,114 @@ const toneValue: Record<DashboardWidgetData['tone'], string> = {
 const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) => {
   const navigate = useNavigate();
 
+  // Раскладываем плитки по этапам, сохраняя порядок производственного пути.
+  // Пустые этапы не показываем: у швеи нет складских показателей, и заголовок
+  // без единой плитки был бы просто шумом.
+  const groups = STAGE_ORDER.map((stage) => ({
+    ...stage,
+    items: widgets.filter((w) => w.stage === stage.key),
+  })).filter((g) => g.items.length > 0);
+
   return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-4">
-      {widgets.map((w) => (
-        <Card
-          key={w.label}
-          onClick={() => navigate(w.path)}
-          className={`group cursor-pointer border p-3 transition-all hover:shadow-md sm:flex sm:flex-col sm:gap-3 sm:p-4 ${toneCard[w.tone]}`}
-        >
-          {/* ТЕЛЕФОН — одна строка: значок, подпись, цифра.
-              Полная карточка на телефоне занимала почти четверть экрана, и десяток
-              показателей превращался в долгую прокрутку. В строке те же данные
-              читаются сразу, а список целиком помещается на один-два экрана.
-              Подсказку и кнопку «Открыть» здесь прячем: подпись и так говорит, о чём
-              показатель, а нажимается вся строка. */}
-          <div className="flex items-center gap-3 sm:hidden">
-            <span
-              className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${toneIcon[w.tone]}`}
-            >
-              <Icon name={w.icon} size={18} />
-            </span>
-            <p className="min-w-0 flex-1 text-sm font-semibold leading-snug">{w.label}</p>
-            <span
-              className={`shrink-0 text-2xl font-bold leading-none tracking-tight ${toneValue[w.tone]}`}
-            >
-              {loading ? '—' : w.value}
-            </span>
+    <div className="space-y-5">
+      {groups.map((group) => (
+        <div key={group.key} className="space-y-2.5">
+          {/* Заголовок этапа: видно, на каком участке пути находится показатель.
+              Раньше плитки шли сплошной лентой, и «Не принятые поставки» стояли
+              между пошивом и стикеровкой — нужную приходилось искать глазами. */}
+          <div className="flex items-center gap-2">
             <Icon
-              name="ChevronRight"
-              size={16}
-              className="shrink-0 text-muted-foreground"
+              name={group.icon}
+              size={15}
+              className={
+                group.key === 'attention' ? 'text-destructive' : 'text-muted-foreground'
+              }
             />
+            <h2
+              className={`text-xs font-semibold uppercase tracking-wide ${
+                group.key === 'attention' ? 'text-destructive' : 'text-muted-foreground'
+              }`}
+            >
+              {group.title}
+            </h2>
+            <span className="h-px flex-1 bg-border" />
           </div>
 
-          {/* ПЛАНШЕТ И КОМПЬЮТЕР — прежняя крупная карточка, без изменений. */}
-          <div className="hidden sm:contents">
-            {/* Верхняя строка: крупный значок слева, цифра справа — самое важное
-                читается одним взглядом, не вчитываясь в подписи. */}
-            <div className="flex items-start justify-between gap-3">
-              <span
-                className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${toneIcon[w.tone]}`}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-4">
+            {group.items.map((w) => (
+              <Card
+                key={w.label}
+                onClick={() => navigate(w.path)}
+                className={`group cursor-pointer border p-3 transition-all hover:shadow-md sm:flex sm:flex-col sm:gap-3 sm:p-4 ${toneCard[w.tone]}`}
               >
-                <Icon name={w.icon} size={22} />
-              </span>
-              <span
-                className={`text-3xl font-bold leading-none tracking-tight ${toneValue[w.tone]}`}
-              >
-                {loading ? '—' : w.value}
-              </span>
-            </div>
+                {/* ТЕЛЕФОН — одна строка: значок, подпись, цифра.
+                    Полная карточка на телефоне занимала почти четверть экрана, и
+                    десяток показателей превращался в долгую прокрутку. В строке те
+                    же данные читаются сразу, а список целиком помещается на
+                    один-два экрана. Подсказку и кнопку «Открыть» здесь прячем:
+                    подпись и так говорит, о чём показатель, а нажимается вся строка. */}
+                <div className="flex items-center gap-3 sm:hidden">
+                  <span
+                    className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${toneIcon[w.tone]}`}
+                  >
+                    <Icon name={w.icon} size={18} />
+                  </span>
+                  <p className="min-w-0 flex-1 text-sm font-semibold leading-snug">
+                    {w.label}
+                  </p>
+                  <span
+                    className={`shrink-0 text-2xl font-bold leading-none tracking-tight ${toneValue[w.tone]}`}
+                  >
+                    {loading ? '—' : w.value}
+                  </span>
+                  <Icon
+                    name="ChevronRight"
+                    size={16}
+                    className="shrink-0 text-muted-foreground"
+                  />
+                </div>
 
-            <div className="min-w-0 space-y-1">
-              <p className="text-sm font-semibold leading-snug">{w.label}</p>
-              {w.hint && (
-                <p className="line-clamp-2 text-xs leading-snug text-muted-foreground">
-                  {w.hint}
-                </p>
-              )}
-            </div>
+                {/* ПЛАНШЕТ И КОМПЬЮТЕР — прежняя крупная карточка, без изменений. */}
+                <div className="hidden sm:contents">
+                  {/* Верхняя строка: крупный значок слева, цифра справа — самое
+                      важное читается одним взглядом, не вчитываясь в подписи. */}
+                  <div className="flex items-start justify-between gap-3">
+                    <span
+                      className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${toneIcon[w.tone]}`}
+                    >
+                      <Icon name={w.icon} size={22} />
+                    </span>
+                    <span
+                      className={`text-3xl font-bold leading-none tracking-tight ${toneValue[w.tone]}`}
+                    >
+                      {loading ? '—' : w.value}
+                    </span>
+                  </div>
 
-            {/* Кнопка-подсказка внизу, как в привычных панелях: видно, что карточка
-                кликабельна и куда она ведёт. */}
-            <span className="mt-auto flex items-center gap-1 pt-1 text-xs font-medium text-muted-foreground transition-colors group-hover:text-primary">
-              Открыть
-              <Icon
-                name="ArrowRight"
-                size={13}
-                className="transition-transform group-hover:translate-x-0.5"
-              />
-            </span>
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-sm font-semibold leading-snug">{w.label}</p>
+                    {w.hint && (
+                      <p className="line-clamp-2 text-xs leading-snug text-muted-foreground">
+                        {w.hint}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Кнопка-подсказка внизу, как в привычных панелях: видно, что
+                      карточка кликабельна и куда она ведёт. */}
+                  <span className="mt-auto flex items-center gap-1 pt-1 text-xs font-medium text-muted-foreground transition-colors group-hover:text-primary">
+                    Открыть
+                    <Icon
+                      name="ArrowRight"
+                      size={13}
+                      className="transition-transform group-hover:translate-x-0.5"
+                    />
+                  </span>
+                </div>
+              </Card>
+            ))}
           </div>
-        </Card>
+        </div>
       ))}
     </div>
   );
