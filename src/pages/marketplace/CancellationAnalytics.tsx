@@ -14,6 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
+import CancellationFunnel from '@/components/crm/cancellations/CancellationFunnel';
 import {
   fetchCancellationReport,
   downloadCancellationExcel,
@@ -157,6 +158,36 @@ const CancellationAnalytics = () => {
 
         {!loading && s && (
           <>
+            {/* Главная цифра отчёта — сразу вверху: сколько случаев не объясняются
+                обычным поведением покупателя и на сколько вещей они наели. */}
+            {s.highRiskBuyers > 0 && (
+              <Card className="border-destructive/40 bg-destructive/[0.04] shadow-none">
+                <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-2 py-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Похоже на скупку</p>
+                    <p className="text-3xl font-bold text-destructive">
+                      {s.highRiskBuyers}
+                      <span className="ml-1.5 text-base font-normal text-muted-foreground">
+                        покупателей
+                      </span>
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Вещей сшито впустую</p>
+                    <p className="text-3xl font-bold text-destructive">{s.highRiskItems}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Средняя вероятность</p>
+                    <p className="text-3xl font-bold text-destructive">{s.avgProbability}%</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {data?.funnel && (
+              <CancellationFunnel funnel={data.funnel} summary={s} days={days} />
+            )}
+
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <Card className="shadow-none">
                 <CardContent className="py-4">
@@ -269,6 +300,7 @@ const CancellationAnalytics = () => {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Покупатель</TableHead>
+                        <TableHead className="text-center">Вероятность</TableHead>
                         <TableHead className="text-center">Риск</TableHead>
                         <TableHead className="text-center">Заказов</TableHead>
                         <TableHead className="text-center">Отменил</TableHead>
@@ -279,12 +311,30 @@ const CancellationAnalytics = () => {
                     </TableHeader>
                     <TableBody>
                       {data.orders.map((o) => (
-                        <TableRow key={o.orderKey} className={o.risk >= 60 ? 'bg-rose-50' : ''}>
+                        <TableRow
+                          key={o.orderKey}
+                          className={o.probability >= 70 ? 'bg-rose-50' : ''}
+                        >
                           <TableCell>
                             <p className="font-medium">{o.orderKey}</p>
                             <p className="max-w-[220px] truncate text-xs text-muted-foreground">
                               {o.products}
                             </p>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {o.probability > 0 ? (
+                              <span
+                                className={`text-base font-bold ${
+                                  o.probability >= 70
+                                    ? 'text-destructive'
+                                    : 'text-amber-600'
+                                }`}
+                              >
+                                {o.probability}%
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">выкупал</span>
+                            )}
                           </TableCell>
                           <TableCell className="text-center">
                             <span

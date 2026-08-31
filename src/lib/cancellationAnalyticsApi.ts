@@ -28,6 +28,11 @@ export interface CancelledOrder {
   neverBought: boolean;
   /** Оценка от 0 до 100: насколько похоже на намеренную скупку. */
   risk: number;
+  /**
+   * Вероятность (0-100), что за случаем стоит конкурент, а не обычный покупатель.
+   * Считается от поведения обычных покупателей в наших же данных, потолок — 95%.
+   */
+  probability: number;
   /** Что именно выглядит подозрительно. */
   flags: string[];
 }
@@ -57,6 +62,18 @@ export interface CancellationReport {
     neverBought: number;
     /** Покупателей, заказавших повторно. */
     repeatBuyers: number;
+    /** Случаев с вероятностью скупки 70% и выше. */
+    highRiskBuyers: number;
+    /** Сколько вещей пришлось на такие случаи — цифра ущерба. */
+    highRiskItems: number;
+    /** Средняя вероятность по этим случаям. */
+    avgProbability: number;
+  };
+  /** Воронка отбора: путь от всех заказов до необъяснимых случаев. */
+  funnel: {
+    totalItems: number;
+    totalAccounts: number;
+    steps: { title: string; value: number; share: number; note: string }[];
   };
   orders: CancelledOrder[];
   products: CancelledProduct[];
