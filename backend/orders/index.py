@@ -1839,7 +1839,8 @@ def handler(event: dict, context) -> dict:
 
                             if fabric_material_id and material_id == fabric_material_id:
                                     cur.execute(
-                                            "SELECT id, remaining_quantity, workshop_id, shift_number FROM rolls WHERE id = %s "
+                                            "SELECT id, remaining_quantity, workshop_id, shift_number, "
+                                            "accepted_at, defect_flagged_at FROM rolls WHERE id = %s "
                                             "AND material_id = %s AND status = 'in_workshop'",
                                             (int(roll_id_chosen), material_id),
                                     )
@@ -1850,6 +1851,30 @@ def handler(event: dict, context) -> dict:
                                                     'statusCode': 404,
                                                     'headers': headers,
                                                     'body': json.dumps({'error': 'Выбранный рулон не найден или недоступен'}),
+                                            }
+                                    # Рулон отгружен со склада, но смена его не приняла —
+                                    # резать нельзя. По документам он в цехе, по факту мог
+                                    # не доехать или приехать порванным. Для аксессуаров
+                                    # такая проверка стояла давно, а для ткани рулон
+                                    # выбирает сам закройщик — и мимо неё проходил.
+                                    if roll_row[4] is None:
+                                            conn.rollback()
+                                            return {
+                                                    'statusCode': 409,
+                                                    'headers': headers,
+                                                    'body': json.dumps({
+                                                            'error': 'Рулон ещё не принят сменой. Подтвердите приёмку '
+                                                                     'рулона в цех, потом раскраивайте'
+                                                    }, ensure_ascii=False),
+                                            }
+                                    if roll_row[5] is not None:
+                                            conn.rollback()
+                                            return {
+                                                    'statusCode': 409,
+                                                    'headers': headers,
+                                                    'body': json.dumps({
+                                                            'error': 'Рулон отставлен как бракованный — работать с ним нельзя'
+                                                    }, ensure_ascii=False),
                                             }
                                     if order_workshop_id and roll_row[2] != order_workshop_id:
                                             conn.rollback()
@@ -2306,22 +2331,43 @@ def handler(event: dict, context) -> dict:
                     )
                     mi_row = cur.fetchone()
                     if mi_row:
+                        # Берём ВЕСЬ состав товара из карточки «Товары на маркетплейсе»,
+                        # а не только аксессуары.
+                        #
+                        # Раньше проверялся один тип — «Аксессуары». Швея брала заказ и
+                        # обнаруживала уже за машинкой, что кончилась упаковка: заказ
+                        # висел в работе, вещь не закрывалась. Что расходуется на товар,
+                        # решает его карточка — по ней и проверяем.
+                        #
+                        # Ткань исключаем: её списывает раскрой ДО пошива, и к моменту
+                        # взятия заказа она уже израсходована. Требовать её остаток
+                        # здесь — значит запретить шить готовый крой.
                         cur.execute(
                             "SELECT mim.material_id, mim.quantity, m.name, m.unit "
                             "FROM marketplace_item_materials mim "
                             "JOIN materials m ON m.id = mim.material_id "
                             "JOIN material_types mt ON mt.id = m.type_id "
-                            "WHERE mim.marketplace_item_id = %s AND mt.name = 'Аксессуары'",
-                            (mi_row[0],),
+                            "WHERE mim.marketplace_item_id = %s AND mt.name <> 'Тюль' "
+                            # Материал, уже списанный по этому заказу, второй раз не
+                            # требуем: он физически израсходован, остаток на него не нужен.
+                            "AND NOT EXISTS (SELECT 1 FROM order_material_usage omu "
+                            "                WHERE omu.order_id = %s "
+                            "                  AND omu.material_id = mim.material_id)",
+                            (mi_row[0], order_id),
                         )
                         lacks = []
                         for mat_id, qty_needed, mat_name, mat_unit in cur.fetchall():
                             cur.execute(
                                 # Бракованные рулоны в доступный остаток не считаем —
                                 # заказ на них планировать нельзя.
+                                #
+                                # Непринятые тоже: рулон отгружен со склада, но смена его
+                                # ещё не подтвердила. По документам материал в цехе, по
+                                # факту его может там не быть — планировать на него заказ
+                                # нельзя, иначе швея возьмёт работу и останется без нитей.
                                 "SELECT COALESCE(SUM(remaining_quantity), 0) FROM rolls "
                                 "WHERE material_id = %s AND status = 'in_workshop' AND remaining_quantity > 0 "
-                                "AND defect_flagged_at IS NULL "
+                                "AND defect_flagged_at IS NULL AND accepted_at IS NOT NULL "
                                 "AND (%s IS NULL OR workshop_id = %s)",
                                 (mat_id, session_workshop_id, session_workshop_id),
                             )
@@ -2550,7 +2596,8 @@ def handler(event: dict, context) -> dict:
                     }
 
                 cur.execute(
-                    "SELECT id, remaining_quantity, workshop_id, shift_number FROM rolls WHERE id = %s "
+                    "SELECT id, remaining_quantity, workshop_id, shift_number, accepted_at, "
+                    "defect_flagged_at FROM rolls WHERE id = %s "
                     "AND material_id = %s AND status = 'in_workshop'",
                     (int(roll_id_chosen), trim_material_id),
                 )
@@ -2560,6 +2607,24 @@ def handler(event: dict, context) -> dict:
                         'statusCode': 404,
                         'headers': headers,
                         'body': json.dumps({'error': 'Выбранный рулон тесьмы не найден или недоступен'}),
+                    }
+                # Рулон отгружен в цех, но смена его не приняла — работать нельзя.
+                if roll_row[4] is None:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Рулон тесьмы ещё не принят сменой. Подтвердите приёмку, '
+                                     'потом стикеруйте'
+                        }, ensure_ascii=False),
+                    }
+                if roll_row[5] is not None:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Рулон тесьмы отставлен как бракованный — работать с ним нельзя'
+                        }, ensure_ascii=False),
                     }
                 if check_workshop_id and roll_row[2] != check_workshop_id:
                     return {

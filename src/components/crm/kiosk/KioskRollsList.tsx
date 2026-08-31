@@ -17,6 +17,8 @@ interface KioskRollsListProps {
   /** Рулоны после фильтра по типу и поиска. */
   visibleRolls: Roll[];
   onSelect: (roll: Roll) => void;
+  /** Приёмка рулона сменой: подтверждение, что материал реально доехал в цех. */
+  onAccept: (roll: Roll) => void;
   onBackToScan: () => void;
 }
 
@@ -31,6 +33,7 @@ const KioskRollsList = ({
   setSearch,
   visibleRolls,
   onSelect,
+  onAccept,
   onBackToScan,
 }: KioskRollsListProps) => (
   <div className="space-y-3">
@@ -97,6 +100,34 @@ const KioskRollsList = ({
         // Остаются два запрета: непринятый материал (мог не доехать) и отставленный
         // из-за брака рулон (он ждёт кладовщика).
         const active = !r.pendingAcceptance && !r.defectFlaggedAt;
+        // Непринятый рулон — не тупик: сотрудник видит его и может подтвердить
+        // приёмку прямо здесь. Без этой кнопки рулон, отгруженный со склада,
+        // навсегда оставался бы серым и нерабочим.
+        if (r.pendingAcceptance && !r.defectFlaggedAt) {
+          return (
+            <div
+              key={r.id}
+              className="flex w-full items-center justify-between gap-3 rounded-lg border border-amber-500/60 bg-amber-50 p-5 text-left"
+            >
+              <div className="min-w-0">
+                <div className="font-mono-tech text-2xl font-bold">#{r.barcode}</div>
+                <div className="text-xl text-muted-foreground">{r.materialName}</div>
+                <div className="text-base font-medium text-amber-700">
+                  Привезён со склада — подтвердите приёмку
+                </div>
+              </div>
+              <Button
+                size="lg"
+                className="h-16 shrink-0 px-6 text-xl"
+                onClick={() => onAccept(r)}
+              >
+                <Icon name="PackageCheck" size={26} className="mr-2" />
+                Принять
+              </Button>
+            </div>
+          );
+        }
+
         return (
           <button
             key={r.id}

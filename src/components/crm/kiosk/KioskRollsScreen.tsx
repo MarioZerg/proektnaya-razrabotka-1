@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useGlobalScanner } from '@/hooks/useGlobalScanner';
 import { playScanSound } from '@/lib/scanSound';
 import { useToast } from '@/hooks/use-toast';
-import { fetchRolls, closeRoll, flagRollDefect, type Roll } from '@/lib/rollsApi';
+import { fetchRolls, closeRoll, flagRollDefect, acceptRoll, type Roll } from '@/lib/rollsApi';
 import KioskRollCloseCard from '@/components/crm/kiosk/KioskRollCloseCard';
 import KioskRollScanPrompt from '@/components/crm/kiosk/KioskRollScanPrompt';
 import KioskRollsList from '@/components/crm/kiosk/KioskRollsList';
@@ -156,6 +156,31 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   // планшете фокус легко теряется от случайного касания.
   useGlobalScanner(handleScan, !loading && !selected && !saving);
 
+  /**
+   * Приёмка рулона сменой.
+   *
+   * Кладовщик отгрузил рулон в цех, но материал мог не доехать или приехать не тот.
+   * Пока сотрудник не подтвердит, что рулон у него в руках, резать из него нельзя —
+   * иначе цех расходует материал, которого физически нет, и расхождение всплывает
+   * только на инвентаризации.
+   */
+  const handleAccept = async (roll: Roll) => {
+    setSaving(true);
+    try {
+      await acceptRoll(roll.id, userId, userName);
+      toast({ title: `Рулон #${roll.barcode} принят`, description: 'Можно работать' });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось принять рулон',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleClose = async (withShortage: boolean) => {
     if (!selected) return;
     setSaving(true);
@@ -273,6 +298,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
       setSearch={setSearch}
       visibleRolls={visibleRolls}
       onSelect={setSelected}
+      onAccept={handleAccept}
       onBackToScan={() => {
         setListOpen(false);
         setSearch('');

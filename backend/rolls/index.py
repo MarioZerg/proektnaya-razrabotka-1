@@ -1167,9 +1167,10 @@ def handler(event: dict, context) -> dict:
                 shift_sql = int(shift_number) if shift_number not in (None, '') else 'NULL'
                 status = 'in_workshop' if workshop_id not in (None, '') else 'in_storage'
 
-                # Рулон, заведённый сразу в цех, считается принятым: подтверждать нечего —
-                # его не везли заявкой, он уже лежит у смены. Отметка о приёмке нужна,
-                # иначе такой рулон навсегда остаётся «не принят» и его нельзя закрыть.
+                # Рулон, ЗАВЕДЁННЫЙ сразу в цех, считается принятым: его не везли со
+                # склада заявкой, кладовщик оформляет то, что уже лежит у смены в руках.
+                # Подтверждать нечего, и без отметки такой рулон навсегда остался бы
+                # «не принят» — его нельзя было бы ни использовать, ни закрыть.
                 accepted_sql = 'now()' if status == 'in_workshop' else 'NULL'
 
                 cur.execute(
@@ -1216,10 +1217,19 @@ def handler(event: dict, context) -> dict:
                     fields.append(f"status = '{status_esc}'")
                     if body_data['status'] == 'completed':
                         fields.append("completed_at = now()")
-                    # Рулон переводят в цех руками (не заявкой) — подтверждать доставку
-                    # некому, поэтому сразу считаем его принятым и годным в работу.
+                    # Рулон УХОДИТ СО СКЛАДА В ЦЕХ — но принятым НЕ считается.
+                    #
+                    # Раньше здесь сразу проставлялась отметка о приёмке, и материал
+                    # мгновенно становился доступен для заказов. По факту рулон в этот
+                    # момент только выехал со склада: он мог не доехать, приехать
+                    # порванным или не в тот цех. Цех резал материал, которого у него
+                    # физически не было, а расхождение всплывало на инвентаризации.
+                    #
+                    # Теперь отметку ставит САМ сотрудник цеха, когда рулон у него в
+                    # руках (действие accept). До этого рулон числится «в пути» и в
+                    # работу не идёт.
                     if body_data['status'] == 'in_workshop':
-                        fields.append("accepted_at = COALESCE(accepted_at, now())")
+                        fields.append("accepted_at = NULL")
                 if 'workshopId' in body_data:
                     val = body_data['workshopId']
                     fields.append(f"workshop_id = {int(val) if val not in (None, '') else 'NULL'}")
@@ -1233,6 +1243,77 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"UPDATE rolls SET {', '.join(fields)} WHERE id = {int(item_id)}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            # ПРИЁМКА РУЛОНА СМЕНОЙ.
+            #
+            # Кладовщик отгрузил рулон в цех — это ещё не значит, что он доехал.
+            # Материал становится доступен для заказов только после того, как
+            # сотрудник цеха подтвердит: рулон у него в руках. До этого рулон
+            # числится «в пути» и в раскрой не идёт.
+            #
+            # Принимает только тот, кто работает в этом цехе на открытой смене:
+            # иначе приёмку мог бы нажать кто угодно из другого цеха, и смысл
+            # подтверждения терялся бы.
+            if action == 'accept':
+                item_id = body_data.get('id')
+                actor_id = body_data.get('userId') or body_data.get('actorId')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Не указан рулон'}, ensure_ascii=False)}
+                if not actor_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Не указан сотрудник'}, ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT r.status, r.accepted_at, r.workshop_id, r.barcode, m.name "
+                    "FROM rolls r LEFT JOIN materials m ON m.id = r.material_id "
+                    "WHERE r.id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Рулон не найден'}, ensure_ascii=False)}
+
+                r_status, r_accepted, r_workshop, r_barcode, r_material = row
+
+                if r_status != 'in_workshop':
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Принять можно только рулон, отгруженный в цех'},
+                                               ensure_ascii=False)}
+                # Повторное нажатие — не ошибка: сотрудник мог не увидеть результат
+                # первого. Просто говорим, что рулон уже принят.
+                if r_accepted is not None:
+                    return {'statusCode': 200, 'headers': headers,
+                            'body': json.dumps({'success': True, 'alreadyAccepted': True},
+                                               ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT workshop_id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "ORDER BY opened_at DESC LIMIT 1",
+                    (int(actor_id),),
+                )
+                sess = cur.fetchone()
+                if not sess:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Смена не открыта — откройте смену в цехе'},
+                                               ensure_ascii=False)}
+                if r_workshop and sess[0] and int(sess[0]) != int(r_workshop):
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Этот рулон отгружен в другой цех'},
+                                               ensure_ascii=False)}
+
+                cur.execute("UPDATE rolls SET accepted_at = now() WHERE id = %s", (int(item_id),))
+                cur.execute(
+                    "INSERT INTO audit_log (category, user_id, user_name, action, "
+                    "entity_type, entity_id, description) VALUES "
+                    "('warehouse', %s, %s, 'roll_accept', 'roll', %s, %s)",
+                    (int(actor_id), body_data.get('actorName'), int(item_id),
+                     f'Принял рулон {r_barcode} ({r_material or ""}) в цех'.strip()),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True}, ensure_ascii=False)}
 
             if action == 'suitable_rolls':
                 # Какие рулоны годятся под возврат куска.

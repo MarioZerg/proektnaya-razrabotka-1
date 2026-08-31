@@ -288,6 +288,16 @@ export const packerReturnToRoll = (payload: {
 
 export const deleteRoll = (id: number) => postAction({ action: 'delete', id });
 
+/**
+ * Приёмка рулона сменой.
+ *
+ * Кладовщик отгрузил рулон в цех — материал становится доступен для заказов только
+ * после того, как сотрудник подтвердит, что рулон реально у него в руках. До этого
+ * рулон числится «в пути» и в работу не идёт.
+ */
+export const acceptRoll = (id: number, userId?: number, userName?: string) =>
+  postAction({ action: 'accept', id, userId, actorName: userName });
+
 /** Закрытие рулона в цехе: рулон закончился. Если ткани не хватило — передаётся недостача. */
 export const closeRoll = (id: number, shortage = 0, userId?: number, userName?: string) =>
   postAction({ action: 'close_roll', id, shortage, userId, userName });
