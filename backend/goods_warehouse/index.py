@@ -277,8 +277,24 @@ def try_match_orders_from_stock(cur, gw_id=None):
     """
     matched = []
 
-    # Свободные вещи на полке: не зарезервированы, лежат в наличии.
-    where_gw = "gw.status = 'in_stock' AND gw.reserved_order_id IS NULL"
+    # Свободные вещи НА ПОЛКЕ: не зарезервированы, в наличии и РЕАЛЬНО ПРИНЯТЫ
+    # кладовщиком на конкретную полку (shelf_id заполнен).
+    #
+    # ПОЧЕМУ ВАЖНА ПОЛКА.
+    # Вещь из цеха по отменённому заказу упаковщица закрывает на терминале и
+    # клеит на неё стикер хранения — но вещь при этом ещё лежит в цехе. Она
+    # становится складским остатком только когда кладовщик отсканирует стикер
+    # и положит её на полку.
+    #
+    # Раньше подбор брал любую вещь в статусе «в наличии», даже без полки:
+    # система закрывала ею новый заказ, кладовщик шёл к стеллажу — а вещи там
+    # нет, она всё ещё в цехе. Заказ числился собранным со склада, ярлык
+    # печатать не с чего, и отправление зависало.
+    #
+    # Теперь пока кладовщик не принял вещь на полку — для подбора её не
+    # существует.
+    where_gw = ("gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+                "AND gw.shelf_id IS NOT NULL")
     if gw_id:
         where_gw += f" AND gw.id = {int(gw_id)}"
     # FOR UPDATE OF gw SKIP LOCKED: вещь, которую параллельно резервирует другой процесс,
@@ -937,7 +953,11 @@ def handler(event: dict, context) -> dict:
                     "SELECT src.product, sh.name, count(*) "
                     "FROM goods_warehouse gw "
                     "JOIN orders src ON src.id = gw.order_id "
-                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "JOIN shelves sh ON sh.id = gw.shelf_id "
+                    # Только вещи, РЕАЛЬНО лежащие на полке. Вещь без полки ещё
+                    # не принята кладовщиком — она в цехе, и посылать за ней к
+                    # стеллажу бессмысленно: раньше такие строки показывались как
+                    # «Полка не указана», кладовщик шёл искать и не находил.
                     "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
                     "  AND src.product IS NOT NULL "
                     "GROUP BY src.product, sh.name "
@@ -946,7 +966,7 @@ def handler(event: dict, context) -> dict:
                 stock_by_product = {}
                 for prod, shelf_name, cnt in cur.fetchall():
                     stock_by_product.setdefault(prod, []).append({
-                        'shelfName': shelf_name or 'Полка не указана',
+                        'shelfName': shelf_name,
                         'count': int(cnt),
                     })
 
