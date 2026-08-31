@@ -59,14 +59,23 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
 
 
 def next_storage_barcode(cur) -> str:
-    """Генерирует следующий штрихкод хранения вида GW-000001 (по максимальному текущему)."""
-    cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE storage_barcode LIKE 'GW-%'")
-    max_seq = 0
-    for (bc,) in cur.fetchall():
-        suffix = bc.split('-', 1)[1] if '-' in bc else ''
-        if suffix.isdigit():
-            max_seq = max(max_seq, int(suffix))
-    return f"GW-{max_seq + 1:06d}"
+    """Следующий стикер хранения GW-XXXXXX — номер выдаёт САМА БАЗА.
+
+    Раньше номер считали как «максимум плюс один»: читали все выданные коды,
+    брали наибольший, прибавляли единицу. Код при этом обязан быть уникальным.
+
+    Когда два терминала закрывали заказы одновременно, оба успевали прочитать
+    базу до записи друг друга и получали ОДИН И ТОТ ЖЕ номер. Второй падал на
+    уникальности — и обрывал всю операцию закрытия заказа: складская запись не
+    создавалась, зарплата швее и упаковщице не начислялась, в журнале не
+    оставалось следа. Упаковка при этом уже списана, статус «Готовые»
+    проставлен: заказ выглядит закрытым, а люди за него денег не получили.
+
+    Счётчик базы выдаёт номер атомарно — двум запросам одно значение достаться
+    не может, сколько бы терминалов ни работало разом.
+    """
+    cur.execute("SELECT nextval('goods_warehouse_storage_seq')")
+    return f"GW-{int(cur.fetchone()[0]):06d}"
 
 
 def get_setting(cur, workshop_id, key, default=None):

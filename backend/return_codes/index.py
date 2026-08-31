@@ -266,8 +266,14 @@ def fetch_ozon_giveout_info(cur, giveout_id):
 
 
 def next_storage_barcode(cur):
-    cur.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM goods_warehouse")
-    return 'GW-' + str(cur.fetchone()[0]).zfill(6)
+    """Следующий стикер хранения GW-XXXXXX — номер выдаёт САМА БАЗА.
+
+    Раньше считали «максимум плюс один». Два одновременных запроса получали
+    один и тот же номер, второй падал на уникальности и обрывал всю операцию.
+    Счётчик базы выдаёт номер атомарно — столкнуться невозможно.
+    """
+    cur.execute("SELECT nextval('goods_warehouse_storage_seq')")
+    return f"GW-{int(cur.fetchone()[0]):06d}"
 
 
 def stock_picked_up_returns(cur, ids=None):

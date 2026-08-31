@@ -853,14 +853,14 @@ def handle_move_orders(cur, conn, body_data, api_key, use_sandbox):
 
 
 def _next_storage_barcode(cur) -> str:
-    """Следующий штрихкод хранения вида GW-000001."""
-    cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE storage_barcode LIKE 'GW-%'")
-    max_seq = 0
-    for (bc,) in cur.fetchall():
-        suffix = bc.split('-', 1)[1] if '-' in bc else ''
-        if suffix.isdigit():
-            max_seq = max(max_seq, int(suffix))
-    return f"GW-{max_seq + 1:06d}"
+    """Следующий стикер хранения GW-XXXXXX — номер выдаёт САМА БАЗА.
+
+    Раньше считали «максимум плюс один». Два одновременных запроса получали
+    один и тот же номер, второй падал на уникальности и обрывал всю операцию.
+    Счётчик базы выдаёт номер атомарно — столкнуться невозможно.
+    """
+    cur.execute("SELECT nextval('goods_warehouse_storage_seq')")
+    return f"GW-{int(cur.fetchone()[0]):06d}"
 
 
 def handle_shelf_cancelled(cur, conn, body_data, api_key, use_sandbox):
