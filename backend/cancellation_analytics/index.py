@@ -597,6 +597,225 @@ def handle_export(cur, days, min_items, only_never=False):
     }
 
 
+def _buyer_orders(cur, days, keys):
+    """Все отправления перечисленных покупателей — построчно, для личных файлов.
+
+    Берём ВСЁ, что человек заказывал, а не только отменённое: без выкупленных
+    строк файл не отвечает на главный вопрос площадки — «а он вообще хоть раз
+    что-то забирал?».
+    """
+    if not keys:
+        return {}
+    # Ключи пришли из нашего же запроса (это цифры из номеров отправлений), но
+    # в SQL всё равно передаём их параметром, а не склейкой строки.
+    cur.execute(
+        f"SELECT {ORDER_KEY} AS acc, o.ozon_posting_number, o.created_at, "
+        "       o.cancelled_at, o.ozon_status, o.status, o.product, "
+        "       o.quantity, o.material, o.width, o.height, o.product_ozon_sku "
+        "FROM orders o "
+        f"WHERE {ALL_FILTER} "
+        f"  AND o.created_at > now() - (%s || ' days')::interval "
+        f"  AND {ORDER_KEY} = ANY(%s) "
+        "ORDER BY 1, o.created_at, o.ozon_posting_number",
+        (str(int(days)), list(keys)),
+    )
+    out = {}
+    for r in cur.fetchall():
+        out.setdefault(r[0], []).append(r)
+    return out
+
+
+# Понятные подписи вместо служебных статусов OZON: файл читает человек в поддержке.
+OZON_STATUS_RU = {
+    'delivered': 'Получен покупателем',
+    'delivering': 'В доставке',
+    'awaiting_deliver': 'Собран, ждёт отгрузки',
+    'awaiting_packaging': 'Ждёт сборки',
+    'cancelled': 'Отменён',
+    'cancelled_from_split_pending': 'Отменён при разделении заказа',
+}
+
+
+# Сколько покупателей кладём в одну порцию архива. 40 книг Excel собираются
+# примерно за секунду — с запасом укладывается в лимит времени функции.
+ARCHIVE_CHUNK = 40
+
+
+def handle_archive(cur, days, min_items, only_never=False, part_index=0):
+    """ZIP-архив: на каждого покупателя своя папка с личным Excel-файлом.
+
+    Зачем именно так: в поддержку площадки обращаются ПО КОНКРЕТНОМУ случаю, а не
+    «по списку из двухсот строк». Общий файл каждый раз приходилось резать вручную.
+    Здесь папка названа номером лицевого счёта — открыл нужную, приложил файл.
+    """
+    import zipfile
+
+    rows = _prepare(cur, days, min_items, only_never)
+
+    # РАЗБИВКА НА ЧАСТИ.
+    #
+    # Функция живёт 5 секунд, а сборка книги Excel — это десятки миллисекунд. На
+    # 176 покупателях процесс не успевал и обрывался по таймауту, архив не
+    # скачивался вообще. Поэтому отдаём порциями: страница просит часть за частью
+    # и складывает их в один архив уже у себя.
+    total = len(rows)
+    chunks = max(1, (total + ARCHIVE_CHUNK - 1) // ARCHIVE_CHUNK)
+    part = max(0, min(part_index, chunks - 1))
+    rows = rows[part * ARCHIVE_CHUNK:(part + 1) * ARCHIVE_CHUNK]
+
+    by_acc = _buyer_orders(cur, days, [r['orderKey'] for r in rows])
+
+    head_fill = PatternFill('solid', fgColor='1F3864')
+    head_font = Font(color='FFFFFF', bold=True)
+    warn_fill = PatternFill('solid', fgColor='FCE4E4')
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for r in rows:
+            acc = r['orderKey']
+            wb = Workbook()
+            ws = wb.active
+            ws.title = 'Покупатель'
+
+            ws['A1'] = f'Покупатель OZON, лицевой счёт {acc}'
+            ws['A1'].font = Font(bold=True, size=14)
+            ws['A2'] = (
+                f'Период: последние {days} дн. Схема FBS — каждая вещь шьётся под '
+                'конкретный заказ, поэтому отмена означает готовый товар, оставшийся '
+                'у продавца.'
+            )
+            ws['A2'].alignment = Alignment(wrap_text=True, vertical='top')
+            ws.merge_cells('A2:F2')
+            ws.row_dimensions[2].height = 30
+
+            # Короткая сводка: главное видно, не листая таблицу.
+            facts = [
+                ('Вероятность скупки конкурентом', f"{r['probability']}%"),
+                ('Внутренняя оценка риска (0-100)', r['risk']),
+                ('Всего заказано вещей', r['totalItems']),
+                ('Отменено вещей', r['cancelledItems']),
+                ('Выкуплено вещей', r['aliveItems']),
+                ('Отдельных заказов', r['ordersCount']),
+                ('Дней с заказами', r['activeDays']),
+                ('Разных товаров', r['distinctProducts']),
+                ('Первый заказ', r['firstCreated'].strftime('%d.%m.%Y %H:%M')
+                 if r['firstCreated'] else ''),
+                ('Последний заказ', r['lastCreated'].strftime('%d.%m.%Y %H:%M')
+                 if r['lastCreated'] else ''),
+                ('Быстрее всего отменил, часов',
+                 r['hoursToCancel'] if r['hoursToCancel'] is not None else ''),
+                ('На что обратить внимание', '; '.join(r['flags'])),
+            ]
+            row_i = 4
+            for name, value in facts:
+                c1 = ws.cell(row=row_i, column=1, value=name)
+                c1.font = Font(bold=True)
+                ws.cell(row=row_i, column=2, value=value)
+                row_i += 1
+            ws.column_dimensions['A'].width = 34
+            ws.column_dimensions['B'].width = 58
+            for rr in ws.iter_rows(min_row=4, max_row=row_i - 1):
+                rr[1].alignment = Alignment(wrap_text=True, vertical='top')
+
+            # Ни одного выкупа — это и есть суть обращения, выносим отдельно.
+            if r['neverBought'] and r['totalItems'] >= 2:
+                c = ws.cell(
+                    row=row_i + 1, column=1,
+                    value=(
+                        f'Заказал {r["totalItems"]} вещей и не забрал ни одной. '
+                        'Обычные покупатели с таким размером заказа так себя почти '
+                        'не ведут — на этом и построена оценка вероятности.'
+                    ),
+                )
+                c.font = Font(bold=True)
+                c.alignment = Alignment(wrap_text=True, vertical='top')
+                ws.merge_cells(start_row=row_i + 1, start_column=1,
+                               end_row=row_i + 1, end_column=6)
+                ws.row_dimensions[row_i + 1].height = 34
+                for cc in ws[row_i + 1]:
+                    cc.fill = warn_fill
+
+            # Второй лист — все его отправления построчно.
+            ws2 = wb.create_sheet('Отправления')
+            headers = [
+                ('Номер отправления', 26), ('Заказан', 18), ('Отменён', 18),
+                ('Статус OZON', 26), ('Товар', 34), ('Кол-во', 9),
+                ('Материал', 16), ('Ширина', 10), ('Высота', 10), ('Артикул OZON', 16),
+            ]
+            for i, (title, width) in enumerate(headers, start=1):
+                c = ws2.cell(row=1, column=i, value=title)
+                c.fill = head_fill
+                c.font = head_font
+                c.alignment = Alignment(vertical='center', wrap_text=True)
+                ws2.column_dimensions[get_column_letter(i)].width = width
+            ws2.freeze_panes = 'A2'
+
+            for o in by_acc.get(acc, []):
+                raw = o[4] or ''
+                cancelled = raw.startswith('cancel') or o[5] == 'Отменён'
+                ws2.append([
+                    o[1],
+                    o[2].strftime('%d.%m.%Y %H:%M') if o[2] else '',
+                    o[3].strftime('%d.%m.%Y %H:%M') if o[3] else '',
+                    OZON_STATUS_RU.get(raw, raw or o[5] or ''),
+                    o[6] or '', o[7] or '', o[8] or '',
+                    o[9] or '', o[10] or '', o[11] or '',
+                ])
+                if cancelled:
+                    for cc in ws2[ws2.max_row]:
+                        cc.fill = warn_fill
+
+            buf = io.BytesIO()
+            wb.save(buf)
+            # Папка named по лицевому счёту — внутри один файл по этому покупателю.
+            z.writestr(f'{acc}/pokupatel-{acc}.xlsx', buf.getvalue())
+
+        # Общий список — чтобы не открывать сотню папок в поисках нужного.
+        # Кладём его во ВСЕ части: у каждой части свой список её покупателей,
+        # и при распаковке в одну папку файлы не затирают друг друга.
+        idx = Workbook()
+        wsi = idx.active
+        wsi.title = 'Список'
+        for i, (title, width) in enumerate(
+            [('Папка (лицевой счёт)', 24), ('Вероятность, %', 16),
+             ('Отменено', 12), ('Выкуплено', 12), ('Заказов', 10),
+             ('На что обратить внимание', 60)], start=1
+        ):
+            c = wsi.cell(row=1, column=i, value=title)
+            c.fill = head_fill
+            c.font = head_font
+            wsi.column_dimensions[get_column_letter(i)].width = width
+        wsi.freeze_panes = 'A2'
+        for r in rows:
+            wsi.append([r['orderKey'], r['probability'], r['cancelledItems'],
+                        r['aliveItems'], r['ordersCount'], '; '.join(r['flags'])])
+        ibuf = io.BytesIO()
+        idx.save(ibuf)
+        suffix = '' if chunks == 1 else f'-chast-{part + 1}'
+        z.writestr(f'00-spisok-pokupateley{suffix}.xlsx', ibuf.getvalue())
+
+    import base64
+    return {
+        'statusCode': 200,
+        'headers': {
+            **CORS,
+            'Content-Type': 'application/zip',
+            'Content-Disposition': (
+                f'attachment; filename="pokupateli-{datetime.now().strftime("%d-%m-%Y")}'
+                f'{"" if chunks == 1 else f"-chast-{part + 1}-iz-{chunks}"}.zip"'
+            ),
+            # По этим заголовкам страница понимает, сколько всего частей и надо ли
+            # запрашивать следующую.
+            'X-Total-Parts': str(chunks),
+            'X-Part-Index': str(part),
+            'X-Total-Buyers': str(total),
+            'Access-Control-Expose-Headers': 'X-Total-Parts, X-Part-Index, X-Total-Buyers',
+        },
+        'isBase64Encoded': True,
+        'body': base64.b64encode(zip_buf.getvalue()).decode(),
+    }
+
+
 def handler(event: dict, context) -> dict:
     """Анализ отмен заказов на маркетплейсе: закономерности и выгрузка в Excel.
 
@@ -632,6 +851,11 @@ def handler(event: dict, context) -> dict:
         only_never = (params.get('onlyNever') or '') in ('1', 'true')
         if action == 'export':
             return handle_export(cur, days, min_items, only_never)
+        if action == 'archive':
+            return handle_archive(
+                cur, days, min_items, only_never,
+                part_index=int(params.get('part') or 0),
+            )
         return handle_report(cur, days, min_items, only_never)
     finally:
         conn.close()

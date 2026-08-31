@@ -18,6 +18,7 @@ import CancellationFunnel from '@/components/crm/cancellations/CancellationFunne
 import {
   fetchCancellationReport,
   downloadCancellationExcel,
+  downloadCancellationArchive,
   type CancellationReport,
 } from '@/lib/cancellationAnalyticsApi';
 
@@ -58,6 +59,7 @@ const CancellationAnalytics = () => {
   const [data, setData] = useState<CancellationReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   useEffect(() => {
     if (!canView) return;
@@ -73,6 +75,40 @@ const CancellationAnalytics = () => {
       )
       .finally(() => setLoading(false));
   }, [days, minItems, onlyNever, canView, toast]);
+
+  const downloadArchive = async () => {
+    setArchiving(true);
+    try {
+      const parts = await downloadCancellationArchive(
+        days,
+        minItems,
+        onlyNever,
+        (done, total) => {
+          if (total > 1) {
+            toast({
+              title: `Часть ${done} из ${total} скачана`,
+              description: 'Собираем следующую, не закрывайте страницу',
+            });
+          }
+        },
+      );
+      toast({
+        title: parts > 1 ? `Скачано частей: ${parts}` : 'Архив скачан',
+        description:
+          parts > 1
+            ? 'Распакуйте все части в одну папку — внутри папка на каждого покупателя'
+            : 'Внутри папка на каждого покупателя с файлом по нему',
+      });
+    } catch (e) {
+      toast({
+        title: 'Не удалось собрать архив',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setArchiving(false);
+    }
+  };
 
   const exportExcel = async () => {
     setExporting(true);
@@ -142,7 +178,21 @@ const CancellationAnalytics = () => {
             <Icon name="UserX" size={14} className="mr-1" />
             Только без выкупа
           </Button>
-          <div className="ml-auto">
+          <div className="ml-auto flex flex-wrap gap-2">
+            {/* Архив по покупателям: в поддержку OZON обращаются по КОНКРЕТНОМУ
+                случаю, поэтому у каждого своя папка со своим файлом. */}
+            <Button
+              variant="outline"
+              onClick={downloadArchive}
+              disabled={archiving || !data?.orders.length}
+            >
+              <Icon
+                name={archiving ? 'Loader2' : 'FolderArchive'}
+                size={16}
+                className={`mr-2 ${archiving ? 'animate-spin' : ''}`}
+              />
+              Архив по покупателям
+            </Button>
             <Button onClick={exportExcel} disabled={exporting || !data?.orders.length}>
               <Icon
                 name={exporting ? 'Loader2' : 'FileSpreadsheet'}

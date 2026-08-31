@@ -127,3 +127,55 @@ export const downloadCancellationExcel = async (
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 };
+/**
+ * Архив с папкой на каждого покупателя: внутри папки — Excel по этому человеку.
+ *
+ * Функция на сервере живёт 5 секунд, а сборка сотни книг Excel в неё не влезает,
+ * поэтому архив приезжает ЧАСТЯМИ: качаем часть за частью, пока сервер не скажет,
+ * что это была последняя. Каждая часть — самостоятельный zip, распаковываются они
+ * в одну общую папку.
+ *
+ * onProgress получает номер скачанной части и их общее число — чтобы показать
+ * человеку, что процесс идёт, а не завис.
+ */
+export const downloadCancellationArchive = async (
+  days: number,
+  minItems: number,
+  onlyNever = false,
+  onProgress?: (done: number, total: number) => void,
+) => {
+  let part = 0;
+  let total = 1;
+
+  do {
+    const res = await fetch(
+      `${ANALYTICS_URL}?action=archive&days=${days}&minItems=${minItems}` +
+        `&onlyNever=${onlyNever ? 1 : 0}&part=${part}` +
+        `&actorRole=${encodeURIComponent(currentRole())}`,
+    );
+    if (!res.ok) throw new Error('Не удалось собрать архив');
+
+    total = Number(res.headers.get('X-Total-Parts') || 1) || 1;
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download =
+      total === 1
+        ? `pokupateli-${days}-dney.zip`
+        : `pokupateli-${days}-dney-chast-${part + 1}-iz-${total}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    part += 1;
+    onProgress?.(part, total);
+    // Небольшая пауза между частями: браузер не любит, когда несколько файлов
+    // просятся на скачивание в одно мгновение, и молча теряет часть из них.
+    if (part < total) await new Promise((r) => setTimeout(r, 700));
+  } while (part < total);
+
+  return total;
+};
