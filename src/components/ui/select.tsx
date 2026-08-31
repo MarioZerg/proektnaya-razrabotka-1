@@ -38,6 +38,11 @@ const SelectScrollUpButton = React.forwardRef<
     ref={ref}
     className={cn(
       "flex cursor-default items-center justify-center py-1",
+      // Стрелки автопрокрутки задуманы для мыши: наведение на них само мотает
+      // список. Пальцем в них попадаешь постоянно — чуть повёл вверх, палец
+      // оказался над верхней стрелкой, и список отматывало в самое начало.
+      // На сенсорных экранах убираем: там прокрутка и так работает пальцем.
+      "[@media(pointer:coarse)]:hidden",
       className
     )}
     {...props}
@@ -55,6 +60,8 @@ const SelectScrollDownButton = React.forwardRef<
     ref={ref}
     className={cn(
       "flex cursor-default items-center justify-center py-1",
+      // То же, что и у верхней стрелки: пальцу она только мешает.
+      "[@media(pointer:coarse)]:hidden",
       className
     )}
     {...props}
@@ -92,6 +99,9 @@ const SelectContent = React.forwardRef<
       <SelectPrimitive.Viewport
         className={cn(
           "p-1",
+          // Без стрелок автопрокрутки список должен листаться сам: включаем
+          // обычную прокрутку и плавную инерцию, как в остальных списках телефона.
+          "overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]",
           position === "popper" &&
             "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]"
         )}
