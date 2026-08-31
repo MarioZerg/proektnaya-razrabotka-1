@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -68,7 +69,7 @@ const WorkshopMaterials = () => {
   const isMaterialFreeShift =
     effectiveShiftNumber !== null && myFreeShifts.includes(effectiveShiftNumber);
 
-  const visibleColumns = isProduction
+  const roleColumns = isProduction
     ? columns.filter(
         (col) =>
           col.workshopId === effectiveWorkshopId &&
@@ -77,6 +78,66 @@ const WorkshopMaterials = () => {
             col.shiftNumber === effectiveShiftNumber)
       )
     : columns;
+
+  // ВКЛАДКИ ПО ЦЕХАМ.
+  //
+  // Кладовщик и админ видят все цеха сразу, и таблица растёт вширь: смены каждого
+  // цеха идут подряд, строка не помещается в экран и приходится листать вбок,
+  // теряя из виду название материала. Вкладка оставляет на экране один цех —
+  // колонок мало, всё читается без прокрутки.
+  const workshops = useMemo(() => {
+    const seen = new Map<number, string>();
+    roleColumns.forEach((c) => {
+      if (!seen.has(c.workshopId)) seen.set(c.workshopId, c.workshopName);
+    });
+    return [...seen].map(([id, name]) => ({ id, name }));
+  }, [roleColumns]);
+
+  const [tab, setTab] = useState('all');
+
+  // Цех мог исчезнуть из данных (например, после перезагрузки под другой ролью) —
+  // тогда возвращаемся на «Все цеха», иначе таблица оказалась бы пустой без причины.
+  useEffect(() => {
+    if (tab !== 'all' && !workshops.some((w) => String(w.id) === tab)) setTab('all');
+  }, [workshops, tab]);
+
+  // Одному цеху вкладки не нужны — работник и так видит только свой.
+  const showTabs = workshops.length > 1;
+
+  const visibleColumns =
+    showTabs && tab !== 'all'
+      ? roleColumns.filter((c) => String(c.workshopId) === tab)
+      : roleColumns;
+
+  // При выборе цеха «Итого» должно считать ПО ЭТОМУ ЦЕХУ: общая цифра по компании
+  // рядом с колонками одного цеха выглядит как ошибка в остатках.
+  const totalFor = (m: WorkshopMaterialType['materials'][number]) => {
+    if (isProduction) {
+      const own = m.cells.find(
+        (c) =>
+          c.workshopId === effectiveWorkshopId &&
+          (c.shiftNumber === null || c.shiftNumber === effectiveShiftNumber)
+      );
+      return {
+        quantity: own?.quantity ?? 0,
+        rolls: own?.rollCount ?? 0,
+        pending: own?.pendingQuantity ?? 0,
+      };
+    }
+    if (showTabs && tab !== 'all') {
+      const cells = m.cells.filter((c) => String(c.workshopId) === tab);
+      return {
+        quantity: cells.reduce((s, c) => s + c.quantity, 0),
+        rolls: cells.reduce((s, c) => s + c.rollCount, 0),
+        pending: cells.reduce((s, c) => s + (c.pendingQuantity ?? 0), 0),
+      };
+    }
+    return {
+      quantity: m.totalQuantity,
+      rolls: m.totalRolls,
+      pending: m.pendingQuantity ?? 0,
+    };
+  };
 
   return (
     <CrmLayout>
@@ -116,7 +177,20 @@ const WorkshopMaterials = () => {
         ) : types.length === 0 ? (
           <p className="text-sm text-muted-foreground">В цехах пока нет материалов</p>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-4">
+            {showTabs && (
+              <Tabs value={tab} onValueChange={setTab}>
+                <TabsList className="flex h-auto w-full flex-wrap justify-start">
+                  <TabsTrigger value="all">Все цеха</TabsTrigger>
+                  {workshops.map((w) => (
+                    <TabsTrigger key={w.id} value={String(w.id)}>
+                      {w.name}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            )}
+
             {types.map((type) => (
               <div key={type.id} className="rounded-md border border-border">
                 <div className="flex items-center justify-between border-b border-border bg-muted/50 px-4 py-2">
@@ -132,11 +206,11 @@ const WorkshopMaterials = () => {
                           key={`${col.workshopId}-${col.shiftNumber}`}
                           className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''}`}
                         >
-                          {/* Цех в заголовке нужен кладовщику и админу: они видят все
-                              цеха сразу, а «Смена №1» есть и в первом, и во втором —
-                              без названия цеха две одинаковые колонки не различить.
-                              Работник цеха видит только свою — ему цех не показываем. */}
-                          {!isProduction && (
+                          {/* Цех в заголовке нужен только на вкладке «Все цеха»: там
+                              «Смена №1» есть и в первом цехе, и во втором — без названия
+                              две одинаковые колонки не различить. Когда цех выбран
+                              вкладкой, его имя в каждой колонке — лишний повтор. */}
+                          {!isProduction && tab === 'all' && (
                             <div className="text-xs font-normal text-muted-foreground">
                               {col.workshopName}
                             </div>
@@ -172,38 +246,24 @@ const WorkshopMaterials = () => {
                         <TableCell
                           className={`text-center font-semibold ${(() => {
                             // Итог подсвечиваем по той же шкале, что и ячейки смен.
-                            const own = m.cells.find(
-                              (c) =>
-                                c.workshopId === effectiveWorkshopId &&
-                                (c.shiftNumber === null || c.shiftNumber === effectiveShiftNumber)
-                            );
-                            const total = isProduction ? own?.quantity ?? 0 : m.totalQuantity;
-                            const lvl = getStockLevel(total, m.unit);
+                            const lvl = getStockLevel(totalFor(m).quantity, m.unit);
                             return lvl ? stockCellClass[lvl] : '';
                           })()}`}
                         >
-                          {/* Работнику цеха "Итого" считаем только по его видимой смене (иначе
-                              общая цифра компании выдавала бы остатки других смен/цехов),
-                              кладовщику и админу — общий итог по всем цехам и сменам как есть. */}
-                          {isProduction
-                            ? (() => {
-                                const own = m.cells.find(
-                                  (c) =>
-                                    c.workshopId === effectiveWorkshopId &&
-                                    (c.shiftNumber === null || c.shiftNumber === effectiveShiftNumber)
-                                );
-                                return own
-                                  ? `${formatQuantity(own.quantity)} ${m.unit}, ${own.rollCount} рул.`
-                                  : `0 ${m.unit}, 0 рул.`;
-                              })()
-                            : `${formatQuantity(m.totalQuantity)} ${m.unit}, ${m.totalRolls} рул.`}
+                          {/* Итог считается по тому, что человек сейчас видит: работнику —
+                              по его смене, при выбранной вкладке — по цеху, на «Все цеха» —
+                              по компании. Иначе цифра не сходилась бы с колонками рядом. */}
+                          {(() => {
+                            const t = totalFor(m);
+                            return `${formatQuantity(t.quantity)} ${m.unit}, ${t.rolls} рул.`;
+                          })()}
                           {/* Часть остатка доехала до цеха, но смена её ещё не приняла.
                               Без этой пометки материал не виден нигде: в работу он не
                               пойдёт, а в общем остатке уже учтён — цех считает, что
                               ткань есть, и планирует раскрой, которого не будет. */}
-                          {(m.pendingQuantity ?? 0) > 0 && (
+                          {totalFor(m).pending > 0 && (
                             <div className="text-xs font-medium text-amber-600">
-                              в пути: {formatQuantity(m.pendingQuantity ?? 0)} {m.unit}
+                              в пути: {formatQuantity(totalFor(m).pending)} {m.unit}
                             </div>
                           )}
                         </TableCell>
