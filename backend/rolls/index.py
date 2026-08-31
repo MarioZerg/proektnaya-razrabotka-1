@@ -1722,12 +1722,25 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Рулон уже закрыт'})}
 
                 # Рулон нельзя закрыть, пока на нём остаётся слишком много материала:
-                # тюль — по настройке цеха min_remaining_to_close_fabric (по умолчанию 20 м),
-                # тесьма/аксессуары — min_remaining_to_close_trim (по умолчанию 80 м).
+                # тюль — по настройке цеха min_remaining_to_close_fabric (20 м),
+                # тесьма/аксессуары — min_remaining_to_close_trim (80 м),
+                # упаковка — min_remaining_to_close_packaging (0 штук).
+                #
+                # ПОЧЕМУ У УПАКОВКИ СВОЙ ПОРОГ.
+                # Пакеты и этикетки считаются ШТУКАМИ, а не метрами: в коробке их
+                # тысяча-полторы. Порог в 80 метров, придуманный для тесьмы, для них
+                # бессмысленен — закрыть коробку было нельзя вообще никогда, пока в
+                # ней не останется меньше 80 штук. Упаковщица видела «нельзя закрыть»
+                # на каждой коробке. Штуки пересчитываются точно, остатка «на глаз»
+                # тут не бывает — поэтому по умолчанию порога нет совсем.
                 remaining_now = float(row[0] or 0)
                 type_name = row[3] or ''
-                setting_key = 'min_remaining_to_close_fabric' if type_name == 'Тюль' else 'min_remaining_to_close_trim'
-                default_limit = 20.0 if type_name == 'Тюль' else 80.0
+                if type_name == 'Тюль':
+                    setting_key, default_limit = 'min_remaining_to_close_fabric', 20.0
+                elif type_name == 'Упаковка':
+                    setting_key, default_limit = 'min_remaining_to_close_packaging', 0.0
+                else:
+                    setting_key, default_limit = 'min_remaining_to_close_trim', 80.0
                 limit = default_limit
                 cur.execute(
                     "SELECT value FROM workshop_settings WHERE workshop_id = %s AND key = %s",
@@ -1743,14 +1756,23 @@ def handler(event: dict, context) -> dict:
                     except (TypeError, ValueError):
                         limit = default_limit
 
-                if remaining_now > limit:
+                # limit = 0 означает «закрывать можно в любой момент» (упаковка).
+                if limit > 0 and remaining_now > limit:
+                    cur.execute(
+                        "SELECT m.unit FROM rolls r JOIN materials m ON m.id = r.material_id "
+                        "WHERE r.id = %s", (int(item_id),),
+                    )
+                    u_row = cur.fetchone()
+                    unit = (u_row[0] if u_row and u_row[0] else 'м')
                     return {
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({
-                            'error': f'Рулон нельзя закрыть: на нём ещё {round(remaining_now, 2)} м '
-                                     f'(закрытие возможно при остатке до {round(limit, 2)} м)'
-                        }),
+                            'error': f'Рулон нельзя закрыть: на нём ещё '
+                                     f'{round(remaining_now, 2)} {unit} '
+                                     f'(закрытие возможно при остатке до '
+                                     f'{round(limit, 2)} {unit})'
+                        }, ensure_ascii=False),
                     }
 
                 # Запоминаем, кто закрыл рулон: по этим данным копится статистика недостач

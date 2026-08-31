@@ -86,13 +86,22 @@ def get_setting(cur, workshop_id, key, default=None):
     return default
 
 
-def write_off_packaging(cur, order_id: int) -> str | None:
+def write_off_packaging(cur, order_id: int, workshop_id=None) -> str | None:
     """Списывает упаковку заказа (пакет, этикетка на пакет) в момент стикеровки.
 
-    Упаковка физически расходуется именно здесь, на терминале упаковщика, а не при раскрое.
-    Берём нужные материалы типа «Упаковка» из состава товара и списываем по FIFO
-    (сначала самые старые рулоны) со склада или из цеха. Повторное закрытие заказа
-    ничего не спишет второй раз. Возвращает текст ошибки при нехватке, иначе None.
+    Упаковка физически расходуется именно здесь, на терминале упаковщика, а не при
+    раскрое. Берём нужные материалы типа «Упаковка» из состава товара и списываем по
+    FIFO — сначала самые старые рулоны. Повторное закрытие заказа ничего не спишет
+    второй раз. Возвращает текст ошибки при нехватке, иначе None.
+
+    СПИСЫВАЕМ ИЗ ЦЕХА УПАКОВЩИЦЫ, А НЕ СО СКЛАДА.
+    Раньше FIFO шёл по всем рулонам подряд, и самым старым почти всегда оказывался
+    складской: расход уходил со склада, хотя пакет упаковщица брала из своей коробки.
+    Её рулоны не убывали и не заканчивались — закрыть их было нельзя, а на складе
+    таял остаток, которого никто не трогал. Теперь рулоны цеха идут первыми, и склад
+    подключается только если в цехе не хватило.
+
+    Непринятые и бракованные рулоны не берём: материала в цехе может физически не быть.
     """
     cur.execute("SELECT id FROM material_types WHERE name = 'Упаковка'")
     pack_type_row = cur.fetchone()
@@ -140,9 +149,19 @@ def write_off_packaging(cur, order_id: int) -> str | None:
 
         cur.execute(
             "SELECT id, remaining_quantity FROM rolls "
-            "WHERE material_id = %s AND status IN ('in_storage', 'in_workshop') AND remaining_quantity > 0 "
-            "ORDER BY created_at ASC",
-            (material_id,),
+            "WHERE material_id = %s AND remaining_quantity > 0 "
+            "AND defect_flagged_at IS NULL "
+            # Рулон, отгруженный в цех, но не принятый сменой, в расход не идёт:
+            # материал мог не доехать.
+            "AND (status = 'in_storage' "
+            "     OR (status = 'in_workshop' AND accepted_at IS NOT NULL)) "
+            # Чужие цеха не трогаем совсем: упаковщица не может взять пакет из
+            # коробки, которая стоит в другом помещении.
+            "AND (status = 'in_storage' OR %s IS NULL OR workshop_id = %s) "
+            # Сначала СВОЙ ЦЕХ (0), потом склад (1) — внутри каждой группы FIFO
+            # по дате. Так расходуется то, что упаковщица реально держит в руках.
+            "ORDER BY (status = 'in_storage') ASC, created_at ASC",
+            (material_id, workshop_id, workshop_id),
         )
         available_rolls = cur.fetchall()
         total_available = sum(float(r[1]) for r in available_rolls)
@@ -944,7 +963,30 @@ def handler(event: dict, context) -> dict:
 
                 # Упаковка расходуется именно на стикеровке — списываем её здесь. Если пакетов
                 # или этикеток не хватает, заказ не закрываем и показываем чего именно нет.
-                pack_err = write_off_packaging(cur, int(order_id))
+                #
+                # Цех берём У САМОЙ УПАКОВЩИЦЫ, а не у заказа: она работает своей
+                # коробкой пакетов, которая стоит рядом с ней. Заказ мог прийти из
+                # другого цеха (гостевая смена, перенос) — списывать за него упаковку
+                # из чужого помещения нельзя.
+                cur.execute(
+                    "SELECT workshop_id FROM shift_sessions WHERE user_id = %s "
+                    "AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+                    (int(packer_id),),
+                )
+                pw_row = cur.fetchone()
+                packer_workshop_for_pack = pw_row[0] if pw_row and pw_row[0] else None
+                if not packer_workshop_for_pack:
+                    # Смена не открыта (бывает у админа) — берём штатный цех профиля.
+                    cur.execute(
+                        "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                        "WHERE u.id = %s",
+                        (int(packer_id),),
+                    )
+                    pw2 = cur.fetchone()
+                    packer_workshop_for_pack = pw2[0] if pw2 else order_workshop_id
+
+                pack_err = write_off_packaging(cur, int(order_id),
+                                               packer_workshop_for_pack)
                 if pack_err:
                     conn.rollback()
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': pack_err})}
