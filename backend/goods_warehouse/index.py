@@ -890,7 +890,13 @@ def handler(event: dict, context) -> dict:
                         # Вещь заведена руками — прошлый путь неизвестен. Это НЕ
                         # «возвратов ноль», это «мы не знаем»: такую вещь тоже стоит
                         # осмотреть.
-                        "       gw.history_lost "
+                        "       gw.history_lost, "
+                        # Кто и когда упаковал вещь в цехе, и номер отправления
+                        # клиента, который от неё отказался. Кладовщик принимает
+                        # тележку из цеха и должен видеть, ЧТО он принимает: раньше
+                        # тут было только число, и сверить содержимое было нечем.
+                        "       pk.full_name, o.packed_at, "
+                        "       COALESCE(o.ozon_posting_number, o.order_number) "
                         "FROM goods_warehouse gw "
                         "LEFT JOIN orders o ON o.id = gw.order_id "
                         # Заявка на возврат берётся ОДНА, самая свежая.
@@ -912,6 +918,7 @@ def handler(event: dict, context) -> dict:
                         ") mr ON true "
                         "LEFT JOIN users ins ON ins.id = gw.inspected_by "
                         "LEFT JOIN users tk ON tk.id = gw.taken_by "
+                        "LEFT JOIN users pk ON pk.id = o.packer_user_id "
                         f"WHERE {where_stage} "
                         "ORDER BY gw.received_at ASC LIMIT 300"
                     )
@@ -937,6 +944,9 @@ def handler(event: dict, context) -> dict:
                             'returnProductName': r[17],
                             'returnCount': int(r[18] or 0),
                             'historyLost': bool(r[19]),
+                            'packerName': r[20],
+                            'packedAt': (r[21].isoformat() + 'Z') if r[21] else None,
+                            'clientOrderNumber': r[22],
                         }
                         for r in cur.fetchall()
                     ]

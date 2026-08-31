@@ -438,6 +438,12 @@ export interface InspectionItem {
   returnCount?: number;
   /** Вещь заведена вручную — прошлая история возвратов неизвестна. */
   historyLost?: boolean;
+  /** Кто упаковал вещь в цехе. */
+  packerName?: string | null;
+  /** Когда упаковали. */
+  packedAt?: string | null;
+  /** Номер отправления клиента, который от вещи отказался. */
+  clientOrderNumber?: string | null;
 }
 
 /** Один возврат в истории вещи. */

@@ -50,7 +50,18 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
   const [saving, setSaving] = useState(false);
   /** Что реально можно класть на полку: осмотренное и забранное из цеха. */
   const [ready, setReady] = useState<
-    { storageBarcode: string; product: string | null; orderNumber: string | null }[]
+    {
+      storageBarcode: string;
+      product: string | null;
+      orderNumber: string | null;
+      material: string | null;
+      width: number | null;
+      height: number | null;
+      marketplace: string | null;
+      packerName?: string | null;
+      packedAt?: string | null;
+      clientOrderNumber?: string | null;
+    }[]
   >([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -71,6 +82,13 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
             storageBarcode: i.storageBarcode,
             product: i.product,
             orderNumber: i.orderNumber,
+            material: i.material,
+            width: i.width,
+            height: i.height,
+            marketplace: i.marketplace,
+            packerName: i.packerName,
+            packedAt: i.packedAt,
+            clientOrderNumber: i.clientOrderNumber,
           })),
         ),
       )
@@ -168,6 +186,59 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
           Готово к укладке: <span className="font-semibold">{ready.length}</span>
         </p>
       </div>
+
+      {/* СПИСОК ТОГО, ЧТО ПРИНИМАЕМ ИЗ ЦЕХА.
+          Раньше здесь было только число — кладовщик забирал тележку и не мог
+          сверить, что именно в ней должно лежать: ни размера, ни стикера, ни
+          от какого клиента вещь. Теперь видно каждую вещь до сканирования. */}
+      {ready.length > 0 && (
+        <div className="space-y-1.5">
+          <Label>Что должно приехать из цеха</Label>
+          <div className="max-h-56 space-y-1.5 overflow-y-auto rounded-md border border-border p-2">
+            {ready.map((r) => {
+              // Уже отсканированное гасим: кладовщик сразу видит, что осталось.
+              const done = rows.some((x) => x.barcode === r.storageBarcode);
+              return (
+                <div
+                  key={r.storageBarcode}
+                  className={`rounded-md border p-2 text-sm ${
+                    done
+                      ? 'border-emerald-300 bg-emerald-50 opacity-60'
+                      : 'border-border'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-medium">
+                      {r.material || r.product || 'Товар'}
+                      {r.width && r.height ? ` ${r.width}×${r.height}` : ''}
+                    </span>
+                    <span className="shrink-0 font-mono-tech text-xs text-muted-foreground">
+                      {r.storageBarcode}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {r.marketplace || '—'}
+                    {r.clientOrderNumber ? ` · заказ ${r.clientOrderNumber}` : ''}
+                  </div>
+                  {(r.packerName || r.packedAt) && (
+                    <div className="text-xs text-muted-foreground">
+                      Упаковала {r.packerName || '—'}
+                      {r.packedAt
+                        ? ` · ${new Date(r.packedAt).toLocaleDateString('ru-RU', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}`
+                        : ''}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <Label>Стикер хранения</Label>
