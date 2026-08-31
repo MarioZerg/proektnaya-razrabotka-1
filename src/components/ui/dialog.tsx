@@ -45,12 +45,18 @@ interface DialogContentProps
    * крестик или кнопки внутри диалога происходит без подтверждения.
    */
   confirmClose?: boolean
+  /**
+   * Спрятать стандартный крестик в правом верхнем углу. Нужен окнам, которые рисуют
+   * свою кнопку закрытия: на весь экран (QR-код сотрудника) маленький крестик
+   * прижимается к самому краю и наезжает на заголовок.
+   */
+  hideClose?: boolean
 }
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, confirmClose = true, onPointerDownOutside, onEscapeKeyDown, onInteractOutside, ...props }, ref) => {
+>(({ className, children, confirmClose = true, hideClose = false, onPointerDownOutside, onEscapeKeyDown, onInteractOutside, ...props }, ref) => {
   const [confirmOpen, setConfirmOpen] = React.useState(false)
   const closeRef = React.useRef<HTMLButtonElement>(null)
 
@@ -94,9 +100,15 @@ const DialogContent = React.forwardRef<
         {...props}
       >
         {children}
+        {/* Кнопку не убираем из разметки, а лишь прячем: через неё закрывается окно
+            после подтверждения «Закрыть окно?». Удали её — и подтверждение перестанет
+            срабатывать. */}
         <DialogPrimitive.Close
           ref={closeRef}
-          className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground"
+          className={cn(
+            "absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground",
+            hideClose && "sr-only"
+          )}
         >
           <X className="h-4 w-4" />
           <span className="sr-only">Close</span>

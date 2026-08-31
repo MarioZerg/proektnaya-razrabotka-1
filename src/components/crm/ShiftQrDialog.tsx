@@ -34,17 +34,51 @@ const ShiftQrDialog = ({ open, onOpenChange }: ShiftQrDialogProps) => {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         confirmClose={false}
-        className="flex max-w-full flex-col items-center justify-center gap-6 border-none bg-background p-0 sm:h-screen sm:max-h-screen sm:w-screen sm:max-w-none sm:rounded-none"
+        hideClose
+        className="flex max-w-full flex-col items-center justify-center gap-0 border-none bg-background p-0 sm:h-screen sm:max-h-screen sm:w-screen sm:max-w-none sm:rounded-none"
       >
         <DialogTitle className="sr-only">QR-код для открытия смены</DialogTitle>
-        <div className="flex flex-1 flex-col items-center justify-center gap-6 p-6">
-          <p className="text-center text-2xl font-semibold">Отсканируйте свой QR-код</p>
+
+        {/* Своя кнопка закрытия вместо стандартного крестика: тот прижимался к
+            правому верхнему углу и наезжал прямо на заголовок. Здесь она круглая,
+            крупная (палец попадает без прицеливания) и с подписью — экран часто
+            открывают на планшете в цехе мокрыми руками. */}
+        <button
+          onClick={() => onOpenChange(false)}
+          className="absolute right-4 top-4 z-10 flex items-center gap-2 rounded-full border border-border bg-background/90 px-4 py-2.5 text-sm font-medium text-muted-foreground shadow-sm backdrop-blur transition hover:bg-muted hover:text-foreground"
+        >
+          <Icon name="X" size={18} />
+          <span className="hidden sm:inline">Закрыть</span>
+        </button>
+
+        <div className="flex flex-1 flex-col items-center justify-center gap-7 px-6 py-16">
+          <div className="space-y-2 text-center">
+            <p className="text-2xl font-semibold sm:text-3xl">Отсканируйте свой QR-код</p>
+            <p className="text-sm text-muted-foreground">
+              Поднесите код к сканеру на терминале — смена откроется сама
+            </p>
+          </div>
+
           {qrDataUrl ? (
-            <img src={qrDataUrl} alt="Персональный QR-код сотрудника" className="h-auto w-full max-w-md" />
+            // Белая рамка вокруг кода: сканер плохо ловит код, вплотную прижатый
+            // к краю экрана, — ему нужно светлое поле по периметру.
+            <div className="rounded-2xl border border-border bg-white p-4 shadow-sm sm:p-6">
+              <img
+                src={qrDataUrl}
+                alt="Персональный QR-код сотрудника"
+                className="h-auto w-full max-w-[18rem] sm:max-w-md"
+              />
+            </div>
           ) : (
             <div className="flex h-64 w-64 items-center justify-center">
               <Icon name="Loader2" size={32} className="animate-spin text-muted-foreground" />
             </div>
+          )}
+
+          {user && (
+            <p className="text-center text-sm text-muted-foreground">
+              {user.name}
+            </p>
           )}
         </div>
       </DialogContent>

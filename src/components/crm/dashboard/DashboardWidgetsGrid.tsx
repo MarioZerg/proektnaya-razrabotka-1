@@ -1,47 +1,78 @@
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
-import { toneStyles, type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
+import { type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 
 interface DashboardWidgetsGridProps {
   widgets: DashboardWidgetData[];
   loading: boolean;
 }
 
+/** Оформление карточки по важности: срочное — красное, ожидающее — янтарное. */
+const toneCard: Record<DashboardWidgetData['tone'], string> = {
+  default: 'border-border hover:border-primary/40',
+  warning: 'border-amber-200 bg-amber-50/40 hover:border-amber-300',
+  urgent: 'border-destructive/30 bg-destructive/[0.04] hover:border-destructive/50',
+};
+
+/** Кружок под значком — тем же цветом, что и рамка карточки. */
+const toneIcon: Record<DashboardWidgetData['tone'], string> = {
+  default: 'bg-primary/10 text-primary',
+  warning: 'bg-amber-100 text-amber-700',
+  urgent: 'bg-destructive/10 text-destructive',
+};
+
+const toneValue: Record<DashboardWidgetData['tone'], string> = {
+  default: 'text-foreground',
+  warning: 'text-amber-700',
+  urgent: 'text-destructive',
+};
+
 const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) => {
   const navigate = useNavigate();
 
-  // На мобильных — плоские строки во всю ширину (компактно), с sm — привычные плитки.
   return (
-    <div className="divide-y divide-border overflow-hidden rounded-lg border border-border sm:grid sm:grid-cols-3 sm:gap-3 sm:divide-y-0 sm:rounded-none sm:border-0 lg:grid-cols-5">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {widgets.map((w) => (
         <Card
           key={w.label}
-          className="cursor-pointer rounded-none border-0 shadow-none transition-colors hover:bg-muted/50 sm:rounded-lg sm:border sm:border-border"
           onClick={() => navigate(w.path)}
+          className={`group flex cursor-pointer flex-col gap-3 border p-4 transition-all hover:shadow-md ${toneCard[w.tone]}`}
         >
-          <CardContent className="flex items-center gap-3 p-3 sm:flex-col sm:items-stretch sm:gap-2 sm:p-4">
+          {/* Верхняя строка: крупный значок слева, цифра справа — самое важное
+              читается одним взглядом, не вчитываясь в подписи. */}
+          <div className="flex items-start justify-between gap-3">
             <span
-              className={`h-1.5 w-1.5 shrink-0 rounded-full sm:hidden ${
-                w.tone === 'urgent'
-                  ? 'bg-destructive'
-                  : w.tone === 'warning'
-                    ? 'bg-amber-500'
-                    : 'bg-transparent'
-              }`}
-            />
-            <span
-              className={`grid h-8 w-8 shrink-0 place-items-center rounded-md bg-muted ${toneStyles[w.tone]}`}
+              className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${toneIcon[w.tone]}`}
             >
-              <Icon name={w.icon} size={16} />
+              <Icon name={w.icon} size={22} />
             </span>
-            <p className="min-w-0 flex-1 truncate text-sm text-muted-foreground sm:order-last sm:whitespace-normal sm:text-xs sm:leading-snug">
-              {w.label}
-            </p>
-            <p className="shrink-0 text-right text-xl font-bold leading-none sm:text-left sm:text-2xl">
+            <span
+              className={`text-3xl font-bold leading-none tracking-tight ${toneValue[w.tone]}`}
+            >
               {loading ? '—' : w.value}
-            </p>
-          </CardContent>
+            </span>
+          </div>
+
+          <div className="min-w-0 space-y-1">
+            <p className="text-sm font-semibold leading-snug">{w.label}</p>
+            {w.hint && (
+              <p className="line-clamp-2 text-xs leading-snug text-muted-foreground">
+                {w.hint}
+              </p>
+            )}
+          </div>
+
+          {/* Кнопка-подсказка внизу, как в привычных панелях: видно, что карточка
+              кликабельна и куда она ведёт. */}
+          <span className="mt-auto flex items-center gap-1 pt-1 text-xs font-medium text-muted-foreground transition-colors group-hover:text-primary">
+            Открыть
+            <Icon
+              name="ArrowRight"
+              size={13}
+              className="transition-transform group-hover:translate-x-0.5"
+            />
+          </span>
         </Card>
       ))}
     </div>
