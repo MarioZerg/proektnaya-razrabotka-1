@@ -1,4 +1,7 @@
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import Icon from '@/components/ui/icon';
+import { ROLL_LOW_STOCK_THRESHOLD } from '@/components/crm/rolls/rollsShared';
 import {
   Select,
   SelectContent,
@@ -20,6 +23,11 @@ interface RollsFiltersProps {
   setShiftFilter: (v: string) => void;
   search: string;
   setSearch: (v: string) => void;
+  /** Показывать только заканчивающиеся рулоны — те же, что в виджете на главной. */
+  lowStockOnly: boolean;
+  setLowStockOnly: (v: boolean) => void;
+  /** Сколько всего рулонов заканчивается — цифра на кнопке фильтра. */
+  lowStockCount: number;
   /** Материалы своей роли: закройщику тюль, швее тесьма, упаковщице пакеты. */
   filterMaterials: Material[];
   workshops: Workshop[];
@@ -39,6 +47,9 @@ const RollsFilters = ({
   setShiftFilter,
   search,
   setSearch,
+  lowStockOnly,
+  setLowStockOnly,
+  lowStockCount,
   filterMaterials,
   workshops,
   filterWorkshop,
@@ -111,6 +122,31 @@ const RollsFilters = ({
       value={search}
       onChange={(e) => setSearch(e.target.value)}
     />
+
+    {/* Заканчивающиеся рулоны — отдельной кнопкой, а не пунктом в списке статусов:
+        это не статус, а тревога, и включают её чаще всего. Сюда же ведёт виджет
+        с главной страницы. */}
+    <Button
+      variant={lowStockOnly ? 'destructive' : 'outline'}
+      onClick={() => setLowStockOnly(!lowStockOnly)}
+      className="justify-start gap-2"
+    >
+      <Icon name={lowStockOnly ? 'Check' : 'AlertTriangle'} size={16} />
+      <span className="truncate">
+        Заканчиваются (&lt;{ROLL_LOW_STOCK_THRESHOLD}&nbsp;м)
+      </span>
+      {lowStockCount > 0 && (
+        <span
+          className={`ml-auto shrink-0 rounded-full px-1.5 text-xs font-bold ${
+            lowStockOnly
+              ? 'bg-destructive-foreground/20'
+              : 'bg-destructive text-destructive-foreground'
+          }`}
+        >
+          {lowStockCount}
+        </span>
+      )}
+    </Button>
   </div>
 );
 

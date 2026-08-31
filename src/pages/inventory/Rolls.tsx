@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import StockValueCard from '@/components/crm/rolls/StockValueCard';
 import CutterAnalysisTab from '@/components/crm/rolls/CutterAnalysisTab';
 import RollCreateDialog, { type RollForm } from '@/components/crm/rolls/RollCreateDialog';
 import RollsFilters from '@/components/crm/rolls/RollsFilters';
 import RollsListSection from '@/components/crm/rolls/RollsListSection';
+import { isLowStockRoll } from '@/components/crm/rolls/rollsShared';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
@@ -28,6 +29,11 @@ const Rolls = () => {
   const [workshopFilter, setWorkshopFilter] = useState('all');
   const [shiftFilter, setShiftFilter] = useState('all');
   const [search, setSearch] = useState('');
+  // Виджет «Рулоны с малым остатком» на главной ведёт сюда со ссылкой ?low=1 —
+  // страница сразу открывается с включённым фильтром, и человек видит ровно те
+  // рулоны, число которых стояло в виджете.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [lowStockOnly, setLowStockOnly] = useState(searchParams.get('low') === '1');
   // Сколько рулонов показываем сейчас. Сбрасывается при смене фильтра.
   const [visibleCount, setVisibleCount] = useState(20);
 
@@ -108,7 +114,18 @@ const Rolls = () => {
   // кнопка внизу догружает следующие. Поиск и фильтры работают по всему списку.
   useEffect(() => {
     setVisibleCount(20);
-  }, [statusFilter, materialFilter, workshopFilter, shiftFilter, search]);
+  }, [statusFilter, materialFilter, workshopFilter, shiftFilter, search, lowStockOnly]);
+
+  // Держим адрес в согласии с фильтром: страницу с включённым фильтром можно
+  // переслать другому человеку или обновить, не потеряв отбор.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (lowStockOnly) next.set('low', '1');
+    else next.delete('low');
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [lowStockOnly, searchParams, setSearchParams]);
 
   useEffect(() => {
     setShiftFilter('all');
@@ -127,8 +144,13 @@ const Rolls = () => {
     if (workshopFilter !== 'all' && workshopFilter !== 'none'
         && String(r.workshopId ?? '') !== workshopFilter) return false;
     if (shiftFilter !== 'all' && String(r.shiftNumber ?? '') !== shiftFilter) return false;
+    if (lowStockOnly && !isLowStockRoll(r)) return false;
     return true;
   });
+
+  // Счётчик на кнопке считаем по ВСЕМ рулонам, а не по отфильтрованным: иначе
+  // цифра менялась бы от других фильтров и не совпадала бы с виджетом на главной.
+  const lowStockCount = rolls.filter(isLowStockRoll).length;
 
   const filtered = allFiltered.slice(0, visibleCount);
 
@@ -220,6 +242,9 @@ const Rolls = () => {
               shiftFilter={shiftFilter}
               setShiftFilter={setShiftFilter}
               search={search}
+              lowStockOnly={lowStockOnly}
+              setLowStockOnly={setLowStockOnly}
+              lowStockCount={lowStockCount}
               setSearch={setSearch}
               filterMaterials={filterMaterials}
               workshops={workshops}
