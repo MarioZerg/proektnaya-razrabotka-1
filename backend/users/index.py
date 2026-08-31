@@ -230,7 +230,12 @@ def handler(event: dict, context) -> dict:
                 # Без этого приходилось открывать каждую карточку по очереди,
                 # чтобы понять, кому чего не хватает.
                 "(SELECT count(*) FROM user_documents d WHERE d.user_id = users.id), "
-                "personal_data_verified, sbp_phone, sbp_confirmed, docs_submitted_at "
+                "personal_data_verified, sbp_phone, sbp_confirmed, docs_submitted_at, "
+                # Архив уволенных: сам факт, причина и кто отправил. Работающие
+                # сотрудники и архив приезжают ОДНИМ списком — фронт разводит их
+                # по вкладкам, второй запрос ради этого не нужен.
+                "archived_at, archive_reason, "
+                "(SELECT full_name FROM users a WHERE a.id = users.archived_by) "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -281,6 +286,11 @@ def handler(event: dict, context) -> dict:
                     'sbpPhone': r[27],
                     'sbpConfirmed': bool(r[28]),
                     'docsSubmittedAt': (r[29].isoformat() + 'Z') if r[29] else None,
+                    # Архив: сотрудник уволен — в рабочих списках его нет, но вся
+                    # история по нему (смены, зарплаты, сшитые вещи) сохранена.
+                    'archivedAt': (r[30].isoformat() + 'Z') if r[30] else None,
+                    'archiveReason': r[31],
+                    'archivedByName': r[32],
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows
@@ -734,6 +744,66 @@ def handler(event: dict, context) -> dict:
                     'UPDATE users SET is_active = false WHERE id = %s '
                     'AND NOT EXISTS (SELECT 1 FROM user_roles WHERE user_id = %s)',
                     (int(user_id), int(user_id)),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'archive':
+                # УВОЛЬНЕНИЕ БЕЗ ПОТЕРИ ИСТОРИИ.
+                #
+                # Удалять уволенного нельзя: к нему привязаны смены, зарплаты, сшитые
+                # вещи, приёмки и брак. Удалишь — и по вещи, вернувшейся с браком,
+                # уже не понять, кто её шил. Поэтому человек остаётся в базе, но
+                # помечается уволенным: доступ закрывается (is_active = false), из
+                # рабочих списков он пропадает, а вся история остаётся на месте.
+                user_id = body_data.get('id')
+                reason = (body_data.get('reason') or '').strip() or None
+                actor_id = body_data.get('actorId')
+                if not user_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Не указан сотрудник'})}
+
+                # Последнего администратора в архив не отправляем: иначе в систему
+                # станет некому войти и вернуть его обратно будет некому.
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(user_id),))
+                row = cur.fetchone()
+                if row and row[0] == 'admin':
+                    cur.execute(
+                        "SELECT count(*) FROM users WHERE role = 'admin' "
+                        "AND is_active = true AND archived_at IS NULL AND id <> %s",
+                        (int(user_id),),
+                    )
+                    if (cur.fetchone() or [0])[0] == 0:
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'Это последний администратор — его нельзя уволить'}),
+                        }
+
+                cur.execute(
+                    'UPDATE users SET archived_at = now(), archive_reason = %s, '
+                    'archived_by = %s, is_active = false WHERE id = %s',
+                    (reason, int(actor_id) if actor_id else None, int(user_id)),
+                )
+                # Открытые смены закрываем: уволенный не должен продолжать
+                # «работать» и копить оплату после увольнения.
+                cur.execute(
+                    "UPDATE shift_sessions SET closed_at = now() "
+                    "WHERE user_id = %s AND closed_at IS NULL",
+                    (int(user_id),),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'unarchive':
+                # Сотрудник вернулся на работу либо его уволили по ошибке.
+                # Доступ возвращаем, историю не трогаем — она никуда и не девалась.
+                user_id = body_data.get('id')
+                if not user_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Не указан сотрудник'})}
+                cur.execute(
+                    'UPDATE users SET archived_at = NULL, archive_reason = NULL, '
+                    'archived_by = NULL, is_active = true WHERE id = %s',
+                    (int(user_id),),
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

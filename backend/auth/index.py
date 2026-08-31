@@ -474,12 +474,19 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             cur.execute(
-                'SELECT is_active, full_name, contract_terminated_at '
+                'SELECT is_active, full_name, contract_terminated_at, archived_at '
                 'FROM users WHERE id = %s', (int(user_id),)
             )
             row = cur.fetchone()
             if not row:
                 return _resp_access(False, 'Учётная запись удалена')
+            # Уволенный (архив) — отдельное, понятное человеку сообщение. Без него
+            # он видел бы «администратор закрыл доступ» и звонил бы выяснять.
+            if row[3]:
+                return _resp_access(
+                    False,
+                    'Вы уволены, доступ в систему закрыт. По вопросам расчётов '
+                    'обратитесь к администратору')
             if not row[0]:
                 return _resp_access(False, 'Администратор закрыл доступ к профилю')
             # Договор расторгнут (п. 5.7): выкидываем даже того, кто уже был в

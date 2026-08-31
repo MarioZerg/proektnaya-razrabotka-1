@@ -13,6 +13,8 @@ import {
   approveEmployeeRole,
   removeEmployeeRole,
   unlockEmployeeSalary,
+  archiveEmployee,
+  unarchiveEmployee,
   type Employee,
 } from '@/lib/usersApi';
 import type { Role } from '@/lib/roles';
@@ -25,6 +27,15 @@ import CreateEmployeeDialog from '@/components/crm/users/CreateEmployeeDialog';
 import EmployeesTable from '@/components/crm/users/EmployeesTable';
 import EmployeeCardDialog from '@/components/crm/users/EmployeeCardDialog';
 import DeleteEmployeeDialog from '@/components/crm/users/DeleteEmployeeDialog';
+import ArchiveEmployeeDialog from '@/components/crm/users/ArchiveEmployeeDialog';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const UsersSettings = () => {
   const { toast } = useToast();
@@ -48,6 +59,12 @@ const UsersSettings = () => {
   const cardFileRef = useRef<HTMLInputElement>(null);
 
   const [deleteId, setDeleteId] = useState<number | null>(null);
+
+  // Работающие и уволенные — на разных вкладках. Архив открывают редко, поэтому
+  // по умолчанию показываем тех, кто работает сейчас.
+  const [tab, setTab] = useState<'active' | 'archived'>('active');
+  const [archiveTarget, setArchiveTarget] = useState<Employee | null>(null);
+  const [archiveSaving, setArchiveSaving] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -285,9 +302,54 @@ const UsersSettings = () => {
     }
   };
 
+  const handleArchive = async (reason: string) => {
+    if (!archiveTarget) return;
+    setArchiveSaving(true);
+    try {
+      await archiveEmployee(archiveTarget.id, reason, user?.id);
+      toast({
+        title: 'Сотрудник уволен',
+        description: `${archiveTarget.fullName} перенесён в архив — история сохранена`,
+      });
+      setArchiveTarget(null);
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось уволить',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setArchiveSaving(false);
+    }
+  };
+
+  const handleUnarchive = async (employee: Employee) => {
+    try {
+      await unarchiveEmployee(employee.id);
+      toast({
+        title: 'Сотрудник вернулся к работе',
+        description: `${employee.fullName} снова в списках и может войти в систему`,
+      });
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось вернуть',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const q = search.trim().toLowerCase();
 
+  const activeCount = employees.filter((e) => !e.archivedAt).length;
+  const archivedCount = employees.filter((e) => e.archivedAt).length;
+
   const filtered = employees.filter((e) => {
+    // Уволенные живут на своей вкладке и в рабочий список не попадают —
+    // иначе они мешались бы в поиске и в фильтрах по цехам.
+    if (tab === 'archived' ? !e.archivedAt : !!e.archivedAt) return false;
     // Пока в поиске что-то есть, фильтры по должности и цеху не сужают выборку:
     // администратор ищет КОНКРЕТНОГО человека и не должен гадать, в каком он цехе.
     if (q) {
@@ -320,9 +382,37 @@ const UsersSettings = () => {
           />
         </div>
 
+        {/* На телефоне — выпадающий список, на компьютере вкладки: две подписи
+            со счётчиками в ширину телефона не помещаются. */}
+        <div className="sm:hidden">
+          <Select value={tab} onValueChange={(v) => setTab(v as 'active' | 'archived')}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">Работают ({activeCount})</SelectItem>
+              <SelectItem value="archived">Архив — уволенные ({archivedCount})</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as 'active' | 'archived')}
+          className="hidden sm:block"
+        >
+          <TabsList>
+            <TabsTrigger value="active">Работают ({activeCount})</TabsTrigger>
+            <TabsTrigger value="archived">Архив — уволенные ({archivedCount})</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
         <EmployeesTable
           loading={loading}
           filtered={filtered}
+          archiveView={tab === 'archived'}
+          onArchiveRequest={setArchiveTarget}
+          onUnarchive={handleUnarchive}
           roleFilter={roleFilter}
           setRoleFilter={setRoleFilter}
           workshopFilter={workshopFilter}
@@ -357,6 +447,13 @@ const UsersSettings = () => {
         deleteId={deleteId}
         onOpenChange={(open) => !open && setDeleteId(null)}
         onConfirm={handleDelete}
+      />
+
+      <ArchiveEmployeeDialog
+        employee={archiveTarget}
+        onOpenChange={(open) => !open && setArchiveTarget(null)}
+        onConfirm={handleArchive}
+        saving={archiveSaving}
       />
     </CrmLayout>
   );

@@ -253,8 +253,11 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Смена не найдена'})}
 
                 cur.execute(
+                    # Уволенных (архив) в составе смены не показываем: смена — это
+                    # кто выйдет на работу, а не кто когда-то в ней числился.
                     "SELECT id, full_name, role, shift_free FROM users "
-                    "WHERE workshop = %s AND shift_number = %s ORDER BY full_name",
+                    "WHERE workshop = %s AND shift_number = %s "
+                    "AND is_active = true AND archived_at IS NULL ORDER BY full_name",
                     (row[2], row[3]),
                 )
                 employees = [

@@ -111,6 +111,24 @@
         "actorId": 1
       },
       "expectedStatus": 400
+    },
+    {
+      "name": "Archive without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "archive"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Unarchive without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "unarchive"
+      },
+      "expectedStatus": 400
     }
   ]
 }

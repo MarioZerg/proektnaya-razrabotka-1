@@ -51,6 +51,15 @@ export interface Employee {
   salaryUnlockAt: string | null;
   /** Сколько дней осталось до открытия зарплаты, 0 — уже открыта. */
   salaryDaysLeft: number;
+  /**
+   * Сотрудник уволен и убран в архив: в рабочих списках его нет, войти он не может,
+   * но вся история (смены, зарплаты, сшитые вещи, брак) сохранена. NULL — работает.
+   */
+  archivedAt?: string | null;
+  /** Причина увольнения — видна в архиве. */
+  archiveReason?: string | null;
+  /** Кто из администраторов отправил сотрудника в архив. */
+  archivedByName?: string | null;
   roles: UserRoleEntry[];
 }
 
@@ -110,6 +119,17 @@ export const updateEmployee = (
 ) => postAction({ action: 'update', id, ...fields });
 
 export const deleteEmployee = (id: number) => postAction({ action: 'delete', id });
+
+/**
+ * Увольнение: сотрудник уходит в архив. Доступ закрывается, из рабочих списков он
+ * пропадает, открытая смена закрывается — но вся история остаётся, поэтому по любой
+ * вещи всегда видно, кто её шил.
+ */
+export const archiveEmployee = (id: number, reason: string, actorId?: number) =>
+  postAction({ action: 'archive', id, reason, actorId });
+
+/** Возврат из архива: сотрудник снова работает и может войти в систему. */
+export const unarchiveEmployee = (id: number) => postAction({ action: 'unarchive', id });
 
 export const addEmployeeRole = (id: number, role: Role, approved = true) =>
   postAction({ action: 'add_role', id, role, approved });

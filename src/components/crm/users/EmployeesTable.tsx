@@ -30,6 +30,10 @@ interface EmployeesTableProps {
   currentUserId?: number;
   /** Сотрудник, в чей аккаунт сейчас выполняется вход — на его кнопке крутится ожидание. */
   enteringId: number | null;
+  /** Открыт архив уволенных: вместо «Уволить» на карточках кнопка «Вернуть». */
+  archiveView?: boolean;
+  onArchiveRequest?: (emp: Employee) => void;
+  onUnarchive?: (emp: Employee) => void;
 }
 
 /**
@@ -57,6 +61,9 @@ const EmployeesTable = ({
   onImpersonate,
   enteringId,
   currentUserId,
+  archiveView = false,
+  onArchiveRequest,
+  onUnarchive,
 }: EmployeesTableProps) => {
   return (
     <div className="space-y-3">
@@ -130,7 +137,9 @@ const EmployeesTable = ({
         <p className="text-sm text-muted-foreground">
           {search.trim()
             ? 'По этому запросу никого не нашлось'
-            : 'Сотрудников пока нет.'}
+            : archiveView
+              ? 'Архив пуст — уволенных сотрудников нет.'
+              : 'Сотрудников пока нет.'}
         </p>
       ) : (
         <div className="space-y-2">
@@ -143,6 +152,9 @@ const EmployeesTable = ({
               onImpersonate={onImpersonate}
               currentUserId={currentUserId}
               enteringId={enteringId}
+              archiveView={archiveView}
+              onArchiveRequest={onArchiveRequest}
+              onUnarchive={onUnarchive}
             />
           ))}
         </div>

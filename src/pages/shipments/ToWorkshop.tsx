@@ -382,7 +382,27 @@ const ToWorkshop = () => {
           )}
         </div>
 
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)}>
+        {/* На телефоне — выпадающий список. Две вкладки с длинными подписями и
+            счётчиками не помещались в ширину экрана: текст обрезался, а сама
+            полоса вкладок не прокручивалась, и до «Завершённых» было не добраться. */}
+        <div className="sm:hidden">
+          <Select value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="new">Новые заявки ({newCount})</SelectItem>
+              <SelectItem value="completed">Завершённые заявки ({completedCount})</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* На компьютере ширины хватает — привычные вкладки. */}
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => setActiveTab(v as TabValue)}
+          className="hidden sm:block"
+        >
           <TabsList>
             <TabsTrigger value="new">Новые заявки ({newCount})</TabsTrigger>
             <TabsTrigger value="completed">Завершённые заявки ({completedCount})</TabsTrigger>

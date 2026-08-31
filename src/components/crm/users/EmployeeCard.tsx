@@ -14,6 +14,10 @@ interface EmployeeCardProps {
   onImpersonate: (emp: Employee) => void;
   currentUserId?: number;
   enteringId: number | null;
+  /** Карточка показана в архиве уволенных — набор кнопок другой. */
+  archiveView?: boolean;
+  onArchiveRequest?: (emp: Employee) => void;
+  onUnarchive?: (emp: Employee) => void;
 }
 
 /**
@@ -31,6 +35,9 @@ const EmployeeCard = ({
   onImpersonate,
   currentUserId,
   enteringId,
+  archiveView = false,
+  onArchiveRequest,
+  onUnarchive,
 }: EmployeeCardProps) => (
   <div
     className={`flex items-center gap-2 rounded-lg border p-2.5 transition hover:bg-muted/40 sm:gap-3 sm:p-3 ${
@@ -95,6 +102,13 @@ const EmployeeCard = ({
             </Badge>
           )}
         </div>
+        {/* В архиве показываем причину увольнения прямо в списке: чаще всего
+            за этим сюда и заходят. */}
+        {emp.archivedAt && emp.archiveReason && (
+          <p className="mt-0.5 truncate text-xs text-muted-foreground" title={emp.archiveReason}>
+            Причина: {emp.archiveReason}
+          </p>
+        )}
       </div>
     </button>
 
@@ -102,6 +116,35 @@ const EmployeeCard = ({
     {/* На телефоне кнопки меньше: тремя кнопками по 40px они съедали половину
         ширины, и на имя не оставалось места. */}
     <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+      {/* АРХИВ. Уволенному нечего редактировать и незачем входить под ним в
+          систему — оставляем одно действие: вернуть на работу. */}
+      {archiveView ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 sm:h-10"
+          title="Вернуть сотрудника на работу"
+          onClick={() => onUnarchive?.(emp)}
+        >
+          <Icon name="RotateCcw" size={14} />
+          <span className="hidden sm:inline">Вернуть</span>
+        </Button>
+      ) : null}
+      {archiveView ? (
+        // Полное удаление доступно ТОЛЬКО из архива и только для тех, кто ни дня
+        // не отработал (ошиблись при заведении). Если за человеком есть смены или
+        // сшитые вещи, сервер удалить не даст — история важнее.
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8 text-muted-foreground hover:text-destructive sm:h-10 sm:w-10"
+          title="Удалить навсегда — возможно только без истории работы"
+          onClick={() => onDeleteRequest(emp.id)}
+        >
+          <Icon name="Trash2" size={14} />
+        </Button>
+      ) : (
+        <>
       {emp.id !== currentUserId && (
         <Button
           size="icon"
@@ -127,15 +170,20 @@ const EmployeeCard = ({
       >
         <Icon name="Pencil" size={14} />
       </Button>
+      {/* Увольнение вместо удаления: к сотруднику привязаны смены, начисления и
+          сшитые вещи. Удалить его — потерять историю по товару, поэтому основное
+          действие теперь «Уволить» (перевод в архив). */}
       <Button
         size="icon"
         variant="destructive"
         className="h-8 w-8 sm:h-10 sm:w-10"
-        title="Удалить сотрудника"
-        onClick={() => onDeleteRequest(emp.id)}
+        title="Уволить — перенести в архив с сохранением истории"
+        onClick={() => onArchiveRequest?.(emp)}
       >
-        <Icon name="Trash2" size={14} />
+        <Icon name="UserMinus" size={14} />
       </Button>
+        </>
+      )}
     </div>
   </div>
 );
