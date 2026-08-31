@@ -8,6 +8,12 @@ export interface BarcodePrintItem {
   supplier?: string | null;
   /** Дата приёмки — видно, сколько рулон лежит; старые пускают в работу первыми. */
   receivedAt?: string | null;
+  /**
+   * Пометка про остаток («Осталось 12 пог.м — закрыть рулон»). Печатается на
+   * стикере крупно и в рамке: закройщик видит её, не заглядывая в систему, и
+   * понимает, что этот рулон надо дорабатывать и закрывать, а не откладывать.
+   */
+  note?: string | null;
 }
 
 const esc = (v: string) =>
@@ -64,9 +70,11 @@ export const printBarcodes = (items: BarcodePrintItem[], title = 'Штрихко
     const label = (item.label || '').trim();
     const supplier = (item.supplier || '').trim();
     const received = formatDate(item.receivedAt);
+    const note = (item.note || '').trim();
     return `
     <div class="sticker">
       ${label ? `<div class="label">${esc(label)}</div>` : ''}
+      ${note ? `<div class="note">${esc(note)}</div>` : ''}
       <img src="${canvas.toDataURL('image/png')}" alt="${esc(item.code)}" />
       <div class="code">${esc(item.code)}</div>
       ${supplier ? `<div class="meta">${esc(supplier)}</div>` : ''}
@@ -134,6 +142,20 @@ export const printBarcodes = (items: BarcodePrintItem[], title = 'Штрихко
       overflow-wrap: anywhere;
     }
     .date { font-size: 11pt; color: #333; }
+    .note {
+      /* Пометка про остаток — в рамке и крупно, чтобы бросалась в глаза раньше
+         всего остального: закройщик должен понять, что рулон надо доработать
+         и закрыть, ещё до того, как начнёт его разматывать. */
+      font-size: 15pt;
+      font-weight: bold;
+      text-align: center;
+      line-height: 1.15;
+      width: 100%;
+      padding: 1mm 2mm;
+      border: 0.8mm solid #000;
+      border-radius: 1.5mm;
+      overflow-wrap: anywhere;
+    }
   </style>
 </head>
 <body>

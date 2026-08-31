@@ -5,6 +5,7 @@ import StockValueCard from '@/components/crm/rolls/StockValueCard';
 import CutterAnalysisTab from '@/components/crm/rolls/CutterAnalysisTab';
 import RollCreateDialog, { type RollForm } from '@/components/crm/rolls/RollCreateDialog';
 import RollsFilters from '@/components/crm/rolls/RollsFilters';
+import LowStockPrintCard from '@/components/crm/rolls/LowStockPrintCard';
 import RollsListSection from '@/components/crm/rolls/RollsListSection';
 import { isLowStockRoll } from '@/components/crm/rolls/rollsShared';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -13,6 +14,7 @@ import { useAuth } from '@/context/AuthContext';
 import { fetchRolls, createRoll, type Roll } from '@/lib/rollsApi';
 import { fetchMaterialsData, type Material, type MaterialType } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
+import { isStorekeeperRole } from '@/lib/roles';
 
 const Rolls = () => {
   const { toast } = useToast();
@@ -57,6 +59,9 @@ const Rolls = () => {
   const canCreateRoll = user?.role === 'admin';
   // Закупочные цены и стоимость склада видит только администратор.
   const isAdmin = user?.role === 'admin';
+  // Стикеры печатает тот, кто ходит по цеху с принтером и клеит их руками:
+  // кладовщик и администратор. Закройщику печатать нечего — он их читает.
+  const canPrintStickers = isAdmin || isStorekeeperRole(user?.role);
 
   const load = () => {
     setLoading(true);
@@ -250,6 +255,12 @@ const Rolls = () => {
               workshops={workshops}
               filterWorkshop={filterWorkshop}
             />
+
+            {/* Панель печати показываем, когда включён фильтр заканчивающихся:
+                это ровно тот список, который кладовщик собирается переклеить. */}
+            {canPrintStickers && lowStockOnly && (
+              <LowStockPrintCard rolls={allFiltered.filter(isLowStockRoll)} />
+            )}
 
             <RollsListSection
               loading={loading}
