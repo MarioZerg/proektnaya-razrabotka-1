@@ -52,11 +52,18 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
 STATUS_ORDER = ['Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка', 'Готовые']
 
 
-def write_off_materials_once(cur, order_id, material, width, height):
+def write_off_materials_once(cur, order_id, material, width, height, workshop_id=None):
     """Списывает материалы заказа по FIFO ОДИН раз (для случая, когда админ двигает статус
     заказа, а не проходит обычный конвейер раскроя). Если по заказу уже есть списания
     (order_material_usage) — ничего не делает. При нехватке материала возвращает текст ошибки,
-    иначе None. Списывает все материалы товара (тюль + аксессуары) из доступных рулонов."""
+    иначе None. Списывает все материалы товара (тюль + аксессуары) из рулонов ЦЕХА.
+
+    РАСХОД ИДЁТ ТОЛЬКО ВНУТРИ ЦЕХА. Складские рулоны не трогаем никогда: пока
+    кладовщик не отгрузил материал в цех и смена его не приняла, этого материала
+    у людей физически нет. Раньше склад шёл в общий котёл, и заказы «списывались»
+    с рулонов, которые лежали на складе нетронутыми: у цеха остаток не убывал,
+    а на складе таял материал, к которому никто не подходил.
+    """
     # Уже списывали по этому заказу — расход идёт один раз (при откате статуса не трогаем).
     cur.execute("SELECT 1 FROM order_material_usage WHERE order_id = %s LIMIT 1", (order_id,))
     if cur.fetchone():
@@ -86,22 +93,23 @@ def write_off_materials_once(cur, order_id, material, width, height):
         qty_needed = float(qty_needed)
         cur.execute(
             "SELECT id, remaining_quantity FROM rolls "
-            # Рулон «в пути» (отгружен в цех, но не принят сменой) в раскрой не идёт:
-            # материал мог не доехать. Такой рулон ждёт подтверждения приёмки.
-            # Бракованный рулон в раскрой не идёт: закройщик его отставил, и материал
-            # с него списывать нельзя, пока кладовщик не решит судьбу рулона.
+            # Только рулоны В ЦЕХЕ и только ПРИНЯТЫЕ сменой: склад в расход не идёт,
+            # а рулон «в пути» мог не доехать. Бракованный тоже не берём — закройщик
+            # его отставил, судьбу решает кладовщик.
             "WHERE material_id = %s AND remaining_quantity > 0 "
             "AND defect_flagged_at IS NULL "
-            "AND (status = 'in_storage' OR (status = 'in_workshop' AND accepted_at IS NOT NULL)) "
+            "AND status = 'in_workshop' AND accepted_at IS NOT NULL "
+            "AND (%s IS NULL OR workshop_id = %s) "
             "ORDER BY created_at ASC",
-            (material_id,),
+            (material_id, workshop_id, workshop_id),
         )
         available_rolls = cur.fetchall()
         total_available = sum(float(r[1]) for r in available_rolls)
         if total_available < qty_needed:
             cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
             mat_name, mat_unit = cur.fetchone()
-            shortages.append(f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, доступно {round(total_available, 2)} {mat_unit}")
+            shortages.append(f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, "
+                             f"в цехе {round(total_available, 2)} {mat_unit}")
             continue
         remaining_to_take = qty_needed
         for roll_id, roll_remaining in available_rolls:
@@ -112,7 +120,7 @@ def write_off_materials_once(cur, order_id, material, width, height):
             remaining_to_take -= take
 
     if shortages:
-        return 'Недостаточно материалов на складе: ' + '; '.join(shortages)
+        return 'Не хватает материала в цехе: ' + '; '.join(shortages)
 
     for roll_id, material_id, take in write_offs:
         cur.execute("SELECT remaining_quantity FROM rolls WHERE id = %s", (roll_id,))
@@ -1145,10 +1153,14 @@ def handler(event: dict, context) -> dict:
                     for gm_id, gm_total in group_need.items():
                         cur.execute(
                             "SELECT COALESCE(SUM(remaining_quantity), 0) FROM rolls "
+                            # Считаем остаток ЦЕХА: склад закройщику недоступен, пока
+                            # материал не отгрузили и смена его не приняла.
                             "WHERE material_id = %s "
-                            "AND (status = 'in_storage' OR (status = 'in_workshop' AND accepted_at IS NOT NULL)) "
+                            "AND status = 'in_workshop' AND accepted_at IS NOT NULL "
+                            "AND defect_flagged_at IS NULL "
+                            "AND (%s IS NULL OR workshop_id = %s) "
                             "AND remaining_quantity > 0",
-                            (gm_id,),
+                            (gm_id, workshop_id, workshop_id),
                         )
                         gm_available = float(cur.fetchone()[0] or 0)
                         if gm_available < gm_total:
@@ -1512,10 +1524,16 @@ def handler(event: dict, context) -> dict:
                 if 'sewingStatus' in body_data:
                     new_status = body_data['sewingStatus']
                     if new_status in STATUS_ORDER and STATUS_ORDER.index(new_status) >= STATUS_ORDER.index('Раскроено'):
-                        cur.execute("SELECT material, width, height FROM orders WHERE id = %s", (int(item_id),))
+                        cur.execute(
+                            "SELECT material, width, height, workshop_id FROM orders WHERE id = %s",
+                            (int(item_id),),
+                        )
                         mwh = cur.fetchone()
                         if mwh:
-                            err = write_off_materials_once(cur, int(item_id), mwh[0], mwh[1], mwh[2])
+                            # Материал списываем из цеха заказа: расход идёт только
+                            # внутри цеха, склад в него не входит.
+                            err = write_off_materials_once(
+                                cur, int(item_id), mwh[0], mwh[1], mwh[2], mwh[3])
                             if err:
                                 conn.rollback()
                                 return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': err})}
@@ -1900,15 +1918,16 @@ def handler(event: dict, context) -> dict:
 
                             cur.execute(
                                     "SELECT id, remaining_quantity FROM rolls "
-                                    # Рулон «в пути» (отгружен в цех, но не принят сменой) в раскрой не идёт:
-            # материал мог не доехать. Такой рулон ждёт подтверждения приёмки.
-            # Бракованный рулон в раскрой не идёт: закройщик его отставил, и материал
-            # с него списывать нельзя, пока кладовщик не решит судьбу рулона.
-            "WHERE material_id = %s AND remaining_quantity > 0 "
-            "AND defect_flagged_at IS NULL "
-            "AND (status = 'in_storage' OR (status = 'in_workshop' AND accepted_at IS NOT NULL)) "
+                                    # РАСХОД ТОЛЬКО ВНУТРИ ЦЕХА: склад не трогаем, пока
+                                    # кладовщик не отгрузил материал и смена его не приняла.
+                                    # Рулон «в пути» мог не доехать, бракованный ждёт
+                                    # решения кладовщика — оба в раскрой не идут.
+                                    "WHERE material_id = %s AND remaining_quantity > 0 "
+                                    "AND defect_flagged_at IS NULL "
+                                    "AND status = 'in_workshop' AND accepted_at IS NOT NULL "
+                                    "AND (%s IS NULL OR workshop_id = %s) "
                                     "ORDER BY created_at ASC",
-                                    (material_id,),
+                                    (material_id, order_workshop_id, order_workshop_id),
                             )
                             available_rolls = cur.fetchall()
                             total_available = sum(float(r[1]) for r in available_rolls)

@@ -149,18 +149,17 @@ def write_off_packaging(cur, order_id: int, workshop_id=None) -> str | None:
 
         cur.execute(
             "SELECT id, remaining_quantity FROM rolls "
+            # РАСХОД ТОЛЬКО ИЗ ЦЕХА. Складские рулоны не берём вообще: упаковщица
+            # физически не может достать пакет из коробки, которая лежит на складе.
+            # Пока кладовщик не отгрузил упаковку в цех и смена её не приняла —
+            # материала у людей нет.
             "WHERE material_id = %s AND remaining_quantity > 0 "
             "AND defect_flagged_at IS NULL "
-            # Рулон, отгруженный в цех, но не принятый сменой, в расход не идёт:
-            # материал мог не доехать.
-            "AND (status = 'in_storage' "
-            "     OR (status = 'in_workshop' AND accepted_at IS NOT NULL)) "
-            # Чужие цеха не трогаем совсем: упаковщица не может взять пакет из
-            # коробки, которая стоит в другом помещении.
-            "AND (status = 'in_storage' OR %s IS NULL OR workshop_id = %s) "
-            # Сначала СВОЙ ЦЕХ (0), потом склад (1) — внутри каждой группы FIFO
-            # по дате. Так расходуется то, что упаковщица реально держит в руках.
-            "ORDER BY (status = 'in_storage') ASC, created_at ASC",
+            "AND status = 'in_workshop' AND accepted_at IS NOT NULL "
+            # Чужие цеха тоже не трогаем: коробка стоит в другом помещении.
+            "AND (%s IS NULL OR workshop_id = %s) "
+            # FIFO внутри цеха: сначала начатая коробка, потом свежая.
+            "ORDER BY created_at ASC",
             (material_id, workshop_id, workshop_id),
         )
         available_rolls = cur.fetchall()
@@ -170,7 +169,7 @@ def write_off_packaging(cur, order_id: int, workshop_id=None) -> str | None:
             mat_name, mat_unit = cur.fetchone()
             shortages.append(
                 f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, "
-                f"доступно {round(total_available, 2)} {mat_unit}"
+                f"в цехе {round(total_available, 2)} {mat_unit}"
             )
             continue
 
@@ -183,7 +182,7 @@ def write_off_packaging(cur, order_id: int, workshop_id=None) -> str | None:
             remaining_to_take -= take
 
     if shortages:
-        return 'Недостаточно упаковки: ' + '; '.join(shortages)
+        return 'Не хватает упаковки в цехе: ' + '; '.join(shortages)
 
     for roll_id, material_id, take in write_offs:
         cur.execute("SELECT remaining_quantity FROM rolls WHERE id = %s", (roll_id,))
