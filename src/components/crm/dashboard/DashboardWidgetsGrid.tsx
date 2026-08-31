@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import {
   STAGE_ORDER,
+  productionOrder,
   type DashboardWidgetData,
 } from '@/components/crm/dashboard/dashboardShared';
 
@@ -34,13 +35,17 @@ const toneValue: Record<DashboardWidgetData['tone'], string> = {
 const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) => {
   const navigate = useNavigate();
 
-  // Раскладываем плитки по этапам, сохраняя порядок производственного пути.
-  // Пустые этапы не показываем: у швеи нет складских показателей, и заголовок
-  // без единой плитки был бы просто шумом.
-  const groups = STAGE_ORDER.map((stage) => ({
-    ...stage,
-    items: widgets.filter((w) => w.stage === stage.key),
-  })).filter((g) => g.items.length > 0);
+  // Два блока: производство и склад. Пустые не показываем — у швеи нет складских
+  // показателей, и заголовок без единой плитки был бы просто шумом.
+  const groups = STAGE_ORDER.map((stage) => {
+    const items = widgets.filter((w) => w.stage === stage.key);
+    // Внутри производства выстраиваем плитки по ходу работы: новые задания →
+    // в закрое → раскроено → в пошиве → на стикеровке.
+    if (stage.key === 'production') {
+      items.sort((a, b) => productionOrder(a.label) - productionOrder(b.label));
+    }
+    return { ...stage, items };
+  }).filter((g) => g.items.length > 0);
 
   return (
     <div className="space-y-5">

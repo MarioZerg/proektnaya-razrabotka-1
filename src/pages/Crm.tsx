@@ -221,17 +221,17 @@ const CrmDashboard = () => {
     // здесь: швея и закройщик видят ТОЛЬКО свою работу (сервер получил роль и id
     // и отфильтровал), «Новые задания» и «Раскроено» — общая очередь на всех.
     const list: DashboardWidgetData[] = [
-      { label: 'Новые задания на пошив', value: summary.newOrders, icon: 'ListPlus', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'orders', hint: 'Заказы приняты и ждут, когда их возьмут в работу' },
+      { label: 'Новые задания на пошив', value: summary.newOrders, icon: 'ListPlus', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Заказы приняты и ждут, когда их возьмут в работу' },
       // Швее и закройщику подписываем «У меня», чтобы цифра не читалась как объём
       // всего цеха: у них в этих виджетах теперь только собственные заказы.
-      { label: isSewer ? 'У меня в пошиве' : 'Товары в пошиве', value: summary.inSewing, icon: 'Shirt', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'sewing', hint: isSewer ? 'Вещи, которые вы шьёте прямо сейчас' : 'Вещи в работе у швей' },
-      { label: isCutter ? 'У меня в закрое' : 'Товары в закрое', value: summary.inCutting, icon: 'Scissors', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'cutting', hint: isCutter ? 'Ткань, которую вы кроите прямо сейчас' : 'Ткань в работе у закройщиков' },
+      { label: isSewer ? 'У меня в пошиве' : 'Товары в пошиве', value: summary.inSewing, icon: 'Shirt', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: isSewer ? 'Вещи, которые вы шьёте прямо сейчас' : 'Вещи в работе у швей' },
+      { label: isCutter ? 'У меня в закрое' : 'Товары в закрое', value: summary.inCutting, icon: 'Scissors', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: isCutter ? 'Ткань, которую вы кроите прямо сейчас' : 'Ткань в работе у закройщиков' },
       // ?type=FBS — страница откроется сразу с фильтром по FBS, иначе показывала все заказы
       { label: 'Срочные заказы (FBS)', value: summary.urgentFbs, icon: 'Zap', tone: 'urgent', path: '/crm/marketplace/sewing-items?type=FBS', stage: 'attention', hint: 'Отгрузка сегодня — делать в первую очередь' },
-      { label: 'Не отгруженные поставки в цех', value: summary.notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'material', hint: 'Материал собран, но со склада ещё не уехал' },
-      { label: 'Не принятые поставки в цехе', value: summary.notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'material', hint: 'Привезли в цех, но приёмку никто не подтвердил' },
-      { label: isSewer || isCutter ? 'Мои на стикеровке' : 'Товары на стикеровке', value: summary.inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'stickering', hint: 'Сшито и ждёт наклейки стикера маркетплейса' },
-      { label: 'Раскроено', value: summary.cut, icon: 'CheckCircle2', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'cutting', hint: 'Крой готов и передан швеям' },
+      { label: 'Не отгруженные поставки в цех', value: summary.notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Материал собран, но со склада ещё не уехал' },
+      { label: 'Не принятые поставки в цехе', value: summary.notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Привезли в цех, но приёмку никто не подтвердил' },
+      { label: isSewer || isCutter ? 'Мои на стикеровке' : 'Товары на стикеровке', value: summary.inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Сшито и ждёт наклейки стикера маркетплейса' },
+      { label: 'Раскроено', value: summary.cut, icon: 'CheckCircle2', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Крой готов и передан швеям' },
     ];
 
     if (canSeeWarehouseWidgets) {
@@ -248,7 +248,7 @@ const CrmDashboard = () => {
         icon: 'PackageCheck',
         tone: awaitingShelf > 0 ? 'urgent' : 'default',
         path: '/crm/inventory/goods-warehouse',
-        stage: 'shipping',
+        stage: 'warehouse',
         hint: 'Заказ отменили — вещь надо вернуть из цеха на полку',
       });
       list.splice(5, 0, {
@@ -259,7 +259,7 @@ const CrmDashboard = () => {
         // Ведём сразу на сборку, а не на общий склад: кладовщику нужно
         // отсканировать вещь и напечатать стикер, а не смотреть остатки.
         path: '/crm/inventory/goods-picking',
-        stage: 'shipping',
+        stage: 'warehouse',
         hint: 'Отсканировать вещь и напечатать стикер отправления',
       });
       // Вещи привезли с ПВЗ, но кладовщик их ещё не осмотрел. Пока они не лежат
@@ -274,7 +274,7 @@ const CrmDashboard = () => {
         icon: 'PackageOpen',
         tone: returnsPickedUp > 0 ? 'urgent' : 'default',
         path: '/crm/inventory/goods-warehouse',
-        stage: 'returns',
+        stage: 'warehouse',
         hint: 'Привезли с пункта выдачи — осмотреть и разложить',
       });
       // Виджет «Возвраты — принять на склад» убран: он считал ВСЕ возвраты,
@@ -292,7 +292,7 @@ const CrmDashboard = () => {
         // те рулоны, которые посчитаны в этом виджете. Раньше вела на общий список
         // из тысяч рулонов, и заканчивающиеся приходилось искать глазами.
         path: '/crm/inventory/rolls?low=1',
-        stage: 'material',
+        stage: 'warehouse',
         hint: 'Меньше 20 погонных метров — пора заказывать',
       });
     }
