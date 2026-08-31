@@ -556,6 +556,32 @@ def return_wb_order_to_accumulator(cur, goods_id):
     return True
 
 
+def cancelled_item_info(cur, goods_id):
+    """Данные отменённой вещи для карточки на терминале сборки.
+
+    Кладовщик держит вещь в руках и должен понять, что с ней делать: карточка
+    показывает размер (чтобы сверить с биркой) и штрихкод хранения (чтобы
+    положить на полку). Если чего-то нет — просто не показываем это поле,
+    сканирование из-за отсутствующей подписи останавливать нельзя.
+    """
+    cur.execute(
+        "SELECT o.material, o.width, o.height, o.marketplace, gw.storage_barcode "
+        "FROM goods_warehouse gw JOIN orders o ON o.id = gw.order_id "
+        "WHERE gw.id = %s",
+        (int(goods_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return {}
+    return {
+        'material': row[0],
+        'width': row[1],
+        'height': row[2],
+        'marketplace': row[3],
+        'storageBarcode': row[4],
+    }
+
+
 def find_cancelled_items(cur, supply_id):
     """Товары поставки, чьи заказы отменены маркетплейсом.
 
@@ -2003,6 +2029,39 @@ def handler(event: dict, context) -> dict:
                     }
                 goods_id, goods_status, order_number, labeled_at = gw_row
 
+                # ОТМЕНУ ПРОВЕРЯЕМ ПЕРВОЙ — раньше ярлыка.
+                #
+                # Порядок здесь важен. Раньше вещь без ярлыка получала ответ «сначала
+                # отстикеруйте», даже если заказ уже отменён: кладовщик шёл клеить
+                # ярлык на вещь, которую всё равно никуда не повезут, и только на
+                # втором скане узнавал про отмену. Отмена — более важная новость,
+                # поэтому она идёт первой и звучит голосом.
+                cur.execute(
+                    "SELECT o.status, o.ozon_status, o.ym_status "
+                    "FROM goods_warehouse gw JOIN orders o ON o.id = gw.order_id "
+                    "WHERE gw.id = %s",
+                    (goods_id,),
+                )
+                st_row = cur.fetchone()
+                if st_row and (
+                    (st_row[0] or '') == 'Отменён'
+                    or 'cancel' in (st_row[1] or '').lower()
+                    or 'cancel' in (st_row[2] or '').lower()
+                ):
+                    payload = {
+                        'error': f'Заказ {order_number} ОТМЕНЁН — в поставку его класть '
+                                 f'нельзя. Отложите вещь в сторону и передайте кладовщику '
+                                 f'на разбор возвратов',
+                        'cancelled': True,
+                        'orderNumber': order_number,
+                    }
+                    payload.update(cancelled_item_info(cur, goods_id))
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(payload, ensure_ascii=False),
+                    }
+
                 # Ярлык маркетплейса ещё не наклеен: вещь лежит на полке, в короб её
                 # класть нельзя — на приёмке маркетплейса её не опознают.
                 if not labeled_at:
@@ -2040,15 +2099,31 @@ def handler(event: dict, context) -> dict:
                     live_status = ozon_posting_status_live(cur, pn_row[0])
                     if live_status in OZON_DEAD_STATUSES:
                         conn.commit()
+                        # ОТМЕНУ помечаем отдельным признаком 'cancelled'.
+                        #
+                        # По нему терминал играет голос «заказ отменён» и показывает
+                        # карточку вещи вместо обычной красной ошибки. Кладовщик
+                        # сканирует поставку подряд, глядя на вещи, а не в экран:
+                        # на слух он сразу понимает, что эту вещь надо отложить в
+                        # сторону, а не класть в общую кучу, где её потом завалят.
+                        #
+                        # Остальные «мёртвые» статусы (уже едет, доставлено) — не
+                        # отмена: там обычная ошибка, вещь не откладывают на полку.
+                        cancelled = live_status == 'cancelled'
+                        payload = {
+                            'error': f'{order_number}: {OZON_DEAD_STATUSES[live_status]}. '
+                                     f'Отложите вещь и передайте её кладовщику на разбор — '
+                                     f'в этот короб она не едет',
+                            'ozonStatus': live_status,
+                        }
+                        if cancelled:
+                            payload['cancelled'] = True
+                            payload['orderNumber'] = order_number
+                            payload.update(cancelled_item_info(cur, goods_id))
                         return {
                             'statusCode': 409,
                             'headers': headers,
-                            'body': json.dumps({
-                                'error': f'{order_number}: {OZON_DEAD_STATUSES[live_status]}. '
-                                         f'Отложите вещь и передайте её кладовщику на разбор — '
-                                         f'в этот короб она не едет',
-                                'ozonStatus': live_status,
-                            }, ensure_ascii=False),
+                            'body': json.dumps(payload, ensure_ascii=False),
                         }
 
                 # Сначала смотрим, не лежит ли товар УЖЕ в поставке. Добавленный товар

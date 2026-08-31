@@ -9,6 +9,9 @@ import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
 import SupplyFboFieldsCard from '@/components/crm/marketplaceSupplies/SupplyFboFieldsCard';
 import SupplyItemsSection from '@/components/crm/marketplaceSupplies/SupplyItemsSection';
 import SupplySewingSection from '@/components/crm/marketplaceSupplies/SupplySewingSection';
+import CancelledScanDialog, {
+  type CancelledScanInfo,
+} from '@/components/crm/marketplaceSupplies/CancelledScanDialog';
 import AddSewingOrdersDialog from '@/components/crm/marketplaceSupplies/AddSewingOrdersDialog';
 import SupplyGroupsPanel from '@/components/crm/marketplaceSupplies/SupplyGroupsPanel';
 import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCard';
@@ -58,6 +61,8 @@ interface SupplyShowContentProps {
     setScanOrderNumber: Dispatch<SetStateAction<string>>;
     scanning: boolean;
     scanInputRef: RefObject<HTMLInputElement>;
+    cancelledScan: CancelledScanInfo | null;
+    setCancelledScan: Dispatch<SetStateAction<CancelledScanInfo | null>>;
     handleAddSewingOrders: (
       rows: { marketplaceItemId: number; quantity: number }[],
     ) => Promise<void>;
@@ -196,6 +201,13 @@ const SupplyShowContent = ({
         marketplaceItems={marketplaceItems}
         saving={actions.addingOrders}
         onCreate={actions.handleAddSewingOrders}
+      />
+
+      {/* Отсканирована вещь отменённого заказа: звук уже прозвучал, окно
+          показывает, что за вещь в руках и куда её деть — на полку, не в короб. */}
+      <CancelledScanDialog
+        info={actions.cancelledScan}
+        onClose={() => actions.setCancelledScan(null)}
       />
     </div>
   );

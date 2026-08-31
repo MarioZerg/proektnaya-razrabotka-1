@@ -1,4 +1,4 @@
-import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -18,7 +18,14 @@ import { importOzonFboComposition } from '@/lib/ozonFboApi';
 import { fetchWbSupplyQr } from '@/lib/wbFbsApi';
 import { useAuth } from '@/context/AuthContext';
 import { printStorageSticker } from '@/lib/printStorageSticker';
-import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import {
+  playScanSound,
+  playScanErrorSound,
+  playCancelSound,
+  primeScanSounds,
+} from '@/lib/scanSound';
+import { CancelledOrderError } from '@/lib/marketplaceSuppliesApi';
+import type { CancelledScanInfo } from '@/components/crm/marketplaceSupplies/CancelledScanDialog';
 
 interface UseSupplyActionsArgs {
   supplyId: number;
@@ -67,6 +74,19 @@ export const useSupplyActions = ({
 
   const [scanOrderNumber, setScanOrderNumber] = useState('');
   const [scanning, setScanning] = useState(false);
+
+  // Отсканирована вещь ОТМЕНЁННОГО заказа: показываем карточку — что за вещь в
+  // руках и куда её деть. В короб она не едет.
+  const [cancelledScan, setCancelledScan] = useState<CancelledScanInfo | null>(null);
+
+  // Прогрев звуков при открытии поставки.
+  //
+  // Браузер молчит, пока человек ничего не нажал на странице. Кладовщик заходит
+  // в поставку кликом — разрешение уже есть, подгружаем файлы заранее, чтобы
+  // ПЕРВЫЙ же скан прозвучал. Иначе самая важная отмена может пройти беззвучно.
+  useEffect(() => {
+    primeScanSounds();
+  }, []);
   const scanInputRef = useRef<HTMLInputElement>(null);
 
   const handleAddSewingOrders = async (
@@ -155,6 +175,15 @@ export const useSupplyActions = ({
         load(true);
       }
     } catch (e) {
+      // ЗАКАЗ ОТМЕНЁН. Отдельный голос вместо обычного писка ошибки: кладовщик
+      // сканирует поставку подряд, глядя на вещи, а не в экран. Услышав отмену,
+      // он сразу откладывает вещь в сторону, а не кладёт в общую кучу, где её
+      // потом завалят другими и уже не найдут.
+      if (e instanceof CancelledOrderError) {
+        playCancelSound();
+        setCancelledScan(e.info);
+        return;
+      }
       playScanErrorSound();
       toast({ title: 'Ошибка сканирования', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
@@ -353,6 +382,8 @@ export const useSupplyActions = ({
     setScanOrderNumber,
     scanning,
     scanInputRef,
+    cancelledScan,
+    setCancelledScan,
     handleAddSewingOrders,
     handleScanOrder,
     handleRemoveItem,

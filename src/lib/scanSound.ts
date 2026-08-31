@@ -68,7 +68,7 @@ const play = (src: string, fallback: () => void) => {
  */
 export const primeScanSounds = () => {
   try {
-    ['/sounds/scan-beep.mp3', '/sounds/scan-error.mp3'].forEach((src) => {
+    ['/sounds/scan-beep.mp3', '/sounds/scan-error.mp3', '/sounds/scan-cancel.mp3'].forEach((src) => {
       if (!templates[src]) {
         const el = new Audio(src);
         el.preload = 'auto';
