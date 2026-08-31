@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import CancellationFunnel from '@/components/crm/cancellations/CancellationFunnel';
+import BuyerLookupCard from '@/components/crm/cancellations/BuyerLookupCard';
 import {
   fetchCancellationReport,
   downloadCancellationExcel,
@@ -237,6 +238,8 @@ const CancellationAnalytics = () => {
             {data?.funnel && (
               <CancellationFunnel funnel={data.funnel} summary={s} days={days} />
             )}
+
+            <BuyerLookupCard days={days} />
 
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <Card className="shadow-none">

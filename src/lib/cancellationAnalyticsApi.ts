@@ -179,3 +179,43 @@ export const downloadCancellationArchive = async (
 
   return total;
 };
+
+/** Одно отправление в карточке покупателя. */
+export interface BuyerPosting {
+  posting: string;
+  createdAt: string | null;
+  cancelledAt: string | null;
+  ozonStatus: string;
+  /** Статус по-русски: файл и карточку читает человек, а не программа. */
+  statusLabel: string;
+  cancelled: boolean;
+  product: string;
+  quantity: number | null;
+  material: string;
+  width: number | null;
+  height: number | null;
+  sku: string;
+}
+
+export interface BuyerCard {
+  found: boolean;
+  orderKey: string;
+  buyer?: CancelledOrder;
+  postings?: BuyerPosting[];
+}
+
+/**
+ * Карточка покупателя по лицевому счёту.
+ *
+ * История берётся ЦЕЛИКОМ, без ограничения периодом со страницы: раз ищут
+ * конкретный счёт, важно увидеть все его заказы, а не только попавшие в фильтр.
+ */
+export const fetchBuyerCard = async (key: string, days: number): Promise<BuyerCard> => {
+  const res = await fetch(
+    `${ANALYTICS_URL}?action=buyer&key=${encodeURIComponent(key.trim())}` +
+      `&days=${days}&actorRole=${encodeURIComponent(currentRole())}`,
+  );
+  if (!res.ok) throw new Error('Не удалось найти покупателя');
+  const data = await res.json();
+  return { ...data, orderKey: data.orderKey || key.trim() };
+};

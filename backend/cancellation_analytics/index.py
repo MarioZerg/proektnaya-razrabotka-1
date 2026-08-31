@@ -816,6 +816,91 @@ def handle_archive(cur, days, min_items, only_never=False, part_index=0):
     }
 
 
+def handle_buyer(cur, key, days):
+    """Карточка одного покупателя: все его отправления и сводка.
+
+    Нужна для поиска по лицевому счёту: человек вводит номер и сразу видит, что
+    этот покупатель делал, — не выкачивая архив и не листая таблицу на сотни строк.
+
+    Период здесь НЕ ограничиваем выбранным на странице: если ищут конкретный счёт,
+    важно увидеть всю его историю, включая заказы за пределами текущего фильтра.
+    """
+    key = (key or '').strip()
+    if not key:
+        return _resp(400, {'error': 'Укажите лицевой счёт'})
+
+    cur.execute(
+        "SELECT o.ozon_posting_number, o.created_at, o.cancelled_at, o.ozon_status, "
+        "       o.status, o.product, o.quantity, o.material, o.width, o.height, "
+        "       o.product_ozon_sku "
+        "FROM orders o "
+        f"WHERE {ALL_FILTER} "
+        f"  AND {ORDER_KEY} = %s "
+        "ORDER BY o.created_at, o.ozon_posting_number",
+        (key,),
+    )
+    raw = cur.fetchall()
+    if not raw:
+        return _resp(200, {'found': False, 'orderKey': key})
+
+    postings = []
+    cancelled = alive = 0
+    orders = set()
+    days_set = set()
+    products = set()
+    for r in raw:
+        st = r[3] or ''
+        is_cancelled = st.startswith('cancel') or r[4] == 'Отменён'
+        if is_cancelled:
+            cancelled += 1
+        if st in ('delivered', 'delivering', 'awaiting_deliver', 'awaiting_packaging'):
+            alive += 1
+        orders.add((r[0] or '').split('-')[1] if '-' in (r[0] or '') else r[0])
+        if r[1]:
+            days_set.add(r[1].date())
+        if r[5]:
+            products.add(r[5])
+        postings.append({
+            'posting': r[0],
+            'createdAt': r[1],
+            'cancelledAt': r[2],
+            'ozonStatus': st,
+            'statusLabel': OZON_STATUS_RU.get(st, st or r[4] or ''),
+            'cancelled': is_cancelled,
+            'product': r[5] or '',
+            'quantity': float(r[6]) if r[6] is not None else None,
+            'material': r[7] or '',
+            'width': r[8],
+            'height': r[9],
+            'sku': r[10] or '',
+        })
+
+    hours = None
+    for r in raw:
+        if r[1] and r[2]:
+            h = (r[2] - r[1]).total_seconds() / 3600.0
+            hours = h if hours is None else min(hours, h)
+
+    row = {
+        'orderKey': key,
+        'cancelledItems': cancelled,
+        'aliveItems': alive,
+        'totalItems': len(raw),
+        'ordersCount': len(orders),
+        'activeDays': len(days_set),
+        'distinctProducts': len(products),
+        'firstCreated': raw[0][1],
+        'lastCreated': raw[-1][1],
+        'hoursToCancel': round(hours, 1) if hours is not None else None,
+        'neverBought': alive == 0,
+    }
+    row['flags'] = _flags(row)
+    row['risk'] = _risk(row)
+    row['probability'] = _competitor_probability(row, _probability_baseline(cur, days))
+
+    return _resp(200, {'found': True, 'buyer': row, 'postings': postings})
+
+
 def handler(event: dict, context) -> dict:
     """Анализ отмен заказов на маркетплейсе: закономерности и выгрузка в Excel.
 
@@ -849,6 +934,8 @@ def handler(event: dict, context) -> dict:
         cur = conn.cursor()
         # onlyNever — оставить только тех, кто не выкупил вообще ничего.
         only_never = (params.get('onlyNever') or '') in ('1', 'true')
+        if action == 'buyer':
+            return handle_buyer(cur, params.get('key'), days)
         if action == 'export':
             return handle_export(cur, days, min_items, only_never)
         if action == 'archive':
