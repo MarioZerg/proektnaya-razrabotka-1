@@ -896,7 +896,14 @@ def handler(event: dict, context) -> dict:
                         # тележку из цеха и должен видеть, ЧТО он принимает: раньше
                         # тут было только число, и сверить содержимое было нечем.
                         "       pk.full_name, o.packed_at, "
-                        "       COALESCE(o.ozon_posting_number, o.order_number) "
+                        "       COALESCE(o.ozon_posting_number, o.order_number), "
+                        # Откуда вещь взялась. Кладовщику важно различать:
+                        # 'return' — приехала от покупателя с ПВЗ;
+                        # 'cancelled_labeled' — заказ отменили ПОСЛЕ стикеровки,
+                        #   вещь из нашего же цеха и к покупателю не уезжала.
+                        # Действия одинаковые (на полку + стикер хранения), но
+                        # осматривать вещь, которая никуда не ездила, незачем.
+                        "       gw.receive_reason "
                         "FROM goods_warehouse gw "
                         "LEFT JOIN orders o ON o.id = gw.order_id "
                         # Заявка на возврат берётся ОДНА, самая свежая.
@@ -947,6 +954,7 @@ def handler(event: dict, context) -> dict:
                             'packerName': r[20],
                             'packedAt': (r[21].isoformat() + 'Z') if r[21] else None,
                             'clientOrderNumber': r[22],
+                            'receiveReason': r[23],
                         }
                         for r in cur.fetchall()
                     ]
@@ -3493,18 +3501,26 @@ def handler(event: dict, context) -> dict:
                         f"WHERE id IN ({','.join(with_shelf)})"
                     )
                 if no_shelf:
-                    # СТАТУС 'awaiting_shelf' («Ждёт полку»), А НЕ 'inspected'.
+                    # СТАТУС 'mp_return' («Разобрать возвраты»), А НЕ 'inspected'.
                     #
-                    # 'inspected' означает «упаковщица осмотрела вещь в цехе и наклеила
+                    # 'inspected' означает «упаковщица осмотрела вещь В ЦЕХЕ и наклеила
                     # стикер хранения» — по нему собирается вкладка «Принять осмотренные
                     # из цеха». Ставя его здесь, мы отправляли туда вещи, которых в цехе
                     # нет и которые никто не осматривал: кладовщик шёл забирать тележку,
-                    # а забирать нечего. Вещь при этом просто лежала на складе без полки.
+                    # а забирать нечего.
                     #
-                    # 'awaiting_shelf' — ровно то, что нужно: вещь на складе, ждёт, пока
-                    # её разложат по полкам. Осмотр она не проходила и не должна.
+                    # Это ОТМЕНА ПОСЛЕ СТИКЕРОВКИ: вещь уже сшита, упакована и заклеена
+                    # ярлыком маркетплейса, а заказ отменили. В цех она не возвращается —
+                    # кладовщик встречает её при сборке FBS. Дальше с ней делают ровно то
+                    # же, что с возвратом: кладут на полку и печатают стикер хранения.
+                    # Поэтому место ей во вкладке «Разобрать возвраты», где этот
+                    # инструмент уже есть.
+                    #
+                    # receive_reason помечает причину: кладовщик видит, что вещь не
+                    # приехала от покупателя, а отменилась у нас после стикеровки.
                     cur.execute(
-                        "UPDATE goods_warehouse SET status = 'awaiting_shelf', "
+                        "UPDATE goods_warehouse SET status = 'mp_return', "
+                        "  receive_reason = 'cancelled_labeled', "
                         "  reserved_order_id = NULL, matched_at = NULL, "
                         "  shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
                         "  shipping_labeled_by_name = NULL "

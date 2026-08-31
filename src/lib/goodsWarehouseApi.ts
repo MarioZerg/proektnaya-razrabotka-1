@@ -444,6 +444,13 @@ export interface InspectionItem {
   packedAt?: string | null;
   /** Номер отправления клиента, который от вещи отказался. */
   clientOrderNumber?: string | null;
+  /**
+   * Откуда вещь взялась:
+   * 'return' — приехала от покупателя с ПВЗ;
+   * 'cancelled_labeled' — заказ отменили ПОСЛЕ стикеровки, вещь из нашего цеха
+   *   и к покупателю не уезжала (осматривать её незачем).
+   */
+  receiveReason?: string | null;
 }
 
 /** Один возврат в истории вещи. */
