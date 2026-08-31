@@ -564,9 +564,13 @@ def cancelled_item_info(cur, goods_id):
     положить на полку). Если чего-то нет — просто не показываем это поле,
     сканирование из-за отсутствующей подписи останавливать нельзя.
     """
+    # Берём заказ, под который вещь едет СЕЙЧАС (reserved_order_id), а если его нет —
+    # тот, под который её сшили. Размер вещи от этого не меняется, но маркетплейс и
+    # номер должны совпадать с тем, что кладовщик видит на ярлыке в руках.
     cur.execute(
         "SELECT o.material, o.width, o.height, o.marketplace, gw.storage_barcode "
-        "FROM goods_warehouse gw JOIN orders o ON o.id = gw.order_id "
+        "FROM goods_warehouse gw "
+        "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
         "WHERE gw.id = %s",
         (int(goods_id),),
     )
@@ -2036,9 +2040,20 @@ def handler(event: dict, context) -> dict:
                 # ярлык на вещь, которую всё равно никуда не повезут, и только на
                 # втором скане узнавал про отмену. Отмена — более важная новость,
                 # поэтому она идёт первой и звучит голосом.
+                #
+                # СМОТРИМ ЗАКАЗ, ПОД КОТОРЫЙ ВЕЩЬ ЕДЕТ СЕЙЧАС (reserved_order_id), а
+                # не тот, для которого её когда-то сшили (order_id).
+                #
+                # У вещи два заказа, и это нормальный ход жизни на складе: сшили под
+                # один заказ, его отменили, вещь легла на полку и потом ушла в подбор
+                # под НОВОГО покупателя. Исходный заказ так и остаётся отменённым
+                # навсегда — по нему судить нельзя. Иначе каждая вещь, однажды
+                # побывавшая в отмене, до конца дней считалась бы отменённой и её
+                # больше никогда не удалось бы отгрузить.
                 cur.execute(
                     "SELECT o.status, o.ozon_status, o.ym_status "
-                    "FROM goods_warehouse gw JOIN orders o ON o.id = gw.order_id "
+                    "FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
                     "WHERE gw.id = %s",
                     (goods_id,),
                 )
