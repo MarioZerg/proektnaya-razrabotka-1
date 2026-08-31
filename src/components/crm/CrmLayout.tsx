@@ -160,14 +160,19 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
         {/* Название компании закреплено сверху: видно, в какой системе работаешь,
             и на телефоне сразу понятно, что выехало именно меню. */}
         <SidebarHeader className="border-b border-sidebar-border px-3 py-3">
-          <Link to="/crm" className="flex items-center gap-2.5">
+          <Link to="/crm" className="flex items-center gap-3">
+            {/* Знак в фирменном файле нарисован тёмно-оливковым, а меню почти
+                чёрное — на нём он просто утонул бы. Подложка не помогает: круг
+                занимает весь кадр целиком, светлого канта из-под него не видно.
+                Поэтому держим рядом вторую, светлую версию знака — она сделана
+                из того же файла и на тёмном меню читается. */}
             <img
-              src="/assets/megatul-round-logo.png"
+              src="/assets/megatul-logo-light.png"
               alt="МЕГАТЮЛЬ"
-              className="h-9 w-9 shrink-0 rounded-full object-contain"
+              className="h-11 w-11 shrink-0 object-contain"
             />
             <span className="min-w-0">
-              <span className="block truncate text-sm font-semibold leading-tight">
+              <span className="block truncate text-base font-semibold leading-tight tracking-wide">
                 МЕГАТЮЛЬ
               </span>
               {/* Должность не повторяем — она в футере рядом с именем сотрудника. */}
