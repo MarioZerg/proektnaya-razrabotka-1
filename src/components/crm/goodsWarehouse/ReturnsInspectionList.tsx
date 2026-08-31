@@ -171,6 +171,23 @@ const ReturnsInspectionList = ({
                     <div className="text-xs text-muted-foreground">
                       {i.orderNumber || '—'} · {i.storageBarcode}
                     </div>
+                    {/* Сколько раз вещь уже возвращали — главное для решения
+                        «осмотреть или сразу на полку». Покупатели не возвращают
+                        исправный товар снова и снова: со второго возврата
+                        подсвечиваем, с третьего — красным. */}
+                    {i.historyLost ? (
+                      <div className="text-xs font-medium text-amber-600">
+                        История потеряна · добавлен вручную
+                      </div>
+                    ) : (i.returnCount || 0) > 1 ? (
+                      <div
+                        className={`text-xs font-medium ${
+                          (i.returnCount || 0) >= 3 ? 'text-destructive' : 'text-amber-600'
+                        }`}
+                      >
+                        Возвращали {i.returnCount} раза — осмотрите
+                      </div>
+                    ) : null}
                     {(i.disposeReason || i.lostReason) && (
                       <div className="text-xs text-destructive">
                         {i.disposeReason || i.lostReason}

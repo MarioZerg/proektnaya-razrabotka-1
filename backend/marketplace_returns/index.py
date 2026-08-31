@@ -477,6 +477,45 @@ def next_storage_barcode(cur):
     return f"GW-{int(cur.fetchone()[0]):06d}"
 
 
+def log_return_history(cur, gw_id, r_id, order_id, actor_id=None, actor_name=None):
+    """Записывает ВОЗВРАТ вещи в её историю.
+
+    Кладовщик при разборе должен видеть, сколько раз вещь уже возвращали: вещь,
+    приехавшая обратно в третий раз, почти наверняка с изъяном — её нужно
+    осмотреть, а не класть на полку и отправлять следующему покупателю.
+
+    Повторное сканирование той же коробки историю не задваивает: на пару
+    «вещь + возврат маркетплейса» стоит уникальный индекс.
+    """
+    cur.execute(
+        "SELECT COALESCE(MAX(return_number), 0) + 1 FROM goods_return_history "
+        "WHERE goods_warehouse_id = %s",
+        (int(gw_id),),
+    )
+    next_number = int(cur.fetchone()[0] or 1)
+
+    cur.execute(
+        "SELECT r.posting_number, r.marketplace, r.return_reason, o.order_number "
+        "FROM marketplace_returns r LEFT JOIN orders o ON o.id = %s "
+        "WHERE r.id = %s",
+        (int(order_id) if order_id else None, int(r_id)),
+    )
+    row = cur.fetchone()
+    posting, mp, reason, order_number = row if row else (None, None, None, None)
+
+    cur.execute(
+        "INSERT INTO goods_return_history (goods_warehouse_id, return_number, "
+        "  order_id, order_number, posting_number, marketplace, return_reason, "
+        "  marketplace_return_id, received_by, received_by_name) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT DO NOTHING",
+        (int(gw_id), next_number, int(order_id) if order_id else None,
+         order_number, posting, mp, reason, int(r_id),
+         int(actor_id) if actor_id else None, actor_name),
+    )
+    return next_number
+
+
 def stock_picked_up_returns(cur, ids=None, limit=None):
     """Заводит забранные с ПВЗ возвраты на склад в «подвешенном» состоянии.
 
@@ -653,6 +692,9 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
             "WHERE id = %s",
             (gw_id, r_id),
         )
+        # Возврат ложится в историю вещи: по ней кладовщик увидит, сколько раз
+        # эта вещь уже ездила к покупателям и возвращалась.
+        log_return_history(cur, gw_id, r_id, order_id)
         created += 1
 
     return created
@@ -1582,6 +1624,17 @@ def handler(event: dict, context) -> dict:
                                 ),
                             )
                             gw_id = cur.fetchone()[0]
+
+                # Возврат ложится в историю вещи. Исход (на полку / перепаковка /
+                # утилизация) дописываем ниже — он уже известен на этом шаге.
+                if gw_id:
+                    log_return_history(cur, gw_id, int(return_id), order_id,
+                                       actor_id, body_data.get('actorName'))
+                    cur.execute(
+                        "UPDATE goods_return_history SET outcome = %s "
+                        "WHERE goods_warehouse_id = %s AND marketplace_return_id = %s",
+                        (outcome, int(gw_id), int(return_id)),
+                    )
 
                 cur.execute(
                     "UPDATE marketplace_returns SET status = 'processed', outcome = %s, "

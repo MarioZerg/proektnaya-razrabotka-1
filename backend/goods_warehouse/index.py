@@ -258,6 +258,52 @@ def pick_shelf_for_item(cur, gw_id):
     return target['id'], target['name'], 'свободное место'
 
 
+def log_return_history(cur, gw_id, order_id, actor_id, actor_name,
+                       mp_return_id=None, return_reason=None, marketplace=None,
+                       posting_number=None):
+    """Записывает ВОЗВРАТ вещи в её историю.
+
+    Кладовщик при разборе должен видеть, сколько раз эту вещь уже возвращали:
+    вещь, приехавшая обратно в третий раз, почти наверняка с изъяном — её нужно
+    осмотреть, а не класть на полку и отправлять следующему покупателю.
+
+    Номер возврата считаем от того, что уже записано по этой вещи. Повторное
+    сканирование той же коробки историю не задваивает: на пару «вещь + возврат
+    маркетплейса» стоит уникальный индекс, и вторая запись просто не создаётся.
+    """
+    cur.execute(
+        "SELECT COALESCE(MAX(return_number), 0) + 1 FROM goods_return_history "
+        "WHERE goods_warehouse_id = %s",
+        (int(gw_id),),
+    )
+    next_number = int(cur.fetchone()[0] or 1)
+
+    order_number = None
+    if order_id:
+        cur.execute(
+            "SELECT order_number, marketplace, ozon_posting_number FROM orders WHERE id = %s",
+            (int(order_id),),
+        )
+        o_row = cur.fetchone()
+        if o_row:
+            order_number = o_row[0]
+            marketplace = marketplace or o_row[1]
+            posting_number = posting_number or o_row[2]
+
+    cur.execute(
+        "INSERT INTO goods_return_history (goods_warehouse_id, return_number, "
+        "  order_id, order_number, posting_number, marketplace, return_reason, "
+        "  marketplace_return_id, received_by, received_by_name) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT DO NOTHING",
+        (int(gw_id), next_number, int(order_id) if order_id else None,
+         order_number, posting_number, marketplace, return_reason,
+         int(mp_return_id) if mp_return_id else None,
+         int(actor_id) if actor_id else None, actor_name),
+    )
+    return next_number
+
+
 def try_match_orders_from_stock(cur, gw_id=None):
     """Ищет заказы, которые можно закрыть вещами со склада, и резервирует их.
 
@@ -831,7 +877,20 @@ def handler(event: dict, context) -> dict:
                         # пакете с ПВЗ. Кладовщик ищет вещь именно по нему: стикера
                         # хранения на возврате ещё нет, а название товара длинное и
                         # набирать его руками дольше, чем пикнуть код.
-                        "       mr.return_barcode, mr.product_name "
+                        "       mr.return_barcode, mr.product_name, "
+                        # СКОЛЬКО РАЗ ЭТУ ВЕЩЬ УЖЕ ВОЗВРАЩАЛИ.
+                        #
+                        # Главное, что кладовщику нужно решить при разборе: осмотреть
+                        # вещь или сразу класть на полку. Вещь, приехавшая обратно
+                        # третий раз, почти наверняка с изъяном — покупатели не
+                        # возвращают исправный товар снова и снова. Раньше этой
+                        # информации не было вовсе: каждый возврат выглядел первым.
+                        "       (SELECT count(*) FROM goods_return_history h "
+                        "         WHERE h.goods_warehouse_id = gw.id), "
+                        # Вещь заведена руками — прошлый путь неизвестен. Это НЕ
+                        # «возвратов ноль», это «мы не знаем»: такую вещь тоже стоит
+                        # осмотреть.
+                        "       gw.history_lost "
                         "FROM goods_warehouse gw "
                         "LEFT JOIN orders o ON o.id = gw.order_id "
                         # Заявка на возврат берётся ОДНА, самая свежая.
@@ -876,6 +935,8 @@ def handler(event: dict, context) -> dict:
                             'takenByName': r[15],
                             'returnBarcode': r[16],
                             'returnProductName': r[17],
+                            'returnCount': int(r[18] or 0),
+                            'historyLost': bool(r[19]),
                         }
                         for r in cur.fetchall()
                     ]
@@ -884,6 +945,52 @@ def handler(event: dict, context) -> dict:
                     'statusCode': 200,
                     'headers': headers,
                     'body': json.dumps({'counts': counts, 'items': items}, ensure_ascii=False),
+                }
+
+            # ИСТОРИЯ ВОЗВРАТОВ ОДНОЙ ВЕЩИ — кладовщик раскрывает её из списка.
+            #
+            # Счётчик отвечает «сколько раз», а здесь видно «когда, из какого
+            # отправления, по какой причине и чем закончилось». По этому кладовщик
+            # и решает: вещь возвращают за размер — можно на полку; возвращают за
+            # брак — надо осматривать.
+            if params.get('return_history'):
+                gw_id = params.get('return_history')
+                cur.execute(
+                    "SELECT h.return_number, h.order_number, h.posting_number, "
+                    "       h.marketplace, h.return_reason, h.outcome, h.returned_at, "
+                    "       COALESCE(h.received_by_name, u.full_name) "
+                    "FROM goods_return_history h "
+                    "LEFT JOIN users u ON u.id = h.received_by "
+                    "WHERE h.goods_warehouse_id = %s "
+                    "ORDER BY h.return_number",
+                    (int(gw_id),),
+                )
+                history = [
+                    {
+                        'returnNumber': r[0],
+                        'orderNumber': r[1],
+                        'postingNumber': r[2],
+                        'marketplace': r[3],
+                        'returnReason': r[4],
+                        'outcome': r[5],
+                        'returnedAt': (r[6].isoformat() + 'Z') if r[6] else None,
+                        'receivedByName': r[7],
+                    }
+                    for r in cur.fetchall()
+                ]
+                cur.execute(
+                    "SELECT history_lost, storage_barcode FROM goods_warehouse WHERE id = %s",
+                    (int(gw_id),),
+                )
+                g_row = cur.fetchone()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'history': history,
+                        'historyLost': bool(g_row[0]) if g_row else False,
+                        'storageBarcode': g_row[1] if g_row else None,
+                    }, ensure_ascii=False),
                 }
 
             if params.get('picking_orders'):
@@ -1366,8 +1473,13 @@ def handler(event: dict, context) -> dict:
 
                     storage_barcode = next_storage_barcode(cur)
                     cur.execute(
-                        "INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, receive_reason) "
-                        "VALUES (%s, %s, %s, %s, 'admin') RETURNING id",
+                        # history_lost — вещь заведена руками, её прошлый путь
+                        # системе неизвестен. Показывать по ней «возвратов: 0»
+                        # нечестно: это не «новая вещь», а «мы не знаем».
+                        # Кладовщик увидит пометку и осмотрит такую вещь.
+                        "INSERT INTO goods_warehouse (order_id, shelf_id, status, storage_barcode, "
+                        "receive_reason, history_lost) "
+                        "VALUES (%s, %s, %s, %s, 'admin', TRUE) RETURNING id",
                         (new_order_id, shelf_val, status_val, storage_barcode),
                     )
                     new_gw_id = cur.fetchone()[0]
@@ -2469,9 +2581,18 @@ def handler(event: dict, context) -> dict:
                         f"reserved_order_id = NULL, shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
                         f"receive_reason = 'return' WHERE id = {gw_id}"
                     )
-                    log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', gw_id, f'Принял возврат заказа #{order_number} повторно')
+                    # Пишем возврат в историю вещи — по ней кладовщик поймёт,
+                    # что вещь ездит к покупателям не первый раз.
+                    times = log_return_history(
+                        cur, gw_id, order_id, actor_id, actor_name,
+                        mp_return_id=body_data.get('marketplaceReturnId'),
+                        return_reason=body_data.get('returnReason'),
+                    )
+                    log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', gw_id, f'Принял возврат заказа #{order_number} повторно (возврат №{times})')
                     conn.commit()
-                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': gw_id, 'storageBarcode': storage_barcode})}
+                    return {'statusCode': 200, 'headers': headers,
+                            'body': json.dumps({'id': gw_id, 'storageBarcode': storage_barcode,
+                                                'returnCount': times})}
 
                 storage_barcode = next_storage_barcode(cur)
                 cur.execute(
@@ -2479,9 +2600,16 @@ def handler(event: dict, context) -> dict:
                     f"VALUES ({order_id}, 'mp_return', '{storage_barcode}', 'return') RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
+                times = log_return_history(
+                    cur, new_id, order_id, actor_id, actor_name,
+                    mp_return_id=body_data.get('marketplaceReturnId'),
+                    return_reason=body_data.get('returnReason'),
+                )
                 log_action(cur, actor_id, actor_name, 'receive_return', 'goods_warehouse', new_id, f'Принял возврат заказа #{order_number} ({storage_barcode})')
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'storageBarcode': storage_barcode})}
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'id': new_id, 'storageBarcode': storage_barcode,
+                                            'returnCount': times})}
 
             if action == 'move_shelf_batch':
                 # Перенос пачкой: кладовщик набрал вещи в буфер у стеллажа и переносит их

@@ -27,6 +27,7 @@ import {
 import GoodsCardActions from '@/components/crm/goodsCard/GoodsCardActions';
 import GoodsCardDetails from '@/components/crm/goodsCard/GoodsCardDetails';
 import GoodsCardHistory from '@/components/crm/goodsCard/GoodsCardHistory';
+import GoodsReturnHistory from '@/components/crm/goodsCard/GoodsReturnHistory';
 
 /**
  * Карточка вещи со склада.
@@ -286,6 +287,10 @@ const GoodsCard = () => {
             load();
           }}
         />
+
+        {/* Сколько раз вещь возвращали — по этому кладовщик решает,
+            осматривать её или можно сразу на полку. */}
+        <GoodsReturnHistory goodsId={Number(id)} />
 
         <GoodsCardHistory history={card.history} />
       </div>

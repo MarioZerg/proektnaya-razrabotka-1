@@ -434,7 +434,43 @@ export interface InspectionItem {
   returnBarcode?: string | null;
   /** Название товара так, как его прислал маркетплейс в возврате. */
   returnProductName?: string | null;
+  /** Сколько раз эту вещь уже возвращали с маркетплейса. */
+  returnCount?: number;
+  /** Вещь заведена вручную — прошлая история возвратов неизвестна. */
+  historyLost?: boolean;
 }
+
+/** Один возврат в истории вещи. */
+export interface ReturnHistoryEntry {
+  returnNumber: number;
+  orderNumber: string | null;
+  postingNumber: string | null;
+  marketplace: string | null;
+  returnReason: string | null;
+  outcome: string | null;
+  returnedAt: string | null;
+  receivedByName: string | null;
+}
+
+/**
+ * История возвратов одной вещи.
+ *
+ * Счётчик отвечает «сколько раз», а здесь видно «когда, из какого отправления,
+ * по какой причине и чем закончилось». По этому кладовщик и решает: вещь
+ * возвращают за размер — можно на полку; возвращают за брак — надо осматривать.
+ */
+export const fetchReturnHistory = async (
+  goodsId: number,
+): Promise<{
+  history: ReturnHistoryEntry[];
+  historyLost: boolean;
+  storageBarcode: string | null;
+}> => {
+  const res = await fetch(`${GOODS_WAREHOUSE_URL}?return_history=${goodsId}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить историю');
+  return data;
+};
 
 /** Счётчики виджетов и список выбранного этапа осмотра. */
 export const fetchInspection = async (
