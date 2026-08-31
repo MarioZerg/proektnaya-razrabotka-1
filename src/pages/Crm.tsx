@@ -25,6 +25,7 @@ import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
 import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
+import StaffEfficiencyCard from '@/components/crm/dashboard/StaffEfficiencyCard';
 import FboShipmentsCard from '@/components/crm/dashboard/FboShipmentsCard';
 import { type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import { isStorekeeperRole } from '@/lib/roles';
@@ -369,6 +370,10 @@ const CrmDashboard = () => {
       {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
 
       {canSeeWorkingToday && <WorkingTodayCard />}
+
+      {/* Эффективность цеха: кто сколько сделал, с каким темпом и с каким браком.
+          Только администратору — это оценка людей, а не рабочий инструмент смены. */}
+      {isAdmin && <StaffEfficiencyCard />}
 
       {/* Недостача в закрытых рулонах: администратор решает, удерживать ли деньги
           с сотрудников или списать на поставщика. Карточка сама скрывается, когда

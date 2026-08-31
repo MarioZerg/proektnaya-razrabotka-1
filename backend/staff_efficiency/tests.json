@@ -1,0 +1,1 @@
+{"tests": [{"name": "Эффективность сотрудников за 30 дней", "method": "GET", "path": "/?days=30", "expectedStatus": 200, "expectedBody": {"days": 30}, "bodyMatcher": "partial"}]}
