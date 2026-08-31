@@ -225,7 +225,11 @@ const CrmDashboard = () => {
       // Швее и закройщику подписываем «У меня», чтобы цифра не читалась как объём
       // всего цеха: у них в этих виджетах теперь только собственные заказы.
       { label: isSewer ? 'У меня в пошиве' : 'Товары в пошиве', value: summary.inSewing, icon: 'Shirt', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: isSewer ? 'Вещи, которые вы шьёте прямо сейчас' : 'Вещи в работе у швей' },
-      { label: isCutter ? 'У меня в закрое' : 'Товары в закрое', value: summary.inCutting, icon: 'Scissors', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: isCutter ? 'Ткань, которую вы кроите прямо сейчас' : 'Ткань в работе у закройщиков' },
+      // Швее раскрой не показываем совсем: она его не делает и повлиять на него
+      // не может — цифра только отвлекает от собственной работы.
+      ...(isSewer
+        ? []
+        : [{ label: isCutter ? 'У меня в закрое' : 'Товары в закрое', value: summary.inCutting, icon: 'Scissors', tone: 'default' as const, path: '/crm/marketplace/sewing-items', stage: 'production' as const, hint: isCutter ? 'Ткань, которую вы кроите прямо сейчас' : 'Ткань в работе у закройщиков' }]),
       // ?type=FBS — страница откроется сразу с фильтром по FBS, иначе показывала все заказы
       // Срочные FBS — это работа цеха, а не отдельная тревога: их шьют в общем
       // потоке, просто в первую очередь. Поэтому плитка стоит в производстве,
@@ -234,7 +238,11 @@ const CrmDashboard = () => {
       { label: 'Не отгруженные поставки в цех', value: summary.notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Материал собран, но со склада ещё не уехал' },
       { label: 'Не принятые поставки в цехе', value: summary.notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Привезли в цех, но приёмку никто не подтвердил' },
       { label: isSewer || isCutter ? 'Мои на стикеровке' : 'Товары на стикеровке', value: summary.inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Сшито и ждёт наклейки стикера маркетплейса' },
-      { label: 'Раскроено', value: summary.cut, icon: 'CheckCircle2', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Крой готов и передан швеям' },
+      // «Раскроено» — тоже не для швеи: это итог работы закройщиков, а очередь,
+      // из которой швея берёт вещи, у неё в «Новых заданиях».
+      ...(isSewer
+        ? []
+        : [{ label: 'Раскроено', value: summary.cut, icon: 'CheckCircle2', tone: 'default' as const, path: '/crm/marketplace/sewing-items', stage: 'production' as const, hint: 'Крой готов и передан швеям' }]),
     ];
 
     if (canSeeWarehouseWidgets) {
@@ -320,15 +328,18 @@ const CrmDashboard = () => {
       // Закройщику показываем только то, что относится к его работе: что предстоит
       // раскроить, что уже в закрое и раскроено, срочные заказы и поставки материала
       // в цех. Остальные виджеты (пошив, стикеровка) — не его зона ответственности.
+      // Сравниваем по СУТИ, а не по точному названию: у закройщика плитка
+      // подписана «У меня в закрое», и список точных названий её отсеивал —
+      // человек не видел собственных заказов, взятых в работу.
       const cutterWidgets = [
-        'Новые задания на пошив',
-        'Товары в закрое',
-        'Срочные заказы (FBS)',
+        'Новые задания',
+        'в закрое',
+        'Срочные заказы',
         'Не отгруженные поставки в цех',
         'Не принятые поставки в цехе',
         'Раскроено',
       ];
-      return list.filter((w) => cutterWidgets.includes(w.label));
+      return list.filter((w) => cutterWidgets.some((part) => w.label.includes(part)));
     }
 
     return list;
