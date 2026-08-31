@@ -4,15 +4,7 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
+  SidebarHeader,
   SidebarProvider,
   SidebarTrigger,
 } from '@/components/ui/sidebar';
@@ -37,6 +29,7 @@ import ContractGate from '@/components/crm/contracts/ContractGate';
 import DocsGate from '@/components/crm/personal/DocsGate';
 import DocsCountdownBanner from '@/components/crm/personal/DocsCountdownBanner';
 import CloseSidebarOnNavigate from '@/components/crm/CloseSidebarOnNavigate';
+import SidebarNav from '@/components/crm/SidebarNav';
 import { fetchStartupInfo, resetStartupInfoCache } from '@/lib/authApi';
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
@@ -56,7 +49,6 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
 
   const navigate = useNavigate();
   const location = useLocation();
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [testAccounts, setTestAccounts] = useState<TestAccount[]>([]);
   const [qrOpen, setQrOpen] = useState(false);
   const [kioskPreviewOpen, setKioskPreviewOpen] = useState(false);
@@ -138,11 +130,6 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   const nav = navByRole[user.role] || [{ label: 'Главная', icon: 'LayoutDashboard', path: '/crm' }];
   const otherRoles = user.availableRoles.filter((r) => r !== user.role);
 
-  // Аккордеон: раскрытие одной группы сворачивает остальные, чтобы меню не разворачивалось
-  // всё сразу.
-  const toggleGroup = (label: string) =>
-    setOpenGroups((prev) => (prev[label] ? {} : { [label]: true }));
-
   const handleLogout = () => {
     logout();
     navigate('/');
@@ -170,82 +157,28 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
       {/* На телефоне меню выезжает поверх страницы — после выбора раздела закрываем его. */}
       <CloseSidebarOnNavigate />
       <Sidebar>
+        {/* Название компании закреплено сверху: видно, в какой системе работаешь,
+            и на телефоне сразу понятно, что выехало именно меню. */}
+        <SidebarHeader className="border-b border-sidebar-border px-3 py-3">
+          <Link to="/crm" className="flex items-center gap-2.5">
+            <img
+              src="/assets/megatul-round-logo.png"
+              alt="МЕГАТЮЛЬ"
+              className="h-9 w-9 shrink-0 rounded-full object-contain"
+            />
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold leading-tight">
+                МЕГАТЮЛЬ
+              </span>
+              {/* Должность не повторяем — она в футере рядом с именем сотрудника. */}
+              <span className="block truncate text-xs text-sidebar-foreground/60">
+                Управление производством
+              </span>
+            </span>
+          </Link>
+        </SidebarHeader>
         <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Навигация</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {nav.map((item) => {
-                  if (!item.children) {
-                    return (
-                      <SidebarMenuItem key={item.label}>
-                        <SidebarMenuButton
-                          asChild
-                          isActive={location.pathname === item.path}
-                        >
-                          <Link to={item.path!}>
-                            <Icon name={item.icon} size={16} />
-                            <span>{item.label}</span>
-                          </Link>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    );
-                  }
-
-                  const isOpen = openGroups[item.label] ?? false;
-                  return (
-                    <SidebarMenuItem key={item.label}>
-                      {/* Выделенный раздел («Инструкции») стоит последним, и без подсветки
-                          его не замечают. Красим текст и значок, чтобы бросался в глаза. */}
-                      <SidebarMenuButton
-                        onClick={() => toggleGroup(item.label)}
-                        className={
-                          item.highlight
-                            ? 'font-semibold text-amber-700 hover:text-amber-800'
-                            : undefined
-                        }
-                      >
-                        <Icon
-                          name={item.icon}
-                          size={16}
-                          className={item.highlight ? 'text-amber-600' : undefined}
-                        />
-                        <span>{item.label}</span>
-                        <Icon
-                          name="ChevronRight"
-                          size={14}
-                          className={`ml-auto transition-transform ${isOpen ? 'rotate-90' : ''}`}
-                        />
-                      </SidebarMenuButton>
-                      {isOpen && (
-                        <SidebarMenuSub>
-                          {item.children.map((child) => (
-                            <SidebarMenuSubItem key={child.path}>
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={location.pathname === child.path}
-                              >
-                                <Link to={child.path}>
-                                  <span>{child.label}</span>
-                                  {/* Новая работа по подбору: вещь уже подобрана под заказ
-                                      и ждёт, чтобы кладовщик наклеил стикер отправления. */}
-                                  {child.path === '/crm/inventory/goods-picking' && pickingPending > 0 && (
-                                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
-                                      {pickingPending}
-                                    </span>
-                                  )}
-                                </Link>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
-                        </SidebarMenuSub>
-                      )}
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          <SidebarNav nav={nav} pickingPending={pickingPending} />
         </SidebarContent>
         <SidebarFooter className="border-t border-sidebar-border p-3">
           {/* Админу — быстрый вход в терминал цеха, чтобы проверить, что видит каждая
