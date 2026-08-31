@@ -334,24 +334,46 @@ def handler(event: dict, context) -> dict:
         who = cur.fetchone()
         who_name = who[0] if who else 'Владелец'
 
-        for r in pushed:
-            cur.execute(
-                "UPDATE marketplace_prices SET price = %s, "
-                "  price_before_discount = coalesce(%s, price_before_discount), "
-                "  source = 'api', updated_at = now() "
-                "WHERE marketplace_item_id = %s AND marketplace_code = %s",
-                (r['newPrice'], r.get('newOldPrice'), r['itemId'],
-                 marketplace),
+        # ЗАПИСЫВАЕМ ВСЮ ПАЧКУ ДВУМЯ ЗАПРОСАМИ, А НЕ ПО ОДНОМУ НА КАРТОЧКУ.
+        #
+        # Раньше на каждый товар уходило два обращения к базе: на шестидесяти
+        # карточках — сто двадцать запросов, и всё это внутри пяти секунд,
+        # отведённых функции, уже ПОСЛЕ похода на площадку. Функция не
+        # укладывалась и обрывалась: цены на витрине менялись, а у нас не
+        # сохранялись — счётчик замирал, и продвижение вставало после второго
+        # круга. Один запрос на всю пачку снимает эту нагрузку целиком.
+        if pushed:
+            values = ','.join(
+                cur.mogrify('(%s,%s,%s)',
+                            (int(r['itemId']), r['newPrice'],
+                             r.get('newOldPrice'))).decode()
+                for r in pushed
             )
+            cur.execute(
+                f"UPDATE marketplace_prices mp SET price = v.new_price, "
+                f"  price_before_discount = coalesce(v.new_old, "
+                f"                                   mp.price_before_discount), "
+                f"  source = 'api', updated_at = now() "
+                f"FROM (VALUES {values}) AS v(item_id, new_price, new_old) "
+                f"WHERE mp.marketplace_item_id = v.item_id "
+                f"  AND mp.marketplace_code = %s",
+                (marketplace,),
+            )
+
             # Записываем как уже применённое: пауза до следующего шага по
             # этому товару начинает идти с этого момента.
+            rec_values = ','.join(
+                cur.mogrify(
+                    "(%s,%s,'push',%s,%s,%s,'applied',now(),%s)",
+                    (marketplace, int(r['itemId']), r['oldMyPrice'],
+                     r['newPrice'], 'Цена отправлена на площадку из системы',
+                     int(actor_id))).decode()
+                for r in pushed
+            )
             cur.execute(
                 "INSERT INTO price_recommendations (marketplace_code, "
                 "  marketplace_item_id, action, current_price, suggested_price, "
-                "  reason, status, decided_at, decided_by) "
-                "VALUES (%s, %s, 'push', %s, %s, %s, 'applied', now(), %s)",
-                (marketplace, r['itemId'], r['oldMyPrice'], r['newPrice'],
-                 'Цена отправлена на площадку из системы', int(actor_id)),
+                f"  reason, status, decided_at, decided_by) VALUES {rec_values}"
             )
 
         if pushed:

@@ -368,8 +368,11 @@ def _push(mp, items, actor_id):
     body = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(PRICE_PUSH_URL, method='POST', data=body)
     req.add_header('Content-Type', 'application/json')
+    # Ждать долго нечего: наш собственный вызов оборвётся раньше. Лучше
+    # быстро вернуть ошибку и дослать пачку следующим кругом, чем висеть
+    # до последнего и потерять весь прогресс вместе с ним.
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=8) as r:
             return json.loads(r.read().decode() or '{}')
     except urllib.error.HTTPError as e:
         return {'error': e.read().decode('utf-8', errors='replace')[:300]}
@@ -415,10 +418,17 @@ def _decide(cur, st, mp='ozon'):
 
 # Сколько карточек отправляем за один вызов.
 #
-# Функции отведено 5 секунд, и в них должен уложиться поход на площадку.
-# Пачка в 200 карточек не укладывалась: Ozon отвечал 5-9 секунд, вызов
-# обрывался, и магазин оставался в разнобое. Пачка в 60 проходит с запасом.
-BATCH_SIZE = 60
+# Здесь работает ЦЕПОЧКА ИЗ ДВУХ функций: робот вызывает функцию отправки, и
+# обе живут по 5 секунд. То есть уложиться надо не в 5 секунд, а в остаток
+# после похода на площадку и записи результатов — окно куда уже, чем кажется.
+#
+# Пачка в 60 карточек в него не влезала: вызов обрывался на середине, цены на
+# витрине менялись, а у нас не сохранялись. Счётчик замирал на 120, и весь
+# ассортимент так и не проходил — «обрыв после второго обхода».
+#
+# 25 — размер, который проходит с запасом даже когда Ozon отвечает медленно.
+# Кругов больше, но каждый доходит до конца, а досыл идёт сам.
+BATCH_SIZE = 25
 
 
 def _start_step(cur, mp, step, decision, reason, actor_id):
@@ -590,6 +600,18 @@ def _manual_move(cur, mp, step, actor_id, note=''):
     # кнопку и ждёт результата, а не сообщения «подождите».
     if _pending_left(cur, mp):
         pushed, failed, left, err = _continue_step(cur, mp, actor_id)
+        # ОСЕЧКА НА ПАЧКЕ — НЕ КОНЕЦ ПРОГОНА.
+        #
+        # Ozon ограничивает частоту обращений и периодически отвечает отказом.
+        # Раньше такой ответ возвращался как ошибка, продвижение падало и
+        # вставало на середине ассортимента. Но очередь-то никуда не делась:
+        # если карточки ещё остались, honest-ответ — «идём дальше», и
+        # следующий круг просто повторит попытку.
+        if err and left:
+            return {'ok': True, 'inProgress': True, 'pushed': pushed,
+                    'left': left,
+                    'reason': f'Площадка притормозила, пробуем дальше: '
+                              f'отправлено {pushed}, осталось {left}'}
         if err:
             return {'error': err}
         if left:
@@ -616,6 +638,13 @@ def _manual_move(cur, mp, step, actor_id, note=''):
         # Отправка идёт пачками: весь магазин за один вызов не успевает.
         pushed, failed, left, err = _start_step(
             cur, mp, step, 'manual', reason, actor_id)
+        # Первая пачка не прошла, но очередь заведена — продолжаем кругами,
+        # а не роняем весь прогон из-за одной осечки площадки.
+        if err and left:
+            return {'ok': True, 'inProgress': True, 'step': step,
+                    'pushed': pushed, 'left': left,
+                    'reason': f'{reason}. Площадка притормозила, '
+                              f'осталось {left} — продолжаем'}
         if err:
             return {'error': err}
         if left:
