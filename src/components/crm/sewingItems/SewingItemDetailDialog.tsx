@@ -20,6 +20,7 @@ import SewingItemActionsSection from '@/components/crm/sewingItems/SewingItemAct
 import SewingItemInfoCards from '@/components/crm/sewingItems/SewingItemInfoCards';
 import SewingItemTimeline from '@/components/crm/sewingItems/SewingItemTimeline';
 import SewingItemCancelConfirm from '@/components/crm/sewingItems/SewingItemCancelConfirm';
+import OverlockActionsCard from '@/components/crm/sewingItems/OverlockActionsCard';
 
 interface SewingItemDetailDialogProps {
   dialogOpen: boolean;
@@ -85,6 +86,11 @@ const SewingItemDetailDialog = ({
   // Менеджер смотрит заказы только как справку и стикерами не занимается.
   const isManager = user?.role === 'manager';
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+
+  // Работать на оверлоке может швея с допуском (галочка в карточке сотрудника)
+  // и администратор. Допуск приходит вместе со списком сотрудников.
+  const canOverlockThis =
+    user?.role === 'admin' || employees.some((e) => e.id === user?.id && e.canOverlock);
 
   const canCancel =
     !!onCancelOrder &&
@@ -170,6 +176,26 @@ const SewingItemDetailDialog = ({
             {/* Раскрой/стикеровку выполняют закройщик и швея. Общий блок «Действия» со сменой
                 статуса и назначением сотрудника/цеха доступен только админу — остальные роли
                 (кладовщик, менеджер) двигать заказ по статусам не могут. */}
+            {/* ЭТАП ОВЕРЛОКА.
+                Вещь ждёт обмётки края — до неё прямострочка не начинается. Карточка
+                видна только тому, кто может эту работу выполнить: швее с допуском и
+                администратору. Остальным блок бесполезен — кнопки всё равно
+                отклонит сервер. */}
+            {!readOnly &&
+              canOverlockThis &&
+              selectedOrder.requiresOverlock &&
+              !selectedOrder.overlockedAt &&
+              selectedOrder.sewingStatus === 'Раскроено' && (
+                <OverlockActionsCard
+                  order={selectedOrder}
+                  actorId={user?.id}
+                  onDone={() => {
+                    setDialogOpen(false);
+                    onOrderUpdated?.();
+                  }}
+                />
+              )}
+
             {!readOnly && (isCutterView || isSewerView || isAdminView) && (
               <SewingItemActionsSection
                 selectedOrder={selectedOrder}

@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Select,
@@ -75,6 +76,11 @@ const EmployeeCardDialog = ({
   const { toast } = useToast();
 
   const employeeRoles = cardEmployee?.roles || [];
+  // Шьёт ли человек вообще: должность в карточке или утверждённая вторая должность.
+  // От этого зависит, показывать ли допуск к оверлоку.
+  const canSew =
+    cardForm?.role === 'sewer' ||
+    employeeRoles.some((r) => r.role === 'sewer' && r.isApproved);
   const addableRoles = roleOptions.filter((r) => !employeeRoles.some((er) => er.role === r));
 
   return (
@@ -196,6 +202,31 @@ const EmployeeCardDialog = ({
                 </Select>
               </div>
             </div>
+
+            {/* ДОПУСК К ОВЕРЛОКУ.
+                Часть тканей сначала обмётывают, и делать это умеет не каждая швея.
+                Отдельную должность не заводим: человек работает и на оверлоке, и на
+                прямострочке, переключать роль в середине смены неудобно. Галочка
+                показывается только тем, кто вообще шьёт, — упаковщице или кладовщику
+                она не нужна и только мешала бы в карточке. */}
+            {canSew && (
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-md border p-3">
+                <Checkbox
+                  checked={cardForm.canOverlock}
+                  onCheckedChange={(v) =>
+                    setCardForm((f) => f && { ...f, canOverlock: v === true })
+                  }
+                  className="mt-0.5"
+                />
+                <span className="text-sm">
+                  <span className="font-medium">Допуск к работе на оверлоке</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    Видит на конвейере вкладку «Оверлок» и берёт оттуда заказы на
+                    обмётку края
+                  </span>
+                </span>
+              </label>
+            )}
 
             {/* Выбор графика сам проставляет часы: 2/2 — цеховая смена 12 часов,
                 5/2 — обычная пятидневка. Часы ниже можно поправить вручную. */}

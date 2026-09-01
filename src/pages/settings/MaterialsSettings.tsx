@@ -36,6 +36,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Tooltip,
   TooltipContent,
@@ -63,6 +64,7 @@ interface MaterialFormState {
   name: string;
   unit: string;
   status: 'active' | 'archive';
+  requiresOverlock: boolean;
 }
 
 const emptyForm: MaterialFormState = {
@@ -71,6 +73,7 @@ const emptyForm: MaterialFormState = {
   name: '',
   unit: 'шт',
   status: 'active',
+  requiresOverlock: false,
 };
 
 const MaterialsSettings = () => {
@@ -123,6 +126,7 @@ const MaterialsSettings = () => {
       name: m.name,
       unit: m.unit,
       status: m.status,
+      requiresOverlock: !!m.requiresOverlock,
     });
     setDialogOpen(true);
   };
@@ -153,10 +157,17 @@ const MaterialsSettings = () => {
           name: form.name.trim(),
           unit: form.unit.trim() || 'шт',
           status: form.status,
+          requiresOverlock: form.requiresOverlock,
           typeId,
         });
       } else {
-        await createMaterial(typeId, form.name.trim(), form.unit.trim() || 'шт', form.status);
+        await createMaterial(
+          typeId,
+          form.name.trim(),
+          form.unit.trim() || 'шт',
+          form.status,
+          form.requiresOverlock
+        );
       }
 
       setDialogOpen(false);
@@ -288,6 +299,26 @@ const MaterialsSettings = () => {
                   </Select>
                 </div>
 
+                {/* Ткань с осыпающимся краем. Заказы из неё идут в цехе длиннее:
+                    сначала оверлок, потом прямострочка. Признак ставится здесь
+                    один раз — дальше система сама метит все новые заказы. */}
+                <label className="flex cursor-pointer items-start gap-2.5 rounded-md border p-3">
+                  <Checkbox
+                    checked={form.requiresOverlock}
+                    onCheckedChange={(v) =>
+                      setForm((f) => ({ ...f, requiresOverlock: v === true }))
+                    }
+                    className="mt-0.5"
+                  />
+                  <span className="text-sm">
+                    <span className="font-medium">Требует обработки на оверлоке</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      Край осыпается: заказ сначала обмётывают на оверлоке и только потом
+                      отдают швее на прямострочку
+                    </span>
+                  </span>
+                </label>
+
                 <Button onClick={handleSave} disabled={saving} className="w-full">
                   {saving ? (
                     <Icon name="Loader2" size={16} className="animate-spin" />
@@ -359,7 +390,20 @@ const MaterialsSettings = () => {
                   <TableRow key={m.id}>
                     <TableCell>{m.id}</TableCell>
                     <TableCell>{typeById.get(m.typeId) || '—'}</TableCell>
-                    <TableCell className="font-medium">{m.name}</TableCell>
+                    <TableCell className="font-medium">
+                      {m.name}
+                      {/* Метка прямо в списке: админу видно, какие ткани идут через
+                          оверлок, без открытия карточки каждой. */}
+                      {m.requiresOverlock && (
+                        <Badge
+                          variant="outline"
+                          className="ml-2 gap-1 border-fuchsia-300 bg-fuchsia-50 font-normal text-fuchsia-700"
+                        >
+                          <Icon name="Scissors" size={11} />
+                          Оверлок
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell>{m.unit}</TableCell>
                     {/* Средняя цена по рулонам на складе — справочно, вручную не задаётся. */}
                     <TableCell>

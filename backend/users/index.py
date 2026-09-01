@@ -235,7 +235,11 @@ def handler(event: dict, context) -> dict:
                 # сотрудники и архив приезжают ОДНИМ списком — фронт разводит их
                 # по вкладкам, второй запрос ради этого не нужен.
                 "archived_at, archive_reason, "
-                "(SELECT full_name FROM users a WHERE a.id = users.archived_by) "
+                "(SELECT full_name FROM users a WHERE a.id = users.archived_by), "
+                # Допуск к оверлоку: швея умеет обмётывать край и разбирает эту
+                # очередь. Отдельной должности не заводим — человек работает и на
+                # оверлоке, и на прямострочке, не переключая роль в середине смены.
+                "can_overlock "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -291,6 +295,9 @@ def handler(event: dict, context) -> dict:
                     'archivedAt': (r[30].isoformat() + 'Z') if r[30] else None,
                     'archiveReason': r[31],
                     'archivedByName': r[32],
+                    # Швея допущена к работе на оверлоке: видит вкладку «Оверлок»
+                    # на конвейере и может брать оттуда заказы.
+                    'canOverlock': bool(r[33]),
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows
@@ -531,6 +538,10 @@ def handler(event: dict, context) -> dict:
                         fields.append("work_schedule = NULL")
                 # Часы работы — главное поле: от него считается, во сколько сотрудник
                 # сможет закрыть смену (приход + эти часы).
+                if 'canOverlock' in body_data:
+                    fields.append(
+                        f"can_overlock = {'true' if body_data['canOverlock'] else 'false'}"
+                    )
                 if 'workHours' in body_data:
                     wh = body_data['workHours']
                     if wh in (None, ''):

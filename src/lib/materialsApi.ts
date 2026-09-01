@@ -24,6 +24,11 @@ export interface Material {
   warehouseQuantity: number;
   /** Количество рулонов на складе (status='in_storage'). */
   warehouseRolls: number;
+  /**
+   * Ткань с осыпающимся краем: заказ из неё сначала обмётывают на оверлоке и
+   * только потом отдают швее на прямострочку.
+   */
+  requiresOverlock?: boolean;
 }
 
 export interface MaterialsData {
@@ -90,19 +95,33 @@ export const createMaterial = async (
   typeId: number,
   name: string,
   unit: string,
-  status: string
+  status: string,
+  requiresOverlock = false
 ) => {
   const res = await fetch(MATERIALS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'create_material', typeId, name, unit, status }),
+    body: JSON.stringify({
+      action: 'create_material',
+      typeId,
+      name,
+      unit,
+      status,
+      requiresOverlock,
+    }),
   });
   return res.json();
 };
 
 export const updateMaterial = async (
   id: number,
-  fields: Partial<{ name: string; unit: string; status: string; typeId: number }>
+  fields: Partial<{
+    name: string;
+    unit: string;
+    status: string;
+    typeId: number;
+    requiresOverlock: boolean;
+  }>
 ) => {
   const res = await fetch(MATERIALS_URL, {
     method: 'POST',

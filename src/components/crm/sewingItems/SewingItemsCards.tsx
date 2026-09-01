@@ -117,6 +117,20 @@ const SewingItemsCards = ({
                         Заказ {o.groupPosition} из {o.groupSize}
                       </Badge>
                     )}
+                    {/* ЭТАП ОВЕРЛОКА. Закройщик по этой метке понимает, что вещь
+                        пойдёт не сразу швеям, а сначала на обмётку края; швея
+                        видит, что вещь уже обмётана и её можно шить. */}
+                    {o.requiresOverlock && (
+                      <Badge
+                        className={
+                          o.overlockedAt
+                            ? 'bg-emerald-600 px-1.5 py-0 text-[10px] text-white hover:bg-emerald-600'
+                            : 'bg-fuchsia-600 px-1.5 py-0 text-[10px] text-white hover:bg-fuchsia-600'
+                        }
+                      >
+                        {o.overlockedAt ? 'Обработан на оверлоке' : 'Оверлок'}
+                      </Badge>
+                    )}
                     {/* Заказ юридического лица (B2B с OZON): такие заказы шьются так же,
                         но цех должен видеть, что покупатель — компания. */}
                     {o.isLegalEntity && (

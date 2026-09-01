@@ -157,6 +157,7 @@ const UsersSettings = () => {
       newPassword: '',
       avatarBase64: '',
       maxUserId: emp.maxUserId || '',
+      canOverlock: !!emp.canOverlock,
     });
   };
 
@@ -177,6 +178,7 @@ const UsersSettings = () => {
         shiftTo: cardForm.shiftTo || null,
         workSchedule: cardForm.workSchedule || '',
         lateToleranceMinutes: Number(cardForm.lateToleranceMinutes) || 0,
+        canOverlock: cardForm.canOverlock,
         workHours: cardForm.workHours.trim() ? Number(cardForm.workHours) : null,
         maxUserId: cardForm.maxUserId.trim() || null,
         ...(cardForm.newPassword.trim() ? { password: cardForm.newPassword.trim() } : {}),

@@ -547,9 +547,10 @@ def handler(event: dict, context) -> dict:
                     "o.marketplace_item_id, COALESCE(o.product_ozon_sku, mi.ozon_sku), "
                     "u.last_hanger_number, "
                     "o.group_key, o.group_size, o.group_position, "
-                    # Название вешалки. Запятой после подзапроса быть не должно —
-                    # это последнее поле перед FROM.
-                    "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number) "
+                    "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number), "
+                    # Этап оверлока. Запятой после последнего поля быть не должно —
+                    # дальше идёт FROM.
+                    "o.requires_overlock, o.overlocked_at "
                     "FROM orders o "
                     "LEFT JOIN users u ON u.id = o.assigned_user_id "
                     "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -639,7 +640,10 @@ def handler(event: dict, context) -> dict:
                     'hangerNumber': row[21],
                     # Название вешалки («Синяя у окна»). Пустое — в интерфейсе
                     # покажется номер, как было раньше.
-                    'hangerName': row[-1],
+                    'hangerName': row[-3],
+                    # Этап оверлока: нужна ли обмётка и прошла ли вещь этот этап.
+                    'requiresOverlock': bool(row[-2]),
+                    'overlockedAt': (row[-1].isoformat() + 'Z') if row[-1] else None,
                     'sewerUserId': row[22],
                     'sewerUserName': row[23],
                     'packerUserId': row[24],
@@ -726,7 +730,12 @@ def handler(event: dict, context) -> dict:
                 "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number), "
                 # Магазин заказа: цех общий, но швея должна видеть, чью вещь
                 # шьёт — у МЕГАТЮЛЬ и ДЮНА разные упаковка и вложения.
-                "shp.name, shp.color "
+                "shp.name, shp.color, "
+                # ЭТАП ОВЕРЛОКА. requires_overlock проставляется на раскрое по
+                # признаку ткани; overlocked_at заполняется, когда край обметали.
+                # По паре этих полей конвейер понимает, где вещь в маршруте:
+                # ждёт оверлок, уже обработана или этап ей вообще не нужен.
+                "o.requires_overlock, o.overlocked_at, o.overlock_user_id, ou.full_name "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -735,6 +744,7 @@ def handler(event: dict, context) -> dict:
                 "LEFT JOIN users pu ON pu.id = o.packer_user_id "
                 "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
                 "LEFT JOIN shops shp ON shp.id = o.shop_id "
+                "LEFT JOIN users ou ON ou.id = o.overlock_user_id "
                 # Берём все активные заказы и только свежую часть истории (см. CTE выше).
                 "WHERE o.sewing_status NOT IN ('Готовые', 'Со склада') "
                 "   OR o.id IN (SELECT id FROM recent_closed) "
@@ -799,11 +809,17 @@ def handler(event: dict, context) -> dict:
                     'cutterUserId': r[19],
                     'cutterUserName': r[20],
                     'hangerNumber': r[21],
-                    # Три последних поля: вешалка, магазин и его цвет. Отсчёт с
-                    # конца, потому что колонок много и номера легко сбить.
-                    'hangerName': r[-3],
-                    'shopName': r[-2],
-                    'shopColor': r[-1],
+                    # Хвост списка колонок: вешалка, магазин с цветом и этап
+                    # оверлока. Отсчёт с конца, потому что колонок много и
+                    # номера легко сбить.
+                    'hangerName': r[-7],
+                    'shopName': r[-6],
+                    'shopColor': r[-5],
+                    # Этап оверлока: нужен ли он вещи и прошла ли она его.
+                    'requiresOverlock': bool(r[-4]) or None,
+                    'overlockedAt': (r[-3].isoformat() + 'Z') if r[-3] else None,
+                    'overlockUserId': r[-2],
+                    'overlockUserName': r[-1],
                     'sewerUserId': r[22],
                     'sewerUserName': r[23],
                     'packerUserId': r[24],
@@ -1213,11 +1229,18 @@ def handler(event: dict, context) -> dict:
 
                 # Полные данные взятых заказов — фронтенду нужны для немедленной печати
                 # "листа закройщика" (чек-лист + QR-лист) сразу после взятия стека.
+                # Признак оверлока берём У ТКАНИ, а не у заказа: сам заказ его получит
+                # только в момент раскроя, а лист печатается ДО него. Закройщику метка
+                # нужна именно сейчас — по ней он вешает крой в очередь обмётки, а не
+                # в общую.
                 cur.execute(
-                    f"SELECT id, order_number, order_type, marketplace, material, width, height, "
-                    f"group_key, group_size, group_position "
-                    f"FROM orders WHERE id IN ({ids_csv}) "
-                    f"ORDER BY material, group_key NULLS FIRST, group_position NULLS LAST, id"
+                    f"SELECT o.id, o.order_number, o.order_type, o.marketplace, o.material, "
+                    f"o.width, o.height, o.group_key, o.group_size, o.group_position, "
+                    f"COALESCE((SELECT m.requires_overlock FROM materials m "
+                    f"          WHERE m.name = o.material LIMIT 1), false) "
+                    f"FROM orders o WHERE o.id IN ({ids_csv}) "
+                    f"ORDER BY o.material, o.group_key NULLS FIRST, "
+                    f"         o.group_position NULLS LAST, o.id"
                 )
                 taken_orders = [
                     {
@@ -1233,6 +1256,8 @@ def handler(event: dict, context) -> dict:
                         'groupKey': r[7],
                         'groupSize': r[8],
                         'groupPosition': r[9],
+                        # Ткань с осыпающимся краем — на листе печатается «ОВЕРЛОК».
+                        'requiresOverlock': bool(r[10]),
                     }
                     for r in cur.fetchall()
                 ]
@@ -1554,14 +1579,15 @@ def handler(event: dict, context) -> dict:
                 # Повторное начисление невозможно: ON CONFLICT по (order_id, type).
                 if 'sewingStatus' in body_data and body_data['sewingStatus'] == 'Готовые':
                     cur.execute(
-                        "SELECT assigned_user_id, width, workshop_id, order_number, sewing_status "
-                        "FROM orders WHERE id = %s",
+                        "SELECT assigned_user_id, width, workshop_id, order_number, sewing_status, "
+                        # Вещь после оверлока оплачивается по другой ставке — см. ниже.
+                        "overlocked_at FROM orders WHERE id = %s",
                         (int(item_id),),
                     )
                     sew_row = cur.fetchone()
                     if sew_row:
                         (sew_user, sew_width, sew_workshop,
-                         sew_order_number, sew_status) = sew_row
+                         sew_order_number, sew_status, sew_overlocked_at) = sew_row
 
                         # «Со склада» — вещь взяли готовой, её никто не шил.
                         if sew_user and sew_width and sew_status != 'Со склада':
@@ -1575,24 +1601,49 @@ def handler(event: dict, context) -> dict:
                                 sew_workshop = sw_row[0] if sw_row else None
 
                             if sew_workshop:
-                                cur.execute(
-                                    "SELECT rate FROM salary_rates WHERE role = 'sewer' "
-                                    "AND width = %s AND workshop_id = %s",
-                                    (int(sew_width), sew_workshop),
-                                )
-                                rate_row = cur.fetchone()
-                                sew_rate = float(rate_row[0]) if rate_row else 0
-                                if sew_rate > 0:
+                                # Вещь, прошедшая оверлок, оплачивается за пог.м. по
+                                # отдельной ставке: край уже обмётан, швее осталось
+                                # пришить тесьму. Точно так же считает терминал
+                                # упаковщицы — правило одно на оба пути закрытия.
+                                if sew_overlocked_at:
                                     cur.execute(
-                                        "INSERT INTO salary_accruals "
-                                        "(user_id, type, amount, order_id, description) "
-                                        "VALUES (%s, 'sewer_piece', %s, %s, %s) "
-                                        "ON CONFLICT (order_id, type) "
-                                        "WHERE order_id IS NOT NULL DO NOTHING",
-                                        (int(sew_user), sew_rate, int(item_id),
-                                         f'Пошив заказа #{sew_order_number or item_id} '
-                                         f'({int(sew_width)} см)'),
+                                        "SELECT rate FROM salary_rates WHERE role = 'sewer_overlock' "
+                                        "AND material_id IS NULL AND width IS NULL AND workshop_id = %s",
+                                        (sew_workshop,),
                                     )
+                                    rate_row = cur.fetchone()
+                                    ov_rate = float(rate_row[0]) if rate_row else 0
+                                    if ov_rate > 0:
+                                        ov_meters = round(float(sew_width) / 100, 2)
+                                        cur.execute(
+                                            "INSERT INTO salary_accruals "
+                                            "(user_id, type, amount, order_id, description) "
+                                            "VALUES (%s, 'sewer_piece', %s, %s, %s) "
+                                            "ON CONFLICT (order_id, type) "
+                                            "WHERE order_id IS NOT NULL DO NOTHING",
+                                            (int(sew_user), round(ov_meters * ov_rate, 2), int(item_id),
+                                             f'Пошив заказа #{sew_order_number or item_id} '
+                                             f'после оверлока - {ov_meters} пог.м.'),
+                                        )
+                                else:
+                                    cur.execute(
+                                        "SELECT rate FROM salary_rates WHERE role = 'sewer' "
+                                        "AND width = %s AND workshop_id = %s",
+                                        (int(sew_width), sew_workshop),
+                                    )
+                                    rate_row = cur.fetchone()
+                                    sew_rate = float(rate_row[0]) if rate_row else 0
+                                    if sew_rate > 0:
+                                        cur.execute(
+                                            "INSERT INTO salary_accruals "
+                                            "(user_id, type, amount, order_id, description) "
+                                            "VALUES (%s, 'sewer_piece', %s, %s, %s) "
+                                            "ON CONFLICT (order_id, type) "
+                                            "WHERE order_id IS NOT NULL DO NOTHING",
+                                            (int(sew_user), sew_rate, int(item_id),
+                                             f'Пошив заказа #{sew_order_number or item_id} '
+                                             f'({int(sew_width)} см)'),
+                                        )
 
                 log_action(
                     cur, actor_id, actor_name, 'update_order', 'order', item_id,
@@ -1984,8 +2035,27 @@ def handler(event: dict, context) -> dict:
                             lh = cur.fetchone()
                             effective_hanger = lh[0] if lh and lh[0] else None
                     hanger_sql = f", hanger_number = {int(effective_hanger)}" if effective_hanger else ""
+
+                    # ТРЕБУЕТ ЛИ ВЕЩЬ ОБМЁТКИ НА ОВЕРЛОКЕ.
+                    #
+                    # Признак берём у ткани в момент раскроя и ЗАПИСЫВАЕМ В ЗАКАЗ, а не
+                    # смотрим на ткань каждый раз потом. Ткань могут перенастроить
+                    # завтра, а вещи, уже запущенные в работу, должны пройти тот
+                    # маршрут, по которому их отправили: иначе крой, висящий на
+                    # вешалке, внезапно поменяет очередь.
+                    needs_overlock = False
+                    if fabric_material_id:
+                            cur.execute(
+                                    "SELECT requires_overlock FROM materials WHERE id = %s",
+                                    (fabric_material_id,),
+                            )
+                            ov_row = cur.fetchone()
+                            needs_overlock = bool(ov_row and ov_row[0])
+                    overlock_sql = ", requires_overlock = true" if needs_overlock else ""
+
                     cur.execute(
-                            f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now(){cutter_sql}{hanger_sql} WHERE id = {int(item_id)}"
+                            f"UPDATE orders SET sewing_status = 'Раскроено', cut_at = now()"
+                            f"{cutter_sql}{hanger_sql}{overlock_sql} WHERE id = {int(item_id)}"
                     )
                     # Запоминаем выбранную вешалку за закройщиком для следующих заказов.
                     if hanger_number and order_assigned_user_id:
@@ -2220,6 +2290,14 @@ def handler(event: dict, context) -> dict:
                 where_parts.append(
                     f"(workshop_id = {int(session_workshop_id)} OR workshop_id IS NULL)"
                 )
+                # ВЕЩЬ, КОТОРОЙ НУЖЕН ОВЕРЛОК, В ПРЯМОСТРОЧКУ НЕ ОТДАЁМ, ПОКА КРАЙ НЕ
+                # ОБМЕТАН.
+                #
+                # Такая вещь лежит в «Раскроено» вместе с остальными, но её маршрут
+                # длиннее: сначала оверлок, потом прямострочка. Без этого условия
+                # кнопка «Взять заказ» выдала бы швее необмётанный крой, и этап,
+                # ради которого всё затевалось, оказался бы пропущен.
+                where_parts.append("(requires_overlock = false OR overlocked_at IS NOT NULL)")
                 if orders_filter_setting == 'fbo':
                     where_parts.append("order_type = 'FBO'")
                 elif orders_filter_setting == 'fbs':
@@ -2702,6 +2780,176 @@ def handler(event: dict, context) -> dict:
                     f'Отправил заказ #{item_id} на стикеровку',
                     {'rollId': roll_id_chosen},
                 )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action in ('take_overlock', 'overlock_done'):
+                # ЭТАП ОВЕРЛОКА.
+                #
+                # take_overlock   — швея-оверлочница берёт вещь из очереди «Оверлок».
+                # overlock_done   — край обметан. Дальше два пути, их выбирает она сама:
+                #     · 'to_sewing' (по умолчанию) — вещь возвращается в общую очередь
+                #       «Раскроено» с отметкой «Обработан на оверлоке», и её разбирают
+                #       обычные швеи на прямострочку;
+                #     · 'finish' — работы по вещи больше нет, оверлочница закончила её
+                #       целиком и отправляет сразу на стикеровку, минуя прямострочку.
+                item_id = body_data.get('id')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id заказа'})}
+
+                # К оверлоку допускает админ галочкой в карточке сотрудника. Отдельной
+                # должности нет: человек работает и на оверлоке, и на прямострочке.
+                cur.execute(
+                    "SELECT role, COALESCE(can_overlock, false) FROM users WHERE id = %s",
+                    (int(actor_id),) if actor_id else (0,),
+                )
+                actor_row = cur.fetchone()
+                if not actor_row or (actor_row[0] != 'admin' and not actor_row[1]):
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Нет допуска к оверлоку. Обратитесь к администратору'},
+                            ensure_ascii=False,
+                        ),
+                    }
+
+                cur.execute(
+                    "SELECT sewing_status, requires_overlock, overlocked_at, width, "
+                    "       workshop_id, order_number, overlock_user_id "
+                    "FROM orders WHERE id = %s",
+                    (int(item_id),),
+                )
+                o_row = cur.fetchone()
+                if not o_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
+                (ov_status, ov_required, ov_done_at, ov_width,
+                 ov_workshop, ov_number, ov_user) = o_row
+
+                if not ov_required:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Этой вещи оверлок не нужен'}, ensure_ascii=False
+                        ),
+                    }
+
+                if action == 'take_overlock':
+                    if ov_done_at:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Край уже обметан — вещь ушла дальше по конвейеру'},
+                                ensure_ascii=False,
+                            ),
+                        }
+                    # Вещь уже взял кто-то другой: очередь общая, и два человека могли
+                    # нажать кнопку почти одновременно.
+                    if ov_user and int(ov_user) != int(actor_id or 0):
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Заказ уже взят другой швеёй'}, ensure_ascii=False
+                            ),
+                        }
+                    cur.execute(
+                        f"UPDATE orders SET overlock_user_id = {int(actor_id)} WHERE id = {int(item_id)}"
+                    )
+                    log_action(
+                        cur, actor_id, actor_name, 'take_overlock', 'order', item_id,
+                        f'Взял заказ #{ov_number or item_id} на оверлок',
+                    )
+                    conn.commit()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+                # overlock_done — край обметан.
+                if ov_done_at:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Заказ уже обработан на оверлоке'}, ensure_ascii=False
+                        ),
+                    }
+                if ov_status != 'Раскроено':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Обметать можно только раскроенную вещь, сейчас «{ov_status}»'},
+                            ensure_ascii=False,
+                        ),
+                    }
+
+                # Оплата оверлочнице: за пог.м. ширины по тарифу цеха (role='overlock').
+                # Цех берём у заказа, а если он ещё не проставлен — штатный цех
+                # работницы: иначе ставка молча вышла бы нулевой и человек обметал
+                # бы бесплатно. Такая же подстраховка стоит у раскроя и пошива.
+                ov_rate_workshop = ov_workshop
+                if not ov_rate_workshop:
+                    cur.execute(
+                        "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                        "WHERE u.id = %s",
+                        (int(actor_id),),
+                    )
+                    w_row = cur.fetchone()
+                    ov_rate_workshop = w_row[0] if w_row else None
+
+                if ov_rate_workshop and ov_width:
+                    cur.execute(
+                        "SELECT rate FROM salary_rates WHERE role = 'overlock' "
+                        "AND material_id IS NULL AND width IS NULL AND workshop_id = %s",
+                        (ov_rate_workshop,),
+                    )
+                    r_row = cur.fetchone()
+                    ov_rate = float(r_row[0]) if r_row else 0
+                    if ov_rate > 0:
+                        ov_meters = round(float(ov_width) / 100, 2)
+                        ov_amount = round(ov_meters * ov_rate, 2)
+                        cur.execute(
+                            "INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                            "VALUES (%s, 'overlock_piece', %s, %s, %s) "
+                            "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING",
+                            (
+                                int(actor_id), ov_amount, int(item_id),
+                                f'Оверлок заказа #{ov_number or item_id} - {ov_meters} пог.м.',
+                            ),
+                        )
+
+                # Куда вещь уходит после обмётки — решает сама оверлочница.
+                next_step = body_data.get('next') or 'to_sewing'
+                if next_step == 'finish':
+                    # Работы по вещи больше нет: оверлочница закончила её целиком.
+                    # Отправляем сразу на стикеровку, минуя очередь прямострочки, и
+                    # проставляем её же швеёй — вещь отшила она.
+                    cur.execute(
+                        f"UPDATE orders SET overlocked_at = now(), "
+                        f"overlock_user_id = {int(actor_id)}, sewing_status = 'Стикеровка', "
+                        f"sewn_at = COALESCE(sewn_at, now()), "
+                        f"sewer_user_id = COALESCE(sewer_user_id, {int(actor_id)}) "
+                        f"WHERE id = {int(item_id)}"
+                    )
+                    award_variki(cur, actor_id)
+                    log_action(
+                        cur, actor_id, actor_name, 'overlock_done', 'order', item_id,
+                        f'Обметал заказ #{ov_number or item_id} и сдал на стикеровку',
+                    )
+                else:
+                    # Обычный путь: вещь возвращается в общую очередь «Раскроено» с
+                    # отметкой об оверлоке. assigned_user_id снимаем — вещь снова
+                    # ничья, её берёт следующая свободная швея в порядке очереди.
+                    cur.execute(
+                        f"UPDATE orders SET overlocked_at = now(), "
+                        f"overlock_user_id = {int(actor_id)}, sewing_status = 'Раскроено', "
+                        f"assigned_user_id = NULL, taken_at = NULL WHERE id = {int(item_id)}"
+                    )
+                    log_action(
+                        cur, actor_id, actor_name, 'overlock_done', 'order', item_id,
+                        f'Обметал заказ #{ov_number or item_id} и передал на пошив',
+                    )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 

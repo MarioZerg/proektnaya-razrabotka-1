@@ -6,8 +6,21 @@ export const heightOptions = [
 ];
 export const statusOptions: SewingStatus[] = ['Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка', 'Готовые'];
 
+/**
+ * Вкладка «Оверлок» — не статус заказа, а срез очереди «Раскроено».
+ *
+ * Вещи из тканей с осыпающимся краем сначала обмётывают, и лежат они в том же
+ * статусе «Раскроено», что и остальной крой. Отдельного статуса для этого не
+ * заводим: маршрут вещи задаётся признаком, а не новым состоянием конвейера —
+ * иначе пришлось бы дублировать все переходы и отчёты.
+ */
+export const OVERLOCK_TAB = 'Оверлок';
+
+/** Значение вкладки: статус заказа либо срез «Оверлок». */
+export type TabValue = SewingStatus | typeof OVERLOCK_TAB;
+
 export interface StatusTab {
-  value: SewingStatus;
+  value: TabValue;
   label: string;
 }
 
@@ -15,6 +28,9 @@ export const statusTabs: StatusTab[] = [
   { value: 'Новый', label: 'Новый' },
   { value: 'На раскрое', label: 'На раскрое' },
   { value: 'В работе', label: 'В работе' },
+  // Оверлок стоит перед «Раскроено»: по маршруту вещь проходит его раньше,
+  // чем попадёт к швеям на прямострочку.
+  { value: OVERLOCK_TAB, label: 'Оверлок' },
   { value: 'Раскроено', label: 'Раскроено' },
   { value: 'Стикеровка', label: 'На стикеровке' },
   { value: 'Готовые', label: 'Готовые' },
@@ -37,6 +53,8 @@ export const statusBadgeClass: Record<string, string> = {
   'На раскрое': 'bg-amber-500 text-white hover:bg-amber-500',
   'В работе': 'bg-sky-500 text-white hover:bg-sky-500',
   Раскроено: 'bg-violet-500 text-white hover:bg-violet-500',
+  // Этап обмётки края — свой цвет, чтобы не путать с обычным кроем.
+  Оверлок: 'bg-fuchsia-600 text-white hover:bg-fuchsia-600',
   Стикеровка: 'bg-orange-500 text-white hover:bg-orange-500',
   Готовые: 'bg-emerald-600 text-white hover:bg-emerald-600',
   // Заказ закрыт готовой вещью со склада — работа цеха по нему не нужна.

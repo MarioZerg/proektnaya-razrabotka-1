@@ -6,7 +6,12 @@ import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { fetchWorkshops, fetchWorkshopDetail, type Workshop } from '@/lib/workshopsApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { fetchEmployeeShifts } from '@/lib/shiftSessionsApi';
-import { statusTabs } from '@/components/crm/sewingItems/sewingItemsShared';
+import {
+  statusTabs,
+  OVERLOCK_TAB,
+  type StatusTab,
+} from '@/components/crm/sewingItems/sewingItemsShared';
+import { isStorekeeperRole } from '@/lib/roles';
 
 /** Данные страницы "Товары для пошива": роль пользователя, список заказов и справочников,
  * загрузка/перезагрузка, а также настройка печати листа закройщика. */
@@ -25,6 +30,14 @@ export const useSewingItemsData = () => {
   // ID материалов (тканей), присущих цеху закройщика — фильтр тканей на конвейере для него
   // ограничивается только этими материалами (из настроек цеха). null = ограничения нет.
   const [allowedMaterialIds, setAllowedMaterialIds] = useState<number[] | null>(null);
+
+  // Допуск к оверлоку берём из справочника сотрудников: он и так грузится для
+  // конвейера, а данные входа его не содержат — иначе после проставления галочки
+  // швее пришлось бы перезаходить в систему, чтобы увидеть вкладку.
+  const canOverlock = useMemo(
+    () => employees.some((e) => e.id === user?.id && e.canOverlock),
+    [employees, user?.id]
+  );
 
   const isCutter = user?.role === 'cutter';
   const isSewer = user?.role === 'sewer';
@@ -46,26 +59,42 @@ export const useSewingItemsData = () => {
   // Вкладку «Со склада» производственникам не показываем совсем: это заказы,
   // закрытые готовой вещью с полки — шить и кроить там нечего. Их собирает
   // кладовщик, а швее они только засоряют конвейер.
+  //
+  // Вкладка «Оверлок» — только тем, кто с ней работает: швеям с допуском (галочка
+  // в карточке сотрудника), администратору и кладовщикам. Обычной швее и
+  // упаковщице она не нужна: брать оттуда заказы они не могут, а вкладка
+  // показывала бы им чужой этап.
   const visibleTabs = useMemo(() => {
+    const canSeeOverlock =
+      user?.role === 'admin' || isStorekeeperRole(user?.role) || (isSewer && canOverlock);
+    const withOverlock = (tabs: StatusTab[]) =>
+      canSeeOverlock ? tabs : tabs.filter((t) => t.value !== OVERLOCK_TAB);
+
     if (isSewer) {
-      return statusTabs.filter(
-        (t) =>
-          t.value !== 'Новый' &&
-          t.value !== 'На раскрое' &&
-          t.value !== 'Раскроено' &&
-          t.value !== 'Со склада'
+      return withOverlock(
+        statusTabs.filter(
+          (t) =>
+            t.value !== 'Новый' &&
+            t.value !== 'На раскрое' &&
+            t.value !== 'Раскроено' &&
+            t.value !== 'Со склада'
+        )
       );
     }
     if (isPacker) {
-      return statusTabs.filter(
-        (t) => t.value !== 'Новый' && t.value !== 'На раскрое' && t.value !== 'Со склада'
+      return withOverlock(
+        statusTabs.filter(
+          (t) => t.value !== 'Новый' && t.value !== 'На раскрое' && t.value !== 'Со склада'
+        )
       );
     }
     if (isCutter) {
-      return statusTabs.filter((t) => t.value !== 'Новый' && t.value !== 'Со склада');
+      return withOverlock(
+        statusTabs.filter((t) => t.value !== 'Новый' && t.value !== 'Со склада')
+      );
     }
-    return statusTabs;
-  }, [isSewer, isPacker, isCutter]);
+    return withOverlock(statusTabs);
+  }, [isSewer, isPacker, isCutter, user?.role, canOverlock]);
 
   // Цех/смена ТЕКУЩЕЙ открытой рабочей смены (может отличаться от штатных в гостевом
   // режиме) — именно они используются для взятия стека и фильтрации доступных рулонов,

@@ -110,7 +110,10 @@ def handler(event: dict, context) -> dict:
                 "COALESCE((SELECT SUM(r.remaining_quantity) FROM rolls r "
                 "WHERE r.material_id = m.id AND r.status = 'in_storage'), 0), "
                 "COALESCE((SELECT COUNT(*) FROM rolls r "
-                "WHERE r.material_id = m.id AND r.status = 'in_storage'), 0) "
+                "WHERE r.material_id = m.id AND r.status = 'in_storage'), 0), "
+                # Ткань с осыпающимся краем: заказ из неё сначала обмётывают на
+                # оверлоке и только потом отдают швее на прямострочку.
+                "m.requires_overlock "
                 "FROM materials m ORDER BY m.sort_order, m.id"
             )
             materials = [
@@ -126,6 +129,7 @@ def handler(event: dict, context) -> dict:
                     'hasMovements': r[7],
                     'warehouseQuantity': float(r[8]),
                     'warehouseRolls': r[9],
+                    'requiresOverlock': bool(r[10]),
                 }
                 for r in cur.fetchall()
             ]
@@ -171,10 +175,11 @@ def handler(event: dict, context) -> dict:
                 name_esc = name.replace("'", "''")
                 unit_esc = unit.replace("'", "''")
                 status_esc = status.replace("'", "''")
+                overlock_sql = 'true' if body_data.get('requiresOverlock') else 'false'
                 # Цену при создании не задаём: она придёт от поставщика при первой приёмке.
                 cur.execute(
-                    f"INSERT INTO materials (type_id, name, unit, status, sort_order) "
-                    f"VALUES ({int(type_id)}, '{name_esc}', '{unit_esc}', '{status_esc}', "
+                    f"INSERT INTO materials (type_id, name, unit, status, requires_overlock, sort_order) "
+                    f"VALUES ({int(type_id)}, '{name_esc}', '{unit_esc}', '{status_esc}', {overlock_sql}, "
                     f"(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM materials WHERE type_id = {int(type_id)})) "
                     f"RETURNING id"
                 )
@@ -195,6 +200,10 @@ def handler(event: dict, context) -> dict:
                     fields.append(f"status = '{str(body_data['status']).replace(chr(39), chr(39)*2)}'")
                 if 'typeId' in body_data:
                     fields.append(f"type_id = {int(body_data['typeId'])}")
+                if 'requiresOverlock' in body_data:
+                    fields.append(
+                        f"requires_overlock = {'true' if body_data['requiresOverlock'] else 'false'}"
+                    )
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
                 cur.execute(f"UPDATE materials SET {', '.join(fields)} WHERE id = {int(item_id)}")

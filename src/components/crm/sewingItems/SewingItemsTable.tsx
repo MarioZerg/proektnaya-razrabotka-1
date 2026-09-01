@@ -217,6 +217,20 @@ const SewingItemsTable = ({
                   {o.cluster && (
                     <div className="text-sm font-semibold text-sky-800">{o.cluster}</div>
                   )}
+                  {/* ЭТАП ОВЕРЛОКА. Закройщик видит, что вещь пойдёт сначала на
+                      обмётку края, а швея — что вещь уже обмётана и готова к
+                      прямострочке. */}
+                  {o.requiresOverlock && (
+                    <div
+                      className={`mt-0.5 inline-block whitespace-nowrap rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${
+                        o.overlockedAt
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-fuchsia-100 text-fuchsia-800'
+                      }`}
+                    >
+                      {o.overlockedAt ? 'Обработан на оверлоке' : 'Оверлок'}
+                    </div>
+                  )}
                   {/* Покупатель — компания: заказ шьётся так же, но пометка нужна,
                       чтобы в цехе понимали, кому уйдёт вещь. */}
                   {o.isLegalEntity && (

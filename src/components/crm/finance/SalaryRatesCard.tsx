@@ -69,13 +69,29 @@ const RateRow = ({
   );
 };
 
+/**
+ * Названия групп для видов оплаты, которым не соответствует должность в системе.
+ *
+ * Перепаковку возвратов и этап оверлока выполняют те же упаковщицы и швеи, поэтому
+ * отдельных ролей у них нет — а заголовок в таблице тарифов нужен.
+ */
+const rateGroupTitles: Record<string, string> = {
+  packer_repack: 'Упаковщик — перепаковка',
+  overlock: 'Оверлок',
+  sewer_overlock: 'Швея — после оверлока',
+  packer_overlock: 'Упаковщик — после оверлока',
+};
+
 const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
   // packer_repack — не должность, а отдельный вид оплаты упаковщицы (перепаковка
   // возвратов за штуку), поэтому в списке ролей идёт сразу после её основной ставки.
   const roleOrder: string[] = [
     'cutter',
     'sewer',
+    'sewer_overlock',
+    'overlock',
     'packer',
+    'packer_overlock',
     'packer_repack',
     'storekeeper',
     'senior_storekeeper',
@@ -160,6 +176,8 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
                   if (role === 'cutter') return r.width === null;
                   if (role === 'packer') return r.materialId === null && r.width === null;
                   if (role === 'packer_repack') return r.width === null;
+                  // Этап оверлока: одна ставка на цех, без ткани и ширины.
+                  if (role.includes('overlock')) return r.materialId === null && r.width === null;
                   return true;
                 });
                 if (roleRates.length === 0) return null;
@@ -168,7 +186,10 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
                   <div key={role} className="space-y-2">
                     <div>
                       <p className="text-sm font-semibold">
-                        {roleLabels[role as Role] || 'Упаковщик — перепаковка'}
+                        {/* Виды оплаты, у которых нет одноимённой должности
+                            (перепаковка возвратов, этап оверлока), берут название
+                            из подписи тарифа: в справочнике ролей их нет. */}
+                        {roleLabels[role as Role] || rateGroupTitles[role] || role}
                       </p>
                       <p className="text-xs text-muted-foreground">{roleRateLabels[role]}</p>
                     </div>

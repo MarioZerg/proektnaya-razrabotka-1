@@ -782,7 +782,10 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT sewing_status, width, assigned_user_id, order_number, workshop_id, "
                     "status, ozon_status, order_type, material, height, product, "
-                    "group_key, group_size, group_position, marketplace FROM orders WHERE id = %s "
+                    "group_key, group_size, group_position, marketplace, "
+                    # Вещь прошла оверлок: у неё другие ставки и у швеи, и у
+                    # упаковщицы — см. расчёт начислений ниже.
+                    "overlocked_at FROM orders WHERE id = %s "
                     "FOR UPDATE",
                     (int(order_id),),
                 )
@@ -792,7 +795,9 @@ def handler(event: dict, context) -> dict:
                 (sewing_status, width, assigned_user_id, order_number, order_workshop_id,
                  order_status, order_ozon_status, order_type, order_material,
                  order_height, order_product, group_key, group_size, group_position,
-                 order_marketplace) = row
+                 order_marketplace, order_overlocked_at) = row
+                # Признак «вещь прошла оверлок» — по нему ниже выбирается тариф.
+                is_overlocked = order_overlocked_at is not None
                 # Отправление уже уехало к покупателю — ярлык не выдадут, и вещь ему не
                 # поедет. Для цеха и склада это то же самое, что отмена: вещь получает
                 # стикер хранения и ложится на полку, а не в поставку.
@@ -1077,19 +1082,50 @@ def handler(event: dict, context) -> dict:
                     sewer_workshop_for_rate = sw_row[0] if sw_row else None
 
                 if assigned_user_id and width and sewer_workshop_for_rate:
-                    cur.execute(
-                        "SELECT rate FROM salary_rates WHERE role = 'sewer' AND width = %s AND workshop_id = %s",
-                        (int(width), sewer_workshop_for_rate),
-                    )
-                    rate_row = cur.fetchone()
-                    sewer_rate = float(rate_row[0]) if rate_row else 0
-                    if sewer_rate > 0:
+                    # ВЕЩЬ ПОСЛЕ ОВЕРЛОКА ОПЛАЧИВАЕТСЯ ПО ДРУГОМУ ТАРИФУ.
+                    #
+                    # Обычный заказ швея шьёт целиком и получает ставку за штуку по
+                    # ширине. У вещи, прошедшей оверлок, работы меньше: край уже
+                    # обмётан оверлочницей, швее остаётся пришить тесьму. Поэтому
+                    # такая вещь идёт по ставке за пог.м. (role='sewer_overlock'),
+                    # а не по полной ставке за штуку.
+                    #
+                    # Система определяет это сама по отметке оверлока на заказе —
+                    # швее ничего выбирать не нужно.
+                    if is_overlocked:
                         cur.execute(
-                            f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
-                            f"VALUES ({int(assigned_user_id)}, 'sewer_piece', {sewer_rate}, {int(order_id)}, "
-                            f"'Пошив заказа #{order_number} ({width} см)') "
-                            f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
+                            "SELECT rate FROM salary_rates WHERE role = 'sewer_overlock' "
+                            "AND material_id IS NULL AND width IS NULL AND workshop_id = %s",
+                            (sewer_workshop_for_rate,),
                         )
+                        rate_row = cur.fetchone()
+                        ov_sewer_rate = float(rate_row[0]) if rate_row else 0
+                        if ov_sewer_rate > 0:
+                            sew_meters = round(float(width) / 100, 2)
+                            sew_amount = round(sew_meters * ov_sewer_rate, 2)
+                            cur.execute(
+                                "INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                                "VALUES (%s, 'sewer_piece', %s, %s, %s) "
+                                "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING",
+                                (
+                                    int(assigned_user_id), sew_amount, int(order_id),
+                                    f'Пошив заказа #{order_number} после оверлока - {sew_meters} пог.м.',
+                                ),
+                            )
+                    else:
+                        cur.execute(
+                            "SELECT rate FROM salary_rates WHERE role = 'sewer' AND width = %s AND workshop_id = %s",
+                            (int(width), sewer_workshop_for_rate),
+                        )
+                        rate_row = cur.fetchone()
+                        sewer_rate = float(rate_row[0]) if rate_row else 0
+                        if sewer_rate > 0:
+                            cur.execute(
+                                f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                                f"VALUES ({int(assigned_user_id)}, 'sewer_piece', {sewer_rate}, {int(order_id)}, "
+                                f"'Пошив заказа #{order_number} ({width} см)') "
+                                f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
+                            )
 
                 # Упаковщица получает ставку за пог.м. на стикеровке — берётся из тарифов ЕЁ
                 # СОБСТВЕННОГО цеха (users.workshop её профиля), а не цеха заказа.
@@ -1117,6 +1153,17 @@ def handler(event: dict, context) -> dict:
                     )
                     packer_rate_row = cur.fetchone()
                     packer_rate = float(packer_rate_row[0]) if packer_rate_row else 0
+                    # Вещь после оверлока гладить не нужно — работы у упаковщицы
+                    # меньше, и ставка на неё отдельная (role='packer_overlock').
+                    if is_overlocked:
+                        cur.execute(
+                            "SELECT rate FROM salary_rates WHERE role = 'packer_overlock' "
+                            "AND material_id IS NULL AND width IS NULL AND workshop_id = %s",
+                            (packer_workshop_id,),
+                        )
+                        ov_packer_row = cur.fetchone()
+                        if ov_packer_row and float(ov_packer_row[0]) > 0:
+                            packer_rate = float(ov_packer_row[0])
                 if packer_rate > 0 and width:
                     meters = round(float(width) / 100, 2)
                     amount = round(meters * packer_rate, 2)

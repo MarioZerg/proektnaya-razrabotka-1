@@ -63,6 +63,19 @@ export interface Order {
   /** Магазин заказа: МЕГАТЮЛЬ или ДЮНА. Цех общий, но вещи разные. */
   shopName?: string | null;
   shopColor?: string | null;
+  /**
+   * ЭТАП ОВЕРЛОКА.
+   *
+   * requiresOverlock — у ткани осыпается край: вещь сначала обмётывают на
+   *   оверлоке и только потом отдают швее на прямострочку. Проставляется на
+   *   раскрое по признаку ткани и дальше у заказа не меняется.
+   * overlockedAt — край обметали. Пока пусто, вещь ждёт в очереди «Оверлок»;
+   *   после заполнения она возвращается в «Раскроено» с пометкой «Обработан».
+   */
+  requiresOverlock?: boolean;
+  overlockedAt?: string | null;
+  overlockUserId?: number | null;
+  overlockUserName?: string | null;
   /** Статус отправления на стороне OZON (только чтение, для FBS-заказов OZON). */
   ozonStatus?: string | null;
   ozonPostingNumber?: string | null;
@@ -247,6 +260,8 @@ export interface TakenOrder {
   groupKey?: string | null;
   groupSize?: number | null;
   groupPosition?: number | null;
+  /** Ткань с осыпающимся краем: на листе закройщика печатается метка «ОВЕРЛОК». */
+  requiresOverlock?: boolean;
 }
 
 export interface TakeStackResult {
@@ -286,5 +301,23 @@ export const takeOrder = (userId: number): Promise<TakeOrderResult> =>
 // actorId обязателен: по нему сервер проверяет, что тесьму списывает именно швея.
 export const sendToStickering = (id: number, rollId?: number, actorId?: number) =>
   postAction({ action: 'send_to_stickering', id, rollId, actorId });
+
+/**
+ * ЭТАП ОВЕРЛОКА.
+ *
+ * takeOverlock — швея с допуском берёт вещь из очереди «Оверлок» себе.
+ * overlockDone — край обметан. Куда вещь пойдёт дальше, решает она сама:
+ *   'to_sewing' — вернуть в общую очередь «Раскроено» с отметкой «Обработан»,
+ *                 дальше её разберут швеи на прямострочку;
+ *   'finish'    — работы больше нет, отправить сразу на стикеровку.
+ */
+export const takeOverlock = (id: number, actorId?: number) =>
+  postAction({ action: 'take_overlock', id, actorId });
+
+export const overlockDone = (
+  id: number,
+  next: 'to_sewing' | 'finish',
+  actorId?: number
+) => postAction({ action: 'overlock_done', id, next, actorId });
 
 export const cancelOrder = (id: number) => postAction({ action: 'cancel_order', id });

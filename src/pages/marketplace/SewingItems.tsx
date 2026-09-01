@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
-import { fetchStackPreview, type SewingStatus } from '@/lib/ordersApi';
+import { fetchStackPreview } from '@/lib/ordersApi';
 import SewingItemsFilters from '@/components/crm/sewingItems/SewingItemsFilters';
 import DonePeriodFilter from '@/components/crm/sewingItems/DonePeriodFilter';
 import SewingItemsTable from '@/components/crm/sewingItems/SewingItemsTable';
@@ -16,6 +16,7 @@ import { useSewingItemOrderDetail } from '@/components/crm/sewingItems/useSewing
 import { useSewingItemsQueueActions } from '@/components/crm/sewingItems/useSewingItemsQueueActions';
 import { isStorekeeperRole } from '@/lib/roles';
 import NextStackHint from '@/components/crm/sewingItems/NextStackHint';
+import { type TabValue } from '@/components/crm/sewingItems/sewingItemsShared';
 
 const SewingItems = () => {
   const {
@@ -337,7 +338,7 @@ const SewingItems = () => {
         <Tabs
           value={activeTab}
           onValueChange={(v) => {
-            setActiveTab(v as SewingStatus);
+            setActiveTab(v as TabValue);
             setPage(1);
           }}
         >

@@ -7,6 +7,8 @@ export const formatMoney = (n: number) =>
 export const accrualTypeLabels: Record<string, string> = {
   cutter_cut: 'Раскрой',
   sewer_piece: 'Пошив',
+  /** Обмётка края на оверлоке — отдельный этап перед прямострочкой. */
+  overlock_piece: 'Оверлок',
   packer_stickering: 'Стикеровка',
   packer_repack: 'Перепаковка возврата',
   storekeeper_shift: 'Оклад за смену',
@@ -48,7 +50,12 @@ export const formatAccrualShift = (a: {
 export const roleRateLabels: Record<string, string> = {
   cutter: 'Закройщик — за пог.м. по материалу',
   sewer: 'Швея — за штуку по ширине',
+  // Этап оверлока: часть тканей сначала обмётывают, и на таких вещах у всех
+  // участников работы меньше — ставки отдельные, за пог.м.
+  overlock: 'Оверлок — за пог.м. обмётки края',
+  sewer_overlock: 'Швея — за пог.м. по вещи после оверлока',
   packer: 'Упаковщик — за пог.м. на стикеровке',
+  packer_overlock: 'Упаковщик — за пог.м. по вещи после оверлока (без глажки)',
   packer_repack: 'Упаковщик — за штуку на перепаковке возвратов',
   storekeeper: 'Кладовщик — оклад за смену',
   senior_storekeeper: 'Старший кладовщик — оклад за смену',

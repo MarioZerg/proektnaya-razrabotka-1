@@ -73,6 +73,22 @@ const groupNote = (o: TakenOrder) =>
                     line-height:1;">СВЯЗКА ${o.groupPosition}/${o.groupSize} — ОДНА ВЕШАЛКА</div>`
     : '';
 
+/**
+ * Метка «ОВЕРЛОК» на листе закройщика.
+ *
+ * Такую вещь после раскроя вешают не в общую очередь на прямострочку, а в очередь
+ * обмётки края. Закройщик должен видеть это в момент работы — на бумаге, а не в
+ * телефоне: иначе крой уедет не туда, и вещь вернётся с середины конвейера.
+ * Печатается инверсией (белым по чёрному) — на плотном листе с двумя десятками
+ * позиций обычная строка теряется.
+ */
+const overlockNote = (o: TakenOrder) =>
+  o.requiresOverlock
+    ? `<div style="margin-top:1px;font-size:11px;font-weight:900;white-space:nowrap;
+                   line-height:1.15;background:#000;color:#fff;border-radius:2px;
+                   padding:0 4px;display:inline-block;">ОВЕРЛОК</div>`
+    : '';
+
 const chunk = <T,>(arr: T[], size: number): T[][] => {
   const result: T[][] = [];
   for (let i = 0; i < arr.length; i += size) result.push(arr.slice(i, i + size));
@@ -199,6 +215,7 @@ const buildChecklistPageHtml = (
         <div style="font-size:${o.groupSize && o.groupSize > 1 ? 9 : 11}px;font-weight:700;
                     color:#222;margin-top:1px;line-height:1;">${o.marketplace}</div>
         ${groupNote(o)}
+        ${overlockNote(o)}
       </div>`,
     cutterId
   );
@@ -227,6 +244,7 @@ const buildQrPageHtml = (
           ${o.marketplace} [${o.orderType}]
         </div>
         ${groupNote(o)}
+        ${overlockNote(o)}
       </div>`,
     cutterId
   );

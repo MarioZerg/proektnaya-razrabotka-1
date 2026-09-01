@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import type { Order, SewingStatus } from '@/lib/ordersApi';
+import type { Order } from '@/lib/ordersApi';
 import type { Material } from '@/lib/materialsApi';
-import type { StatusTab } from '@/components/crm/sewingItems/sewingItemsShared';
+import { OVERLOCK_TAB, type StatusTab, type TabValue } from '@/components/crm/sewingItems/sewingItemsShared';
 
 interface UseSewingItemsFiltersArgs {
   orders: Order[];
@@ -28,7 +28,7 @@ export const useSewingItemsFilters = ({
   userId,
   effectiveWorkshopId,
 }: UseSewingItemsFiltersArgs) => {
-  const [activeTab, setActiveTab] = useState<SewingStatus>(visibleTabs[0]?.value || 'Новый');
+  const [activeTab, setActiveTab] = useState<TabValue>(visibleTabs[0]?.value || 'Новый');
   const [page, setPage] = useState(1);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -63,7 +63,22 @@ export const useSewingItemsFilters = ({
   // На вкладке «Новый» дополнительно поднимаем FBS: у них сжатые сроки отгрузки,
   // и система раздаёт их в раскрой первыми — список должен совпадать с очередью.
   const ordersInTab = orders
-    .filter((o) => o.sewingStatus === activeTab)
+    .filter((o) => {
+      // ВКЛАДКА «ОВЕРЛОК» — СРЕЗ ОЧЕРЕДИ «РАСКРОЕНО», А НЕ ОТДЕЛЬНЫЙ СТАТУС.
+      //
+      // Вещь из ткани с осыпающимся краем лежит в том же статусе «Раскроено», что
+      // и остальной крой, но швеям на прямострочку её отдавать рано. Поэтому одна
+      // и та же очередь делится на две вкладки:
+      //   · «Оверлок»   — ждут обмётки (край ещё не обметан);
+      //   · «Раскроено» — всё остальное, включая уже обмётанные вещи.
+      // Без этого деления необмётанный крой висел бы в общей очереди и швея
+      // забирала бы его в работу, пропуская этап.
+      if (activeTab === OVERLOCK_TAB) {
+        return o.sewingStatus === 'Раскроено' && o.requiresOverlock && !o.overlockedAt;
+      }
+      if (activeTab === 'Раскроено' && o.requiresOverlock && !o.overlockedAt) return false;
+      return o.sewingStatus === activeTab;
+    })
     .sort((a, b) => {
       if (activeTab === 'Новый') {
         const fbs = Number(b.orderType === 'FBS') - Number(a.orderType === 'FBS');
@@ -138,7 +153,20 @@ export const useSewingItemsFilters = ({
   const totalMeters = filteredOrders.reduce((sum, o) => sum + ((o.width || 0) * o.quantity) / 100, 0);
   const totalPieces = filteredOrders.reduce((sum, o) => sum + o.quantity, 0);
 
-  const countForTab = (status: SewingStatus) => {
+  const countForTab = (status: TabValue) => {
+    // Счётчики повторяют деление очереди «Раскроено» на две вкладки: ждущие
+    // обмётки — в «Оверлок», всё остальное — в «Раскроено».
+    if (status === OVERLOCK_TAB) {
+      return orders.filter(
+        (o) => o.sewingStatus === 'Раскроено' && o.requiresOverlock && !o.overlockedAt
+      ).length;
+    }
+    if (status === 'Раскроено' && !isCutter) {
+      return orders.filter(
+        (o) =>
+          o.sewingStatus === 'Раскроено' && !(o.requiresOverlock && !o.overlockedAt)
+      ).length;
+    }
     if (status === 'На раскрое' && isCutter) {
       return orders.filter((o) => o.sewingStatus === status && o.assignedUserId === userId).length;
     }
@@ -158,7 +186,12 @@ export const useSewingItemsFilters = ({
     }
     // На вкладке у закройщика только его крой — счётчик должен показывать то же число.
     if (status === 'Раскроено' && isCutter) {
-      return orders.filter((o) => o.sewingStatus === status && o.cutterUserId === userId).length;
+      return orders.filter(
+        (o) =>
+          o.sewingStatus === status &&
+          o.cutterUserId === userId &&
+          !(o.requiresOverlock && !o.overlockedAt)
+      ).length;
     }
     return orders.filter((o) => o.sewingStatus === status).length;
   };

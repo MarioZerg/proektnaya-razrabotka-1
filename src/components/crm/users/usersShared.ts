@@ -74,4 +74,6 @@ export interface CardFormState {
   newPassword: string;
   avatarBase64: string;
   maxUserId: string;
+  /** Швея допущена к работе на оверлоке — видит вкладку «Оверлок» на конвейере. */
+  canOverlock: boolean;
 }

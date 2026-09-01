@@ -112,6 +112,7 @@ const FinanceToolbar = ({
             <SelectItem value="all">Все типы</SelectItem>
             <SelectItem value="cutter_cut">Раскрой</SelectItem>
             <SelectItem value="sewer_piece">Пошив</SelectItem>
+            <SelectItem value="overlock_piece">Оверлок</SelectItem>
             <SelectItem value="packer_stickering">Стикеровка</SelectItem>
             <SelectItem value="packer_repack">Перепаковка возврата</SelectItem>
             <SelectItem value="storekeeper_shift">Оклад кладовщика</SelectItem>
