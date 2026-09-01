@@ -420,6 +420,19 @@ const CrmDashboard = () => {
         </CollapsibleSection>
       )}
 
+      {/* Лототрон стоит сразу за эффективностью: оба блока про людей и их
+          результат, админ смотрит их в одном заходе. */}
+      {isAdmin && (
+        <CollapsibleSection
+          storageKey="lototron"
+          title="Лототрон"
+          hint="Розыгрыш и списание вариков"
+          icon="Coins"
+        >
+          <LototronCard actorId={user?.id} />
+        </CollapsibleSection>
+      )}
+
       {/* Недостача в закрытых рулонах: администратор решает, удерживать ли деньги
           с сотрудников или списать на поставщика. Карточка сама скрывается, когда
           нерассмотренных рулонов нет. */}
@@ -460,18 +473,6 @@ const CrmDashboard = () => {
         ) : null}
       </div>
 
-      {/* Лототрон вынесен из сетки смен в собственный сворачиваемый блок: розыгрыш
-          проводят изредка, а форма занимала целый экран под графиком смен. */}
-      {isAdmin && (
-        <CollapsibleSection
-          storageKey="lototron"
-          title="Лототрон"
-          hint="Розыгрыш и списание вариков"
-          icon="Coins"
-        >
-          <LototronCard actorId={user?.id} />
-        </CollapsibleSection>
-      )}
     </div>
   );
 

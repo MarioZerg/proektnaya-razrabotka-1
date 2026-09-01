@@ -65,18 +65,10 @@ const StaffEfficiencyCard = () => {
   return (
     <Card>
       <CardContent className="space-y-4 p-4 sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-2.5">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
-              <Icon name="TrendingUp" size={18} />
-            </span>
-            <div>
-              <p className="text-sm font-semibold">Эффективность сотрудников</p>
-              <p className="text-xs text-muted-foreground">
-                Выработка, темп и возвраты. Обновляется автоматически
-              </p>
-            </div>
-          </div>
+        {/* Своего заголовка у карточки нет: название и пояснение уже написаны на
+            строке, по которой блок разворачивают. Дублировать их внутри — значит
+            показать человеку два одинаковых заголовка подряд. */}
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <Select value={String(days)} onValueChange={(v) => setDays(Number(v))}>
             <SelectTrigger className="w-36">
               <SelectValue />

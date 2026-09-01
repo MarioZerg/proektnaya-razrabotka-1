@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -64,13 +64,9 @@ const LototronCard = ({ actorId }: LototronCardProps) => {
 
   return (
     <Card className="border-amber-300 bg-amber-50/40 shadow-none">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Icon name="Coins" size={18} className="text-amber-500" />
-          Лототрон · Списание вариков
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+      {/* Заголовок не дублируем: он уже написан на строке, которой блок
+          разворачивают. */}
+      <CardContent className="space-y-4 pt-5">
         <p className="text-xs text-muted-foreground">
           Порог для игры — {threshold} вариков. Готовы играть: {readyPlayers.length}.
         </p>
