@@ -1,15 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,29 +10,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import {
   fetchMaterialsData,
@@ -54,27 +21,15 @@ import {
   type Material,
   type MaterialType,
 } from '@/lib/materialsApi';
-
-const NEW_TYPE_VALUE = '__new__';
-const PAGE_SIZE = 10;
-
-interface MaterialFormState {
-  typeId: string;
-  newTypeName: string;
-  name: string;
-  unit: string;
-  status: 'active' | 'archive';
-  requiresOverlock: boolean;
-}
-
-const emptyForm: MaterialFormState = {
-  typeId: '',
-  newTypeName: '',
-  name: '',
-  unit: 'шт',
-  status: 'active',
-  requiresOverlock: false,
-};
+import MaterialFormDialog from '@/components/crm/materials/MaterialFormDialog';
+import MaterialTypesRow from '@/components/crm/materials/MaterialTypesRow';
+import MaterialsTable from '@/components/crm/materials/MaterialsTable';
+import {
+  NEW_TYPE_VALUE,
+  PAGE_SIZE,
+  emptyForm,
+  type MaterialFormState,
+} from '@/components/crm/materials/materialsSettingsShared';
 
 const MaterialsSettings = () => {
   const { toast } = useToast();
@@ -216,274 +171,42 @@ const MaterialsSettings = () => {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-bold">Материалы</h1>
 
-          <Dialog
-            open={dialogOpen}
-            onOpenChange={(open) => {
+          <MaterialFormDialog
+            dialogOpen={dialogOpen}
+            onDialogOpenChange={(open) => {
               setDialogOpen(open);
               if (!open) {
                 setEditingId(null);
                 setForm(emptyForm);
               }
             }}
-          >
-            <DialogTrigger asChild>
-              <Button onClick={openCreateDialog}>Добавить материал</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>{editingId ? 'Изменить материал' : 'Новый материал'}</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label>Тип</Label>
-                  <Select
-                    value={form.typeId}
-                    onValueChange={(v) => setForm((f) => ({ ...f, typeId: v }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Выберите тип" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {types.map((t) => (
-                        <SelectItem key={t.id} value={String(t.id)}>
-                          {t.name}
-                        </SelectItem>
-                      ))}
-                      <SelectItem value={NEW_TYPE_VALUE}>+ Создать новый тип</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {form.typeId === NEW_TYPE_VALUE && (
-                    <Input
-                      className="mt-2"
-                      placeholder="Название нового типа"
-                      value={form.newTypeName}
-                      onChange={(e) => setForm((f) => ({ ...f, newTypeName: e.target.value }))}
-                    />
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>Название</Label>
-                  <Input
-                    placeholder="Например: Вуаль"
-                    value={form.name}
-                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  />
-                </div>
-
-                {/* Себестоимость здесь больше не задаётся: цену материала определяет прайс
-                    поставщика, а точная себестоимость считается при приёмке (цена × курс +
-                    логистика) и хранится на каждом рулоне отдельно. */}
-                <div className="space-y-1.5">
-                  <Label>Ед. измерения</Label>
-                  <Input
-                    placeholder="п.м. / шт"
-                    value={form.unit}
-                    onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>Статус</Label>
-                  <Select
-                    value={form.status}
-                    onValueChange={(v) => setForm((f) => ({ ...f, status: v as 'active' | 'archive' }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">Активен</SelectItem>
-                      <SelectItem value="archive">Архив</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Ткань с осыпающимся краем. Заказы из неё идут в цехе длиннее:
-                    сначала оверлок, потом прямострочка. Признак ставится здесь
-                    один раз — дальше система сама метит все новые заказы. */}
-                <label className="flex cursor-pointer items-start gap-2.5 rounded-md border p-3">
-                  <Checkbox
-                    checked={form.requiresOverlock}
-                    onCheckedChange={(v) =>
-                      setForm((f) => ({ ...f, requiresOverlock: v === true }))
-                    }
-                    className="mt-0.5"
-                  />
-                  <span className="text-sm">
-                    <span className="font-medium">Требует обработки на оверлоке</span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">
-                      Край осыпается: заказ сначала обмётывают на оверлоке и только потом
-                      отдают швее на прямострочку
-                    </span>
-                  </span>
-                </label>
-
-                <Button onClick={handleSave} disabled={saving} className="w-full">
-                  {saving ? (
-                    <Icon name="Loader2" size={16} className="animate-spin" />
-                  ) : editingId ? (
-                    'Сохранить'
-                  ) : (
-                    'Создать'
-                  )}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+            onCreateClick={openCreateDialog}
+            types={types}
+            editingId={editingId}
+            form={form}
+            setForm={setForm}
+            saving={saving}
+            onSave={handleSave}
+          />
         </div>
 
-        {/* Группы материалов: пустую группу можно удалить прямо здесь, чтобы в справочнике
-            не висели лишние категории. Группа с материалами не удаляется. */}
-        {types.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Группы материалов</p>
-            <div className="flex flex-wrap gap-2">
-              {types.map((t) => {
-                const count = materials.filter((m) => m.typeId === t.id).length;
-                return (
-                  <div
-                    key={t.id}
-                    className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm"
-                  >
-                    <span className="font-medium">{t.name}</span>
-                    <span className="text-xs text-muted-foreground">{count} шт</span>
-                    {count === 0 && (
-                      <button
-                        onClick={() => handleDeleteType(t.id, t.name)}
-                        className="text-muted-foreground transition hover:text-destructive"
-                        aria-label={`Удалить группу ${t.name}`}
-                      >
-                        <Icon name="X" size={14} />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <MaterialTypesRow
+          types={types}
+          materials={materials}
+          onDeleteType={handleDeleteType}
+        />
 
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Icon name="Loader2" size={16} className="animate-spin" />
-            Загрузка...
-          </div>
-        ) : materials.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Материалов пока нет — добавьте первый.</p>
-        ) : (
-          <div className="rounded-md border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-primary hover:bg-primary">
-                  <TableHead className="text-primary-foreground">#</TableHead>
-                  <TableHead className="text-primary-foreground">Тип</TableHead>
-                  <TableHead className="text-primary-foreground">Название</TableHead>
-                  <TableHead className="text-primary-foreground">Ед.измерения</TableHead>
-                  <TableHead className="text-primary-foreground">Средняя цена</TableHead>
-                  <TableHead className="text-primary-foreground">Статус</TableHead>
-                  <TableHead className="text-primary-foreground" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pagedMaterials.map((m) => (
-                  <TableRow key={m.id}>
-                    <TableCell>{m.id}</TableCell>
-                    <TableCell>{typeById.get(m.typeId) || '—'}</TableCell>
-                    <TableCell className="font-medium">
-                      {m.name}
-                      {/* Метка прямо в списке: админу видно, какие ткани идут через
-                          оверлок, без открытия карточки каждой. */}
-                      {m.requiresOverlock && (
-                        <Badge
-                          variant="outline"
-                          className="ml-2 gap-1 border-fuchsia-300 bg-fuchsia-50 font-normal text-fuchsia-700"
-                        >
-                          <Icon name="Scissors" size={11} />
-                          Оверлок
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>{m.unit}</TableCell>
-                    {/* Средняя цена по рулонам на складе — справочно, вручную не задаётся. */}
-                    <TableCell>
-                      {m.avgCost > 0 ? (
-                        `${m.avgCost.toFixed(2)} ₽`
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={m.status === 'active' ? 'secondary' : 'outline'}>
-                        {m.status === 'active' ? 'Активен' : 'Архив'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-2">
-                        <Button size="icon" variant="secondary" onClick={() => openEditDialog(m)}>
-                          <Icon name="Pencil" size={14} />
-                        </Button>
-                        {m.hasMovements ? (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span>
-                                <Button size="icon" variant="destructive" disabled>
-                                  <Icon name="Lock" size={14} />
-                                </Button>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              Материал участвовал в движениях по заказам — удалить нельзя
-                            </TooltipContent>
-                          </Tooltip>
-                        ) : (
-                          <Button
-                            size="icon"
-                            variant="destructive"
-                            onClick={() => setDeleteId(m.id)}
-                          >
-                            <Icon name="Trash2" size={14} />
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-
-        {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2">
-            <Button
-              size="icon"
-              variant="outline"
-              disabled={page === 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              <Icon name="ChevronLeft" size={16} />
-            </Button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-              <Button
-                key={p}
-                size="icon"
-                variant={p === page ? 'default' : 'outline'}
-                onClick={() => setPage(p)}
-              >
-                {p}
-              </Button>
-            ))}
-            <Button
-              size="icon"
-              variant="outline"
-              disabled={page === totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              <Icon name="ChevronRight" size={16} />
-            </Button>
-          </div>
-        )}
+        <MaterialsTable
+          loading={loading}
+          materials={materials}
+          pagedMaterials={pagedMaterials}
+          typeById={typeById}
+          page={page}
+          totalPages={totalPages}
+          setPage={setPage}
+          onEdit={openEditDialog}
+          onAskDelete={setDeleteId}
+        />
       </div>
 
       <AlertDialog open={deleteId !== null} onOpenChange={(open) => !open && setDeleteId(null)}>
