@@ -75,6 +75,15 @@ const SewingItemActionsSection = ({
     }
   }, [dialogOpen, orderDetail?.lastHangerNumber]);
 
+  // Выбор рулона сбрасываем при закрытии окна и при переходе к другому заказу.
+  //
+  // Иначе выбранный для прошлого заказа рулон оставался в поле: тесьма у нового
+  // заказа может быть другая, а швея видит уже заполненное поле и жмёт «Отправить»,
+  // не перевыбирая. Сервер такой рулон отклонит, но человек не поймёт причины.
+  useEffect(() => {
+    setSelectedRollId('');
+  }, [dialogOpen, selectedOrder?.id]);
+
   // Раскрой доступен ТОЛЬКО пока заказ на раскрое. Раньше блок выбора рулона и вешалки
   // оставался рабочим и на заказах, ушедших дальше по конвейеру («В работе», «Стикеровка»,
   // «Готовые») — закройщик мог случайно списать материал второй раз и сменить вешалку
@@ -88,6 +97,25 @@ const SewingItemActionsSection = ({
   // Тесьма нужна только если у товара задан требуемый материал тесьмы. Товары без тесьмы
   // швея отправляет на стикеровку без выбора рулона.
   const trimNeeded = orderDetail?.requiredTrimMaterialId != null;
+
+  // В СПИСКЕ — ТОЛЬКО ТА ТЕСЬМА, КОТОРАЯ УКАЗАНА В КАРТОЧКЕ ТОВАРА.
+  //
+  // Раньше сюда падали все рулоны тесьмы, что лежат в цехе. Швея выбирала любой,
+  // жала «Отправить на стикеровку» и получала отказ уже от сервера: он сверяет
+  // рулон с материалом из карточки товара и чужой не принимает. Человек за
+  // машинкой не понимал, что не так, и перебирал рулоны наугад.
+  //
+  // Теперь список сразу совпадает с тем, что проверяет сервер: видно только
+  // подходящую тесьму, и ошибиться нечем.
+  //
+  // У закройщика ровно то же самое, только материал — ткань из карточки товара.
+  const requiredMaterialId = isSewerView
+    ? orderDetail?.requiredTrimMaterialId
+    : orderDetail?.requiredFabricMaterialId;
+  const matchingRolls =
+    requiredMaterialId != null
+      ? availableRolls.filter((r) => r.materialId === requiredMaterialId)
+      : availableRolls;
 
   if (isCutterView) {
     // Заказ уже ушёл дальше по конвейеру — раскраивать нечего, показываем причину,
@@ -124,10 +152,10 @@ const SewingItemActionsSection = ({
                 <SelectValue placeholder="Выберите рулон" />
               </SelectTrigger>
               <SelectContent>
-                {availableRolls.length === 0 ? (
+                {matchingRolls.length === 0 ? (
                   <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет доступных рулонов</div>
                 ) : (
-                  availableRolls.map((r) => (
+                  matchingRolls.map((r) => (
                     <SelectItem key={r.id} value={String(r.id)}>
                       {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)} {r.unit}
                     </SelectItem>
@@ -135,6 +163,17 @@ const SewingItemActionsSection = ({
                 )}
               </SelectContent>
             </Select>
+            {/* Пустой список — тупик: закройщик не понимает, почему нельзя раскроить.
+                Называем нужную ткань, чтобы было с чем идти к кладовщику. */}
+            {matchingRolls.length === 0 && (
+              <p className="text-xs text-amber-700">
+                В вашем цехе и смене нет рулонов
+                {orderDetail?.requiredFabricMaterialName
+                  ? ` «${orderDetail.requiredFabricMaterialName}»`
+                  : ' нужной ткани'}
+                . Попросите кладовщика передать рулон в цех.
+              </p>
+            )}
           </div>
 
           <div className="w-40 space-y-1.5">
@@ -243,10 +282,10 @@ const SewingItemActionsSection = ({
                   <SelectValue placeholder="Выберите рулон" />
                 </SelectTrigger>
                 <SelectContent>
-                  {availableRolls.length === 0 ? (
+                  {matchingRolls.length === 0 ? (
                     <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет доступных рулонов</div>
                   ) : (
-                    availableRolls.map((r) => (
+                    matchingRolls.map((r) => (
                       <SelectItem key={r.id} value={String(r.id)}>
                         {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)} {r.unit}
                         {/* Материал завела другая смена: расход запишется как работа
@@ -259,7 +298,7 @@ const SewingItemActionsSection = ({
               </Select>
               {/* Пустой список — тупик: швея не понимает, почему нельзя отправить заказ.
                   Называем нужную тесьму, чтобы было с чем идти к кладовщику. */}
-              {availableRolls.length === 0 && (
+              {matchingRolls.length === 0 && (
                 <p className="text-xs text-amber-700">
                   В вашем цехе и смене нет рулонов
                   {orderDetail?.requiredTrimMaterialName
