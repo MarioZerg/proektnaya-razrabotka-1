@@ -1321,6 +1321,17 @@ def handler(event: dict, context) -> dict:
 
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
+            # ПОТОЛОК НА ВЫДАЧУ.
+            #
+            # Без фильтра и без поиска (вкладка «Все») запрос тянул весь склад
+            # целиком — 6617 записей. Склад растёт каждый день, и ответ перестал
+            # влезать в предельный размер: страница отдавала ошибку вместо списка.
+            #
+            # Отдаём последние 1500 записей — это несколько месяцев работы, дальше
+            # никто глазами не листает. Нужную вещь ищут поиском по стикеру или
+            # номеру заказа, а он идёт в базу и видит всю историю без ограничения.
+            limit_clause = "" if (status or search) else " LIMIT 1500"
+
             cur.execute(
                 f"SELECT gw.id, gw.order_id, o.order_number, o.product, o.material, o.width, o.height, "
                 f"gw.shelf_id, s.name, gw.status, gw.received_at, gw.shipped_at, gw.storage_barcode, "
@@ -1355,13 +1366,20 @@ def handler(event: dict, context) -> dict:
                 f"COALESCE(ro.sewing_status, '') NOT IN ('Новый', 'Со склада'), "
                 # Стикер хранения напечатан упаковщицей. Пока пусто — вещь ещё у неё
                 # на руках, идти за ней в цех рано.
-                f"gw.storage_labeled_at "
+                f"gw.storage_labeled_at, "
+                # ЗАКАЗ, В КОТОРОМ ВЕЩЬ СШИЛИ, ОТМЕНЁН НА ПЛОЩАДКЕ.
+                #
+                # Вернуть такую вещь «в цех» нельзя: возврат сбрасывает заказ обратно
+                # в пошив, а шить для отменённого покупателя нечего — цех получает
+                # работу, которую никто не оплатит. Кладовщику эту кнопку не
+                # показываем, см. фронт.
+                f"(COALESCE(o.ozon_status, '') = 'cancelled' OR o.cancelled_at IS NOT NULL) "
                 f"FROM goods_warehouse gw "
                 f"LEFT JOIN orders o ON o.id = gw.order_id "
                 f"LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
                 f"LEFT JOIN shelves s ON s.id = gw.shelf_id "
                 f"{where_clause} "
-                f"ORDER BY gw.received_at DESC, gw.id DESC"
+                f"ORDER BY gw.received_at DESC, gw.id DESC{limit_clause}"
             )
             items = [
                 {
@@ -1394,6 +1412,11 @@ def handler(event: dict, context) -> dict:
                     'orderInProduction': r[24],
                     # Стикер хранения напечатан — вещь готова к забору кладовщиком.
                     'storageLabeledAt': (r[25].isoformat() + 'Z') if r[25] else None,
+                    # Заказ отменён покупателем: возвращать вещь в цех бессмысленно.
+                    # Отменённых на складе единицы, поэтому шлём поле только когда
+                    # оно true — иначе на 1176 вещах это лишние килобайты в цех, и
+                    # ответ упирается в предельный размер.
+                    'orderCancelled': True if r[26] else None,
                 }
                 for r in cur.fetchall()
             ]
@@ -1410,7 +1433,15 @@ def handler(event: dict, context) -> dict:
         finally:
             conn.close()
 
-        return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'items': items})}
+        # ensure_ascii=False обязателен. Иначе каждая русская буква уезжает как
+        # «\u043e» — шесть байт вместо двух, и ответ раздувается втрое: список
+        # склада перестал влезать в предельный размер и отдавал ошибку вместо
+        # товаров. Остальные ветки этой функции давно отвечают именно так.
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': json.dumps({'items': items}, ensure_ascii=False),
+        }
 
     if method == 'POST':
         body_data = json.loads(event.get('body') or '{}')
@@ -2749,12 +2780,26 @@ def handler(event: dict, context) -> dict:
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
-                cur.execute("SELECT order_id, status FROM goods_warehouse WHERE id = %s", (int(item_id),))
+                cur.execute(
+                    "SELECT gw.order_id, gw.status, "
+                    "       (COALESCE(o.ozon_status, '') = 'cancelled' OR o.cancelled_at IS NOT NULL) "
+                    "FROM goods_warehouse gw LEFT JOIN orders o ON o.id = gw.order_id "
+                    "WHERE gw.id = %s",
+                    (int(item_id),),
+                )
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Запись не найдена'})}
                 if row[1] not in ('in_stock', 'picking'):
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Товар уже зарезервирован/отгружен, вернуть нельзя'})}
+                # ОТМЕНЁННЫЙ ЗАКАЗ В ЦЕХ НЕ ВОЗВРАЩАЕМ.
+                #
+                # Возврат сбрасывает заказ обратно в «В работе», и цех начинает шить
+                # для покупателя, который уже отказался: тратится ткань и рабочее
+                # время, а платить за вещь некому. Кнопку на складе мы спрятали, но
+                # запрет должен стоять и здесь — на случай старой открытой вкладки.
+                if row[2]:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Заказ отменён покупателем — возвращать вещь в цех нельзя. Оставьте её на полке: она уйдёт следующему заказу с такими же размерами'})}
                 cur.execute(f"DELETE FROM goods_warehouse WHERE id = {int(item_id)}")
                 cur.execute(f"UPDATE orders SET sewing_status = 'В работе' WHERE id = {int(row[0])}")
                 log_action(cur, actor_id, actor_name, 'return_to_workshop', 'order', row[0], f'Вернул товар #{item_id} в цех')

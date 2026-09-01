@@ -153,9 +153,16 @@ const GoodsWarehouseCards = ({
 
             {canAct && (
               <div className="mt-3 flex flex-wrap justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={() => onReturnToWorkshop(i.id)}>
-                  <Icon name="Undo2" size={14} className="mr-1.5" />В цех
-                </Button>
+                {/* «В цех» — это возврат на ПЕРЕДЕЛКУ: вещь с браком уходит обратно
+                    в пошив. Для отменённого заказа кнопку убираем: она сбрасывала
+                    заказ в работу, и цех начинал шить для покупателя, который уже
+                    отказался. Такую вещь оставляют на полке — она уйдёт следующему
+                    заказу с теми же размерами. */}
+                {!i.orderCancelled && (
+                  <Button variant="outline" size="sm" onClick={() => onReturnToWorkshop(i.id)}>
+                    <Icon name="Undo2" size={14} className="mr-1.5" />В цех
+                  </Button>
+                )}
                 <Button variant="ghost" size="sm" onClick={() => onMarkLost(i.id)}>
                   <Icon name="HelpCircle" size={14} className="mr-1.5" />
                   Утерян
