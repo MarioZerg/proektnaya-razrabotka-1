@@ -24,6 +24,7 @@ import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard'
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
+import CollapsibleSection from '@/components/crm/dashboard/CollapsibleSection';
 import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
 import StaffEfficiencyCard from '@/components/crm/dashboard/StaffEfficiencyCard';
 import FboShipmentsCard from '@/components/crm/dashboard/FboShipmentsCard';
@@ -377,13 +378,29 @@ const CrmDashboard = () => {
 
       {/* Бонусная программа: швея видит СВОЙ прогресс к премии, руководство — всех.
           Остальным ролям карточка не нужна: программа только для швей. */}
-      {(isSewer || isAdmin) && (
+      {/* Швее — открыто и всегда: свой прогресс к премии она смотрит каждую смену,
+          прятать его под клик нельзя. Админу это отчёт по всем сразу, он длинный
+          и нужен раз в период — сворачиваем. */}
+      {isSewer && (
         <>
           {/* Акция дня — выше месячной премии: её цель нужно взять до конца смены,
               поэтому она важнее для решений «здесь и сейчас». */}
-          <SewerDailyCard onlyUserId={isSewer ? user?.id : undefined} />
-          <SewerBonusCard onlyUserId={isSewer ? user?.id : undefined} />
+          <SewerDailyCard onlyUserId={user?.id} />
+          <SewerBonusCard onlyUserId={user?.id} />
         </>
+      )}
+      {isAdmin && (
+        <CollapsibleSection
+          storageKey="output"
+          title="Выработка сотрудников"
+          hint="Акция дня и премия за выработку по всем швеям"
+          icon="Trophy"
+        >
+          <div className="space-y-6">
+            <SewerDailyCard />
+            <SewerBonusCard />
+          </div>
+        </CollapsibleSection>
       )}
 
       {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
@@ -392,7 +409,16 @@ const CrmDashboard = () => {
 
       {/* Эффективность цеха: кто сколько сделал, с каким темпом и с каким браком.
           Только администратору — это оценка людей, а не рабочий инструмент смены. */}
-      {isAdmin && <StaffEfficiencyCard />}
+      {isAdmin && (
+        <CollapsibleSection
+          storageKey="efficiency"
+          title="Эффективность сотрудников"
+          hint="Выработка, темп и возвраты по швеям, закройщикам и упаковщикам"
+          icon="TrendingUp"
+        >
+          <StaffEfficiencyCard />
+        </CollapsibleSection>
+      )}
 
       {/* Недостача в закрытых рулонах: администратор решает, удерживать ли деньги
           с сотрудников или списать на поставщика. Карточка сама скрывается, когда
@@ -420,7 +446,6 @@ const CrmDashboard = () => {
               onSelectDate={setSelectedDate}
               days={calendarDays}
             />
-            <LototronCard actorId={user?.id} />
           </>
         ) : canSeeShiftCalendar ? (
           // Кладовщик и менеджер: график смен по календарю. Открытие и закрытие смены
@@ -434,6 +459,19 @@ const CrmDashboard = () => {
           </div>
         ) : null}
       </div>
+
+      {/* Лототрон вынесен из сетки смен в собственный сворачиваемый блок: розыгрыш
+          проводят изредка, а форма занимала целый экран под графиком смен. */}
+      {isAdmin && (
+        <CollapsibleSection
+          storageKey="lototron"
+          title="Лототрон"
+          hint="Розыгрыш и списание вариков"
+          icon="Coins"
+        >
+          <LototronCard actorId={user?.id} />
+        </CollapsibleSection>
+      )}
     </div>
   );
 
