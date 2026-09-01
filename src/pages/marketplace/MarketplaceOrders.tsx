@@ -296,13 +296,22 @@ const MarketplaceOrders = () => {
   // и реальный прогресс не отражает). Отменённые (status='Отменён') показываются только во
   // вкладке "Отменённые" и не попадают в остальные — их видно зачёркнутыми.
   const IN_PROGRESS_STAGES = ['На раскрое', 'Раскроено', 'В работе', 'Стикеровка'];
+  // Заказ закрыт двумя путями: его отшили («Готовые») или вещь взяли готовой со
+  // склада, минуя цех («Со склада»). Для отдела продаж это одно и то же —
+  // выполненный заказ. Раньше в «Выполненных» проверялись только «Готовые», и
+  // больше тысячи заказов «Со склада» не показывались НИ В ОДНОМ фильтре: они
+  // приходили с сервера, но проваливались мимо всех четырёх условий.
+  const DONE_STAGES = ['Готовые', 'Со склада'];
   const matchesStatus = (o: Order): boolean => {
-    const cancelled = o.status === 'Отменён';
+    // Отменяют заказ на любом этапе, и sewingStatus при этом остаётся прежним
+    // («Новый», «Готовые», «Со склада»). Признак отмены — только поле status,
+    // поэтому проверяем его первым и до всех остальных условий.
+    const cancelled = o.status === 'Отменён' || o.sewingStatus === 'Отменён';
     if (statusFilter === 'cancelled') return cancelled;
     if (cancelled) return false;
     if (statusFilter === 'new') return o.sewingStatus === 'Новый';
     if (statusFilter === 'in_progress') return IN_PROGRESS_STAGES.includes(o.sewingStatus);
-    if (statusFilter === 'done') return o.sewingStatus === 'Готовые';
+    if (statusFilter === 'done') return DONE_STAGES.includes(o.sewingStatus);
     return true;
   };
 
