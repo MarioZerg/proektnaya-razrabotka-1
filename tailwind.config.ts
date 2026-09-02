@@ -73,6 +73,17 @@ export default {
 				sm: 'calc(var(--radius) - 4px)'
 			},
 			keyframes: {
+				// Появление «молодца» после закрытия всех заданий смены: выскакивает
+				// снизу с лёгким перелётом и потом еле заметно покачивается.
+				'cheer-pop': {
+					'0%': { opacity: '0', transform: 'translateY(16px) scale(0.6) rotate(-8deg)' },
+					'60%': { opacity: '1', transform: 'translateY(-6px) scale(1.08) rotate(3deg)' },
+					'100%': { opacity: '1', transform: 'translateY(0) scale(1) rotate(0deg)' }
+				},
+				'cheer-idle': {
+					'0%, 100%': { transform: 'translateY(0) rotate(-2deg)' },
+					'50%': { transform: 'translateY(-5px) rotate(2deg)' }
+				},
 				'accordion-down': {
 					from: {
 						height: '0'
@@ -164,6 +175,8 @@ export default {
 				}
 			},
 			animation: {
+				'cheer-pop': 'cheer-pop 0.7s cubic-bezier(0.22, 1.4, 0.4, 1) both',
+				'cheer-idle': 'cheer-idle 3s ease-in-out 0.7s infinite',
 				'accordion-down': 'accordion-down 0.2s ease-out',
 				'accordion-up': 'accordion-up 0.2s ease-out',
 				'fade-in': 'fade-in 0.6s ease-out both',

@@ -142,6 +142,27 @@ const StorekeeperTasksWidget = () => {
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
     >
+      {/* НАГРАДА ЗА ЗАКРЫТЫЙ ЧЕК-ЛИСТ.
+          Появляется, когда выполнено ВСЁ, и выскакивает над виджетом с лёгким
+          перелётом. Дальше еле заметно покачивается — глаз не устаёт.
+          Стоит появиться новой работе (пришёл возврат, отменили заказ) —
+          картинка исчезает сама и вернётся, только когда список снова закрыт.
+          pointer-events-none: не перехватывает клики по заданиям под ней. */}
+      {allDone && (
+        // Два слоя, потому что анимации разные по смыслу: внешний выскакивает
+        // один раз, внутренний качается бесконечно. В одном элементе они
+        // затирали бы друг друга — вторая анимация сбрасывала бы transform.
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -top-16 right-2 z-10 animate-cheer-pop motion-reduce:animate-none"
+        >
+          <img
+            src="/happy-done.png"
+            alt=""
+            className="h-24 w-auto animate-cheer-idle drop-shadow-[0_6px_12px_rgba(0,0,0,0.25)] motion-reduce:animate-none"
+          />
+        </span>
+      )}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
