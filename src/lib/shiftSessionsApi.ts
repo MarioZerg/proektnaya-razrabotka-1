@@ -222,6 +222,8 @@ export interface StorekeeperTask {
 
 export interface StorekeeperTasksResult {
   shiftOpen: boolean;
+  /** Демо-просмотр без открытой смены: галочки живут только на экране. */
+  demo?: boolean;
   sessionId?: number;
   tasks: StorekeeperTask[];
   doneCount?: number;
@@ -239,9 +241,10 @@ export interface StorekeeperTasksResult {
  */
 export const fetchStorekeeperTasks = async (
   userId: number,
+  demo = false,
 ): Promise<StorekeeperTasksResult> => {
   const res = await fetch(
-    `${SHIFT_SESSIONS_URL}?storekeeperTasks=1&userId=${userId}`,
+    `${SHIFT_SESSIONS_URL}?storekeeperTasks=1&userId=${userId}${demo ? '&demo=1' : ''}`,
   );
   if (!res.ok) return { shiftOpen: false, tasks: [] };
   const data = await res.json();

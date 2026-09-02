@@ -33,7 +33,13 @@ MANUAL_TASKS = ('fabric_shipment', 'rolls_reminder')
 
 
 def _manual_done(cur, session_id):
-    """Какие задания кладовщик уже отметил вручную в этой смене."""
+    """Какие задания кладовщик уже отметил вручную в этой смене.
+
+    Без смены (демо-просмотр у администратора) отметок нет: галочки хранятся
+    по смене, а её в этом режиме не существует.
+    """
+    if not session_id:
+        return set()
     cur.execute(
         "SELECT task_key FROM storekeeper_shift_tasks WHERE shift_session_id = %s",
         (int(session_id),),
@@ -112,19 +118,30 @@ def build_tasks(cur, session_id, user_id):
     # останется до завтра, а маркетплейс ждёт её сегодня.
     #
     # Чужие и вчерашние поставки человека не держат — он за них не брался.
-    cur.execute(
-        "SELECT count(*) FROM storekeeper_shift_supplies sss "
-        "JOIN marketplace_supplies ms ON ms.id = sss.supply_id "
-        "WHERE sss.shift_session_id = %s "
-        "  AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')",
-        (int(session_id),),
-    )
-    supplies_open = int(cur.fetchone()[0] or 0)
-    cur.execute(
-        "SELECT count(*) FROM storekeeper_shift_supplies WHERE shift_session_id = %s",
-        (int(session_id),),
-    )
-    supplies_total = int(cur.fetchone()[0] or 0)
+    if session_id:
+        cur.execute(
+            "SELECT count(*) FROM storekeeper_shift_supplies sss "
+            "JOIN marketplace_supplies ms ON ms.id = sss.supply_id "
+            "WHERE sss.shift_session_id = %s "
+            "  AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')",
+            (int(session_id),),
+        )
+        supplies_open = int(cur.fetchone()[0] or 0)
+        cur.execute(
+            "SELECT count(*) FROM storekeeper_shift_supplies WHERE shift_session_id = %s",
+            (int(session_id),),
+        )
+        supplies_total = int(cur.fetchone()[0] or 0)
+    else:
+        # Демо-просмотр без смены: показываем НЕЗАКРЫТЫЕ поставки FBS вообще —
+        # чтобы задание выглядело как в реальной работе, с живыми цифрами.
+        cur.execute(
+            "SELECT count(*) FROM marketplace_supplies "
+            "WHERE type = 'FBS' AND COALESCE(is_accumulator, false) = false "
+            "  AND COALESCE(status, '') NOT IN ('Выполнена', 'Отменена')"
+        )
+        supplies_open = int(cur.fetchone()[0] or 0)
+        supplies_total = supplies_open
     tasks.append({
         'key': 'fbs_supplies',
         'title': 'Отгрузить поставки FBS',

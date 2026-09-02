@@ -31,6 +31,8 @@ export interface TestAccount {
   workshopId: number | null;
   workshopName: string | null;
   shiftNumber: number | null;
+  /** Допуск к оверлоку: у швей таких аккаунта два — обычный и с допуском. */
+  canOverlock?: boolean;
 }
 
 /** Что показать сотруднику при входе — одним запросом. */

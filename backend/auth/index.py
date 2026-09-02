@@ -288,14 +288,28 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             cur.execute(
-                "SELECT DISTINCT ON (u.role) u.id, u.full_name, u.role, u.workshop, u.shift_number, w.id "
+                # ПО ОДНОМУ ЧЕЛОВЕКУ НА РОЛЬ, но швеи — ДВЕ.
+                #
+                # Оверлок это не должность, а допуск (галочка can_overlock): он
+                # открывает вкладку «Оверлок» и меняет расчёт зарплаты. Раньше
+                # список брал строго по одному на роль, и швея с допуском в него
+                # не попадала — посмотреть этот режим было не на ком.
+                #
+                # Поэтому ключ группировки — роль ПЛЮС признак оверлока: у швей
+                # выходит два входа, у остальных ролей по-прежнему один.
+                "SELECT DISTINCT ON (u.role, COALESCE(u.can_overlock, false)) "
+                "  u.id, u.full_name, u.role, u.workshop, u.shift_number, w.id, "
+                "  COALESCE(u.can_overlock, false) "
                 "FROM users u "
                 "LEFT JOIN workshops w ON w.name = u.workshop "
                 "WHERE u.is_active = true AND u.role <> '' "
                 # Расторгнувших договор в списке для входа не показываем: их
                 # доступ закрыт, и предлагать им кнопку входа незачем.
                 "  AND u.contract_terminated_at IS NULL "
-                "ORDER BY u.role, u.id"
+                # Демо-аккаунты идут первыми: если для роли заведён специальный
+                # тестовый сотрудник, показываем именно его, а не живого человека.
+                "ORDER BY u.role, COALESCE(u.can_overlock, false), "
+                "         COALESCE(u.is_demo, false) DESC, u.id"
             )
             rows = cur.fetchall()
         finally:
@@ -309,6 +323,9 @@ def handler(event: dict, context) -> dict:
                 'workshopName': r[3],
                 'shiftNumber': r[4],
                 'workshopId': r[5],
+                # Допуск к оверлоку: по нему в списке входов видно, чем этот
+                # аккаунт отличается от обычной швеи.
+                'canOverlock': bool(r[6]),
             }
             for r in rows
         ]

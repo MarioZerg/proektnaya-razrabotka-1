@@ -51,8 +51,17 @@ const TestAccountsPanel = ({ onSelect, disabled }: TestAccountsPanelProps) => {
             onClick={() => onSelect(acc)}
             className="flex flex-col items-center gap-1.5 rounded-sm border border-border bg-transparent px-3 py-3 text-center transition-colors hover:border-primary hover:bg-primary/5 disabled:opacity-50"
           >
-            <Icon name={roleIcons[acc.role] || 'User'} size={20} className="text-muted-foreground" />
-            <span className="text-xs font-medium leading-tight">{roleLabels[acc.role]}</span>
+            <Icon
+              name={acc.canOverlock ? 'Layers' : roleIcons[acc.role] || 'User'}
+              size={20}
+              className="text-muted-foreground"
+            />
+            {/* Швей в списке две: обычная и с допуском к оверлоку. Без подписи
+                кнопки выглядели бы одинаково, и выбрать нужную было нельзя. */}
+            <span className="text-xs font-medium leading-tight">
+              {roleLabels[acc.role]}
+              {acc.canOverlock && ' (оверлок)'}
+            </span>
           </button>
         ))}
       </div>

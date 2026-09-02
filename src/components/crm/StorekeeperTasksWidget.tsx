@@ -39,18 +39,24 @@ const StorekeeperTasksWidget = () => {
   const [shiftOpen, setShiftOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  // Галочки в демо-режиме: настоящей смены нет, запоминать их негде — держим
+  // на экране, чтобы администратор мог понажимать и посмотреть, как это работает.
+  const [demoDone, setDemoDone] = useState<Set<string>>(new Set());
 
   const isStorekeeper = isStorekeeperRole(user?.role);
+  // Тестовый вход администратора под кладовщика: смену он не открывает, но
+  // список должен быть виден и кликабелен — иначе проверить его нельзя.
+  const isDemo = !!user?.isDemo;
 
   const load = useCallback(() => {
     if (!user?.id || !isStorekeeper) return;
-    fetchStorekeeperTasks(user.id)
+    fetchStorekeeperTasks(user.id, isDemo)
       .then((r) => {
         setShiftOpen(r.shiftOpen);
         setTasks(r.tasks);
       })
       .catch(() => setTasks([]));
-  }, [user?.id, isStorekeeper]);
+  }, [user?.id, isStorekeeper, isDemo]);
 
   useEffect(() => {
     load();
@@ -70,12 +76,30 @@ const StorekeeperTasksWidget = () => {
 
   if (!isStorekeeper || !shiftOpen || tasks.length === 0) return null;
 
-  const doneCount = tasks.filter((t) => t.done).length;
-  const blocking = tasks.filter((t) => t.blocking && !t.done);
-  const allDone = doneCount === tasks.length;
+  // В демо-режиме поверх настоящих данных накладываем галочки, нажатые на экране.
+  const shown = isDemo
+    ? tasks.map((t) => (demoDone.has(t.key) ? { ...t, done: true } : t))
+    : tasks;
+
+  const doneCount = shown.filter((t) => t.done).length;
+  const blocking = shown.filter((t) => t.blocking && !t.done);
+  const allDone = doneCount === shown.length;
 
   const handleToggle = async (task: StorekeeperTask) => {
-    if (!user?.id || !task.manual) return;
+    if (!user?.id) return;
+    // ДЕМО: нажимается ЛЮБАЯ галочка, в том числе у автоматических заданий —
+    // чтобы администратор увидел, как выглядит выполненный список целиком.
+    // В базу это не пишется и на работу склада не влияет.
+    if (isDemo) {
+      setDemoDone((prev) => {
+        const next = new Set(prev);
+        if (next.has(task.key)) next.delete(task.key);
+        else next.add(task.key);
+        return next;
+      });
+      return;
+    }
+    if (!task.manual) return;
     setBusyKey(task.key);
     try {
       await toggleStorekeeperTask(user.id, task.key);
@@ -116,11 +140,16 @@ const StorekeeperTasksWidget = () => {
         <span className="min-w-0 flex-1">
           <span className="block text-xs font-semibold leading-tight">
             Задания смены
+            {isDemo && (
+              <span className="ml-1 rounded-sm bg-muted px-1 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
+                демо
+              </span>
+            )}
           </span>
           <span className="block text-[11px] leading-tight text-muted-foreground">
             {allDone
               ? 'Всё выполнено — можно закрывать смену'
-              : `Выполнено ${doneCount} из ${tasks.length}`}
+              : `Выполнено ${doneCount} из ${shown.length}`}
           </span>
         </span>
         <span
@@ -130,7 +159,7 @@ const StorekeeperTasksWidget = () => {
               : 'bg-primary/10 text-primary'
           }`}
         >
-          {doneCount}/{tasks.length}
+          {doneCount}/{shown.length}
         </span>
         <Icon
           name={open ? 'ChevronUp' : 'ChevronDown'}
@@ -145,13 +174,13 @@ const StorekeeperTasksWidget = () => {
           className={`h-full rounded-full transition-all duration-500 ${
             allDone ? 'bg-emerald-500' : 'bg-primary'
           }`}
-          style={{ width: `${(doneCount / tasks.length) * 100}%` }}
+          style={{ width: `${(doneCount / shown.length) * 100}%` }}
         />
       </div>
 
       {open && (
         <div className="max-h-[60vh] space-y-1 overflow-y-auto p-2">
-          {tasks.map((t) => (
+          {shown.map((t) => (
             <div
               key={t.key}
               className={`flex items-start gap-2 rounded-lg border p-2 transition-colors ${
@@ -166,18 +195,20 @@ const StorekeeperTasksWidget = () => {
                   показывает состояние — работа закрывает их сама. */}
               <button
                 type="button"
-                disabled={!t.manual || busyKey === t.key}
+                disabled={(!t.manual && !isDemo) || busyKey === t.key}
                 onClick={() => handleToggle(t)}
                 title={
-                  t.manual
-                    ? 'Отметить выполненным'
-                    : 'Галочка встанет сама, когда работа будет сделана'
+                  isDemo
+                    ? 'Демо: нажмите, чтобы посмотреть, как ставится галочка'
+                    : t.manual
+                      ? 'Отметить выполненным'
+                      : 'Галочка встанет сама, когда работа будет сделана'
                 }
                 className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md border transition-colors ${
                   t.done
                     ? 'border-emerald-500 bg-emerald-500 text-white'
                     : 'border-muted-foreground/40 bg-background'
-                } ${t.manual ? 'cursor-pointer hover:border-emerald-500' : 'cursor-default'}`}
+                } ${t.manual || isDemo ? 'cursor-pointer hover:border-emerald-500' : 'cursor-default'}`}
               >
                 {busyKey === t.key ? (
                   <Icon name="Loader2" size={12} className="animate-spin" />
@@ -211,7 +242,14 @@ const StorekeeperTasksWidget = () => {
             </div>
           ))}
 
-          {blocking.length > 0 && (
+          {isDemo && (
+            <p className="px-1 pt-1 text-[10px] leading-snug text-muted-foreground">
+              Демо-просмотр: цифры настоящие, галочки нажимаются для примера и
+              никуда не сохраняются. У кладовщика на смене сами закрываются все
+              задания, кроме отгрузки ткани и напоминания про рулоны.
+            </p>
+          )}
+          {blocking.length > 0 && !isDemo && (
             <p className="px-1 pt-1 text-[10px] leading-snug text-amber-700">
               Смену нельзя закрыть, пока не сделано: {blocking.length} задание
               {blocking.length > 1 ? 'й' : ''}. Задания с галочкой вручную смену

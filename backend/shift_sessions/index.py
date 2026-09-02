@@ -438,6 +438,32 @@ def handler(event: dict, context) -> dict:
                 if not tasks_user_id:
                     return {'statusCode': 400, 'headers': headers,
                             'body': json.dumps({'error': 'Укажите userId'})}
+
+                # ДЕМО-РЕЖИМ: показать чек-лист, не открывая настоящую смену.
+                #
+                # Администратор заходит тестовым входом под кладовщика, чтобы
+                # посмотреть, как список выглядит и работает. Открывать ради этого
+                # реальную смену нельзя — она попадёт в табель и начислит оклад.
+                # Поэтому считаем задания по живым данным склада, но без привязки
+                # к смене: галочки такой список не запоминает, они живут только на
+                # экране до перезагрузки.
+                if (params.get('demo') or '') == '1':
+                    demo_tasks = build_tasks(cur, None, int(tasks_user_id))
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'shiftOpen': True,
+                            'demo': True,
+                            'tasks': demo_tasks,
+                            'doneCount': sum(1 for t in demo_tasks if t['done']),
+                            'totalCount': len(demo_tasks),
+                            'blockingCount': sum(
+                                1 for t in demo_tasks if t['blocking'] and not t['done']
+                            ),
+                        }, ensure_ascii=False),
+                    }
+
                 cur.execute(
                     "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
                     "ORDER BY opened_at DESC LIMIT 1",
@@ -558,7 +584,11 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "SELECT id, full_name, role, shift_number, shift_from, shift_to, workshop, shift_free, "
                 "work_hours, late_tolerance_minutes FROM users "
-                "WHERE is_active = true ORDER BY full_name"
+                # Демо-аккаунты (кнопка тестового входа у админа) в управлении
+                # сменами не показываем: они не работают, и строка «смена закрыта»
+                # у них висела бы вечно, мешая видеть реальных людей.
+                "WHERE is_active = true AND COALESCE(is_demo, false) = false "
+                "ORDER BY full_name"
             )
             employee_rows = cur.fetchall()
 
