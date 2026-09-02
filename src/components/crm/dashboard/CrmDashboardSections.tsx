@@ -7,6 +7,7 @@ import CollapsibleSection from '@/components/crm/dashboard/CollapsibleSection';
 import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
 import StaffEfficiencyCard from '@/components/crm/dashboard/StaffEfficiencyCard';
 import FboShipmentsCard from '@/components/crm/dashboard/FboShipmentsCard';
+import StalledShipmentsCard from '@/components/crm/dashboard/StalledShipmentsCard';
 import { type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import {
   type EmployeeShiftStatus,
@@ -59,6 +60,11 @@ const CrmDashboardSections = ({
   calendarDays,
 }: CrmDashboardSectionsProps) => (
   <>
+    {/* Зависшие отправления — выше всего остального: маркетплейс уже ждёт эти
+        заказы, а по ним никто не работает. Видят те, кто может это разобрать:
+        администратор и склад. Пусто — блок не рисуется. */}
+    {canSeeFboBoard && <StalledShipmentsCard />}
+
     {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
 
     {canSeeWorkingToday && <WorkingTodayCard />}

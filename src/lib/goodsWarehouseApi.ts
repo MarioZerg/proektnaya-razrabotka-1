@@ -840,3 +840,31 @@ export const closeShippedStuck = (
   postAction({ action: 'close_shipped_stuck', ids, actorId, actorName }) as Promise<{
     closed: number;
   }>;
+/** Зависшее отправление: маркетплейс ждёт товар, а по заказу никто не работает. */
+export interface StalledShipment {
+  orderId: number;
+  orderNumber: string;
+  marketplace: string | null;
+  product: string | null;
+  createdAt: string | null;
+  goodsId: number | null;
+  goodsStatus: string | null;
+  shelfName: string | null;
+}
+
+/**
+ * Отправления, которые заказчик ждёт, а мы не двигаем.
+ *
+ * Так теряются заказы, закрытые вещью со склада: если вещь не попала в подбор
+ * кладовщика, работа по заказу не начинается вообще, и он висит незамеченным.
+ * Свежие заказы (младше суток) сюда не попадают — их просто ещё не разобрали.
+ */
+export const fetchStalledShipments = async (): Promise<{
+  items: StalledShipment[];
+  count: number;
+}> => {
+  const res = await fetch(`${GOODS_WAREHOUSE_URL}?stalled_shipments=1`);
+  if (!res.ok) return { items: [], count: 0 };
+  const data = await res.json();
+  return { items: data.items || [], count: data.count || 0 };
+};

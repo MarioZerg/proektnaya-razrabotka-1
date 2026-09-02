@@ -785,6 +785,68 @@ def handler(event: dict, context) -> dict:
             # Воронка осмотра возвратов: шесть счётчиков + список выбранного этапа.
             # Кладовщик видит, сколько вещей застряло на каждом шаге, и не теряет их
             # «где-то между цехом и складом».
+            if params.get('stalled_shipments'):
+                # ЗАВИСШИЕ ОТПРАВЛЕНИЯ: маркетплейс ждёт товар, а у нас по заказу
+                # никто не движется.
+                #
+                # Так пропадали заказы OZON, закрытые вещью со склада: подбор ставил
+                # резерв, но не переводил вещь в статус «в подборе». Списки кладовщика
+                # показывают только 'picking' и 'awaiting_supply' — заказ не попадал
+                # к нему вообще и молча висел неделями, пока его не замечали вручную.
+                # Сам подбор исправлен, но подобное может случиться и по другой
+                # причине (оборванная операция, ручная правка), поэтому смотрим не за
+                # конкретной ошибкой, а за результатом: заказ есть, работы по нему нет.
+                #
+                # Считаем зависшим заказ, который ОДНОВРЕМЕННО:
+                #   * маркетплейс всё ещё ждёт от нас (awaiting_packaging у OZON,
+                #     пустой статус у WB и Яндекса), не отменён и не отгружен;
+                #   * старше суток — свежие заказы просто ещё не разобрали, это норма;
+                #   * никуда не двигается: цех за него не брался И склад не готовит.
+                #
+                # Заказ в работе цеха (раскроен, шьётся, стикеруется) зависшим НЕ
+                # считается — он идёт своим ходом по конвейеру.
+                cur.execute(
+                    "SELECT o.id, o.order_number, o.marketplace, o.product, "
+                    "       o.created_at, gw.id, gw.status, sh.name "
+                    "FROM orders o "
+                    "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+                    "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                    "WHERE COALESCE(o.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
+                    "  AND COALESCE(o.ozon_status, '') NOT IN "
+                    "      ('awaiting_deliver', 'delivering', 'delivered', 'cancelled', "
+                    "       'not_accepted', 'driver_pickup') "
+                    "  AND COALESCE(o.ym_status, '') NOT ILIKE 'cancel%' "
+                    "  AND o.created_at < now() - interval '1 day' "
+                    # Вещь подобрана со склада, но не отдана кладовщику в работу:
+                    # числится свободным остатком или вовсе не на складе.
+                    "  AND o.sewing_status = 'Со склада' "
+                    "  AND (gw.id IS NULL OR gw.status NOT IN ('picking', 'awaiting_supply', 'shipped')) "
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                    "        JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                    "        WHERE msi.goods_warehouse_id = gw.id "
+                    "          AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                    "ORDER BY o.created_at ASC LIMIT 50"
+                )
+                items = [
+                    {
+                        'orderId': r[0],
+                        'orderNumber': r[1],
+                        'marketplace': r[2],
+                        'product': r[3],
+                        'createdAt': r[4].isoformat() + 'Z' if r[4] else None,
+                        'goodsId': r[5],
+                        'goodsStatus': r[6],
+                        'shelfName': r[7],
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'items': items, 'count': len(items)},
+                                       ensure_ascii=False),
+                }
+
             # Уведомления для панели администратора.
             if params.get('notifications'):
                 cur.execute(
