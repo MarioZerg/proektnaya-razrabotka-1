@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "GET without supplyId fails",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 400
+    },
+    {
+      "name": "POST without supplyId fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "create"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "nope", "supplyId": 1},
+      "expectedStatus": 400
+    }
+  ]
+}

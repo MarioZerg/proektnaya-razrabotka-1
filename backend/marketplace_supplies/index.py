@@ -2956,6 +2956,39 @@ def handler(event: dict, context) -> dict:
                 extra_sql = ""
                 ozon_shipped, ozon_problems, ozon_remaining = 0, [], 0
                 if new_status == 'Отгрузка':
+                    # ЭТрН. С 01.09 сортировочные центры принимают только электронные
+                    # транспортные документы, бумажные версии не принимаются, а за
+                    # нарушение порядка оформления предусмотрена ответственность по
+                    # ст. 11.14.3 КоАП РФ. Машина без подписанной накладной уедет зря:
+                    # на воротах СЦ груз развернут. Поэтому отгрузку FBO не открываем,
+                    # пока подписанный документ от оператора не загружен в поставку.
+                    if supply_type == 'FBO':
+                        cur.execute(
+                            'SELECT status, signed_file_url FROM etrn_documents WHERE supply_id = %s',
+                            (int(supply_id),),
+                        )
+                        etrn = cur.fetchone()
+                        if not etrn:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': 'По поставке не заведена транспортная накладная (ЭТрН). '
+                                             'СЦ принимает груз только с электронным документом.',
+                                    'etrnMissing': True,
+                                }, ensure_ascii=False),
+                            }
+                        if etrn[0] != 'Подписана' or not etrn[1]:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': f'Транспортная накладная не подписана (статус «{etrn[0]}»). '
+                                             'Подпишите её в Диадоке и загрузите подписанный документ.',
+                                    'etrnNotSigned': True,
+                                }, ensure_ascii=False),
+                            }
+
                     # Отменённые заказы отгружать нельзя: на маркетплейсе их больше нет.
                     # Кладовщик должен сначала отправить такие вещи на полку хранения —
                     # прямо из строки поставки, кнопкой «На полку».

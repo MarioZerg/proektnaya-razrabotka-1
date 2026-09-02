@@ -16,6 +16,7 @@ import AddSewingOrdersDialog from '@/components/crm/marketplaceSupplies/AddSewin
 import SupplyGroupsPanel from '@/components/crm/marketplaceSupplies/SupplyGroupsPanel';
 import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCard';
 import WbFboSupplyCard from '@/components/crm/marketplaceSupplies/WbFboSupplyCard';
+import EtrnCard from '@/components/crm/marketplaceSupplies/EtrnCard';
 
 interface SupplyShowContentProps {
   supply: SupplyDetail;
@@ -153,6 +154,11 @@ const SupplyShowContent = ({
           gazelkaReady={flags.gazelkaReady}
         />
       )}
+
+      {/* Транспортная накладная: ставим сразу под перевозкой — водитель, машина и
+          сдача груза относятся к одному и тому же выезду. С 1 сентября СЦ принимают
+          только электронные документы, поэтому блок виден у всех поставок FBO. */}
+      {supply.type === 'FBO' && <EtrnCard supply={supply} isManager={flags.isManager} />}
 
       {/* Пошив по поставке: менеджер видит, что уже сшито, и догружает недостающее.
           Показываем НАД товарным составом — сначала производство, потом сборка. */}
