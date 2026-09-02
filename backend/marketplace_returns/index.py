@@ -535,16 +535,35 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
 
     Возвращает, сколько вещей завели.
     """
+    # Явный список id — это прямое указание человека: он отсканировал наклейку или
+    # отметил привезённые коробки. Такие вещи заводим без дополнительных проверок.
+    # Проверка ниже нужна только для фонового добора «всего, что числится забранным».
     where_ids = ''
+    confirmed_only = True
     if ids:
         where_ids = ' AND r.id IN (' + ','.join(str(int(i)) for i in ids) + ')'
+        confirmed_only = False
 
     cur.execute(
         "SELECT r.id, r.order_id, r.marketplace, r.external_id, r.product_name, "
         "       mi.material, mi.width, mi.height, mi.name "
         "FROM marketplace_returns r "
         "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
-        "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL"
+        "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL "
+        # ВЕЩЬ ПОЯВЛЯЕТСЯ НА СКЛАДЕ, ТОЛЬКО КОГДА ЕЁ РЕАЛЬНО ЗАБРАЛИ С ПВЗ.
+        #
+        # Подтверждение — выдача по коду ПВЗ (giveout_id) или отметка человека:
+        # кладовщик пикнул наклейку либо отметил привезённые коробки (picked_up_by).
+        #
+        # Больное место — отмена прямо на пункте выдачи: кладовщик привёз товар на
+        # отгрузку, оператор ПВЗ его отсканировал, покупатель отменил заказ — и вещь
+        # тут же числилась возвратом у нас на складе. Кладовщик искал её по полкам,
+        # а она лежала в пункте выдачи. Теперь она дождётся выдачи по коду.
+        #
+        # Эта же проверка стоит в модуле кодов ПВЗ: заведение на склад идёт двумя
+        # путями (по коду выдачи и фоновой загрузкой), и правило должно быть одно.
+        + ("  AND (r.giveout_id IS NOT NULL OR r.picked_up_by IS NOT NULL) "
+           if confirmed_only else "")
         + where_ids
         + (f' ORDER BY r.id LIMIT {int(limit)}' if limit else '')
     )
@@ -1339,9 +1358,15 @@ def handler(event: dict, context) -> dict:
                 # Помечаем её забранной и работаем дальше.
                 if row[6] == 'new':
                     cur.execute(
+                        # picked_up_by обязателен: по нему видно, что вещь забрал
+                        # ЖИВОЙ человек, а не просто числится забранной по данным
+                        # площадки. Заведение на склад опирается на эту отметку —
+                        # без неё отсканированная кладовщиком коробка не попала бы
+                        # в «Разобрать возвраты».
                         "UPDATE marketplace_returns SET status = 'picked_up', "
-                        "picked_up_at = COALESCE(picked_up_at, now()) WHERE id = %s",
-                        (row[0],),
+                        "picked_up_at = COALESCE(picked_up_at, now()), "
+                        "picked_up_by = COALESCE(picked_up_by, %s) WHERE id = %s",
+                        (int(actor_id) if actor_id else None, row[0],),
                     )
                     row = list(row)
                     row[6] = 'picked_up'

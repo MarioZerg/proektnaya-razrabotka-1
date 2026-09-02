@@ -242,14 +242,32 @@ def fetch_ozon_giveout_info(cur, giveout_id):
     # Физическая выдача на ПВЗ — сама по себе подтверждение: вещь уже у нас в руках,
     # спорить с этим бессмысленно.
     if total and scanned >= total:
+        # ЗАБРАННЫМИ СЧИТАЕМ РОВНО СТОЛЬКО ВЕЩЕЙ, СКОЛЬКО ПУНКТ ВЫДАЧИ ОТДАЛ.
+        #
+        # Раньше здесь не было ограничения по количеству, и одна выдача помечала
+        # забранными ВСЕ заявки со статусом «В пункте выдачи» — а их в ПВЗ лежат
+        # сотни. Кладовщик забирал 25 коробок, а на склад падало 128 вещей.
+        #
+        # Отдельно это ломало отгрузку: кладовщик привозит товар на отправку,
+        # оператор ПВЗ его сканирует, покупатель отменяет заказ — вещь встаёт
+        # в «В пункте выдачи» и тут же уезжала к нам на склад как возврат. Её
+        # искали по полкам, а она физически лежала на пункте выдачи.
+        #
+        # Теперь берём только `total` самых давних заявок — ровно те коробки,
+        # что сотрудник ПВЗ отсканировал и передал в руки. Всё, что приехало
+        # в ПВЗ позже (в том числе свежие отмены), дождётся следующей выдачи.
         cur.execute(
             "UPDATE marketplace_returns SET status = 'picked_up', picked_up_at = now(), "
             "giveout_id = %s "
-            "WHERE marketplace = 'OZON' AND status IN ('new', 'approved') "
+            "WHERE id IN ("
+            "  SELECT id FROM marketplace_returns "
+            "  WHERE marketplace = 'OZON' AND status IN ('new', 'approved') "
             # Только те, что реально ехали к нам: на складе OZON лежат сотни заявок,
             # которые ещё никуда не отправлены — их забирать нечем.
-            "AND mp_status IN ('В пункте выдачи', 'Получен')",
-            (giveout_id,),
+            "    AND mp_status IN ('В пункте выдачи', 'Получен') "
+            "  ORDER BY id LIMIT %s"
+            ")",
+            (giveout_id, int(total)),
         )
 
     return {
@@ -295,16 +313,35 @@ def stock_picked_up_returns(cur, ids=None):
 
     Возвращает, сколько вещей завели.
     """
+    # Явный список id — прямое указание человека (скан наклейки, отметка коробок).
+    # Такие вещи заводим без проверок; проверка ниже нужна фоновому добору.
     where_ids = ''
+    confirmed_only = True
     if ids:
         where_ids = ' AND r.id IN (' + ','.join(str(int(i)) for i in ids) + ')'
+        confirmed_only = False
 
     cur.execute(
         "SELECT r.id, r.order_id, r.marketplace, r.external_id, r.product_name, "
         "       mi.material, mi.width, mi.height, mi.name "
         "FROM marketplace_returns r "
         "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
-        "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL" + where_ids
+        "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL "
+        # ВЕЩЬ ПОЯВЛЯЕТСЯ НА СКЛАДЕ, ТОЛЬКО КОГДА ЕЁ РЕАЛЬНО ЗАБРАЛИ С ПВЗ.
+        #
+        # Забор подтверждается одним из двух: выдача по коду ПВЗ (giveout_id) либо
+        # отметка человека — кладовщик пикнул наклейку или отметил коробки руками
+        # (picked_up_by).
+        #
+        # Без этой проверки на склад падала любая заявка со статусом «забрана».
+        # Больное место — отмена уже на пункте выдачи: кладовщик привёз товар на
+        # отгрузку, оператор ПВЗ его отсканировал, покупатель отменил заказ — и
+        # вещь тут же числилась возвратом на нашем складе. Кладовщик искал её по
+        # полкам, а она физически лежала в пункте выдачи. Теперь она дождётся,
+        # пока её выдадут по коду, и появится в системе ровно в этот момент.
+        + ("  AND (r.giveout_id IS NOT NULL OR r.picked_up_by IS NOT NULL) "
+           if confirmed_only else "")
+        + where_ids
     )
     rows = cur.fetchall()
     created = 0
