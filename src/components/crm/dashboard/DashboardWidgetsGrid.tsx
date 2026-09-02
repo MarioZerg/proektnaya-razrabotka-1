@@ -101,11 +101,15 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
               >
                 {/* Блик перелива: узкая светлая полоса, медленно проходящая по
                     карточке. Лежит поверх фона, но под содержимым и не ловит
-                    клики — плитка нажимается как обычно. */}
+                    клики — плитка нажимается как обычно.
+                    Ставим блик от ЛЕВОГО КРАЯ (left-0), а за край его уводит сама
+                    анимация. Раньше блок дополнительно сдвигался классом -left-1/3,
+                    и этот сдвиг складывался со сдвигом анимации: полоса начинала
+                    путь уже внутри плитки и уходила, не дойдя до правого края. */}
                 {motion === 'sheen' && (
                   <span
                     aria-hidden
-                    className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 animate-tile-sheen bg-gradient-to-r from-transparent via-white/70 to-transparent"
+                    className="pointer-events-none absolute inset-y-0 left-0 w-1/3 animate-tile-sheen bg-gradient-to-r from-transparent via-white/70 to-transparent"
                   />
                 )}
                 {/* ТЕЛЕФОН — одна строка: значок, подпись, цифра.
