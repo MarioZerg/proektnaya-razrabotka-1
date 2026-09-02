@@ -380,9 +380,19 @@ def match_from_stock(cur, order_id, item_id) -> bool:
     cur.execute(
         "SELECT gw.id FROM goods_warehouse gw "
         "JOIN orders src ON src.id = gw.order_id "
+        # ВЕЩЬ ОБЯЗАНА ЛЕЖАТЬ НА ПОЛКЕ (shelf_id заполнен).
+        #
+        # Вещь по отменённому заказу упаковщица закрывает на терминале в цехе —
+        # складским остатком она становится только когда кладовщик отсканирует её
+        # на конкретную полку. Без этой проверки подбор забирал вещь, которая
+        # физически ещё лежит в цехе: кладовщик шёл к стеллажу, а её там нет.
         "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+        "AND gw.shelf_id IS NOT NULL "
         "AND src.marketplace_item_id = %s "
-        "ORDER BY gw.received_at ASC LIMIT 1",
+        "ORDER BY gw.received_at ASC LIMIT 1 "
+        # Вещь, которую параллельно резервирует другой процесс, пропускаем —
+        # так одна вещь физически не может уйти в два заказа сразу.
+        "FOR UPDATE OF gw SKIP LOCKED",
         (int(item_id),),
     )
     row = cur.fetchone()
@@ -390,7 +400,21 @@ def match_from_stock(cur, order_id, item_id) -> bool:
         return False
     gw_id = row[0]
     cur.execute(
-        "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
+        # СТАТУС 'picking' — ЭТО РАБОТА КЛАДОВЩИКА, А НЕ СВОБОДНЫЙ ОСТАТОК.
+        #
+        # Раньше здесь проставлялся только резерв, а статус оставался 'in_stock'.
+        # Список подбора и счётчик «Ожидают отгрузки» берут ТОЛЬКО 'picking' и
+        # 'awaiting_supply' — поэтому такой заказ не попадал кладовщику вообще:
+        # вещь числилась свободной на полке, а отправление молча висело в
+        # «ожидает сборки» неделями, пока его не замечали вручную.
+        #
+        # Ярлык предыдущего отправления СНИМАЕМ: вещь могла быть отстикерована под
+        # заказ, который потом отменили. Иначе сканер скажет «стикер наклеен, неси
+        # в короб», а на пакете будет наклейка чужого отменённого заказа.
+        "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now(), "
+        "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+        "shipping_labeled_by_name = NULL, "
+        "status = 'picking' WHERE id = %s",
         (int(order_id), gw_id),
     )
     # Заказ закрывается со склада: на конвейер не попадает, ждёт стикеровки кладовщиком.

@@ -45,6 +45,26 @@ export const syncOzonOrders = (actor?: {
 }): Promise<OzonSyncResult> =>
   post({ action: 'sync_orders', actorId: actor?.id, actorName: actor?.name }) as Promise<OzonSyncResult>;
 
+/**
+ * Точечная догрузка отправлений OZON по номерам.
+ *
+ * Обычная синхронизация идёт по ленте маркетплейса и берёт свежие отправления
+ * пачками. Если конкретный заказ в неё не попал (сбой связи, отправление
+ * появилось задним числом), ждать следующего круга незачем — забираем его
+ * адресно. OZON проверяет номер на своей стороне: многовещевое отправление
+ * разделится на отдельные задания как при обычной загрузке.
+ */
+export const pullOzonOrdersByNumbers = (
+  numbers: string[],
+  actor?: { id?: number | null; name?: string | null },
+): Promise<OzonSyncResult> =>
+  post({
+    action: 'sync_orders',
+    postingNumbers: numbers,
+    actorId: actor?.id,
+    actorName: actor?.name,
+  }) as Promise<OzonSyncResult>;
+
 export const refreshOzonStatus = (
   postingNumber: string
 ): Promise<{ postingNumber: string; ozonStatus: string | null }> =>

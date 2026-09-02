@@ -25,6 +25,8 @@ interface OrdersToolbarProps {
   syncingYandex: boolean;
   onRefreshOzonStatuses: () => void;
   refreshingOzon: boolean;
+  /** Догрузить отправление OZON по номеру — когда заказа нет на конвейере. */
+  onPullByNumber: () => void;
   statusFilter: StatusFilter;
   onStatusChange: (v: StatusFilter) => void;
   marketplaceFilter: MarketplaceFilter;
@@ -44,6 +46,7 @@ const OrdersToolbar = ({
   syncingYandex,
   onRefreshOzonStatuses,
   refreshingOzon,
+  onPullByNumber,
   statusFilter,
   onStatusChange,
   marketplaceFilter,
@@ -104,6 +107,11 @@ const OrdersToolbar = ({
             className={`mr-1.5 ${refreshingOzon ? 'animate-spin' : ''}`}
           />
           {refreshingOzon ? 'Обновляем...' : 'Обновить статусы OZON'}
+        </Button>
+        {/* Аварийная догрузка: заказ есть на OZON, но на конвейер не попал. */}
+        <Button variant="outline" onClick={onPullByNumber}>
+          <Icon name="Search" size={16} className="mr-1.5" />
+          Заказ по номеру
         </Button>
       </div>
       )}

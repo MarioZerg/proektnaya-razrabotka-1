@@ -152,9 +152,14 @@ def match_from_stock(cur, order_id, item_id) -> bool:
     cur.execute(
         "SELECT gw.id FROM goods_warehouse gw "
         "JOIN orders src ON src.id = gw.order_id "
+        # Вещь обязана лежать НА ПОЛКЕ: пока кладовщик не принял её из цеха,
+        # складского остатка не существует — иначе он пойдёт за товаром, которого
+        # на стеллаже нет.
         "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+        "AND gw.shelf_id IS NOT NULL "
         "AND src.marketplace_item_id = %s "
-        "ORDER BY gw.received_at ASC LIMIT 1",
+        "ORDER BY gw.received_at ASC LIMIT 1 "
+        "FOR UPDATE OF gw SKIP LOCKED",
         (int(item_id),),
     )
     row = cur.fetchone()
@@ -162,7 +167,14 @@ def match_from_stock(cur, order_id, item_id) -> bool:
         return False
     gw_id = row[0]
     cur.execute(
-        "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
+        # Статус 'picking' — вещь стала работой кладовщика. Раньше ставился только
+        # резерв, статус оставался 'in_stock', и заказ не попадал ни в список
+        # подбора, ни в счётчик «Ожидают отгрузки»: отправление зависало молча.
+        # Ярлык прошлого отправления снимаем — он выписан под другой заказ.
+        "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now(), "
+        "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+        "shipping_labeled_by_name = NULL, "
+        "status = 'picking' WHERE id = %s",
         (int(order_id), gw_id),
     )
     cur.execute(

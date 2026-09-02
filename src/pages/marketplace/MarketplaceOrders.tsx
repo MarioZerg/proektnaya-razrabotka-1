@@ -23,6 +23,7 @@ import OrdersTable from '@/components/crm/orders/OrdersTable';
 import OrdersSummary from '@/components/crm/orders/OrdersSummary';
 import EditOrderDialog from '@/components/crm/orders/EditOrderDialog';
 import CreateManualOrderDialog from '@/components/crm/orders/CreateManualOrderDialog';
+import PullOrderByNumberDialog from '@/components/crm/orders/PullOrderByNumberDialog';
 import { findDuplicateOrders } from '@/lib/findDuplicateOrders';
 import Icon from '@/components/ui/icon';
 
@@ -47,6 +48,8 @@ const MarketplaceOrders = () => {
   const [saving, setSaving] = useState(false);
 
   const [manualOpen, setManualOpen] = useState(false);
+  // Аварийная догрузка заказа OZON по номеру — когда его нет на конвейере.
+  const [pullOpen, setPullOpen] = useState(false);
   const [manualRows, setManualRows] = useState<ManualOrderRow[]>([emptyManualRow()]);
   const [manualSaving, setManualSaving] = useState(false);
 
@@ -359,6 +362,7 @@ const MarketplaceOrders = () => {
           syncingYandex={syncingYandex}
           onRefreshOzonStatuses={handleRefreshOzonStatuses}
           refreshingOzon={refreshingOzon}
+          onPullByNumber={() => setPullOpen(true)}
           statusFilter={statusFilter}
           onStatusChange={setStatusFilter}
           marketplaceFilter={marketplaceFilter}
@@ -393,6 +397,12 @@ const MarketplaceOrders = () => {
         marketplaceItems={marketplaceItems}
         manualSaving={manualSaving}
         onCreate={handleManualCreate}
+      />
+
+      <PullOrderByNumberDialog
+        open={pullOpen}
+        onOpenChange={setPullOpen}
+        onDone={load}
       />
     </CrmLayout>
   );
