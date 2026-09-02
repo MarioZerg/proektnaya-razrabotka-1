@@ -256,7 +256,50 @@ def handler(event: dict, context) -> dict:
         cur = conn.cursor()
 
         if method == 'GET':
-            supply_id = (event.get('queryStringParameters') or {}).get('supplyId')
+            params = event.get('queryStringParameters') or {}
+
+            # Очередь на подпись для дашборда руководителя.
+            #
+            # Документ, отправленный на подпись, легко потерять: он лежит в карточке
+            # поставки, а руководитель туда не заходит. Пока накладная не подписана,
+            # машину выпускать нельзя — поэтому очередь висит на главной, где её
+            # видно сразу при входе.
+            if params.get('view') == 'pending':
+                cur.execute(
+                    'SELECT e.id, e.supply_id, e.number, e.status, e.doc_date, '
+                    '       e.driver_name, e.vehicle_number, e.carrier_name, '
+                    '       e.cargo_places, e.delivery_at, e.operator_doc_id, e.updated_at, '
+                    '       s.marketplace, s.type, s.status, s.cluster, s.supply_number '
+                    'FROM etrn_documents e '
+                    'JOIN marketplace_supplies s ON s.id = e.supply_id '
+                    "WHERE e.status = 'На подписи' "
+                    'ORDER BY e.doc_date NULLS LAST, e.id',
+                )
+                items = [
+                    {
+                        'id': r[0],
+                        'supplyId': r[1],
+                        'number': r[2],
+                        'status': r[3],
+                        'docDate': _iso(r[4]),
+                        'driverName': r[5],
+                        'vehicleNumber': r[6],
+                        'carrierName': r[7],
+                        'cargoPlaces': r[8],
+                        'deliveryAt': _iso(r[9]),
+                        'operatorDocId': r[10],
+                        'updatedAt': _iso(r[11]),
+                        'marketplace': r[12],
+                        'supplyType': r[13],
+                        'supplyStatus': r[14],
+                        'cluster': r[15],
+                        'supplyNumber': r[16],
+                    }
+                    for r in cur.fetchall()
+                ]
+                return _resp(200, {'items': items})
+
+            supply_id = params.get('supplyId')
             if not supply_id:
                 return _resp(400, {'error': 'Укажите supplyId'})
             return _resp(200, {'document': _get_doc(cur, supply_id)})

@@ -113,6 +113,36 @@ const post = async (payload: Record<string, unknown>): Promise<EtrnDocument> => 
   return data.document;
 };
 
+/** Строка очереди на подпись: накладная плюс данные поставки, к которой она относится. */
+export interface EtrnPendingItem {
+  id: number;
+  supplyId: number;
+  number: string | null;
+  status: EtrnStatus;
+  docDate: string | null;
+  driverName: string | null;
+  vehicleNumber: string | null;
+  carrierName: string | null;
+  cargoPlaces: number | null;
+  deliveryAt: string | null;
+  /** Номер документа у оператора — по нему накладная открывается в Диадоке. */
+  operatorDocId: string | null;
+  updatedAt: string;
+  marketplace: string;
+  supplyType: string;
+  supplyStatus: string;
+  cluster: string | null;
+  supplyNumber: string | null;
+}
+
+/** Накладные, ожидающие подписи руководителя. */
+export const fetchPendingEtrn = async (): Promise<EtrnPendingItem[]> => {
+  const res = await fetch(`${ETRN_URL}?view=pending`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить очередь на подпись');
+  return data.items || [];
+};
+
 /** Накладная поставки. null — ещё не заводили. */
 export const fetchEtrn = async (supplyId: number): Promise<EtrnDocument | null> => {
   const res = await fetch(`${ETRN_URL}?supplyId=${supplyId}`);
