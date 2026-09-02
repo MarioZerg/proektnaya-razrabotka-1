@@ -102,46 +102,72 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
           {/* Разбивка по тканям: кладовщик сразу видит, какого материала уйдёт больше
               всего, и отгружает в цех нужные рулоны, а не наугад. */}
           {materialRows.length > 0 && (
-            <div className="mt-2 space-y-1 border-t border-border pt-2">
-              {materialRows.map(([name, v]) => {
-                const left = stock.get(name.trim().toLowerCase());
-                // Ткани нет в справочнике (например, «Без материала») — остаток
-                // показать нечего, но саму строку заказов не прячем.
-                const low = left !== undefined && left.qty < LOW_STOCK_METERS;
-                return (
-                  <div
-                    key={name}
-                    className="flex flex-wrap items-baseline justify-between gap-x-2 text-sm"
-                  >
-                    <span className="min-w-0 truncate">{name}</span>
-                    <span className="whitespace-nowrap">
-                      <span className="font-semibold">{v.meters.toFixed(2)}</span>
-                      <span className="text-muted-foreground"> пог.м.</span>
-                      <span className="ml-1.5 text-xs text-muted-foreground">
-                        · {v.items} шт.
-                      </span>
-                      {left !== undefined && (
-                        <span
-                          className={`ml-1.5 text-xs ${
-                            low ? 'font-semibold text-destructive' : 'text-muted-foreground'
-                          }`}
-                        >
-                          · на складе {left.qty.toFixed(2)} {left.unit}
-                        </span>
-                      )}
-                    </span>
-                    {/* Предупреждение отдельной строкой, а не мелкой подписью в
-                        хвосте: закупку ткани легко пропустить среди цифр, а из-за
-                        неё встаёт весь цех. */}
-                    {low && (
-                      <span className="flex w-full items-center gap-1 text-xs font-semibold text-destructive">
-                        <Icon name="TriangleAlert" size={12} />
-                        Пора заказывать материал — осталось меньше {LOW_STOCK_METERS} пог.м.
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
+            <div className="mt-3 border-t border-border pt-3">
+              {/* ТАБЛИЦА, А НЕ СТРОКИ ТЕКСТА.
+                  Раньше все четыре числа шли подряд через точки — «107.45 пог.м.
+                  · 29 шт. · на складе 5695.60 м». Глаз не мог сравнить остаток у
+                  разных тканей: цифры стояли на разной высоте строки. В колонках
+                  они выровнены по правому краю и читаются столбиком. */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground">
+                      <th className="pb-1.5 text-left font-normal">Материал</th>
+                      <th className="pb-1.5 pl-3 text-right font-normal">Нужно</th>
+                      <th className="pb-1.5 pl-3 text-right font-normal">Заказов</th>
+                      <th className="pb-1.5 pl-3 text-right font-normal">На складе</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {materialRows.map(([name, v]) => {
+                      const left = stock.get(name.trim().toLowerCase());
+                      // Ткани нет в справочнике (например, «Без материала») —
+                      // остаток показать нечего, но строку заказов не прячем.
+                      const low = left !== undefined && left.qty < LOW_STOCK_METERS;
+                      return (
+                        <tr key={name} className="border-t border-border/50">
+                          <td className="py-1.5 pr-2">
+                            <span className="block truncate">{name}</span>
+                            {/* Предупреждение — под названием ткани, а не в
+                                отдельной колонке: так оно не ломает выравнивание
+                                чисел и его видно первым делом. */}
+                            {low && (
+                              <span className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-destructive">
+                                <Icon name="TriangleAlert" size={12} className="shrink-0" />
+                                Пора заказывать материал
+                              </span>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap py-1.5 pl-3 text-right font-semibold tabular-nums">
+                            {v.meters.toFixed(2)}
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">
+                              пог.м.
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap py-1.5 pl-3 text-right tabular-nums text-muted-foreground">
+                            {v.items}
+                            <span className="ml-1 text-xs">шт.</span>
+                          </td>
+                          <td
+                            className={`whitespace-nowrap py-1.5 pl-3 text-right tabular-nums ${
+                              low ? 'font-semibold text-destructive' : 'text-muted-foreground'
+                            }`}
+                          >
+                            {left === undefined ? (
+                              '—'
+                            ) : (
+                              <>
+                                {left.qty.toFixed(2)}
+                                <span className="ml-1 text-xs font-normal">{left.unit}</span>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </CardContent>
