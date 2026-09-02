@@ -1899,6 +1899,25 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if row[0] != 'Открытая':
                 return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Удалить можно только открытую поставку'})}
 
+            # Подписанная транспортная накладная — юридический документ перевозки, и он
+            # должен храниться независимо от того, что стало с поставкой в системе.
+            # Черновик удалить можно: перевозки не было, подтверждать нечего.
+            cur.execute(
+                "SELECT status FROM etrn_documents "
+                "WHERE supply_id = %s AND signed_file_url IS NOT NULL",
+                (int(item_id),),
+            )
+            signed_etrn = cur.fetchone()
+            if signed_etrn:
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': 'По поставке есть подписанная транспортная накладная — '
+                                 'удалить такую поставку нельзя.'
+                    }, ensure_ascii=False),
+                }
+
             # Заказы на пошив по этой поставке. Удалять поставку можно, только пока их не
             # начали шить: если по заказу уже кроили или шили, значит потрачены ткань и
             # труд — такую поставку убирать нельзя, иначе работа пропадёт из учёта.
@@ -1961,6 +1980,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             cur.execute(f"DELETE FROM marketplace_supply_items WHERE supply_id = {int(item_id)}")
             cur.execute(f"DELETE FROM marketplace_supply_boxes WHERE supply_id = {int(item_id)}")
+            # Отсканированные ярлыки связок Яндекса: живут только внутри своей поставки
+            # и без неё смысла не имеют. Раньше их не убирали, и удаление поставки со
+            # связками падало с ошибкой связей в базе.
+            cur.execute(f"DELETE FROM supply_bundle_labels WHERE supply_id = {int(item_id)}")
+            # Транспортная накладная поставки. Черновик неподписанной ЭТрН удаляем
+            # вместе с поставкой: перевозки не было, документ ничего не подтверждает.
+            # Подписанную накладную удалить нельзя — проверка стоит выше, до всей
+            # очистки, чтобы юридический документ не пропал вместе с поставкой.
+            cur.execute(f"DELETE FROM etrn_documents WHERE supply_id = {int(item_id)}")
 
             # ЗАКАЗЫ WB ВОЗВРАЩАЕМ В НАКОПИТЕЛЬ, А НЕ ТЕРЯЕМ ВМЕСТЕ С ПОСТАВКОЙ.
             #
@@ -2015,4 +2043,3 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
         return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
     finally:
         conn.close()
-
