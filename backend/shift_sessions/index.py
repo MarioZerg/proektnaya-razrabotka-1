@@ -210,6 +210,77 @@ def apply_penalty(cur, user_id, amount, description, shift_session_id=None):
     )
 
 
+def accrue_shift_salary(cur, user_id, session_id, session_workshop_id, accrual_day=None):
+    """Начисляет оклад за смену повременным ролям (уборщица, кладовщик, старший кладовщик).
+
+    Одна функция на оба пути закрытия смены — сотрудник закрыл её сам или её закрыл
+    ночной обход. Раньше начисление жило только в ручном закрытии, и у того, кто забыл
+    нажать «Закрыть смену», оклад просто не появлялся: работа была, денег не было.
+
+    Роль берём ту, в которой человек реально работал в этой смене (shift_sessions.role) —
+    в гостевом режиме она может отличаться от штатной должности в профиле.
+
+    accrual_day — за какой день платим. При автозакрытии это день самой смены, а не
+    день ночного обхода: он приходится уже на следующие сутки.
+    """
+    if not user_id or not session_id:
+        return False
+
+    cur.execute("SELECT role, workshop FROM users WHERE id = %s", (int(user_id),))
+    user_row = cur.fetchone()
+    cur.execute("SELECT role FROM shift_sessions WHERE id = %s", (int(session_id),))
+    sess_role_row = cur.fetchone()
+    shift_role = (sess_role_row[0] if sess_role_row and sess_role_row[0]
+                  else (user_row[0] if user_row else None))
+    if shift_role not in ('cleaner', 'storekeeper', 'senior_storekeeper'):
+        return False
+
+    # Ставка берётся из тарифов цеха этой смены; если у смены цех не указан —
+    # из цеха профиля сотрудника.
+    rate_workshop_id = session_workshop_id
+    if not rate_workshop_id and user_row and user_row[1]:
+        cur.execute("SELECT id FROM workshops WHERE name = %s", (user_row[1],))
+        w_row = cur.fetchone()
+        rate_workshop_id = w_row[0] if w_row else None
+    if not rate_workshop_id:
+        return False
+
+    cur.execute(
+        "SELECT rate FROM salary_rates WHERE role = %s AND workshop_id = %s",
+        (shift_role, rate_workshop_id),
+    )
+    rate_row = cur.fetchone()
+    rate = float(rate_row[0]) if rate_row else 0
+    if rate <= 0:
+        return False
+
+    accrual_type = f'{shift_role}_shift'
+
+    # ДЕНЬ НАЧИСЛЕНИЯ СЧИТАЕМ ОДИН РАЗ и подставляем и в проверку, и в саму запись.
+    # Иначе наличие оклада проверялось бы по московской дате, а колонка accrued_for
+    # заполнялась датой UTC — после 21:00 по Москве это уже разные сутки.
+    if accrual_day is None:
+        cur.execute(f"SELECT {SQL_MSK_TODAY}")
+        accrual_day = cur.fetchone()[0]
+
+    # Оклад за смену платим ОДИН раз в день. Две смены за день (своя и гостевая в
+    # другом цехе) — это разные записи смен, и защита по смене их не ловит.
+    cur.execute(
+        "SELECT 1 FROM salary_accruals WHERE user_id = %s AND type = %s AND accrued_for = %s",
+        (int(user_id), accrual_type, accrual_day),
+    )
+    if cur.fetchone():
+        return False
+
+    cur.execute(
+        "INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, accrued_for, description) "
+        "VALUES (%s, %s, %s, %s, %s, 'Оклад за смену') "
+        "ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING",
+        (int(user_id), accrual_type, rate, int(session_id), accrual_day),
+    )
+    return True
+
+
 def _calendar_days(cur, month: str) -> list:
     """Кто в какой день месяца выходил на смену — для календаря на главной."""
     month_esc = month.replace("'", "''")
@@ -1025,70 +1096,11 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute("UPDATE shift_sessions SET closed_at = now() WHERE id = %s", (session_id,))
 
-                # Уборщица получает оклад за смену при её закрытии (salary_rates, role='cleaner'),
-                # ставка берётся из тарифов цеха, указанного при открытии этой смены (workshop_id).
-                # Если цех у смены не указан — если у уборщицы есть свой цех в профиле, используем его.
-                # Оклад за смену получают уборщица, кладовщик и старший кладовщик — у всех
-                # троих оплата повременная, а не сдельная. Раньше начислялась только уборщице:
-                # кладовщики закрывали смены месяцами и не получали ничего, хотя ставки в
-                # таблице стояли (2050 и 1200 руб.). Роль берём ту, в которой человек реально
-                # работал в этой смене (shift_sessions.role) — в гостевом режиме она может
-                # отличаться от штатной должности в профиле.
-                cur.execute("SELECT role, workshop FROM users WHERE id = %s", (int(user_id),))
-                user_row = cur.fetchone()
-                cur.execute("SELECT role FROM shift_sessions WHERE id = %s", (session_id,))
-                sess_role_row = cur.fetchone()
-                shift_role = (sess_role_row[0] if sess_role_row and sess_role_row[0]
-                              else (user_row[0] if user_row else None))
-                if shift_role in ('cleaner', 'storekeeper', 'senior_storekeeper'):
-                    rate_workshop_id = session_workshop_id
-                    if not rate_workshop_id and user_row[1]:
-                        cur.execute("SELECT id FROM workshops WHERE name = %s", (user_row[1],))
-                        w_row = cur.fetchone()
-                        rate_workshop_id = w_row[0] if w_row else None
-                    if rate_workshop_id:
-                        cur.execute(
-                            "SELECT rate FROM salary_rates WHERE role = %s AND workshop_id = %s",
-                            (shift_role, rate_workshop_id),
-                        )
-                        rate_row = cur.fetchone()
-                        rate = float(rate_row[0]) if rate_row else 0
-                        if rate > 0:
-                            # Оклад за смену платим ОДИН раз в день. Если сотрудник за день
-                            # отработал две смены (свою и гостевую в другом цехе), это разные
-                            # записи смен, и защита по смене их не ловит — от задвоения
-                            # спасает дневной уникальный индекс. Но он бьёт ошибкой и рвёт
-                            # закрытие смены, поэтому проверяем день заранее и просто не
-                            # начисляем второй оклад.
-                            accrual_type = f'{shift_role}_shift'
-
-                            # ДЕНЬ НАЧИСЛЕНИЯ СЧИТАЕМ ОДИН РАЗ.
-                            #
-                            # Тут была ловушка: наличие оклада проверяли по
-                            # МОСКОВСКОЙ дате, а колонка accrued_for заполнялась
-                            # значением по умолчанию — датой UTC. После 21:00 по
-                            # Москве это уже разные сутки: проверка смотрела в
-                            # завтра, ничего не находила и шла вставлять, а
-                            # уникальный индекс по сегодняшней дате падал с
-                            # ошибкой — и смена вообще не закрывалась.
-                            #
-                            # Поэтому берём дату один раз и подставляем её и в
-                            # проверку, и в саму запись.
-                            cur.execute(f"SELECT {SQL_MSK_TODAY}")
-                            accrual_day = cur.fetchone()[0]
-
-                            cur.execute(
-                                "SELECT 1 FROM salary_accruals WHERE user_id = %s "
-                                "AND type = %s AND accrued_for = %s",
-                                (int(user_id), accrual_type, accrual_day),
-                            )
-                            if not cur.fetchone():
-                                cur.execute(
-                                    "INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, accrued_for, description) "
-                                    "VALUES (%s, %s, %s, %s, %s, 'Оклад за смену') "
-                                    "ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING",
-                                    (int(user_id), accrual_type, rate, session_id, accrual_day),
-                                )
+                # Оклад за смену повременным ролям (уборщица, кладовщик, старший
+                # кладовщик). Само начисление — в accrue_shift_salary: та же функция
+                # вызывается при автозакрытии, чтобы забывший нажать «Закрыть смену»
+                # получал деньги наравне с закрывшим её сам.
+                accrue_shift_salary(cur, user_id, session_id, session_workshop_id)
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
@@ -1154,6 +1166,21 @@ def handler(event: dict, context) -> dict:
                         "WHERE id = %s",
                         (opened_at, end_str, session_id),
                     )
+
+                    # ОКЛАД ЗА СМЕНУ НАЧИСЛЯЕМ И ЗДЕСЬ.
+                    #
+                    # Смену закрыл ночной обход, но человек её отработал — деньги за неё
+                    # положены так же, как если бы он закрыл её сам. Раньше начисление
+                    # жило только в ручном закрытии: кто забывал нажать «Закрыть смену»,
+                    # оставался без оклада, и это всплывало каждый раз заново.
+                    #
+                    # Платим за день САМОЙ СМЕНЫ, а не за день обхода: обход приходит
+                    # ночью и его дата — уже следующие сутки.
+                    cur.execute(
+                        "SELECT ((%s + interval '3 hours')::date)", (opened_at,)
+                    )
+                    shift_day = cur.fetchone()[0]
+                    accrue_shift_salary(cur, s_user_id, session_id, s_workshop_id, shift_day)
 
                     # Смену закрыли за сотрудника — значит он забыл это сделать сам.
                     # Если при этом за ним ещё висели заказы, штраф отдельный и обычно
