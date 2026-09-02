@@ -90,11 +90,14 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     }
   }, [user, location.pathname, navigate]);
 
+  // Список тестовых входов нужен и в демо-режиме, и администратору: он
+  // переключается на роли, чтобы посмотреть систему их глазами.
+  const canSwitchAccounts = !!user?.isDemo || user?.role === 'admin';
   useEffect(() => {
-    if (user?.isDemo) {
+    if (canSwitchAccounts) {
       fetchTestAccounts().then(setTestAccounts);
     }
-  }, [user?.isDemo]);
+  }, [canSwitchAccounts]);
 
   if (!user) {
     return null;
@@ -234,12 +237,13 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            {user.isDemo && (
+            {canSwitchAccounts && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
                     className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
                     aria-label="Переключить аккаунт"
+                    title="Посмотреть систему глазами сотрудника"
                   >
                     <Icon name="Users" size={16} />
                   </button>
@@ -256,6 +260,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                       <span className="flex-1 truncate">{acc.name}</span>
                       <span className="ml-2 text-xs text-muted-foreground">
                         {roleLabels[acc.role]}
+                        {acc.canOverlock && ' (оверлок)'}
                       </span>
                     </DropdownMenuItem>
                   ))}

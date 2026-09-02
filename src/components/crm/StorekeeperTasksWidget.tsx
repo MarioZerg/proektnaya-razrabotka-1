@@ -44,9 +44,14 @@ const StorekeeperTasksWidget = () => {
   const [demoDone, setDemoDone] = useState<Set<string>>(new Set());
 
   const isStorekeeper = isStorekeeperRole(user?.role);
-  // Тестовый вход администратора под кладовщика: смену он не открывает, но
-  // список должен быть виден и кликабелен — иначе проверить его нельзя.
-  const isDemo = !!user?.isDemo;
+  // ПРОСМОТР ГЛАЗАМИ КЛАДОВЩИКА, БЕЗ ОТКРЫТОЙ СМЕНЫ.
+  //
+  // Администратор попадает сюда двумя путями: демо-вход (isDemo) и вход в
+  // аккаунт сотрудника из раздела «Сотрудники» (isImpersonated). В обоих
+  // случаях смены нет — и список бы просто не показался. Поэтому в этих
+  // режимах считаем задания по живым данным склада и разрешаем нажимать
+  // галочки: они никуда не сохраняются и на работу склада не влияют.
+  const isDemo = !!user?.isDemo || !!user?.isImpersonated;
 
   const load = useCallback(() => {
     if (!user?.id || !isStorekeeper) return;
