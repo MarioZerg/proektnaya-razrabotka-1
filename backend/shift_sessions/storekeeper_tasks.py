@@ -203,7 +203,7 @@ def build_tasks(cur, session_id, user_id):
         'hint': 'Отмена в цехе со стикером FBS — сразу на полку',
         'count': cancelled_labeled,
         'done': cancelled_labeled == 0,
-        'link': '/crm/inventory/goods-warehouse',
+        'link': '/crm/inventory/returns-inspection',
         'manual': False,
         'blocking': True,
         'idle': cancelled_labeled == 0 and not _had_cancelled_labeled(cur, session_id),
@@ -230,7 +230,7 @@ def build_tasks(cur, session_id, user_id):
         'hint': 'Бракованная ткань от закройщика — забрать на склад сканером',
         'count': defect_rolls,
         'done': defect_rolls == 0,
-        'link': '/crm/inventory/rolls',
+        'link': '/crm/inventory/defect-receive',
         'manual': False,
         'blocking': True,
         # Брака за смену не заявляли — приглушаем: это дело, которого не было.
@@ -378,7 +378,7 @@ def build_tasks(cur, session_id, user_id):
         'hint': 'Привезённое с пункта выдачи — осмотреть и разложить',
         'count': returns_left,
         'done': returns_left == 0,
-        'link': '/crm/inventory/goods-warehouse',
+        'link': '/crm/inventory/returns-inspection',
         'manual': False,
         'blocking': True,
         # Работы не появлялось за смену — строка показывается приглушённой:

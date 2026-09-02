@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { useAuth } from '@/context/AuthContext';
+import { isStorekeeperRole } from '@/lib/roles';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -43,6 +45,19 @@ const emptyRow: ItemRow = { rollId: '', quantity: '' };
 
 const DefectWriteoff = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
+  // СПИСЫВАТЬ БРАК ВРУЧНУЮ КЛАДОВЩИК НЕ МОЖЕТ.
+  //
+  // Брак заводит тот, кто нашёл его физически: закройщик отставляет рулон, а
+  // упаковщица списывает кусок на терминале в цехе. Кладовщик потом принимает
+  // куски сканером в «Приём брака из цеха» — то есть подтверждает уже
+  // заявленное. Ручное списание здесь позволяло ему снять метраж с любого
+  // рулона задним числом, минуя цех: остаток переставал сходиться с
+  // фактическим, а виноватого в недостаче было не найти.
+  //
+  // Поэтому для кладовщика страница — только история: видно, что и за что
+  // списано, но завести новое списание нельзя.
+  const readOnly = isStorekeeperRole(user?.role);
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [loading, setLoading] = useState(true);
@@ -112,16 +127,20 @@ const DefectWriteoff = () => {
           <div>
             <h1 className="text-xl font-bold">Списание брака</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Списание бракованного материала с остатка рулона
+              {readOnly
+                ? 'История списаний брака. Брак заводят в цехе, вы принимаете куски сканером в «Приём брака из цеха»'
+                : 'Списание бракованного материала с остатка рулона'}
             </p>
           </div>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button onClick={openCreate}>
-                <Icon name="Plus" size={16} className="mr-2" />
-                Новое списание
-              </Button>
-            </DialogTrigger>
+            {!readOnly && (
+              <DialogTrigger asChild>
+                <Button onClick={openCreate}>
+                  <Icon name="Plus" size={16} className="mr-2" />
+                  Новое списание
+                </Button>
+              </DialogTrigger>
+            )}
             <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Списание брака</DialogTitle>

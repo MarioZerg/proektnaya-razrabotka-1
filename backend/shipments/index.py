@@ -511,7 +511,26 @@ def handler(event: dict, context) -> dict:
                     au = cur.fetchone()
                     home_ws_id = au[0] if au else None
                     actor_role = au[1] if au else None
-                    if actor_role not in ('admin', 'storekeeper', 'senior_storekeeper', 'manager'):
+
+                    # КЛАДОВЩИКУ РУЧНОЕ СПИСАНИЕ БРАКА ЗАКРЫТО.
+                    #
+                    # Брак заводит тот, кто нашёл его физически: закройщик отставляет
+                    # рулон, упаковщица списывает кусок на терминале в цехе. Кладовщик
+                    # принимает куски сканером в «Приём брака из цеха» — подтверждает
+                    # уже заявленное. Ручное списание позволяло ему снять метраж с
+                    # любого рулона задним числом, минуя цех: остаток переставал
+                    # сходиться с фактическим, а виноватого в недостаче было не найти.
+                    if actor_role in ('storekeeper', 'senior_storekeeper'):
+                        return {
+                            'statusCode': 403,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Списывать брак вручную нельзя. Брак заводят в цехе, '
+                                         'а вы принимаете куски сканером в «Приём брака из цеха»'
+                            }, ensure_ascii=False),
+                        }
+
+                    if actor_role not in ('admin', 'manager'):
                         for item in items:
                             if not item.get('rollId'):
                                 continue
