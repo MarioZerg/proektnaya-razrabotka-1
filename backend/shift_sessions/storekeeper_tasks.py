@@ -88,6 +88,34 @@ def _had_cancelled_labeled(cur, session_id):
     return cur.fetchone() is not None
 
 
+def _had_defect_rolls(cur, session_id):
+    """Заявляли ли за эту смену брак ткани.
+
+    Пустой счётчик в начале смены — это не выполненная работа, а её отсутствие:
+    закройщик ещё ничего не отставил. Такую строку показываем приглушённой.
+    """
+    started = _shift_started_at(cur, session_id)
+    if not started:
+        return False
+    cur.execute(
+        "SELECT 1 FROM rolls WHERE defect_flagged_at >= %s LIMIT 1",
+        (started,),
+    )
+    return cur.fetchone() is not None
+
+
+def _had_repacked(cur, session_id):
+    """Отдавали ли за смену перепакованные вещи из цеха."""
+    started = _shift_started_at(cur, session_id)
+    if not started:
+        return False
+    cur.execute(
+        "SELECT 1 FROM goods_warehouse WHERE inspected_at >= %s LIMIT 1",
+        (started,),
+    )
+    return cur.fetchone() is not None
+
+
 def build_tasks(cur, session_id, user_id):
     """Собирает список заданий смены с текущим состоянием каждого.
 
@@ -159,7 +187,57 @@ def build_tasks(cur, session_id, user_id):
         'idle': False,
     })
 
-    # 3. ОТГРУЗИТЬ ПОСТАВКИ FBS.
+    # 3. ОТМЕНЁННЫЕ ПОСЛЕ СТИКЕРОВКИ.
+    # Вещь сшили, упаковали и заклеили ярлыком маркетплейса — и уже после этого
+    # заказ отменили. К покупателю она не уезжала, осматривать её незачем: сразу
+    # на полку со стикером хранения. Лежит в той же вкладке «Разобрать возвраты»,
+    # но помечена синим — инструмент там тот же, а работа другая и быстрее.
+    cur.execute(
+        "SELECT count(*) FROM goods_warehouse "
+        "WHERE status = 'mp_return' AND receive_reason = 'cancelled_labeled'"
+    )
+    cancelled_labeled = int(cur.fetchone()[0] or 0)
+    tasks.append({
+        'key': 'cancelled_labeled',
+        'title': 'Отменённые после стикеровки',
+        'hint': 'Отмена в цехе со стикером FBS — сразу на полку',
+        'count': cancelled_labeled,
+        'done': cancelled_labeled == 0,
+        'link': '/crm/inventory/goods-warehouse',
+        'manual': False,
+        'blocking': True,
+        'idle': cancelled_labeled == 0 and not _had_cancelled_labeled(cur, session_id),
+    })
+
+    # 4. ОТСКАНИРОВАТЬ БРАК ИЗ ЦЕХА.
+    # Закройщик встретил брак в рулоне и отставил его: резать дальше нельзя.
+    # Рулон физически лежит в цехе и ждёт, пока кладовщик заберёт его на склад —
+    # забор идёт СКАНЕРОМ, по штрихкоду рулона, чтобы было видно: рулон реально
+    # доехал, а не остался лежать после формального подтверждения.
+    #
+    # Держит смену: брошенный в цехе бракованный рулон занимает место, путается
+    # с рабочими рулонами и назавтра его снова возьмут в раскрой.
+    cur.execute(
+        "SELECT count(*) FROM rolls "
+        "WHERE defect_flagged_at IS NOT NULL "
+        "  AND defect_declined_at IS NULL "
+        "  AND status NOT IN ('in_storage', 'completed')"
+    )
+    defect_rolls = int(cur.fetchone()[0] or 0)
+    tasks.append({
+        'key': 'defect_rolls',
+        'title': 'Отсканировать брак из цеха',
+        'hint': 'Бракованная ткань от закройщика — забрать на склад сканером',
+        'count': defect_rolls,
+        'done': defect_rolls == 0,
+        'link': '/crm/inventory/rolls',
+        'manual': False,
+        'blocking': True,
+        # Брака за смену не заявляли — приглушаем: это дело, которого не было.
+        'idle': defect_rolls == 0 and not _had_defect_rolls(cur, session_id),
+    })
+
+    # 5. ОТГРУЗИТЬ ПОСТАВКИ FBS.
     # В задание попадают поставки, которые кладовщик создал В ЭТУ СМЕНУ. Пока
     # такая поставка не закрыта, смену закрыть нельзя: собранная поставка
     # останется до завтра, а маркетплейс ждёт её сегодня.
@@ -209,7 +287,7 @@ def build_tasks(cur, session_id, user_id):
         'idle': supplies_total == 0,
     })
 
-    # 4. ОТГРУЗИТЬ ТКАНЬ НА ПРОИЗВОДСТВО.
+    # 6. ОТГРУЗИТЬ ТКАНЬ НА ПРОИЗВОДСТВО.
     # Ручное задание: материала может не быть на складе, и тогда отгружать
     # нечего. Показываем, сколько поставок в цех ещё не уехало — как подсказку,
     # но закрывает задание сам кладовщик.
@@ -235,7 +313,7 @@ def build_tasks(cur, session_id, user_id):
         'idle': False,
     })
 
-    # 5. НАПОМНИТЬ ЗАКРОЙЩИКАМ ПРО РУЛОНЫ С МАЛЫМ ОСТАТКОМ.
+    # 7. НАПОМНИТЬ ЗАКРОЙЩИКАМ ПРО РУЛОНЫ С МАЛЫМ ОСТАТКОМ.
     # Задание появляется, только когда таких рулонов много: из-за пары штук
     # ходить в цех незачем. Закрывает галочкой — разговор в цехе система не видит.
     cur.execute(
@@ -261,7 +339,25 @@ def build_tasks(cur, session_id, user_id):
         'idle': False,
     })
 
-    # 6. РАЗОБРАТЬ ВОЗВРАТЫ С ПВЗ.
+    # 8. ЗАБРАТЬ ПЕРЕПАКОВАННЫЕ ИЗ ЦЕХА.
+    # Упаковщица переупаковала вещь, наклеила стикер хранения и отдала её.
+    # Вещь лежит в цехе и ждёт, пока кладовщик унесёт её на полку: пока не
+    # унесли, товар не на месте и в подбор не пойдёт.
+    cur.execute("SELECT count(*) FROM goods_warehouse WHERE status = 'inspected'")
+    repacked_left = int(cur.fetchone()[0] or 0)
+    tasks.append({
+        'key': 'repacked_to_shelf',
+        'title': 'Забрать перепакованные из цеха',
+        'hint': 'Переупакованные вещи со стикером — унести на полки',
+        'count': repacked_left,
+        'done': repacked_left == 0,
+        'link': '/crm/inventory/goods-warehouse',
+        'manual': False,
+        'blocking': True,
+        'idle': repacked_left == 0 and not _had_repacked(cur, session_id),
+    })
+
+    # 9. РАЗОБРАТЬ ВОЗВРАТЫ С ПВЗ.
     # Вещи привезены с пункта выдачи и отсканированы, но не разобраны: кладовщик
     # ещё не решил, положить их на полку или отдать на осмотр. Пока они в этом
     # статусе, товар не считается проверенным и в подбор не идёт — поэтому
@@ -288,28 +384,6 @@ def build_tasks(cur, session_id, user_id):
         # Работы не появлялось за смену — строка показывается приглушённой:
         # это не выполненное дело, а дело, которого сегодня не было.
         'idle': returns_left == 0 and not _had_returns(cur, session_id),
-    })
-
-    # 7. ОТМЕНЁННЫЕ ПОСЛЕ СТИКЕРОВКИ.
-    # Вещь сшили, упаковали и заклеили ярлыком маркетплейса — и уже после этого
-    # заказ отменили. К покупателю она не уезжала, осматривать её незачем: сразу
-    # на полку со стикером хранения. Лежит в той же вкладке «Разобрать возвраты»,
-    # но помечена синим — инструмент там тот же, а работа другая и быстрее.
-    cur.execute(
-        "SELECT count(*) FROM goods_warehouse "
-        "WHERE status = 'mp_return' AND receive_reason = 'cancelled_labeled'"
-    )
-    cancelled_labeled = int(cur.fetchone()[0] or 0)
-    tasks.append({
-        'key': 'cancelled_labeled',
-        'title': 'Отменённые после стикеровки',
-        'hint': 'Отмена в цехе со стикером FBS — сразу на полку',
-        'count': cancelled_labeled,
-        'done': cancelled_labeled == 0,
-        'link': '/crm/inventory/goods-warehouse',
-        'manual': False,
-        'blocking': True,
-        'idle': cancelled_labeled == 0 and not _had_cancelled_labeled(cur, session_id),
     })
 
     return tasks
