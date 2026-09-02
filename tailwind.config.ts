@@ -130,6 +130,27 @@ export default {
 				'logo-glow': {
 					'0%, 100%': { opacity: '0.45' },
 					'50%': { opacity: '0.85' }
+				},
+				// ПЕРЕЛИВ ПЛИТКИ СКЛАДА: «работа есть, но не горит».
+				// Блик медленно проходит по карточке — глаз замечает движение,
+				// но оно не дёргает и не мешает работать весь день.
+				'tile-sheen': {
+					'0%': { transform: 'translateX(-120%)' },
+					'55%, 100%': { transform: 'translateX(220%)' }
+				},
+				// ПУЛЬСАЦИЯ ПЛИТКИ СКЛАДА: работы накопилось, пора разгребать.
+				// Красная рамка и фон то разгораются, то гаснут.
+				'tile-alert': {
+					'0%, 100%': {
+						borderColor: 'hsl(var(--destructive) / 0.35)',
+						backgroundColor: 'hsl(var(--destructive) / 0.04)',
+						boxShadow: '0 0 0 0 hsl(var(--destructive) / 0)'
+					},
+					'50%': {
+						borderColor: 'hsl(var(--destructive) / 0.85)',
+						backgroundColor: 'hsl(var(--destructive) / 0.12)',
+						boxShadow: '0 0 0 4px hsl(var(--destructive) / 0.12)'
+					}
 				}
 			},
 			animation: {
@@ -143,7 +164,12 @@ export default {
 				'logo-spin': 'logo-spin 3.5s linear infinite',
 				'logo-glow': 'logo-glow 3.5s ease-in-out infinite',
 				'bubble': 'bubble 4.5s ease-in infinite',
-				'wave': 'wave 5s ease-in-out infinite'
+				'wave': 'wave 5s ease-in-out infinite',
+				// Перелив неспешный: карточка «дышит», а не мигает.
+				'tile-sheen': 'tile-sheen 3.5s ease-in-out infinite',
+				// Пульсация заметно быстрее перелива — разница читается сразу,
+				// даже боковым зрением, без сравнивания плиток между собой.
+				'tile-alert': 'tile-alert 1.4s ease-in-out infinite'
 			}
 		}
 	},
