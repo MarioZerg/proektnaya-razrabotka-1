@@ -204,3 +204,65 @@ export const checkShiftDefects = async (userId: number): Promise<DefectCheck | n
   const data = await res.json();
   return data.ask ? data : null;
 };
+/** Пункт чек-листа кладовщика на смену. */
+export interface StorekeeperTask {
+  key: string;
+  title: string;
+  hint: string;
+  /** Сколько работы осталось. 0 — ничего не висит. */
+  count: number;
+  done: boolean;
+  /** Куда идти делать это задание. */
+  link: string;
+  /** Закрывается галочкой вручную: система проверить это не может. */
+  manual: boolean;
+  /** Мешает закрыть смену, пока не выполнено. */
+  blocking: boolean;
+}
+
+export interface StorekeeperTasksResult {
+  shiftOpen: boolean;
+  sessionId?: number;
+  tasks: StorekeeperTask[];
+  doneCount?: number;
+  totalCount?: number;
+  /** Сколько заданий прямо сейчас держат смену. */
+  blockingCount?: number;
+}
+
+/**
+ * Чек-лист кладовщика на текущую смену.
+ *
+ * Пока смена не открыта, заданий нет: список привязан к смене, а не к дате —
+ * у человека может быть две смены за день, и галочки одной не должны закрывать
+ * задания в другой.
+ */
+export const fetchStorekeeperTasks = async (
+  userId: number,
+): Promise<StorekeeperTasksResult> => {
+  const res = await fetch(
+    `${SHIFT_SESSIONS_URL}?storekeeperTasks=1&userId=${userId}`,
+  );
+  if (!res.ok) return { shiftOpen: false, tasks: [] };
+  const data = await res.json();
+  return { shiftOpen: !!data.shiftOpen, tasks: data.tasks || [], ...data };
+};
+
+/**
+ * Отметить галочкой задание, которое система проверить не может: отгрузку ткани
+ * (материала может не быть) и напоминание закройщикам про рулоны. Повторное
+ * нажатие снимает галочку — отметить по ошибке не страшно.
+ */
+export const toggleStorekeeperTask = async (
+  userId: number,
+  taskKey: string,
+): Promise<{ done: boolean }> => {
+  const res = await fetch(SHIFT_SESSIONS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'toggle_task', userId, taskKey }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось отметить задание');
+  return data;
+};

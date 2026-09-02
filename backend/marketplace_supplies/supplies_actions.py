@@ -214,6 +214,29 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             )
             supply_id = cur.fetchone()[0]
 
+            # ПОСТАВКА FBS ПОПАДАЕТ В ЗАДАНИЯ СМЕНЫ КЛАДОВЩИКА.
+            #
+            # Пока она не отгружена, смену закрыть нельзя: собранная поставка
+            # останется до завтра, а маркетплейс ждёт её сегодня. Привязываем
+            # именно к смене, а не к дате — чужие и вчерашние поставки человека
+            # держать не должны.
+            #
+            # FBO сюда не берём: их собирают неделями и закрывают по графику
+            # маркетплейса, к концу смены они не привязаны.
+            if supply_type == 'FBS' and created_by not in (None, ''):
+                cur.execute(
+                    "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "ORDER BY opened_at DESC LIMIT 1",
+                    (int(created_by),),
+                )
+                sess_row = cur.fetchone()
+                if sess_row:
+                    cur.execute(
+                        "INSERT INTO storekeeper_shift_supplies (shift_session_id, supply_id) "
+                        "VALUES (%s, %s) ON CONFLICT (shift_session_id, supply_id) DO NOTHING",
+                        (int(sess_row[0]), int(supply_id)),
+                    )
+
             goods_ids = body_data.get('goodsWarehouseIds') or []
             for gid in goods_ids:
                 cur.execute("SELECT status FROM goods_warehouse WHERE id = %s", (int(gid),))

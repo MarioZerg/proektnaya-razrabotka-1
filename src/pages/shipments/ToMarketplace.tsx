@@ -29,6 +29,17 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
+import { isStorekeeperRole } from '@/lib/roles';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   fetchSupplies,
   createSupply,
@@ -71,6 +82,12 @@ const ToMarketplace = () => {
   const [allSupplies, setAllSupplies] = useState<Supply[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  // Поставка FBS, которую кладовщик собирается создать: ждём подтверждения, что
+  // он понимает — до её отгрузки смену закрыть не получится.
+  const [pendingFbs, setPendingFbs] = useState<{
+    marketplace: string;
+    type: SupplyType;
+  } | null>(null);
   const [ozonFboDialogOpen, setOzonFboDialogOpen] = useState(false);
   // FBS-поставки создаёт и собирает кладовщик — товар он отбирает со своих полок. Менеджер
   // ведёт FBO-поставки и только наблюдает за сборкой FBS в реальном времени.
@@ -147,6 +164,18 @@ const ToMarketplace = () => {
       setOzonFboDialogOpen(true);
       return;
     }
+    // FBS-поставка попадает в задания смены кладовщика и держит её до отгрузки.
+    // Предупреждаем заранее: человек должен понимать, что берёт работу на сегодня,
+    // а не оставляет её на завтра. Менеджера и админа это не касается — смену
+    // держат только задания кладовщика.
+    if (type === 'FBS' && isStorekeeperRole(user?.role)) {
+      setPendingFbs({ marketplace, type });
+      return;
+    }
+    await createSupplyNow(marketplace, type);
+  };
+
+  const createSupplyNow = async (marketplace: string, type: SupplyType) => {
     setCreating(true);
     try {
       const res = await createSupply({ marketplace, type, createdBy: user?.id });
@@ -465,6 +494,32 @@ const ToMarketplace = () => {
           </div>
         )}
       </div>
+
+      <AlertDialog open={!!pendingFbs} onOpenChange={(v) => !v && setPendingFbs(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Поставка попадёт в задания смены</AlertDialogTitle>
+            <AlertDialogDescription>
+              Новая поставка {pendingFbs?.marketplace} FBS добавится в ваш список
+              заданий на сегодня. Пока вы её не отгрузите, закрыть смену не
+              получится — иначе собранная поставка останется до завтра, а
+              маркетплейс ждёт её сегодня.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const p = pendingFbs;
+                setPendingFbs(null);
+                if (p) createSupplyNow(p.marketplace, p.type);
+              }}
+            >
+              Создать поставку
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <CreateOzonFboDialog
         open={ozonFboDialogOpen}

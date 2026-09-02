@@ -4,6 +4,8 @@ from datetime import date, datetime, timedelta, timezone
 
 import psycopg2
 
+from storekeeper_tasks import MANUAL_TASKS, build_tasks, blocking_tasks
+
 # ЕДИНОЕ ВРЕМЯ СИСТЕМЫ — МОСКОВСКОЕ (UTC+3).
 #
 # База и облако живут в UTC: now() и datetime.now() дают время по Гринвичу. А график
@@ -412,6 +414,43 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if params.get('storekeeperTasks'):
+                # Чек-лист кладовщика на текущую смену. Пока смена не открыта,
+                # заданий нет: список привязан к смене, а не к календарному дню —
+                # у человека может быть две смены за день, и галочки одной не
+                # должны закрывать задания в другой.
+                tasks_user_id = params.get('userId')
+                if not tasks_user_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите userId'})}
+                cur.execute(
+                    "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "ORDER BY opened_at DESC LIMIT 1",
+                    (int(tasks_user_id),),
+                )
+                sess = cur.fetchone()
+                if not sess:
+                    return {'statusCode': 200, 'headers': headers,
+                            'body': json.dumps({'shiftOpen': False, 'tasks': []})}
+                tasks = build_tasks(cur, sess[0], int(tasks_user_id))
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'shiftOpen': True,
+                        'sessionId': sess[0],
+                        'tasks': tasks,
+                        'doneCount': sum(1 for t in tasks if t['done']),
+                        'totalCount': len(tasks),
+                        # Сколько заданий держат смену прямо сейчас — по этому
+                        # числу интерфейс объясняет, почему кнопка закрытия не
+                        # сработает, ещё до нажатия.
+                        'blockingCount': sum(
+                            1 for t in tasks if t['blocking'] and not t['done']
+                        ),
+                    }, ensure_ascii=False),
+                }
 
             if params.get('calendar'):
                 month = params.get('month')  # 'YYYY-MM'
@@ -1094,6 +1133,32 @@ def handler(event: dict, context) -> dict:
                             ),
                         }
 
+                # ЧЕК-ЛИСТ КЛАДОВЩИКА: смену не закрыть, пока висит работа.
+                #
+                # Собранная, но не отгруженная поставка; вещи, не снятые с полок под
+                # заказы; неразобранные возвраты — всё это к утру превращается в
+                # проблему: маркетплейс не получил отправление, товар не в обороте.
+                # Поэтому такие задания держат смену.
+                #
+                # Задания с ручной галочкой (отгрузка ткани, напоминание про рулоны)
+                # смену НЕ держат: материала может не быть, и человек застрял бы на
+                # деле, которое от него не зависит.
+                if not closed_by_admin and sess_role in ('storekeeper', 'senior_storekeeper'):
+                    left = blocking_tasks(cur, session_id, user_id)
+                    if left:
+                        titles = ', '.join(
+                            f"{t['title']} ({t['count']})" for t in left
+                        )
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Остались задания смены: {titles}. '
+                                         f'Завершите их, потом закрывайте смену',
+                                'pendingTasks': left,
+                            }, ensure_ascii=False),
+                        }
+
                 cur.execute("UPDATE shift_sessions SET closed_at = now() WHERE id = %s", (session_id,))
 
                 # Оклад за смену повременным ролям (уборщица, кладовщик, старший
@@ -1104,6 +1169,57 @@ def handler(event: dict, context) -> dict:
 
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'toggle_task':
+                # Галочка на задании, которое система проверить не может: отгрузку
+                # ткани (материала может не быть) и напоминание закройщикам про
+                # рулоны (разговор в цехе система не видит). Остальные задания
+                # закрываются сами, когда работа сделана.
+                t_user_id = body_data.get('userId')
+                task_key = (body_data.get('taskKey') or '').strip()
+                if not t_user_id or not task_key:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите userId и taskKey'})}
+                if task_key not in MANUAL_TASKS:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Это задание закрывается само, когда работа сделана'
+                        }, ensure_ascii=False),
+                    }
+                cur.execute(
+                    "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "ORDER BY opened_at DESC LIMIT 1",
+                    (int(t_user_id),),
+                )
+                t_sess = cur.fetchone()
+                if not t_sess:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Смена не открыта'},
+                                               ensure_ascii=False)}
+                session_id_t = t_sess[0]
+                # Повторное нажатие снимает галочку: кладовщик мог отметить по
+                # ошибке, и запирать его в этом состоянии до конца смены незачем.
+                cur.execute(
+                    "DELETE FROM storekeeper_shift_tasks "
+                    "WHERE shift_session_id = %s AND task_key = %s RETURNING id",
+                    (int(session_id_t), task_key),
+                )
+                removed = cur.fetchone()
+                if not removed:
+                    cur.execute(
+                        "INSERT INTO storekeeper_shift_tasks "
+                        "  (shift_session_id, task_key, done_by) VALUES (%s, %s, %s) "
+                        "ON CONFLICT (shift_session_id, task_key) DO NOTHING",
+                        (int(session_id_t), task_key, int(t_user_id)),
+                    )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'done': not removed}),
+                }
 
             if action == 'auto_close':
                 # Автозакрытие начисляет штрафы, то есть трогает деньги сотрудников.

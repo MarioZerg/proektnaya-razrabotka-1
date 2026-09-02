@@ -20,6 +20,7 @@ import Icon from '@/components/ui/icon';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
 import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
+import StorekeeperTasksWidget from '@/components/crm/StorekeeperTasksWidget';
 import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels, isStorekeeperRole } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
@@ -305,6 +306,10 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
             <HeaderSalaryWidget />
           </div>
         </div>
+        {/* Задания смены кладовщика — полупрозрачный список под балансом.
+            Сам решает, показываться ли: только кладовщику и только при
+            открытой смене. */}
+        <StorekeeperTasksWidget />
         {/* Сбой внутри страницы не должен гасить меню и весь экран. */}
         <div className="p-3 sm:p-6">
           {/* key по адресу: при переходе на другую страницу защита пересоздаётся,
