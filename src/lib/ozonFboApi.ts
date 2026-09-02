@@ -40,6 +40,18 @@ export const fetchOzonFboApplications = async (): Promise<OzonFboApplication[]> 
   return (data.applications || []) as OzonFboApplication[];
 };
 
+/** Сколько ткани съест заявка и сколько её сейчас на складе — по каждому материалу. */
+export interface FboMaterialNeed {
+  material: string;
+  /** Погонные метры на всю заявку (норма из состава товара × количество). */
+  meters: number;
+  /** Штук изделий из этой ткани. */
+  items: number;
+  /** Остаток на складе; null — ткани нет в справочнике материалов. */
+  inStock: number | null;
+  unit: string | null;
+}
+
 export interface OzonFboCompositionCheck {
   totalItems: number;
   totalQty: number;
@@ -47,6 +59,9 @@ export interface OzonFboCompositionCheck {
   matchedQty: number;
   unmatchedItems: number;
   unmatched: Array<{ ozonSku: number | null; offerId: string | null; name: string | null; quantity: number }>;
+  /** Расход ткани по материалам. Пусто у старых ответов сервера. */
+  materials?: FboMaterialNeed[];
+  totalMeters?: number;
 }
 
 export const checkOzonFboComposition = (orderId: number): Promise<OzonFboCompositionCheck> =>

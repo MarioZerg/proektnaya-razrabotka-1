@@ -144,6 +144,27 @@ def load_item_lookup(cur):
     return by_ozon_sku, by_offer
 
 
+def load_fabric_per_item(cur):
+    """Расход ТКАНИ на одно изделие по каждому товару: {marketplace_items.id: метры}.
+
+    Берём ту же цифру, что показывает сводка заказов: норму из состава товара по
+    материалу типа «Тюль». В неё уже заложен запас на подгибку, поэтому она больше
+    «чистой» ширины — именно столько метров спишется со склада.
+
+    Нужно, чтобы менеджер ДО загрузки заявки на конвейер видел, сколько ткани съест
+    поставка. Раньше состав показывал только штуки: FBO-заявка на несколько сотен
+    изделий уходила в цех вслепую, и нехватка ткани всплывала уже на раскрое.
+    """
+    cur.execute(
+        "SELECT mim.marketplace_item_id, mim.quantity "
+        "FROM marketplace_item_materials mim "
+        "JOIN materials mm ON mm.id = mim.material_id "
+        "JOIN material_types mmt ON mmt.id = mm.type_id "
+        "WHERE mmt.name = 'Тюль'"
+    )
+    return {int(r[0]): float(r[1] or 0) for r in cur.fetchall()}
+
+
 def match_item(by_ozon_sku, by_offer, ozon_sku, offer_id):
     """Сопоставляет позицию OZON с нашим товаром: сначала по ozon_sku, затем по offer_id."""
     if ozon_sku is not None:
@@ -230,20 +251,52 @@ def handle_check_composition(cur, client_id, api_key, body_data):
     items = get_bundle_items(client_id, api_key, bundle_id) if bundle_id else []
 
     by_ozon_sku, by_offer = load_item_lookup(cur)
+    fabric_per_item = load_fabric_per_item(cur)
+
+    # Остаток ткани на складе — по нему сразу видно, хватит ли материала на заявку.
+    cur.execute(
+        "SELECT m.name, m.unit, "
+        "COALESCE((SELECT SUM(r.remaining_quantity) FROM rolls r "
+        "          WHERE r.material_id = m.id AND r.status = 'in_storage'), 0) "
+        "FROM materials m"
+    )
+    stock = {r[0].strip().lower(): (float(r[2]), r[1]) for r in cur.fetchall()}
 
     total_items = len(items)
     total_qty = 0
     matched_items = 0
     matched_qty = 0
     unmatched = []
+    # Сколько метров каждой ткани съест заявка, если загрузить её на конвейер.
+    materials = {}
     for it in items:
         qty = int(it.get('quantity') or 1)
         total_qty += qty
-        if match_item(by_ozon_sku, by_offer, it.get('sku'), it.get('offer_id')):
+        found = match_item(by_ozon_sku, by_offer, it.get('sku'), it.get('offer_id'))
+        if found:
             matched_items += 1
             matched_qty += qty
+            material, width, _height, _name, _barcode, item_id, _sku = found
+            # Норма из состава товара, а если её не завели — «чистая» ширина в
+            # метрах: так позиция не выпадет из подсчёта совсем.
+            per_item = fabric_per_item.get(int(item_id)) or ((width or 0) / 100)
+            key = material or 'Без материала'
+            agg = materials.setdefault(key, {'meters': 0.0, 'items': 0})
+            agg['meters'] += per_item * qty
+            agg['items'] += qty
         else:
             unmatched.append({'ozonSku': it.get('sku'), 'offerId': it.get('offer_id'), 'name': it.get('name'), 'quantity': qty})
+
+    material_rows = []
+    for name, agg in sorted(materials.items(), key=lambda x: -x[1]['meters']):
+        left = stock.get(name.strip().lower())
+        material_rows.append({
+            'material': name,
+            'meters': round(agg['meters'], 2),
+            'items': agg['items'],
+            'inStock': round(left[0], 2) if left else None,
+            'unit': left[1] if left else None,
+        })
 
     return _resp(200, {
         'totalItems': total_items,
@@ -252,6 +305,9 @@ def handle_check_composition(cur, client_id, api_key, body_data):
         'matchedQty': matched_qty,
         'unmatchedItems': len(unmatched),
         'unmatched': unmatched[:100],
+        # Сколько ткани уйдёт на заявку и сколько её сейчас на складе.
+        'materials': material_rows,
+        'totalMeters': round(sum(r['meters'] for r in material_rows), 2),
     })
 
 

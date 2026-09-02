@@ -170,6 +170,67 @@ const CreateOzonFboDialog = ({
                   </p>
                 )}
 
+                {/* СКОЛЬКО ТКАНИ СЪЕСТ ЗАЯВКА — до загрузки на конвейер.
+                    Раньше состав показывал только штуки, и заявка на несколько
+                    сотен изделий уходила в цех вслепую: нехватка ткани всплывала
+                    уже на раскрое, когда отменить поставку поздно. */}
+                {check?.materials && check.materials.length > 0 && (
+                  <div className="border-t border-border/60 pt-2">
+                    <div className="mb-1 flex items-baseline justify-between">
+                      <span className="text-muted-foreground">Потребуется ткани</span>
+                      <span className="font-semibold tabular-nums">
+                        {check.totalMeters?.toFixed(2)}
+                        <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+                          пог.м.
+                        </span>
+                      </span>
+                    </div>
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="text-muted-foreground">
+                          <th className="pb-1 text-left font-normal">Материал</th>
+                          <th className="pb-1 pl-2 text-right font-normal">Нужно</th>
+                          <th className="pb-1 pl-2 text-right font-normal">Шт.</th>
+                          <th className="pb-1 pl-2 text-right font-normal">На складе</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {check.materials.map((m) => {
+                          // Ткани на складе меньше, чем требует заявка, — грузить её
+                          // на конвейер нельзя, цех встанет на раскрое.
+                          const short = m.inStock !== null && m.inStock < m.meters;
+                          return (
+                            <tr key={m.material} className="border-t border-border/40">
+                              <td className="py-1 pr-2">
+                                <span className="block truncate">{m.material}</span>
+                                {short && (
+                                  <span className="flex items-center gap-1 font-semibold text-destructive">
+                                    <Icon name="TriangleAlert" size={11} className="shrink-0" />
+                                    Не хватает ткани
+                                  </span>
+                                )}
+                              </td>
+                              <td className="whitespace-nowrap py-1 pl-2 text-right font-semibold tabular-nums">
+                                {m.meters.toFixed(2)}
+                              </td>
+                              <td className="whitespace-nowrap py-1 pl-2 text-right tabular-nums text-muted-foreground">
+                                {m.items}
+                              </td>
+                              <td
+                                className={`whitespace-nowrap py-1 pl-2 text-right tabular-nums ${
+                                  short ? 'font-semibold text-destructive' : 'text-muted-foreground'
+                                }`}
+                              >
+                                {m.inStock === null ? '—' : `${m.inStock.toFixed(2)} ${m.unit || ''}`}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
                 {selected.supplyId && (
                   <Badge variant="secondary" className="mt-1">Заявка уже загружена в систему</Badge>
                 )}
