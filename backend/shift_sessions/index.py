@@ -298,10 +298,24 @@ def _calendar_days(cur, month: str) -> list:
         f"ORDER BY ss.opened_at"
     )
     days: dict = {}
+    # ОДИН ЧЕЛОВЕК — ОДНА СТРОКА В ДНЕ.
+    #
+    # За день у сотрудника может быть НЕСКОЛЬКО смен: своя и гостевая в другом цехе,
+    # или смену переоткрыли после ошибки. Раньше в календарь падала строка на каждую
+    # смену, и человек появлялся в списке дважды — выглядело как сбой данных, хотя
+    # это просто две записи о его работе.
+    #
+    # Считаем людей, а не смены: список за день должен отвечать на вопрос «кто
+    # сегодня работал», а не «сколько раз открывали смену».
+    seen: dict = {}
     for opened_date, full_name, shift_number in cur.fetchall():
         key = opened_date.isoformat()
         if key not in days:
             days[key] = {'date': key, 'employees': [], 'activeShift': shift_number}
+            seen[key] = set()
+        if full_name in seen[key]:
+            continue
+        seen[key].add(full_name)
         days[key]['employees'].append(full_name)
     return list(days.values())
 
