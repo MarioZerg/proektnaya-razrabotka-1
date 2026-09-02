@@ -47,6 +47,47 @@ def _manual_done(cur, session_id):
     return {r[0] for r in cur.fetchall()}
 
 
+def _shift_started_at(cur, session_id):
+    """Когда началась смена. Без смены (демо-просмотр) — None."""
+    if not session_id:
+        return None
+    cur.execute("SELECT opened_at FROM shift_sessions WHERE id = %s", (int(session_id),))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _had_returns(cur, session_id):
+    """Приезжали ли за эту смену возвраты с ПВЗ.
+
+    Нужно, чтобы отличить «работу сделали» от «работы не было». Пустой счётчик
+    в начале смены — это не выполненное задание, а дело, которого ещё не
+    появилось: такую строку показываем приглушённой и без галочки.
+    """
+    started = _shift_started_at(cur, session_id)
+    if not started:
+        return False
+    cur.execute(
+        "SELECT 1 FROM goods_warehouse "
+        "WHERE COALESCE(receive_reason, '') <> 'cancelled_labeled' "
+        "  AND received_at >= %s LIMIT 1",
+        (started,),
+    )
+    return cur.fetchone() is not None
+
+
+def _had_cancelled_labeled(cur, session_id):
+    """Появлялись ли за смену отмены после стикеровки (вещи со стикером FBS)."""
+    started = _shift_started_at(cur, session_id)
+    if not started:
+        return False
+    cur.execute(
+        "SELECT 1 FROM goods_warehouse "
+        "WHERE receive_reason = 'cancelled_labeled' AND received_at >= %s LIMIT 1",
+        (started,),
+    )
+    return cur.fetchone() is not None
+
+
 def build_tasks(cur, session_id, user_id):
     """Собирает список заданий смены с текущим состоянием каждого.
 
@@ -89,6 +130,9 @@ def build_tasks(cur, session_id, user_id):
         'link': '/crm/inventory/goods-picking',
         'manual': False,
         'blocking': True,
+            # Эта работа есть всегда: подбор и отменённые копятся сами,
+        # ручные задания кладовщик закрывает каждую смену.
+        'idle': False,
     })
 
     # 2. ЗАБРАТЬ ИЗ ЦЕХА ОТМЕНЁННЫЕ ВЕЩИ.
@@ -110,6 +154,9 @@ def build_tasks(cur, session_id, user_id):
         'link': '/crm/inventory/goods-warehouse',
         'manual': False,
         'blocking': True,
+            # Эта работа есть всегда: подбор и отменённые копятся сами,
+        # ручные задания кладовщик закрывает каждую смену.
+        'idle': False,
     })
 
     # 3. ОТГРУЗИТЬ ПОСТАВКИ FBS.
@@ -153,6 +200,13 @@ def build_tasks(cur, session_id, user_id):
         'link': '/crm/shipments/to-marketplace',
         'manual': False,
         'blocking': True,
+        # ПОКА ПОСТАВОК НЕ СОЗДАВАЛИ — СТРОКА ПРИГЛУШЕНА, БЕЗ ГАЛОЧКИ.
+        #
+        # В начале смены отгружать нечего, и зачёркнутая строка сбивала бы с
+        # толку: выглядит как сделанная работа, хотя её не было. Создал поставку
+        # и отгрузил — строка становится выполненной. Создал ещё одну — снова
+        # активная, пока не отгрузит.
+        'idle': supplies_total == 0,
     })
 
     # 4. ОТГРУЗИТЬ ТКАНЬ НА ПРОИЗВОДСТВО.
@@ -176,6 +230,9 @@ def build_tasks(cur, session_id, user_id):
         'link': '/crm/shipments/to-workshop',
         'manual': True,
         'blocking': False,
+            # Эта работа есть всегда: подбор и отменённые копятся сами,
+        # ручные задания кладовщик закрывает каждую смену.
+        'idle': False,
     })
 
     # 5. НАПОМНИТЬ ЗАКРОЙЩИКАМ ПРО РУЛОНЫ С МАЛЫМ ОСТАТКОМ.
@@ -199,14 +256,25 @@ def build_tasks(cur, session_id, user_id):
             'link': '/crm/inventory/rolls?low=1',
             'manual': True,
             'blocking': False,
-        })
+                # Эта работа есть всегда: подбор и отменённые копятся сами,
+        # ручные задания кладовщик закрывает каждую смену.
+        'idle': False,
+    })
 
     # 6. РАЗОБРАТЬ ВОЗВРАТЫ С ПВЗ.
     # Вещи привезены с пункта выдачи и отсканированы, но не разобраны: кладовщик
     # ещё не решил, положить их на полку или отдать на осмотр. Пока они в этом
     # статусе, товар не считается проверенным и в подбор не идёт — поэтому
     # задание держит смену.
-    cur.execute("SELECT count(*) FROM goods_warehouse WHERE status = 'mp_return'")
+    #
+    # Отмену после стикеровки сюда НЕ считаем: она лежит в той же вкладке, но это
+    # другая работа (см. задание ниже), и смешивать их в одном счётчике нельзя —
+    # кладовщик не поймёт, что именно ему разбирать.
+    cur.execute(
+        "SELECT count(*) FROM goods_warehouse "
+        "WHERE status = 'mp_return' "
+        "  AND COALESCE(receive_reason, '') <> 'cancelled_labeled'"
+    )
     returns_left = int(cur.fetchone()[0] or 0)
     tasks.append({
         'key': 'returns',
@@ -217,6 +285,31 @@ def build_tasks(cur, session_id, user_id):
         'link': '/crm/inventory/goods-warehouse',
         'manual': False,
         'blocking': True,
+        # Работы не появлялось за смену — строка показывается приглушённой:
+        # это не выполненное дело, а дело, которого сегодня не было.
+        'idle': returns_left == 0 and not _had_returns(cur, session_id),
+    })
+
+    # 7. ОТМЕНЁННЫЕ ПОСЛЕ СТИКЕРОВКИ.
+    # Вещь сшили, упаковали и заклеили ярлыком маркетплейса — и уже после этого
+    # заказ отменили. К покупателю она не уезжала, осматривать её незачем: сразу
+    # на полку со стикером хранения. Лежит в той же вкладке «Разобрать возвраты»,
+    # но помечена синим — инструмент там тот же, а работа другая и быстрее.
+    cur.execute(
+        "SELECT count(*) FROM goods_warehouse "
+        "WHERE status = 'mp_return' AND receive_reason = 'cancelled_labeled'"
+    )
+    cancelled_labeled = int(cur.fetchone()[0] or 0)
+    tasks.append({
+        'key': 'cancelled_labeled',
+        'title': 'Отменённые после стикеровки',
+        'hint': 'Отмена в цехе со стикером FBS — сразу на полку',
+        'count': cancelled_labeled,
+        'done': cancelled_labeled == 0,
+        'link': '/crm/inventory/goods-warehouse',
+        'manual': False,
+        'blocking': True,
+        'idle': cancelled_labeled == 0 and not _had_cancelled_labeled(cur, session_id),
     })
 
     return tasks
@@ -224,7 +317,9 @@ def build_tasks(cur, session_id, user_id):
 
 def blocking_tasks(cur, session_id, user_id):
     """Задания, из-за которых нельзя закрыть смену. Пусто — можно закрывать."""
+    # Приглушённые (idle) не держат: работы по ним за смену не появлялось,
+    # держать человека из-за дела, которого не было, нельзя.
     return [
         t for t in build_tasks(cur, session_id, user_id)
-        if t['blocking'] and not t['done']
+        if t['blocking'] and not t['done'] and not t.get('idle')
     ]

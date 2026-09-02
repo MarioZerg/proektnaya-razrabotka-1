@@ -22,14 +22,25 @@
 /** Минимальный промежуток между двумя сигналами ОДНОГО вида. */
 const COOLDOWN_MS = 60000;
 
-export type WarehouseAlert = 'cancelledToShelf' | 'newPicking';
+export type WarehouseAlert = 'cancelledToShelf' | 'newPicking' | 'taskDone';
 
 const SOURCES: Record<WarehouseAlert, string> = {
   /** Отменённый заказ из цеха: упаковщица наклеила складской стикер, вещь едет на полку. */
   cancelledToShelf: '/sounds/cancelled-to-shelf.mp3',
   /** На подбор со склада пришёл новый заказ. */
   newPicking: '/sounds/new-picking.mp3',
+  /** Задание смены выполнено — короткая отбивка при появлении галочки. */
+  taskDone: '/sounds/task-done.mp3',
 };
+
+/**
+ * Сигналы, которые звучат В ОТВЕТ НА ДЕЙСТВИЕ человека, а не сами по себе.
+ *
+ * Минутная пауза для них не нужна и вредна: кладовщик закрывает два задания
+ * подряд и должен услышать подтверждение на каждое. А вот общая очередь нужна —
+ * чтобы отбивка не наложилась на голосовое уведомление о новой работе.
+ */
+const NO_COOLDOWN: WarehouseAlert[] = ['taskDone'];
 
 /** Когда каждый вид сигнала звучал в последний раз — по нему держим минутную паузу. */
 const lastPlayedAt: Partial<Record<WarehouseAlert, number>> = {};
@@ -89,8 +100,9 @@ const playNext = () => {
  */
 export const playWarehouseAlert = (alert: WarehouseAlert): boolean => {
   const now = Date.now();
+  const skipCooldown = NO_COOLDOWN.includes(alert);
   const last = lastPlayedAt[alert] || 0;
-  if (now - last < COOLDOWN_MS) return false;
+  if (!skipCooldown && now - last < COOLDOWN_MS) return false;
 
   // Этот же сигнал уже стоит в очереди и вот-вот прозвучит — второй раз не ставим.
   if (queue.includes(alert)) return false;

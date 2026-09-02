@@ -288,28 +288,24 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             cur.execute(
-                # ПО ОДНОМУ ЧЕЛОВЕКУ НА РОЛЬ, но швеи — ДВЕ.
+                # По одному активному сотруднику на каждую роль — этого
+                # достаточно, чтобы посмотреть систему её глазами.
                 #
-                # Оверлок это не должность, а допуск (галочка can_overlock): он
-                # открывает вкладку «Оверлок» и меняет расчёт зарплаты. Раньше
-                # список брал строго по одному на роль, и швея с допуском в него
-                # не попадала — посмотреть этот режим было не на ком.
-                #
-                # Поэтому ключ группировки — роль ПЛЮС признак оверлока: у швей
-                # выходит два входа, у остальных ролей по-прежнему один.
-                "SELECT DISTINCT ON (u.role, COALESCE(u.can_overlock, false)) "
-                "  u.id, u.full_name, u.role, u.workshop, u.shift_number, w.id, "
-                "  COALESCE(u.can_overlock, false) "
+                # Оверлок отдельным входом не заводим: это не должность, а
+                # галочка-допуск в карточке швеи. Нужен такой режим — админ
+                # ставит допуск живой швее и входит в её аккаунт из раздела
+                # «Сотрудники».
+                "SELECT DISTINCT ON (u.role) u.id, u.full_name, u.role, u.workshop, "
+                "  u.shift_number, w.id, COALESCE(u.can_overlock, false) "
                 "FROM users u "
                 "LEFT JOIN workshops w ON w.name = u.workshop "
                 "WHERE u.is_active = true AND u.role <> '' "
                 # Расторгнувших договор в списке для входа не показываем: их
                 # доступ закрыт, и предлагать им кнопку входа незачем.
                 "  AND u.contract_terminated_at IS NULL "
-                # Демо-аккаунты идут первыми: если для роли заведён специальный
-                # тестовый сотрудник, показываем именно его, а не живого человека.
-                "ORDER BY u.role, COALESCE(u.can_overlock, false), "
-                "         COALESCE(u.is_demo, false) DESC, u.id"
+                # Демо-записи в список входов не берём: это служебные аккаунты.
+                "  AND COALESCE(u.is_demo, false) = false "
+                "ORDER BY u.role, u.id"
             )
             rows = cur.fetchall()
         finally:

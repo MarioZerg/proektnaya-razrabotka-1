@@ -218,6 +218,12 @@ export interface StorekeeperTask {
   manual: boolean;
   /** Мешает закрыть смену, пока не выполнено. */
   blocking: boolean;
+  /**
+   * Работы по этому делу за смену не появлялось: поставок не создавали, возвраты
+   * не приезжали. Не выполненное задание и не висящее — показываем бледной
+   * строкой без галочки и смену оно не держит.
+   */
+  idle?: boolean;
 }
 
 export interface StorekeeperTasksResult {

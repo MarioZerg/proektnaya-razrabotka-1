@@ -4,6 +4,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
+import { playWarehouseAlert } from '@/lib/warehouseAlerts';
 import {
   fetchStorekeeperTasks,
   toggleStorekeeperTask,
@@ -99,7 +100,12 @@ const StorekeeperTasksWidget = () => {
       setDemoDone((prev) => {
         const next = new Set(prev);
         if (next.has(task.key)) next.delete(task.key);
-        else next.add(task.key);
+        else {
+          next.add(task.key);
+          // Звучим только когда галочка ВСТАЁТ. Снятие — исправление ошибки,
+          // хвалить за него нечего.
+          playWarehouseAlert('taskDone');
+        }
         return next;
       });
       return;
@@ -107,7 +113,11 @@ const StorekeeperTasksWidget = () => {
     if (!task.manual) return;
     setBusyKey(task.key);
     try {
-      await toggleStorekeeperTask(user.id, task.key);
+      const res = await toggleStorekeeperTask(user.id, task.key);
+      // Отбивка при появлении галочки. Идёт через общую очередь звуков склада:
+      // если в этот момент говорит голосовое уведомление о новой работе, отбивка
+      // дождётся своей очереди и не наложится на него.
+      if (res.done) playWarehouseAlert('taskDone');
       load();
     } catch (e) {
       toast({
@@ -124,7 +134,7 @@ const StorekeeperTasksWidget = () => {
     <div
       // Полупрозрачный в покое, непрозрачный под курсором — не закрывает работу,
       // но всегда под рукой. На планшете раскрывается касанием по шапке.
-      className={`fixed right-3 top-16 z-40 w-[17rem] rounded-xl border shadow-lg backdrop-blur transition-all duration-200 sm:right-4 ${
+      className={`fixed right-3 top-16 z-40 w-[21rem] rounded-xl border shadow-lg backdrop-blur transition-all duration-200 sm:right-4 ${
         open
           ? 'border-border bg-card opacity-100'
           : 'border-border/50 bg-card/60 opacity-60 hover:opacity-100'
@@ -135,15 +145,15 @@ const StorekeeperTasksWidget = () => {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
       >
         <Icon
           name={allDone ? 'CircleCheckBig' : 'ClipboardList'}
-          size={16}
+          size={18}
           className={allDone ? 'shrink-0 text-emerald-600' : 'shrink-0 text-primary'}
         />
         <span className="min-w-0 flex-1">
-          <span className="block text-xs font-semibold leading-tight">
+          <span className="block text-sm font-semibold leading-tight">
             Задания смены
             {isDemo && (
               <span className="ml-1 rounded-sm bg-muted px-1 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
@@ -151,14 +161,14 @@ const StorekeeperTasksWidget = () => {
               </span>
             )}
           </span>
-          <span className="block text-[11px] leading-tight text-muted-foreground">
+          <span className="block text-xs leading-tight text-muted-foreground">
             {allDone
               ? 'Всё выполнено — можно закрывать смену'
               : `Выполнено ${doneCount} из ${shown.length}`}
           </span>
         </span>
         <span
-          className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-bold ${
+          className={`shrink-0 rounded-md px-2 py-0.5 text-sm font-bold ${
             allDone
               ? 'bg-emerald-100 text-emerald-700'
               : 'bg-primary/10 text-primary'
@@ -188,37 +198,51 @@ const StorekeeperTasksWidget = () => {
           {shown.map((t) => (
             <div
               key={t.key}
-              className={`flex items-start gap-2 rounded-lg border p-2 transition-colors ${
-                t.done
-                  ? 'border-emerald-200 bg-emerald-50/60'
-                  : t.blocking
-                    ? 'border-amber-200 bg-amber-50/60'
-                    : 'border-border bg-muted/30'
+              className={`flex items-start gap-2.5 rounded-lg border p-2.5 transition-colors ${
+                t.idle
+                  ? // РАБОТЫ ПО ЭТОМУ ДЕЛУ СЕГОДНЯ НЕ БЫЛО.
+                    // Не выполненное задание и не висящее: поставок не создавали,
+                    // возвраты не приезжали. Показываем бледной строкой без
+                    // галочки — зачёркнутая выглядела бы как сделанная работа.
+                    'border-dashed border-border bg-transparent opacity-45'
+                  : t.done
+                    ? 'border-emerald-200 bg-emerald-50/60'
+                    : t.blocking
+                      ? 'border-amber-200 bg-amber-50/60'
+                      : 'border-border bg-muted/30'
               }`}
             >
               {/* Галочка: у ручных заданий по ней жмут, у остальных она просто
                   показывает состояние — работа закрывает их сама. */}
               <button
                 type="button"
-                disabled={(!t.manual && !isDemo) || busyKey === t.key}
+                disabled={t.idle || (!t.manual && !isDemo) || busyKey === t.key}
                 onClick={() => handleToggle(t)}
                 title={
-                  isDemo
-                    ? 'Демо: нажмите, чтобы посмотреть, как ставится галочка'
-                    : t.manual
-                      ? 'Отметить выполненным'
-                      : 'Галочка встанет сама, когда работа будет сделана'
+                  t.idle
+                    ? 'Сегодня такой работы не появлялось'
+                    : isDemo
+                      ? 'Демо: нажмите, чтобы посмотреть, как ставится галочка'
+                      : t.manual
+                        ? 'Отметить выполненным'
+                        : 'Галочка встанет сама, когда работа будет сделана'
                 }
-                className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md border transition-colors ${
+                className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md border transition-colors ${
                   t.done
                     ? 'border-emerald-500 bg-emerald-500 text-white'
-                    : 'border-muted-foreground/40 bg-background'
-                } ${t.manual || isDemo ? 'cursor-pointer hover:border-emerald-500' : 'cursor-default'}`}
+                    : t.idle
+                      ? 'border-dashed border-muted-foreground/30 bg-transparent'
+                      : 'border-muted-foreground/40 bg-background'
+                } ${
+                  !t.idle && (t.manual || isDemo)
+                    ? 'cursor-pointer hover:border-emerald-500'
+                    : 'cursor-default'
+                }`}
               >
                 {busyKey === t.key ? (
-                  <Icon name="Loader2" size={12} className="animate-spin" />
+                  <Icon name="Loader2" size={14} className="animate-spin" />
                 ) : t.done ? (
-                  <Icon name="Check" size={12} />
+                  <Icon name="Check" size={14} />
                 ) : null}
               </button>
 
@@ -228,19 +252,19 @@ const StorekeeperTasksWidget = () => {
                 className="min-w-0 flex-1 text-left"
               >
                 <span
-                  className={`block text-[11px] font-semibold leading-snug ${
-                    t.done ? 'text-muted-foreground line-through' : ''
+                  className={`block text-[13px] font-semibold leading-snug ${
+                    t.done && !t.idle ? 'text-muted-foreground line-through' : ''
                   }`}
                 >
                   {t.title}
                 </span>
-                <span className="block text-[10px] leading-snug text-muted-foreground">
-                  {t.hint}
+                <span className="block text-[11px] leading-snug text-muted-foreground">
+                  {t.idle ? 'Сегодня такой работы не появлялось' : t.hint}
                 </span>
               </button>
 
-              {t.count > 0 && !t.done && (
-                <span className="mt-0.5 shrink-0 rounded-md bg-amber-200 px-1.5 text-[11px] font-bold text-amber-900">
+              {t.count > 0 && !t.done && !t.idle && (
+                <span className="mt-0.5 shrink-0 rounded-md bg-amber-200 px-1.5 text-[13px] font-bold text-amber-900">
                   {t.count}
                 </span>
               )}
@@ -248,14 +272,14 @@ const StorekeeperTasksWidget = () => {
           ))}
 
           {isDemo && (
-            <p className="px-1 pt-1 text-[10px] leading-snug text-muted-foreground">
+            <p className="px-1 pt-1 text-[11px] leading-snug text-muted-foreground">
               Демо-просмотр: цифры настоящие, галочки нажимаются для примера и
               никуда не сохраняются. У кладовщика на смене сами закрываются все
               задания, кроме отгрузки ткани и напоминания про рулоны.
             </p>
           )}
           {blocking.length > 0 && !isDemo && (
-            <p className="px-1 pt-1 text-[10px] leading-snug text-amber-700">
+            <p className="px-1 pt-1 text-[11px] leading-snug text-amber-700">
               Смену нельзя закрыть, пока не сделано: {blocking.length} задание
               {blocking.length > 1 ? 'й' : ''}. Задания с галочкой вручную смену
               не держат.

@@ -90,9 +90,11 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     }
   }, [user, location.pathname, navigate]);
 
-  // Список тестовых входов нужен и в демо-режиме, и администратору: он
-  // переключается на роли, чтобы посмотреть систему их глазами.
-  const canSwitchAccounts = !!user?.isDemo || user?.role === 'admin';
+  // Переключение аккаунтов — только внутри демо-режима. Администратор входит
+  // в аккаунт сотрудника из раздела «Сотрудники»: там видно, кого он выбирает,
+  // и это действие записывается. Дублировать его рядом с кнопкой выхода не
+  // нужно — оттуда легко провалиться в чужой аккаунт случайно.
+  const canSwitchAccounts = !!user?.isDemo;
   useEffect(() => {
     if (canSwitchAccounts) {
       fetchTestAccounts().then(setTestAccounts);
@@ -260,7 +262,6 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                       <span className="flex-1 truncate">{acc.name}</span>
                       <span className="ml-2 text-xs text-muted-foreground">
                         {roleLabels[acc.role]}
-                        {acc.canOverlock && ' (оверлок)'}
                       </span>
                     </DropdownMenuItem>
                   ))}
