@@ -272,6 +272,26 @@ def is_label_gone(marketplace, ozon_status) -> bool:
     return (marketplace or '').upper() == 'OZON' and (ozon_status or '') in OZON_SHIPMENT_GONE
 
 
+def is_order_cancelled(status, ozon_status=None, ym_status=None) -> bool:
+    """Заказ отменён — вещь дошивают, но она уедет на склад, а не покупателю.
+
+    Признак собран по всем площадкам сразу, потому что поле статуса у каждой своё:
+      * OZON      — ozon_status ('cancelled');
+      * Яндекс    — ym_status;
+      * WB        — отдельного поля нет, синхронизация сразу ставит status='Отменён'.
+
+    Раньше проверка была написана по месту (в четырёх разных ветках) и везде смотрела
+    ТОЛЬКО на ozon_status. Отмена WB и Яндекса ловилась лишь тогда, когда наша
+    синхронизация успевала переписать общий status, — а до этого упаковщица успевала
+    напечатать ярлык отправления на отменённый заказ.
+    """
+    return (
+        status == 'Отменён'
+        or 'cancel' in (ozon_status or '').lower()
+        or 'cancel' in (ym_status or '').lower()
+    )
+
+
 
 def shift_close_allowed_at(schedule_row, opened_at):
     """Во сколько сотрудник сможет закрыть смену. Считает ТАК ЖЕ, как shift_sessions.
@@ -535,7 +555,9 @@ def handler(event: dict, context) -> dict:
                 "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.status, o.ozon_status, "
                 "o.marketplace, o.group_key, o.group_size, o.group_position, o.order_type, "
-                "o.is_legal_entity, o.legal_company_name, o.cluster, cu.full_name, su.full_name "
+                "o.is_legal_entity, o.legal_company_name, o.cluster, cu.full_name, su.full_name, "
+                # Статус Яндекс.Маркета — вторая площадка со своим полем отмены.
+                "o.ym_status "
                 "FROM orders o LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                 "LEFT JOIN users su ON su.id = o.sewer_user_id "
@@ -629,7 +651,7 @@ def handler(event: dict, context) -> dict:
                 'assignedUserName': row[8],
                 # Заказ отменён клиентом: вещь всё равно дошивается, но уходит не покупателю,
                 # а на склад хранения — упаковщик клеит стикер ХРАНЕНИЯ вместо отправления.
-                'isCancelled': row[9] == 'Отменён' or 'cancel' in (row[10] or '').lower(),
+                'isCancelled': is_order_cancelled(row[9], row[10], row[21]),
                 # Отправление уже уехало к покупателю (или отменено на стороне OZON) —
                 # ярлык не выдадут. Вещь закрывают со стикером хранения, как отменённую.
                 'labelGone': is_label_gone(row[11], row[10]),
@@ -783,6 +805,9 @@ def handler(event: dict, context) -> dict:
                     "SELECT sewing_status, width, assigned_user_id, order_number, workshop_id, "
                     "status, ozon_status, order_type, material, height, product, "
                     "group_key, group_size, group_position, marketplace, "
+                    # Статус на стороне Яндекс.Маркета: по нему видно отмену так же,
+                    # как ozon_status показывает её для OZON.
+                    "ym_status, "
                     # Вещь прошла оверлок: у неё другие ставки и у швеи, и у
                     # упаковщицы — см. расчёт начислений ниже.
                     "overlocked_at FROM orders WHERE id = %s "
@@ -795,7 +820,7 @@ def handler(event: dict, context) -> dict:
                 (sewing_status, width, assigned_user_id, order_number, order_workshop_id,
                  order_status, order_ozon_status, order_type, order_material,
                  order_height, order_product, group_key, group_size, group_position,
-                 order_marketplace, order_overlocked_at) = row
+                 order_marketplace, order_ym_status, order_overlocked_at) = row
                 # Признак «вещь прошла оверлок» — по нему ниже выбирается тариф.
                 is_overlocked = order_overlocked_at is not None
                 # Отправление уже уехало к покупателю — ярлык не выдадут, и вещь ему не
@@ -811,8 +836,7 @@ def handler(event: dict, context) -> dict:
                 label_printed = bool(body_data.get('labelPrinted'))
                 label_gone = is_label_gone(order_marketplace, order_ozon_status)
                 is_cancelled = (
-                    order_status == 'Отменён'
-                    or 'cancel' in (order_ozon_status or '').lower()
+                    is_order_cancelled(order_status, order_ozon_status, order_ym_status)
                     or (label_gone and not label_printed)
                 )
 
@@ -1677,7 +1701,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
                     "o.sewing_status, COALESCE(o.sewer_user_id, o.assigned_user_id), "
-                    "su.full_name, o.status, o.ozon_status, o.marketplace "
+                    "su.full_name, o.status, o.ozon_status, o.marketplace, o.ym_status "
                     "FROM orders o "
                     "LEFT JOIN users su ON su.id = COALESCE(o.sewer_user_id, o.assigned_user_id) "
                     f"WHERE {where_sql} "
@@ -1694,7 +1718,7 @@ def handler(event: dict, context) -> dict:
                         'sewingStatus': r[6],
                         'assignedUserId': r[7],
                         'assignedUserName': r[8],
-                        'isCancelled': r[9] == 'Отменён' or 'cancel' in (r[10] or '').lower(),
+                        'isCancelled': is_order_cancelled(r[9], r[10], r[12]),
                         # Ярлык уже не получить — вещь пойдёт на полку хранения.
                         'labelGone': is_label_gone(r[11], r[10]),
                         'marketplace': r[11],

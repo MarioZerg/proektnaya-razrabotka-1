@@ -7,6 +7,7 @@ import {
   releaseStuckCancelled,
   type StuckCancelledItem,
 } from '@/lib/goodsWarehouseApi';
+import MarketplaceBadge from '@/components/crm/MarketplaceBadge';
 
 interface StuckCancelledPanelProps {
   items: StuckCancelledItem[];
@@ -105,6 +106,9 @@ const StuckCancelledPanel = ({ items, onReload }: StuckCancelledPanelProps) => {
                 <span className="font-medium text-amber-900">
                   {i.material && i.width ? `${i.material} ${i.width}×${i.height}` : i.product || 'Товар'}
                 </span>
+                {/* Площадка: отмены WB, Яндекса и OZON лежат вперемешку, а по
+                    номеру заказа их не различить. */}
+                <MarketplaceBadge marketplace={i.marketplace} />
                 <span className="font-mono-tech text-xs text-amber-800">{i.storageBarcode}</span>
                 <span className="text-xs text-amber-800">заказ {i.orderNumber || '—'}</span>
                 {/* Полка нужна кладовщику, чтобы найти вещь. Без неё вещь уедет

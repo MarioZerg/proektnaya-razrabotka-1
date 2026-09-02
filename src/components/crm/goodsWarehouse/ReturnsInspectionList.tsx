@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import { shortProductName } from '@/lib/shortProductName';
+import MarketplaceBadge from '@/components/crm/MarketplaceBadge';
 import type { InspectionItem } from '@/lib/goodsWarehouseApi';
 
 const formatDate = (value: string | null) => {
@@ -168,8 +169,14 @@ const ReturnsInspectionList = ({
                     <div className="font-medium" title={i.product || ''}>
                       {shortProductName(i)}
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      {i.orderNumber || '—'} · {i.storageBarcode}
+                    {/* От какой площадки товар: WB и Яндекс возвращают вещь
+                        целиком, OZON — поштучно, и разбирают их по-разному.
+                        По номеру заказа площадку не отличить. */}
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                      <MarketplaceBadge marketplace={i.marketplace} />
+                      <span>
+                        {i.orderNumber || '—'} · {i.storageBarcode}
+                      </span>
                     </div>
                     {/* Сколько раз вещь уже возвращали — главное для решения
                         «осмотреть или сразу на полку». Покупатели не возвращают
