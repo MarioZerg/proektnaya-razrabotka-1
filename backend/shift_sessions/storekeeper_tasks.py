@@ -88,22 +88,6 @@ def _had_cancelled_labeled(cur, session_id):
     return cur.fetchone() is not None
 
 
-def _had_defect_rolls(cur, session_id):
-    """Заявляли ли за эту смену брак ткани.
-
-    Пустой счётчик в начале смены — это не выполненная работа, а её отсутствие:
-    закройщик ещё ничего не отставил. Такую строку показываем приглушённой.
-    """
-    started = _shift_started_at(cur, session_id)
-    if not started:
-        return False
-    cur.execute(
-        "SELECT 1 FROM rolls WHERE defect_flagged_at >= %s LIMIT 1",
-        (started,),
-    )
-    return cur.fetchone() is not None
-
-
 def _had_repacked(cur, session_id):
     """Отдавали ли за смену перепакованные вещи из цеха."""
     started = _shift_started_at(cur, session_id)
@@ -210,31 +194,30 @@ def build_tasks(cur, session_id, user_id):
     })
 
     # 4. ОТСКАНИРОВАТЬ БРАК ИЗ ЦЕХА.
-    # Закройщик встретил брак в рулоне и отставил его: резать дальше нельзя.
-    # Рулон физически лежит в цехе и ждёт, пока кладовщик заберёт его на склад —
-    # забор идёт СКАНЕРОМ, по штрихкоду рулона, чтобы было видно: рулон реально
-    # доехал, а не остался лежать после формального подтверждения.
+    # Упаковщица списала бракованный кусок на терминале в цехе и наклеила на него
+    # стикер. Кусок лежит в контейнере и ждёт, пока кладовщик отсканирует его на
+    # складе — это ровно то, что показывает вкладка «Приём брака из цеха».
     #
-    # Держит смену: брошенный в цехе бракованный рулон занимает место, путается
-    # с рабочими рулонами и назавтра его снова возьмут в раскрой.
+    # Держит смену: неотсканированный кусок нигде не числится. Он уже списан с
+    # рулона, но на склад не принят — и если его потеряют, концов не найти.
     cur.execute(
-        "SELECT count(*) FROM rolls "
-        "WHERE defect_flagged_at IS NOT NULL "
-        "  AND defect_declined_at IS NULL "
-        "  AND status NOT IN ('in_storage', 'completed')"
+        "SELECT count(*) FROM material_defects "
+        "WHERE received_at IS NULL AND missing_at IS NULL"
     )
-    defect_rolls = int(cur.fetchone()[0] or 0)
+    defect_pieces = int(cur.fetchone()[0] or 0)
     tasks.append({
         'key': 'defect_rolls',
         'title': 'Отсканировать брак из цеха',
-        'hint': 'Бракованная ткань от закройщика — забрать на склад сканером',
-        'count': defect_rolls,
-        'done': defect_rolls == 0,
+        'hint': 'Бракованные куски со стикерами — принять сканером на склад',
+        'count': defect_pieces,
+        'done': defect_pieces == 0,
         'link': '/crm/inventory/defect-receive',
         'manual': False,
         'blocking': True,
-        # Брака за смену не заявляли — приглушаем: это дело, которого не было.
-        'idle': defect_rolls == 0 and not _had_defect_rolls(cur, session_id),
+        # Куски копятся сами и ждут приёмки сколько угодно долго — в отличие от
+        # поставок и возвратов, приглушать тут нечего: пока в контейнере
+        # что-то лежит, это работа на сегодня.
+        'idle': False,
     })
 
     # 5. ОТГРУЗИТЬ ПОСТАВКИ FBS.
@@ -340,10 +323,13 @@ def build_tasks(cur, session_id, user_id):
     })
 
     # 8. ЗАБРАТЬ ПЕРЕПАКОВАННЫЕ ИЗ ЦЕХА.
-    # Упаковщица переупаковала вещь, наклеила стикер хранения и отдала её.
-    # Вещь лежит в цехе и ждёт, пока кладовщик унесёт её на полку: пока не
-    # унесли, товар не на месте и в подбор не пойдёт.
-    cur.execute("SELECT count(*) FROM goods_warehouse WHERE status = 'inspected'")
+    # Упаковщица переупаковала вещь, наклеила стикер хранения и отдала её. Дальше
+    # два шага: кладовщик забирает вещь из цеха (становится 'taken') и кладёт на
+    # полку. Считаем ОБА состояния: забранная, но не разложенная вещь лежит в
+    # тележке и в подбор не идёт — работа не закончена.
+    cur.execute(
+        "SELECT count(*) FROM goods_warehouse WHERE status IN ('inspected', 'taken')"
+    )
     repacked_left = int(cur.fetchone()[0] or 0)
     tasks.append({
         'key': 'repacked_to_shelf',
