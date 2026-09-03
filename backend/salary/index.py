@@ -935,6 +935,185 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+            if action == 'accrue_missed':
+                """Доначислить зарплату за этапы, оставшиеся без начисления.
+
+                Кнопка «Доначислить» в предупреждении финансов. Считает по ТЕМ ЖЕ
+                правилам, что и штатное начисление в момент закрытия этапа, — ставка
+                берётся из salary_rates по цеху и ширине, сумма считается так же.
+                Своей арифметики здесь нет намеренно: разойдись она с основной, и
+                доначисленное молча отличалось бы от начисленного вовремя.
+
+                Заказы, по которым ставка не заведена, пропускаются и возвращаются
+                отдельным числом — деньги «на глазок» не выдумываем, админ заводит
+                ставку и нажимает ещё раз.
+                """
+                m_user_id = body_data.get('userId')
+                stage = (body_data.get('stage') or '').strip()
+                if not m_user_id or not stage:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите сотрудника и этап'})}
+                m_user_id = int(m_user_id)
+
+                # Цех сотрудника — запасной вариант, если у заказа цех не проставлен
+                # (частая причина самой дыры).
+                cur.execute(
+                    "SELECT w.id FROM users u LEFT JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
+                    (m_user_id,),
+                )
+                uw = cur.fetchone()
+                user_ws = uw[0] if uw else None
+
+                created = 0
+                skipped = 0
+                total_amount = 0.0
+
+                if stage == 'Раскрой':
+                    # Ставка закройщика заведена на КОНКРЕТНУЮ ткань, а у заказа
+                    # хранится её название — поэтому подтягиваем материал по имени.
+                    cur.execute(
+                        "SELECT o.id, o.order_number, o.width, o.workshop_id, m.id "
+                        "FROM orders o LEFT JOIN materials m ON m.name = o.material "
+                        "WHERE o.cutter_user_id = %s AND o.cut_at IS NOT NULL "
+                        "  AND COALESCE(o.source, '') <> 'import' "
+                        "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
+                        "                  WHERE a.order_id = o.id AND a.type = 'cutter_cut')",
+                        (m_user_id,),
+                    )
+                    for oid, onum, width, ows, mat_id in cur.fetchall():
+                        ws = ows or user_ws
+                        if not (ws and width and mat_id):
+                            skipped += 1
+                            continue
+                        cur.execute(
+                            "SELECT rate FROM salary_rates WHERE role = 'cutter' AND material_id = %s "
+                            "AND width IS NULL AND workshop_id = %s",
+                            (int(mat_id), int(ws)),
+                        )
+                        rr = cur.fetchone()
+                        rate = float(rr[0]) if rr else 0
+                        if rate <= 0:
+                            skipped += 1
+                            continue
+                        cur.execute("SELECT name FROM materials WHERE id = %s", (int(mat_id),))
+                        mn = cur.fetchone()
+                        mat_name = mn[0] if mn else ''
+                        pay_meters = round(float(width) / 100, 2)
+                        amount = round(pay_meters * rate, 2)
+                        cur.execute(
+                            "INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                            "VALUES (%s, 'cutter_cut', %s, %s, %s) "
+                            "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING",
+                            (m_user_id, amount, int(oid),
+                             f'Раскрой заказа #{onum or oid} ({mat_name} {int(width)} см) - '
+                             f'{pay_meters} пог.м. (доначислено)'),
+                        )
+                        created += cur.rowcount
+                        total_amount += amount
+
+                elif stage == 'Пошив':
+                    cur.execute(
+                        "SELECT o.id, o.order_number, o.width, o.workshop_id, o.overlocked_at "
+                        "FROM orders o WHERE o.assigned_user_id = %s AND o.sewing_status = 'Готовые' "
+                        "  AND COALESCE(o.sewing_status, '') <> 'Со склада' "
+                        "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
+                        "                  WHERE a.order_id = o.id AND a.type = 'sewer_piece')",
+                        (m_user_id,),
+                    )
+                    for oid, onum, width, ows, overlocked in cur.fetchall():
+                        ws = ows or user_ws
+                        if not (ws and width):
+                            skipped += 1
+                            continue
+                        if overlocked:
+                            cur.execute(
+                                "SELECT rate FROM salary_rates WHERE role = 'sewer_overlock' "
+                                "AND material_id IS NULL AND width IS NULL AND workshop_id = %s",
+                                (int(ws),),
+                            )
+                            rr = cur.fetchone()
+                            rate = float(rr[0]) if rr else 0
+                            if rate <= 0:
+                                skipped += 1
+                                continue
+                            meters = round(float(width) / 100, 2)
+                            amount = round(meters * rate, 2)
+                            descr = (f'Пошив заказа #{onum or oid} после оверлока - '
+                                     f'{meters} пог.м. (доначислено)')
+                        else:
+                            cur.execute(
+                                "SELECT rate FROM salary_rates WHERE role = 'sewer' "
+                                "AND width = %s AND workshop_id = %s",
+                                (int(width), int(ws)),
+                            )
+                            rr = cur.fetchone()
+                            rate = float(rr[0]) if rr else 0
+                            if rate <= 0:
+                                skipped += 1
+                                continue
+                            amount = rate
+                            descr = f'Пошив заказа #{onum or oid} ({int(width)} см) (доначислено)'
+                        cur.execute(
+                            "INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                            "VALUES (%s, 'sewer_piece', %s, %s, %s) "
+                            "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING",
+                            (m_user_id, amount, int(oid), descr),
+                        )
+                        created += cur.rowcount
+                        total_amount += amount
+
+                elif stage == 'Стикеровка':
+                    cur.execute(
+                        "SELECT o.id, o.order_number, o.width, o.workshop_id, o.overlocked_at "
+                        "FROM orders o WHERE o.packer_user_id = %s AND o.sewing_status = 'Готовые' "
+                        "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
+                        "                  WHERE a.order_id = o.id AND a.type = 'packer_stickering')",
+                        (m_user_id,),
+                    )
+                    for oid, onum, width, ows, overlocked in cur.fetchall():
+                        ws = ows or user_ws
+                        if not (ws and width):
+                            skipped += 1
+                            continue
+                        role_name = 'packer_overlock' if overlocked else 'packer'
+                        cur.execute(
+                            "SELECT rate FROM salary_rates WHERE role = %s "
+                            "AND material_id IS NULL AND width IS NULL AND workshop_id = %s",
+                            (role_name, int(ws)),
+                        )
+                        rr = cur.fetchone()
+                        rate = float(rr[0]) if rr else 0
+                        if rate <= 0:
+                            skipped += 1
+                            continue
+                        meters = round(float(width) / 100, 2)
+                        amount = round(meters * rate, 2)
+                        cur.execute(
+                            "INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                            "VALUES (%s, 'packer_stickering', %s, %s, %s) "
+                            "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING",
+                            (m_user_id, amount, int(oid),
+                             f'Стикеровка заказа #{onum or oid} - {meters} п.м. (доначислено)'),
+                        )
+                        created += cur.rowcount
+                        total_amount += amount
+                else:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестный этап'}, ensure_ascii=False)}
+
+                total_amount = round(total_amount, 2)
+                log_action(
+                    cur, actor_id, actor_name, 'accrue_missed', 'salary', m_user_id,
+                    f'Доначислил зарплату: этап {stage}, начислено {created} шт на {total_amount} руб, '
+                    f'пропущено без ставки {skipped} шт',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({
+                        'success': True, 'created': created,
+                        'skipped': skipped, 'amount': total_amount,
+                    }, ensure_ascii=False),
+                }
+
             if action == 'update_rate':
                 rate_id = body_data.get('id')
                 rate = body_data.get('rate')

@@ -335,6 +335,30 @@ export const dismissMissedAccrual = (
     return true;
   });
 
+/** Доначислить зарплату за этапы, оставшиеся без начисления. Считает по тем же
+ *  ставкам, что и обычное начисление. Возвращает, сколько начислено и на какую
+ *  сумму, и сколько заказов пропущено из-за незаведённой ставки. */
+export const accrueMissed = (
+  item: { userId: number; stage: string },
+  actorId?: number,
+  actorName?: string,
+): Promise<{ created: number; skipped: number; amount: number }> =>
+  fetch(SALARY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'accrue_missed',
+      userId: item.userId,
+      stage: item.stage,
+      actorId,
+      actorName,
+    }),
+  }).then(async (r) => {
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Не удалось доначислить');
+    return d;
+  });
+
 export const fetchMissedAccruals = async (): Promise<MissedAccrual[]> => {
   const res = await fetch(`${SALARY_URL}?missedAccruals=1`);
   const data = res.ok ? await res.json() : {};

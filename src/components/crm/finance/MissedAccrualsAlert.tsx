@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import {
   fetchMissedAccruals,
   dismissMissedAccrual,
+  accrueMissed,
   type MissedAccrual,
 } from '@/lib/salaryApi';
 import { formatDate } from '@/lib/dateUtils';
@@ -30,12 +31,51 @@ const MissedAccrualsAlert = () => {
   const { user } = useAuth();
   const [items, setItems] = useState<MissedAccrual[]>([]);
   const [hiding, setHiding] = useState<string | null>(null);
+  const [accruing, setAccruing] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () =>
     fetchMissedAccruals()
       .then(setItems)
       .catch(() => setItems([]));
+
+  useEffect(() => {
+    load();
   }, []);
+
+  // Доначислить одной кнопкой: ставки уже заведены, а начисление не создалось —
+  // руками это значило открыть каждый заказ и посчитать сумму заново.
+  const handleAccrue = async (item: MissedAccrual) => {
+    const key = `${item.userId}-${item.stage}`;
+    setAccruing(key);
+    try {
+      const r = await accrueMissed(item, user?.id, user?.name);
+      if (r.created > 0) {
+        toast({
+          title: `Доначислено ${r.created} шт на ${r.amount.toLocaleString('ru-RU')} ₽`,
+          description: r.skipped
+            ? `${item.userName}: ещё ${r.skipped} заказов пропущено — для них не заведена ставка`
+            : item.userName,
+        });
+      } else {
+        // Ставки нет — сумму придумывать нельзя, честно говорим почему.
+        toast({
+          title: 'Начислить не удалось',
+          description:
+            'Для этих заказов не заведена ставка или не проставлен цех. Заполните их в настройках зарплат и нажмите ещё раз.',
+          variant: 'destructive',
+        });
+      }
+      await load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось доначислить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setAccruing(null);
+    }
+  };
 
   const handleDismiss = async (item: MissedAccrual) => {
     const key = `${item.userId}-${item.stage}`;
@@ -69,8 +109,9 @@ const MissedAccrualsAlert = () => {
             Работа без начисления: {total} шт
           </p>
           <p className="mt-0.5 text-sm text-amber-900">
-            Этапы выполнены, но зарплата за них не начислена — проверьте ставки и цех
-            у этих заказов. Разобрались — уберите строку крестиком.
+            Этапы выполнены, но зарплата за них не начислена. «Доначислить» — начислит
+            по заведённым ставкам. Если дыра объяснима (выдали наличными, закрыли задним
+            числом) — уберите строку крестиком.
           </p>
 
           <div className="mt-3 space-y-1.5">
@@ -95,10 +136,29 @@ const MissedAccrualsAlert = () => {
                   )}
                   <button
                     type="button"
+                    onClick={() => handleAccrue(i)}
+                    disabled={accruing === key}
+                    title="Начислить зарплату за эти заказы по заведённым ставкам"
+                    className="ml-auto shrink-0 rounded-md border border-amber-400 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900 hover:bg-amber-200 disabled:opacity-50"
+                  >
+                    {accruing === key ? (
+                      <span className="flex items-center gap-1">
+                        <Icon name="Loader2" size={12} className="animate-spin" />
+                        Начисляю
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1">
+                        <Icon name="Wallet" size={12} />
+                        Доначислить
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleDismiss(i)}
                     disabled={hiding === key}
                     title="Убрать это предупреждение"
-                    className="ml-auto shrink-0 rounded-sm p-0.5 text-amber-700 hover:bg-amber-200 hover:text-amber-900 disabled:opacity-50"
+                    className="shrink-0 rounded-sm p-0.5 text-amber-700 hover:bg-amber-200 hover:text-amber-900 disabled:opacity-50"
                   >
                     <Icon name={hiding === key ? 'Loader2' : 'X'} size={14} className={hiding === key ? 'animate-spin' : ''} />
                   </button>
