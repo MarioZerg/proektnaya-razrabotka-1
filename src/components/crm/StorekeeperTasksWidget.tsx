@@ -4,6 +4,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { playWarehouseAlert } from '@/lib/warehouseAlerts';
 import {
   fetchStorekeeperTasks,
@@ -42,6 +43,10 @@ const StorekeeperTasksWidget = () => {
   const [open, setOpen] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [claimKey, setClaimKey] = useState<string | null>(null);
+  // На телефоне виджет ведёт себя иначе: раскрывается только пальцем и занимает
+  // всю ширину. Наведение мыши там не существует, а фиксированные 21rem не
+  // помещались в экран 360 px — карточка уезжала за правый край.
+  const isMobile = useIsMobile();
   // Галочки в демо-режиме: настоящей смены нет, запоминать их негде — держим
   // на экране, чтобы администратор мог понажимать и посмотреть, как это работает.
   const [demoDone, setDemoDone] = useState<Set<string>>(new Set());
@@ -168,13 +173,21 @@ const StorekeeperTasksWidget = () => {
     <div
       // Полупрозрачный в покое, непрозрачный под курсором — не закрывает работу,
       // но всегда под рукой. На планшете раскрывается касанием по шапке.
-      className={`fixed right-3 top-16 z-40 w-[21rem] rounded-xl border shadow-lg backdrop-blur transition-all duration-200 sm:right-4 ${
-        open
+      //
+      // На телефоне тянем во всю ширину (left+right вместо жёстких 21rem) и не
+      // приглушаем: полупрозрачная карточка поверх узкого экрана мешает читать
+      // и то, что под ней, и сам список.
+      className={`fixed top-16 z-40 rounded-xl border shadow-lg backdrop-blur transition-all duration-200 ${
+        isMobile ? 'inset-x-2' : 'right-3 w-[21rem] sm:right-4'
+      } ${
+        open || isMobile
           ? 'border-border bg-card opacity-100'
           : 'border-border/50 bg-card/60 opacity-60 hover:opacity-100'
       }`}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
+      // Мышью раскрываем только на компьютере: на сенсорном экране события
+      // наведения срабатывают от случайного касания и список прыгает сам.
+      onMouseEnter={isMobile ? undefined : () => setOpen(true)}
+      onMouseLeave={isMobile ? undefined : () => setOpen(false)}
     >
       {/* НАГРАДА ЗА ЗАКРЫТЫЙ ЧЕК-ЛИСТ.
           Появляется, когда выполнено ВСЁ, и выскакивает над виджетом с лёгким
@@ -188,12 +201,12 @@ const StorekeeperTasksWidget = () => {
         // затирали бы друг друга — вторая анимация сбрасывала бы transform.
         <span
           aria-hidden
-          className="pointer-events-none absolute -top-16 right-2 z-10 animate-cheer-pop motion-reduce:animate-none"
+          className="pointer-events-none absolute -top-12 right-2 z-10 animate-cheer-pop motion-reduce:animate-none sm:-top-16"
         >
           <img
             src="/happy-done.png"
             alt=""
-            className="h-24 w-auto animate-cheer-idle drop-shadow-[0_6px_12px_rgba(0,0,0,0.25)] motion-reduce:animate-none"
+            className="h-16 w-auto animate-cheer-idle drop-shadow-[0_6px_12px_rgba(0,0,0,0.25)] motion-reduce:animate-none sm:h-24"
           />
         </span>
       )}
@@ -328,11 +341,15 @@ const StorekeeperTasksWidget = () => {
                     идут в цех за одними и теми же вещами. */}
                 {t.claimedBy && !t.done && (
                   <span
-                    className={`mt-1 flex items-center gap-1 text-[10px] font-medium leading-snug ${
+                    className={`mt-1 flex items-start gap-1 text-[10px] font-medium leading-snug ${
                       t.claimedByOther ? 'text-slate-600' : 'text-emerald-700'
                     }`}
                   >
-                    <Icon name={t.claimedByOther ? 'UserCheck' : 'User'} size={10} />
+                    <Icon
+                      name={t.claimedByOther ? 'UserCheck' : 'User'}
+                      size={10}
+                      className="mt-[1px] shrink-0"
+                    />
                     {t.claimedByOther
                       ? `Делает ${t.claimedByName} — не берите`
                       : 'Вы взяли это на себя'}
@@ -340,13 +357,17 @@ const StorekeeperTasksWidget = () => {
                 )}
                 {t.cutoff && !t.idle && !t.done && (
                   <span
-                    className={`mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium leading-snug ${
+                    className={`mt-1 inline-flex items-start gap-1 rounded px-1.5 py-0.5 text-left text-[10px] font-medium leading-snug ${
                       t.cutoffPassed
                         ? 'bg-emerald-100 text-emerald-800'
                         : 'bg-sky-100 text-sky-800'
                     }`}
                   >
-                    <Icon name={t.cutoffPassed ? 'Lock' : 'Clock'} size={10} />
+                    <Icon
+                      name={t.cutoffPassed ? 'Lock' : 'Clock'}
+                      size={10}
+                      className="mt-[1px] shrink-0"
+                    />
                     {t.cutoffPassed
                       ? 'Список закрыт в 15:00 — новое уйдёт на завтра'
                       : 'Собрать до 15:00 — позже в эту смену не добавится'}
@@ -367,7 +388,8 @@ const StorekeeperTasksWidget = () => {
                         ? 'Отпустить задание — его сможет взять другой'
                         : 'Взять на себя, чтобы второй кладовщик это не делал'
                     }
-                    className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50 ${
+                    // На телефоне кнопка крупнее: в 10 px по пальцу не попасть.
+                    className={`shrink-0 rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50 sm:px-1.5 sm:py-0.5 sm:text-[10px] ${
                       t.claimedBy
                         ? 'border-emerald-300 bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
                         : 'border-border bg-background text-muted-foreground hover:border-primary hover:text-primary'
