@@ -86,6 +86,20 @@ USEFUL_TABLES = (
     'variki_purchases', 'variki_shop_items', 'audit_log',
 )
 
+# Колонки, которые модели знать незачем: технические ссылки на внешние системы,
+# служебные отметки синхронизации, следы интеграций. Они раздувают справочник
+# (а значит, и время ответа), но на вопросы владельца не отвечают.
+SKIP_COLUMN_PATTERNS = (
+    'posting_number', 'sync_', '_sync', 'external_', 'raw_', '_json',
+    'cursor', 'webhook', 'token', 'secret', 'password', 'hash',
+)
+
+
+def _useful_column(name: str) -> bool:
+    """Нужна ли колонка в справочнике для модели."""
+    low = name.lower()
+    return not any(p in low for p in SKIP_COLUMN_PATTERNS)
+
 
 def _schema_digest(cur, schema):
     """Список таблиц с колонками — чтобы модель знала, где что лежит.
@@ -98,9 +112,20 @@ def _schema_digest(cur, schema):
         "ORDER BY table_name, ordinal_position",
         (schema, list(USEFUL_TABLES)),
     )
+    # Типы сокращаем до коротких обозначений: модели достаточно понимать, число
+    # это, дата или текст, а полные названия типов занимают половину справочника.
+    short = {
+        'character varying': 'текст', 'text': 'текст', 'integer': 'число',
+        'bigint': 'число', 'numeric': 'число', 'double precision': 'число',
+        'boolean': 'да/нет', 'date': 'дата',
+        'timestamp without time zone': 'дата+время',
+        'timestamp with time zone': 'дата+время', 'jsonb': 'json',
+    }
     tables = {}
     for table, column, dtype in cur.fetchall():
-        tables.setdefault(table, []).append(f'{column} {dtype}')
+        if not _useful_column(column):
+            continue
+        tables.setdefault(table, []).append(f'{column} {short.get(dtype, dtype)}')
     return '\n'.join(f'{t}({", ".join(cols)})' for t, cols in tables.items())
 
 
@@ -234,32 +259,90 @@ SYSTEM_PROMPT = """Ты — помощник по системе управле�
 - Всегда ограничивай выборку: LIMIT, агрегаты (count, sum), группировки.
 - Не запрашивай пароли, токены и коды входа — это личные данные.
 
-УСТРОЙСТВО СИСТЕМЫ (для понимания вопросов):
-- orders — заказы с маркетплейсов (Ozon, Wildberries, Яндекс). Поле sewing_status
-  показывает этап: «Новый», «На раскрое», «В работе», «Стикеровка», «Со склада».
-  Поле status — судьба заказа: «Отменён», «Отгружен», «Доставлен».
-- goods_warehouse — конкретные вещи на складе. status: in_stock (на полке),
-  picking (в подборе под заказ), shipped (уехала), mp_return (возврат с ПВЗ),
-  lost (списана). reserved_order_id — под какой заказ отложена.
-- rolls — рулоны ткани, materials — материалы, shelves — полки.
-- users — сотрудники (роли: admin, manager, storekeeper, senior_storekeeper,
-  sewer — швея, cutter — закройщик, packer — упаковщик, cleaner — уборщица).
-- shift_sessions — смены: opened_at начало, closed_at конец (пусто = на смене).
-- salary_accruals — начисления и штрафы, salary_payouts — выплаты.
-- marketplace_supplies — поставки на маркетплейс, shipments — отгрузки.
-- Время в базе хранится по Гринвичу, а рабочий день считается по Москве (+3 часа).
+КАК УСТРОЕНО ПРОИЗВОДСТВО (путь заказа):
+Заказ приходит с маркетплейса → закройщик режет ткань из рулона → швея шьёт →
+упаковщица пакует и клеит стикер → кладовщик собирает вещи под отправления и
+отгружает поставку на маркетплейс. Часть заказов закрывается не пошивом, а
+готовой вещью со склада (sewing_status='Со склада').
+
+ЗАКАЗЫ (таблица orders):
+- sewing_status — этап пошива. РЕАЛЬНЫЕ значения в базе, других НЕТ:
+    'Новый'     — ждёт работы (ещё не в раскрое)
+    'Раскроено' — закройщик раскроил, ждёт швею
+    'Готовые'   — пошив завершён
+    'Со склада' — заказ закрыт готовой вещью со склада, а не пошивом
+    'Отменён'   — отменён
+  ВАЖНО: статусов «В работе», «На раскрое», «Стикеровка» в базе НЕ существует.
+  Вопрос «сколько заказов в работе» = ещё не готовые и не отменённые, то есть
+  sewing_status IN ('Новый','Раскроено').
+- status — судьба заказа: 'Новый', 'Готов', 'Выполнен', 'Отгружен', 'Отменён'.
+- ЖИВОЙ заказ (не отменён и не уехал): COALESCE(status,'') NOT IN
+  ('Отменён','Отгружен') — почти всегда нужно добавлять это условие.
+- marketplace — площадка: 'OZON', 'WB', 'Yandex' (именно так, заглавными).
+- product — что за вещь текстом, например 'Лен 300x265'; material, width, height —
+  то же по отдельности. order_type — 'FBS' или 'FBO'.
+- Кто делал: cutter_user_id (закройщик), sewer_user_id (швея), assigned_user_id.
+
+СКЛАД ГОТОВЫХ ВЕЩЕЙ (goods_warehouse) — одна строка = одна физическая вещь:
+- status, реальные значения: 'in_stock' (лежит на полке, свободна),
+  'picking' (подобрана под заказ, кладовщик должен снять с полки),
+  'awaiting_supply' (уже в собираемой поставке), 'reserved' (отложена),
+  'repacking' (у упаковщицы на переупаковке), 'shipped' (уехала),
+  'mp_return' (возврат с ПВЗ, ждёт разбора), 'lost' (списана),
+  'to_dispose' (на утилизацию), 'awaiting_shelf', 'inspected', 'taken'.
+- reserved_order_id — под какой заказ отложена вещь. storage_barcode — её стикер.
+- shelf_id → shelves.name — на какой полке лежит.
+- «Сколько товара на складе» — это status='in_stock'.
+
+РУЛОНЫ ТКАНИ (rolls):
+- status: 'in_storage' (на складе), 'in_workshop' (в цехе, из него кроят),
+  'completed' (израсходован).
+- remaining_quantity — сколько осталось (метры или штуки, см. materials.unit).
+- «Заканчиваются» — это рулоны В ЦЕХЕ с малым остатком:
+  status='in_workshop' AND remaining_quantity < 20, сортировать по остатку.
+- material_id → materials (name, unit).
+
+СОТРУДНИКИ И СМЕНЫ:
+- users.full_name — имя, users.role — должность: 'sewer' (швея), 'cutter'
+  (закройщик), 'packer' (упаковщица), 'storekeeper' (кладовщик),
+  'senior_storekeeper' (старший кладовщик), 'cleaner' (уборщица),
+  'manager' (менеджер), 'admin' (администратор).
+- Работающие сотрудники: is_active = true И contract_terminated_at IS NULL.
+  На вопрос «сколько человек работает» считай именно так, иначе в число попадут
+  уволенные.
+- shift_sessions — смены: opened_at начало, closed_at конец.
+  «Кто сейчас на смене» = closed_at IS NULL.
+- Начало и конец смены хранятся в UTC, а рабочий день считается по Москве (+3 часа).
+
+ПОСТАВКИ И ОТГРУЗКИ:
+- marketplace_supplies — поставки на маркетплейс, status: 'На сборке',
+  'Выполнена', 'Отменена'. type — 'FBS' или 'FBO'.
+- marketplace_supply_items — что в поставке (ссылки на goods_warehouse).
+- shipments — отгрузки: type='to_workshop' (материал в цех),
+  'from_supplier' (приход от поставщика) и другие.
+- marketplace_returns — возвраты с маркетплейса, reviews — отзывы покупателей.
 
 ЗАРПЛАТЫ И ЗАРАБОТОК:
 - salary_accruals — все начисления сотрудникам. amount: положительная сумма —
-  заработок, отрицательная — штраф (type='penalty'). user_id — кому начислено.
+  заработок, отрицательная — удержание. user_id — кому начислено.
+- type, реальные значения: 'sewer_piece' (швее за пошив), 'cutter_cut'
+  (закройщику за раскрой), 'packer_stickering' (упаковщице за стикеровку),
+  'packer_repack' (за переупаковку), 'storekeeper_shift' и
+  'senior_storekeeper_shift' (оклад кладовщика за смену), 'cleaner_shift'
+  (оклад уборщицы), 'manual' (начислено вручную), 'penalty' (штраф),
+  'deduction' (удержание).
+- Сдельщики (швея, закройщик, упаковщица) получают за каждую единицу работы —
+  поэтому у них за день десятки строк начислений. Кладовщик и уборщица получают
+  оклад за смену, у них одна строка.
 - ГЛАВНОЕ: за какой рабочий день начисление, показывает поле accrued_for (дата),
   а НЕ created_at. Вопросы «кто сколько заработал вчера / за вчера / за 2 сентября»
   считай по accrued_for.
 - Имя сотрудника бери из users.full_name (соединяй по user_id).
-- «Сколько заработал» — это сумма начислений: SUM(amount). Если нужен чистый
-  заработок без штрафов, считай отдельно положительные и отрицательные суммы.
+- «Сколько заработал» — это SUM(amount) с группировкой по сотруднику и
+  сортировкой по убыванию. Штрафы уже входят в сумму со знаком минус.
 - salary_payouts — фактические выплаты денег на руки, это НЕ то же самое, что
-  заработок за день.
+  заработок за день. paid_at в начислении — когда деньги выплачены.
+- cash_box_transactions — касса, manager_accruals — начисления менеджеру.
 
 КАК СЧИТАТЬ ДАТЫ (очень важно):
 - НИКОГДА не подставляй дату из головы — ты не знаешь сегодняшнее число.
@@ -274,6 +357,30 @@ SYSTEM_PROMPT = """Ты — помощник по системе управле�
   GROUP BY u.full_name ORDER BY zarabotok DESC;
 - Если запрос вернул пусто — прежде чем говорить «данных нет», проверь соседние
   дни (например MAX(accrued_for)): возможно, ты ошибся с датой.
+
+ЕСЛИ ЗАПРОС ВЕРНУЛ ПУСТО — НЕ СПЕШИ ГОВОРИТЬ «ДАННЫХ НЕТ»:
+Чаще всего дело не в отсутствии данных, а в неверном значении в условии.
+Сделай ещё один запрос и посмотри, какие значения там есть на самом деле:
+  SELECT sewing_status, count(*) FROM <схема>.orders GROUP BY sewing_status;
+и ответь уже по фактическим значениям. Пустой ответ — почти всегда моя ошибка
+в фильтре, а не отсутствие работы на фабрике.
+
+ПРИМЕРЫ ПРАВИЛЬНЫХ ЗАПРОСОВ:
+- «Сколько заказов в работе»:
+  SELECT sewing_status, count(*) FROM <схема>.orders
+  WHERE sewing_status IN ('Новый','Раскроено')
+    AND COALESCE(status,'') NOT IN ('Отменён','Отгружен')
+  GROUP BY sewing_status;
+- «Какие рулоны заканчиваются»:
+  SELECT m.name, r.remaining_quantity, m.unit FROM <схема>.rolls r
+  JOIN <схема>.materials m ON m.id = r.material_id
+  WHERE r.status='in_workshop' AND r.remaining_quantity < 20
+  ORDER BY r.remaining_quantity LIMIT 30;
+- «Кто сейчас на смене»:
+  SELECT u.full_name, u.role, ss.opened_at FROM <схема>.shift_sessions ss
+  JOIN <схема>.users u ON u.id = ss.user_id WHERE ss.closed_at IS NULL;
+- «Сколько товара на складе»:
+  SELECT count(*) FROM <схема>.goods_warehouse WHERE status='in_stock';
 """
 
 TOOLS = [{
