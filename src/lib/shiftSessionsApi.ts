@@ -237,6 +237,9 @@ export interface StorekeeperTask {
   claimedByName?: string;
   /** Задание взял ДРУГОЙ кладовщик: трогать нельзя, смену оно не держит. */
   claimedByOther?: boolean;
+  /** Администратор закрыл задание за кладовщика — нештатная ситуация, работа
+   *  физически ещё не сделана (count это отражает), но смену больше не держит. */
+  adminClosed?: boolean;
 }
 
 export interface StorekeeperTasksResult {
@@ -302,5 +305,27 @@ export const toggleStorekeeperTask = async (
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось отметить задание');
+  return data;
+};
+
+/**
+ * Администратор закрывает пункт чек-листа кладовщика ЗА него — для нештатных
+ * ситуаций (работа висит, а разобраться с причиной сейчас нельзя), чтобы человек
+ * мог закрыть смену. Отметка живёт только в рамках текущей открытой смены
+ * кладовщика: завтра, в новой смене, чек-лист посчитается заново с нуля.
+ * Повторный вызов снимает отметку.
+ */
+export const adminCloseStorekeeperTask = async (
+  userId: number,
+  taskKey: string,
+  actorId: number,
+): Promise<{ closed: boolean }> => {
+  const res = await fetch(SHIFT_SESSIONS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'admin_close_task', userId, taskKey, actorId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось закрыть задание');
   return data;
 };

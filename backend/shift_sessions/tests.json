@@ -25,6 +25,13 @@
       "path": "/",
       "body": { "action": "close" },
       "expectedStatus": 400
+    },
+    {
+      "name": "Admin close task without required fields fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "admin_close_task" },
+      "expectedStatus": 400
     }
   ]
 }

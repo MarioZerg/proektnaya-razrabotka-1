@@ -18,10 +18,11 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import Icon from '@/components/ui/icon';
-import { roleLabels, type Role } from '@/lib/roles';
+import { roleLabels, isStorekeeperRole, type Role } from '@/lib/roles';
 import type { EmployeeShiftStatus } from '@/lib/shiftSessionsApi';
 import type { ShiftListItem } from '@/lib/shiftsApi';
 import { formatTime } from '@/components/crm/dashboard/dashboardShared';
+import StorekeeperTaskChecklistDialog from '@/components/crm/dashboard/StorekeeperTaskChecklistDialog';
 
 interface ShiftManagementCardProps {
   employees: EmployeeShiftStatus[];
@@ -51,6 +52,8 @@ const ShiftManagementCard = ({
   const [freeTogglingId, setFreeTogglingId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [onlyOpen, setOnlyOpen] = useState(false);
+  // Кладовщик, чей чек-лист сейчас смотрит администратор (кнопка «Задания»).
+  const [checklistTarget, setChecklistTarget] = useState<EmployeeShiftStatus | null>(null);
 
   const openCount = employees.filter((e) => e.isOpen).length;
   const visibleEmployees = employees.filter((e) => {
@@ -161,6 +164,19 @@ const ShiftManagementCard = ({
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  {/* Чек-лист заданий — только у кладовщика на открытой смене:
+                      у остальных ролей чек-листа нет, и кнопка была бы пустышкой. */}
+                  {isStorekeeperRole(s.role as Role) && s.isOpen && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 px-2"
+                      title="Задания смены"
+                      onClick={() => setChecklistTarget(s)}
+                    >
+                      <Icon name="ClipboardList" size={15} />
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="ghost"
@@ -242,6 +258,11 @@ const ShiftManagementCard = ({
           </div>
         </DialogContent>
       </Dialog>
+
+      <StorekeeperTaskChecklistDialog
+        employee={checklistTarget}
+        onClose={() => setChecklistTarget(null)}
+      />
     </Card>
   );
 };

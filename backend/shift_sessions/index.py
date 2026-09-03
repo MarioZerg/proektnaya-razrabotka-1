@@ -391,6 +391,15 @@ def handler(event: dict, context) -> dict:
           late_opened_shift_penalty из настроек цеха, если она больше 0 — КРОМЕ случая,
           когда openedByAdmin=true (администратор открыл смену ЗА сотрудника с дашборда —
           сотрудник не виноват в моменте открытия, штраф не начисляется)
+    POST /  { action: 'admin_close_task', userId, taskKey, actorId }
+                                    - администратор закрывает пункт чек-листа
+                                      кладовщика ЗА него (нештатная ситуация: работа
+                                      висит, а разобраться с причиной сейчас нельзя).
+                                      Отметка привязана к текущей открытой смене
+                                      кладовщика (userId) — завтра, в новой смене,
+                                      чек-лист считается заново без неё. Повторный
+                                      вызов снимает отметку. actorId проверяется по
+                                      базе — закрывать может только role='admin'
     POST /  { action: 'close', userId }
         - закрывает последнюю открытую смену сотрудника (closed_at = now()).
           Если сотрудник — уборщица (role='cleaner'), начисляет ей оклад за смену
@@ -1332,6 +1341,73 @@ def handler(event: dict, context) -> dict:
                     'statusCode': 200,
                     'headers': headers,
                     'body': json.dumps({'success': True, 'claimed': claimed}),
+                }
+
+            if action == 'admin_close_task':
+                """Администратор закрывает пункт чек-листа ЗА кладовщика.
+
+                Для нештатных ситуаций: работа висит (сбой синхронизации, битая
+                запись), кладовщик не может закрыть смену, а разобраться с
+                первопричиной прямо сейчас нельзя. Администратор снимает
+                блокировку сам, чтобы человек мог уйти домой.
+
+                Отметка привязана к КОНКРЕТНОЙ ОТКРЫТОЙ СМЕНЕ кладовщика: завтра
+                откроется новая смена с новым id, и чек-лист посчитается заново
+                по живым данным склада — сегодняшняя отметка на него не подействует.
+
+                Повторное нажатие снимает отметку — админ мог закрыть по ошибке.
+                """
+                target_user_id = body_data.get('userId')
+                task_key = (body_data.get('taskKey') or '').strip()
+                actor_id = body_data.get('actorId')
+                if not target_user_id or not task_key or not actor_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите userId, taskKey и actorId'})}
+
+                # Право закрывать чужие задания — только у администратора, и
+                # проверяем это по базе, а не по флагу из браузера.
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                actor_row = cur.fetchone()
+                if not actor_row or actor_row[0] != 'admin':
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Закрывать задания за кладовщика может только администратор'},
+                            ensure_ascii=False,
+                        ),
+                    }
+
+                cur.execute(
+                    "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL "
+                    "ORDER BY opened_at DESC LIMIT 1",
+                    (int(target_user_id),),
+                )
+                admin_sess = cur.fetchone()
+                if not admin_sess:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'У сотрудника нет открытой смены'},
+                                               ensure_ascii=False)}
+                admin_session_id = admin_sess[0]
+
+                cur.execute(
+                    "DELETE FROM storekeeper_task_admin_overrides "
+                    "WHERE shift_session_id = %s AND task_key = %s RETURNING id",
+                    (admin_session_id, task_key),
+                )
+                removed = cur.fetchone()
+                if not removed:
+                    cur.execute(
+                        "INSERT INTO storekeeper_task_admin_overrides "
+                        "  (shift_session_id, task_key, closed_by) VALUES (%s, %s, %s) "
+                        "ON CONFLICT (shift_session_id, task_key) DO NOTHING",
+                        (admin_session_id, task_key, int(actor_id)),
+                    )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'closed': not removed}),
                 }
 
             if action == 'auto_close':
