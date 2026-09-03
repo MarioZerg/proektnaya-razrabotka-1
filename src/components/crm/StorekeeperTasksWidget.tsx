@@ -334,6 +334,28 @@ const StorekeeperTasksWidget = () => {
                 <span className="block text-[11px] leading-snug text-muted-foreground">
                   {t.idle ? 'Сегодня такой работы не появлялось' : t.hint}
                 </span>
+                {/* ЧТО И ПО СКОЛЬКУ ШТУК СОБРАТЬ.
+                    Вещи одного размера на полке одинаковы, и по одному общему
+                    числу кладовщик не понимал, что именно из списка ещё не
+                    собрано, — сканировал всё подряд. Здесь он видит конкретные
+                    позиции с количеством и снимает с полок ровно нужное. */}
+                {!t.done && !t.idle && t.items && t.items.length > 0 && (
+                  <span className="mt-1.5 block space-y-0.5">
+                    {t.items.map((it) => (
+                      <span
+                        key={it.name}
+                        className="flex items-center justify-between gap-2 rounded bg-background/70 px-1.5 py-0.5 text-[11px] leading-snug"
+                      >
+                        <span className="min-w-0 flex-1 truncate font-medium">
+                          {it.name}
+                        </span>
+                        <span className="shrink-0 font-bold tabular-nums text-amber-900">
+                          {it.qty} шт
+                        </span>
+                      </span>
+                    ))}
+                  </span>
+                )}
                 {/* Метка отсечки. До 15:00 — предупреждение «успей собрать»,
                     после — объяснение, почему на странице цифра больше, чем
                     в задании: новое уже уехало в завтрашний список. */}

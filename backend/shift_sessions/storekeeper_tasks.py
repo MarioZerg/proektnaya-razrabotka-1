@@ -217,8 +217,19 @@ def build_tasks(cur, session_id, user_id):
     # отсканировать и наклеить ярлык. Пока висит — маркетплейс ждёт товар.
     # Считаем ровно тем же запросом, что и страница подбора, иначе кладовщик
     # видит в задании одно число, а в списке другое.
+    #
+    # СЧИТАЕМ ПО ПОЗИЦИЯМ — «ЧТО И СКОЛЬКО ШТУК», А НЕ ОДНО ОБЩЕЕ ЧИСЛО.
+    #
+    # Подбор не привязан к конкретной вещи: вещи одного размера лежат на полке
+    # вперемешку и физически не отличаются, кладовщик берёт любую подходящую.
+    # Поэтому раньше человек видел только «12» и, чтобы понять, ЧТО именно из
+    # этих двенадцати ещё не собрано, перебирал и сканировал всё подряд.
+    #
+    # Теперь задание сразу говорит: «Сетка 500x265 — 2 шт, Лен 400x250 — 1 шт».
+    # Кладовщик идёт к нужным полкам и снимает ровно нужное количество, а не
+    # пикает весь склад в поисках подходящих.
     cur.execute(
-        "SELECT count(*) FROM goods_warehouse gw "
+        "SELECT o.product, count(*) FROM goods_warehouse gw "
         "JOIN orders o ON o.id = gw.reserved_order_id "
         "WHERE gw.status IN ('picking', 'awaiting_supply') "
         "  AND gw.reserved_order_id IS NOT NULL "
@@ -232,13 +243,21 @@ def build_tasks(cur, session_id, user_id):
         "  AND COALESCE(o.ozon_status, '') NOT IN "
         "      ('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup')"
         + _cut(cutoff, 'gw.matched_at')
+        + " GROUP BY o.product ORDER BY count(*) DESC, o.product ASC"
     )
-    picking_left = int(cur.fetchone()[0] or 0)
+    picking_rows = cur.fetchall()
+    picking_items = [
+        {'name': r[0] or 'Без названия', 'qty': int(r[1])} for r in picking_rows
+    ]
+    picking_left = sum(i['qty'] for i in picking_items)
     tasks.append({
         'key': 'picking',
         'title': 'Собрать товары с подбора',
         'hint': 'Снять вещи с полок под заказы и наклеить ярлыки',
         'count': picking_left,
+        # Разбивка по позициям: кладовщик видит, какие именно вещи и по сколько
+        # штук нужны, и сканирует адресно.
+        'items': picking_items,
         'done': picking_left == 0,
         'link': '/crm/inventory/goods-picking',
         'manual': False,
