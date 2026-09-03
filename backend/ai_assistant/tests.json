@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "GET without models param not allowed",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 405
+    },
+    {
+      "name": "Empty question rejected",
+      "method": "POST",
+      "path": "/",
+      "body": { "question": "" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Question without userId rejected",
+      "method": "POST",
+      "path": "/",
+      "body": { "question": "сколько заказов" },
+      "expectedStatus": 400
+    }
+  ]
+}
