@@ -286,6 +286,18 @@ def handler(event: dict, context) -> dict:
     # Проверка настройки: какие модели доступны сервису. Нужна, когда чат
     # отвечает ошибкой доступа — сразу видно, дело в ключе или в модели.
     if method == 'GET' and (event.get('queryStringParameters') or {}).get('models'):
+        probe = (event.get('queryStringParameters') or {}).get('probe')
+        if probe:
+            checked = {}
+            for m in [x.strip() for x in probe.split(',') if x.strip()]:
+                data, err, code = _call_model(
+                    api_key, m,
+                    [{'role': 'user', 'content': 'ответь одним словом: ок'}], None,
+                )
+                checked[m] = 'ok' if data is not None else f'{code}: {(err or "")[:400]}'
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps(checked, ensure_ascii=False)}
+
         req = urllib.request.Request(
             'https://api.aitunnel.ru/v1/models',
             headers={'Authorization': f'Bearer {api_key}'},
