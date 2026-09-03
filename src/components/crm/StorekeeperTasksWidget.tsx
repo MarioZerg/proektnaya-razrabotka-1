@@ -282,6 +282,23 @@ const StorekeeperTasksWidget = () => {
                 <span className="block text-[11px] leading-snug text-muted-foreground">
                   {t.idle ? 'Сегодня такой работы не появлялось' : t.hint}
                 </span>
+                {/* Метка отсечки. До 15:00 — предупреждение «успей собрать»,
+                    после — объяснение, почему на странице цифра больше, чем
+                    в задании: новое уже уехало в завтрашний список. */}
+                {t.cutoff && !t.idle && !t.done && (
+                  <span
+                    className={`mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium leading-snug ${
+                      t.cutoffPassed
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-sky-100 text-sky-800'
+                    }`}
+                  >
+                    <Icon name={t.cutoffPassed ? 'Lock' : 'Clock'} size={10} />
+                    {t.cutoffPassed
+                      ? 'Список закрыт в 15:00 — новое уйдёт на завтра'
+                      : 'Собрать до 15:00 — позже в эту смену не добавится'}
+                  </span>
+                )}
               </button>
 
               {t.count > 0 && !t.done && !t.idle && (
@@ -297,6 +314,15 @@ const StorekeeperTasksWidget = () => {
               Демо-просмотр: цифры настоящие, галочки нажимаются для примера и
               никуда не сохраняются. У кладовщика на смене сами закрываются все
               задания, кроме отгрузки ткани и напоминания про рулоны.
+            </p>
+          )}
+          {/* Общее пояснение внизу — чтобы правило было понятно даже тому,
+              кто впервые видит список. */}
+          {shown.some((t) => t.cutoff) && (
+            <p className="px-1 pt-1 text-[11px] leading-snug text-muted-foreground">
+              {shown.some((t) => t.cutoffPassed)
+                ? 'После 15:00 новая работа в задания смены не попадает — она уйдёт в список на завтра. Этот список можно закрыть полностью.'
+                : 'Отмеченные задания копятся до 15:00. Всё, что придёт позже, попадёт в задания следующего дня — искать это перед закрытием смены не нужно.'}
             </p>
           )}
           {blocking.length > 0 && !isDemo && (

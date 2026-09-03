@@ -21,7 +21,33 @@
 Держат смену только те задания, где работа реально висит и её видно в системе.
 Задания с ручной галочкой смену НЕ держат: иначе достаточно забыть нажать
 галочку, чтобы человек не смог уйти домой.
+
+ОТСЕЧКА 15:00 — ГЛАВНОЕ ПРАВИЛО СПИСКА.
+Раньше список был «живым»: работа падала в него до самого закрытия смены. В
+половине шестого кладовщику прилетало ещё десять вещей в подбор, и он бежал
+искать их по цеху, лишь бы закрыть смену. Список, который невозможно закрыть,
+люди перестают выполнять.
+
+Теперь в задания попадает только работа, ПОЯВИВШАЯСЯ ДО 15:00 по Москве. Всё
+пришедшее позже кладовщик видит на рабочих страницах (счётчики там живые, ничего
+не прячем) и разбирает, если успевает, — но смену это уже не держит. Не успел:
+завтра утром эта работа сама попадёт в новый список.
+
+Так у смены появляется финиш: после 15:00 список только уменьшается.
 """
+
+from datetime import timedelta
+
+# Время, после которого новая работа в задания смены больше НЕ попадает.
+# 15:00 по Москве: до конца дня остаётся запас, чтобы спокойно доделать список.
+TASKS_CUTOFF_HOUR = 15
+
+# Задания, которые копятся до отсечки. Для них считаем только работу, появившуюся
+# до 15:00 — по своему полю времени у каждого (когда работа возникла).
+CUTOFF_TASKS = (
+    'picking', 'cancelled_to_shelf', 'cancelled_labeled',
+    'defect_rolls', 'repacked_to_shelf', 'returns',
+)
 
 # Порог, с которого рулоны с малым остатком становятся заданием: сходить в цех и
 # напомнить закройщикам, что пора их закрывать. Меньше — обычная текучка, ходить
@@ -30,6 +56,39 @@ ROLLS_REMINDER_THRESHOLD = 10
 
 # Задания, которые кладовщик закрывает сам галочкой (см. пояснение выше).
 MANUAL_TASKS = ('fabric_shipment', 'rolls_reminder')
+
+
+def cutoff_moment(cur):
+    """Граница «свежести» работы для заданий смены — в UTC, как хранятся данные.
+
+    Возвращает момент, ПОЗЖЕ которого появившаяся работа в список смены уже не
+    попадает, и признак того, что отсечка наступила.
+
+    До 15:00 по Москве границы нет (None): список живой, всё падает в него сразу.
+    После 15:00 граница — сегодняшние 15:00; работа, пришедшая позже, ждёт утра.
+
+    Почему граница считается по МОСКОВСКОМУ времени, а сравнивается с UTC: в базе
+    все отметки времени хранятся в UTC, а «15:00» для человека — это 15:00 у него
+    на часах. Переводим один раз здесь, чтобы ниже в запросах об этом не думать.
+    """
+    cur.execute("SELECT (now() + interval '3 hours')")
+    msk_now = cur.fetchone()[0]
+    if msk_now.hour < TASKS_CUTOFF_HOUR:
+        return None, False
+    msk_cutoff = msk_now.replace(hour=TASKS_CUTOFF_HOUR, minute=0, second=0, microsecond=0)
+    # Обратно в UTC: минус те же 3 часа.
+    return msk_cutoff - timedelta(hours=3), True
+
+
+def _cut(cutoff, column):
+    """Кусок SQL «работа появилась до отсечки». До 15:00 — пустой, фильтра нет.
+
+    NULL в поле времени считаем «появилось давно»: у старых записей отметки может
+    не быть, и потерять их из списка нельзя — работа-то физически лежит.
+    """
+    if not cutoff:
+        return ''
+    return f"  AND ({column} IS NULL OR {column} <= '{cutoff.isoformat()}') "
 
 
 def _manual_done(cur, session_id):
@@ -110,6 +169,8 @@ def build_tasks(cur, session_id, user_id):
       * blocking — мешает закрыть смену, пока не выполнено.
     """
     manual = _manual_done(cur, session_id)
+    # Граница отсечки: после 15:00 новая работа в список уже не добавляется.
+    cutoff, after_cutoff = cutoff_moment(cur)
     tasks = []
 
     # 1. СОБРАТЬ ВЕЩИ С ПОЛОК ПОД ЗАКАЗЫ.
@@ -131,6 +192,7 @@ def build_tasks(cur, session_id, user_id):
         "  AND COALESCE(o.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
         "  AND COALESCE(o.ozon_status, '') NOT IN "
         "      ('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup')"
+        + _cut(cutoff, 'gw.matched_at')
     )
     picking_left = int(cur.fetchone()[0] or 0)
     tasks.append({
@@ -155,6 +217,7 @@ def build_tasks(cur, session_id, user_id):
     cur.execute(
         "SELECT count(*) FROM goods_warehouse "
         "WHERE status = 'awaiting_shelf' AND storage_labeled_at IS NOT NULL"
+        + _cut(cutoff, 'storage_labeled_at')
     )
     cancelled_left = int(cur.fetchone()[0] or 0)
     tasks.append({
@@ -179,6 +242,7 @@ def build_tasks(cur, session_id, user_id):
     cur.execute(
         "SELECT count(*) FROM goods_warehouse "
         "WHERE status = 'mp_return' AND receive_reason = 'cancelled_labeled'"
+        + _cut(cutoff, 'received_at')
     )
     cancelled_labeled = int(cur.fetchone()[0] or 0)
     tasks.append({
@@ -203,6 +267,7 @@ def build_tasks(cur, session_id, user_id):
     cur.execute(
         "SELECT count(*) FROM material_defects "
         "WHERE received_at IS NULL AND missing_at IS NULL"
+        + _cut(cutoff, 'created_at')
     )
     defect_pieces = int(cur.fetchone()[0] or 0)
     tasks.append({
@@ -329,6 +394,7 @@ def build_tasks(cur, session_id, user_id):
     # тележке и в подбор не идёт — работа не закончена.
     cur.execute(
         "SELECT count(*) FROM goods_warehouse WHERE status IN ('inspected', 'taken')"
+        + _cut(cutoff, 'inspected_at')
     )
     repacked_left = int(cur.fetchone()[0] or 0)
     tasks.append({
@@ -356,6 +422,7 @@ def build_tasks(cur, session_id, user_id):
         "SELECT count(*) FROM goods_warehouse "
         "WHERE status = 'mp_return' "
         "  AND COALESCE(receive_reason, '') <> 'cancelled_labeled'"
+        + _cut(cutoff, 'received_at')
     )
     returns_left = int(cur.fetchone()[0] or 0)
     tasks.append({
@@ -371,6 +438,16 @@ def build_tasks(cur, session_id, user_id):
         # это не выполненное дело, а дело, которого сегодня не было.
         'idle': returns_left == 0 and not _had_returns(cur, session_id),
     })
+
+    # ПОМЕТКА ПРО ОТСЕЧКУ.
+    # Ставим её только тем заданиям, которые копятся до 15:00, — чтобы кладовщик
+    # понимал: этот список конечен, новая работа сюда сегодня уже не придёт.
+    # Показываем пометку и ДО 15:00 (как предупреждение «собери до трёх»), и
+    # после (как объяснение, почему счётчик на странице больше, чем в задании).
+    for t in tasks:
+        if t['key'] in CUTOFF_TASKS:
+            t['cutoff'] = True
+            t['cutoffPassed'] = after_cutoff
 
     return tasks
 
