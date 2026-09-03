@@ -459,7 +459,9 @@ def handler(event: dict, context) -> dict:
                             'doneCount': sum(1 for t in demo_tasks if t['done']),
                             'totalCount': len(demo_tasks),
                             'blockingCount': sum(
-                                1 for t in demo_tasks if t['blocking'] and not t['done']
+                                1 for t in demo_tasks
+                                if t['blocking'] and not t['done']
+                                and not t.get('idle') and not t.get('claimedByOther')
                             ),
                         }, ensure_ascii=False),
                     }
@@ -486,8 +488,14 @@ def handler(event: dict, context) -> dict:
                         # Сколько заданий держат смену прямо сейчас — по этому
                         # числу интерфейс объясняет, почему кнопка закрытия не
                         # сработает, ещё до нажатия.
+                        # Считаем ровно так же, как blocking_tasks при закрытии
+                        # смены: приглушённые и взятые ДРУГИМ кладовщиком человека
+                        # не держат. Иначе виджет обещал бы одно, а закрытие
+                        # смены отвечало другое.
                         'blockingCount': sum(
-                            1 for t in tasks if t['blocking'] and not t['done']
+                            1 for t in tasks
+                            if t['blocking'] and not t['done']
+                            and not t.get('idle') and not t.get('claimedByOther')
                         ),
                     }, ensure_ascii=False),
                 }
@@ -1263,6 +1271,67 @@ def handler(event: dict, context) -> dict:
                     'statusCode': 200,
                     'headers': headers,
                     'body': json.dumps({'success': True, 'done': not removed}),
+                }
+
+            if action == 'claim_task':
+                """Взять задание на себя или отпустить его.
+
+                Кладовщики работают на своих аккаунтах, и раньше одно дело делали
+                вдвоём: оба шли в цех за одними вещами. Метка показывает второму,
+                что дело занято, — брать его нельзя, а смену оно ему не держит.
+
+                Метка живёт на КАЛЕНДАРНЫЙ ДЕНЬ, а не на смену: смены у двоих
+                разные (один пришёл в 8, другой в 10), и привязка к смене не дала
+                бы второму увидеть занятое дело.
+                """
+                c_user_id = body_data.get('userId')
+                task_key = (body_data.get('taskKey') or '').strip()
+                if not c_user_id or not task_key:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите userId и taskKey'})}
+                c_user_id = int(c_user_id)
+
+                cur.execute(
+                    "SELECT c.user_id, u.full_name FROM storekeeper_task_claims c "
+                    "LEFT JOIN users u ON u.id = c.user_id "
+                    "WHERE c.task_key = %s AND c.claim_date = (now() + interval '3 hours')::date",
+                    (task_key,),
+                )
+                existing = cur.fetchone()
+
+                if existing and int(existing[0]) != c_user_id:
+                    # Занято другим — молча перехватывать нельзя: человек уже
+                    # пошёл в цех и делает эту работу.
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Задание уже взял {existing[1] or "другой кладовщик"}'
+                        }, ensure_ascii=False),
+                    }
+
+                if existing:
+                    # Своё же — повторное нажатие отпускает: взял по ошибке или
+                    # передумал, запирать до конца дня незачем.
+                    cur.execute(
+                        "DELETE FROM storekeeper_task_claims "
+                        "WHERE task_key = %s AND claim_date = (now() + interval '3 hours')::date",
+                        (task_key,),
+                    )
+                    claimed = False
+                else:
+                    cur.execute(
+                        "INSERT INTO storekeeper_task_claims (task_key, claim_date, user_id) "
+                        "VALUES (%s, (now() + interval '3 hours')::date, %s) "
+                        "ON CONFLICT (task_key, claim_date) DO NOTHING",
+                        (task_key, c_user_id),
+                    )
+                    claimed = True
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'claimed': claimed}),
                 }
 
             if action == 'auto_close':

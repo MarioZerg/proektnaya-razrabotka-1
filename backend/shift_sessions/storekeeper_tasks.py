@@ -91,6 +91,23 @@ def _cut(cutoff, column):
     return f"  AND ({column} IS NULL OR {column} <= '{cutoff.isoformat()}') "
 
 
+def _claims(cur):
+    """Кто какое задание взял на себя сегодня: {task_key: (user_id, имя)}.
+
+    Кладовщики работают на своих аккаунтах и раньше дублировали работу — оба шли
+    в цех за одними и теми же вещами. Метка показывает второму, что дело занято.
+
+    День берём московский: рабочий день считается по местным часам.
+    """
+    cur.execute(
+        "SELECT c.task_key, c.user_id, u.full_name "
+        "FROM storekeeper_task_claims c "
+        "LEFT JOIN users u ON u.id = c.user_id "
+        "WHERE c.claim_date = (now() + interval '3 hours')::date"
+    )
+    return {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+
+
 def _manual_done(cur, session_id):
     """Какие задания кладовщик уже отметил вручную в этой смене.
 
@@ -171,6 +188,7 @@ def build_tasks(cur, session_id, user_id):
     manual = _manual_done(cur, session_id)
     # Граница отсечки: после 15:00 новая работа в список уже не добавляется.
     cutoff, after_cutoff = cutoff_moment(cur)
+    claims = _claims(cur)
     tasks = []
 
     # 1. СОБРАТЬ ВЕЩИ С ПОЛОК ПОД ЗАКАЗЫ.
@@ -449,6 +467,22 @@ def build_tasks(cur, session_id, user_id):
             t['cutoff'] = True
             t['cutoffPassed'] = after_cutoff
 
+    # КТО ВЗЯЛ ЗАДАНИЕ НА СЕБЯ.
+    # Ручные задания (отгрузка ткани, напоминание про рулоны) не делим: там
+    # галочка и так ставится руками, а взять «на себя» разговор в цехе нельзя.
+    for t in tasks:
+        if t['manual']:
+            continue
+        claim = claims.get(t['key'])
+        if not claim:
+            continue
+        claim_user, claim_name = claim
+        t['claimedBy'] = claim_user
+        t['claimedByName'] = claim_name
+        # Задание взял ДРУГОЙ человек — для текущего оно чужое: трогать нельзя
+        # и смену оно ему не держит (см. blocking_tasks).
+        t['claimedByOther'] = bool(user_id) and int(claim_user) != int(user_id)
+
     return tasks
 
 
@@ -456,7 +490,12 @@ def blocking_tasks(cur, session_id, user_id):
     """Задания, из-за которых нельзя закрыть смену. Пусто — можно закрывать."""
     # Приглушённые (idle) не держат: работы по ним за смену не появлялось,
     # держать человека из-за дела, которого не было, нельзя.
+    #
+    # Взятое ДРУГИМ кладовщиком (claimedByOther) тоже не держит: за него отвечает
+    # тот, кто взял. Иначе двое запирали бы друг друга — первый не может уйти,
+    # пока второй не доделает, и наоборот.
     return [
         t for t in build_tasks(cur, session_id, user_id)
         if t['blocking'] and not t['done'] and not t.get('idle')
+        and not t.get('claimedByOther')
     ]

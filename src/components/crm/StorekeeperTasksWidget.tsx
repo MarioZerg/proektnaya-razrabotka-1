@@ -8,6 +8,7 @@ import { playWarehouseAlert } from '@/lib/warehouseAlerts';
 import {
   fetchStorekeeperTasks,
   toggleStorekeeperTask,
+  claimStorekeeperTask,
   type StorekeeperTask,
 } from '@/lib/shiftSessionsApi';
 
@@ -40,6 +41,7 @@ const StorekeeperTasksWidget = () => {
   const [shiftOpen, setShiftOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [claimKey, setClaimKey] = useState<string | null>(null);
   // Галочки в демо-режиме: настоящей смены нет, запоминать их негде — держим
   // на экране, чтобы администратор мог понажимать и посмотреть, как это работает.
   const [demoDone, setDemoDone] = useState<Set<string>>(new Set());
@@ -88,8 +90,40 @@ const StorekeeperTasksWidget = () => {
     : tasks;
 
   const doneCount = shown.filter((t) => t.done).length;
-  const blocking = shown.filter((t) => t.blocking && !t.done);
+  // Держат смену только СВОИ невыполненные дела: приглушённые (работы не было)
+  // и взятые другим кладовщиком человека не держат — считаем так же, как сервер,
+  // иначе виджет обещал бы одно, а закрытие смены отвечало другое.
+  const blocking = shown.filter(
+    (t) => t.blocking && !t.done && !t.idle && !t.claimedByOther,
+  );
   const allDone = doneCount === shown.length;
+
+  // «Беру на себя»: второй кладовщик увидит, что дело занято, и не побежит
+  // делать ту же работу. Повторное нажатие отпускает задание.
+  const handleClaim = async (task: StorekeeperTask) => {
+    if (!user?.id || isDemo) return;
+    setClaimKey(task.key);
+    try {
+      const r = await claimStorekeeperTask(user.id, task.key);
+      toast({
+        title: r.claimed ? 'Взяли на себя' : 'Отпустили задание',
+        description: r.claimed
+          ? `${task.title} — второй кладовщик это увидит`
+          : task.title,
+      });
+      await load();
+    } catch (e) {
+      // Чаще всего — «уже взял другой»: показываем его имя как есть.
+      toast({
+        title: 'Не получилось',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+      await load();
+    } finally {
+      setClaimKey(null);
+    }
+  };
 
   const handleToggle = async (task: StorekeeperTask) => {
     if (!user?.id) return;
@@ -228,9 +262,14 @@ const StorekeeperTasksWidget = () => {
                     'border-dashed border-border bg-transparent opacity-45'
                   : t.done
                     ? 'border-emerald-200 bg-emerald-50/60'
-                    : t.blocking
-                      ? 'border-amber-200 bg-amber-50/60'
-                      : 'border-border bg-muted/30'
+                    : t.claimedByOther
+                      ? // ВЗЯЛ ДРУГОЙ КЛАДОВЩИК.
+                        // Не наша работа: показываем спокойным серо-синим, без
+                        // тревожного янтарного — человека это дело не держит.
+                        'border-slate-200 bg-slate-50 opacity-70'
+                      : t.blocking
+                        ? 'border-amber-200 bg-amber-50/60'
+                        : 'border-border bg-muted/30'
               }`}
             >
               {/* Галочка: у ручных заданий по ней жмут, у остальных она просто
@@ -285,6 +324,20 @@ const StorekeeperTasksWidget = () => {
                 {/* Метка отсечки. До 15:00 — предупреждение «успей собрать»,
                     после — объяснение, почему на странице цифра больше, чем
                     в задании: новое уже уехало в завтрашний список. */}
+                {/* Кто делает задание. Занятое другим не трогаем — иначе двое
+                    идут в цех за одними и теми же вещами. */}
+                {t.claimedBy && !t.done && (
+                  <span
+                    className={`mt-1 flex items-center gap-1 text-[10px] font-medium leading-snug ${
+                      t.claimedByOther ? 'text-slate-600' : 'text-emerald-700'
+                    }`}
+                  >
+                    <Icon name={t.claimedByOther ? 'UserCheck' : 'User'} size={10} />
+                    {t.claimedByOther
+                      ? `Делает ${t.claimedByName} — не берите`
+                      : 'Вы взяли это на себя'}
+                  </span>
+                )}
                 {t.cutoff && !t.idle && !t.done && (
                   <span
                     className={`mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium leading-snug ${
@@ -301,11 +354,46 @@ const StorekeeperTasksWidget = () => {
                 )}
               </button>
 
-              {t.count > 0 && !t.done && !t.idle && (
-                <span className="mt-0.5 shrink-0 rounded-md bg-amber-200 px-1.5 text-[13px] font-bold text-amber-900">
-                  {t.count}
-                </span>
-              )}
+              <span className="mt-0.5 flex shrink-0 items-center gap-1.5">
+                {/* «Беру на себя» — только у своей незанятой работы. Чужое дело
+                    перехватить нельзя: человек уже пошёл за этими вещами. */}
+                {!t.done && !t.idle && !t.manual && !isDemo && !t.claimedByOther && (
+                  <button
+                    type="button"
+                    onClick={() => handleClaim(t)}
+                    disabled={claimKey === t.key}
+                    title={
+                      t.claimedBy
+                        ? 'Отпустить задание — его сможет взять другой'
+                        : 'Взять на себя, чтобы второй кладовщик это не делал'
+                    }
+                    className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50 ${
+                      t.claimedBy
+                        ? 'border-emerald-300 bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                        : 'border-border bg-background text-muted-foreground hover:border-primary hover:text-primary'
+                    }`}
+                  >
+                    {claimKey === t.key ? (
+                      <Icon name="Loader2" size={10} className="animate-spin" />
+                    ) : t.claimedBy ? (
+                      'Отпустить'
+                    ) : (
+                      'Беру'
+                    )}
+                  </button>
+                )}
+                {t.count > 0 && !t.done && !t.idle && (
+                  <span
+                    className={`rounded-md px-1.5 text-[13px] font-bold ${
+                      t.claimedByOther
+                        ? 'bg-slate-200 text-slate-700'
+                        : 'bg-amber-200 text-amber-900'
+                    }`}
+                  >
+                    {t.count}
+                  </span>
+                )}
+              </span>
             </div>
           ))}
 
@@ -325,11 +413,18 @@ const StorekeeperTasksWidget = () => {
                 : 'Отмеченные задания копятся до 15:00. Всё, что придёт позже, попадёт в задания следующего дня — искать это перед закрытием смены не нужно.'}
             </p>
           )}
+          {shown.some((t) => t.claimedByOther) && (
+            <p className="px-1 pt-1 text-[11px] leading-snug text-slate-600">
+              Серые задания взял другой кладовщик — они на нём и вашу смену не
+              держат. Нажмите «Беру» на своих делах, чтобы он не пошёл за теми же
+              вещами.
+            </p>
+          )}
           {blocking.length > 0 && !isDemo && (
             <p className="px-1 pt-1 text-[11px] leading-snug text-amber-700">
               Смену нельзя закрыть, пока не сделано: {blocking.length} задание
-              {blocking.length > 1 ? 'й' : ''}. Задания с галочкой вручную смену
-              не держат.
+              {blocking.length > 1 ? 'й' : ''}. Задания с галочкой вручную и взятые
+              другим кладовщиком смену не держат.
             </p>
           )}
         </div>

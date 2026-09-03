@@ -232,6 +232,11 @@ export interface StorekeeperTask {
   cutoff?: boolean;
   /** 15:00 уже прошло: список зафиксирован и дальше только уменьшается. */
   cutoffPassed?: boolean;
+  /** Кто взял это задание на себя сегодня. */
+  claimedBy?: number;
+  claimedByName?: string;
+  /** Задание взял ДРУГОЙ кладовщик: трогать нельзя, смену оно не держит. */
+  claimedByOther?: boolean;
 }
 
 export interface StorekeeperTasksResult {
@@ -270,6 +275,22 @@ export const fetchStorekeeperTasks = async (
  * (материала может не быть) и напоминание закройщикам про рулоны. Повторное
  * нажатие снимает галочку — отметить по ошибке не страшно.
  */
+/** Взять задание на себя (или отпустить повторным нажатием). Если его уже взял
+ *  другой кладовщик — вернётся ошибка с его именем. */
+export const claimStorekeeperTask = async (
+  userId: number,
+  taskKey: string,
+): Promise<{ claimed: boolean }> => {
+  const res = await fetch(SHIFT_SESSIONS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'claim_task', userId, taskKey }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось взять задание');
+  return data;
+};
+
 export const toggleStorekeeperTask = async (
   userId: number,
   taskKey: string,
