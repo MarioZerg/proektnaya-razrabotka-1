@@ -148,25 +148,7 @@ const StorekeeperTaskChecklistDialog = ({
                   <span className="block text-[11px] leading-snug text-muted-foreground">
                     {t.idle ? 'Сегодня такой работы не появлялось' : t.hint}
                   </span>
-                  {/* Разбивка «что и по сколько штук» — админу видно, какая
-                      именно работа держит смену кладовщика. */}
-                  {!t.done && !t.idle && t.items && t.items.length > 0 && (
-                    <span className="mt-1.5 block space-y-0.5">
-                      {t.items.map((it) => (
-                        <span
-                          key={it.name}
-                          className="flex items-center justify-between gap-2 rounded bg-background/70 px-1.5 py-0.5 text-[11px] leading-snug"
-                        >
-                          <span className="min-w-0 flex-1 truncate font-medium">
-                            {it.name}
-                          </span>
-                          <span className="shrink-0 font-bold tabular-nums text-amber-900">
-                            {it.qty} шт
-                          </span>
-                        </span>
-                      ))}
-                    </span>
-                  )}
+
                   {t.adminClosed && (
                     <span className="mt-1 flex items-center gap-1 text-[10px] font-medium leading-snug text-sky-700">
                       <Icon name="ShieldCheck" size={10} />
