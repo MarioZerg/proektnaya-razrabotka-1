@@ -54,10 +54,11 @@ MODEL_CANDIDATES = [
 # Ограничения на запросы модели к базе. Помощник отвечает на вопросы, а не
 # выгружает базу: большие выборки только жгут деньги и тормозят ответ.
 MAX_ROWS = 200
-SQL_TIMEOUT_MS = 15000
+SQL_TIMEOUT_MS = 8000
 # Сколько шагов «подумать → сходить в базу → подумать» разрешено за один вопрос.
-# Хватает, чтобы уточнить данные парой запросов, но не даёт зациклиться.
-MAX_STEPS = 4
+# Хватает, чтобы уточнить данные несколькими запросами (например, когда первый
+# вернул пусто и надо проверить соседние даты), но не даёт зациклиться.
+MAX_STEPS = 6
 
 # Слова, которых в запросе быть не должно. Это второй слой защиты: основной —
 # READ ONLY у самого подключения к базе.
@@ -68,6 +69,24 @@ FORBIDDEN_SQL = re.compile(
 )
 
 
+# Таблицы, по которым спрашивают на деле. В базе их больше сотни, и если
+# отправлять модели все, запрос разбухает и ответ приходит заметно дольше —
+# а служебные таблицы (коды входа, курсоры синхронизации, журналы) на вопросы
+# владельца всё равно не отвечают.
+USEFUL_TABLES = (
+    'orders', 'goods_warehouse', 'rolls', 'materials', 'material_defects',
+    'shelves', 'users', 'shift_sessions', 'shifts', 'workshops',
+    'salary_accruals', 'salary_payouts', 'salary_rates',
+    'marketplace_supplies', 'marketplace_supply_items', 'marketplace_items',
+    'marketplace_returns', 'marketplace_sales', 'marketplace_stocks',
+    'marketplace_buyout', 'marketplace_prices', 'reviews',
+    'shipments', 'shipment_items', 'suppliers', 'supplier_prices',
+    'contracts', 'vacations', 'stocktakes', 'cash_box_transactions',
+    'manager_accruals', 'order_material_usage', 'material_movements',
+    'variki_purchases', 'variki_shop_items', 'audit_log',
+)
+
+
 def _schema_digest(cur, schema):
     """Список таблиц с колонками — чтобы модель знала, где что лежит.
 
@@ -75,8 +94,9 @@ def _schema_digest(cur, schema):
     """
     cur.execute(
         "SELECT table_name, column_name, data_type FROM information_schema.columns "
-        "WHERE table_schema = %s ORDER BY table_name, ordinal_position",
-        (schema,),
+        "WHERE table_schema = %s AND table_name = ANY(%s) "
+        "ORDER BY table_name, ordinal_position",
+        (schema, list(USEFUL_TABLES)),
     )
     tables = {}
     for table, column, dtype in cur.fetchall():
@@ -228,6 +248,32 @@ SYSTEM_PROMPT = """Ты — помощник по системе управле�
 - salary_accruals — начисления и штрафы, salary_payouts — выплаты.
 - marketplace_supplies — поставки на маркетплейс, shipments — отгрузки.
 - Время в базе хранится по Гринвичу, а рабочий день считается по Москве (+3 часа).
+
+ЗАРПЛАТЫ И ЗАРАБОТОК:
+- salary_accruals — все начисления сотрудникам. amount: положительная сумма —
+  заработок, отрицательная — штраф (type='penalty'). user_id — кому начислено.
+- ГЛАВНОЕ: за какой рабочий день начисление, показывает поле accrued_for (дата),
+  а НЕ created_at. Вопросы «кто сколько заработал вчера / за вчера / за 2 сентября»
+  считай по accrued_for.
+- Имя сотрудника бери из users.full_name (соединяй по user_id).
+- «Сколько заработал» — это сумма начислений: SUM(amount). Если нужен чистый
+  заработок без штрафов, считай отдельно положительные и отрицательные суммы.
+- salary_payouts — фактические выплаты денег на руки, это НЕ то же самое, что
+  заработок за день.
+
+КАК СЧИТАТЬ ДАТЫ (очень важно):
+- НИКОГДА не подставляй дату из головы — ты не знаешь сегодняшнее число.
+- Всегда вычисляй даты прямо в запросе от текущего момента базы.
+- Сегодня по Москве: (now() + interval '3 hours')::date
+- Вчера: (now() + interval '3 hours')::date - 1
+- Пример «кто сколько заработал вчера»:
+  SELECT u.full_name, SUM(sa.amount) AS zarabotok
+  FROM <схема>.salary_accruals sa
+  JOIN <схема>.users u ON u.id = sa.user_id
+  WHERE sa.accrued_for = (now() + interval '3 hours')::date - 1
+  GROUP BY u.full_name ORDER BY zarabotok DESC;
+- Если запрос вернул пусто — прежде чем говорить «данных нет», проверь соседние
+  дни (например MAX(accrued_for)): возможно, ты ошибся с датой.
 """
 
 TOOLS = [{
@@ -346,6 +392,12 @@ def handler(event: dict, context) -> dict:
             return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
                 {'error': 'Помощник доступен только администраторам'}, ensure_ascii=False)}
         schema_text = _schema_digest(cur, schema)
+        # Сегодняшняя дата по Москве. Без неё модель подставляла дату «из головы»
+        # (например 2023 год) и на вопрос «кто сколько заработал вчера» отвечала,
+        # что данных нет, хотя начисления в базе были.
+        cur.execute("SELECT to_char(now() + interval '3 hours', 'YYYY-MM-DD'), "
+                    "to_char(now() + interval '3 hours', 'DD.MM.YYYY HH24:MI')")
+        today_iso, now_human = cur.fetchone()
     finally:
         conn.close()
 
@@ -356,8 +408,14 @@ def handler(event: dict, context) -> dict:
         f'ВСЕГДА пиши имя схемы перед таблицей, например: '
         f'SELECT count(*) FROM {schema}.orders. Без схемы запрос не сработает.'
     )
+    date_rule = (
+        f'\n\nСЕГОДНЯ: {today_iso} (по Москве сейчас {now_human}). '
+        f'Вчера — это {today_iso} минус один день. Используй эти сведения, чтобы '
+        f'правильно понимать слова «сегодня», «вчера», «на этой неделе», но в '
+        f'самих запросах всё равно вычисляй даты от now(), как показано выше.'
+    )
     messages = [
-        {'role': 'system', 'content': SYSTEM_PROMPT + schema_rule
+        {'role': 'system', 'content': SYSTEM_PROMPT + schema_rule + date_rule
             + '\n\nТАБЛИЦЫ БАЗЫ ДАННЫХ:\n' + schema_text},
     ]
     # Прошлые сообщения беседы: без них помощник не поймёт «а за прошлый месяц?».
