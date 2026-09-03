@@ -21,6 +21,7 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
 import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
 import StorekeeperTasksWidget from '@/components/crm/StorekeeperTasksWidget';
+import AiAssistantWidget from '@/components/crm/AiAssistantWidget';
 import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels, isStorekeeperRole } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
@@ -323,6 +324,9 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
               чтобы после переключения должности страница отрисовалась заново. */}
           <ErrorBoundary key={`${location.pathname}-${user.role}`}>{children}</ErrorBoundary>
         </div>
+        {/* Помощник — кнопка в правом нижнем углу поверх любой страницы.
+            Сам решает, показываться ли: только администратору. */}
+        <AiAssistantWidget />
       </main>
     </SidebarProvider>
   );

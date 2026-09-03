@@ -73,7 +73,6 @@ const SuppliersSettings = lazy(() => import("./pages/settings/SuppliersSettings"
 const MarketplaceItemsSettings = lazy(() => import("./pages/settings/MarketplaceItemsSettings"));
 const MarketplaceIntegrationsSettings = lazy(() => import("./pages/settings/MarketplaceIntegrationsSettings"));
 const Kiosk = lazy(() => import("./pages/Kiosk"));
-const AiAssistant = lazy(() => import("./pages/AiAssistant"));
 const Contracts = lazy(() => import("./pages/Contracts"));
 const PrivacyPolicy = lazy(() => import("./pages/legal/PrivacyPolicy"));
 const PersonalDataConsent = lazy(() => import("./pages/legal/PersonalDataConsent"));
@@ -189,7 +188,6 @@ const App = () => (
             <Route path="/crm/settings/marketplace-items" element={<MarketplaceItemsSettings />} />
             <Route path="/crm/settings/marketplace-integrations" element={<MarketplaceIntegrationsSettings />} />
             <Route path="/crm/kiosk" element={<Kiosk />} />
-            <Route path="/crm/assistant" element={<AiAssistant />} />
             <Route path="/crm/contracts" element={<Contracts />} />
             {/* Юридические документы — открыты без входа: их читают до регистрации. */}
             <Route path="/privacy" element={<PrivacyPolicy />} />
