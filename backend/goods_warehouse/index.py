@@ -3100,6 +3100,15 @@ def handler(event: dict, context) -> dict:
                             'product': gw_product,
                         }, ensure_ascii=False)}
                     if own:
+                        # Эту вещь кладовщик держит в руках — помечаем подтверждённой,
+                        # иначе сканер отдал бы её заказ следующей такой же вещи и
+                        # выдал лишний успех на уже закрытую потребность.
+                        cur.execute(
+                            "UPDATE goods_warehouse SET picked_confirmed_at = now(), "
+                            f"picked_confirmed_by = {int(actor_id) if actor_id else 'NULL'} "
+                            f"WHERE id = {int(gw_id)} AND picked_confirmed_at IS NULL"
+                        )
+                        conn.commit()
                         # Вещь закреплена за живым заказом, но числится «На хранении» —
                         # значит, где-то её вернули на полку, забыв снять резерв. В подборе
                         # такой вещи не видно, и кладовщик упирался в тупик: сканер её
@@ -3155,6 +3164,86 @@ def handler(event: dict, context) -> dict:
 
                 prod_esc = gw_product.replace("'", "''")
 
+                # 3а. Заказ ждёт такой же товар, но держит ДРУГУЮ вещь.
+                #
+                # Это главный случай на складе. Кладовщик идёт вдоль стеллажа с
+                # нужным размером в руках, а система закрепила за заказом соседнюю,
+                # физически неотличимую вещь. Раньше сканер отвечал «мимо» — и
+                # человек шёл искать конкретный номер, хотя товар уже был у него.
+                #
+                # Теперь переносим подбор на вещь В РУКАХ. А чтобы это не
+                # превратилось в бесконечный успех (подбор просто переезжал с вещи
+                # на вещь, а количество не менялось), забираем работу ТОЛЬКО у
+                # вещи, которую ещё не подтвердили сканером и не отстикеровали.
+                # Нужно 2 штуки — сканер даст ровно 2 успеха, третий уже «мимо».
+                cur.execute(
+                    "SELECT twin.id, ro.id, ro.order_number "
+                    "FROM goods_warehouse twin "
+                    "JOIN orders src ON src.id = twin.order_id "
+                    "JOIN orders ro ON ro.id = twin.reserved_order_id "
+                    f"WHERE src.product = '{prod_esc}' "
+                    f"  AND twin.id <> {int(gw_id)} "
+                    "  AND twin.status IN ('in_stock', 'picking') "
+                    # Вещь уже подтверждена кладовщиком или отстикерована — работа
+                    # на ней закончена, отбирать её нельзя.
+                    #
+                    # Подтверждение засчитываем, только если оно СВЕЖЕЕ последнего
+                    # закрепления (picked_confirmed_at >= matched_at). Так отметка
+                    # чистится сама: вещь освободили и позже подобрали под другой
+                    # заказ — matched_at обновился, старое подтверждение сгорело.
+                    # Иначе пришлось бы вручную сбрасывать отметку в двух десятках
+                    # мест, где вещь освобождается (списание, потеря, отмена,
+                    # разбор поставки), и одно забытое место навсегда выключило бы
+                    # вещь из подбора.
+                    "  AND (twin.picked_confirmed_at IS NULL "
+                    "       OR twin.matched_at IS NULL "
+                    "       OR twin.picked_confirmed_at < twin.matched_at) "
+                    "  AND twin.shipping_labeled_at IS NULL "
+                    "  AND twin.shipped_at IS NULL "
+                    # Вещь уже уехала бы в коробе — её резерв трогать нельзя.
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                    "     JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                    "     WHERE msi.goods_warehouse_id = twin.id "
+                    "       AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                    "  AND ro.marketplace <> 'Yandex' "
+                    f"  AND {RESERVE_ALIVE_SQL} "
+                    "ORDER BY twin.matched_at ASC, twin.id ASC LIMIT 1"
+                )
+                twin = cur.fetchone()
+                if twin:
+                    twin_id, twin_order_id, twin_order_number = twin
+                    # Прежняя вещь возвращается в свободный остаток.
+                    cur.execute(
+                        "UPDATE goods_warehouse SET reserved_order_id = NULL, "
+                        f"matched_at = NULL, status = 'in_stock' WHERE id = {int(twin_id)}"
+                    )
+                    # Работа переезжает на вещь в руках и сразу помечается
+                    # подтверждённой — второй раз этот заказ уже не отдадим.
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'picking', "
+                        "reserved_order_id = %s, matched_at = now(), "
+                        "picked_confirmed_at = now(), picked_confirmed_by = %s, "
+                        "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                        "shipping_labeled_by_name = NULL WHERE id = %s",
+                        (int(twin_order_id), actor_id, int(gw_id)),
+                    )
+                    cur.execute(
+                        "UPDATE orders SET fulfilled_from_stock_id = %s WHERE id = %s",
+                        (int(gw_id), int(twin_order_id)),
+                    )
+                    log_action(
+                        cur, actor_id, actor_name, 'scan_picking', 'goods_warehouse',
+                        gw_id,
+                        f'Заказ #{twin_order_number} перенесён на вещь в руках '
+                        f'({barcode}) вместо равнозначной со склада',
+                    )
+                    conn.commit()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'matched': True, 'goodsId': gw_id, 'product': gw_product,
+                        'shelfName': gw_shelf, 'orderNumber': twin_order_number,
+                        'reassigned': True,
+                    }, ensure_ascii=False)}
+
                 # 3б. Ищем ОСИРОТЕВШИЙ заказ на такой же товар.
                 #
                 # Заказ считается закрытым складом и указывает на конкретную вещь, но та
@@ -3199,9 +3288,10 @@ def handler(event: dict, context) -> dict:
                         # заказ, и старая наклейка на ней недействительна.
                         "UPDATE goods_warehouse SET status = 'picking', "
                         "reserved_order_id = %s, matched_at = now(), "
+                        "picked_confirmed_at = now(), picked_confirmed_by = %s, "
                         "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
                         "shipping_labeled_by_name = NULL WHERE id = %s",
-                        (int(orphan_id), int(gw_id)),
+                        (int(orphan_id), actor_id, int(gw_id)),
                     )
                     cur.execute(
                         "UPDATE orders SET fulfilled_from_stock_id = %s WHERE id = %s",

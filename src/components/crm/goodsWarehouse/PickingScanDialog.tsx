@@ -177,6 +177,12 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
         >
           <div className="space-y-1.5">
             <p className="text-sm font-medium">Сканируйте пакет с товаром</p>
+            {/* Кладовщик раньше искал вещь с конкретным номером стикера и не знал,
+                что подойдёт любая такая же. Пишем это прямо у поля ввода. */}
+            <p className="text-xs text-muted-foreground">
+              Подходит любая вещь нужного материала и размера — номер стикера
+              искать не нужно. Лишние штуки сканер отсечёт сам.
+            </p>
             <Input
               ref={inputRef}
               autoFocus
