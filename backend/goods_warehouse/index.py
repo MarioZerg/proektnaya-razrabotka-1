@@ -1199,6 +1199,11 @@ def handler(event: dict, context) -> dict:
                     "       sh.name, "
                     "       src.order_number, src.product, src.material, src.width, src.height, "
                     "       src.marketplace, "
+                    # Свой заказ вещи (её сшили прямо под него) — по нему тоже
+                    # печатается ярлык. Без id и типа карточка не могла напечатать
+                    # стикер на сшитую под заказ вещь: она смотрела только на
+                    # бронь, а брони у такой вещи нет.
+                    "       src.id, src.order_type, "
                     "       res.id, res.order_number, res.marketplace, res.order_type, "
                     # Причина утилизации — рядом с причиной списания: у вещи в
                     # карточке должно быть видно, за что её отправили в утиль.
@@ -1233,7 +1238,8 @@ def handler(event: dict, context) -> dict:
 
                 # История: события и по самой вещи, и по заказам, с которыми она связана.
                 # Так видно всю цепочку — от пошива до наклейки стикера.
-                order_ids = [x for x in (r[15],) if x]
+                # r[17] — заказ, под который вещь подобрана (бронь).
+                order_ids = [x for x in (r[17],) if x]
                 cur.execute("SELECT order_id FROM goods_warehouse WHERE id = %s", (card_id,))
                 own = cur.fetchone()
                 if own and own[0]:
@@ -1274,12 +1280,14 @@ def handler(event: dict, context) -> dict:
                         'width': r[12],
                         'height': r[13],
                         'sourceMarketplace': r[14],
-                        'reservedOrderId': r[15],
-                        'reservedOrderNumber': r[16],
-                        'reservedMarketplace': r[17],
-                        'reservedOrderType': r[18],
-                        'lostReason': r[19],
-                        'disposeReason': r[20],
+                        'sourceOrderId': r[15],
+                        'sourceOrderType': r[16],
+                        'reservedOrderId': r[17],
+                        'reservedOrderNumber': r[18],
+                        'reservedMarketplace': r[19],
+                        'reservedOrderType': r[20],
+                        'lostReason': r[21],
+                        'disposeReason': r[22],
                         'supplyId': sup[0] if sup else None,
                         'supplyStatus': sup[1] if sup else None,
                         'history': history,

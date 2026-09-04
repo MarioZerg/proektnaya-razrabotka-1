@@ -90,18 +90,47 @@ const GoodsCardActions = ({
       <Card className="border-primary/30 bg-primary/5 shadow-none">
         <CardContent className="space-y-3 pt-6">
           {alreadyInSupply ? (
-            <div className="flex items-center gap-2.5">
-              <Icon name="CircleCheck" size={20} className="text-emerald-600" />
-              <div>
-                <p className="font-semibold">Вещь на поставке</p>
-                <p className="text-sm text-muted-foreground">
-                  {card.supplyId
-                    ? `Добавлена в поставку №${card.supplyId}`
-                    : `Ждёт сканирования в короб поставки ${schemeLabel} ${
-                        card.reservedMarketplace || ''
-                      }`.trim()}
-                </p>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2.5">
+                <Icon name="CircleCheck" size={20} className="text-emerald-600" />
+                <div>
+                  <p className="font-semibold">Вещь на поставке</p>
+                  <p className="text-sm text-muted-foreground">
+                    {card.supplyId
+                      ? `Добавлена в поставку №${card.supplyId}`
+                      : `Ждёт сканирования в короб поставки ${schemeLabel} ${
+                          card.reservedMarketplace || ''
+                        }`.trim()}
+                  </p>
+                </div>
               </div>
+
+              {/* ПЕРЕПЕЧАТКА ЯРЛЫКА — ЗДЕСЬ ЕЁ И НЕ ХВАТАЛО.
+                  Стикер зажевало принтером или порвался пакет уже после того,
+                  как вещь ушла на поставку. Раньше карточка показывала только
+                  надпись «Вещь на поставке» — ни одной кнопки, и напечатать
+                  ярлык заново было неоткуда. Кладовщик оставался с вещью,
+                  которую нельзя ни отправить, ни опознать.
+
+                  Ярлык каждый раз запрашивается у маркетплейса по номеру
+                  отправления, поэтому это ровно тот же стикер, а не копия
+                  старых данных. */}
+              {canPrintLabel && (
+                <div>
+                  <Button variant="outline" onClick={onPrint} disabled={printing}>
+                    <Icon
+                      name={printing ? 'Loader2' : 'Printer'}
+                      size={18}
+                      className={`mr-2 ${printing ? 'animate-spin' : ''}`}
+                    />
+                    Перепечатать стикер {schemeLabel}
+                  </Button>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Если стикер зажевало или порвался пакет — распечатайте
+                    ярлык заново и наклейте вместо старого
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
             <>

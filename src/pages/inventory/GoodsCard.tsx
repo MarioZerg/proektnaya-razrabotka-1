@@ -83,30 +83,59 @@ const GoodsCard = () => {
   }, [id]);
 
   const handlePrint = async () => {
-    if (!card?.reservedOrderId) return;
+    if (!card) return;
+    // Вещь, подобранную с полки, печатаем по её НОВОМУ заказу (бронь); вещь,
+    // сшитую сразу под заказ, — по СВОЕМУ. Раньше карточка знала только про
+    // бронь, и на сшитой под заказ вещи кнопка молча ничего не делала: у неё
+    // reservedOrderId пустой. Именно такие вещи и лежат в коробах поставок.
+    const printOrderId = card.reservedOrderId || card.sourceOrderId;
+    if (!printOrderId) return;
     setPrinting(true);
     try {
       // Перед печатью проверяем, нужна ли вещь под этот заказ до сих пор: он мог
       // уехать к покупателю или отмениться, пока она лежала на полке. Тогда ярлык
       // маркетплейс уже не отдаст, и печатать нечего — вещь возвращается на полку,
       // а кладовщик получает понятное объяснение вместо ошибки печати.
-      const check = await verifyPicking(card.id, user?.id, user?.name).catch(() => null);
-      if (check && check.total > 0) {
-        toast({
-          title: 'Вещь больше не нужна под этот заказ',
-          description: `${check.released[0]?.reason}. Вещь возвращена на полку хранения`,
-          variant: 'destructive',
-        });
-        load();
-        return;
+      //
+      // Проверка нужна только для подобранной вещи: у сшитой под заказ вещи
+      // брони нет, отбирать у неё нечего.
+      if (card.reservedOrderId) {
+        const check = await verifyPicking(card.id, user?.id, user?.name).catch(() => null);
+        if (check && check.total > 0) {
+          toast({
+            title: 'Вещь больше не нужна под этот заказ',
+            description: `${check.released[0]?.reason}. Вещь возвращена на полку хранения`,
+            variant: 'destructive',
+          });
+          load();
+          return;
+        }
       }
 
       await printOrderMarketplaceLabel({
-        id: card.reservedOrderId,
-        orderNumber: card.reservedOrderNumber || '',
-        marketplace: card.reservedMarketplace,
-        orderType: card.reservedOrderType,
+        id: printOrderId,
+        orderNumber: card.reservedOrderNumber || card.sourceOrderNumber || '',
+        marketplace: card.reservedMarketplace || card.sourceMarketplace,
+        orderType: card.reservedOrderType || card.sourceOrderType,
       });
+      // ПЕРЕПЕЧАТКА НИЧЕГО НЕ МЕНЯЕТ В СИСТЕМЕ.
+      //
+      // Вещь уже на поставке (ждёт короба или лежит в нём) — ярлык на ней
+      // отмечен, и трогать её состояние нельзя. Отметка ship_label вернула бы
+      // вещь в статус «На сборке», то есть выбила бы её из собранного короба:
+      // поставка недосчиталась бы позиции, а кладовщик искал бы вещь, которая
+      // физически лежит на месте. Здесь просто выходит второй такой же ярлык.
+      const inSupply =
+        card.status === 'awaiting_supply' || card.status === 'reserved' || !!card.supplyId;
+      if (inSupply) {
+        toast({
+          title: 'Стикер отправлен на печать',
+          description: 'Наклейте его вместо испорченного — в системе ничего не изменилось',
+        });
+        setPrinting(false);
+        return;
+      }
+
       // Отмечаем наклейку ярлыка в системе, а не только на экране.
       //
       // Раньше кнопка лишь запоминала печать в браузере: вещь выглядела готовой,
@@ -202,16 +231,27 @@ const GoodsCard = () => {
   // коробкой на склад площадки). Раньше кнопка везде называлась «Напечатать стикер
   // FBS», хотя для FBO печатался правильный, FBO-стикер, — кладовщик видел «FBS»
   // на FBO-товаре и не решался печатать.
-  const isFbo = (card.reservedOrderType || '').toUpperCase() === 'FBO';
+  const isFbo = (card.reservedOrderType || card.sourceOrderType || '').toUpperCase() === 'FBO';
   const schemeLabel = isFbo ? 'FBO' : 'FBS';
-  const alreadyInSupply = card.status === 'awaiting_supply' || !!card.supplyId;
+  // Вещь уже в пути на поставку: либо ждёт короба, либо отсканирована в него.
+  // 'reserved' — это и есть «лежит в коробе»: кнопку «Отправить на поставку»
+  // ей показывать не надо, а вот перепечатать ярлык бывает нужно.
+  const alreadyInSupply =
+    card.status === 'awaiting_supply' || card.status === 'reserved' || !!card.supplyId;
   // Стикер отправления печатаем только на вещь, которую собирают ПРЯМО СЕЙЧАС:
   // снята с полки («На сборке») или сшита и ждёт поставки («На поставку»).
   // Вещь «На хранении» лежит свободной, даже если за ней когда-то закрепляли заказ, —
   // ярлык ей не нужен, а наклеенный по ошибке уводит чужой товар в поставку.
+  //
+  // 'reserved' сюда добавлен намеренно: это вещь, уже отсканированная в короб
+  // поставки. Именно на ней чаще всего и заминало стикер — пакет лежит в
+  // коробе, ярлык порван, а перепечатать было неоткуда: карточка показывала
+  // только надпись «Вещь на поставке» без единой кнопки.
   const canPrintLabel =
-    !!card.reservedOrderId &&
-    (card.status === 'picking' || card.status === 'awaiting_supply') &&
+    !!(card.reservedOrderId || card.sourceOrderId) &&
+    (card.status === 'picking' ||
+      card.status === 'awaiting_supply' ||
+      card.status === 'reserved') &&
     // Вещь уехала на маркетплейс и там её приняли — отправление закрыто, ярлык
     // печатать некуда. Статусы 'shipped' и 'lost' сюда и так не попадают, но
     // дата отгрузки может проставиться раньше смены статуса.

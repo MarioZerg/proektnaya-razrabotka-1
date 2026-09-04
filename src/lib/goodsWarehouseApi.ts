@@ -673,6 +673,9 @@ export interface GoodsCard {
   width: number | null;
   height: number | null;
   sourceMarketplace: string | null;
+  /** Заказ, под который вещь сшили. У такой вещи брони нет — ярлык печатается по нему. */
+  sourceOrderId: number | null;
+  sourceOrderType: string | null;
   reservedOrderId: number | null;
   reservedOrderNumber: string | null;
   reservedMarketplace: string | null;
