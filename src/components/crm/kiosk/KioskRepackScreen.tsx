@@ -104,15 +104,11 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
 
   const handleFinish = async (outcome: 'repacked' | 'utilized', newBag?: boolean) => {
     if (!item) return;
-    const text = note.trim();
-    if (outcome === 'utilized' && !text) {
-      toast({
-        title: 'Опишите брак',
-        description: 'Администратор должен видеть, за что списан товар',
-        variant: 'destructive',
-      });
-      return;
-    }
+    // Причину брака упаковщица больше не выбирает — на экране только три
+    // решения: перепаковать, в брак, вернуть на рулон. Разбираться, ЧТО именно
+    // с вещью не так, всё равно будет администратор, когда вещь дойдёт до него
+    // со стикером. Лишний экран выбора только тормозил работу на потоке.
+    const text = note.trim() || 'Брак при перепаковке';
     setProcessing(true);
     setBagAsk(false);
     try {
@@ -176,17 +172,6 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
     }
   };
 
-  const defects = [
-    'Дырка',
-    'Затяжка',
-    'Пятно',
-    'Брак шва',
-    'Не тот размер',
-    'Мятая',
-    'Грязная',
-    'Без дефектов',
-  ];
-
   return (
     <div className="space-y-4">
       {/* Сканер и счётчики. Пока вещь на экране — поле заблокировано: сначала
@@ -244,6 +229,15 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
         open={rollReturnOpen}
         onOpenChange={setRollReturnOpen}
         goodsWarehouseId={item?.id}
+        onReturned={() => {
+          // Вещь ушла в материал: чистим экран и обновляем счётчик очереди,
+          // как после обычного завершения.
+          setItem(null);
+          setNote('');
+          setDoneCount((n) => n + 1);
+          loadCount();
+          focusInput();
+        }}
       />
 
       <Dialog open={bagAsk} onOpenChange={(v) => !v && setBagAsk(false)}>
@@ -322,75 +316,58 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
               </div>
             )}
 
-            {/* Что с вещью — кнопками: на сенсорном киоске текст не набрать.
-                Можно отметить несколько дефектов сразу (дырка + пятно), повторное
-                нажатие снимает отметку. */}
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium">Что с вещью (обязательно при списании)</p>
-              <div className="grid grid-cols-2 gap-2">
-                {defects.map((label) => {
-                  const chosen = note.split(', ').filter(Boolean);
-                  const active = chosen.includes(label);
-                  return (
-                    <Button
-                      key={label}
-                      type="button"
-                      variant={active ? 'default' : 'outline'}
-                      className="h-14 text-base"
-                      onClick={() =>
-                        setNote(
-                          (active ? chosen.filter((c) => c !== label) : [...chosen, label]).join(
-                            ', ',
-                          ),
-                        )
-                      }
-                    >
-                      {active && <Icon name="Check" size={18} className="mr-1.5" />}
-                      {label}
-                    </Button>
-                  );
-                })}
-              </div>
-            </div>
+            {/* ТРИ РЕШЕНИЯ — и всё. Раньше здесь сверху висели восемь кнопок с
+                причинами брака («дырка», «затяжка», «пятно»...), и упаковщица
+                сначала разбиралась с ними, а уже потом нажимала действие. На
+                потоке это лишний шаг: причину всё равно смотрит администратор,
+                когда вещь доходит до него со стикером.
 
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                Кнопки одного размера и в один ряд: у каждой вещи ровно один
+                исход, и выбор должен читаться с одного взгляда. */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <Button
                 size="lg"
-                className="h-16 bg-emerald-600 text-lg text-white hover:bg-emerald-700"
+                className="h-24 bg-emerald-600 text-lg text-white hover:bg-emerald-700"
                 onClick={() => setBagAsk(true)}
                 disabled={processing}
               >
-                <Icon
-                  name={processing ? 'Loader2' : 'Check'}
-                  size={24}
-                  className={`mr-2 ${processing ? 'animate-spin' : ''}`}
-                />
-                Переупаковано — печать стикера
+                <div className="flex flex-col items-center gap-1">
+                  <Icon
+                    name={processing ? 'Loader2' : 'Check'}
+                    size={30}
+                    className={processing ? 'animate-spin' : ''}
+                  />
+                  <span>Перепаковка</span>
+                </div>
               </Button>
               <Button
                 size="lg"
                 variant="outline"
-                className="h-16 text-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
+                className="h-24 border-2 border-destructive/40 text-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
                 onClick={() => handleFinish('utilized')}
                 disabled={processing}
               >
-                <Icon name="Trash2" size={24} className="mr-2" />
-                Брак — печать стикера
+                <div className="flex flex-col items-center gap-1">
+                  <Icon name="Trash2" size={30} />
+                  <span>Брак</span>
+                </div>
+              </Button>
+              {/* Перекроила материал и остался годный кусок — вместо утилизации
+                  возвращаем его на рулон. Вещь при этом уходит с перепаковки:
+                  товара больше нет, есть метры на рулоне. */}
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-24 border-2 border-violet-300 text-lg text-violet-700 hover:bg-violet-50 hover:text-violet-800"
+                onClick={() => setRollReturnOpen(true)}
+                disabled={processing}
+              >
+                <div className="flex flex-col items-center gap-1">
+                  <Icon name="Undo2" size={30} />
+                  <span>Добавить в рулон</span>
+                </div>
               </Button>
             </div>
-
-            {/* Перекроила материал и остался годный кусок — вместо утилизации
-                возвращаем его на рулон. Метраж пойдёт отдельной строкой и на
-                штрафы за недостачу не повлияет. */}
-            <Button
-              variant="outline"
-              className="h-14 w-full border-violet-300 text-base text-violet-700 hover:bg-violet-50 hover:text-violet-800"
-              onClick={() => setRollReturnOpen(true)}
-              disabled={processing}
-            >
-              <Icon name="Undo2" size={20} className="mr-2" />
-              Вернуть материал на рулон
-            </Button>
 
             {/* Ошиблась вещью — можно вернуть экран к сканеру, ничего не закрывая. */}
             <Button

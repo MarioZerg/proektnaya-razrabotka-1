@@ -17,6 +17,14 @@ interface KioskReturnToRollDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Вещь, из-за перекроя которой остался кусок, — для следа в истории рулона. */
   goodsWarehouseId?: number;
+  /**
+   * Материал лёг на рулон — вещи как товара больше нет.
+   *
+   * Экран перепаковки обязан её отпустить: иначе упаковщица видит перед собой
+   * карточку уже разобранной вещи и жмёт по ней «Перепаковка» или второй раз
+   * «Добавить в рулон».
+   */
+  onReturned?: () => void;
 }
 
 interface SuitableRoll {
@@ -51,6 +59,7 @@ const KioskReturnToRollDialog = ({
   open,
   onOpenChange,
   goodsWarehouseId,
+  onReturned,
 }: KioskReturnToRollDialogProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -102,9 +111,13 @@ const KioskReturnToRollDialog = ({
       });
       toast({
         title: `Вернули на рулон: ${res.added} ${res.unit || ''}`.trim(),
-        description: `${res.materialName || res.barcode} · на рулоне стало ${res.remainingQuantity}`,
+        description: `${res.materialName || res.barcode} · на рулоне стало ${res.remainingQuantity}. `
+          + 'Вещь снята с перепаковки',
       });
       onOpenChange(false);
+      // Вещь распустили в материал — отпускаем её с экрана, чтобы упаковщица
+      // сразу сканировала следующую и не могла нажать по ней ещё одно действие.
+      onReturned?.();
     } catch (e) {
       toast({
         title: 'Не удалось вернуть материал',

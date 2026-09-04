@@ -1394,6 +1394,14 @@ def handler(event: dict, context) -> dict:
                     )
                     other = cur.fetchone()
                     if other:
+                        # Вещь уже распустили в материал — говорим об этом прямо,
+                        # иначе упаковщица думает, что сканер сломался, и пикает
+                        # пустой пакет по второму кругу.
+                        if other[0] == 'returned_to_roll':
+                            return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                                {'error': 'Материал этой вещи уже вернули на рулон — '
+                                          'работа по ней закончена'},
+                                ensure_ascii=False)}
                         return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
                             {'error': 'Эта вещь не на перепаковке — её не переводили в цех. '
                                       'Сканируйте только вещи из тележки возвратов'},
@@ -1477,6 +1485,14 @@ def handler(event: dict, context) -> dict:
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Вещь не найдена'})}
+                if row[1] == 'returned_to_roll':
+                    # Вещь распустили в материал и вернули на рулон — товара
+                    # больше нет. Оплата за перепаковку тут не положена: она
+                    # начисляется только за годный товар, вернувшийся в продажу.
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Эта вещь уже возвращена на рулон материалом — '
+                                  'перепаковывать нечего'},
+                        ensure_ascii=False)}
                 if row[1] != 'repacking':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Эта вещь не на перепаковке'})}
 

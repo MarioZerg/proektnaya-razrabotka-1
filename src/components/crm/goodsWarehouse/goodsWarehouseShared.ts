@@ -56,6 +56,8 @@ export const statusLabels: Record<GoodsStatus, string> = {
   inspected: 'Осмотрено',
   taken: 'Забрано с производства',
   to_dispose: 'На утилизацию',
+  // Вещь распустили в материал: метры легли на рулон, товара больше нет.
+  returned_to_roll: 'Возвращено в рулон',
   in_stock: 'На хранении',
   // Вещь снята с полки и отстикерована — дальше её сканируют в поставку.
   picking: 'На сборке',
@@ -74,6 +76,7 @@ export const statusVariant: Record<GoodsStatus, 'secondary' | 'default' | 'outli
   inspected: 'default',
   taken: 'default',
   to_dispose: 'destructive',
+  returned_to_roll: 'outline',
   in_stock: 'secondary',
   picking: 'default',
   awaiting_supply: 'default',
@@ -129,6 +132,8 @@ export const statusZone: Record<GoodsStatus, WorkZone> = {
   taken: 'both',
   // Решение об утилизации принимает производство: вещь бракуют по состоянию.
   to_dispose: 'production',
+  // Материал вернулся в цех на рулон — это производственная сторона.
+  returned_to_roll: 'production',
   // Дальше всё складское: полка, сборка, поставка, отгрузка.
   in_stock: 'warehouse',
   picking: 'warehouse',

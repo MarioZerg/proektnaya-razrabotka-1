@@ -1519,6 +1519,40 @@ def handler(event: dict, context) -> dict:
                                                   f'материал можно только на рулоны своей смены'},
                                         ensure_ascii=False)}
 
+                # ВЕЩЬ УХОДИТ С ПЕРЕУПАКОВКИ — ЭТО КЛЮЧЕВОЙ ШАГ.
+                #
+                # Кусок ткани физически лёг на рулон, вещи как товара больше нет:
+                # её распустили на материал. Раньше статус не менялся, и вещь
+                # оставалась висеть на перепаковке. Последствия были такие:
+                #   1) метраж можно было вернуть повторно — тот же кусок ткани
+                #      добавлялся на рулон снова и снова, остаток рос из воздуха;
+                #   2) упаковщица потом нажимала «Переупаковано» на этой же вещи
+                #      и получала за неё оплату, хотя вещи уже не существовало.
+                #
+                # Проверяем статус ПЕРЕД тем, как трогать рулон: если вещь уже
+                # разобрали, метры не начисляем вовсе.
+                gw_return_id = None
+                if gw_id:
+                    cur.execute(
+                        "SELECT status, repack_return_id FROM goods_warehouse WHERE id = %s",
+                        (int(gw_id),),
+                    )
+                    gw_st = cur.fetchone()
+                    if gw_st:
+                        gw_return_id = gw_st[1]
+                    if gw_st and gw_st[0] == 'returned_to_roll':
+                        return {'statusCode': 409, 'headers': headers,
+                                'body': json.dumps(
+                                    {'error': 'Эта вещь уже возвращена на рулон — '
+                                              'повторно добавить материал нельзя'},
+                                    ensure_ascii=False)}
+                    if gw_st and gw_st[0] not in ('repacking', 'checking', 'mp_return'):
+                        return {'statusCode': 409, 'headers': headers,
+                                'body': json.dumps(
+                                    {'error': 'Эта вещь не на перепаковке — '
+                                              'вернуть её материал на рулон нельзя'},
+                                    ensure_ascii=False)}
+
                 cur.execute(
                     "UPDATE rolls SET remaining_quantity = remaining_quantity + %s, "
                     "packer_returned_quantity = COALESCE(packer_returned_quantity, 0) + %s "
@@ -1527,6 +1561,29 @@ def handler(event: dict, context) -> dict:
                     (qty, qty, int(roll_id)),
                 )
                 upd = cur.fetchone()
+
+                # Снимаем вещь с перепаковки. Полку и резерв обнуляем: вещи
+                # больше нет, она превратилась в метры на рулоне.
+                if gw_id:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'returned_to_roll', "
+                        "returned_to_roll_at = now(), returned_to_roll_id = %s, "
+                        "repack_return_id = NULL, repack_workshop_id = NULL, "
+                        "reserved_order_id = NULL, matched_at = NULL, shelf_id = NULL, "
+                        "inspected_at = now(), inspected_by = %s "
+                        "WHERE id = %s",
+                        (int(roll_id), int(actor_id) if actor_id else None, int(gw_id)),
+                    )
+                    # Возврат с маркетплейса закрыт: товар не вернулся в продажу,
+                    # а ушёл в материал. Номер возврата взят ВЫШЕ, до того как
+                    # ссылка на него обнулилась.
+                    if gw_return_id:
+                        cur.execute(
+                            "UPDATE marketplace_returns SET outcome = 'to_roll', "
+                            "outcome_at = now(), outcome_by = %s "
+                            "WHERE id = %s AND outcome IS NULL",
+                            (int(actor_id) if actor_id else None, int(gw_return_id)),
+                        )
 
                 cur.execute(
                     "INSERT INTO roll_packer_returns "
