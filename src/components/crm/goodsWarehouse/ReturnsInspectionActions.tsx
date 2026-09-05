@@ -1,4 +1,15 @@
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -45,6 +56,13 @@ const ReturnsInspectionActions = ({
   onClear,
   onClearSelection,
 }: ReturnsInspectionActionsProps) => {
+  // Отправка в цех — действие в один клик и на всю выделенную пачку сразу.
+  // Обратной кнопки у неё нет: вещи уезжают к упаковщицам, и вернуть их
+  // может только администратор. Один промах мышью — и три десятка возвратов
+  // уходят не туда (так и случилось 05.09: 30 вещей улетели в цех разом).
+  // Поэтому спрашиваем подтверждение и показываем ЧИСЛО вещей.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
   if (selected.length === 0) return null;
 
   return (
@@ -55,10 +73,32 @@ const ReturnsInspectionActions = ({
           вещей упаковщицам на осмотр — действие одинаковое для обоих этапов. */}
       {(stage === 'fromReturn' || stage === 'fromMarketplace') && (
         <>
-          <Button size="sm" onClick={onMoveToWorkshop} disabled={acting}>
+          <Button size="sm" onClick={() => setConfirmOpen(true)} disabled={acting}>
             <Icon name="Truck" size={16} className="mr-2" />
             Переместить в цех на осмотр
           </Button>
+
+          <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Передать в цех {selected.length}{' '}
+                  {selected.length === 1 ? 'вещь' : selected.length < 5 ? 'вещи' : 'вещей'}?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  Вещи уедут упаковщицам на осмотр и пропадут из вашего разбора
+                  возвратов. Вернуть их обратно сможет только администратор —
+                  проверьте, что выбрали именно то, что везёте в цех.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Отмена</AlertDialogCancel>
+                <AlertDialogAction onClick={onMoveToWorkshop}>
+                  Да, передать в цех
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           {/* Вещь вернулась в порядке — везти её к упаковщицам незачем. Раньше
               с разбора был один путь, через цех, и годная вещь делала лишний круг
               по производству. Полку выбирают тут же: вещь в руках, и второй заход
