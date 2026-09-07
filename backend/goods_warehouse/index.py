@@ -2651,6 +2651,31 @@ def handler(event: dict, context) -> dict:
                 if not reason:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите причину утилизации'})}
                 ids_csv = ','.join(str(int(i)) for i in ids)
+
+                # ОТМЕНА ПОСЛЕ СТИКЕРОВКИ В УТИЛЬ НЕ ИДЁТ.
+                #
+                # Это наша собственная вещь: её сшили, упаковали и заклеили ярлыком
+                # маркетплейса, и уже после этого покупатель отменил заказ. К нему она
+                # не уезжала, руками её никто не мял — брака тут взяться неоткуда.
+                # У такой вещи один путь: полка со стикером хранения, откуда её
+                # подберут под следующий заказ. Списать её в утиль — просто выбросить
+                # новый товар.
+                cur.execute(
+                    f"SELECT COUNT(*) FROM goods_warehouse "
+                    f"WHERE id IN ({ids_csv}) AND receive_reason = 'cancelled_labeled'"
+                )
+                cancelled_labeled_count = int(cur.fetchone()[0] or 0)
+                if cancelled_labeled_count:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Отмена после стикеровки в цехе ({cancelled_labeled_count} шт.) '
+                                     f'на утилизацию не отправляется — вещь новая, к покупателю '
+                                     f'не уезжала. Положите её на полку со стикером хранения'
+                        }, ensure_ascii=False),
+                    }
+
                 reason_esc = reason.replace("'", "''")
                 cur.execute(
                     f"UPDATE goods_warehouse SET status = 'to_dispose', "

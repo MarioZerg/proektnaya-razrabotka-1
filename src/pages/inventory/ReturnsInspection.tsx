@@ -38,6 +38,7 @@ const ReturnsInspection = () => {
     setSearch,
     isAdmin,
     visible,
+    cancelledLabeledCount,
     toggle,
     toggleAll,
     handleMoveToWorkshop,
@@ -93,6 +94,7 @@ const ReturnsInspection = () => {
           onDispose={handleDispose}
           onClear={handleClear}
           onClearSelection={() => setSelected([])}
+          cancelledLabeledCount={cancelledLabeledCount}
         />
 
         {stage === 'atPackers' && !isAdmin && (

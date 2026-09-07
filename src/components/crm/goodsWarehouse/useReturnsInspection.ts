@@ -101,6 +101,17 @@ export const useReturnsInspection = () => {
   const toggleAll = () =>
     setSelected((prev) => (prev.length === visible.length ? [] : visible.map((i) => i.id)));
 
+  /**
+   * Сколько среди выбранных — отмена после стикеровки в цехе.
+   *
+   * Такая вещь новая: её сшили, упаковали и заклеили ярлыком, и уже потом покупатель
+   * отменил заказ. К нему она не уезжала, поэтому в утиль не идёт — только на полку
+   * со стикером хранения. По этому числу прячем кнопку утилизации.
+   */
+  const cancelledLabeledCount = items.filter(
+    (i) => selected.includes(i.id) && i.receiveReason === 'cancelled_labeled',
+  ).length;
+
   const handleMoveToWorkshop = async () => {
     setActing(true);
     try {
@@ -228,6 +239,7 @@ export const useReturnsInspection = () => {
     setSearch,
     isAdmin,
     visible,
+    cancelledLabeledCount,
     toggle,
     toggleAll,
     handleMoveToWorkshop,

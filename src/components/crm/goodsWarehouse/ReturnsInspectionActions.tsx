@@ -37,6 +37,9 @@ interface ReturnsInspectionActionsProps {
   onDispose: () => void;
   onClear: () => void;
   onClearSelection: () => void;
+  /** Сколько среди выбранных вещей — отмена после стикеровки в цехе. Такие идут
+   * только на полку, утилизация для них недоступна. */
+  cancelledLabeledCount?: number;
 }
 
 /** Действия по выбранным вещам — свои для каждого этапа. */
@@ -55,6 +58,7 @@ const ReturnsInspectionActions = ({
   onDispose,
   onClear,
   onClearSelection,
+  cancelledLabeledCount = 0,
 }: ReturnsInspectionActionsProps) => {
   // Отправка в цех — действие в один клик и на всю выделенную пачку сразу.
   // Обратной кнопки у неё нет: вещи уезжают к упаковщицам, и вернуть их
@@ -159,25 +163,44 @@ const ReturnsInspectionActions = ({
           на терминале), а окончательно списывает администратор. Раньше кнопка
           стояла на всех этапах, и вещь можно было отправить в утиль со склада
           мимо осмотра — никто потом не мог сказать, кто и почему её забраковал. */}
-      {stage !== 'disposed' && stage !== 'toDispose' && isAdmin && (
-        <>
-          <Input
-            value={disposeReason}
-            onChange={(e) => onDisposeReasonChange(e.target.value)}
-            placeholder="Причина утилизации"
-            className="h-9 w-56"
-          />
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={onDispose}
-            disabled={acting}
-          >
-            <Icon name="TriangleAlert" size={16} className="mr-2" />
-            На утилизацию
-          </Button>
-        </>
-      )}
+      {/* ОТМЕНА ПОСЛЕ СТИКЕРОВКИ В ЦЕХЕ — утилизации у неё нет.
+          Вещь сшили, упаковали и заклеили ярлыком, и только потом покупатель отменил
+          заказ. К нему она не уезжала, брака взяться неоткуда — путь один: полка со
+          стикером хранения, откуда её подберут под следующий заказ. Кнопку не просто
+          гасим, а убираем совсем: серая кнопка заставляет гадать, почему не работает. */}
+      {stage !== 'disposed' &&
+        stage !== 'toDispose' &&
+        isAdmin &&
+        cancelledLabeledCount === 0 && (
+          <>
+            <Input
+              value={disposeReason}
+              onChange={(e) => onDisposeReasonChange(e.target.value)}
+              placeholder="Причина утилизации"
+              className="h-9 w-56"
+            />
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={onDispose}
+              disabled={acting}
+            >
+              <Icon name="TriangleAlert" size={16} className="mr-2" />
+              На утилизацию
+            </Button>
+          </>
+        )}
+
+      {stage !== 'disposed' &&
+        stage !== 'toDispose' &&
+        isAdmin &&
+        cancelledLabeledCount > 0 && (
+          <span className="text-sm text-sky-700">
+            {cancelledLabeledCount === selected.length
+              ? 'Отмена после стикеровки — только на полку со стикером хранения'
+              : `Среди выбранных ${cancelledLabeledCount} шт. отменённых после стикеровки — они идут только на полку`}
+          </span>
+        )}
 
       {stage === 'toDispose' && isAdmin && (
         <Button size="sm" variant="destructive" onClick={onClear} disabled={acting}>
