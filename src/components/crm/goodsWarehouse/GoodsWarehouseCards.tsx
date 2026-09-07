@@ -40,6 +40,11 @@ const GoodsWarehouseCards = ({
   // Печать наклеек из списка — только старшему кладовщику: см. пояснение в таблице.
   // Обычный кладовщик печатает стикер тогда, когда держит вещь в руках, — на сборке.
   const canPrintStickers = user?.role === 'senior_storekeeper' || user?.role === 'admin';
+  // Вещь НА ХРАНЕНИИ печатает любой кладовщик: она никуда не едет, ярлыка
+  // маркетплейса на ней нет, перепутать нечего. А без наклейки (затёрлась,
+  // отклеилась) вещь не отсканировать в подбор — работа встаёт.
+  const canPrintShelfSticker = (item: GoodsWarehouseItem) =>
+    canPrintStickers || item.status === 'in_stock';
   // Ярлык отправления — любому кладовщику: это перепечатка того же кода, когда
   // порвался пакет и вещь перекладывают в новый.
   const canPrintMpLabels = getAccessZone(user?.role) === 'warehouse' || user?.role === 'admin';
@@ -75,7 +80,7 @@ const GoodsWarehouseCards = ({
               <Badge variant={statusVariant[i.status]}>{statusLabels[i.status]}</Badge>
             </div>
 
-            {canPrintStickers && canPrintStorageSticker(i) ? (
+            {canPrintShelfSticker(i) && canPrintStorageSticker(i) ? (
               <button
                 type="button"
                 onClick={() =>

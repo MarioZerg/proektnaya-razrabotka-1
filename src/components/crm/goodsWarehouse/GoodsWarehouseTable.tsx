@@ -94,6 +94,19 @@ const GoodsWarehouseTable = ({
   const canPrintStickers = user?.role === 'senior_storekeeper' || user?.role === 'admin';
 
   /**
+   * Стикер вещи НА ХРАНЕНИИ печатает любой кладовщик.
+   *
+   * Опасение выше — про печать «вслепую» — на такую вещь не распространяется:
+   * она никуда не едет, ярлыка маркетплейса на ней нет, и перепутать нечего.
+   * Наклейка на полке затирается и отклеивается, а без неё вещь нельзя
+   * отсканировать в подбор — кладовщик упирается в тупик и ждёт старшего.
+   *
+   * Печать здесь ничего не меняет в системе: тот же номер, что и был.
+   */
+  const canPrintShelfSticker = (item: GoodsWarehouseItem) =>
+    canPrintStickers || item.status === 'in_stock';
+
+  /**
    * Ярлык отправления печатает ЛЮБОЙ кладовщик, а не только старший.
    *
    * Это не печать «вслепую», как со стикером хранения: ярлык намертво привязан к
@@ -332,7 +345,7 @@ const GoodsWarehouseTable = ({
                 <TableCell>
                   <div className="flex items-center gap-1.5">
                     <span className="font-mono-tech text-xs">{i.storageBarcode}</span>
-                    {canPrintStickers && canPrintStorageSticker(i) && (
+                    {canPrintShelfSticker(i) && canPrintStorageSticker(i) && (
                     <Button
                       variant="ghost"
                       size="icon"
