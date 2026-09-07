@@ -1251,6 +1251,47 @@ def handler(event: dict, context) -> dict:
                     f"   OR (entity_type = 'order' AND entity_id IN ({ids_csv})) "
                     "ORDER BY created_at DESC LIMIT 100"
                 )
+                log_rows = cur.fetchall()
+
+                # ЭТАПЫ КОНВЕЙЕРА БЕРЁМ ИЗ САМОГО ЗАКАЗА, А НЕ ИЗ ЖУРНАЛА.
+                #
+                # Когда вещь раскроили, сшили и упаковали — записано прямо в
+                # заказе (cut_at, taken_at, sewn_at, packed_at) вместе с тем, кто
+                # это сделал. Журнал те же события лишь дублировал строками, и
+                # они копились десятками тысяч, нагружая базу без пользы.
+                #
+                # Теперь история читается из первоисточника: она никуда не
+                # денется, даже когда старые записи журнала подчистятся.
+                cur.execute(
+                    "SELECT o.order_number, o.cut_at, cu.full_name, "
+                    "       o.taken_at, o.sewn_at, sw.full_name, "
+                    "       o.packed_at, pk.full_name "
+                    "FROM orders o "
+                    "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+                    "LEFT JOIN users sw ON sw.id = o.sewer_user_id "
+                    "LEFT JOIN users pk ON pk.id = o.packer_user_id "
+                    f"WHERE o.id IN ({ids_csv})"
+                )
+                stage_events = []
+                for st in cur.fetchall():
+                    num = st[0]
+                    for when, who, text in (
+                        (st[1], st[2], 'Раскроен'),
+                        (st[3], None, 'Взят в пошив'),
+                        (st[4], st[5], 'Отшит'),
+                        (st[6], st[7], 'Упакован'),
+                    ):
+                        if when:
+                            stage_events.append({
+                                'userName': who,
+                                'action': 'stage',
+                                'description': f'{text} — заказ {num}' if num else text,
+                                'createdAt': when.isoformat() + 'Z',
+                            })
+
+                # Строки конвейера из журнала отбрасываем: те же события уже
+                # собраны выше из полей заказа, иначе они задвоятся в истории.
+                stage_actions = ('take_order', 'cut', 'send_to_stickering', 'close_order')
                 history = [
                     {
                         'userName': h[0],
@@ -1258,8 +1299,11 @@ def handler(event: dict, context) -> dict:
                         'description': h[2],
                         'createdAt': (h[3].isoformat() + 'Z') if h[3] else None,
                     }
-                    for h in cur.fetchall()
+                    for h in log_rows if h[1] not in stage_actions
                 ]
+                history += stage_events
+                # Самое свежее сверху — как и было.
+                history.sort(key=lambda x: x['createdAt'] or '', reverse=True)
 
                 return {
                     'statusCode': 200,
