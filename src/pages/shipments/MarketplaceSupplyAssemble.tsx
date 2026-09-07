@@ -169,12 +169,40 @@ const MarketplaceSupplyAssemble = () => {
 
   const handleAddOrderToBox = async (boxId: number, orderNumber: string) => {
     try {
-      await addOrderToBox(boxId, orderNumber);
+      const res = await addOrderToBox(boxId, orderNumber);
       playScanSound();
       toast({ title: `Заказ ${orderNumber} добавлен в короб` });
-      // Молча: без подмены экрана «Загрузка…» — кладовщик сканирует дальше,
-      // пока список обновляется сам.
-      load(true);
+
+      // СТРОКУ ДОРИСОВЫВАЕМ САМИ, БЕЗ ПЕРЕЗАПРОСА ПОСТАВКИ.
+      //
+      // Даже «тихая» перезагрузка тянула всю поставку целиком после каждого пика:
+      // на большой поставке это секунды, за которые кладовщик успевает отсканировать
+      // ещё пару вещей. Теперь сервер возвращает готовую строку — кладём её в нужный
+      // короб, и картинка на экране совпадает с реальностью мгновенно.
+      if (res.item) {
+        const added = res.item;
+        setSupply((prev) => {
+          if (!prev) return prev;
+          // Защита от гонки: тот же товар мог прилететь дважды (двойной пик сканера).
+          if (
+            prev.boxes.some((b) =>
+              b.items.some((i) => i.goodsWarehouseId === added.goodsWarehouseId),
+            )
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            boxes: prev.boxes.map((b) =>
+              b.id === boxId ? { ...b, items: [...b.items, added] } : b,
+            ),
+          };
+        });
+      } else {
+        // Сервер не прислал строку (нештатный случай) — падаем на прежнее
+        // поведение, чтобы короба не разошлись с реальностью.
+        load(true);
+      }
       if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
     } catch (e) {
       // ЗАКАЗ ОТМЕНЁН покупателем. Отдельный звук и отдельное окно: вещь едет не в

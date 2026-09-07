@@ -1,6 +1,6 @@
 import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { SupplyDetail, SupplyStatus } from '@/lib/marketplaceSuppliesApi';
+import type { SupplyDetail, SupplyStatus, WbSupplyOrder } from '@/lib/marketplaceSuppliesApi';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import type { MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFboApplicationCard';
@@ -68,6 +68,7 @@ interface SupplyShowContentProps {
       rows: { marketplaceItemId: number; quantity: number }[],
     ) => Promise<void>;
     handleScanOrder: () => void;
+    handleWbScanned: (order: WbSupplyOrder, supplyStatus?: string) => void;
     handleRemoveItem: (itemId: number) => void;
     handleSaveFields: () => void;
     handleMoveStatus: () => void;
@@ -180,7 +181,12 @@ const SupplyShowContent = ({
       />
 
       {flags.isWbFbs ? (
-        <WbFbsSupplyCard supply={supply} supplyId={supplyId} onReload={load} />
+        <WbFbsSupplyCard
+          supply={supply}
+          supplyId={supplyId}
+          onReload={load}
+          onScanned={actions.handleWbScanned}
+        />
       ) : (
         <SupplyItemsSection
           supply={supply}

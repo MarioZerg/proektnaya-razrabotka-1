@@ -452,6 +452,8 @@ export interface AddOrderToBoxResult {
   success: true;
   itemId: number;
   goodsWarehouseId: number;
+  /** Готовая строка короба — дорисовывается без перезагрузки страницы. */
+  item?: SupplyItem | null;
 }
 
 /** Кладёт товар в короб поставки по ШТРИХКОДУ ХРАНЕНИЯ (GW-XXXXXX). Параметр называется

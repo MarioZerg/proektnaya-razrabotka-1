@@ -1199,10 +1199,70 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             ozon_assembled = ensure_ozon_assembled(cur, goods_id)
 
             conn.commit()
+
+            # ВОЗВРАЩАЕМ ГОТОВУЮ СТРОКУ КОРОБА — чтобы фронт дорисовал её сам.
+            #
+            # Раньше после каждого пика заново тянулась вся поставка со всеми коробами
+            # и их составом. Кладовщик сканирует быстрее, чем это грузится: коробы
+            # перерисовывались целиком, место в прокрутке терялось.
+            #
+            # Поля — те же, что в списке items у get_detail, иначе новая строка
+            # отличалась бы от соседних (пустой размер, нет фамилии стикеровщика).
+            cur.execute(
+                "SELECT msi.id, msi.goods_warehouse_id, "
+                "COALESCE(ro.order_number, o.order_number), "
+                "COALESCE(ro.product, o.product), COALESCE(ro.material, o.material), "
+                "COALESCE(ro.width, o.width), COALESCE(ro.height, o.height), "
+                "gw.status, gw.shipped_at, msi.box_id, "
+                "COALESCE(ro.group_key, o.group_key), "
+                "COALESCE(ro.group_size, o.group_size), "
+                "COALESCE(ro.group_position, o.group_position), "
+                "COALESCE(ro.status, o.status), "
+                "COALESCE(ro.ozon_status, o.ozon_status), "
+                "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id, "
+                "COALESCE(ro.marketplace, o.marketplace), gw.shipping_labeled_by_name "
+                "FROM marketplace_supply_items msi "
+                "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+                "LEFT JOIN orders o ON o.id = gw.order_id "
+                "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                "WHERE msi.id = %s",
+                (item_id,),
+            )
+            nr = cur.fetchone()
+            new_item = None
+            if nr:
+                new_item = {
+                    'id': nr[0],
+                    'goodsWarehouseId': nr[1],
+                    'orderNumber': nr[2],
+                    'product': nr[3],
+                    'material': nr[4],
+                    'width': nr[5],
+                    'height': nr[6],
+                    'goodsStatus': nr[7],
+                    'shippedAt': (nr[8].isoformat() + 'Z') if nr[8] else None,
+                    'boxId': nr[9],
+                    'groupKey': nr[10],
+                    'groupSize': nr[11],
+                    'groupPosition': nr[12],
+                    'isCancelled': (
+                        nr[13] == 'Отменён'
+                        or 'cancel' in (nr[14] or '').lower()
+                        or 'cancel' in (nr[15] or '').lower()
+                    ),
+                    'storageBarcode': nr[16],
+                    'shelfId': nr[17],
+                    'marketplace': nr[18],
+                    'mpStatus': nr[14] or nr[15],
+                    'labeledByName': nr[19],
+                }
+
             return {'statusCode': 200, 'headers': headers,
                     'body': json.dumps({'success': True, 'itemId': item_id,
                                         'goodsWarehouseId': goods_id,
-                                        'ozonAssembled': ozon_assembled}, ensure_ascii=False)}
+                                        'ozonAssembled': ozon_assembled,
+                                        # Готовая строка для дорисовки в короб.
+                                        'item': new_item}, ensure_ascii=False)}
 
         if action == 'remove_box_item':
             item_id = body_data.get('itemId')

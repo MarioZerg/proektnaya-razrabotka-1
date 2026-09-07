@@ -422,7 +422,60 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
     if s_status == 'Открытая':
         cur.execute("UPDATE marketplace_supplies SET status = 'На сборке' WHERE id = %s", (int(supply_id),))
     conn.commit()
-    return _resp(200, {'success': True, 'orderId': order_id, 'orderNumber': order_number, 'product': product})
+
+    # ВОЗВРАЩАЕМ ГОТОВУЮ СТРОКУ ТАБЛИЦЫ — как это уже сделано у OZON FBS.
+    #
+    # Раньше после каждого скана фронт перезагружал ВСЮ карточку поставки: заказы,
+    # список ожидающих, стикеры коробов, сверку с WB. На большой поставке это
+    # секунды ожидания и полная перерисовка таблицы после каждого пика — кладовщик
+    # пикает быстрее, чем страница успевает обновиться, список прыгает под руками,
+    # а место в прокрутке теряется.
+    #
+    # Теперь отдаём ровно ту строку, которую нужно дорисовать. Поля — те же, что в
+    # списке wbOrders у get_detail, иначе новая строка отличалась бы от соседних
+    # (пустой размер, нет фамилии стикеровщика).
+    cur.execute(
+        "SELECT wso.id, wso.order_id, o.order_number, o.product, "
+        "wso.wb_trbx_id, wso.sticker_url, wso.sticker_name, wso.scanned_at, "
+        "COALESCE(o.status, ''), o.material, o.width, o.height, "
+        "gw.shipping_labeled_by_name "
+        "FROM wb_supply_orders wso JOIN orders o ON o.id = wso.order_id "
+        "LEFT JOIN goods_warehouse gw ON gw.reserved_order_id = o.id "
+        "     AND gw.shipped_at IS NULL "
+        "WHERE wso.supply_id = %s AND wso.order_id = %s "
+        "ORDER BY wso.id DESC LIMIT 1",
+        (int(supply_id), order_id),
+    )
+    nr = cur.fetchone()
+    new_order = None
+    if nr:
+        new_order = {
+            'id': nr[0],
+            'orderId': nr[1],
+            'orderNumber': nr[2],
+            'product': nr[3],
+            'wbTrbxId': nr[4],
+            'stickerUrl': nr[5],
+            'stickerName': nr[6],
+            'scannedAt': (nr[7].isoformat() + 'Z') if nr[7] else None,
+            'isCancelled': nr[8] == 'Отменён',
+            'material': nr[9],
+            'width': nr[10],
+            'height': nr[11],
+            'labeledByName': nr[12],
+        }
+
+    return _resp(200, {
+        'success': True,
+        'orderId': order_id,
+        'orderNumber': order_number,
+        'product': product,
+        # Готовая строка для дорисовки в таблице без перезагрузки карточки.
+        'order': new_order,
+        # Первый скан меняет статус поставки — фронт обновляет его у себя,
+        # иначе кнопка «передать в доставку» осталась бы недоступной до перезагрузки.
+        'supplyStatus': 'На сборке' if s_status == 'Открытая' else s_status,
+    })
 
 
 def _cleanup_empty_accumulator(cur, supply_id):

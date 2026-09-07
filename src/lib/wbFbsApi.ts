@@ -1,3 +1,5 @@
+import type { WbSupplyOrder } from '@/lib/marketplaceSuppliesApi';
+
 const WB_FBS_URL = 'https://functions.poehali.dev/142096e2-0171-412b-b6df-1631cb52574a';
 
 export interface WbUnmatchedOrder {
@@ -46,15 +48,22 @@ export interface WbCreateSupplyResult {
 export const createWbSupply = (supplyId: number): Promise<WbCreateSupplyResult> =>
   post({ action: 'create_supply', supplyId }) as Promise<WbCreateSupplyResult>;
 
+export interface WbScanResult {
+  success: true;
+  orderId: number;
+  orderNumber: string;
+  product: string;
+  /** Готовая строка таблицы — дорисовывается без перезагрузки карточки. */
+  order: WbSupplyOrder | null;
+  /** Статус поставки после скана: первый скан переводит её в «На сборке». */
+  supplyStatus?: string;
+}
+
 export const scanWbOrderToSupply = (
   supplyId: number,
   orderNumber: string
-): Promise<{ success: true; orderNumber: string; product: string }> =>
-  post({ action: 'scan_order_to_supply', supplyId, orderNumber }) as Promise<{
-    success: true;
-    orderNumber: string;
-    product: string;
-  }>;
+): Promise<WbScanResult> =>
+  post({ action: 'scan_order_to_supply', supplyId, orderNumber }) as Promise<WbScanResult>;
 
 export const removeWbOrderFromSupply = (
   supplyId: number,

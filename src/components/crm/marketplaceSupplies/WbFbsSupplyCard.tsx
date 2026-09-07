@@ -17,7 +17,7 @@ import { printLabelFromUrl } from '@/lib/printMarketplaceLabel';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
-import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
+import type { SupplyDetail, WbSupplyOrder } from '@/lib/marketplaceSuppliesApi';
 import {
   createWbSupply,
   scanWbOrderToSupply,
@@ -30,12 +30,14 @@ interface WbFbsSupplyCardProps {
   supply: SupplyDetail;
   supplyId: number;
   onReload: () => void;
+  /** Дорисовать отсканированный заказ в таблицу без перезагрузки карточки. */
+  onScanned: (order: WbSupplyOrder, supplyStatus?: string) => void;
 }
 
 /** Карточка сборки WB FBS-поставки: создание поставки на стороне WildBerries, сканирование
  * готовых заказов в поставку (со счётчиками готово/отсканировано), передача в доставку и
  * отображение стикеров коробов, которые WB возвращает при закрытии. */
-const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) => {
+const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyCardProps) => {
   const { toast } = useToast();
   const [creatingSupply, setCreatingSupply] = useState(false);
   const [scanValue, setScanValue] = useState('');
@@ -144,10 +146,27 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
     setScanValue('');
     setScanning(true);
     try {
-      await scanWbOrderToSupply(supplyId, orderNumber);
+      const res = await scanWbOrderToSupply(supplyId, orderNumber);
       playScanSound();
       toast({ title: `Заказ ${orderNumber} добавлен в поставку` });
-      onReload();
+
+      // СТРОКУ ДОРИСОВЫВАЕМ САМИ, БЕЗ ПЕРЕЗАГРУЗКИ КАРТОЧКИ.
+      //
+      // Раньше здесь стоял onReload(): после каждого пика заново тянулась вся
+      // поставка со списками и стикерами. Кладовщик сканирует быстрее, чем это
+      // грузится: таблица моргала, место в прокрутке терялось, а на большой
+      // поставке каждый скан стоил несколько секунд ожидания.
+      //
+      // Теперь сервер возвращает готовую строку — просто добавляем её в таблицу
+      // и убираем вещь из «ожидают сканирования». Ровно то, что сделала бы
+      // перезагрузка, но мгновенно и без единого лишнего запроса.
+      if (res.order) {
+        onScanned(res.order, res.supplyStatus);
+      } else {
+        // Сервер не прислал строку (нештатный случай) — падаем на прежнее
+        // поведение, чтобы таблица не разошлась с реальностью.
+        onReload();
+      }
     } catch (e) {
       playScanErrorSound();
       toast({ title: 'Ошибка сканирования', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });

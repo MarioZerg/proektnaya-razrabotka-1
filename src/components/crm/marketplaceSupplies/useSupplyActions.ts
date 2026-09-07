@@ -12,6 +12,7 @@ import {
   addSewingOrdersToSupply,
   supplyStatusFlow,
   type SupplyDetail,
+  type WbSupplyOrder,
 } from '@/lib/marketplaceSuppliesApi';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { importOzonFboComposition } from '@/lib/ozonFboApi';
@@ -157,9 +158,27 @@ export const useSupplyActions = ({
           if (prev.items.some((i) => i.goodsWarehouseId === added.goodsWarehouseId)) {
             return prev;
           }
+          // СВЯЗКИ ЯНДЕКСА обновляем тут же.
+          //
+          // Панель «Связки заказов» и жёлтая подсветка неполных связок считаются
+          // по этому списку. Без пересчёта связка после скана последней вещи так
+          // и оставалась «2 из 3» до обновления страницы — кладовщик думал, что
+          // чего-то не хватает, и заново перебирал уже собранный короб.
+          const groups = res.group
+            ? (prev.groups || []).map((g) =>
+                g.groupKey === res.group!.groupKey
+                  ? {
+                      ...g,
+                      inSupply: res.group!.inSupply,
+                      isComplete: res.group!.remaining === 0,
+                    }
+                  : g,
+              )
+            : prev.groups;
           return {
             ...prev,
             items: [...prev.items, added],
+            groups,
             awaitingItems: (prev.awaitingItems || []).filter(
               (a) => a.id !== added.goodsWarehouseId,
             ),
@@ -192,6 +211,31 @@ export const useSupplyActions = ({
       // после ререндера, и браузер молча проигнорирует вызов на задизейбленном инпуте.
       setTimeout(() => scanInputRef.current?.focus(), 0);
     }
+  };
+
+  /**
+   * WB FBS: заказ отсканирован — дорисовываем строку в таблицу без перезагрузки.
+   *
+   * То же, что и у OZON FBS выше: сервер возвращает готовую строку, мы добавляем
+   * её к отсканированным и убираем вещь из списка ожидающих. Перезагружать всю
+   * карточку после каждого пика нельзя — кладовщик сканирует быстрее.
+   */
+  const handleWbScanned = (order: WbSupplyOrder, supplyStatus?: string) => {
+    setSupply((prev) => {
+      if (!prev) return prev;
+      // Защита от гонки: тот же заказ мог прилететь дважды (двойной пик сканера).
+      if (prev.wbOrders.some((o) => o.orderId === order.orderId)) return prev;
+      return {
+        ...prev,
+        wbOrders: [...prev.wbOrders, order],
+        wbAwaitingItems: (prev.wbAwaitingItems || []).filter(
+          (a) => a.orderNumber !== order.orderNumber,
+        ),
+        // Первый скан переводит поставку в «На сборке» — иначе кнопка передачи
+        // в доставку оставалась бы недоступной до ручного обновления страницы.
+        status: (supplyStatus as SupplyDetail['status']) || prev.status,
+      };
+    });
   };
 
   const handleRemoveItem = async (itemId: number) => {
@@ -386,6 +430,7 @@ export const useSupplyActions = ({
     setCancelledScan,
     handleAddSewingOrders,
     handleScanOrder,
+    handleWbScanned,
     handleRemoveItem,
     handleSaveFields,
     handleMoveStatus,
