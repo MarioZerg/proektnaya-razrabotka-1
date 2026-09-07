@@ -149,7 +149,9 @@ const StorekeeperTasksWidget = () => {
       });
       return;
     }
-    if (!task.manual) return;
+    // Галочку можно поставить на ЛЮБОМ задании: бывает работа, которую
+    // физически не закончить сегодня (вещь не отгрузить, товара нет), а смену
+    // закрывать пора. Счётчик рядом остаётся честным — видно, что осталось.
     setBusyKey(task.key);
     try {
       const res = await toggleStorekeeperTask(user.id, task.key);
@@ -285,20 +287,21 @@ const StorekeeperTasksWidget = () => {
                         : 'border-border bg-muted/30'
               }`}
             >
-              {/* Галочка: у ручных заданий по ней жмут, у остальных она просто
-                  показывает состояние — работа закрывает их сама. */}
+              {/* Галочка нажимается на ЛЮБОМ задании: у большинства она встаёт
+                  сама, когда работа сделана, но закрыть пункт руками можно
+                  всегда — иначе недоделанное дело запирает смену. */}
               <button
                 type="button"
-                disabled={t.idle || (!t.manual && !isDemo) || busyKey === t.key}
+                disabled={t.idle || busyKey === t.key}
                 onClick={() => handleToggle(t)}
                 title={
                   t.idle
                     ? 'Сегодня такой работы не появлялось'
                     : isDemo
                       ? 'Демо: нажмите, чтобы посмотреть, как ставится галочка'
-                      : t.manual
-                        ? 'Отметить выполненным'
-                        : 'Галочка встанет сама, когда работа будет сделана'
+                      : t.done
+                        ? 'Снять отметку'
+                        : 'Отметить выполненным'
                 }
                 className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md border transition-colors ${
                   t.done
@@ -307,7 +310,7 @@ const StorekeeperTasksWidget = () => {
                       ? 'border-dashed border-muted-foreground/30 bg-transparent'
                       : 'border-muted-foreground/40 bg-background'
                 } ${
-                  !t.idle && (t.manual || isDemo)
+                  !t.idle
                     ? 'cursor-pointer hover:border-emerald-500'
                     : 'cursor-default'
                 }`}
@@ -334,6 +337,16 @@ const StorekeeperTasksWidget = () => {
                 <span className="block text-[11px] leading-snug text-muted-foreground">
                   {t.idle ? 'Сегодня такой работы не появлялось' : t.hint}
                 </span>
+
+                {/* Пункт закрыт галочкой, хотя работа осталась. Показываем
+                    остаток честно: смену это уже не держит, но дело не забыто
+                    и завтра посчитается заново. */}
+                {t.selfClosed && t.count > 0 && (
+                  <span className="mt-1 flex items-start gap-1 text-[10px] font-medium leading-snug text-sky-700">
+                    <Icon name="Hand" size={10} className="mt-[1px] shrink-0" />
+                    Закрыто вручную — осталось {t.count}
+                  </span>
+                )}
 
                 {/* Метка отсечки. До 15:00 — предупреждение «успей собрать»,
                     после — объяснение, почему на странице цифра больше, чем

@@ -240,6 +240,8 @@ export interface StorekeeperTask {
   /** Администратор закрыл задание за кладовщика — нештатная ситуация, работа
    *  физически ещё не сделана (count это отражает), но смену больше не держит. */
   adminClosed?: boolean;
+  /** Кладовщик закрыл пункт галочкой сам, хотя работа по счётчику осталась. */
+  selfClosed?: boolean;
 }
 
 export interface StorekeeperTasksResult {
