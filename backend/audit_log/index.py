@@ -86,10 +86,16 @@ def build_filters(params):
 
     log_where = ["1=1"]
     shift_where = ["1=1"]
+    # Этапы конвейера (раскрой, пошив, упаковка) берутся не из журнала, а из
+    # самого заказа — см. пояснение в fetch_events. Условия для них собираем
+    # отдельно: поля называются иначе, чем в audit_log.
+    order_where = ["1=1"]
 
     if user_id.isdigit():
         log_where.append(f"a.user_id = {int(user_id)}")
         shift_where.append(f"s.user_id = {int(user_id)}")
+        # У этапа свой исполнитель в своей колонке — она подставляется при сборке.
+        order_where.append(f"{{uid}} = {int(user_id)}")
 
     # ПРИ ПОИСКЕ ПЕРИОД НЕ ПРИМЕНЯЕТСЯ.
     #
@@ -104,6 +110,13 @@ def build_filters(params):
         if date_to:
             log_where.append(f"a.created_at <= '{esc(date_to)} 23:59:59'")
             shift_where.append(f"s.opened_at <= '{esc(date_to)} 23:59:59'")
+        # Для этапов заказа период применяем к КОЛОНКЕ ВРЕМЕНИ самого этапа —
+        # она подставляется в каждый запрос своя (o.cut_at, o.sewn_at и т.д.),
+        # поэтому здесь только шаблон, а колонка — ниже, при сборке.
+        if date_from:
+            order_where.append(f"{{col}} >= '{esc(date_from)} 00:00:00'")
+        if date_to:
+            order_where.append(f"{{col}} <= '{esc(date_to)} 23:59:59'")
 
     if search:
         s = esc(search)
@@ -128,8 +141,13 @@ def build_filters(params):
             f"                OR sgo.order_number ILIKE '%{s}%')))"
         )
         shift_where.append(f"u.full_name ILIKE '%{s}%'")
+        # По этапам ищем так же: номер заказа с маркетплейса и имя исполнителя.
+        order_where.append(
+            f"(o.order_number ILIKE '%{s}%' OR CAST(o.id AS TEXT) = '{s}' "
+            f" OR {{who}} ILIKE '%{s}%')"
+        )
 
-    return log_where, shift_where, stage
+    return log_where, shift_where, order_where, stage
 
 
 def fetch_events(cur, params):
@@ -140,7 +158,7 @@ def fetch_events(cur, params):
     смены превращается в два события — «открыл» и «закрыл». Так журнал показывает
     полную картину дня, не требуя переписывать существующий код смен.
     """
-    log_where, shift_where, stage = build_filters(params)
+    log_where, shift_where, order_where, stage = build_filters(params)
 
     limit = params.get('limit') or '100'
     offset = params.get('offset') or '0'
@@ -154,6 +172,28 @@ def fetch_events(cur, params):
     if stage and stage in STAGE_ACTIONS and stage != 'shifts':
         codes = "','".join(STAGE_ACTIONS[stage])
         stage_sql = f" AND a.action IN ('{codes}')"
+
+    # ЭТАПЫ КОНВЕЙЕРА СТРОЯТСЯ ИЗ ЗАКАЗА, А НЕ ИЗ ЖУРНАЛА.
+    #
+    # Когда заказ раскроили, взяли в пошив, отшили и упаковали — записано в самом
+    # заказе (cut_at, taken_at, sewn_at, packed_at) вместе с исполнителем. Журнал
+    # эти же события лишь дублировал: 26 тысяч строк за месяц, 60% всей таблицы.
+    # Теперь строки конвейера чистятся через 60 дней, а лента журнала собирает их
+    # из первоисточника — ровно так же, как уже делает со сменами.
+    #
+    # Благодаря этому журнал за любой прошлый период показывает раскрой и пошив
+    # даже после чистки: данные лежат в заказе и никуда не денутся.
+    ORDER_STAGES = (
+        ('cut', 'cutting', 'o.cut_at', 'o.cutter_user_id', 'Раскроил заказ'),
+        ('take_order', 'sewing', 'o.taken_at', 'o.sewer_user_id', 'Взял заказ в пошив'),
+        ('send_to_stickering', 'sewing', 'o.sewn_at', 'o.sewer_user_id',
+         'Отшил, отправил на стикеровку'),
+        ('close_order', 'stickering', 'o.packed_at', 'o.packer_user_id', 'Упаковал заказ'),
+    )
+    # Действия конвейера из журнала выбрасываем — иначе задвоятся со строками,
+    # собранными из заказа.
+    conveyor_codes = "','".join(s[0] for s in ORDER_STAGES)
+    log_where.append(f"a.action NOT IN ('{conveyor_codes}')")
 
     parts = []
     if include_log:
@@ -185,6 +225,29 @@ def fetch_events(cur, params):
             "LEFT JOIN users su ON su.id = ao.sewer_user_id "
             f"WHERE {' AND '.join(log_where)}{stage_sql}"
         )
+
+        # Этапы конвейера — по строке на каждую заполненную дату заказа.
+        for code, group, col, uid_col, title in ORDER_STAGES:
+            if stage and stage != group:
+                continue
+            where = [w.replace('{col}', col)
+                      .replace('{uid}', uid_col)
+                      .replace('{who}', 'COALESCE(su.full_name, \'\')')
+                     for w in order_where]
+            where.append(f"{col} IS NOT NULL")
+            where.append("COALESCE(o.status, '') <> 'Отменён'")
+            parts.append(
+                f"SELECT {col} AS at, {uid_col} AS user_id, "
+                "COALESCE(su.full_name, 'Система') AS who, "
+                f"'{code}' AS action, 'order' AS entity_type, o.id AS entity_id, "
+                f"'{title}' AS description, 'production' AS category, "
+                "o.workshop_id, NULL::text AS role, "
+                "o.order_number, o.marketplace, NULL::text AS storage_barcode "
+                "FROM orders o "
+                f"LEFT JOIN users su ON su.id = {uid_col} "
+                f"WHERE {' AND '.join(where)}"
+            )
+
     if include_shifts:
         parts.append(
             "SELECT s.opened_at AS at, s.user_id, u.full_name AS who, "
@@ -262,13 +325,7 @@ def fetch_summary(cur, params):
     Нужна, чтобы админ с первого взгляда видел объём работы за день: сколько
     раскроили, сколько отшили, сколько смен открыли, — не листая всю ленту.
     """
-    log_where, shift_where, _ = build_filters(params)
-
-    cur.execute(
-        "SELECT a.action, count(*) FROM audit_log a "
-        f"WHERE {' AND '.join(log_where)} GROUP BY a.action"
-    )
-    counts = {r[0]: r[1] for r in cur.fetchall()}
+    log_where, shift_where, order_where, _ = build_filters(params)
 
     cur.execute(
         "SELECT count(*), count(s.closed_at) FROM shift_sessions s "
@@ -277,13 +334,33 @@ def fetch_summary(cur, params):
     row = cur.fetchone()
     opened, closed = row[0], row[1]
 
+    # СЧИТАЕМ ПО ЗАКАЗАМ, А НЕ ПО ЖУРНАЛУ.
+    #
+    # Плитки «раскроено / отшито / упаковано» раньше считали строки audit_log.
+    # После чистки старых записей сводка за прошлый период показывала бы нули,
+    # хотя работа была сделана. Даты этапов лежат в самом заказе — по ним и
+    # считаем: цифры точные за любой период, хоть годовой давности.
+    def count_stage(col, uid_col):
+        where = [w.replace('{col}', col)
+                  .replace('{uid}', uid_col)
+                  .replace('{who}', "COALESCE(su.full_name, '')")
+                 for w in order_where]
+        where.append(f"{col} IS NOT NULL")
+        where.append("COALESCE(o.status, '') <> 'Отменён'")
+        cur.execute(
+            "SELECT count(*) FROM orders o "
+            f"LEFT JOIN users su ON su.id = {uid_col} "
+            f"WHERE {' AND '.join(where)}"
+        )
+        return cur.fetchone()[0]
+
     return {
         'shiftsOpened': opened,
         'shiftsClosed': closed,
-        'cut': counts.get('cut', 0),
-        'taken': counts.get('take_order', 0),
-        'sewn': counts.get('send_to_stickering', 0),
-        'packed': counts.get('close_order', 0),
+        'cut': count_stage('o.cut_at', 'o.cutter_user_id'),
+        'taken': count_stage('o.taken_at', 'o.sewer_user_id'),
+        'sewn': count_stage('o.sewn_at', 'o.sewer_user_id'),
+        'packed': count_stage('o.packed_at', 'o.packer_user_id'),
     }
 
 
@@ -338,10 +415,16 @@ def handler(event: dict, context) -> dict:
         if action == 'users':
             # Только те, кто реально что-то делал, — иначе в фильтре висят десятки
             # уволенных и никогда не работавших сотрудников.
+            # Исполнителей этапов берём и из самих заказов: строки конвейера в
+            # журнале живут 60 дней, и швея, работавшая раньше, пропала бы из
+            # фильтра — а её работа в ленте осталась бы (она строится из заказа).
             cur.execute(
                 "SELECT DISTINCT u.id, u.full_name FROM users u "
                 "WHERE EXISTS (SELECT 1 FROM audit_log a WHERE a.user_id = u.id) "
                 "   OR EXISTS (SELECT 1 FROM shift_sessions s WHERE s.user_id = u.id) "
+                "   OR EXISTS (SELECT 1 FROM orders o "
+                "              WHERE o.cutter_user_id = u.id OR o.sewer_user_id = u.id "
+                "                 OR o.packer_user_id = u.id) "
                 "ORDER BY u.full_name"
             )
             users = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
