@@ -16,7 +16,7 @@ import { useSewingItemOrderDetail } from '@/components/crm/sewingItems/useSewing
 import { useSewingItemsQueueActions } from '@/components/crm/sewingItems/useSewingItemsQueueActions';
 import { isStorekeeperRole } from '@/lib/roles';
 import NextStackHint from '@/components/crm/sewingItems/NextStackHint';
-import { type TabValue } from '@/components/crm/sewingItems/sewingItemsShared';
+import { formatWait, type TabValue } from '@/components/crm/sewingItems/sewingItemsShared';
 
 const SewingItems = () => {
   const {
@@ -130,6 +130,7 @@ const SewingItems = () => {
     takingStack,
     takingOrder,
     takeOrderCooldown,
+    takeWaitSec,
     lastTakenStack,
     handleTakeStack,
     handlePrintTask,
@@ -144,6 +145,7 @@ const SewingItems = () => {
     myUnfinishedCount,
     unfinishedOrders: myUnfinishedOrders,
     ordersLoading: loading,
+    isSewer,
   });
 
   return (
@@ -288,12 +290,25 @@ const SewingItems = () => {
                 )}
               </div>
             )}
+            {/* Кнопка сама показывает, сколько ещё ждать. Время реальное — приходит с
+                сервера по накопительному таймауту из настроек цеха швеи и тикает каждую
+                секунду. Без него швея жала кнопку вслепую и ловила отказы одним и тем же
+                тостом, не понимая, сколько ждать и почему. */}
             {isSewer && (
-              <Button onClick={handleTakeOrder} disabled={takingOrder || takeOrderCooldown} className="w-full sm:w-auto">
+              <Button
+                onClick={handleTakeOrder}
+                disabled={takingOrder || takeOrderCooldown}
+                className="w-full sm:w-auto"
+              >
                 {takingOrder ? (
                   <>
                     <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
                     Получаем заказ...
+                  </>
+                ) : takeWaitSec > 0 ? (
+                  <>
+                    <Icon name="Timer" size={16} className="mr-2" />
+                    Следующий заказ через {formatWait(takeWaitSec)}
                   </>
                 ) : (
                   <>
@@ -302,6 +317,13 @@ const SewingItems = () => {
                   </>
                 )}
               </Button>
+            )}
+
+            {isSewer && takeWaitSec > 0 && (
+              <p className="text-sm text-muted-foreground">
+                Перерыв между заказами задан настройками вашего цеха — кнопка откроется сама,
+                обновлять страницу не нужно.
+              </p>
             )}
 
             {isCutter && myUnfinishedCount > 0 && (

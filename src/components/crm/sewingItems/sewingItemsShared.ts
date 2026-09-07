@@ -80,4 +80,18 @@ export const shortFio = (fullName: string): string => {
   return initials ? `${last} ${initials}` : last;
 };
 
+/**
+ * Остаток ожидания следующего заказа в человеческом виде: до минуты — секунды,
+ * дальше — «мин:сек». Секунды из счётчика показываем всегда, а не округляем до
+ * минут: швея должна видеть, что время реально идёт, иначе застывшая «5 мин»
+ * читается как зависшая кнопка.
+ */
+export const formatWait = (totalSec: number): string => {
+  const sec = Math.max(0, Math.round(totalSec));
+  if (sec < 60) return `${sec} сек.`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+};
+
 export { formatDateTime as formatDate, timeAgo } from '@/lib/dateUtils';

@@ -41,6 +41,12 @@
       "expectedStatus": 409
     },
     {
+      "name": "Take cooldown for user without shift returns zero wait",
+      "method": "GET",
+      "path": "/?takeCooldown=1&userId=999999",
+      "expectedStatus": 200
+    },
+    {
       "name": "Cut without id fails",
       "method": "POST",
       "path": "/",

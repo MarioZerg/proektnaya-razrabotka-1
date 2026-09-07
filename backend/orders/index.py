@@ -1,6 +1,7 @@
 import json
 import os
 import random
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 
@@ -287,6 +288,65 @@ def nearest_timeout_width(width):
     return TIMEOUT_WIDTHS[-1]
 
 
+def take_order_cooldown(cur, user_id, workshop_id, session_opened_at):
+    """Сколько секунд швее ещё ждать до следующего заказа — ЕДИНЫЙ расчёт для всех мест.
+
+    Этот же расчёт отдаётся фронту для живого счётчика на кнопке «Получить новый заказ»,
+    чтобы швея видела реальное время из настроек ЕЁ цеха, а не гадала и не тыкала кнопку
+    вслепую. Раньше цифра жила только внутри текста ошибки — узнать её можно было лишь
+    нажав кнопку и получив отказ.
+
+    Правило накопительное: первые max_quantity_orders_without_timeout заказов за смену
+    берутся без задержки, каждый следующий добавляет к общему бюджету времени свой
+    timeout_{ширина} (в МИНУТАХ из настроек). Взять новый заказ можно, когда с момента
+    взятия ПЕРВОГО заказа смены прошло не меньше суммы этих таймаутов.
+
+    Возвращает (wait_sec, next_at_iso): сколько секунд осталось (0 — можно брать) и момент
+    разблокировки в ISO — по нему фронт тикает сам, не дёргая сервер каждую секунду.
+    """
+    if not session_opened_at:
+        return 0, None
+    without_timeout = get_setting_int(cur, workshop_id, 'max_quantity_orders_without_timeout', 0)
+    cur.execute(
+        "SELECT width, EXTRACT(EPOCH FROM (now() - taken_at))::float "
+        "FROM orders WHERE assigned_user_id = %s AND taken_at >= %s "
+        "ORDER BY taken_at ASC, id ASC",
+        (int(user_id), session_opened_at),
+    )
+    taken_rows = cur.fetchall()
+    if not taken_rows:
+        return 0, None
+    # Таймауты по порогам читаем разово: порогов пять, и они одни на всю смену, а
+    # заказов у швеи к вечеру полсотни — чтение внутри цикла клало функцию по времени.
+    timeout_by_bucket = {}
+    for row in taken_rows[without_timeout:]:
+        bucket = nearest_timeout_width(row[0])
+        if bucket and bucket not in timeout_by_bucket:
+            timeout_by_bucket[bucket] = get_setting_int(cur, workshop_id, f'timeout_{bucket}', 0)
+
+    required_budget = 0
+    for row in taken_rows[without_timeout:]:
+        bucket = nearest_timeout_width(row[0])
+        if bucket:
+            required_budget += timeout_by_bucket.get(bucket, 0) * 60
+
+    if required_budget <= 0:
+        return 0, None
+    elapsed_since_first = taken_rows[0][1]
+    wait_sec = int(round(required_budget - elapsed_since_first))
+    if wait_sec <= 0:
+        return 0, None
+    next_at = datetime.now(timezone.utc) + timedelta(seconds=wait_sec)
+    return wait_sec, next_at.isoformat()
+
+
+def format_wait(wait_sec):
+    """Человеческая запись остатка ожидания: до минуты — в секундах, дальше — мин. сек."""
+    if wait_sec < 60:
+        return f'{wait_sec} сек.'
+    return f'{wait_sec // 60} мин. {wait_sec % 60} сек.'
+
+
 # Сколько вещей связки раскраиваем за один вызов функции. Раскрой одной вещи — это десятки
 # запросов к базе, поэтому большую связку обрабатываем порциями, иначе упираемся в лимит
 # времени выполнения. Для закройщика это незаметно: фронтенд повторяет вызов автоматически.
@@ -304,6 +364,11 @@ def handler(event: dict, context) -> dict:
         есть в системе (в т.ч. пришедший ранее по API) — новый заказ не создаётся.
 
     GET  /                       - получить список заказов
+    GET  /?takeCooldown=1&userId=5 - сколько секунд швее ещё ждать до следующего заказа:
+                                    { waitSeconds, nextAt (ISO), shiftOpen }. Считается той же
+                                    функцией take_order_cooldown, что и проверка при взятии,
+                                    по настройкам цеха ТЕКУЩЕЙ открытой смены — фронт рисует
+                                    по этому живой обратный отсчёт на кнопке
     GET  /?id=1                  - получить детальную карточку заказа с расходом материалов;
                                     дополнительно возвращает requiredFabricMaterialId/Name и
                                     requiredTrimMaterialId/Name — конкретный материал тюля и тесьмы,
@@ -427,6 +492,40 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            # Сколько швее ждать до следующего заказа. Лёгкий запрос без побочных
+            # эффектов: фронт спрашивает его один раз и дальше тикает сам по nextAt.
+            # Швея видит живой обратный отсчёт вместо того, чтобы жать кнопку вслепую
+            # и ловить отказы — время реальное, из настроек ЕЁ цеха.
+            if params.get('takeCooldown') and params.get('userId'):
+                cooldown_user_id = int(params['userId'])
+                cur.execute(
+                    "SELECT workshop_id, opened_at FROM shift_sessions "
+                    "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+                    (cooldown_user_id,),
+                )
+                cd_session = cur.fetchone()
+                if not cd_session:
+                    # Смена не открыта — таймаута нет, брать всё равно нельзя, и об этом
+                    # честно скажет сам take_order при нажатии.
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'waitSeconds': 0, 'nextAt': None, 'shiftOpen': False}),
+                    }
+                cd_workshop_id, cd_opened_at = cd_session
+                cd_wait, cd_next_at = take_order_cooldown(
+                    cur, cooldown_user_id, cd_workshop_id, cd_opened_at
+                )
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'waitSeconds': cd_wait,
+                        'nextAt': cd_next_at,
+                        'shiftOpen': True,
+                    }),
+                }
 
             # Предпросмотр очереди для закройщика: что лежит следующим для его цеха.
             # Ничего не занимает и не меняет — просто заглядывает в очередь, чтобы
@@ -2228,68 +2327,23 @@ def handler(event: dict, context) -> dict:
                                 'body': json.dumps({'error': f'Лимит метража на смену исчерпан: {round(taken_meters, 2)}/{daily_limit} пог.м.'}),
                             }
 
-                    # НАКОПИТЕЛЬНЫЙ таймаут между взятием заказов. Настройки timeout_200..800
-                    # задаются в МИНУТАХ (в БД хранятся минуты, здесь переводим в секунды).
-                    # Первые max_quantity_orders_without_timeout заказов за смену швея берёт
-                    # без задержки — они НЕ входят в сумму. Каждый следующий заказ (сверх
-                    # лимита) добавляет к общему "бюджету времени" свой timeout_{bucket} по
-                    # ширине. Взять новый заказ можно, когда с момента взятия ПЕРВОГО заказа
-                    # за смену прошло не меньше накопленного бюджета. Пример: лимит 2, взяли 2
-                    # заказа мгновенно — бюджет 0. Берём 3-й (ширина 500, timeout 12 мин) —
-                    # бюджет 12 мин; 4-й станет доступен, когда с первого взятия пройдёт
-                    # столько, чтобы покрыть сумму таймаутов 3-го и 4-го. Задержки суммируются.
-                    without_timeout = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_without_timeout', 0)
-                    cur.execute(
-                        "SELECT width, taken_at, EXTRACT(EPOCH FROM (now() - taken_at))::float "
-                        "FROM orders WHERE assigned_user_id = %s AND taken_at >= %s "
-                        "ORDER BY taken_at ASC, id ASC",
-                        (int(user_id), session_opened_at),
+                    # НАКОПИТЕЛЬНЫЙ таймаут между взятием заказов — считается одной
+                    # общей функцией take_order_cooldown, той же самой, что отдаёт остаток
+                    # ожидания фронту для счётчика на кнопке. Расчёт обязан быть один: если
+                    # развести его на два места, счётчик у швеи и проверка на сервере
+                    # однажды разойдутся, и кнопка будет врать.
+                    wait_sec, _next_at = take_order_cooldown(
+                        cur, user_id, session_workshop_id, session_opened_at
                     )
-                    taken_rows = cur.fetchall()
-                    # Требуемый бюджет времени = сумма таймаутов заказов, взятых СВЕРХ лимита
-                    # (первые without_timeout заказов не считаются). Ширина каждого заказа
-                    # округляется до ближайшего порога timeout_200..800.
-                    #
-                    # ТАЙМАУТЫ ЧИТАЕМ ОДИН РАЗ, А НЕ НА КАЖДЫЙ ЗАКАЗ.
-                    #
-                    # Раньше get_setting_int стоял ВНУТРИ цикла, и каждый виток бил
-                    # в базу дважды (workshop_settings + system_settings). К концу
-                    # смены у швеи 40-50 взятых заказов — это под сотню лишних
-                    # запросов на одно нажатие «Взять заказ». Функция не
-                    # укладывалась в свои 5 секунд и падала с таймаутом: швея
-                    # видела ошибку и не могла взять работу.
-                    #
-                    # Порогов всего пять (200..800) и они одинаковы для всей смены,
-                    # поэтому достаточно прочитать их разово в словарь.
-                    timeout_by_bucket = {}
-                    for w in taken_rows[without_timeout:]:
-                        bucket = nearest_timeout_width(w[0])
-                        if bucket and bucket not in timeout_by_bucket:
-                            timeout_by_bucket[bucket] = get_setting_int(
-                                cur, session_workshop_id, f'timeout_{bucket}', 0
-                            )
-
-                    required_budget = 0
-                    for w in taken_rows[without_timeout:]:
-                        bucket = nearest_timeout_width(w[0])
-                        if bucket:
-                            # Значение настройки — минуты, бюджет считаем в секундах.
-                            required_budget += timeout_by_bucket.get(bucket, 0) * 60
-
-                    if required_budget > 0 and taken_rows:
-                        elapsed_since_first = taken_rows[0][2]
-                        if elapsed_since_first < required_budget:
-                            wait_sec = round(required_budget - elapsed_since_first)
-                            # Пишем понятно: до минуты — в секундах, дальше — в минутах.
-                            if wait_sec < 60:
-                                wait_text = f'{wait_sec} сек.'
-                            else:
-                                wait_text = f'{wait_sec // 60} мин. {wait_sec % 60} сек.'
-                            return {
-                                'statusCode': 409,
-                                'headers': headers,
-                                'body': json.dumps({'error': f'Подождите ещё {wait_text} перед взятием следующего заказа'}),
-                            }
+                    if wait_sec > 0:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Подождите ещё {format_wait(wait_sec)} перед взятием следующего заказа',
+                                'waitSeconds': wait_sec,
+                            }, ensure_ascii=False),
+                        }
 
                 # Приоритет и фильтр заказов (по цеху смены): orders_filter — ограничивает
                 # выборку FBO/FBS, orders_cluster_priority — приоритетный FBO-кластер идёт

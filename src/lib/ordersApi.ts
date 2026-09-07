@@ -298,6 +298,29 @@ export interface TakeOrderResult {
 export const takeOrder = (userId: number): Promise<TakeOrderResult> =>
   postAction({ action: 'take_order', userId });
 
+/** Сколько швее ещё ждать до следующего заказа — по накопительному таймауту из
+ * настроек ЕЁ цеха. Нужен, чтобы кнопка показывала живой обратный отсчёт, а не
+ * молчала до отказа сервера. */
+export interface TakeCooldown {
+  /** Осталось секунд. 0 — заказ можно брать прямо сейчас. */
+  waitSeconds: number;
+  /** Момент разблокировки (ISO) — по нему фронт тикает сам, не дёргая сервер. */
+  nextAt: string | null;
+  /** Открыта ли смена: без смены заказы не выдаются вовсе. */
+  shiftOpen: boolean;
+}
+
+export const fetchTakeCooldown = async (userId: number): Promise<TakeCooldown> => {
+  const res = await fetch(`${ORDERS_URL}?takeCooldown=1&userId=${userId}`);
+  if (!res.ok) return { waitSeconds: 0, nextAt: null, shiftOpen: true };
+  const data = await res.json();
+  return {
+    waitSeconds: Number(data.waitSeconds) || 0,
+    nextAt: data.nextAt ?? null,
+    shiftOpen: data.shiftOpen !== false,
+  };
+};
+
 // actorId обязателен: по нему сервер проверяет, что тесьму списывает именно швея.
 export const sendToStickering = (id: number, rollId?: number, actorId?: number) =>
   postAction({ action: 'send_to_stickering', id, rollId, actorId });
