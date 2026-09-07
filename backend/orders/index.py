@@ -2249,14 +2249,32 @@ def handler(event: dict, context) -> dict:
                     # Требуемый бюджет времени = сумма таймаутов заказов, взятых СВЕРХ лимита
                     # (первые without_timeout заказов не считаются). Ширина каждого заказа
                     # округляется до ближайшего порога timeout_200..800.
+                    #
+                    # ТАЙМАУТЫ ЧИТАЕМ ОДИН РАЗ, А НЕ НА КАЖДЫЙ ЗАКАЗ.
+                    #
+                    # Раньше get_setting_int стоял ВНУТРИ цикла, и каждый виток бил
+                    # в базу дважды (workshop_settings + system_settings). К концу
+                    # смены у швеи 40-50 взятых заказов — это под сотню лишних
+                    # запросов на одно нажатие «Взять заказ». Функция не
+                    # укладывалась в свои 5 секунд и падала с таймаутом: швея
+                    # видела ошибку и не могла взять работу.
+                    #
+                    # Порогов всего пять (200..800) и они одинаковы для всей смены,
+                    # поэтому достаточно прочитать их разово в словарь.
+                    timeout_by_bucket = {}
+                    for w in taken_rows[without_timeout:]:
+                        bucket = nearest_timeout_width(w[0])
+                        if bucket and bucket not in timeout_by_bucket:
+                            timeout_by_bucket[bucket] = get_setting_int(
+                                cur, session_workshop_id, f'timeout_{bucket}', 0
+                            )
+
                     required_budget = 0
                     for w in taken_rows[without_timeout:]:
                         bucket = nearest_timeout_width(w[0])
                         if bucket:
                             # Значение настройки — минуты, бюджет считаем в секундах.
-                            required_budget += get_setting_int(
-                                cur, session_workshop_id, f'timeout_{bucket}', 0
-                            ) * 60
+                            required_budget += timeout_by_bucket.get(bucket, 0) * 60
 
                     if required_budget > 0 and taken_rows:
                         elapsed_since_first = taken_rows[0][2]
