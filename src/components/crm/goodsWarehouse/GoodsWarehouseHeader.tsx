@@ -17,6 +17,9 @@ interface GoodsWarehouseHeaderProps {
   /** Выгрузить товарный состав в Excel для FBO-поставки. */
   onExport?: () => void;
   exporting?: boolean;
+  /** Выгрузить файл строго по шаблону OZON — грузится в кабинет площадки как есть. */
+  onExportOzon?: () => void;
+  exportingOzon?: boolean;
   /** Менеджеру складские действия не нужны — он только собирает состав поставки. */
   stockOnly?: boolean;
   /** Сколько вещей менеджер отметил галочками для выгрузки. */
@@ -33,6 +36,8 @@ const GoodsWarehouseHeader = ({
   onReprint,
   onExport,
   exporting = false,
+  onExportOzon,
+  exportingOzon = false,
   stockOnly = false,
   pickedCount = 0,
   onClearPicked,
@@ -66,8 +71,25 @@ const GoodsWarehouseHeader = ({
             </button>
           </div>
         )}
+        {/* ДЛЯ OZON — отдельный файл по их шаблону, он же главная кнопка: именно
+            его менеджер грузит в кабинет площадки. Наш общий свод (с полками и
+            штрихкодами) OZON не примет, поэтому это два разных файла. */}
+        {onExportOzon && (
+          <Button onClick={onExportOzon} disabled={exportingOzon}>
+            <Icon
+              name={exportingOzon ? 'Loader2' : 'FileSpreadsheet'}
+              size={16}
+              className={`mr-2 ${exportingOzon ? 'animate-spin' : ''}`}
+            />
+            {exportingOzon
+              ? 'Готовим файл...'
+              : pickedCount > 0
+                ? `Файл для OZON (${pickedCount})`
+                : 'Файл для OZON'}
+          </Button>
+        )}
         {onExport && (
-          <Button onClick={onExport} disabled={exporting}>
+          <Button variant="outline" onClick={onExport} disabled={exporting}>
             <Icon
               name={exporting ? 'Loader2' : 'FileSpreadsheet'}
               size={16}
@@ -76,8 +98,8 @@ const GoodsWarehouseHeader = ({
             {exporting
               ? 'Готовим файл...'
               : pickedCount > 0
-                ? `Выгрузить отмеченное (${pickedCount})`
-                : 'Выгрузить в Excel'}
+                ? `Свод по складу (${pickedCount})`
+                : 'Свод по складу'}
           </Button>
         )}
         {!stockOnly && (

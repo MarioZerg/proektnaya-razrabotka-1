@@ -501,6 +501,68 @@ def next_storage_barcode(cur) -> str:
     return f"GW-{int(cur.fetchone()[0]):06d}"
 
 
+def export_stock_ozon_xlsx(cur, ids=None):
+    """Товарный состав для загрузки FBO-поставки НА OZON — строго по их шаблону.
+
+    Файл повторяет products-import-template один в один: единственный лист «Sheet1»
+    и шапка ровно из трёх колонок строчными буквами — «артикул», «имя (необязательно)»,
+    «количество». Ни заголовков, ни итогов, ни лишних листов: OZON читает файл
+    машинно и на любое отличие в шапке отвечает отказом загрузки. Поэтому свой
+    свод (с полками, штрихкодами и подсветкой) остаётся в общем файле, а этот —
+    только для площадки.
+
+    Артикул берём ozon_sku: именно он заведён в кабинете OZON. Вещи без него в файл
+    не попадают — площадка их не опознает; сколько таких, менеджер видит в общем
+    файле по жёлтым строкам.
+    """
+    from openpyxl import Workbook
+    import base64
+    import io
+    from datetime import datetime
+
+    id_clause = ''
+    if ids:
+        id_clause = ' AND gw.id IN (' + ','.join(str(int(i)) for i in ids) + ')'
+
+    # Свод по артикулу OZON: в заявку идёт «сколько штук такого товара».
+    # Имя — для глаз менеджера, OZON его игнорирует (колонка необязательная).
+    cur.execute(
+        "SELECT mi.ozon_sku, COALESCE(mi.name, o.product), COUNT(*) "
+        "FROM goods_warehouse gw "
+        "JOIN orders o ON o.id = gw.order_id "
+        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+        "WHERE gw.status = 'in_stock' AND mi.ozon_sku IS NOT NULL "
+        "  AND mi.ozon_sku <> ''" + id_clause + " "
+        "GROUP BY 1, 2 ORDER BY 2"
+    )
+    rows = cur.fetchall()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Sheet1'
+    ws.append(['артикул', 'имя (необязательно)', 'количество'])
+    # Ширина второй колонки — как в шаблоне: длинные названия иначе не читаются.
+    ws.column_dimensions['B'].width = 30.71
+    for ozon_sku, name, qty in rows:
+        ws.append([ozon_sku, name or '', int(qty)])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return {
+        'statusCode': 200,
+        'headers': {
+            'Access-Control-Allow-Origin': '*',
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition': (
+                f'attachment; filename="ozon-fbo-'
+                f'{datetime.now().strftime("%d-%m-%Y")}.xlsx"'
+            ),
+        },
+        'isBase64Encoded': True,
+        'body': base64.b64encode(buf.getvalue()).decode(),
+    }
+
+
 def export_stock_xlsx(cur, marketplace, ids=None):
     """Товарный состав склада «На хранении» в Excel — для загрузки FBO-поставки.
 
@@ -703,7 +765,12 @@ def handler(event: dict, context) -> dict:
           Считается ТОЛЬКО статус in_stock — свободный остаток на полках; вещи в сборке,
           резерве и поставках не попадают, иначе заявленное не сойдётся с фактическим.
           marketplace — оставить лист только одной площадки (по умолчанию оба)
-    POST /  { action: 'export_stock', ids: [1,2,3], marketplace? }
+    GET  /?export_stock=1&format=ozon
+        - файл СТРОГО по шаблону OZON (products-import-template): один лист «Sheet1»,
+          шапка «артикул | имя (необязательно) | количество». Грузится в кабинет как
+          есть — любое отличие в шапке площадка отклоняет. Товары без ozon_sku
+          не попадают: OZON их не опознает
+    POST /  { action: 'export_stock', ids: [1,2,3], marketplace?, format? }
         - тот же файл, но только по вещам, отмеченным менеджером галочками: он набирает
           на складе нужные размеры и выгружает ровно то, что забирает в поставку.
           Список id идёт телом запроса — в адресной строке сотни номеров не помещаются
@@ -774,7 +841,10 @@ def handler(event: dict, context) -> dict:
             cur = conn.cursor()
 
             # Выгрузка товарного состава для FBO-поставки (Excel).
+            # format=ozon — файл строго по шаблону OZON, для загрузки на площадку.
             if params.get('export_stock'):
+                if (params.get('format') or '').lower() == 'ozon':
+                    return export_stock_ozon_xlsx(cur)
                 return export_stock_xlsx(cur, params.get('marketplace') or '')
 
             # Счётчик для кладовщика: сколько вещей на полках уже подобрано под заказы и
@@ -1777,6 +1847,8 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': 'Отметьте товары галочками'}, ensure_ascii=False),
                     }
+                if (body_data.get('format') or '').lower() == 'ozon':
+                    return export_stock_ozon_xlsx(cur, ids)
                 return export_stock_xlsx(cur, body_data.get('marketplace') or '', ids)
 
             if action == 'admin_receive':

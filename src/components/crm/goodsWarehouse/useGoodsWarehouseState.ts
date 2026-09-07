@@ -398,6 +398,33 @@ export const useGoodsWarehouseState = () => {
     }
   };
 
+  /**
+   * Файл ДЛЯ ЗАГРУЗКИ НА OZON — по их шаблону, без наших колонок.
+   *
+   * Отдельно от общего свода намеренно: OZON читает файл машинно и отклоняет его при
+   * любом отличии в шапке. Наш свод с полками и штрихкодами туда не годится, а без
+   * него не собрать товар с полок — поэтому это два разных файла, а не один.
+   */
+  const [exportingOzon, setExportingOzon] = useState(false);
+  const handleExportOzon = async () => {
+    setExportingOzon(true);
+    try {
+      await downloadStockExcel(undefined, pickedIds.length ? pickedIds : undefined, 'ozon');
+      toast({
+        title: 'Файл для OZON готов',
+        description: 'Загружайте в кабинет как есть — шапка по шаблону площадки',
+      });
+    } catch (e) {
+      toast({
+        title: 'Не удалось выгрузить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setExportingOzon(false);
+    }
+  };
+
   const handleReturn = async (id: number) => {
     try {
       await returnGoodsToWorkshop(id);
@@ -497,6 +524,8 @@ export const useGoodsWarehouseState = () => {
     stockOnly,
     exporting,
     handleExport,
+    exportingOzon,
+    handleExportOzon,
     pickedIds,
     pickedCount,
     togglePick,

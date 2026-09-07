@@ -25,6 +25,8 @@ const GoodsWarehouse = () => {
           onReprint={() => s.setReprintOpen(true)}
           onExport={s.handleExport}
           exporting={s.exporting}
+          onExportOzon={s.handleExportOzon}
+          exportingOzon={s.exportingOzon}
           stockOnly={s.stockOnly}
           pickedCount={s.pickedCount}
           onClearPicked={s.clearPicked}

@@ -19,6 +19,12 @@
       "expectedStatus": 200
     },
     {
+      "name": "Export ozon template works",
+      "method": "GET",
+      "path": "/?export_stock=1&format=ozon",
+      "expectedStatus": 200
+    },
+    {
       "name": "Export selected without ids fails",
       "method": "POST",
       "path": "/",

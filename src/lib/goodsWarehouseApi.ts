@@ -896,6 +896,12 @@ export const downloadStockExcel = async (
    * Не переданы — выгружается весь свободный остаток.
    */
   ids?: number[],
+  /**
+   * 'ozon' — файл строго по шаблону OZON (лист Sheet1, шапка «артикул | имя
+   * (необязательно) | количество»), грузится в кабинет как есть. По умолчанию —
+   * наш общий свод с полками, штрихкодами и листами обеих площадок.
+   */
+  format?: 'ozon',
 ) => {
   // Отбор шлём телом POST, а не ссылкой: сотни номеров в адресную строку не влезают,
   // а обрезанный список дал бы неполный файл без единой ошибки на экране.
@@ -903,10 +909,11 @@ export const downloadStockExcel = async (
     ? await fetch(GOODS_WAREHOUSE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'export_stock', ids, marketplace }),
+        body: JSON.stringify({ action: 'export_stock', ids, marketplace, format }),
       })
     : await fetch(
-        `${GOODS_WAREHOUSE_URL}?export_stock=1${marketplace ? `&marketplace=${marketplace}` : ''}`,
+        `${GOODS_WAREHOUSE_URL}?export_stock=1${marketplace ? `&marketplace=${marketplace}` : ''}` +
+          `${format ? `&format=${format}` : ''}`,
       );
   if (!res.ok) throw new Error('Не удалось сформировать файл');
 
@@ -915,9 +922,11 @@ export const downloadStockExcel = async (
   const a = document.createElement('a');
   a.href = url;
   const today = new Date().toLocaleDateString('ru-RU').replace(/\./g, '-');
-  a.download = `sklad-fbo${marketplace ? `-${marketplace.toLowerCase()}` : ''}${
-    ids?.length ? '-otbor' : ''
-  }-${today}.xlsx`;
+  a.download = format === 'ozon'
+    ? `ozon-fbo${ids?.length ? '-otbor' : ''}-${today}.xlsx`
+    : `sklad-fbo${marketplace ? `-${marketplace.toLowerCase()}` : ''}${
+        ids?.length ? '-otbor' : ''
+      }-${today}.xlsx`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
