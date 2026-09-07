@@ -2440,6 +2440,30 @@ def handler(event: dict, context) -> dict:
                 if not ids:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товары'})}
                 ids_csv = ','.join(str(int(i)) for i in ids)
+
+                # ОТМЕНА ПОСЛЕ СТИКЕРОВКИ В ЦЕХ НЕ ЕДЕТ — ОНА ОТТУДА И ПРИШЛА.
+                #
+                # Вещь сшили, упаковали и заклеили ярлыком прямо в цехе, и уже после
+                # этого покупатель отменил заказ. Осматривать у упаковщицы нечего: она
+                # же её десять минут назад и собирала. Отправить такую «на осмотр» —
+                # значит вернуть вещь туда, откуда её только что принесли, и потерять
+                # день на пустой круг. Путь один: полка со стикером хранения.
+                cur.execute(
+                    f"SELECT COUNT(*) FROM goods_warehouse "
+                    f"WHERE id IN ({ids_csv}) AND receive_reason = 'cancelled_labeled'"
+                )
+                cancelled_labeled_count = int(cur.fetchone()[0] or 0)
+                if cancelled_labeled_count:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Отмена после стикеровки в цехе ({cancelled_labeled_count} шт.) '
+                                     f'на осмотр не отправляется — вещь пришла из цеха и уже '
+                                     f'упакована. Положите её на полку со стикером хранения'
+                        }, ensure_ascii=False),
+                    }
+
                 # В цех уезжают и вещи прямо с ПВЗ (mp_return): кладовщик разбирает
                 # привезённое и часть сразу отдаёт упаковщицам, не заводя промежуточный шаг.
                 cur.execute(

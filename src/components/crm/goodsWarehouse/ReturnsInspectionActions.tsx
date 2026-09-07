@@ -77,10 +77,16 @@ const ReturnsInspectionActions = ({
           вещей упаковщицам на осмотр — действие одинаковое для обоих этапов. */}
       {(stage === 'fromReturn' || stage === 'fromMarketplace') && (
         <>
-          <Button size="sm" onClick={() => setConfirmOpen(true)} disabled={acting}>
-            <Icon name="Truck" size={16} className="mr-2" />
-            Переместить в цех на осмотр
-          </Button>
+          {/* ОТМЕНА ПОСЛЕ СТИКЕРОВКИ В ЦЕХ НЕ ЕДЕТ — она оттуда и пришла.
+              Вещь упаковала та же упаковщица десять минут назад, осматривать ей
+              нечего. Отправить такую «на осмотр» — вернуть вещь туда, откуда её
+              только что принесли, и потерять день на пустой круг. */}
+          {cancelledLabeledCount === 0 && (
+            <Button size="sm" onClick={() => setConfirmOpen(true)} disabled={acting}>
+              <Icon name="Truck" size={16} className="mr-2" />
+              Переместить в цех на осмотр
+            </Button>
+          )}
 
           <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
             <AlertDialogContent>
@@ -191,16 +197,16 @@ const ReturnsInspectionActions = ({
           </>
         )}
 
-      {stage !== 'disposed' &&
-        stage !== 'toDispose' &&
-        isAdmin &&
-        cancelledLabeledCount > 0 && (
-          <span className="text-sm text-sky-700">
-            {cancelledLabeledCount === selected.length
-              ? 'Отмена после стикеровки — только на полку со стикером хранения'
-              : `Среди выбранных ${cancelledLabeledCount} шт. отменённых после стикеровки — они идут только на полку`}
-          </span>
-        )}
+      {/* Подсказка вместо спрятанных кнопок — видна ВСЕМ, а не только админу:
+          кнопку «в цех на осмотр» нажимает кладовщик, и объяснить пропажу нужно
+          прежде всего ему. Иначе он ищет исчезнувшую кнопку и зовёт разбираться. */}
+      {stage !== 'disposed' && stage !== 'toDispose' && cancelledLabeledCount > 0 && (
+        <span className="text-sm text-sky-700">
+          {cancelledLabeledCount === selected.length
+            ? 'Отмена после стикеровки — вещь из цеха, осмотр не нужен: только на полку со стикером хранения'
+            : `Среди выбранных ${cancelledLabeledCount} шт. отменённых после стикеровки — они идут только на полку`}
+        </span>
+      )}
 
       {stage === 'toDispose' && isAdmin && (
         <Button size="sm" variant="destructive" onClick={onClear} disabled={acting}>
