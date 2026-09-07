@@ -40,6 +40,10 @@ interface GoodsWarehouseFiltersProps {
   loading?: boolean;
   /** Выбрана конкретная полка — тогда подпись про полку, а не про весь склад. */
   shelfSelected?: boolean;
+  /** Менеджеру открыт только свободный остаток «На хранении»: он собирает товарный
+   * состав FBO-поставки, а складские состояния (возвраты, сборка, утиль) к его
+   * работе не относятся. Переключатель состояния для него прячем. */
+  stockOnly?: boolean;
 }
 
 /**
@@ -72,6 +76,7 @@ const GoodsWarehouseFilters = ({
   resultCount,
   loading = false,
   shelfSelected = false,
+  stockOnly = false,
 }: GoodsWarehouseFiltersProps) => {
   return (
     <div className="space-y-3">
@@ -127,6 +132,15 @@ const GoodsWarehouseFilters = ({
       <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
       {/* 1. Состояние вещи. «Возвраты с маркетплейса» — не статус, а происхождение:
           вещи, приехавшие обратно от покупателя, в любом состоянии. */}
+      {/* Менеджеру состояние не переключается: ему открыт только свободный остаток
+          «На хранении». Показывать неизменяемый выпадающий список незачем — вместо
+          него подпись, чтобы было ясно, что именно он видит. */}
+      {stockOnly ? (
+        <div className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+          <Icon name="Boxes" size={16} className="shrink-0 text-muted-foreground" />
+          <span className="truncate font-medium">На хранении</span>
+        </div>
+      ) : (
       <div className="min-w-0">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger>
@@ -153,6 +167,7 @@ const GoodsWarehouseFilters = ({
           </SelectContent>
         </Select>
       </div>
+      )}
 
       {/* 2. Материал */}
       <div className="min-w-0">

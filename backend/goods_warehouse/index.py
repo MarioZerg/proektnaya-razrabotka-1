@@ -501,6 +501,162 @@ def next_storage_barcode(cur) -> str:
     return f"GW-{int(cur.fetchone()[0]):06d}"
 
 
+def export_stock_xlsx(cur, marketplace):
+    """Товарный состав склада «На хранении» в Excel — для загрузки FBO-поставки.
+
+    ОДИН ФАЙЛ НА ОБЕ ПЛОЩАДКИ. У OZON и WB шаблоны заявки разные, но обе читают
+    одно и то же: артикул и количество. Поэтому книга собрана так, чтобы годиться
+    и туда, и туда:
+      * лист «Товарный состав» — свод по товару (артикул OZON, артикул WB,
+        штрихкод, название, размер и КОЛИЧЕСТВО). Именно его менеджер копирует
+        в шаблон площадки: колонки уже сведены, руками считать нечего;
+      * лист «OZON» и лист «WB» — по две колонки «артикул + количество» в том
+        порядке, в каком их ждёт площадка. Вставляется без правки.
+      * лист «Позиции» — расшифровка: каждая вещь со стикером хранения и полкой.
+        Нужен кладовщику, когда состав утверждён и товар надо собрать с полок.
+
+    Считаем ТОЛЬКО статус in_stock: это свободный остаток на полках. Вещи в сборке,
+    в резерве и уже уехавшие в поставку сюда не попадают — иначе менеджер заявит
+    товар, которого физически нет, и приёмка на складе площадки не сойдётся.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    import base64
+    import io
+    from datetime import datetime
+
+    mp = (marketplace or '').strip().upper()
+
+    # Свод по КАРТОЧКЕ ТОВАРА, а не по вещам: в заявку площадки идёт артикул и
+    # количество. Вещи без привязки к карточке собираем отдельной строкой — у них
+    # нет артикула, и заявить их нельзя, пока товар не привязан.
+    cur.execute(
+        "SELECT mi.ozon_sku, mi.wb_sku, mi.barcode, "
+        "       COALESCE(mi.name, o.product), "
+        "       COALESCE(mi.material, o.material), "
+        "       COALESCE(mi.width, o.width), COALESCE(mi.height, o.height), "
+        "       COUNT(*) "
+        "FROM goods_warehouse gw "
+        "JOIN orders o ON o.id = gw.order_id "
+        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+        "WHERE gw.status = 'in_stock' "
+        "GROUP BY 1, 2, 3, 4, 5, 6, 7 "
+        "ORDER BY 4, 6, 7"
+    )
+    rows = cur.fetchall()
+
+    wb = Workbook()
+    head_font = Font(bold=True, color='FFFFFF')
+    head_fill = PatternFill('solid', fgColor='2F5597')
+    warn_fill = PatternFill('solid', fgColor='FFF2CC')
+
+    def style_head(ws, widths):
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        for cell in ws[1]:
+            cell.font = head_font
+            cell.fill = head_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.freeze_panes = 'A2'
+
+    # ЛИСТ 1 — свод по товару.
+    ws = wb.active
+    ws.title = 'Товарный состав'
+    ws.append([
+        'Артикул OZON', 'Артикул WB', 'Штрихкод', 'Товар',
+        'Материал', 'Ширина', 'Высота', 'Количество',
+    ])
+    total = 0
+    no_sku_total = 0
+    for r in rows:
+        ozon_sku, wb_sku, barcode, name, material, width, height, qty = r
+        qty = int(qty)
+        total += qty
+        ws.append([
+            ozon_sku or '', wb_sku or '', barcode or '', name or '',
+            material or '', width or '', height or '', qty,
+        ])
+        # Товар без артикулов заявить нельзя — подсвечиваем строку, чтобы менеджер
+        # увидел это ДО загрузки на площадку, а не при отказе приёмки.
+        if not ozon_sku and not wb_sku:
+            no_sku_total += qty
+            for cell in ws[ws.max_row]:
+                cell.fill = warn_fill
+    style_head(ws, [16, 16, 18, 46, 16, 10, 10, 13])
+
+    ws.append([])
+    ws.append(['', '', '', 'ИТОГО штук на хранении', '', '', '', total])
+    ws[f'D{ws.max_row}'].font = Font(bold=True)
+    ws[f'H{ws.max_row}'].font = Font(bold=True)
+    if no_sku_total:
+        ws.append([
+            '', '', '',
+            f'Из них без артикула (жёлтые строки) — заявить нельзя: {no_sku_total} шт. '
+            f'Привяжите товар в справочнике «Товары на маркетплейсе»',
+        ])
+        ws[f'D{ws.max_row}'].font = Font(bold=True, color='BF8F00')
+
+    # ЛИСТЫ 2 и 3 — готовые к вставке пары «артикул + количество».
+    # Строки без артикула пропускаем: площадка их всё равно не примет, а лишняя
+    # пустая строка ломает загрузку шаблона.
+    for sheet_name, idx in (('OZON', 0), ('WB', 1)):
+        if mp and mp != sheet_name:
+            continue
+        wsx = wb.create_sheet(sheet_name)
+        wsx.append([f'Артикул {sheet_name}', 'Количество'])
+        for r in rows:
+            sku = r[idx]
+            if not sku:
+                continue
+            wsx.append([sku, int(r[7])])
+        style_head(wsx, [24, 14])
+
+    # ЛИСТ 4 — расшифровка по вещам: с чем идти к полкам.
+    cur.execute(
+        "SELECT gw.storage_barcode, COALESCE(sh.name, '— без полки —'), "
+        "       COALESCE(mi.name, o.product), "
+        "       COALESCE(mi.material, o.material), "
+        "       COALESCE(mi.width, o.width), COALESCE(mi.height, o.height), "
+        "       mi.ozon_sku, mi.wb_sku, gw.received_at "
+        "FROM goods_warehouse gw "
+        "JOIN orders o ON o.id = gw.order_id "
+        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+        "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+        "WHERE gw.status = 'in_stock' "
+        "ORDER BY COALESCE(sh.name, 'яя'), COALESCE(mi.name, o.product)"
+    )
+    ws2 = wb.create_sheet('Позиции')
+    ws2.append([
+        'Стикер хранения', 'Полка', 'Товар', 'Материал',
+        'Ширина', 'Высота', 'Артикул OZON', 'Артикул WB', 'На складе с',
+    ])
+    for r in cur.fetchall():
+        ws2.append([
+            r[0], r[1], r[2] or '', r[3] or '', r[4] or '', r[5] or '',
+            r[6] or '', r[7] or '',
+            r[8].strftime('%d.%m.%Y') if r[8] else '',
+        ])
+    style_head(ws2, [18, 20, 44, 16, 10, 10, 16, 16, 14])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    suffix = f'-{mp.lower()}' if mp else ''
+    return {
+        'statusCode': 200,
+        'headers': {
+            'Access-Control-Allow-Origin': '*',
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition': (
+                f'attachment; filename="sklad-fbo{suffix}-'
+                f'{datetime.now().strftime("%d-%m-%Y")}.xlsx"'
+            ),
+        },
+        'isBase64Encoded': True,
+        'body': base64.b64encode(buf.getvalue()).decode(),
+    }
+
+
 def handler(event: dict, context) -> dict:
     """Склад готового товара: изделия, сшитые и упакованные (статус заказа "Готовые"),
     попадают на склад товара на конкретную полку под уникальным штрихкодом хранения
@@ -519,6 +675,14 @@ def handler(event: dict, context) -> dict:
         доп. фильтры: ?material=Вуаль, ?width=200, ?height=250, ?shelf_id=1
     GET  /?barcode=GW-000001         - найти товар по штрихкоду хранения (для сканера подбора
                                         и сканирования в поставку)
+    GET  /?export_stock=1[&marketplace=OZON|WB]
+        - товарный состав склада «На хранении» файлом Excel для загрузки FBO-поставки.
+          Книга универсальна: лист «Товарный состав» (свод с артикулами обеих площадок и
+          количеством), листы «OZON» и «WB» — готовые пары «артикул + количество» под
+          шаблон площадки, лист «Позиции» — расшифровка по вещам со стикером и полкой.
+          Считается ТОЛЬКО статус in_stock — свободный остаток на полках; вещи в сборке,
+          резерве и поставках не попадают, иначе заявленное не сойдётся с фактическим.
+          marketplace — оставить лист только одной площадки (по умолчанию оба)
     POST /  { action: 'admin_receive', marketplaceItemId, shelfId? }
         - ручной приём администратором: вещь без заказа с маркетплейса (излишек производства,
           найденный товар). Под неё создаётся служебный заказ WH-00001 и запись склада с
@@ -584,6 +748,10 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            # Выгрузка товарного состава для FBO-поставки (Excel).
+            if params.get('export_stock'):
+                return export_stock_xlsx(cur, params.get('marketplace') or '')
 
             # Счётчик для кладовщика: сколько вещей на полках уже подобрано под заказы и
             # ждёт, чтобы он наклеил стикер отправления. По нему в меню горит значок.

@@ -14,6 +14,11 @@ interface GoodsWarehouseHeaderProps {
   onMove: () => void;
   onAdminReceive: () => void;
   onReprint: () => void;
+  /** Выгрузить товарный состав в Excel для FBO-поставки. */
+  onExport?: () => void;
+  exporting?: boolean;
+  /** Менеджеру складские действия не нужны — он только собирает состав поставки. */
+  stockOnly?: boolean;
 }
 
 /** Шапка склада товара: заголовок и редкие действия под кнопкой «Ещё». */
@@ -23,18 +28,36 @@ const GoodsWarehouseHeader = ({
   onMove,
   onAdminReceive,
   onReprint,
+  onExport,
+  exporting = false,
+  stockOnly = false,
 }: GoodsWarehouseHeaderProps) => {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h1 className="text-xl font-bold">Склад товара</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Готовые изделия по полкам — источник для поставок на маркетплейс
+          {stockOnly
+            ? 'Свободный остаток на полках — товарный состав для FBO-поставки'
+            : 'Готовые изделия по полкам — источник для поставок на маркетплейс'}
         </p>
       </div>
       {/* Редкие действия убраны под «Ещё»: раньше десять кнопок в один ряд
           переносились на две-три строки, и глазами приходилось искать нужную. */}
       <div className="flex flex-wrap items-center gap-2">
+        {/* Выгрузка — главное действие менеджера, поэтому отдельной кнопкой, а не
+            в «Ещё»: он заходит на склад ровно за этим файлом. */}
+        {onExport && (
+          <Button onClick={onExport} disabled={exporting}>
+            <Icon
+              name={exporting ? 'Loader2' : 'FileSpreadsheet'}
+              size={16}
+              className={`mr-2 ${exporting ? 'animate-spin' : ''}`}
+            />
+            {exporting ? 'Готовим файл...' : 'Выгрузить в Excel'}
+          </Button>
+        )}
+        {!stockOnly && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline">
@@ -61,6 +84,7 @@ const GoodsWarehouseHeader = ({
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
       </div>
     </div>
   );

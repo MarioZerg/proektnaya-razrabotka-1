@@ -7,6 +7,7 @@ import {
   returnGoodsToWorkshop,
   markGoodsLost,
   deleteGoods,
+  downloadStockExcel,
   fetchStuckCancelled,
   type GoodsWarehouseItem,
   type GoodsStatusFilter,
@@ -30,6 +31,14 @@ export const useGoodsWarehouseState = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  /**
+   * Менеджеру склад открыт ровно для одного: собрать товарный состав будущей
+   * FBO-поставки и выгрузить его в Excel. Поэтому он видит ТОЛЬКО свободный остаток
+   * «На хранении» — вещи в сборке, резерве и возвратах к его работе не относятся, а
+   * складские операции (полки, приёмка, утиль) остаются кладовщику: менеджер вещей
+   * в руках не держит.
+   */
+  const stockOnly = user?.role === 'manager';
   /** Ручную приёмку делает и кладовщик: излишек с производства приносят прямо ему на склад,
    * ждать администратора, чтобы завести вещь и напечатать стикер, — терять время. */
   const canReceiveManually = isAdmin || isStorekeeperRole(user?.role);
@@ -42,7 +51,14 @@ export const useGoodsWarehouseState = () => {
   // То, что реально ушло в запрос. Отделено от search: поле ввода меняется на
   // каждую букву, а в базу уходит только устоявшийся текст.
   const searchQuery = search.trim();
-  const [statusFilter, setStatusFilter] = useState('in_stock');
+  const [statusFilter, setStatusFilterRaw] = useState('in_stock');
+  // У менеджера состояние зафиксировано на «На хранении»: заявить в поставку можно
+  // только свободный остаток. Оборачиваем сеттер, а не прячем один переключатель —
+  // иначе статус сменился бы поиском или сбросом фильтров в обход интерфейса.
+  const setStatusFilter = (value: string) => {
+    if (stockOnly) return;
+    setStatusFilterRaw(value);
+  };
   const [materialFilter, setMaterialFilter] = useState('');
   const [widthFilter, setWidthFilter] = useState('');
   const [heightFilter, setHeightFilter] = useState('');
@@ -137,9 +153,16 @@ export const useGoodsWarehouseState = () => {
     // Поиск отправляем на сервер: кладовщик пикает сканером стикер и ждёт одну
     // вещь. База найдёт её среди всех статусов за любой срок — как и раньше,
     // когда перебор шёл в браузере.
+    //
+    // У МЕНЕДЖЕРА ПОИСК НЕ ВЫВОДИТ ЗА ПРЕДЕЛЫ «НА ХРАНЕНИИ».
+    //
+    // Обычный поиск ищет по всем статусам — кладовщику это и нужно: он пикает стикер
+    // и должен найти вещь, где бы она ни была. Но менеджеру склад открыт только как
+    // свободный остаток, и поиск стал бы дырой: набрал номер — увидел отгруженное.
+    // Поэтому ему поиск сужаем до того же статуса, что и список.
     fetchGoodsWarehouse(
       searchQuery
-        ? { search: searchQuery }
+        ? { search: searchQuery, ...(stockOnly ? { status: 'in_stock' as GoodsStatusFilter } : {}) }
         : { status: statusFilter === 'all' ? undefined : (statusFilter as GoodsStatusFilter) },
     )
       .then(setItems)
@@ -320,6 +343,29 @@ export const useGoodsWarehouseState = () => {
     setMoveOpen(true);
   };
 
+  // Выгрузка товарного состава для FBO-поставки. Файл собирает сервер: там же
+  // считается свободный остаток, поэтому цифры в книге всегда совпадают со складом,
+  // а не с тем, что успело загрузиться в браузер.
+  const [exporting, setExporting] = useState(false);
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      await downloadStockExcel();
+      toast({
+        title: 'Файл готов',
+        description: 'Лист «Товарный состав» — свод для площадки, «Позиции» — с чем идти к полкам',
+      });
+    } catch (e) {
+      toast({
+        title: 'Не удалось выгрузить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleReturn = async (id: number) => {
     try {
       await returnGoodsToWorkshop(id);
@@ -416,6 +462,9 @@ export const useGoodsWarehouseState = () => {
     handleReturn,
     handleMarkLost,
     handleDeleteGoods,
+    stockOnly,
+    exporting,
+    handleExport,
   };
 };
 

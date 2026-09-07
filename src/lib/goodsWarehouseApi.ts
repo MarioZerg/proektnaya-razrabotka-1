@@ -880,3 +880,28 @@ export const fetchStalledShipments = async (): Promise<{
   const data = await res.json();
   return { items: data.items || [], count: data.count || 0 };
 };
+/**
+ * Выгрузка товарного состава склада «На хранении» в Excel — для FBO-поставки.
+ *
+ * Файл универсальный: в книге есть свод с артикулами OZON и WB, отдельные листы
+ * «артикул + количество» под шаблон каждой площадки и расшифровка по вещам с
+ * полками. Считается только свободный остаток на полках — вещи в сборке, резерве
+ * и уже уехавшие в поставку не попадают, иначе заявленное не сойдётся с фактом.
+ */
+export const downloadStockExcel = async (marketplace?: 'OZON' | 'WB') => {
+  const res = await fetch(
+    `${GOODS_WAREHOUSE_URL}?export_stock=1${marketplace ? `&marketplace=${marketplace}` : ''}`,
+  );
+  if (!res.ok) throw new Error('Не удалось сформировать файл');
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const today = new Date().toLocaleDateString('ru-RU').replace(/\./g, '-');
+  a.download = `sklad-fbo${marketplace ? `-${marketplace.toLowerCase()}` : ''}-${today}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};

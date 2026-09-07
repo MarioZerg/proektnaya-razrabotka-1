@@ -13,6 +13,12 @@
       "expectedStatus": 200
     },
     {
+      "name": "Export stock xlsx works",
+      "method": "GET",
+      "path": "/?export_stock=1",
+      "expectedStatus": 200
+    },
+    {
       "name": "Place on shelf without barcode fails",
       "method": "POST",
       "path": "/",

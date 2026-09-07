@@ -23,11 +23,18 @@ const GoodsWarehouse = () => {
           onMove={s.openMove}
           onAdminReceive={() => s.setAdminReceiveOpen(true)}
           onReprint={() => s.setReprintOpen(true)}
+          onExport={s.handleExport}
+          exporting={s.exporting}
+          stockOnly={s.stockOnly}
         />
 
         {/* Работа на сейчас — плитки с числами. Кладовщик видит, сколько вещей ждёт
             на каждом шаге, и нажимает ту, где есть работа: пустые остаются серыми и в
-            глаза не лезут. */}
+            глаза не лезут.
+            Менеджеру их не показываем: это складские операции с вещами в руках —
+            разложить по полкам, забрать из цеха, пересчитать. Он собирает состав
+            поставки и вещей не касается. */}
+        {!s.stockOnly && (
         <GoodsWarehouseWorkTiles
           pendingShelfCount={s.pendingShelf.length}
           pendingReturnsCount={s.pendingReturns.length}
@@ -41,7 +48,9 @@ const GoodsWarehouse = () => {
           onPickup={() => s.setPickupOpen(true)}
           onPlaceInspected={() => s.setPlaceInspectedOpen(true)}
         />
+        )}
 
+        {!s.stockOnly && (
         <GoodsWarehouseDialogs
           isAdmin={s.isAdmin}
           canReceiveManually={s.canReceiveManually}
@@ -62,23 +71,26 @@ const GoodsWarehouse = () => {
           load={s.load}
           loadInspectedReady={s.loadInspectedReady}
         />
+        )}
 
         {/* Зависли после отмены: заказ отменили уже после стикеровки. В поставку такие
             вещи не уедут, но и свободным остатком не считаются — товар выпадает из
             оборота молча. Показываем СРАЗУ, до непроверенных возвратов: это потеря
             готового товара, а не рядовая работа. */}
-        <StuckCancelledPanel
-          items={s.stuckCancelled}
-          onReload={() => {
-            s.loadStuckCancelled();
-            s.load();
-            s.loadInspectedReady();
-          }}
-        />
+        {!s.stockOnly && (
+          <StuckCancelledPanel
+            items={s.stuckCancelled}
+            onReload={() => {
+              s.loadStuckCancelled();
+              s.load();
+              s.loadInspectedReady();
+            }}
+          />
+        )}
 
         {/* Привезли с ПВЗ, но ещё не осмотрели. Такой товар нельзя продавать:
             он не проверен и в подбор не идёт, пока не ляжет на полку. */}
-        {s.uncheckedReturns > 0 && (
+        {!s.stockOnly && s.uncheckedReturns > 0 && (
           <button
             type="button"
             onClick={() => navigate('/crm/inventory/returns-inspection')}
@@ -126,6 +138,7 @@ const GoodsWarehouse = () => {
           resultCount={s.filtered.length}
           loading={s.loading}
           shelfSelected={Boolean(s.shelfFilter)}
+          stockOnly={s.stockOnly}
         />
 
         <GoodsWarehouseTable
