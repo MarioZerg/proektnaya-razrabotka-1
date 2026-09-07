@@ -796,11 +796,18 @@ export const releaseStuckCancelled = (
   ids: number[],
   actorId?: number,
   actorName?: string,
-): Promise<{ released: number; toShelf: number; toSorting: number }> =>
+): Promise<{
+  released: number;
+  toShelf: number;
+  toSorting: number;
+  /** Данные для ленты стикеров хранения: на вещах ярлык отправления уже недействителен. */
+  stickers: { storageBarcode: string; title: string | null; orderNumber: string | null }[];
+}> =>
   postAction({ action: 'release_stuck_cancelled', ids, actorId, actorName }) as Promise<{
     released: number;
     toShelf: number;
     toSorting: number;
+    stickers: { storageBarcode: string; title: string | null; orderNumber: string | null }[];
   }>;
 
 /** Вещь, которая уже уехала к клиенту, но осталась висеть в подборе. */

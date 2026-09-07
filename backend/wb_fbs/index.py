@@ -934,8 +934,16 @@ def handle_shelf_cancelled(cur, conn, body_data, api_key, use_sandbox):
     gw = cur.fetchone()
     if gw:
         storage_barcode = gw[0]
+        # ЯРЛЫК МАРКЕТПЛЕЙСА АННУЛИРУЕМ.
+        #
+        # Он выписан под конкретное отправление, а покупатель отказался — на
+        # полку вещь едет чистой. Без этого система считала её «уже
+        # застикерованной»: под новый заказ она ушла бы со старым ярлыком WB,
+        # и посылка уехала бы не тому человеку.
         cur.execute(
-            "UPDATE goods_warehouse SET status = 'awaiting_shelf', reserved_order_id = NULL "
+            "UPDATE goods_warehouse SET status = 'awaiting_shelf', reserved_order_id = NULL, "
+            "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+            "shipping_labeled_by_name = NULL, matched_at = NULL "
             "WHERE order_id = %s",
             (int(order_id),),
         )
@@ -945,6 +953,20 @@ def handle_shelf_cancelled(cur, conn, body_data, api_key, use_sandbox):
             "INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason) "
             "VALUES (%s, 'awaiting_shelf', %s, 'cancelled')",
             (int(order_id), storage_barcode),
+        )
+
+    # Что за вещь — чтобы стикер хранения печатался с названием и размером,
+    # а не с одним голым номером: по такому стикеру вещь не опознать на полке.
+    cur.execute(
+        "SELECT product, material, width, height FROM orders WHERE id = %s",
+        (int(order_id),),
+    )
+    p_row = cur.fetchone()
+    product_title = None
+    if p_row:
+        product_title = (
+            f"{p_row[1]} {p_row[2]}x{p_row[3]}"
+            if p_row[1] and p_row[2] and p_row[3] else p_row[0]
         )
 
     cur.execute("UPDATE orders SET status = 'Отменён' WHERE id = %s", (int(order_id),))
@@ -958,6 +980,7 @@ def handle_shelf_cancelled(cur, conn, body_data, api_key, use_sandbox):
     conn.commit()
     return _resp(200, {
         'success': True, 'orderNumber': order_number, 'storageBarcode': storage_barcode,
+        'product': product_title,
     })
 
 

@@ -3746,11 +3746,34 @@ def handler(event: dict, context) -> dict:
                         'Возвращена в оборот: заказ отменён на маркетплейсе, '
                         'ярлык отправления снят',
                     )
+                # ДАННЫЕ ДЛЯ СТИКЕРОВ ХРАНЕНИЯ.
+                #
+                # На вещи висит ярлык маркетплейса, который мы только что
+                # аннулировали, а складского стикера у неё нет. Без него вещь
+                # ложится на полку неопознанной: отсканировать её в подбор
+                # потом нечем. Кладовщик должен снять ярлык и наклеить стикер
+                # хранения, поэтому отдаём всё нужное для печати ленты сразу.
+                cur.execute(
+                    "SELECT gw.storage_barcode, o.product, o.material, o.width, o.height, "
+                    "       o.order_number "
+                    "FROM goods_warehouse gw LEFT JOIN orders o ON o.id = gw.order_id "
+                    f"WHERE gw.id IN ({all_ids}) ORDER BY gw.id"
+                )
+                stickers = [
+                    {
+                        'storageBarcode': s[0],
+                        'title': (f'{s[2]} {s[3]}x{s[4]}' if s[2] and s[3] and s[4] else s[1]),
+                        'orderNumber': s[5],
+                    }
+                    for s in cur.fetchall()
+                ]
+
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
                     'released': len(rows),
                     'toShelf': len(with_shelf),
                     'toSorting': len(no_shelf),
+                    'stickers': stickers,
                 }, ensure_ascii=False)}
 
             if action == 'close_shipped_stuck':

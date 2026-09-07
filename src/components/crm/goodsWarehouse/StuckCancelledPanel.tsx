@@ -7,6 +7,7 @@ import {
   releaseStuckCancelled,
   type StuckCancelledItem,
 } from '@/lib/goodsWarehouseApi';
+import { printStorageStickers } from '@/lib/printStorageSticker';
 import MarketplaceBadge from '@/components/crm/MarketplaceBadge';
 
 interface StuckCancelledPanelProps {
@@ -44,6 +45,16 @@ const StuckCancelledPanel = ({ items, onReload }: StuckCancelledPanelProps) => {
         user?.id,
         user?.name,
       );
+      // ЛЕНТА СТИКЕРОВ ХРАНЕНИЯ — СРАЗУ В ПЕЧАТЬ.
+      //
+      // На этих вещах висит ярлык маркетплейса от отменённого заказа, который
+      // мы только что аннулировали. Складского стикера у них нет: без него
+      // вещь ложится на полку неопознанной, и отсканировать её в подбор потом
+      // нечем. Кладовщик снимает старый ярлык и клеит стикер хранения.
+      if (res.stickers?.length) {
+        printStorageStickers(res.stickers);
+      }
+
       // Часть вещей уходит сразу на полку, часть — на раскладку: у них не была
       // указана полка, и кладовщик должен отсканировать их на место.
       const parts: string[] = [];
@@ -52,8 +63,8 @@ const StuckCancelledPanel = ({ items, onReload }: StuckCancelledPanelProps) => {
       toast({
         title: `Возвращено в оборот: ${res.released} шт.`,
         description: parts.length
-          ? `${parts.join(', ')}. Заказы остались на конвейере — их не трогали`
-          : 'Заказы остались на конвейере — их не трогали',
+          ? `${parts.join(', ')}. Снимите ярлыки маркетплейса и наклейте стикеры хранения`
+          : 'Снимите ярлыки маркетплейса и наклейте стикеры хранения',
       });
       onReload();
     } catch (e) {

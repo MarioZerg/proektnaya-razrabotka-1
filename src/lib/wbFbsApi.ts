@@ -104,11 +104,18 @@ export const fetchWbLabel = async (orderNumber: string): Promise<string> => {
 export const shelfCancelledOrder = (
   supplyId: number,
   orderId: number
-): Promise<{ success: true; orderNumber: string; storageBarcode: string }> =>
+): Promise<{
+  success: true;
+  orderNumber: string;
+  storageBarcode: string;
+  /** Название и размер вещи — для стикера хранения, чтобы её опознали на полке. */
+  product: string | null;
+}> =>
   post({ action: 'shelf_cancelled_order', supplyId, orderId }) as Promise<{
     success: true;
     orderNumber: string;
     storageBarcode: string;
+    product: string | null;
   }>;
 
 /** Заказ, собранный упаковщицей и ждущий в свободной поставке. */

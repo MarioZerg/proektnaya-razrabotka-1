@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import printHtmlInIframe from '@/lib/printInIframe';
+import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printLabelFromUrl } from '@/lib/printMarketplaceLabel';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
@@ -76,9 +77,20 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload }: WbFbsSupplyCardProps) =
     setShelvingId(orderId);
     try {
       const r = await shelfCancelledOrder(supplyId, orderId);
+      // СТИКЕР ХРАНЕНИЯ ПЕЧАТАЕМ СРАЗУ.
+      //
+      // Раньше система только писала «наклейте стикер GW-…», а печатать его
+      // было неоткуда: кладовщик оставался с вещью, на которой висит уже
+      // недействительный ярлык WB, и без складского стикера. Опознать её на
+      // полке и отсканировать в подбор потом невозможно.
+      printStorageSticker({
+        storageBarcode: r.storageBarcode,
+        title: r.product,
+        orderNumber: r.orderNumber,
+      });
       toast({
         title: `Заказ ${orderNumber} убран из поставки`,
-        description: `Наклейте стикер хранения ${r.storageBarcode} — вещь едет на полку`,
+        description: `Снимите ярлык WB, наклейте стикер хранения ${r.storageBarcode} — вещь едет на полку`,
       });
       onReload();
     } catch (e) {
