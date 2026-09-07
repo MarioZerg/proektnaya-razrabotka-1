@@ -210,8 +210,8 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
 
         {!item && (
           <p className="text-base text-violet-800">
-            Подойдёт любой код на пакете: наш стикер хранения, ярлык возврата или номер
-            отправления
+            Подойдёт любой код на пакете: наш стикер хранения, ярлык возврата или ярлык
+            отправления, с которым вещь ездила к покупателю — OZON, WB, Яндекс
           </p>
         )}
 

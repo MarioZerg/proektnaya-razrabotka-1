@@ -1382,14 +1382,38 @@ def handler(event: dict, context) -> dict:
                 # Теперь принимаем любой код, которым вещь реально помечена:
                 #   * наш стикер хранения (storage_barcode);
                 #   * ярлык возврата маркетплейса (marketplace_returns.return_barcode);
-                #   * номер отправления, по которому вещь уехала (posting_number).
+                #   * номер отправления, по которому вещь уехала (posting_number);
+                #   * ЯРЛЫК ОТПРАВЛЕНИЯ FBS, с которым вещь ездила к покупателю:
+                #     номер отправления OZON, код стикера WB (*DWto4dQG, со звёздочкой
+                #     или без) и номер заказа Яндекса.
+                #
+                # Зачем FBS-ярлыки. Вещь вернулась по возвратному стикеру, кладовщик
+                # отправил её в цех — а на пакете к этому моменту живым остался только
+                # ярлык маркетплейса, с которым она уезжала. Возвратную наклейку
+                # сдирают на ПВЗ, наш стикер хранения затёрт. Упаковщица пикала ярлык
+                # отправления и получала «вещь не найдена»: сканировать было нечего,
+                # и вещь возвращали кладовщику выяснять, что это.
                 #
                 # ЖЁСТКОЕ ОГРАНИЧЕНИЕ: ищем ТОЛЬКО среди вещей со статусом 'repacking' —
                 # тех, что кладовщик перевёл в цех на перепаковку. Это и есть защита от
                 # актуальных FBS-заказов: живая вещь, которая вот-вот уедет покупателю,
                 # в перепаковку не переведена, и по её ярлыку сканер ответит «не найдена».
                 # Случайно списать или переупаковать товар из активного отправления
-                # физически невозможно — он не входит в область поиска.
+                # физически невозможно — он не входит в область поиска. Именно поэтому
+                # добавить сюда ярлыки FBS безопасно.
+                bare_esc = scan_code.lstrip('*').replace("'", "''")
+                code_match = (
+                    f"      gw.storage_barcode = '{code_esc}' "
+                    f"   OR mr.return_barcode = '{code_esc}' "
+                    f"   OR mr.posting_number = '{code_esc}' "
+                    f"   OR o.order_number = '{code_esc}' "
+                    f"   OR o.ozon_posting_number = '{code_esc}' "
+                    f"   OR o.wb_sticker_barcode = '{code_esc}' "
+                    f"   OR o.wb_sticker_barcode = '{bare_esc}' "
+                    f"   OR o.wb_sticker_barcode = '*{bare_esc}' "
+                    f"   OR CAST(o.wb_order_id AS TEXT) = '{bare_esc}' "
+                    f"   OR CAST(o.ym_order_id AS TEXT) = '{bare_esc}' "
+                )
                 cur.execute(
                     "SELECT gw.id, gw.status, gw.storage_barcode, o.order_number, o.product, "
                     "o.material, o.width, o.height, mr.return_reason, mr.marketplace, "
@@ -1398,25 +1422,21 @@ def handler(event: dict, context) -> dict:
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN marketplace_returns mr ON mr.goods_warehouse_id = gw.id "
                     "LEFT JOIN workshops w ON w.id = gw.repack_workshop_id "
-                    "WHERE gw.status = 'repacking' AND ("
-                    f"      gw.storage_barcode = '{code_esc}' "
-                    f"   OR mr.return_barcode = '{code_esc}' "
-                    f"   OR mr.posting_number = '{code_esc}' "
-                    f"   OR o.order_number = '{code_esc}') "
+                    "WHERE gw.status = 'repacking' AND (" + code_match + ") "
                     "LIMIT 1"
                 )
                 sc = cur.fetchone()
                 if not sc:
                     # Вещи с таким кодом на перепаковке нет. Разбираемся, что это было,
                     # чтобы упаковщица не гадала: чужой товар с полки или живой заказ.
+                    # Ищем тем же набором кодов, что и выше, но уже без фильтра по
+                    # статусу: иначе подсказка соврёт — вещь по ярлыку FBS есть, а
+                    # мы ответим «не найдена» вместо «не на перепаковке».
                     cur.execute(
                         "SELECT gw.status FROM goods_warehouse gw "
                         "LEFT JOIN marketplace_returns mr ON mr.goods_warehouse_id = gw.id "
                         "LEFT JOIN orders o ON o.id = gw.order_id "
-                        f"WHERE gw.storage_barcode = '{code_esc}' "
-                        f"   OR mr.return_barcode = '{code_esc}' "
-                        f"   OR mr.posting_number = '{code_esc}' "
-                        f"   OR o.order_number = '{code_esc}' LIMIT 1"
+                        "WHERE " + code_match + " LIMIT 1"
                     )
                     other = cur.fetchone()
                     if other:
