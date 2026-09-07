@@ -516,6 +516,103 @@ def log_return_history(cur, gw_id, r_id, order_id, actor_id=None, actor_name=Non
     return next_number
 
 
+def _accept_return_by_order(cur, conn, code, actor_id, actor_name):
+    """Приём возврата WB / Яндекса по коду с пакета — через НАШУ базу заказов.
+
+    У OZON возврат ищется в их API по штрихкоду наклейки. У WB и Яндекса такого
+    поиска нет: на пакете печатают код стикера отправления (WB, вида *DWto4dQG) или
+    номер заказа покупателя (Яндекс). Оба кода есть у нас в заказах, поэтому вещь
+    опознаём сами и сразу заводим её на склад как возврат.
+
+    Возвращает готовый ответ для кладовщика или None, если заказ по коду не нашёлся
+    (тогда выше отработает обычный путь через API OZON).
+    """
+    bare = code.lstrip('*')
+    code_esc = code.replace("'", "''")
+    bare_esc = bare.replace("'", "''")
+
+    # Ищем ТОЛЬКО среди WB и Яндекса: возвраты OZON проходят своим путём, через их
+    # API — там у заявки есть внешний id, история и причина возврата.
+    #
+    # Связка Яндекса — несколько вещей под одним номером заказа. Поэтому берём ту,
+    # которая ещё не принята как возврат: каждый скан принимает следующую вещь.
+    cur.execute(
+        "SELECT o.id, o.order_number, o.marketplace, o.material, o.width, o.height, "
+        "       gw.id, gw.status, gw.storage_barcode "
+        "FROM orders o "
+        "LEFT JOIN goods_warehouse gw ON gw.order_id = o.id "
+        "WHERE o.marketplace IN ('WB', 'Yandex') "
+        f"  AND (o.order_number = '{code_esc}' "
+        f"       OR o.wb_sticker_barcode = '{code_esc}' "
+        f"       OR o.wb_sticker_barcode = '{bare_esc}' "
+        f"       OR o.wb_sticker_barcode = '*{bare_esc}' "
+        f"       OR CAST(o.wb_order_id AS TEXT) = '{bare_esc}' "
+        f"       OR CAST(o.ym_order_id AS TEXT) = '{bare_esc}') "
+        "ORDER BY (gw.id IS NULL OR gw.status <> 'mp_return') DESC, o.id "
+        "LIMIT 1"
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+
+    order_id, order_number, marketplace, material, width, height, gw_id, gw_status, storage_barcode = row
+
+    # Повторный скан той же вещи ничего не меняет: кладовщик просто пикнул пакет
+    # дважды. Говорим об этом отдельно, чтобы счётчик принятого не врал.
+    if gw_id and gw_status == 'mp_return':
+        return {
+            'found': 0,
+            'barcode': code,
+            'alreadyPicked': True,
+            'accepted': {
+                'material': material,
+                'width': width,
+                'height': height,
+                'storageBarcode': storage_barcode,
+                'productName': None,
+            },
+        }
+
+    if gw_id:
+        # Вещь уже заводили на склад раньше (уезжала к покупателю и вернулась) —
+        # возвращаем ту же запись в возвраты, не плодя вторую: order_id уникален.
+        cur.execute(
+            "UPDATE goods_warehouse SET status = 'mp_return', shelf_id = NULL, "
+            "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
+            "reserved_order_id = NULL, shipping_labeled_at = NULL, "
+            "shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
+            "receive_reason = 'return' WHERE id = %s",
+            (gw_id,),
+        )
+    else:
+        storage_barcode = next_storage_barcode(cur)
+        cur.execute(
+            "INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason) "
+            "VALUES (%s, 'mp_return', %s, 'return') RETURNING id",
+            (order_id, storage_barcode),
+        )
+        gw_id = cur.fetchone()[0]
+
+    log_action(
+        cur, actor_id, actor_name, 'receive_return',
+        f'Принял возврат {marketplace} по коду {code} — заказ {order_number} ({storage_barcode})',
+    )
+    conn.commit()
+
+    return {
+        'found': 1,
+        'barcode': code,
+        'alreadyPicked': False,
+        'accepted': {
+            'material': material,
+            'width': width,
+            'height': height,
+            'storageBarcode': storage_barcode,
+            'productName': None,
+        },
+    }
+
+
 def stock_picked_up_returns(cur, ids=None, limit=None):
     """Заводит забранные с ПВЗ возвраты на склад в «подвешенном» состоянии.
 
@@ -956,6 +1053,23 @@ def handler(event: dict, context) -> dict:
                 code = (body_data.get('barcode') or '').strip()
                 if not code:
                     return _resp(400, {'error': 'Отсканируйте штрихкод возврата'})
+
+                # ВОЗВРАТ WB ИЛИ ЯНДЕКСА — ПРИНИМАЕМ ПО СВОЕЙ БАЗЕ, БЕЗ API OZON.
+                #
+                # Раньше приёмка умела только OZON: код с пакета уходил в их API, и на
+                # возврат WB или Яндекса кладовщик получал «OZON не знает возврат».
+                # Такие вещи заводили руками или они вовсе оставались вне учёта.
+                #
+                # Что печатают на возвратах:
+                #   WB     — код стикера вида *DWto4dQG (со звёздочкой или без) и
+                #            номер сборочного задания цифрами;
+                #   Яндекс — номер заказа покупателя (у нас он внутри YM-61355128771-1).
+                # Ни того, ни другого в API возвратов OZON нет, поэтому сначала ищем
+                # заказ у себя: нашли — принимаем сразу, не тревожа чужую площадку.
+                accepted_other = _accept_return_by_order(cur, conn, code, actor_id, actor_name)
+                if accepted_other is not None:
+                    return _resp(200, accepted_other)
+
                 creds, enabled = get_credentials(cur, 'ozon')
                 if not enabled:
                     return _resp(409, {'error': 'Интеграция OZON выключена'})

@@ -850,7 +850,11 @@ def handler(event: dict, context) -> dict:
         - список отменённых вещей, отстикерованных упаковщиком, но ещё не положенных на полку
           (виджет на дашборде кладовщика)
     POST /  { action: 'receive_return', orderNumber }
-        - приём возврата с маркетплейса по номеру заказа (ручной ввод, до появления API).
+        - приём возврата ЛЮБОЙ площадки: orderNumber — это наш номер заказа, номер
+          отправления OZON, код стикера WB (*DWto4dQG, со звёздочкой или без),
+          номер сборочного задания WB цифрами или номер заказа Яндекс Маркета.
+          Для связки Яндекса (несколько вещей под одним номером) каждый скан
+          принимает следующую ещё не принятую вещь.
           Полка НЕ выбирается: вещь встаёт в статус awaiting_shelf и попадает на полку только
           сканированием стикера хранения (place_on_shelf) — так товар не окажется «не на месте».
           Если заказ уже был на складе, старый storage_barcode сохраняется
@@ -3116,19 +3120,56 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите номер заказа'})}
 
                 order_number_esc = order_number.replace("'", "''")
-                # Ищем и по номеру отправления маркетплейса: на ярлыке OZON напечатан
-                # именно он, а у вещи в системе может быть внутренний номер с хвостом
-                # (…-1-2) — наследство старого способа деления отправлений. Без этого
-                # кладовщик сканировал возврат и получал «заказ не найден».
+                # Тот же код без ведущей «*»: на стикере WB штрихкод печатается со
+                # звёздочкой (*DWto4dQG), а сканеры в разных режимах отдают его то с
+                # ней, то без. Ищем по обоим написаниям, чтобы кладовщик не разбирался.
+                bare_esc = order_number.lstrip('*').replace("'", "''")
+
+                # ПРИНИМАЕМ ВОЗВРАТ ЛЮБОЙ ПЛОЩАДКИ, А НЕ ТОЛЬКО OZON.
+                #
+                # Раньше искали лишь по нашему номеру заказа и номеру отправления OZON.
+                # Возврат WB или Яндекса кладовщик отсканировать не мог: система
+                # отвечала «заказ не найден», и такие вещи заводили руками или они
+                # вовсе оставались вне учёта.
+                #
+                # Что печатается на возвратах:
+                #   OZON   — номер отправления (ozon_posting_number);
+                #   WB     — код стикера вида *DWto4dQG (wb_sticker_barcode) и
+                #            номер сборочного задания цифрами (wb_order_id);
+                #   Яндекс — номер заказа покупателя (ym_order_id), а у нас он лежит
+                #            внутри своего номера: YM-61355128771-1.
+                # Числовые поля сравниваем как текст: сканер отдаёт строку.
+                #
+                # ПОРЯДОК ВЫБОРА. Связка Яндекса — это несколько вещей с ОДНИМ номером
+                # заказа, поэтому совпадений может быть много. Берём ту вещь, которая
+                # ещё не принята как возврат: кладовщик сканирует один номер столько
+                # раз, сколько вещей у него в руках, и каждый скан принимает следующую.
                 cur.execute(
-                    f"SELECT id FROM orders "
-                    f"WHERE order_number = '{order_number_esc}' "
-                    f"   OR ozon_posting_number = '{order_number_esc}' "
-                    f"ORDER BY (order_number = '{order_number_esc}') DESC, id LIMIT 1"
+                    f"SELECT o.id FROM orders o "
+                    f"LEFT JOIN goods_warehouse gw ON gw.order_id = o.id "
+                    f"WHERE o.order_number = '{order_number_esc}' "
+                    f"   OR o.ozon_posting_number = '{order_number_esc}' "
+                    f"   OR o.wb_sticker_barcode = '{order_number_esc}' "
+                    f"   OR o.wb_sticker_barcode = '{bare_esc}' "
+                    f"   OR o.wb_sticker_barcode = '*{bare_esc}' "
+                    f"   OR CAST(o.wb_order_id AS TEXT) = '{bare_esc}' "
+                    f"   OR CAST(o.ym_order_id AS TEXT) = '{bare_esc}' "
+                    # Сначала точное попадание в наш номер, затем ещё не принятые вещи.
+                    f"ORDER BY (o.order_number = '{order_number_esc}') DESC, "
+                    f"         (gw.id IS NULL OR gw.status <> 'mp_return') DESC, o.id "
+                    f"LIMIT 1"
                 )
                 order_row = cur.fetchone()
                 if not order_row:
-                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Заказ {order_number} не найден'})}
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Заказ {order_number} не найден. Отсканируйте номер '
+                                     f'отправления OZON, код стикера WB или номер заказа '
+                                     f'Яндекс Маркета'
+                        }, ensure_ascii=False),
+                    }
                 order_id = order_row[0]
 
                 # Полку вручную не выбираем: возврат принимается в статусе awaiting_shelf, а на

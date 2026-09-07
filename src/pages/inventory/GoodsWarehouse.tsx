@@ -97,7 +97,9 @@ const GoodsWarehouse = () => {
         {!s.stockOnly && s.uncheckedReturns > 0 && (
           <button
             type="button"
-            onClick={() => navigate('/crm/inventory/returns-inspection')}
+            onClick={() =>
+              navigate('/crm/inventory/returns-inspection?stage=fromMarketplace')
+            }
             className="flex w-full items-center gap-3 rounded-lg border border-violet-300 bg-violet-50 px-4 py-3 text-left"
           >
             <Icon name="PackageOpen" size={24} className="shrink-0 text-violet-600" />

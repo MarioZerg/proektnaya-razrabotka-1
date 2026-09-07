@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
@@ -13,6 +14,17 @@ import {
   type InspectionItem,
   type InspectionStage,
 } from '@/lib/goodsWarehouseApi';
+
+/** Этапы, на которые можно попасть по ссылке. Чужое значение в адресе игнорируем,
+ * чтобы страница не открылась пустой на несуществующей вкладке. */
+const VALID_STAGES: InspectionStage[] = [
+  'fromMarketplace',
+  'fromReturn',
+  'atPackers',
+  'inspected',
+  'toDispose',
+  'disposed',
+];
 
 const EMPTY_COUNTS: InspectionCounts = {
   fromMarketplace: 0,
@@ -31,7 +43,17 @@ export const useReturnsInspection = () => {
 
   const [counts, setCounts] = useState<InspectionCounts>(EMPTY_COUNTS);
   const [items, setItems] = useState<InspectionItem[]>([]);
-  const [stage, setStage] = useState<InspectionStage>('fromReturn');
+  /**
+   * Этап, открытый при заходе. Берём из ссылки (?stage=fromMarketplace), чтобы плашки
+   * и плитки со склада вели СРАЗУ на нужную вкладку: кладовщик жмёт «Непроверенные
+   * возвраты» и попадает на «Возврат с маркетплейса», а не на общий разбор, где этих
+   * вещей ещё нет и приходится искать нужную вкладку глазами.
+   */
+  const [searchParams] = useSearchParams();
+  const stageFromUrl = searchParams.get('stage') as InspectionStage | null;
+  const [stage, setStage] = useState<InspectionStage>(
+    stageFromUrl && VALID_STAGES.includes(stageFromUrl) ? stageFromUrl : 'fromReturn',
+  );
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<number[]>([]);
   const [acting, setActing] = useState(false);

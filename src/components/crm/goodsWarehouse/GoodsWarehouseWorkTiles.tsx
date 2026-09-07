@@ -95,7 +95,9 @@ const GoodsWarehouseWorkTiles = ({
           hint="Решить: в цех на осмотр или на полку"
           count={pendingReturnsCount}
           zone="both"
-          onClick={() => navigate('/crm/inventory/returns-inspection')}
+          onClick={() =>
+            navigate('/crm/inventory/returns-inspection?stage=fromMarketplace')
+          }
           stepLabel="Привёз с пункта выдачи"
           stepIcon="Truck"
           onStep={onPickup}
