@@ -511,9 +511,12 @@ def export_stock_ozon_xlsx(cur, ids=None):
     свод (с полками, штрихкодами и подсветкой) остаётся в общем файле, а этот —
     только для площадки.
 
-    Артикул берём ozon_sku: именно он заведён в кабинете OZON. Вещи без него в файл
-    не попадают — площадка их не опознает; сколько таких, менеджер видит в общем
-    файле по жёлтым строкам.
+    АРТИКУЛ — ЭТО НАШ sku ПРОДАВЦА («vyal2_250»), А НЕ ЧИСЛОВОЙ ozon_sku.
+    В шаблоне заявки OZON ждёт артикул, который мы САМИ задали в карточке товара в
+    его кабинете. Числовой ozon_sku — это внутренний код площадки (SKU): он нужен
+    для API отправлений, но в файле поставки не опознаётся, и загрузка отваливается.
+    Вещи без нашего артикула в файл не попадают — заявить их нельзя; сколько таких,
+    менеджер видит в общем своде по жёлтым строкам.
     """
     from openpyxl import Workbook
     import base64
@@ -527,12 +530,12 @@ def export_stock_ozon_xlsx(cur, ids=None):
     # Свод по артикулу OZON: в заявку идёт «сколько штук такого товара».
     # Имя — для глаз менеджера, OZON его игнорирует (колонка необязательная).
     cur.execute(
-        "SELECT mi.ozon_sku, COALESCE(mi.name, o.product), COUNT(*) "
+        "SELECT mi.sku, COALESCE(mi.name, o.product), COUNT(*) "
         "FROM goods_warehouse gw "
         "JOIN orders o ON o.id = gw.order_id "
         "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
-        "WHERE gw.status = 'in_stock' AND mi.ozon_sku IS NOT NULL "
-        "  AND mi.ozon_sku <> ''" + id_clause + " "
+        "WHERE gw.status = 'in_stock' AND mi.sku IS NOT NULL "
+        "  AND mi.sku <> ''" + id_clause + " "
         "GROUP BY 1, 2 ORDER BY 2"
     )
     rows = cur.fetchall()
@@ -543,8 +546,8 @@ def export_stock_ozon_xlsx(cur, ids=None):
     ws.append(['артикул', 'имя (необязательно)', 'количество'])
     # Ширина второй колонки — как в шаблоне: длинные названия иначе не читаются.
     ws.column_dimensions['B'].width = 30.71
-    for ozon_sku, name, qty in rows:
-        ws.append([ozon_sku, name or '', int(qty)])
+    for sku, name, qty in rows:
+        ws.append([sku, name or '', int(qty)])
 
     buf = io.BytesIO()
     wb.save(buf)
