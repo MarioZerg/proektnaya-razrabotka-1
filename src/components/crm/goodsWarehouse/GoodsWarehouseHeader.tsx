@@ -17,9 +17,9 @@ interface GoodsWarehouseHeaderProps {
   /** Выгрузить товарный состав в Excel для FBO-поставки. */
   onExport?: () => void;
   exporting?: boolean;
-  /** Выгрузить файл строго по шаблону OZON — грузится в кабинет площадки как есть. */
-  onExportOzon?: () => void;
-  exportingOzon?: boolean;
+  /** Выгрузить файл строго по шаблону выбранной площадки — грузится в кабинет как есть. */
+  onExportFor?: (target: 'ozon' | 'wb') => void;
+  exportingFor?: 'ozon' | 'wb' | null;
   /** Менеджеру складские действия не нужны — он только собирает состав поставки. */
   stockOnly?: boolean;
   /** Сколько вещей менеджер отметил галочками для выгрузки. */
@@ -36,8 +36,8 @@ const GoodsWarehouseHeader = ({
   onReprint,
   onExport,
   exporting = false,
-  onExportOzon,
-  exportingOzon = false,
+  onExportFor,
+  exportingFor = null,
   stockOnly = false,
   pickedCount = 0,
   onClearPicked,
@@ -71,22 +71,38 @@ const GoodsWarehouseHeader = ({
             </button>
           </div>
         )}
-        {/* ДЛЯ OZON — отдельный файл по их шаблону, он же главная кнопка: именно
-            его менеджер грузит в кабинет площадки. Наш общий свод (с полками и
-            штрихкодами) OZON не примет, поэтому это два разных файла. */}
-        {onExportOzon && (
-          <Button onClick={onExportOzon} disabled={exportingOzon}>
-            <Icon
-              name={exportingOzon ? 'Loader2' : 'FileSpreadsheet'}
-              size={16}
-              className={`mr-2 ${exportingOzon ? 'animate-spin' : ''}`}
-            />
-            {exportingOzon
-              ? 'Готовим файл...'
-              : pickedCount > 0
-                ? `Файл для OZON (${pickedCount})`
-                : 'Файл для OZON'}
-          </Button>
+        {/* ВЫБОР ПЛОЩАДКИ — обязательный шаг, а не удобство: шаблоны OZON и WB
+            несовместимы (у одного артикул и название, у другого только баркод), и
+            файл «на обе сразу» ни одна из них не примет. Поэтому одна кнопка со
+            списком: менеджер сначала называет площадку, потом получает файл. */}
+        {onExportFor && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button disabled={exportingFor !== null}>
+                <Icon
+                  name={exportingFor ? 'Loader2' : 'FileSpreadsheet'}
+                  size={16}
+                  className={`mr-2 ${exportingFor ? 'animate-spin' : ''}`}
+                />
+                {exportingFor
+                  ? 'Готовим файл...'
+                  : pickedCount > 0
+                    ? `Файл для площадки (${pickedCount})`
+                    : 'Файл для площадки'}
+                <Icon name="ChevronDown" size={14} className="ml-2" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem onClick={() => onExportFor('ozon')}>
+                <Icon name="ShoppingBag" size={16} className="mr-2" />
+                Для OZON
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onExportFor('wb')}>
+                <Icon name="ShoppingBag" size={16} className="mr-2" />
+                Для Wildberries
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
         {onExport && (
           <Button variant="outline" onClick={onExport} disabled={exporting}>

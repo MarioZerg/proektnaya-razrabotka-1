@@ -399,19 +399,21 @@ export const useGoodsWarehouseState = () => {
   };
 
   /**
-   * Файл ДЛЯ ЗАГРУЗКИ НА OZON — по их шаблону, без наших колонок.
+   * Файл ДЛЯ ЗАГРУЗКИ НА ПЛОЩАДКУ — по её шаблону, без наших колонок.
    *
-   * Отдельно от общего свода намеренно: OZON читает файл машинно и отклоняет его при
-   * любом отличии в шапке. Наш свод с полками и штрихкодами туда не годится, а без
-   * него не собрать товар с полок — поэтому это два разных файла, а не один.
+   * Шаблоны у площадок разные и несовместимые: OZON ждёт артикул продавца и название,
+   * WB — только баркод и количество. Файл читается машинно, и при любом отличии в
+   * шапке загрузка отклоняется, поэтому менеджер выбирает площадку ЯВНО, а не получает
+   * один файл «на всякий случай». Наш общий свод с полками остаётся отдельно: он нужен
+   * складу, чтобы собрать товар, но площадки его не принимают.
    */
-  const [exportingOzon, setExportingOzon] = useState(false);
-  const handleExportOzon = async () => {
-    setExportingOzon(true);
+  const [exportingFor, setExportingFor] = useState<'ozon' | 'wb' | null>(null);
+  const handleExportFor = async (target: 'ozon' | 'wb') => {
+    setExportingFor(target);
     try {
-      await downloadStockExcel(undefined, pickedIds.length ? pickedIds : undefined, 'ozon');
+      await downloadStockExcel(undefined, pickedIds.length ? pickedIds : undefined, target);
       toast({
-        title: 'Файл для OZON готов',
+        title: target === 'ozon' ? 'Файл для OZON готов' : 'Файл для Wildberries готов',
         description: 'Загружайте в кабинет как есть — шапка по шаблону площадки',
       });
     } catch (e) {
@@ -421,7 +423,7 @@ export const useGoodsWarehouseState = () => {
         variant: 'destructive',
       });
     } finally {
-      setExportingOzon(false);
+      setExportingFor(null);
     }
   };
 
@@ -524,8 +526,8 @@ export const useGoodsWarehouseState = () => {
     stockOnly,
     exporting,
     handleExport,
-    exportingOzon,
-    handleExportOzon,
+    exportingFor,
+    handleExportFor,
     pickedIds,
     pickedCount,
     togglePick,

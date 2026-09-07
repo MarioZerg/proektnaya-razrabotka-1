@@ -566,6 +566,64 @@ def export_stock_ozon_xlsx(cur, ids=None):
     }
 
 
+def export_stock_wb_xlsx(cur, ids=None):
+    """Товарный состав для загрузки FBO-поставки НА WILDBERRIES — строго по их шаблону.
+
+    Шаблон WB короче ozon-овского: единственный лист «Sheet1» и две колонки —
+    «Баркод» и «Количество». Никакого названия товара: WB опознаёт позицию только
+    по баркоду. Как и у OZON, файл читается машинно, поэтому ни заголовков, ни
+    итогов, ни лишних колонок здесь быть не должно.
+
+    БАРКОД — это wb_sku (13 цифр, «2038648306466»), а НЕ артикул продавца и не
+    nm_id. Именно баркод печатается на стикере вещи и сканируется на приёмке WB.
+    Вещи без баркода в файл не попадают: заявить их нельзя.
+    """
+    from openpyxl import Workbook
+    import base64
+    import io
+    from datetime import datetime
+
+    id_clause = ''
+    if ids:
+        id_clause = ' AND gw.id IN (' + ','.join(str(int(i)) for i in ids) + ')'
+
+    cur.execute(
+        "SELECT mi.wb_sku, COUNT(*) "
+        "FROM goods_warehouse gw "
+        "JOIN orders o ON o.id = gw.order_id "
+        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+        "WHERE gw.status = 'in_stock' AND mi.wb_sku IS NOT NULL "
+        "  AND mi.wb_sku <> ''" + id_clause + " "
+        "GROUP BY 1 ORDER BY 1"
+    )
+    rows = cur.fetchall()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Sheet1'
+    ws.append(['Баркод', 'Количество'])
+    for wb_sku, qty in rows:
+        # Баркод отдаём ТЕКСТОМ. Числом Excel показал бы его как 2,03865E+12 и
+        # обрезал бы значащие цифры — на приёмке такой файл не читается.
+        ws.append([str(wb_sku), int(qty)])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return {
+        'statusCode': 200,
+        'headers': {
+            'Access-Control-Allow-Origin': '*',
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition': (
+                f'attachment; filename="wb-fbo-'
+                f'{datetime.now().strftime("%d-%m-%Y")}.xlsx"'
+            ),
+        },
+        'isBase64Encoded': True,
+        'body': base64.b64encode(buf.getvalue()).decode(),
+    }
+
+
 def export_stock_xlsx(cur, marketplace, ids=None):
     """Товарный состав склада «На хранении» в Excel — для загрузки FBO-поставки.
 
@@ -770,9 +828,13 @@ def handler(event: dict, context) -> dict:
           marketplace — оставить лист только одной площадки (по умолчанию оба)
     GET  /?export_stock=1&format=ozon
         - файл СТРОГО по шаблону OZON (products-import-template): один лист «Sheet1»,
-          шапка «артикул | имя (необязательно) | количество». Грузится в кабинет как
-          есть — любое отличие в шапке площадка отклоняет. Товары без ozon_sku
-          не попадают: OZON их не опознает
+          шапка «артикул | имя (необязательно) | количество». Артикул — наш sku
+          продавца («vyal2_250»), а не числовой ozon_sku. Грузится в кабинет как
+          есть — любое отличие в шапке площадка отклоняет
+    GET  /?export_stock=1&format=wb
+        - файл СТРОГО по шаблону Wildberries: лист «Sheet1», шапка «Баркод | Количество».
+          Баркод — wb_sku (13 цифр), отдаётся текстом, иначе Excel превратит его в
+          2,03865E+12. Товары без баркода не попадают: заявить их нельзя
     POST /  { action: 'export_stock', ids: [1,2,3], marketplace?, format? }
         - тот же файл, но только по вещам, отмеченным менеджером галочками: он набирает
           на складе нужные размеры и выгружает ровно то, что забирает в поставку.
@@ -846,8 +908,11 @@ def handler(event: dict, context) -> dict:
             # Выгрузка товарного состава для FBO-поставки (Excel).
             # format=ozon — файл строго по шаблону OZON, для загрузки на площадку.
             if params.get('export_stock'):
-                if (params.get('format') or '').lower() == 'ozon':
+                fmt = (params.get('format') or '').lower()
+                if fmt == 'ozon':
                     return export_stock_ozon_xlsx(cur)
+                if fmt == 'wb':
+                    return export_stock_wb_xlsx(cur)
                 return export_stock_xlsx(cur, params.get('marketplace') or '')
 
             # Счётчик для кладовщика: сколько вещей на полках уже подобрано под заказы и
@@ -1850,8 +1915,11 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': 'Отметьте товары галочками'}, ensure_ascii=False),
                     }
-                if (body_data.get('format') or '').lower() == 'ozon':
+                fmt = (body_data.get('format') or '').lower()
+                if fmt == 'ozon':
                     return export_stock_ozon_xlsx(cur, ids)
+                if fmt == 'wb':
+                    return export_stock_wb_xlsx(cur, ids)
                 return export_stock_xlsx(cur, body_data.get('marketplace') or '', ids)
 
             if action == 'admin_receive':

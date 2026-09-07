@@ -897,11 +897,13 @@ export const downloadStockExcel = async (
    */
   ids?: number[],
   /**
-   * 'ozon' — файл строго по шаблону OZON (лист Sheet1, шапка «артикул | имя
-   * (необязательно) | количество»), грузится в кабинет как есть. По умолчанию —
-   * наш общий свод с полками, штрихкодами и листами обеих площадок.
+   * Под какую площадку собрать файл — шаблоны у них разные:
+   *   'ozon' — лист Sheet1, шапка «артикул | имя (необязательно) | количество»;
+   *   'wb'   — лист Sheet1, шапка «Баркод | Количество».
+   * Оба грузятся в кабинет как есть. Без формата — наш общий свод с полками и
+   * штрихкодами: он для склада, площадки его не принимают.
    */
-  format?: 'ozon',
+  format?: 'ozon' | 'wb',
 ) => {
   // Отбор шлём телом POST, а не ссылкой: сотни номеров в адресную строку не влезают,
   // а обрезанный список дал бы неполный файл без единой ошибки на экране.
@@ -922,8 +924,8 @@ export const downloadStockExcel = async (
   const a = document.createElement('a');
   a.href = url;
   const today = new Date().toLocaleDateString('ru-RU').replace(/\./g, '-');
-  a.download = format === 'ozon'
-    ? `ozon-fbo${ids?.length ? '-otbor' : ''}-${today}.xlsx`
+  a.download = format
+    ? `${format}-fbo${ids?.length ? '-otbor' : ''}-${today}.xlsx`
     : `sklad-fbo${marketplace ? `-${marketplace.toLowerCase()}` : ''}${
         ids?.length ? '-otbor' : ''
       }-${today}.xlsx`;
