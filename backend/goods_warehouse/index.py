@@ -501,8 +501,13 @@ def next_storage_barcode(cur) -> str:
     return f"GW-{int(cur.fetchone()[0]):06d}"
 
 
-def export_stock_xlsx(cur, marketplace):
+def export_stock_xlsx(cur, marketplace, ids=None):
     """Товарный состав склада «На хранении» в Excel — для загрузки FBO-поставки.
+
+    ids — список id вещей, отмеченных менеджером галочками. Если он передан, в книгу
+    попадают ТОЛЬКО они: менеджер отбирает нужные размеры на складе и увозит в поставку
+    не весь остаток, а то, что решил забрать. Без ids выгружается весь свободный остаток
+    (прежнее поведение).
 
     ОДИН ФАЙЛ НА ОБЕ ПЛОЩАДКИ. У OZON и WB шаблоны заявки разные, но обе читают
     одно и то же: артикул и количество. Поэтому книга собрана так, чтобы годиться
@@ -528,6 +533,17 @@ def export_stock_xlsx(cur, marketplace):
 
     mp = (marketplace or '').strip().upper()
 
+    # Отбор менеджера. Пустой список отличаем от «не передавали»: ids=[] означало бы
+    # «ничего не выбрано» — такой файл собирать бессмысленно, поэтому его отсекаем выше,
+    # в обработчике запроса.
+    #
+    # Даже при отборе оставляем условие status='in_stock': пока менеджер набирал
+    # галочки, вещь могла уйти в сборку или в чужую поставку. Заявить её нельзя —
+    # физически она уже занята.
+    id_clause = ''
+    if ids:
+        id_clause = ' AND gw.id IN (' + ','.join(str(int(i)) for i in ids) + ')'
+
     # Свод по КАРТОЧКЕ ТОВАРА, а не по вещам: в заявку площадки идёт артикул и
     # количество. Вещи без привязки к карточке собираем отдельной строкой — у них
     # нет артикула, и заявить их нельзя, пока товар не привязан.
@@ -540,7 +556,7 @@ def export_stock_xlsx(cur, marketplace):
         "FROM goods_warehouse gw "
         "JOIN orders o ON o.id = gw.order_id "
         "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
-        "WHERE gw.status = 'in_stock' "
+        "WHERE gw.status = 'in_stock'" + id_clause + " "
         "GROUP BY 1, 2, 3, 4, 5, 6, 7 "
         "ORDER BY 4, 6, 7"
     )
@@ -623,7 +639,7 @@ def export_stock_xlsx(cur, marketplace):
         "JOIN orders o ON o.id = gw.order_id "
         "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
         "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
-        "WHERE gw.status = 'in_stock' "
+        "WHERE gw.status = 'in_stock'" + id_clause + " "
         "ORDER BY COALESCE(sh.name, 'яя'), COALESCE(mi.name, o.product)"
     )
     ws2 = wb.create_sheet('Позиции')
@@ -642,6 +658,10 @@ def export_stock_xlsx(cur, marketplace):
     buf = io.BytesIO()
     wb.save(buf)
     suffix = f'-{mp.lower()}' if mp else ''
+    # Отбор и полный остаток называем по-разному: у менеджера в загрузках лежит
+    # несколько файлов за день, и по имени должно быть видно, что в нём.
+    if ids:
+        suffix += '-otbor'
     return {
         'statusCode': 200,
         'headers': {
@@ -683,6 +703,10 @@ def handler(event: dict, context) -> dict:
           Считается ТОЛЬКО статус in_stock — свободный остаток на полках; вещи в сборке,
           резерве и поставках не попадают, иначе заявленное не сойдётся с фактическим.
           marketplace — оставить лист только одной площадки (по умолчанию оба)
+    POST /  { action: 'export_stock', ids: [1,2,3], marketplace? }
+        - тот же файл, но только по вещам, отмеченным менеджером галочками: он набирает
+          на складе нужные размеры и выгружает ровно то, что забирает в поставку.
+          Список id идёт телом запроса — в адресной строке сотни номеров не помещаются
     POST /  { action: 'admin_receive', marketplaceItemId, shelfId? }
         - ручной приём администратором: вещь без заказа с маркетплейса (излишек производства,
           найденный товар). Под неё создаётся служебный заказ WH-00001 и запись склада с
@@ -1734,6 +1758,26 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            # ВЫГРУЗКА ОТМЕЧЕННОГО ГАЛОЧКАМИ — методом POST, а не ссылкой.
+            #
+            # Менеджер отбирает на складе конкретные вещи (нужные размеры), и их
+            # бывает несколько сотен. Список id такой длины в адресную строку не
+            # влезает — часть браузеров и прокси режут её молча, и в файл попал бы
+            # обрезанный отбор. В теле запроса ограничения нет.
+            if action == 'export_stock':
+                ids = body_data.get('ids') or []
+                try:
+                    ids = [int(i) for i in ids]
+                except (TypeError, ValueError):
+                    ids = []
+                if not ids:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Отметьте товары галочками'}, ensure_ascii=False),
+                    }
+                return export_stock_xlsx(cur, body_data.get('marketplace') or '', ids)
 
             if action == 'admin_receive':
                 # Ручной приём администратором или кладовщиком: он находит товар в справочнике

@@ -888,10 +888,26 @@ export const fetchStalledShipments = async (): Promise<{
  * полками. Считается только свободный остаток на полках — вещи в сборке, резерве
  * и уже уехавшие в поставку не попадают, иначе заявленное не сойдётся с фактом.
  */
-export const downloadStockExcel = async (marketplace?: 'OZON' | 'WB') => {
-  const res = await fetch(
-    `${GOODS_WAREHOUSE_URL}?export_stock=1${marketplace ? `&marketplace=${marketplace}` : ''}`,
-  );
+export const downloadStockExcel = async (
+  marketplace?: 'OZON' | 'WB',
+  /**
+   * Вещи, отмеченные галочками. Переданы — в файл идут только они: менеджер отобрал
+   * на складе нужные размеры и выгружает ровно то, что забирает в поставку.
+   * Не переданы — выгружается весь свободный остаток.
+   */
+  ids?: number[],
+) => {
+  // Отбор шлём телом POST, а не ссылкой: сотни номеров в адресную строку не влезают,
+  // а обрезанный список дал бы неполный файл без единой ошибки на экране.
+  const res = ids?.length
+    ? await fetch(GOODS_WAREHOUSE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'export_stock', ids, marketplace }),
+      })
+    : await fetch(
+        `${GOODS_WAREHOUSE_URL}?export_stock=1${marketplace ? `&marketplace=${marketplace}` : ''}`,
+      );
   if (!res.ok) throw new Error('Не удалось сформировать файл');
 
   const blob = await res.blob();
@@ -899,7 +915,9 @@ export const downloadStockExcel = async (marketplace?: 'OZON' | 'WB') => {
   const a = document.createElement('a');
   a.href = url;
   const today = new Date().toLocaleDateString('ru-RU').replace(/\./g, '-');
-  a.download = `sklad-fbo${marketplace ? `-${marketplace.toLowerCase()}` : ''}-${today}.xlsx`;
+  a.download = `sklad-fbo${marketplace ? `-${marketplace.toLowerCase()}` : ''}${
+    ids?.length ? '-otbor' : ''
+  }-${today}.xlsx`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

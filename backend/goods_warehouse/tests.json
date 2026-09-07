@@ -19,6 +19,25 @@
       "expectedStatus": 200
     },
     {
+      "name": "Export selected without ids fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "export_stock"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Export selected by ids works",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "export_stock",
+        "ids": [999999]
+      },
+      "expectedStatus": 200
+    },
+    {
       "name": "Place on shelf without barcode fails",
       "method": "POST",
       "path": "/",

@@ -19,6 +19,9 @@ interface GoodsWarehouseHeaderProps {
   exporting?: boolean;
   /** Менеджеру складские действия не нужны — он только собирает состав поставки. */
   stockOnly?: boolean;
+  /** Сколько вещей менеджер отметил галочками для выгрузки. */
+  pickedCount?: number;
+  onClearPicked?: () => void;
 }
 
 /** Шапка склада товара: заголовок и редкие действия под кнопкой «Ещё». */
@@ -31,6 +34,8 @@ const GoodsWarehouseHeader = ({
   onExport,
   exporting = false,
   stockOnly = false,
+  pickedCount = 0,
+  onClearPicked,
 }: GoodsWarehouseHeaderProps) => {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -38,7 +43,7 @@ const GoodsWarehouseHeader = ({
         <h1 className="text-xl font-bold">Склад товара</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {stockOnly
-            ? 'Свободный остаток на полках — товарный состав для FBO-поставки'
+            ? 'Отметьте галочками нужные размеры и выгрузите — в файл попадёт только отмеченное'
             : 'Готовые изделия по полкам — источник для поставок на маркетплейс'}
         </p>
       </div>
@@ -47,6 +52,20 @@ const GoodsWarehouseHeader = ({
       <div className="flex flex-wrap items-center gap-2">
         {/* Выгрузка — главное действие менеджера, поэтому отдельной кнопкой, а не
             в «Ещё»: он заходит на склад ровно за этим файлом. */}
+        {/* Отбор виден прямо на кнопке: менеджер набирает вещи по разным фильтрам и
+            должен видеть общий счёт, не пролистывая таблицу обратно. */}
+        {stockOnly && pickedCount > 0 && (
+          <div className="flex items-center gap-2 rounded-md border border-primary bg-primary/5 px-3 py-1.5 text-sm">
+            <span className="font-medium">Отмечено: {pickedCount} шт.</span>
+            <button
+              type="button"
+              onClick={onClearPicked}
+              className="text-muted-foreground underline-offset-2 hover:underline"
+            >
+              снять
+            </button>
+          </div>
+        )}
         {onExport && (
           <Button onClick={onExport} disabled={exporting}>
             <Icon
@@ -54,7 +73,11 @@ const GoodsWarehouseHeader = ({
               size={16}
               className={`mr-2 ${exporting ? 'animate-spin' : ''}`}
             />
-            {exporting ? 'Готовим файл...' : 'Выгрузить в Excel'}
+            {exporting
+              ? 'Готовим файл...'
+              : pickedCount > 0
+                ? `Выгрузить отмеченное (${pickedCount})`
+                : 'Выгрузить в Excel'}
           </Button>
         )}
         {!stockOnly && (

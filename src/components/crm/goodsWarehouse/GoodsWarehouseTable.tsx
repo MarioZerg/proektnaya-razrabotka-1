@@ -51,6 +51,17 @@ interface GoodsWarehouseTableProps {
   isAdmin?: boolean;
   /** Удаление со склада — только для вещей на хранении и только у администратора. */
   onDelete?: (id: number) => Promise<void>;
+  /**
+   * ОТБОР МЕНЕДЖЕРА в поставку. Это отдельная колонка галочек, не связанная с
+   * печатью стикеров: кладовщик отмечает вещи, чтобы напечатать ленту наклеек,
+   * менеджер — чтобы выгрузить их в Excel и забрать со склада. Роли не
+   * пересекаются, поэтому в один момент видна только одна колонка.
+   */
+  pickMode?: boolean;
+  pickedIds?: number[];
+  onTogglePick?: (id: number) => void;
+  onToggleAllPicked?: () => void;
+  allPicked?: boolean;
 }
 
 const GoodsWarehouseTable = ({
@@ -60,6 +71,11 @@ const GoodsWarehouseTable = ({
   onMarkLost,
   isAdmin = false,
   onDelete,
+  pickMode = false,
+  pickedIds = [],
+  onTogglePick,
+  onToggleAllPicked,
+  allPicked = false,
 }: GoodsWarehouseTableProps) => {
   const [lostId, setLostId] = useState<number | null>(null);
   const [lostReason, setLostReason] = useState('');
@@ -240,6 +256,9 @@ const GoodsWarehouseTable = ({
           onReturnToWorkshop={onReturnToWorkshop}
           onMarkLost={openLostDialog}
           onPrintMpLabel={handlePrintMpLabel}
+          pickMode={pickMode}
+          pickedIds={pickedIds}
+          onTogglePick={onTogglePick}
         />
       </div>
 
@@ -265,6 +284,18 @@ const GoodsWarehouseTable = ({
         <Table>
           <TableHeader>
             <TableRow className="bg-primary hover:bg-primary">
+              {/* Галочка отбора менеджера. В шапке — «отметить всё, что сейчас
+                  показывает фильтр»: он открыл нужный размер и берёт его целиком. */}
+              {pickMode && (
+                <TableHead className="w-10 text-primary-foreground">
+                  <Checkbox
+                    checked={allPicked}
+                    onCheckedChange={() => onToggleAllPicked?.()}
+                    aria-label="Отметить все показанные"
+                    className="border-primary-foreground data-[state=checked]:bg-primary-foreground data-[state=checked]:text-primary"
+                  />
+                </TableHead>
+              )}
               {canPrintStickers && (
                 <TableHead className="w-10 text-primary-foreground">
                   <Checkbox
@@ -290,8 +321,27 @@ const GoodsWarehouseTable = ({
             {items.map((i) => (
               <TableRow
                 key={i.id}
-                className={i.receiveReason === 'admin' ? 'bg-amber-50 hover:bg-amber-100' : ''}
+                className={
+                  pickMode && pickedIds.includes(i.id)
+                    ? 'bg-primary/5 hover:bg-primary/10'
+                    : i.receiveReason === 'admin'
+                      ? 'bg-amber-50 hover:bg-amber-100'
+                      : ''
+                }
               >
+                {/* Отбор в поставку: отмечаем только вещи на хранении — остальные
+                    физически заняты и заявить их нельзя. */}
+                {pickMode && (
+                  <TableCell>
+                    {i.status === 'in_stock' && (
+                      <Checkbox
+                        checked={pickedIds.includes(i.id)}
+                        onCheckedChange={() => onTogglePick?.(i.id)}
+                        aria-label={`Забрать ${i.storageBarcode}`}
+                      />
+                    )}
+                  </TableCell>
+                )}
                 {/* Галочка есть только у вещей, которым положен стикер: отгруженную
                     или утерянную печатать некуда — её на складе уже нет. */}
                 {canPrintStickers && (

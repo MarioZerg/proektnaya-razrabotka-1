@@ -343,6 +343,34 @@ export const useGoodsWarehouseState = () => {
     setMoveOpen(true);
   };
 
+  /**
+   * ОТБОР МЕНЕДЖЕРА: какие вещи он забирает со склада в поставку.
+   *
+   * Раньше выгрузка отдавала весь свободный остаток целиком, и менеджер вычищал
+   * лишние строки в Excel руками — а на площадку уезжало заявленное количество,
+   * которое со складом не сходилось. Теперь он фильтрует склад по нужному размеру,
+   * отмечает галочками — и в файл попадает ровно отмеченное.
+   *
+   * Список живёт НАД фильтром и страницами: менеджер набирает 200×250, потом
+   * переключается на 300×250 и добирает — ранее отмеченное не слетает.
+   */
+  const [pickedIds, setPickedIds] = useState<number[]>([]);
+  const togglePick = (id: number) =>
+    setPickedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const clearPicked = () => setPickedIds([]);
+
+  /** Все вещи, видимые текущим фильтром, — их отмечает галочка в шапке таблицы. */
+  const pickableIds = filtered.filter((i) => i.status === 'in_stock').map((i) => i.id);
+  const allPicked =
+    pickableIds.length > 0 && pickableIds.every((id) => pickedIds.includes(id));
+  const toggleAllPicked = () =>
+    setPickedIds((prev) =>
+      allPicked
+        ? prev.filter((id) => !pickableIds.includes(id))
+        : Array.from(new Set([...prev, ...pickableIds])),
+    );
+  const pickedCount = pickedIds.length;
+
   // Выгрузка товарного состава для FBO-поставки. Файл собирает сервер: там же
   // считается свободный остаток, поэтому цифры в книге всегда совпадают со складом,
   // а не с тем, что успело загрузиться в браузер.
@@ -350,10 +378,14 @@ export const useGoodsWarehouseState = () => {
   const handleExport = async () => {
     setExporting(true);
     try {
-      await downloadStockExcel();
+      // Есть отбор — выгружаем только его. Нет — весь свободный остаток, как раньше:
+      // так менеджер может просто посмотреть, что вообще лежит на складе.
+      await downloadStockExcel(undefined, pickedIds.length ? pickedIds : undefined);
       toast({
         title: 'Файл готов',
-        description: 'Лист «Товарный состав» — свод для площадки, «Позиции» — с чем идти к полкам',
+        description: pickedIds.length
+          ? `В файле только отмеченное: ${pickedIds.length} шт.`
+          : 'Лист «Товарный состав» — свод для площадки, «Позиции» — с чем идти к полкам',
       });
     } catch (e) {
       toast({
@@ -465,6 +497,12 @@ export const useGoodsWarehouseState = () => {
     stockOnly,
     exporting,
     handleExport,
+    pickedIds,
+    pickedCount,
+    togglePick,
+    toggleAllPicked,
+    allPicked,
+    clearPicked,
   };
 };
 

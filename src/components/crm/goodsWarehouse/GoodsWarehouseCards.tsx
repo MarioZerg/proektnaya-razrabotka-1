@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import Icon from '@/components/ui/icon';
 import { zoneBarClass, zoneLabels } from '@/lib/workZone';
 import { shortProductName } from '@/lib/shortProductName';
@@ -26,6 +27,10 @@ interface GoodsWarehouseCardsProps {
   onMarkLost: (id: number) => void;
   /** Перепечатать ярлык маркетплейса по вещи, собранной с полки. */
   onPrintMpLabel?: (item: GoodsWarehouseItem) => void;
+  /** Отбор менеджера в поставку: карточку можно отметить галочкой. */
+  pickMode?: boolean;
+  pickedIds?: number[];
+  onTogglePick?: (id: number) => void;
 }
 
 /** Мобильный вид склада готового товара — карточки вместо широкой таблицы,
@@ -35,6 +40,9 @@ const GoodsWarehouseCards = ({
   onReturnToWorkshop,
   onMarkLost,
   onPrintMpLabel,
+  pickMode = false,
+  pickedIds = [],
+  onTogglePick,
 }: GoodsWarehouseCardsProps) => {
   const { user } = useAuth();
   // Печать наклеек из списка — только старшему кладовщику: см. пояснение в таблице.
@@ -69,6 +77,16 @@ const GoodsWarehouseCards = ({
               title={zoneLabels[statusZone[i.status]]}
             />
             <div className="flex items-start justify-between gap-2">
+              {/* Галочка отбора на телефоне: менеджер ходит вдоль стеллажей и
+                  отмечает то, что забирает. */}
+              {pickMode && i.status === 'in_stock' && (
+                <Checkbox
+                  checked={pickedIds.includes(i.id)}
+                  onCheckedChange={() => onTogglePick?.(i.id)}
+                  aria-label={`Забрать ${i.storageBarcode}`}
+                  className="mt-1 h-5 w-5 shrink-0"
+                />
+              )}
               <div className="min-w-0">
                 <div className="font-semibold" title={i.product || ''}>
                   {shortProductName(i)}

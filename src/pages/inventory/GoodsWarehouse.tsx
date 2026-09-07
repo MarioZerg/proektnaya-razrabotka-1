@@ -26,6 +26,8 @@ const GoodsWarehouse = () => {
           onExport={s.handleExport}
           exporting={s.exporting}
           stockOnly={s.stockOnly}
+          pickedCount={s.pickedCount}
+          onClearPicked={s.clearPicked}
         />
 
         {/* Работа на сейчас — плитки с числами. Кладовщик видит, сколько вещей ждёт
@@ -148,6 +150,11 @@ const GoodsWarehouse = () => {
           onMarkLost={s.handleMarkLost}
           isAdmin={s.isAdmin}
           onDelete={s.handleDeleteGoods}
+          pickMode={s.stockOnly}
+          pickedIds={s.pickedIds}
+          onTogglePick={s.togglePick}
+          onToggleAllPicked={s.toggleAllPicked}
+          allPicked={s.allPicked}
         />
         <TablePager page={s.page} totalPages={s.totalPages} total={s.total} setPage={s.setPage} />
         </div>
