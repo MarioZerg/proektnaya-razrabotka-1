@@ -144,38 +144,61 @@ def write_off_packaging(cur, order_id: int, workshop_id=None) -> str | None:
     if not needed:
         return None
 
+    # ВСЁ, ЧТО НУЖНО ДЛЯ РАСЧЁТА, БЕРЁМ ТРЕМЯ ЗАПРОСАМИ — НЕ ПО ШТУКЕ НА МАТЕРИАЛ.
+    #
+    # Раньше на каждый материал упаковки шло по три отдельных обращения к базе
+    # (списан ли уже, какие есть рулоны, как называется материал). Списание
+    # срабатывает на КАЖДОМ закрытии заказа швеёй — это самая частая операция в
+    # цехе, и она без нужды нагружала общую базу.
+    mat_ids_csv = ','.join(str(int(m[0])) for m in needed)
+
+    # Что по этому заказу уже списано — одним махом.
+    cur.execute(
+        f"SELECT material_id FROM order_material_usage "
+        f"WHERE order_id = %s AND material_id IN ({mat_ids_csv})",
+        (order_id,),
+    )
+    already_used = {r[0] for r in cur.fetchall()}
+
+    # Рулоны всех нужных материалов сразу.
+    #
+    # РАСХОД ТОЛЬКО ИЗ ЦЕХА. Складские рулоны не берём вообще: упаковщица
+    # физически не может достать пакет из коробки, которая лежит на складе.
+    # Пока кладовщик не отгрузил упаковку в цех и смена её не приняла —
+    # материала у людей нет. Чужие цеха тоже не трогаем: коробка стоит в
+    # другом помещении.
+    cur.execute(
+        "SELECT material_id, id, remaining_quantity FROM rolls "
+        f"WHERE material_id IN ({mat_ids_csv}) AND remaining_quantity > 0 "
+        "AND defect_flagged_at IS NULL "
+        "AND status = 'in_workshop' AND accepted_at IS NOT NULL "
+        "AND (%s IS NULL OR workshop_id = %s) "
+        # FIFO внутри цеха: сначала начатая коробка, потом свежая.
+        "ORDER BY material_id, created_at ASC",
+        (workshop_id, workshop_id),
+    )
+    rolls_by_material = {}
+    for mat_id, roll_id, remaining in cur.fetchall():
+        rolls_by_material.setdefault(mat_id, []).append((roll_id, remaining))
+
+    # Названия — только чтобы написать понятный текст о нехватке.
+    cur.execute(
+        f"SELECT id, name, unit FROM materials WHERE id IN ({mat_ids_csv})"
+    )
+    mat_info = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+
     shortages = []
     write_offs = []
     for material_id, qty_needed in needed:
         qty_needed = float(qty_needed)
         # Этот материал по заказу уже списан — второй раз не списываем.
-        cur.execute(
-            "SELECT 1 FROM order_material_usage WHERE order_id = %s AND material_id = %s LIMIT 1",
-            (order_id, material_id),
-        )
-        if cur.fetchone():
+        if material_id in already_used:
             continue
 
-        cur.execute(
-            "SELECT id, remaining_quantity FROM rolls "
-            # РАСХОД ТОЛЬКО ИЗ ЦЕХА. Складские рулоны не берём вообще: упаковщица
-            # физически не может достать пакет из коробки, которая лежит на складе.
-            # Пока кладовщик не отгрузил упаковку в цех и смена её не приняла —
-            # материала у людей нет.
-            "WHERE material_id = %s AND remaining_quantity > 0 "
-            "AND defect_flagged_at IS NULL "
-            "AND status = 'in_workshop' AND accepted_at IS NOT NULL "
-            # Чужие цеха тоже не трогаем: коробка стоит в другом помещении.
-            "AND (%s IS NULL OR workshop_id = %s) "
-            # FIFO внутри цеха: сначала начатая коробка, потом свежая.
-            "ORDER BY created_at ASC",
-            (material_id, workshop_id, workshop_id),
-        )
-        available_rolls = cur.fetchall()
+        available_rolls = rolls_by_material.get(material_id, [])
         total_available = sum(float(r[1]) for r in available_rolls)
         if total_available < qty_needed:
-            cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
-            mat_name, mat_unit = cur.fetchone()
+            mat_name, mat_unit = mat_info.get(material_id, ('Материал', ''))
             shortages.append(
                 f"{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, "
                 f"в цехе {round(total_available, 2)} {mat_unit}"
@@ -193,13 +216,16 @@ def write_off_packaging(cur, order_id: int, workshop_id=None) -> str | None:
     if shortages:
         return 'Не хватает упаковки в цехе: ' + '; '.join(shortages)
 
+    # Остаток пересчитываем прямо в UPDATE, а не читаем его отдельным запросом:
+    # так на рулон приходится одно обращение вместо двух, и значение берётся
+    # актуальное на момент записи.
     for roll_id, material_id, take in write_offs:
-        cur.execute("SELECT remaining_quantity FROM rolls WHERE id = %s", (roll_id,))
-        roll_remaining = float(cur.fetchone()[0])
-        new_remaining = roll_remaining - take
-        new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
         cur.execute(
-            f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {int(roll_id)}"
+            "UPDATE rolls SET remaining_quantity = remaining_quantity - %s, "
+            "status = CASE WHEN remaining_quantity - %s <= 0 THEN 'completed' ELSE status END, "
+            "completed_at = CASE WHEN remaining_quantity - %s <= 0 THEN now() ELSE completed_at END "
+            "WHERE id = %s",
+            (take, take, take, int(roll_id)),
         )
         cur.execute(
             "INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
