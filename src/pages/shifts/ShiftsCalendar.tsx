@@ -91,7 +91,12 @@ const ShiftsCalendar = () => {
 
   const today = new Date();
   const [monthOffset, setMonthOffset] = useState(0);
-  const viewDate = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+  const baseYear = today.getFullYear();
+  const baseMonth = today.getMonth();
+  const viewDate = useMemo(
+    () => new Date(baseYear, baseMonth + monthOffset, 1),
+    [baseYear, baseMonth, monthOffset],
+  );
   const weeks = useMemo(() => buildMonthGrid(viewDate.getFullYear(), viewDate.getMonth()), [viewDate]);
 
   useEffect(() => {

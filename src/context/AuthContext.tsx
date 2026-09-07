@@ -176,6 +176,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       stop();
       document.removeEventListener('visibilitychange', onVisibility);
     };
+    // Перезапуск только при смене самого пользователя, роли или демо-режима:
+    // на весь объект user эффект пересоздавался бы при каждом обновлении данных.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?.role, user?.isDemo]);
 
   return (

@@ -86,6 +86,7 @@ const Rolls = () => {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Поиск по штрихкоду ищет в базе, поэтому список надо перезапросить. Ждём паузу
