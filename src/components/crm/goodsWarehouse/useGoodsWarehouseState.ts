@@ -14,7 +14,6 @@ import {
   type StuckCancelledItem,
 } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
-import { fetchMarketplaceReturns } from '@/lib/marketplaceReturnsApi';
 import { fetchInspection } from '@/lib/goodsWarehouseApi';
 import { fetchActiveStocktake } from '@/lib/stocktakesApi';
 import { usePickingPending } from '@/hooks/usePickingPending';
@@ -210,9 +209,22 @@ export const useGoodsWarehouseState = () => {
     loadStocktake();
   }, []);
 
+  // СЧИТАЕМ ПО ВЕЩАМ НА СКЛАДЕ, А НЕ ПО ЗАЯВКАМ ВОЗВРАТА.
+  //
+  // Раньше здесь считались заявки со статусом «забрана с ПВЗ», и плашка показывала
+  // 10 штук, тогда как в разборе лежало 7, а на дашборде значилось 5 — три числа про
+  // одну и ту же работу расходились между собой.
+  //
+  // Причина: заявка и вещь живут раздельно. Из тех 10 заявок четыре вещи уже собраны
+  // под заказы (picking), одна уехала в поставку — работы по ним нет, а заявка так и
+  // висит незакрытой. И наоборот: вещи, отменённые после стикеровки, заявкой вообще
+  // не оформлены, но разбирать их надо.
+  //
+  // Кладовщик по этой плашке открывает разбор возвратов и видит там СПИСОК ВЕЩЕЙ —
+  // значит и считать надо вещи, тем же условием, что и плитка «Разобрать возвраты».
   useEffect(() => {
-    fetchMarketplaceReturns({ status: 'picked_up' })
-      .then((d) => setUncheckedReturns(d.counts.picked_up || 0))
+    fetchGoodsWarehouse({ status: 'mp_return' })
+      .then((list) => setUncheckedReturns(list.length))
       .catch(() => setUncheckedReturns(0));
   }, []);
 
