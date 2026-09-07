@@ -2477,23 +2477,39 @@ def handler(event: dict, context) -> dict:
                             "                  AND omu.material_id = mim.material_id)",
                             (mi_row[0], order_id),
                         )
-                        lacks = []
-                        for mat_id, qty_needed, mat_name, mat_unit in cur.fetchall():
+                        needed_rows = cur.fetchall()
+
+                        # ОСТАТКИ ВСЕХ МАТЕРИАЛОВ — ОДНИМ ЗАПРОСОМ.
+                        #
+                        # Раньше на каждый материал товара шёл отдельный запрос к
+                        # rolls (в таблице 4800 рулонов), и каждый занимал около
+                        # секунды. На товар приходится до трёх материалов — три
+                        # секунды только здесь, плюс остальные проверки. Функция
+                        # не укладывалась в свои 4 секунды и обрывалась: швея
+                        # видела ошибку вместо заказа.
+                        #
+                        # Условия те же, что и были: бракованные рулоны не считаем
+                        # (планировать заказ на брак нельзя) и непринятые тоже —
+                        # рулон отгружен со склада, но смена его не подтвердила, по
+                        # факту материала в цехе может не быть.
+                        stock_by_material = {}
+                        if needed_rows:
+                            mat_ids_csv = ','.join(str(int(r[0])) for r in needed_rows)
                             cur.execute(
-                                # Бракованные рулоны в доступный остаток не считаем —
-                                # заказ на них планировать нельзя.
-                                #
-                                # Непринятые тоже: рулон отгружен со склада, но смена его
-                                # ещё не подтвердила. По документам материал в цехе, по
-                                # факту его может там не быть — планировать на него заказ
-                                # нельзя, иначе швея возьмёт работу и останется без нитей.
-                                "SELECT COALESCE(SUM(remaining_quantity), 0) FROM rolls "
-                                "WHERE material_id = %s AND status = 'in_workshop' AND remaining_quantity > 0 "
-                                "AND defect_flagged_at IS NULL AND accepted_at IS NOT NULL "
-                                "AND (%s IS NULL OR workshop_id = %s)",
-                                (mat_id, session_workshop_id, session_workshop_id),
+                                "SELECT material_id, COALESCE(SUM(remaining_quantity), 0) "
+                                "FROM rolls "
+                                f"WHERE material_id IN ({mat_ids_csv}) "
+                                "  AND status = 'in_workshop' AND remaining_quantity > 0 "
+                                "  AND defect_flagged_at IS NULL AND accepted_at IS NOT NULL "
+                                "  AND (%s IS NULL OR workshop_id = %s) "
+                                "GROUP BY material_id",
+                                (session_workshop_id, session_workshop_id),
                             )
-                            available = float(cur.fetchone()[0] or 0)
+                            stock_by_material = {r[0]: float(r[1] or 0) for r in cur.fetchall()}
+
+                        lacks = []
+                        for mat_id, qty_needed, mat_name, mat_unit in needed_rows:
+                            available = stock_by_material.get(mat_id, 0.0)
                             if available < float(qty_needed):
                                 lacks.append(
                                     f"{mat_name}: нужно {round(float(qty_needed), 2)} {mat_unit}, "
