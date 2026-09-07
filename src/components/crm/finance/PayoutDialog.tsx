@@ -32,6 +32,7 @@ interface PayoutDialogProps {
     userId: number,
     periodFrom?: string,
     periodTo?: string,
+    debtIds?: number[],
   ) => Promise<void>;
 }
 
@@ -73,6 +74,8 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
   const [preview, setPreview] = useState<PayoutPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  /** Отмеченные старые долги — их удержим из этой выплаты. */
+  const [debtIds, setDebtIds] = useState<number[]>([]);
 
   // Сумма пересчитывается при смене сотрудника или дат: админ должен видеть,
   // сколько уйдёт из кассы, ДО нажатия кнопки, а не узнавать постфактум.
@@ -84,7 +87,13 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
     let cancelled = false;
     setLoading(true);
     previewPayout(Number(userId), from || undefined, to || undefined)
-      .then((d) => !cancelled && setPreview(d))
+      .then((d) => {
+        if (cancelled) return;
+        setPreview(d);
+        // Долги по умолчанию отмечены: копить их незачем, а снять галочку
+        // проще, чем вспомнить о забытом штрафе.
+        setDebtIds((d.outsideDebts || []).map((x) => x.id));
+      })
       .catch(() => !cancelled && setPreview(null))
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -94,7 +103,7 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
 
   const handleSubmit = async () => {
     if (!userId) return;
-    await onSubmit(Number(userId), from || undefined, to || undefined);
+    await onSubmit(Number(userId), from || undefined, to || undefined, debtIds);
 
     // ОКНО НЕ ЗАКРЫВАЕМ.
     //
@@ -107,7 +116,19 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
     setPreview(null);
   };
 
-  const amount = preview?.amount || 0;
+  const debts = preview?.outsideDebts || [];
+  const accrued = preview?.amount || 0;
+
+  // Сколько удержим отмеченными галочками долгами. Долг не может увести
+  // выплату в минус: гасим ровно столько, сколько покрывает заработок,
+  // остаток перейдёт на следующую выплату — так же считает и сервер.
+  const debtSum = debts
+    .filter((d) => debtIds.includes(d.id))
+    .reduce((s, d) => s + Math.abs(d.amount), 0);
+  const willRepay = Math.min(debtSum, Math.max(accrued, 0));
+  const carryOver = debtSum - willRepay;
+
+  const amount = Math.max(accrued - willRepay, 0);
   const notEnough = !!preview && preview.cashBalance < amount;
   const wholePeriod = !from && !to;
 
@@ -277,6 +298,61 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
             </div>
           )}
 
+          {/* СТАРЫЕ ДОЛГИ ВНЕ ВЫБРАННОГО ПЕРИОДА.
+              Штраф выписан 21-го, а закрывают первую половину месяца — он не
+              попадал в выплату и висел вечно, копясь в виджете кассы. Теперь
+              он виден здесь, и его можно удержать галочкой. */}
+          {userId && !loading && debts.length > 0 && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-900">
+                <Icon name="TriangleAlert" size={13} className="shrink-0" />
+                Непогашенные удержания за другие даты
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {debts.map((d) => (
+                  <label
+                    key={d.id}
+                    className="flex cursor-pointer items-start gap-2 text-xs"
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-amber-600"
+                      checked={debtIds.includes(d.id)}
+                      onChange={(e) =>
+                        setDebtIds((prev) =>
+                          e.target.checked
+                            ? [...prev, d.id]
+                            : prev.filter((x) => x !== d.id),
+                        )
+                      }
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="font-semibold text-amber-900">
+                        {formatMoney(Math.abs(d.amount))} ₽
+                      </span>
+                      <span className="text-amber-800">
+                        {' '}
+                        · {d.type === 'penalty' ? 'штраф' : 'удержание'} от{' '}
+                        {d.accruedFor}
+                      </span>
+                      <span className="block truncate text-amber-700">
+                        {d.description}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {/* Долг больше заработка — гасим частично, остальное перенесём.
+                  Человек не должен уйти с выплатой «минус». */}
+              {carryOver > 0 && (
+                <p className="mt-2 text-xs text-amber-800">
+                  Заработка хватает на {formatMoney(willRepay)} ₽ — остаток{' '}
+                  {formatMoney(carryOver)} ₽ перейдёт на следующую выплату
+                </p>
+              )}
+            </div>
+          )}
+
           {userId && (
             <div className="rounded-md border border-border p-3 text-sm">
               {loading ? (
@@ -298,6 +374,14 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
                       {preview.firstDate &&
                         preview.lastDate &&
                         ` · ${preview.firstDate} — ${preview.lastDate}`}
+                    </p>
+                  )}
+                  {/* Расшифровка, когда часть заработка ушла на долги: без неё
+                      админ видит сумму меньше ожидаемой и не понимает почему. */}
+                  {willRepay > 0 && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Начислено {formatMoney(accrued)} ₽ − удержано{' '}
+                      {formatMoney(willRepay)} ₽
                     </p>
                   )}
                   {/* Денег в кассе может не хватить — сказать об этом надо

@@ -19,7 +19,7 @@ interface AdminOperationsPanelProps {
   onPenalty: (userId: number, amount: number, description: string) => Promise<void>;
   onDeduction: (userId: number, amount: number, description: string) => Promise<void>;
   pendingPayouts: PendingPayout[];
-  onPayout: (userId: number, periodFrom?: string, periodTo?: string) => Promise<void>;
+  onPayout: (userId: number, periodFrom?: string, periodTo?: string, debtIds?: number[]) => Promise<void>;
   operations: SalaryOperation[];
   operationsLoading: boolean;
   operationsPage: number;

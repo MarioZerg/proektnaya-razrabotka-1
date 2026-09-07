@@ -1269,6 +1269,48 @@ def handler(event: dict, context) -> dict:
                 )
                 total, cnt, d_min, d_max = cur.fetchone()
 
+                # СТАРЫЕ ДОЛГИ ЗА ГРАНИЦАМИ ПЕРИОДА.
+                #
+                # Штраф гасился, только если админ случайно захватил датой тот
+                # день, которым он выписан. Закрывают первую половину месяца —
+                # штраф от 21-го числа не попадает в выплату и висит дальше;
+                # в кассе он копится в виджете, а списать его нечем.
+                #
+                # Показываем такие долги отдельно, чтобы админ видел их до
+                # нажатия кнопки и сам решал, гасить сейчас или отложить.
+                debts = []
+                debts_total = 0.0
+                if p_from or p_to:
+                    # «Снаружи» — всё, что не попало в выбранные даты: раньше
+                    # начала периода или позже его конца.
+                    outside = []
+                    out_params = [int(user_id)]
+                    if p_from:
+                        outside.append("accrued_for < %s")
+                        out_params.append(p_from)
+                    if p_to:
+                        outside.append("accrued_for > %s")
+                        out_params.append(p_to)
+                    out_where = (
+                        "user_id = %s AND paid_at IS NULL AND amount < 0 "
+                        f"AND ({' OR '.join(outside)})"
+                    )
+                    cur.execute(
+                        f"SELECT id, type, amount, accrued_for, description "
+                        f"FROM salary_accruals WHERE {out_where} "
+                        f"ORDER BY accrued_for",
+                        tuple(out_params),
+                    )
+                    for d in cur.fetchall():
+                        debts.append({
+                            'id': d[0],
+                            'type': d[1],
+                            'amount': float(d[2]),
+                            'accruedFor': str(d[3]),
+                            'description': d[4],
+                        })
+                        debts_total += float(d[2])
+
                 cur.execute("SELECT COALESCE(SUM(amount), 0) FROM cash_box_transactions")
                 cash = float(cur.fetchone()[0])
 
@@ -1299,6 +1341,10 @@ def handler(event: dict, context) -> dict:
                     'sbpConfirmed': bool(u[3]) if u else False,
                     # Телефон входа — запасной ориентир, если СБП не заполнен.
                     'loginPhone': (u[4] or '') if u else '',
+                    # Непогашенные штрафы и удержания вне выбранного периода:
+                    # админ видит их до выплаты и решает, гасить ли сейчас.
+                    'outsideDebts': debts,
+                    'outsideDebtsTotal': debts_total,
                 })}
 
             if action == 'payout':
@@ -1329,6 +1375,63 @@ def handler(event: dict, context) -> dict:
                 balance = float(cur.fetchone()[0])
                 if balance <= 0:
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Нет начислений к выплате за выбранный период'})}
+
+                # ПОГАШЕНИЕ СТАРЫХ ДОЛГОВ, ОТМЕЧЕННЫХ ГАЛОЧКОЙ.
+                #
+                # Штрафы и удержания прошлых дат не попадают в период выплаты и
+                # копятся бесконечно. Админ отмечает в окне выплаты, какие из них
+                # погасить сейчас, — их id приходят в debtIds.
+                #
+                # Гасим ровно настолько, насколько хватает заработка: сумма на
+                # руки не может уйти в минус. Если долг больше заработка, он
+                # закрывается ЧАСТИЧНО — на непогашенный остаток остаётся новая
+                # запись, и она спишется со следующей выплаты.
+                debt_ids = body_data.get('debtIds') or []
+                debt_ids = [int(x) for x in debt_ids if str(x).strip().lstrip('-').isdigit()]
+                repaid = []
+                # Записи-остатки долга: создаём их после закрытия выплаты,
+                # иначе они попадут в неё же и обнулятся.
+                pending_splits = []
+                if debt_ids:
+                    ids_csv = ','.join(str(i) for i in debt_ids)
+                    cur.execute(
+                        f"SELECT id, type, amount, accrued_for, description "
+                        f"FROM salary_accruals "
+                        f"WHERE id IN ({ids_csv}) AND user_id = %s "
+                        f"  AND paid_at IS NULL AND amount < 0 "
+                        f"ORDER BY accrued_for",
+                        (int(user_id),),
+                    )
+                    for d_id, d_type, d_amount, d_for, d_desc in cur.fetchall():
+                        if balance <= 0:
+                            break
+                        debt = -float(d_amount)          # долг как положительное число
+                        take = min(debt, balance)        # сколько реально гасим сейчас
+                        rest = debt - take               # что переносим дальше
+
+                        if rest > 0:
+                            # Часть долга остаётся: уменьшаем текущую запись до
+                            # погашенной суммы, а на остаток заводим новую —
+                            # так в истории видно, что и когда было удержано.
+                            cur.execute(
+                                "UPDATE salary_accruals SET amount = %s, "
+                                "description = %s WHERE id = %s",
+                                (-take, f'{d_desc} (удержано частично)', d_id),
+                            )
+                            # Саму запись-остаток создаём ПОСЛЕ закрытия выплаты
+                            # (см. ниже): её дата попадает в тот же период, и
+                            # общий UPDATE пометил бы её выплаченной — долг
+                            # молча исчез бы вместо переноса на следующий раз.
+                            pending_splits.append(
+                                (int(user_id), d_type, -rest,
+                                 f'{d_desc} (остаток долга)', d_for,
+                                 int(actor_id) if actor_id not in (None, '') else None,
+                                 d_id)
+                            )
+                        # Погашенную часть включаем в эту выплату — она
+                        # закроется вместе с остальными записями ниже.
+                        balance -= take
+                        repaid.append({'id': d_id, 'repaid': take, 'rest': rest})
 
                 # Выплата списывается из кассы компании — если денег в кассе недостаточно,
                 # выплата блокируется полностью (частичных выплат нет).
@@ -1366,6 +1469,28 @@ def handler(event: dict, context) -> dict:
                     tuple([paid_at, payout_id] + params),
                 )
 
+                # Погашенные старые долги закрываем этой же выплатой — иначе они
+                # остались бы висеть и всё повторилось бы в следующий раз.
+                if repaid:
+                    ids_csv = ','.join(str(r['id']) for r in repaid)
+                    cur.execute(
+                        f"UPDATE salary_accruals SET paid_at = %s, payout_id = %s "
+                        f"WHERE id IN ({ids_csv})",
+                        (paid_at, payout_id),
+                    )
+
+                # Остатки недогашенных долгов создаём последними — уже после
+                # того, как выплата закрыта. Так они остаются НЕвыплаченными и
+                # уйдут в следующую выплату, а не обнулятся вместе с этой.
+                for sp in pending_splits:
+                    cur.execute(
+                        "INSERT INTO salary_accruals "
+                        "(user_id, type, amount, description, accrued_for, "
+                        " created_by, split_from_id) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        sp,
+                    )
+
                 cur.execute(
                     f"INSERT INTO cash_box_transactions (amount, description, payout_id, created_by) "
                     f"VALUES ({-balance}, 'Выплата зарплаты сотруднику #{int(user_id)}"
@@ -1373,12 +1498,19 @@ def handler(event: dict, context) -> dict:
                     f"{payout_id}, {actor_id_sql})"
                 )
 
+                repaid_total = sum(r['repaid'] for r in repaid)
                 log_action(
                     cur, actor_id, actor_name, 'payout', 'salary_payout', payout_id,
-                    f'Выплатил сотруднику #{user_id} {balance}',
+                    f'Выплатил сотруднику #{user_id} {balance}'
+                    + (f', удержано долгов {repaid_total}' if repaid_total else ''),
                 )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': payout_id, 'amount': balance})}
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'id': payout_id,
+                    'amount': balance,
+                    'repaidTotal': repaid_total,
+                    'repaid': repaid,
+                })}
 
             if action == 'delete_payout':
                 payout_id = body_data.get('id')
@@ -1390,6 +1522,37 @@ def handler(event: dict, context) -> dict:
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Выплата не найдена'})}
                 payout_user_id, payout_amount = row
+
+                # СХЛОПЫВАЕМ ЧАСТИЧНО ПОГАШЕННЫЕ ДОЛГИ.
+                #
+                # Если при выплате долг закрылся не целиком, исходная запись была
+                # уменьшена, а на остаток заведена вторая. Отменяя выплату, надо
+                # вернуть долг в исходном размере: складываем остаток обратно в
+                # родительскую запись, а запись-остаток обнуляем. Иначе долг
+                # удвоится — вернётся и уменьшённый штраф, и его остаток.
+                cur.execute(
+                    "SELECT r.id, r.amount, r.split_from_id "
+                    "FROM salary_accruals r "
+                    "JOIN salary_accruals p ON p.id = r.split_from_id "
+                    "WHERE p.payout_id = %s AND r.split_from_id IS NOT NULL",
+                    (int(payout_id),),
+                )
+                for rest_id, rest_amount, parent_id in cur.fetchall():
+                    cur.execute(
+                        "UPDATE salary_accruals SET amount = amount + %s, "
+                        "description = replace(description, ' (удержано частично)', '') "
+                        "WHERE id = %s",
+                        (rest_amount, parent_id),
+                    )
+                    # Запись-остаток больше не нужна: сумма вернулась в родителя.
+                    # Не удаляем, а обнуляем и помечаем — история операций по
+                    # зарплате не переписывается задним числом.
+                    cur.execute(
+                        "UPDATE salary_accruals SET amount = 0, paid_at = now(), "
+                        "description = description || ' — отменено (выплата отменена)' "
+                        "WHERE id = %s",
+                        (rest_id,),
+                    )
 
                 # Начисления, входившие в эту выплату, возвращаются в невыплаченные — снова
                 # появятся в "К выплате", сотруднику можно будет выплатить заново корректно.

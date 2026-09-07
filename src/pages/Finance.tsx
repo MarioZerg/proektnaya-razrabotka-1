@@ -254,13 +254,21 @@ const Finance = () => {
     userId: number,
     periodFrom?: string,
     periodTo?: string,
+    debtIds?: number[],
   ) => {
     setSavingAccrual(true);
     try {
       const res = await payoutSalary(
-        userId, user?.id, user?.name, periodFrom, periodTo,
+        userId, user?.id, user?.name, periodFrom, periodTo, debtIds,
       );
-      toast({ title: 'Зарплата выплачена', description: `Сумма: ${res.amount.toFixed(2)} ₽` });
+      // Когда часть заработка ушла на долги — говорим об этом прямо, иначе
+      // сумма выглядит меньше ожидаемой без объяснений.
+      const repaid = res.repaidTotal || 0;
+      toast({
+        title: 'Зарплата выплачена',
+        description: `Сумма: ${res.amount.toFixed(2)} ₽`
+          + (repaid > 0 ? ` · удержано долгов: ${repaid.toFixed(2)} ₽` : ''),
+      });
       loadOperations();
       loadPayouts();
       loadCashBox();

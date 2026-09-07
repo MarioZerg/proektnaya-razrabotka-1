@@ -231,6 +231,9 @@ export const updateAccrual = (payload: {
 export interface PayoutResult {
   id: number;
   amount: number;
+  /** Сколько старых долгов удержали этой выплатой. */
+  repaidTotal?: number;
+  repaid?: { id: number; repaid: number; rest: number }[];
 }
 
 /** Что выйдет к выплате за период — до нажатия кнопки. */
@@ -255,6 +258,25 @@ export interface PayoutPreview {
   sbpConfirmed?: boolean;
   /** Телефон входа: ориентир, если СБП не заполнен. */
   loginPhone?: string;
+  /**
+   * Непогашенные штрафы и удержания ВНЕ выбранного периода.
+   *
+   * Раньше такой долг не попадал в выплату и висел вечно: он гасился, только
+   * если админ случайно захватил датой тот день, которым выписан. Показываем
+   * их отдельно — админ решает галочкой, гасить сейчас или отложить.
+   */
+  outsideDebts?: OutsideDebt[];
+  outsideDebtsTotal?: number;
+}
+
+export interface OutsideDebt {
+  id: number;
+  /** penalty — штраф с виной, deduction — удержание без вины. */
+  type: string;
+  /** Всегда отрицательная: это списание с сотрудника. */
+  amount: number;
+  accruedFor: string;
+  description: string;
 }
 
 export const previewPayout = (
@@ -270,9 +292,11 @@ export const payoutSalary = (
   actorName?: string,
   periodFrom?: string,
   periodTo?: string,
+  /** Отмеченные галочкой старые долги — их удержат из этой выплаты. */
+  debtIds?: number[],
 ): Promise<PayoutResult> =>
   postAction({
-    action: 'payout', userId, actorId, actorName, periodFrom, periodTo,
+    action: 'payout', userId, actorId, actorName, periodFrom, periodTo, debtIds,
   });
 
 export const deletePayout = (id: number, actorId?: number, actorName?: string) =>
