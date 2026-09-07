@@ -346,7 +346,9 @@ def handler(event: dict, context) -> dict:
 
     GET  /                       - получить список заказов
     GET  /?sewingWaits=1&userId=5 - сколько ещё шить каждую вещь «В работе» у этой швеи:
-                                    { waits: { orderId: { waitSeconds, nextAt } }, shiftOpen }.
+                                    { waits: { orderId: { waitSeconds, nextAt } }, shiftOpen,
+                                      inWork, maxOrders } — по inWork/maxOrders кнопка
+                                    «Получить заказ» показывает замочек.
                                     Время берётся по ШИРИНЕ изделия из настроек цеха
                                     (timeout_200…800) и отсчитывается от взятия заказа.
                                     По нему блокируется кнопка «Отправить на стикеровку»
@@ -499,16 +501,30 @@ def handler(event: dict, context) -> dict:
                     (waits_user_id,),
                 )
                 waits = {}
+                in_work_count = 0
                 for w_id, w_width, w_ws, w_taken in cur.fetchall():
+                    in_work_count += 1
                     w_sec, w_next = sewing_wait_for_order(
                         cur, w_ws or session_ws, w_width, w_taken
                     )
                     if w_sec > 0:
                         waits[str(w_id)] = {'waitSeconds': w_sec, 'nextAt': w_next}
+
+                # Лимит заказов на руках отдаём фронту: по нему кнопка «Получить заказ»
+                # показывает замочек, не дёргая сервер впустую. Проверку всё равно делает
+                # сервер при взятии — это только подсказка для глаз.
+                max_orders = get_setting_int(
+                    cur, session_ws, 'max_quantity_orders_to_seamstress', 0
+                )
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'waits': waits, 'shiftOpen': ws_row is not None}),
+                    'body': json.dumps({
+                        'waits': waits,
+                        'shiftOpen': ws_row is not None,
+                        'inWork': in_work_count,
+                        'maxOrders': max_orders,
+                    }),
                 }
 
             # Предпросмотр очереди для закройщика: что лежит следующим для его цеха.
@@ -2266,32 +2282,34 @@ def handler(event: dict, context) -> dict:
                 )
                 finishing_group = cur.fetchone() is not None
 
-                # Лимит незакрытых заказов у швеи (max_quantity_orders_to_seamstress). Считаем
-                # и те, что "В работе", и те, что уже отправлены на "Стикеровку", но упаковщик
-                # их ещё не закрыл: иначе швея копит горы неупакованного и лимит обходится.
+                # Лимит заказов НА РУКАХ У ШВЕИ (max_quantity_orders_to_seamstress).
+                #
+                # СЧИТАЕМ ТОЛЬКО «В РАБОТЕ». Отправила вещь на стикеровку — место
+                # освободилось сразу, можно брать следующую.
+                #
+                # Раньше в лимит входила и «Стикеровка»: швея сдавала обе вещи и всё
+                # равно упиралась в замок, пока упаковщица их не закроет. Работа швеи
+                # вставала из-за очереди на чужом участке — она физически освободила
+                # руки, а система держала её закрытой. Теперь ограничение отражает
+                # ровно то, что швея реально шьёт прямо сейчас.
                 max_orders = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_to_seamstress', 0)
                 if max_orders > 0 and not finishing_group:
                     cur.execute(
-                        "SELECT COUNT(*) FILTER (WHERE sewing_status = 'В работе'), "
-                        "COUNT(*) FILTER (WHERE sewing_status = 'Стикеровка') FROM orders "
-                        "WHERE (assigned_user_id = %s OR sewer_user_id = %s) "
-                        "AND sewing_status IN ('В работе', 'Стикеровка')",
-                        (int(user_id), int(user_id)),
+                        "SELECT COUNT(*) FROM orders "
+                        "WHERE assigned_user_id = %s AND sewing_status = 'В работе'",
+                        (int(user_id),),
                     )
-                    cnt_row = cur.fetchone()
-                    in_work, on_stickering = int(cnt_row[0]), int(cnt_row[1])
-                    total_open = in_work + on_stickering
-                    if total_open >= max_orders:
-                        if on_stickering > 0:
-                            msg = (f'У вас {in_work} в работе и {on_stickering} ждут стикеровки '
-                                   f'(лимит {max_orders}) — дождитесь, пока упаковщик их закроет')
-                        else:
-                            msg = (f'У вас уже {in_work} заказов в работе (лимит {max_orders}) — '
-                                   f'сначала отправьте их на стикеровку')
+                    in_work = int(cur.fetchone()[0])
+                    if in_work >= max_orders:
                         return {
                             'statusCode': 409,
                             'headers': headers,
-                            'body': json.dumps({'error': msg}),
+                            'body': json.dumps({
+                                'error': f'У вас уже {in_work} заказов в работе (лимит {max_orders}) — '
+                                         f'сначала отправьте их на стикеровку',
+                                'inWork': in_work,
+                                'maxOrders': max_orders,
+                            }, ensure_ascii=False),
                         }
 
                 # НАКОПИТЕЛЬНОГО ТАЙМАУТА НА ВЗЯТИЕ И ЛИМИТА МЕТРАЖА ЗА СМЕНУ БОЛЬШЕ НЕТ.

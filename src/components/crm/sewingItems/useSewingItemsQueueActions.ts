@@ -90,6 +90,14 @@ export const useSewingItemsQueueActions = ({
    */
   const [sewWaits, setSewWaits] = useState<Record<number, number>>({});
   const [sewUntil, setSewUntil] = useState<Record<number, number>>({});
+  /**
+   * Заказов на руках и предел цеха — по ним на кнопке «Получить заказ» висит замочек.
+   *
+   * Считается ТОЛЬКО «В работе»: сдала вещь на стикеровку — место освободилось сразу,
+   * замок снимается. Ждать, пока упаковщица её закроет, швея не должна.
+   */
+  const [inWork, setInWork] = useState(0);
+  const [maxOrders, setMaxOrders] = useState(0);
 
   /** Забрать с сервера актуальные остатки. Дёргаем редко: при открытии страницы,
    * после взятия заказа и когда очередной отсчёт добежал до нуля. Между этими точками
@@ -105,11 +113,15 @@ export const useSewingItemsQueueActions = ({
       });
       setSewUntil(until);
       setSewWaits(left);
+      setInWork(res.inWork);
+      setMaxOrders(res.maxOrders);
     } catch {
       // Сеть моргнула — не запираем кнопки: настоящую проверку всё равно делает
       // сервер при отправке, и швея не должна стоять из-за вспомогательного запроса.
       setSewUntil({});
       setSewWaits({});
+      setInWork(0);
+      setMaxOrders(0);
     }
   };
 
@@ -244,6 +256,10 @@ export const useSewingItemsQueueActions = ({
     takeOrderCooldown,
     /** Сколько ещё шить каждую вещь: id заказа → секунды. Пустой ключ = можно сдавать. */
     sewWaits,
+    /** Лимит на руках исчерпан — на кнопке «Получить заказ» замочек. */
+    takeLocked: maxOrders > 0 && inWork >= maxOrders,
+    inWork,
+    maxOrders,
     /** Перечитать таймеры — вызывается после отправки вещи на стикеровку. */
     refreshSewWaits,
     lastTakenStack,

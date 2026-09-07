@@ -131,6 +131,9 @@ const SewingItems = () => {
     takingOrder,
     takeOrderCooldown,
     sewWaits,
+    takeLocked,
+    inWork,
+    maxOrders,
     refreshSewWaits,
     lastTakenStack,
     handleTakeStack,
@@ -291,19 +294,25 @@ const SewingItems = () => {
                 )}
               </div>
             )}
-            {/* Общего таймера на этой кнопке больше нет: темп задаёт таймер пошива у
-                каждой вещи. Взять новый заказ мешает только лимит на руках — пока швея
-                не сдаст отшитое, места не освободятся. */}
+            {/* ЗАМОЧЕК НА КНОПКЕ, когда на руках предельное число заказов.
+                Считается только «В работе»: сдала вещь на стикеровку — замок снялся
+                сразу, ждать упаковщицу не нужно. Темп внутри лимита задаёт таймер
+                пошива на кнопке каждой вещи. */}
             {isSewer && (
               <Button
                 onClick={handleTakeOrder}
-                disabled={takingOrder || takeOrderCooldown}
+                disabled={takingOrder || takeOrderCooldown || takeLocked}
                 className="w-full sm:w-auto"
               >
                 {takingOrder ? (
                   <>
                     <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
                     Получаем заказ...
+                  </>
+                ) : takeLocked ? (
+                  <>
+                    <Icon name="Lock" size={16} className="mr-2" />
+                    В работе {inWork} из {maxOrders}
                   </>
                 ) : (
                   <>
@@ -312,6 +321,12 @@ const SewingItems = () => {
                   </>
                 )}
               </Button>
+            )}
+
+            {isSewer && takeLocked && (
+              <p className="text-sm text-muted-foreground">
+                Отправьте хотя бы один заказ на стикеровку — кнопка откроется сразу.
+              </p>
             )}
 
             {isCutter && myUnfinishedCount > 0 && (

@@ -318,15 +318,21 @@ export interface SewingWaits {
   waits: Record<string, SewingWait>;
   /** Открыта ли смена: без смены заказы не выдаются вовсе. */
   shiftOpen: boolean;
+  /** Сколько заказов у швеи прямо сейчас «В работе». */
+  inWork: number;
+  /** Предел заказов на руках — настройка цеха. По нему кнопка показывает замочек. */
+  maxOrders: number;
 }
 
 export const fetchSewingWaits = async (userId: number): Promise<SewingWaits> => {
   const res = await fetch(`${ORDERS_URL}?sewingWaits=1&userId=${userId}`);
-  if (!res.ok) return { waits: {}, shiftOpen: true };
+  if (!res.ok) return { waits: {}, shiftOpen: true, inWork: 0, maxOrders: 0 };
   const data = await res.json();
   return {
     waits: data.waits || {},
     shiftOpen: data.shiftOpen !== false,
+    inWork: Number(data.inWork) || 0,
+    maxOrders: Number(data.maxOrders) || 0,
   };
 };
 
