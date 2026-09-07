@@ -66,15 +66,20 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
   { key: 'max_quantity_orders_to_cutter', label: 'Макс. заказов у закройщика', type: 'number' },
   { key: 'cutter_daily_limit', label: 'Метраж в день у закройщика, м', type: 'number' },
   { key: 'cancel_order_penalty', label: 'Штраф за отмену заказа, руб.', type: 'number' },
-  { key: 'seamstress_daily_limit', label: 'Метраж в день у швеи, м', type: 'number' },
-  { key: 'max_quantity_orders_without_timeout', label: 'Заказов без задержки (в начале смены)', type: 'number' },
-  { key: 'timeout_200', label: 'Таймаут на 200 см, мин', type: 'number' },
-  { key: 'timeout_300', label: 'Таймаут на 300 см, мин', type: 'number' },
-  { key: 'timeout_400', label: 'Таймаут на 400 см, мин', type: 'number' },
-  { key: 'timeout_500', label: 'Таймаут на 500 см, мин', type: 'number' },
-  { key: 'timeout_600', label: 'Таймаут на 600 см, мин', type: 'number' },
-  { key: 'timeout_700', label: 'Таймаут на 700 см, мин', type: 'number' },
-  { key: 'timeout_800', label: 'Таймаут на 800 см, мин', type: 'number' },
+  // Время на пошив вещи по её ширине. Отсчёт идёт от взятия заказа в работу, и пока он
+  // не кончился, кнопка «Отправить на стикеровку» у этой вещи заблокирована — сдать её
+  // раньше нельзя. Так темп задаёт сама работа, а не общий счётчик за смену.
+  //
+  // Прежние «Метраж в день у швеи» и «Заказов без задержки» убраны: накопительный
+  // таймаут от первого заказа смены к вечеру разрастался до часа и терял связь с
+  // реальной работой — швея могла всё отшить и всё равно ждать.
+  { key: 'timeout_200', label: 'Время на пошив 200 см, мин', type: 'number' },
+  { key: 'timeout_300', label: 'Время на пошив 300 см, мин', type: 'number' },
+  { key: 'timeout_400', label: 'Время на пошив 400 см, мин', type: 'number' },
+  { key: 'timeout_500', label: 'Время на пошив 500 см, мин', type: 'number' },
+  { key: 'timeout_600', label: 'Время на пошив 600 см, мин', type: 'number' },
+  { key: 'timeout_700', label: 'Время на пошив 700 см, мин', type: 'number' },
+  { key: 'timeout_800', label: 'Время на пошив 800 см, мин', type: 'number' },
   {
     key: 'print_qr_cutting',
     label: 'QR-код на листе закройщика',

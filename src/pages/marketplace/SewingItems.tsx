@@ -16,7 +16,7 @@ import { useSewingItemOrderDetail } from '@/components/crm/sewingItems/useSewing
 import { useSewingItemsQueueActions } from '@/components/crm/sewingItems/useSewingItemsQueueActions';
 import { isStorekeeperRole } from '@/lib/roles';
 import NextStackHint from '@/components/crm/sewingItems/NextStackHint';
-import { formatWait, type TabValue } from '@/components/crm/sewingItems/sewingItemsShared';
+import { type TabValue } from '@/components/crm/sewingItems/sewingItemsShared';
 
 const SewingItems = () => {
   const {
@@ -130,7 +130,8 @@ const SewingItems = () => {
     takingStack,
     takingOrder,
     takeOrderCooldown,
-    takeWaitSec,
+    sewWaits,
+    refreshSewWaits,
     lastTakenStack,
     handleTakeStack,
     handlePrintTask,
@@ -290,10 +291,9 @@ const SewingItems = () => {
                 )}
               </div>
             )}
-            {/* Кнопка сама показывает, сколько ещё ждать. Время реальное — приходит с
-                сервера по накопительному таймауту из настроек цеха швеи и тикает каждую
-                секунду. Без него швея жала кнопку вслепую и ловила отказы одним и тем же
-                тостом, не понимая, сколько ждать и почему. */}
+            {/* Общего таймера на этой кнопке больше нет: темп задаёт таймер пошива у
+                каждой вещи. Взять новый заказ мешает только лимит на руках — пока швея
+                не сдаст отшитое, места не освободятся. */}
             {isSewer && (
               <Button
                 onClick={handleTakeOrder}
@@ -305,11 +305,6 @@ const SewingItems = () => {
                     <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
                     Получаем заказ...
                   </>
-                ) : takeWaitSec > 0 ? (
-                  <>
-                    <Icon name="Timer" size={16} className="mr-2" />
-                    Следующий заказ через {formatWait(takeWaitSec)}
-                  </>
                 ) : (
                   <>
                     <Icon name="PackagePlus" size={16} className="mr-2" />
@@ -317,13 +312,6 @@ const SewingItems = () => {
                   </>
                 )}
               </Button>
-            )}
-
-            {isSewer && takeWaitSec > 0 && (
-              <p className="text-sm text-muted-foreground">
-                Перерыв между заказами задан настройками вашего цеха — кнопка откроется сама,
-                обновлять страницу не нужно.
-              </p>
             )}
 
             {isCutter && myUnfinishedCount > 0 && (
@@ -413,7 +401,12 @@ const SewingItems = () => {
           isSewerView={isSewer}
           isAdminView={user?.role === 'admin'}
           availableRolls={isSewer ? myTrimRolls : myFabricRolls}
-          onSendToStickering={handleSendToStickering}
+          onSendToStickering={async (rollId) => {
+            await handleSendToStickering(rollId);
+            // Место в работе освободилось — перечитываем таймеры остальных вещей.
+            if (user?.id) refreshSewWaits(user.id);
+          }}
+          sewWaitSec={selectedOrder ? sewWaits[selectedOrder.id] || 0 : 0}
           onCancelOrder={handleCancelOrder}
           cancelOrderPenalty={cancelOrderPenalty}
           isPackerView={isPacker}

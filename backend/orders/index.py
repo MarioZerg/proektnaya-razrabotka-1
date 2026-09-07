@@ -288,52 +288,33 @@ def nearest_timeout_width(width):
     return TIMEOUT_WIDTHS[-1]
 
 
-def take_order_cooldown(cur, user_id, workshop_id, session_opened_at):
-    """Сколько секунд швее ещё ждать до следующего заказа — ЕДИНЫЙ расчёт для всех мест.
+def sewing_wait_for_order(cur, workshop_id, width, taken_at):
+    """Сколько секунд ещё шить ЭТУ вещь, прежде чем сдать её на стикеровку.
 
-    Этот же расчёт отдаётся фронту для живого счётчика на кнопке «Получить новый заказ»,
-    чтобы швея видела реальное время из настроек ЕЁ цеха, а не гадала и не тыкала кнопку
-    вслепую. Раньше цифра жила только внутри текста ошибки — узнать её можно было лишь
-    нажав кнопку и получив отказ.
+    Время берётся из настроек цеха по ширине изделия (timeout_200…800, в МИНУТАХ) и
+    отсчитывается от момента, когда швея взяла заказ в работу. Пока отсчёт идёт,
+    кнопка «Отправить на стикеровку» у этой вещи заблокирована.
 
-    Правило накопительное: первые max_quantity_orders_without_timeout заказов за смену
-    берутся без задержки, каждый следующий добавляет к общему бюджету времени свой
-    timeout_{ширина} (в МИНУТАХ из настроек). Взять новый заказ можно, когда с момента
-    взятия ПЕРВОГО заказа смены прошло не меньше суммы этих таймаутов.
+    Так темп задаёт сама работа: широкое полотно шьётся дольше узкого, и система
+    считает время по конкретной вещи, а не общим счётчиком за смену. Раньше таймер
+    был накопительным от первого заказа смены — к вечеру он разрастался до часа и
+    переставал отражать реальность.
 
-    Возвращает (wait_sec, next_at_iso): сколько секунд осталось (0 — можно брать) и момент
-    разблокировки в ISO — по нему фронт тикает сам, не дёргая сервер каждую секунду.
+    Возвращает (wait_sec, next_at_iso): сколько секунд осталось (0 — можно сдавать) и
+    момент разблокировки в ISO, по которому фронт тикает сам, не дёргая сервер.
     """
-    if not session_opened_at:
+    if not taken_at:
         return 0, None
-    without_timeout = get_setting_int(cur, workshop_id, 'max_quantity_orders_without_timeout', 0)
-    cur.execute(
-        "SELECT width, EXTRACT(EPOCH FROM (now() - taken_at))::float "
-        "FROM orders WHERE assigned_user_id = %s AND taken_at >= %s "
-        "ORDER BY taken_at ASC, id ASC",
-        (int(user_id), session_opened_at),
-    )
-    taken_rows = cur.fetchall()
-    if not taken_rows:
+    bucket = nearest_timeout_width(width)
+    if not bucket:
         return 0, None
-    # Таймауты по порогам читаем разово: порогов пять, и они одни на всю смену, а
-    # заказов у швеи к вечеру полсотни — чтение внутри цикла клало функцию по времени.
-    timeout_by_bucket = {}
-    for row in taken_rows[without_timeout:]:
-        bucket = nearest_timeout_width(row[0])
-        if bucket and bucket not in timeout_by_bucket:
-            timeout_by_bucket[bucket] = get_setting_int(cur, workshop_id, f'timeout_{bucket}', 0)
+    minutes = get_setting_int(cur, workshop_id, f'timeout_{bucket}', 0)
+    if minutes <= 0:
+        return 0, None
 
-    required_budget = 0
-    for row in taken_rows[without_timeout:]:
-        bucket = nearest_timeout_width(row[0])
-        if bucket:
-            required_budget += timeout_by_bucket.get(bucket, 0) * 60
-
-    if required_budget <= 0:
-        return 0, None
-    elapsed_since_first = taken_rows[0][1]
-    wait_sec = int(round(required_budget - elapsed_since_first))
+    cur.execute("SELECT EXTRACT(EPOCH FROM (now() - %s))::float", (taken_at,))
+    elapsed = float(cur.fetchone()[0] or 0)
+    wait_sec = int(round(minutes * 60 - elapsed))
     if wait_sec <= 0:
         return 0, None
     next_at = datetime.now(timezone.utc) + timedelta(seconds=wait_sec)
@@ -364,11 +345,12 @@ def handler(event: dict, context) -> dict:
         есть в системе (в т.ч. пришедший ранее по API) — новый заказ не создаётся.
 
     GET  /                       - получить список заказов
-    GET  /?takeCooldown=1&userId=5 - сколько секунд швее ещё ждать до следующего заказа:
-                                    { waitSeconds, nextAt (ISO), shiftOpen }. Считается той же
-                                    функцией take_order_cooldown, что и проверка при взятии,
-                                    по настройкам цеха ТЕКУЩЕЙ открытой смены — фронт рисует
-                                    по этому живой обратный отсчёт на кнопке
+    GET  /?sewingWaits=1&userId=5 - сколько ещё шить каждую вещь «В работе» у этой швеи:
+                                    { waits: { orderId: { waitSeconds, nextAt } }, shiftOpen }.
+                                    Время берётся по ШИРИНЕ изделия из настроек цеха
+                                    (timeout_200…800) и отсчитывается от взятия заказа.
+                                    По нему блокируется кнопка «Отправить на стикеровку»
+                                    у конкретного заказа
     GET  /?id=1                  - получить детальную карточку заказа с расходом материалов;
                                     дополнительно возвращает requiredFabricMaterialId/Name и
                                     requiredTrimMaterialId/Name — конкретный материал тюля и тесьмы,
@@ -426,19 +408,19 @@ def handler(event: dict, context) -> dict:
           равенстве — FIFO по времени раскроя (cut_at). Атомарная операция (FOR UPDATE SKIP LOCKED)
           исключает дубли при одновременных нажатиях. Назначает заказ на userId, переводит
           в "В работе", фиксирует taken_at.
-          Отклоняется (409), если: у швеи уже max_quantity_orders_to_seamstress заказов "В
-          работе"; за текущую смену исчерпан лимит метража (seamstress_daily_limit); не прошёл
-          НАКОПЛЕННЫЙ таймаут. Таймаут накопительный: первые max_quantity_orders_without_timeout
-          заказов за смену берутся без задержки, каждый следующий добавляет к общему бюджету
-          времени свой timeout_{ширина}; взять новый заказ можно, когда с момента взятия
-          ПЕРВОГО заказа смены прошло не меньше суммы таймаутов всех заказов сверх лимита.
-          Лимиты/таймаут действуют только при наличии открытой рабочей смены (shift_sessions)
+          Отклоняется (409) ровно по одной причине: у швеи уже
+          max_quantity_orders_to_seamstress заказов на руках ("В работе" + "Стикеровка").
+          Накопительного таймаута на взятие и лимита метража за смену БОЛЬШЕ НЕТ — темп
+          задаёт таймер на отправке конкретной вещи (см. send_to_stickering)
     POST /  { action: 'send_to_stickering', id, rollId }
         - швея указывает рулон тесьмы (должен быть в её цехе/смене), с которого списывается
           тесьма товара, и переводит заказ в статус "Стикеровка". Без указания рулона тесьмы
           перевод недоступен. Фиксирует sewer_user_id = текущий assigned_user_id (швея) —
           отдельное поле от assigned_user_id, аналогично cutter_user_id, чтобы история
-          "кто отшил" осталась видна на карточке товара
+          "кто отшил" осталась видна на карточке товара.
+          ТАЙМЕР ПОШИВА: отклоняется (409), пока не вышло время на пошив этой вещи —
+          timeout_{ширина} минут из настроек цеха, отсчёт от taken_at. Так освободить
+          место в работе можно только реально отшив вещь, а не сдав её сразу после взятия
     POST /  { action: 'cancel_order', id }
         - отмена заказа закройщиком (статус "На раскрое") или швеёй (статус "В работе").
           Заказ НЕ удаляется из системы: снимается назначенный сотрудник, и заказ возвращается
@@ -493,38 +475,40 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
-            # Сколько швее ждать до следующего заказа. Лёгкий запрос без побочных
-            # эффектов: фронт спрашивает его один раз и дальше тикает сам по nextAt.
-            # Швея видит живой обратный отсчёт вместо того, чтобы жать кнопку вслепую
-            # и ловить отказы — время реальное, из настроек ЕЁ цеха.
-            if params.get('takeCooldown') and params.get('userId'):
-                cooldown_user_id = int(params['userId'])
+            # Сколько ещё шить каждую вещь, взятую швеёй в работу.
+            #
+            # Лёгкий запрос без побочных эффектов: фронт спрашивает его при открытии
+            # страницы и дальше тикает сам по nextAt, не дёргая сервер каждую секунду.
+            # По этим числам блокируются кнопки «Отправить на стикеровку» у конкретных
+            # заказов — швея видит, сколько осталось, а не гадает.
+            if params.get('sewingWaits') and params.get('userId'):
+                waits_user_id = int(params['userId'])
                 cur.execute(
-                    "SELECT workshop_id, opened_at FROM shift_sessions "
+                    "SELECT workshop_id FROM shift_sessions "
                     "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
-                    (cooldown_user_id,),
+                    (waits_user_id,),
                 )
-                cd_session = cur.fetchone()
-                if not cd_session:
-                    # Смена не открыта — таймаута нет, брать всё равно нельзя, и об этом
-                    # честно скажет сам take_order при нажатии.
-                    return {
-                        'statusCode': 200,
-                        'headers': headers,
-                        'body': json.dumps({'waitSeconds': 0, 'nextAt': None, 'shiftOpen': False}),
-                    }
-                cd_workshop_id, cd_opened_at = cd_session
-                cd_wait, cd_next_at = take_order_cooldown(
-                    cur, cooldown_user_id, cd_workshop_id, cd_opened_at
+                ws_row = cur.fetchone()
+                session_ws = ws_row[0] if ws_row else None
+
+                # Все вещи «В работе» у этой швеи. Цех берём у заказа, а если он не
+                # проставлен (FBO мимо раскроя) — из её открытой смены.
+                cur.execute(
+                    "SELECT id, width, workshop_id, taken_at FROM orders "
+                    "WHERE assigned_user_id = %s AND sewing_status = 'В работе'",
+                    (waits_user_id,),
                 )
+                waits = {}
+                for w_id, w_width, w_ws, w_taken in cur.fetchall():
+                    w_sec, w_next = sewing_wait_for_order(
+                        cur, w_ws or session_ws, w_width, w_taken
+                    )
+                    if w_sec > 0:
+                        waits[str(w_id)] = {'waitSeconds': w_sec, 'nextAt': w_next}
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({
-                        'waitSeconds': cd_wait,
-                        'nextAt': cd_next_at,
-                        'shiftOpen': True,
-                    }),
+                    'body': json.dumps({'waits': waits, 'shiftOpen': ws_row is not None}),
                 }
 
             # Предпросмотр очереди для закройщика: что лежит следующим для его цеха.
@@ -2310,40 +2294,22 @@ def handler(event: dict, context) -> dict:
                             'body': json.dumps({'error': msg}),
                         }
 
-                # Лимиты и таймаут считаются в пределах ТЕКУЩЕЙ открытой смены (сбрасываются
-                # при открытии новой) — без открытой смены не применяются.
-                if session_opened_at and not finishing_group:
-                    daily_limit = get_setting_float(cur, session_workshop_id, 'seamstress_daily_limit', 0)
-                    if daily_limit > 0:
-                        cur.execute(
-                            "SELECT COALESCE(SUM(width), 0) FROM orders WHERE assigned_user_id = %s AND taken_at >= %s",
-                            (int(user_id), session_opened_at),
-                        )
-                        taken_meters = float(cur.fetchone()[0] or 0) / 100
-                        if taken_meters >= daily_limit:
-                            return {
-                                'statusCode': 409,
-                                'headers': headers,
-                                'body': json.dumps({'error': f'Лимит метража на смену исчерпан: {round(taken_meters, 2)}/{daily_limit} пог.м.'}),
-                            }
-
-                    # НАКОПИТЕЛЬНЫЙ таймаут между взятием заказов — считается одной
-                    # общей функцией take_order_cooldown, той же самой, что отдаёт остаток
-                    # ожидания фронту для счётчика на кнопке. Расчёт обязан быть один: если
-                    # развести его на два места, счётчик у швеи и проверка на сервере
-                    # однажды разойдутся, и кнопка будет врать.
-                    wait_sec, _next_at = take_order_cooldown(
-                        cur, user_id, session_workshop_id, session_opened_at
-                    )
-                    if wait_sec > 0:
-                        return {
-                            'statusCode': 409,
-                            'headers': headers,
-                            'body': json.dumps({
-                                'error': f'Подождите ещё {format_wait(wait_sec)} перед взятием следующего заказа',
-                                'waitSeconds': wait_sec,
-                            }, ensure_ascii=False),
-                        }
+                # НАКОПИТЕЛЬНОГО ТАЙМАУТА НА ВЗЯТИЕ И ЛИМИТА МЕТРАЖА ЗА СМЕНУ БОЛЬШЕ НЕТ.
+                #
+                # Раньше швея упиралась в общий таймер: система складывала таймауты всех
+                # взятых за смену заказов и держала кнопку «Получить заказ» закрытой. Время
+                # шло от ПЕРВОГО заказа смены, поэтому к вечеру отсчёт превращался в час с
+                # лишним, а связь с реальной работой терялась — швея могла всё отшить и
+                # всё равно ждать.
+                #
+                # Теперь темп задаёт САМА ВЕЩЬ: таймер висит на кнопке «Отправить на
+                # стикеровку» конкретного заказа и считается по его ширине (timeout_200…800).
+                # Пока вещь не отшита по времени — её не сдать, а значит и место в работе не
+                # освободится. Ограничение осталось прежним по сути, но стало честным:
+                # оно привязано к конкретной вещи, а не к общему счётчику смены.
+                #
+                # Здесь остаётся ровно одна проверка — лимит заказов на руках
+                # (max_quantity_orders_to_seamstress, сейчас 2). Она выше по коду.
 
                 # Приоритет и фильтр заказов (по цеху смены): orders_filter — ограничивает
                 # выборку FBO/FBS, orders_cluster_priority — приоритетный FBO-кластер идёт
@@ -2656,13 +2622,15 @@ def handler(event: dict, context) -> dict:
                     }
 
                 cur.execute(
-                    "SELECT material, width, height, workshop_id, sewing_status, assigned_user_id FROM orders WHERE id = %s",
+                    "SELECT material, width, height, workshop_id, sewing_status, assigned_user_id, taken_at "
+                    "FROM orders WHERE id = %s",
                     (int(item_id),),
                 )
                 order_row = cur.fetchone()
                 if not order_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-                material, width, height, order_workshop_id, current_status, order_assigned_user_id = order_row
+                (material, width, height, order_workshop_id, current_status,
+                 order_assigned_user_id, order_taken_at) = order_row
                 if current_status == 'Стикеровка':
                     return {
                         'statusCode': 409,
@@ -2691,6 +2659,43 @@ def handler(event: dict, context) -> dict:
                             {'error': f'На стикеровку нельзя: {stage_hint}'},
                             ensure_ascii=False,
                         ),
+                    }
+
+                # ВЕЩЬ НЕЛЬЗЯ СДАТЬ РАНЬШЕ, ЧЕМ ЕЁ РЕАЛЬНО МОЖНО ОТШИТЬ.
+                #
+                # Время на пошив задано настройками цеха по ширине изделия
+                # (timeout_200…800) и отсчитывается от момента взятия заказа в работу.
+                # Пока оно не вышло, отправить вещь на стикеровку нельзя — иначе смысл
+                # ограничения теряется: швея за минуту «сдавала» бы всё подряд, освобождая
+                # места в работе, и разбирала бы очередь цеха.
+                #
+                # Проверку делает СЕРВЕР, а не только кнопка на экране: интерфейс можно
+                # обойти старой вкладкой или повторным запросом, сервер — нет.
+                #
+                # Цех берём у заказа, а при его отсутствии — из смены швеи (гостевой режим
+                # и FBO-заказы без цеха): настройки должны найтись в любом случае.
+                wait_ws_id = order_workshop_id
+                if not wait_ws_id:
+                    cur.execute(
+                        "SELECT workshop_id FROM shift_sessions "
+                        "WHERE user_id = %s AND closed_at IS NULL "
+                        "ORDER BY opened_at DESC LIMIT 1",
+                        (int(actor_id),) if actor_id else (0,),
+                    )
+                    ws_row = cur.fetchone()
+                    wait_ws_id = ws_row[0] if ws_row else None
+
+                sew_wait, _sew_next = sewing_wait_for_order(
+                    cur, wait_ws_id, width, order_taken_at
+                )
+                if sew_wait > 0:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Ещё рано: вещь можно сдать через {format_wait(sew_wait)}',
+                            'waitSeconds': sew_wait,
+                        }, ensure_ascii=False),
                     }
 
                 # Цех и смена, с материалами которых работает швея ПРЯМО СЕЙЧАС, берутся из

@@ -298,25 +298,34 @@ export interface TakeOrderResult {
 export const takeOrder = (userId: number): Promise<TakeOrderResult> =>
   postAction({ action: 'take_order', userId });
 
-/** Сколько швее ещё ждать до следующего заказа — по накопительному таймауту из
- * настроек ЕЁ цеха. Нужен, чтобы кнопка показывала живой обратный отсчёт, а не
- * молчала до отказа сервера. */
-export interface TakeCooldown {
-  /** Осталось секунд. 0 — заказ можно брать прямо сейчас. */
+/**
+ * Сколько ещё шить каждую вещь, взятую швеёй в работу.
+ *
+ * Время задаётся настройками цеха по ШИРИНЕ изделия и отсчитывается от взятия заказа.
+ * Пока отсчёт идёт, кнопка «Отправить на стикеровку» у этой вещи заблокирована: сдать
+ * её раньше нельзя, а значит и место в работе не освободится.
+ *
+ * Ключ — id заказа. Вещи, у которых время уже вышло, в ответ не попадают.
+ */
+export interface SewingWait {
+  /** Осталось секунд. */
   waitSeconds: number;
   /** Момент разблокировки (ISO) — по нему фронт тикает сам, не дёргая сервер. */
   nextAt: string | null;
+}
+
+export interface SewingWaits {
+  waits: Record<string, SewingWait>;
   /** Открыта ли смена: без смены заказы не выдаются вовсе. */
   shiftOpen: boolean;
 }
 
-export const fetchTakeCooldown = async (userId: number): Promise<TakeCooldown> => {
-  const res = await fetch(`${ORDERS_URL}?takeCooldown=1&userId=${userId}`);
-  if (!res.ok) return { waitSeconds: 0, nextAt: null, shiftOpen: true };
+export const fetchSewingWaits = async (userId: number): Promise<SewingWaits> => {
+  const res = await fetch(`${ORDERS_URL}?sewingWaits=1&userId=${userId}`);
+  if (!res.ok) return { waits: {}, shiftOpen: true };
   const data = await res.json();
   return {
-    waitSeconds: Number(data.waitSeconds) || 0,
-    nextAt: data.nextAt ?? null,
+    waits: data.waits || {},
     shiftOpen: data.shiftOpen !== false,
   };
 };

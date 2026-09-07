@@ -45,6 +45,8 @@ interface SewingItemDetailDialogProps {
   isAdminView?: boolean;
   availableRolls?: Roll[];
   onSendToStickering?: (rollId?: number) => void;
+  /** Сколько ещё шить эту вещь — по нему блокируется отправка на стикеровку. */
+  sewWaitSec?: number;
   onCancelOrder?: () => void;
   cancelling?: boolean;
   /** Штраф за отмену заказа из настроек цеха — показывается в окне подтверждения. */
@@ -76,6 +78,7 @@ const SewingItemDetailDialog = ({
   isAdminView = false,
   availableRolls = [],
   onSendToStickering,
+  sewWaitSec = 0,
   onCancelOrder,
   cancelling = false,
   cancelOrderPenalty = 0,
@@ -213,6 +216,7 @@ const SewingItemDetailDialog = ({
                 isSewerView={isSewerView}
                 availableRolls={availableRolls}
                 onSendToStickering={onSendToStickering}
+                sewWaitSec={sewWaitSec}
                 dialogOpen={dialogOpen}
               />
             )}

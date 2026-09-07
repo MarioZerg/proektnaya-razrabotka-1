@@ -15,7 +15,7 @@ import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { Roll } from '@/lib/rollsApi';
 import { fetchHangers, hangerLabel, type Hanger } from '@/lib/hangersApi';
-import { statusOptions } from '@/components/crm/sewingItems/sewingItemsShared';
+import { statusOptions, formatWait } from '@/components/crm/sewingItems/sewingItemsShared';
 import { formatQuantity } from '@/lib/formatQuantity';
 
 interface SewingItemActionsSectionProps {
@@ -35,6 +35,12 @@ interface SewingItemActionsSectionProps {
   availableRolls: Roll[];
   onSendToStickering?: (rollId?: number) => void;
   dialogOpen: boolean;
+  /**
+   * Сколько ещё секунд шить ЭТУ вещь. Пока идёт отсчёт, кнопку «Отправить на
+   * стикеровку» не нажать: время на пошив задано настройками цеха по ширине изделия.
+   * 0 или не передано — можно сдавать.
+   */
+  sewWaitSec?: number;
 }
 
 const SewingItemActionsSection = ({
@@ -54,6 +60,7 @@ const SewingItemActionsSection = ({
   availableRolls,
   onSendToStickering,
   dialogOpen,
+  sewWaitSec = 0,
 }: SewingItemActionsSectionProps) => {
   const [selectedRollId, setSelectedRollId] = useState<string>('');
   const [hangers, setHangers] = useState<Hanger[]>([]);
@@ -314,14 +321,25 @@ const SewingItemActionsSection = ({
             </p>
           )}
 
+          {/* ТАЙМЕР ПОШИВА. Пока он идёт, вещь сдать нельзя: время на неё задано
+              настройками цеха по ширине и отсчитывается от взятия заказа. Так место
+              в работе освобождается только реально отшитой вещью. Кнопка сама
+              показывает остаток и разблокируется — обновлять страницу не нужно. */}
           <Button
             onClick={() => onSendToStickering?.(selectedRollId ? Number(selectedRollId) : undefined)}
-            disabled={cutting || isAlreadyStickering || (trimNeeded && !selectedRollId)}
+            disabled={
+              cutting || isAlreadyStickering || (trimNeeded && !selectedRollId) || sewWaitSec > 0
+            }
           >
             {cutting ? (
               <>
                 <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
                 Списываем тесьму...
+              </>
+            ) : sewWaitSec > 0 ? (
+              <>
+                <Icon name="Timer" size={16} className="mr-2" />
+                Можно сдать через {formatWait(sewWaitSec)}
               </>
             ) : (
               <>
@@ -330,6 +348,13 @@ const SewingItemActionsSection = ({
               </>
             )}
           </Button>
+
+          {sewWaitSec > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Время на пошив этой вещи задано настройками цеха по её ширине. Кнопка
+              откроется сама.
+            </p>
+          )}
         </CardContent>
       </Card>
     );

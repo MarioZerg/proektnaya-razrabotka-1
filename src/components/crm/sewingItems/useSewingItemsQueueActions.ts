@@ -3,7 +3,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   takeStack,
   takeOrder,
-  fetchTakeCooldown,
+  fetchSewingWaits,
   type SewingStatus,
   type TakenOrder,
 } from '@/lib/ordersApi';
@@ -77,64 +77,72 @@ export const useSewingItemsQueueActions = ({
   const [takeOrderCooldown, setTakeOrderCooldown] = useState(false);
   const [lastTakenStack, setLastTakenStack] = useState<TakenOrder[]>(() => loadStoredStack(userId));
 
-  // Момент, когда швея сможет взять следующий заказ (мс epoch). Приходит с сервера —
-  // считается по накопительному таймауту из настроек ЕЁ цеха, а не зашитой в код цифрой.
-  const [nextTakeAt, setNextTakeAt] = useState<number | null>(null);
-  // Остаток в секундах: отдельным состоянием, чтобы кнопка перерисовывалась каждую
-  // секунду и швея видела живой отсчёт, а не застывшее число.
-  const [takeWaitSec, setTakeWaitSec] = useState(0);
+  /**
+   * ТАЙМЕР НА КАЖДУЮ ВЕЩЬ В РАБОТЕ: id заказа → сколько секунд ещё шить.
+   *
+   * Время задаётся настройками цеха по ширине изделия и отсчитывается от взятия
+   * заказа. Пока оно идёт, кнопка «Отправить на стикеровку» у этой вещи заблокирована:
+   * сдать её раньше нельзя, а значит и место в работе не освободится.
+   *
+   * Момент разблокировки держим отдельно (мс epoch), чтобы тикать от абсолютного
+   * времени: вкладку сворачивают, планшет усыпляют — фоновые таймеры тормозят, и
+   * отсчёт «по единичке» отстал бы от реальности на минуты.
+   */
+  const [sewWaits, setSewWaits] = useState<Record<number, number>>({});
+  const [sewUntil, setSewUntil] = useState<Record<number, number>>({});
 
-  /** Спросить у сервера актуальный остаток ожидания. Дёргаем редко: при открытии
-   * страницы, после взятия заказа и когда отсчёт добежал до нуля. Между этими точками
-   * фронт тикает сам по nextTakeAt — сервер незачем опрашивать каждую секунду. */
-  const refreshCooldown = async (uid: number) => {
+  /** Забрать с сервера актуальные остатки. Дёргаем редко: при открытии страницы,
+   * после взятия заказа и когда очередной отсчёт добежал до нуля. Между этими точками
+   * фронт тикает сам — опрашивать сервер каждую секунду незачем. */
+  const refreshSewWaits = async (uid: number) => {
     try {
-      const cd = await fetchTakeCooldown(uid);
-      if (cd.waitSeconds > 0) {
-        setNextTakeAt(Date.now() + cd.waitSeconds * 1000);
-        setTakeWaitSec(cd.waitSeconds);
-      } else {
-        setNextTakeAt(null);
-        setTakeWaitSec(0);
-      }
+      const res = await fetchSewingWaits(uid);
+      const until: Record<number, number> = {};
+      const left: Record<number, number> = {};
+      Object.entries(res.waits).forEach(([id, w]) => {
+        until[Number(id)] = Date.now() + w.waitSeconds * 1000;
+        left[Number(id)] = w.waitSeconds;
+      });
+      setSewUntil(until);
+      setSewWaits(left);
     } catch {
-      // Сеть моргнула — не запираем кнопку: настоящую проверку всё равно делает сервер
-      // при взятии, и швея не должна стоять из-за неудавшегося вспомогательного запроса.
-      setNextTakeAt(null);
-      setTakeWaitSec(0);
+      // Сеть моргнула — не запираем кнопки: настоящую проверку всё равно делает
+      // сервер при отправке, и швея не должна стоять из-за вспомогательного запроса.
+      setSewUntil({});
+      setSewWaits({});
     }
   };
 
-  // Первый запрос остатка при заходе на страницу: швея сразу видит, сколько ждать,
-  // даже если обновила вкладку или пришла с другого планшета — время живёт на сервере.
+  // Первый запрос при заходе: швея сразу видит, сколько осталось по каждой вещи, даже
+  // если обновила вкладку или пришла с другого планшета — время живёт на сервере.
   useEffect(() => {
     if (!isSewer || !userId) return;
-    refreshCooldown(userId);
+    refreshSewWaits(userId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSewer, userId]);
 
-  // Секундный тик обратного отсчёта. Считаем от абсолютного времени разблокировки, а
-  // не вычитанием по единице: вкладку сворачивают, планшет усыпляют, — таймеры в фоне
-  // тормозят, и счётчик «по единичке» отстал бы от реальности на минуты.
+  // Секундный тик по всем вещам сразу.
   useEffect(() => {
-    if (nextTakeAt === null) return;
+    if (Object.keys(sewUntil).length === 0) return;
     const tick = () => {
-      const left = Math.ceil((nextTakeAt - Date.now()) / 1000);
-      if (left <= 0) {
-        setTakeWaitSec(0);
-        setNextTakeAt(null);
-        // Сверяемся с сервером: пока шёл отсчёт, могли смениться настройки цеха или
-        // смена — последнее слово всегда за сервером.
-        if (userId) refreshCooldown(userId);
-      } else {
-        setTakeWaitSec(left);
-      }
+      const now = Date.now();
+      const left: Record<number, number> = {};
+      let finished = false;
+      Object.entries(sewUntil).forEach(([id, until]) => {
+        const sec = Math.ceil((until - now) / 1000);
+        if (sec > 0) left[Number(id)] = sec;
+        else finished = true;
+      });
+      setSewWaits(left);
+      // Хотя бы у одной вещи время вышло — сверяемся с сервером: последнее слово
+      // всегда за ним, настройки цеха могли смениться прямо во время отсчёта.
+      if (finished && userId) refreshSewWaits(userId);
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextTakeAt, userId]);
+  }, [sewUntil, userId]);
 
   // Подхватываем сохранённый стек, когда стал известен сотрудник.
   //
@@ -223,19 +231,21 @@ export const useSewingItemsQueueActions = ({
     } finally {
       setTakingOrder(false);
       setTimeout(() => setTakeOrderCooldown(false), MIN_CLICK_GUARD_MS);
-      // После взятия заказа бюджет времени вырос — сразу забираем новый остаток, чтобы
-      // счётчик на кнопке пошёл от реальной цифры, а не от старой.
-      refreshCooldown(userId);
+      // У новой вещи свой таймер пошива — забираем остатки заново, чтобы отсчёт на её
+      // кнопке пошёл сразу, а не после перезахода на страницу.
+      refreshSewWaits(userId);
     }
   };
 
   return {
     takingStack,
     takingOrder,
-    /** Кнопка заперта: либо идёт запрос, либо ещё не прошёл таймаут цеха. */
-    takeOrderCooldown: takeOrderCooldown || takeWaitSec > 0,
-    /** Сколько секунд осталось до следующего заказа — для подписи на кнопке. */
-    takeWaitSec,
+    /** Кнопка заперта только на время запроса — от «дребезга» двойного клика. */
+    takeOrderCooldown,
+    /** Сколько ещё шить каждую вещь: id заказа → секунды. Пустой ключ = можно сдавать. */
+    sewWaits,
+    /** Перечитать таймеры — вызывается после отправки вещи на стикеровку. */
+    refreshSewWaits,
     lastTakenStack,
     handleTakeStack,
     handlePrintTask,

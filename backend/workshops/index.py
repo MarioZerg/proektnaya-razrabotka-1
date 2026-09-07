@@ -23,8 +23,9 @@ SETTINGS_KEYS = [
     'max_quantity_orders_to_cutter',
     'cutter_daily_limit',
     'cancel_order_penalty',
-    'seamstress_daily_limit',
-    'max_quantity_orders_without_timeout',
+    # seamstress_daily_limit и max_quantity_orders_without_timeout убраны: накопительный
+    # таймаут на взятие заказа и лимит метража за смену больше не применяются. Темп швеи
+    # задаёт таймер на отправке конкретной вещи — timeout_{ширина} ниже.
     'timeout_200',
     'timeout_300',
     'timeout_400',

@@ -41,9 +41,9 @@
       "expectedStatus": 409
     },
     {
-      "name": "Take cooldown for user without shift returns zero wait",
+      "name": "Sewing waits for user without shift works",
       "method": "GET",
-      "path": "/?takeCooldown=1&userId=999999",
+      "path": "/?sewingWaits=1&userId=999999",
       "expectedStatus": 200
     },
     {
