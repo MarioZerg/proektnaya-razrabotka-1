@@ -8,6 +8,8 @@ import KioskOrderActions from '@/components/crm/kiosk/KioskOrderActions';
 interface Props {
   order: KioskOrder;
   printed: boolean;
+  /** Ярлык сейчас запрашивается у маркетплейса — кнопка показывает ожидание. */
+  printing: boolean;
   labelRefused: boolean;
   tracePrinted: boolean;
   setTracePrinted: (v: boolean) => void;
@@ -29,6 +31,7 @@ interface Props {
 const KioskOrderCard = ({
   order,
   printed,
+  printing,
   labelRefused,
   tracePrinted,
   setTracePrinted,
@@ -58,6 +61,7 @@ const KioskOrderCard = ({
       <KioskOrderActions
         order={order}
         printed={printed}
+        printing={printing}
         labelRefused={labelRefused}
         tracePrinted={tracePrinted}
         closing={closing}

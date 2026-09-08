@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { recoverIfStaleBuild } from '@/lib/appUpdate';
 import {
   type SpareItemError,
@@ -27,6 +28,8 @@ interface Params {
   setOrder: React.Dispatch<React.SetStateAction<KioskOrder | null>>;
   printed: boolean;
   setPrinted: (v: boolean) => void;
+  /** Идёт печать: кнопка показывает это, иначе терминал выглядит зависшим. */
+  setPrinting: (v: boolean) => void;
   labelRefused: boolean;
   setLabelRefused: (v: boolean) => void;
   setClosing: (v: boolean) => void;
@@ -55,6 +58,7 @@ export const useKioskOrderActions = ({
   setOrder,
   printed,
   setPrinted,
+  setPrinting,
   labelRefused,
   setLabelRefused,
   setClosing,
@@ -67,8 +71,18 @@ export const useKioskOrderActions = ({
   resetAfterClose,
   refocus,
 }: Params) => {
+  // Идёт ли прямо сейчас печать или закрытие. Именно ref, а не состояние: между
+  // двумя быстрыми нажатиями React не успевает перерисовать кнопку, и второй клик
+  // проходил бы по старому disabled. На терминале это давало два ярлыка на одну
+  // вещь и два запроса на закрытие.
+  const printingRef = useRef(false);
+  const closingRef = useRef(false);
+
   const handlePrint = async () => {
     if (!order) return;
+    if (printingRef.current) return;
+    printingRef.current = true;
+    setPrinting(true);
     try {
       // FBS: ярлык отправления печатает МАРКЕТПЛЕЙС — берём готовый файл по API и печатаем
       // как есть. Свой аналог рисовать нельзя: на складе принимают только их ярлык с их
@@ -129,11 +143,18 @@ export const useKioskOrderActions = ({
         description: msg || undefined,
         variant: 'destructive',
       });
+    } finally {
+      printingRef.current = false;
+      setPrinting(false);
     }
   };
 
   const handleClose = async () => {
     if (!order) return;
+    // Двойное нажатие «Закрыть заказ» защищено на сервере (он отвечает alreadyClosed),
+    // но второй запрос всё равно уходил и приносил вторую печать стикера хранения.
+    if (closingRef.current) return;
+    closingRef.current = true;
     setClosing(true);
     try {
       const res = await closeKioskOrder(
@@ -145,6 +166,22 @@ export const useKioskOrderActions = ({
         printed && !labelRefused,
       );
       playScanSound();
+      // Сервер заказ УЖЕ закрыл. Всё, что дальше, — печать наклеек, и если она
+      // сорвётся (принтер отвалился, браузер не дал открыть окно печати), заказ
+      // от этого не раззакроется. Раньше такая ошибка улетала в общий catch, и
+      // терминал писал «Заказ НЕ закрыт», оставляя закрытый заказ висеть на
+      // экране: упаковщица жала «Закрыть» снова и снова, а он не уходил.
+      const safePrint = (fn: () => void) => {
+        try {
+          fn();
+        } catch {
+          toast({
+            title: 'Заказ закрыт, но стикер не напечатался',
+            description: 'Позовите старшего — стикер нужно распечатать отдельно',
+            variant: 'destructive',
+          });
+        }
+      };
       // Заказ отменён клиентом — вещь едет не покупателю, а на склад хранения. Печатаем
       // стикер ХРАНЕНИЯ: по нему кладовщик заберёт вещь из цеха и положит на полку.
       if (res.isCancelled && res.storageBarcode) {
@@ -155,14 +192,16 @@ export const useKioskOrderActions = ({
           order.groupKey && (order.groupSize || 0) > 1
             ? `Связка ${order.groupPosition || 1} из ${order.groupSize}`
             : null;
-        printStorageSticker({
-          storageBarcode: res.storageBarcode,
-          title: order.material && order.width
-            ? `${order.material} ${order.width}×${order.height}`
-            : order.product,
-          orderNumber: order.orderNumber,
-          groupLabel,
-        });
+        safePrint(() =>
+          printStorageSticker({
+            storageBarcode: res.storageBarcode!,
+            title: order.material && order.width
+              ? `${order.material} ${order.width}×${order.height}`
+              : order.product,
+            orderNumber: order.orderNumber,
+            groupLabel,
+          }),
+        );
         // Стикер ушёл на принтер — только теперь вещь встаёт в очередь «Разложить
         // по полкам». Пока стикера нет, звать кладовщика в цех не за чем: он придёт,
         // а вещь ещё у упаковщицы.
@@ -179,14 +218,16 @@ export const useKioskOrderActions = ({
       // Индивидуальный пошив на маркетплейс не едет: вещь до выдачи клиенту лежит
       // на полке. Печатаем свой стикер — с тканью, размерами и складским штрихкодом.
       if (res.isIndividual && res.storageBarcode) {
-        printIndividualSticker({
-          orderNumber: res.orderNumber || order.orderNumber,
-          material: res.material ?? order.material,
-          width: res.width ?? order.width,
-          height: res.height ?? order.height,
-          storageBarcode: res.storageBarcode,
-          product: res.product ?? order.product,
-        });
+        safePrint(() =>
+          printIndividualSticker({
+            orderNumber: res.orderNumber || order.orderNumber,
+            material: res.material ?? order.material,
+            width: res.width ?? order.width,
+            height: res.height ?? order.height,
+            storageBarcode: res.storageBarcode!,
+            product: res.product ?? order.product,
+          }),
+        );
         void confirmStorageLabelPrinted(res.storageBarcode);
         toast({
           title: `Заказ ${order.orderNumber} закрыт`,
@@ -204,15 +245,17 @@ export const useKioskOrderActions = ({
         // собрать им поставку нельзя — кладовщик сканирует именно этот код,
         // поэтому он должен быть на каждой вещи заказа.
         if (res.bundleBarcode) {
-          printStorageSticker({
-            storageBarcode: res.bundleBarcode,
-            title:
-              order.material && order.width
-                ? `${order.material} ${order.width}×${order.height}`
-                : order.product,
-            orderNumber: order.orderNumber,
-            groupLabel: `Связка ${res.groupPosition || 1} из ${res.groupSize}`,
-          });
+          safePrint(() =>
+            printStorageSticker({
+              storageBarcode: res.bundleBarcode!,
+              title:
+                order.material && order.width
+                  ? `${order.material} ${order.width}×${order.height}`
+                  : order.product,
+              orderNumber: order.orderNumber,
+              groupLabel: `Связка ${res.groupPosition || 1} из ${res.groupSize}`,
+            }),
+          );
         }
         toast({
           title:
@@ -237,11 +280,14 @@ export const useKioskOrderActions = ({
       resetAfterClose();
     } catch (e) {
       toast({
-        title: 'Ошибка',
-        description: e instanceof Error ? e.message : undefined,
+        title: 'Заказ НЕ закрыт',
+        description:
+          (e instanceof Error ? e.message : 'Сервер не ответил') +
+          '. Вещь пока не сдавайте — нажмите «Закрыть заказ» ещё раз',
         variant: 'destructive',
       });
     } finally {
+      closingRef.current = false;
       setClosing(false);
     }
   };

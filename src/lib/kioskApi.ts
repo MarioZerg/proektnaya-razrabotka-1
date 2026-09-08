@@ -33,6 +33,12 @@ export interface KioskOrder {
   cutterName?: string | null;
   /** Кто шил эту вещь. */
   sewerName?: string | null;
+  /** Заказ найден НЕ по точному совпадению номера: OZON переименовал отправление,
+   * и на экране номер другой, чем на листке закройщика. Терминал предупреждает —
+   * иначе это выглядит как «выдали чужой заказ». */
+  matchedByFallback?: boolean;
+  /** Что именно отсканировали — показываем рядом для сверки. */
+  scannedCode?: string | null;
 }
 
 /** Заказ уже закрыт, но вещь физически осталась у упаковщицы: её можно сдать на склад
@@ -330,13 +336,33 @@ export const closeKioskOrder = async (
   /** Заказ уже был закрыт раньше — повторное нажатие просто закрывает окно. */
   alreadyClosed?: boolean;
 }> => {
-  const res = await fetch(KIOSK_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'close_order', orderId, packerId, actorId, actorName, labelPrinted,
-    }),
-  });
+  // Своё ограничение по времени. Отправку данных общая обёртка не трогает (повторять
+  // закрытие заказа нельзя), поэтому без этого запрос при обрыве связи висел бы
+  // минутами: кнопка «Закрыть заказ» крутится, заказ на экране не уходит, упаковщица
+  // считает терминал зависшим. Через 25 секунд честно говорим, что ответа нет.
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 25000);
+  let res: Response;
+  try {
+    res = await fetch(KIOSK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'close_order', orderId, packerId, actorId, actorName, labelPrinted,
+      }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') {
+      throw new Error(
+        'Сервер не ответил за 25 секунд. Нажмите «Закрыть заказ» ещё раз — повторное ' +
+          'закрытие безопасно, дважды заказ не закроется',
+      );
+    }
+    throw e;
+  } finally {
+    window.clearTimeout(timer);
+  }
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.error || 'Ошибка запроса');

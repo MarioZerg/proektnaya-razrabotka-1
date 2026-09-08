@@ -31,6 +31,10 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   const [searching, setSearching] = useState(false);
   const [order, setOrder] = useState<KioskOrder | null>(null);
   const [printed, setPrinted] = useState(false);
+  // Ярлык запрашивается у маркетплейса по сети — это несколько секунд. Пока идёт
+  // запрос, кнопка ничем не отвечала, и упаковщица жала её повторно, считая, что
+  // терминал завис. Показываем ожидание прямо на кнопке.
+  const [printing, setPrinting] = useState(false);
   // Внутренний стикер с номером нашего заказа кладётся ВНУТРЬ пакета. По нему при возврате
   // видно, кто шил именно эту штуку — на FBO маркетплейс такой информации не даёт.
   const [tracePrinted, setTracePrinted] = useState(false);
@@ -52,6 +56,12 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   // предупреждение прямо на экране, а не только всплывашкой — её легко не заметить.
   const [blockedWarning, setBlockedWarning] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Запрос заказа уже в пути. Состояние searching для этого не годится: React
+  // применяет его только к следующей отрисовке, а два обработчика скана срабатывают
+  // в одном тике — второй проскакивал проверку и слал лишний запрос.
+  const searchingRef = useRef(false);
+  // Номер последнего поиска: ответы на старые сканы на экран не пускаем.
+  const searchSeqRef = useRef(0);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -61,6 +71,9 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
 
   // Экран после закрытия заказа: снимаем заказ и возвращаем фокус сканеру.
   const resetAfterClose = () => {
+    // Обрываем связь со всеми поисками, что могли остаться в пути: их ответ не должен
+    // подсунуть на чистый экран заказ, который упаковщица уже закрыла.
+    searchSeqRef.current += 1;
     setOrder(null);
     setPrinted(false);
     setTracePrinted(false);
@@ -86,6 +99,17 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   const handleSearch = async () => {
     const value = (inputRef.current?.value || code).trim();
     if (!value) return;
+    // Один скан приходит сюда двумя путями сразу: через Enter в скрытом поле и через
+    // глобальный перехватчик клавиатуры. Плюс сканер иногда «пикает» дважды. Состояние
+    // searching обновляется не мгновенно, поэтому запираем на ref: иначе уходили два
+    // запроса, и на экран мог сесть ответ более раннего скана — упаковщица видела
+    // заказ, которого не сканировала.
+    if (searchingRef.current) return;
+    searchingRef.current = true;
+    // Номер этого поиска. К моменту ответа мог начаться новый скан — тогда старый
+    // ответ выбрасываем, а не показываем поверх свежего.
+    searchSeqRef.current += 1;
+    const seq = searchSeqRef.current;
     setCode('');
     if (inputRef.current) inputRef.current.value = '';
     setSearching(true);
@@ -97,9 +121,12 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     setBlockedWarning(false);
     try {
       const found = await fetchKioskOrder(value);
+      // Пока ждали ответ, начался новый поиск — этот результат уже неактуален.
+      if (seq !== searchSeqRef.current) return;
       playScanSound();
       setOrder(found);
     } catch (e) {
+      if (seq !== searchSeqRef.current) return;
       playScanErrorSound();
       // Заказ закрыт, но вещь у упаковщицы в руках — показываем, как её сдать на склад.
       if (e instanceof SpareItemError) {
@@ -113,8 +140,11 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         variant: 'destructive',
       });
     } finally {
-      setSearching(false);
-      refocus();
+      searchingRef.current = false;
+      if (seq === searchSeqRef.current) {
+        setSearching(false);
+        refocus();
+      }
     }
   };
 
@@ -159,6 +189,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     setOrder,
     printed,
     setPrinted,
+    setPrinting,
     labelRefused,
     setLabelRefused,
     setClosing,
@@ -201,6 +232,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
         <KioskOrderCard
           order={order}
           printed={printed}
+          printing={printing}
           labelRefused={labelRefused}
           tracePrinted={tracePrinted}
           setTracePrinted={setTracePrinted}

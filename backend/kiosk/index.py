@@ -576,14 +576,38 @@ def handler(event: dict, context) -> dict:
             _rparts = base_number.rsplit('-', 1)
             if len(_rparts) == 2 and _rparts[1].isdigit() and len(_rparts[1]) <= 2:
                 root_number = _rparts[0]
-            root_like_esc = root_number.replace("'", "''").replace('%', '') + '-%'
+            # Поиск по корню — самое рискованное место терминала: он выдаёт вещь,
+            # номер которой НЕ совпадает с бумажкой в руках. Поэтому включаем его
+            # только для настоящего корня отправления OZON: длинный, из цифр и
+            # дефисов, минимум два сегмента. Короткий огрызок вроде «123» дал бы
+            # LIKE '123-%' и вытащил бы совершенно чужой заказ — упаковщица
+            # получала на экран другой номер, чем на листке закройщика.
+            root_ok = (
+                root_number != base_number
+                and len(root_number) >= 8
+                and root_number.count('-') >= 1
+                and all(c.isdigit() or c == '-' for c in root_number)
+            )
+            root_like_esc = root_number.replace("'", "''").replace('%', '').replace('_', '') + '-%'
+            # Соседи по отправлению годятся ТОЛЬКО если они прямо сейчас на
+            # стикеровке. Иначе по нечёткому совпадению мог приехать закрытый
+            # чужой заказ, и терминал предлагал сдать по нему вещь на склад —
+            # то есть списать не ту вещь.
+            root_clause = (
+                f"   OR (o.ozon_posting_number LIKE '{root_like_esc}' "
+                f"       AND o.sewing_status = 'Стикеровка') "
+                if root_ok
+                else ""
+            )
             cur.execute(
                 "SELECT o.id, o.order_number, o.product, o.material, o.width, o.height, "
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.status, o.ozon_status, "
                 "o.marketplace, o.group_key, o.group_size, o.group_position, o.order_type, "
                 "o.is_legal_entity, o.legal_company_name, o.cluster, cu.full_name, su.full_name, "
                 # Статус Яндекс.Маркета — вторая площадка со своим полем отмены.
-                "o.ym_status "
+                "o.ym_status, "
+                # Номер отправления — по нему сверяем, точно ли совпало со сканом.
+                "o.ozon_posting_number "
                 "FROM orders o LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                 "LEFT JOIN users su ON su.id = o.sewer_user_id "
@@ -609,7 +633,8 @@ def handler(event: dict, context) -> dict:
                 f"   OR o.order_number = '{base_number_esc}' "
                 f"   OR o.ozon_posting_number = '{base_number_esc}' "
                 # Соседи по отправлению: OZON мог выдать вещам номера «-1» и «-3».
-                f"   OR o.ozon_posting_number LIKE '{root_like_esc}' "
+                # Только те, что сейчас на стикеровке, и только для настоящего корня.
+                f"{root_clause}"
                 #
                 # ПОРЯДОК ВАЖЕН: сначала берём вещь, которую сейчас реально стикеруют,
                 # и только потом смотрим на точность совпадения номера.
@@ -631,6 +656,12 @@ def handler(event: dict, context) -> dict:
             row = cur.fetchone()
             if not row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Заказ {order_number} не найден'})}
+            # Совпал ли номер ТОЧНО с тем, что на бумажке. Нечёткие совпадения нужны
+            # (OZON переименовывает отправления), но упаковщица обязана их видеть:
+            # на экране номер заказа не такой, как на листке, и без предупреждения
+            # это выглядит как «терминал дал чужой заказ».
+            scanned_row = row[22]
+            exact_match = order_number in (row[1], scanned_row)
             if row[6] != 'Стикеровка':
                 # Уже застикерованный заказ на терминал не пускаем: иначе на вещь наклеят
                 # второй ярлык. Говорим прямо, что работа по нему закончена.
@@ -700,6 +731,11 @@ def handler(event: dict, context) -> dict:
                 # Кто кроил и кто шил — по ним разбирают брак и возвраты.
                 'cutterName': row[19],
                 'sewerName': row[20],
+                # Номер на экране не совпал с отсканированным: заказ нашли по
+                # переименованному отправлению OZON. Терминал показывает это крупно,
+                # чтобы упаковщица сверила вещь, а не молча клеила чужой ярлык.
+                'matchedByFallback': not exact_match,
+                'scannedCode': order_number,
             }
         finally:
             conn.close()

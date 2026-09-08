@@ -5,6 +5,8 @@ import type { KioskOrder } from '@/lib/kioskApi';
 interface KioskOrderActionsProps {
   order: KioskOrder;
   printed: boolean;
+  /** Ярлык сейчас запрашивается у маркетплейса. */
+  printing?: boolean;
   /** Маркетплейс реально отказал в ярлыке — вещь идёт на склад хранения. */
   labelRefused?: boolean;
   tracePrinted: boolean;
@@ -27,6 +29,7 @@ interface KioskOrderActionsProps {
 const KioskOrderActions = ({
   order,
   printed,
+  printing = false,
   labelRefused = false,
   tracePrinted,
   closing,
@@ -90,11 +93,25 @@ const KioskOrderActions = ({
             </p>
           </div>
         )}
-        <Button size="lg" className="h-20 w-full text-2xl font-semibold" onClick={onPrint}>
-          <Icon name="Printer" size={30} className="mr-3" />
-          {order.orderType === 'FBS'
-            ? 'Распечатать ярлык отправления'
-            : 'Распечатать стикер'}
+        {/* Пока ярлык едет от маркетплейса, кнопка занята и крутит значок: без этого
+            терминал молчал по несколько секунд и выглядел зависшим — упаковщица
+            жала ещё раз и получала два ярлыка на одну вещь. */}
+        <Button
+          size="lg"
+          className="h-20 w-full text-2xl font-semibold"
+          onClick={onPrint}
+          disabled={printing}
+        >
+          <Icon
+            name={printing ? 'Loader2' : 'Printer'}
+            size={30}
+            className={`mr-3 ${printing ? 'animate-spin' : ''}`}
+          />
+          {printing
+            ? 'Готовим ярлык…'
+            : order.orderType === 'FBS'
+              ? 'Распечатать ярлык отправления'
+              : 'Распечатать стикер'}
         </Button>
       </>
     )}
