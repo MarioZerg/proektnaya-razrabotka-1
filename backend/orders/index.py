@@ -123,12 +123,24 @@ def write_off_materials_once(cur, order_id, material, width, height, workshop_id
     if shortages:
         return 'Не хватает материала в цехе: ' + '; '.join(shortages)
 
+    # Вычитает база, одним запросом: между подсчётом write_offs выше и записью
+    # материал мог уйти в раскрой. «Прочитал → посчитал → записал» в этом месте
+    # затирал чужой расход, и остаток на рулоне переставал сходиться с фактом.
     for roll_id, material_id, take in write_offs:
-        cur.execute("SELECT remaining_quantity FROM rolls WHERE id = %s", (roll_id,))
-        roll_remaining = float(cur.fetchone()[0])
-        new_remaining = roll_remaining - take
-        new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
-        cur.execute(f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {roll_id}")
+        cur.execute(
+            "UPDATE rolls SET remaining_quantity = round(remaining_quantity - %s, 3), "
+            "status = CASE WHEN remaining_quantity - %s <= 0 THEN 'completed' ELSE status END, "
+            "completed_at = CASE WHEN remaining_quantity - %s <= 0 THEN now() ELSE completed_at END "
+            "WHERE id = %s AND remaining_quantity >= %s "
+            "RETURNING remaining_quantity",
+            (take, take, take, roll_id, take - 0.001),
+        )
+        if not cur.fetchone():
+            cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
+            m_row = cur.fetchone()
+            return (f'{m_row[0] if m_row else "Материал"}: не хватило '
+                    f'{round(take, 2)} {m_row[1] if m_row else ""} — материал разобрали, '
+                    f'пока шло списание')
         cur.execute(
             "INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) VALUES (%s, %s, %s, %s)",
             (int(order_id), material_id, roll_id, take),
@@ -2113,17 +2125,41 @@ def handler(event: dict, context) -> dict:
                                     'body': json.dumps({'error': 'Недостаточно материалов на складе: ' + '; '.join(shortages)}),
                             }
 
+                    # СПИСАНИЕ АТОМАРНОЕ: вычитает сама база, одним запросом.
+                    #
+                    # Раньше здесь было «прочитал остаток → посчитал новый → записал».
+                    # Два закройщика, нажавшие «Раскроено» одновременно, читали одно и то
+                    # же число и записывали каждый своё: расход второго затирал расход
+                    # первого. Метры уходили в заказы, а на рулоне не убывали — остаток
+                    # рос из воздуха, и недостача всплывала уже на закрытии рулона.
+                    #
+                    # Условие remaining_quantity >= take проверяется в момент записи:
+                    # если материал разобрали, пока мы считали, строка не обновится и
+                    # мы откатим весь раскрой, а не спишем половину.
                     for roll_id, material_id, take in write_offs:
                             cur.execute(
-                                    "SELECT remaining_quantity FROM rolls WHERE id = %s",
-                                    (roll_id,),
+                                    "UPDATE rolls SET remaining_quantity = round(remaining_quantity - %s, 3), "
+                                    "status = CASE WHEN remaining_quantity - %s <= 0 THEN 'completed' ELSE status END, "
+                                    "completed_at = CASE WHEN remaining_quantity - %s <= 0 THEN now() ELSE completed_at END "
+                                    "WHERE id = %s AND remaining_quantity >= %s "
+                                    "RETURNING remaining_quantity",
+                                    (take, take, take, roll_id, take - 0.001),
                             )
-                            roll_remaining = float(cur.fetchone()[0])
-                            new_remaining = roll_remaining - take
-                            new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
-                            cur.execute(
-                                    f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {roll_id}"
-                            )
+                            if not cur.fetchone():
+                                    conn.rollback()
+                                    cur.execute("SELECT name, unit FROM materials WHERE id = %s", (material_id,))
+                                    m_row = cur.fetchone()
+                                    m_name = m_row[0] if m_row else 'Материал'
+                                    m_unit = m_row[1] if m_row else ''
+                                    return {
+                                            'statusCode': 409,
+                                            'headers': headers,
+                                            'body': json.dumps({
+                                                    'error': f'{m_name}: материал разобрали, пока шёл раскрой — '
+                                                             f'нужно {round(take, 2)} {m_unit}, столько уже нет. '
+                                                             f'Обновите экран и повторите'
+                                            }, ensure_ascii=False),
+                                    }
                             cur.execute(
                                     f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
                                     f"VALUES ({int(item_id)}, {material_id}, {roll_id}, {take})"
@@ -2869,11 +2905,32 @@ def handler(event: dict, context) -> dict:
                         ),
                     }
 
-                new_remaining = roll_remaining - trim_qty_needed
-                new_status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
+                # Атомарное вычитание: между проверкой остатка выше и этой записью
+                # тесьму мог забрать другой заказ. Считает база, условие проверяется
+                # в момент записи — иначе расход двух заказов затирал бы друг друга.
                 cur.execute(
-                    f"UPDATE rolls SET remaining_quantity = {new_remaining}{new_status_sql} WHERE id = {roll_row[0]}"
+                    "UPDATE rolls SET remaining_quantity = round(remaining_quantity - %s, 3), "
+                    "status = CASE WHEN remaining_quantity - %s <= 0 THEN 'completed' ELSE status END, "
+                    "completed_at = CASE WHEN remaining_quantity - %s <= 0 THEN now() ELSE completed_at END "
+                    "WHERE id = %s AND remaining_quantity >= %s "
+                    "RETURNING remaining_quantity",
+                    (trim_qty_needed, trim_qty_needed, trim_qty_needed,
+                     roll_row[0], trim_qty_needed - 0.001),
                 )
+                if not cur.fetchone():
+                    conn.rollback()
+                    cur.execute("SELECT name, unit FROM materials WHERE id = %s", (trim_material_id,))
+                    t_row = cur.fetchone()
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'{t_row[0] if t_row else "Тесьма"}: материал разобрали, пока '
+                                     f'шла стикеровка — нужно {round(trim_qty_needed, 2)} '
+                                     f'{t_row[1] if t_row else ""}, столько уже нет. '
+                                     f'Обновите экран и повторите'
+                        }, ensure_ascii=False),
+                    }
                 # Пишем, КТО и в какой смене реально израсходовал материал: у гостя это
                 # смена цеха присутствия, а не смена-владелец коробки.
                 actor_ws_sql = int(check_workshop_id) if check_workshop_id else 'NULL'

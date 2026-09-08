@@ -24,6 +24,62 @@
       "path": "/",
       "body": { "action": "create" },
       "expectedStatus": 400
+    },
+    {
+      "name": "Возврат на рулон без вещи запрещён (метраж нельзя рисовать)",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "packer_return", "barcode": "QA-NO-SUCH-ROLL", "quantity": 5 },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Возврат на рулон без рулона запрещён",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "packer_return", "quantity": 5, "goodsWarehouseId": 1 },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Возврат отрицательного метража запрещён",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "packer_return", "barcode": "QA-NO-SUCH-ROLL", "quantity": -5, "goodsWarehouseId": 1 },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Списание отрицательного количества запрещено",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "write_off", "id": 1, "quantity": -10, "role": "admin", "actorId": 1 },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Списание нулевого количества запрещено",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "write_off", "id": 1, "quantity": 0, "role": "admin", "actorId": 1 },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Списывать материал может только администратор",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "write_off", "id": 1, "quantity": 1, "role": "cutter", "actorId": 1 },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Закрытие рулона без id запрещено",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "close_roll", "shortage": 0 },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Закрытие несуществующего рулона возвращает 404",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "close_roll", "id": 999999999, "shortage": 0 },
+      "expectedStatus": 404
     }
   ]
 }

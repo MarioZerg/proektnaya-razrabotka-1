@@ -1411,6 +1411,24 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers,
                             'body': json.dumps({'error': 'Отсканируйте рулон'},
                                                ensure_ascii=False)}
+
+                # ВОЗВРАТ ВСЕГДА ПРИВЯЗАН К КОНКРЕТНОЙ ВЕЩИ.
+                #
+                # Метры берутся не из воздуха: кусок ткани появляется ровно тогда,
+                # когда конкретную вещь распустили на материал. Вещь и есть источник
+                # этих метров, поэтому ниже с неё снимается статус — и повторно
+                # вернуть тот же кусок уже нельзя.
+                #
+                # Без этой привязки запрос «добавь 2.5 м на рулон» проходил сколько
+                # угодно раз подряд: на проверке остаток вырос с 5 до 10 м двумя
+                # одинаковыми запросами, ничем не подтверждёнными. Это прямой путь
+                # нарисовать на складе материал, которого нет.
+                if not gw_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Не указана вещь. Возвращать материал на рулон '
+                                          'можно только с конкретной вещи на перепаковке'},
+                                ensure_ascii=False)}
                 # МЕТРАЖ СЧИТАЕТСЯ САМ — ПО ШИРИНЕ ВЕЩИ.
                 #
                 # Раньше упаковщица набирала его руками на сенсорной клавиатуре.
@@ -1707,14 +1725,51 @@ def handler(event: dict, context) -> dict:
                         }, ensure_ascii=False),
                     }
 
-                new_remaining = round(remaining - qty, 3)
+                # СПИСАНИЕ ОДНОЙ АТОМАРНОЙ ОПЕРАЦИЕЙ, А НЕ «ПРОЧИТАЛ → ПОСЧИТАЛ → ЗАПИСАЛ».
+                #
+                # Проверка выше сравнивает остаток, прочитанный ДО этого момента. Между
+                # чтением и записью материал мог уйти в раскрой или в другое списание —
+                # и тогда мы записывали остаток, посчитанный от устаревшего числа.
+                #
+                # На проверке это выглядело так: в коробке 100 штук, шесть списаний по 20
+                # ушли одновременно — все шесть ответили «успешно», а остаток стал 40
+                # вместо −20. Списали 120 из 100, и 60 штук возникли из воздуха.
+                #
+                # Теперь вычитание делает сама база в одном запросе, а условие
+                # remaining_quantity >= qty проверяется в тот же момент. Не хватило —
+                # строка не обновится, и мы честно ответим отказом.
                 new_status_sql = (", status = 'completed', completed_at = now()"
-                                  if new_remaining <= 0 else "")
-
+                                  if remaining - qty <= 0 else "")
                 cur.execute(
-                    f"UPDATE rolls SET remaining_quantity = %s{new_status_sql} WHERE id = %s",
-                    (new_remaining, int(item_id)),
+                    f"UPDATE rolls SET remaining_quantity = round(remaining_quantity - %s, 3)"
+                    f"{new_status_sql} "
+                    "WHERE id = %s AND remaining_quantity >= %s "
+                    "RETURNING remaining_quantity",
+                    (qty, int(item_id), qty - 0.001),
                 )
+                upd_row = cur.fetchone()
+                if not upd_row:
+                    # Материал разобрали, пока мы проверяли. Отвечаем отказом с текущим
+                    # остатком: администратор увидит реальное число и решит, что делать.
+                    conn.rollback()
+                    cur.execute(
+                        "SELECT r.remaining_quantity, m.unit FROM rolls r "
+                        "LEFT JOIN materials m ON m.id = r.material_id WHERE r.id = %s",
+                        (int(item_id),),
+                    )
+                    now_row = cur.fetchone()
+                    now_left = float(now_row[0] or 0) if now_row else 0
+                    now_unit = (now_row[1] if now_row and now_row[1] else '')
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Материал разобрали, пока шло списание: в рулоне '
+                                     f'{round(now_left, 2)} {now_unit}, а списать нужно '
+                                     f'{round(qty, 2)}. Повторите с актуальным числом'
+                        }, ensure_ascii=False),
+                    }
+                new_remaining = float(upd_row[0])
 
                 if order_id:
                     cur.execute(
@@ -1765,11 +1820,17 @@ def handler(event: dict, context) -> dict:
                     "r.initial_quantity, "
                     # Фактический расход по заказам — им перепроверяем недостачу.
                     "COALESCE((SELECT SUM(omu.quantity) FROM order_material_usage omu "
-                    "          WHERE omu.roll_id = r.id), 0) "
+                    "          WHERE omu.roll_id = r.id), 0), "
+                    # Метраж, возвращённый упаковщицами на этот рулон. Это ЖИВОЙ
+                    # материал: он лежит на рулоне и его ещё можно кроить.
+                    "COALESCE(r.packer_returned_quantity, 0) "
                     "FROM rolls r "
                     "LEFT JOIN materials m ON m.id = r.material_id "
                     "LEFT JOIN material_types mt ON mt.id = m.type_id "
-                    "WHERE r.id = %s",
+                    "WHERE r.id = %s "
+                    # Запираем рулон: пока идёт закрытие, на него нельзя вернуть
+                    # материал и нельзя закрыть его вторым нажатием.
+                    "FOR UPDATE OF r",
                     (int(item_id),),
                 )
                 row = cur.fetchone()
@@ -1829,6 +1890,38 @@ def handler(event: dict, context) -> dict:
                                      f'{round(remaining_now, 2)} {unit} '
                                      f'(закрытие возможно при остатке до '
                                      f'{round(limit, 2)} {unit})'
+                        }, ensure_ascii=False),
+                    }
+
+                # СВОБОДНЫЙ ОСТАТОК НЕ ДАЁТ ЗАКРЫТЬ РУЛОН.
+                #
+                # Упаковщица вернула на рулон годный кусок ткани — это живой материал,
+                # он лежит на рулоне и его ещё можно кроить. Закрытие обнуляет остаток
+                # подчистую, и такой кусок просто исчезал: на проверке рулон с 5 м
+                # возврата закрылся, и 5 метров растворились без единой записи о том,
+                # куда они делись.
+                #
+                # Материал, который физически есть, обязан быть либо выкроен, либо
+                # списан явно — «потерялся при закрытии» не бывает. Поэтому пока на
+                # рулоне числится возврат упаковщицы, закрыть его нельзя: сначала
+                # выкроить кусок в заказ или списать его отдельно с указанием причины.
+                packer_returned_now = float(row[6] or 0)
+                if packer_returned_now > 0.001:
+                    cur.execute(
+                        "SELECT m.unit FROM rolls r JOIN materials m ON m.id = r.material_id "
+                        "WHERE r.id = %s", (int(item_id),),
+                    )
+                    pr_row = cur.fetchone()
+                    pr_unit = (pr_row[0] if pr_row and pr_row[0] else 'м')
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'На рулоне есть свободный остаток от упаковщицы: '
+                                     f'{round(packer_returned_now, 2)} {pr_unit}. '
+                                     f'Это годный материал — выкроите его в заказ или '
+                                     f'спишите отдельно, потом закрывайте рулон',
+                            'packerReturned': round(packer_returned_now, 3),
                         }, ensure_ascii=False),
                     }
 
