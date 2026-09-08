@@ -1092,6 +1092,13 @@ def handler(event: dict, context) -> dict:
                     "                  JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
                     "                  WHERE msi.goods_warehouse_id = gw.id "
                     "                    AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                    # У WB состав поставки лежит в своей таблице (wb_supply_orders) и
+                    # связан с ЗАКАЗОМ, а не со складской вещью — без этой проверки
+                    # счётчик считал бы уже уехавшие вещи WB и расходился со списком.
+                    "  AND NOT EXISTS (SELECT 1 FROM wb_supply_orders wso "
+                    "                  JOIN marketplace_supplies wms ON wms.id = wso.supply_id "
+                    "                  WHERE wso.order_id = o.id "
+                    "                    AND COALESCE(wms.status, '') NOT IN ('Выполнена', 'Отменена')) "
                     f"  AND {RESERVE_ALIVE_SQL.replace('ro.', 'o.')} "
                     "GROUP BY 1"
                 )
@@ -1449,6 +1456,20 @@ def handler(event: dict, context) -> dict:
                     "                  JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
                     "                  WHERE msi.goods_warehouse_id = gw.id "
                     "                    AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                    # У WB СВОЯ ТАБЛИЦА СОСТАВА ПОСТАВКИ — wb_supply_orders.
+                    #
+                    # OZON и Яндекс кладут вещь в marketplace_supply_items, а WB работает
+                    # заданиями: сканирование в поставку пишет связь «заказ ↔ поставка» в
+                    # wb_supply_orders, а в marketplace_supply_items не попадает ничего.
+                    # Из-за этого проверка выше вещи WB не видела: стикер наклеен, вещь
+                    # в коробе, а строка продолжала висеть в подборе. Кладовщик шёл к
+                    # стеллажу за вещью, которая уже уехала в поставку.
+                    #
+                    # Связь у WB идёт через ЗАКАЗ, а не через складскую вещь.
+                    "  AND NOT EXISTS (SELECT 1 FROM wb_supply_orders wso "
+                    "                  JOIN marketplace_supplies wms ON wms.id = wso.supply_id "
+                    "                  WHERE wso.order_id = o.id "
+                    "                    AND COALESCE(wms.status, '') NOT IN ('Выполнена', 'Отменена')) "
                     # Отправление уже уехало от нас или отменено — ярлык для него OZON
                     # больше не отдаёт, собрать такую вещь невозможно. Раньше она висела
                     # в подборе вечно: кладовщик шёл к стеллажу, а на печати получал
