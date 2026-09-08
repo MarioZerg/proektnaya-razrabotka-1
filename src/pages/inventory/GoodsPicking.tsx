@@ -19,6 +19,7 @@ import ShippedStuckPanel from '@/components/crm/goodsWarehouse/ShippedStuckPanel
 import {
   fetchPickingOrders,
   verifyPicking,
+  rematchStock,
   type PickingOrder,
 } from '@/lib/goodsWarehouseApi';
 import { useToast } from '@/hooks/use-toast';
@@ -54,6 +55,7 @@ const GoodsPicking = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [scanOpen, setScanOpen] = useState(false);
+  const [rematching, setRematching] = useState(false);
 
   // Списать ненайденную вещь может только старший кладовщик и админ: за этим стоят
   // потраченная ткань и повторная работа цеха. Обычный кладовщик зовёт старшего.
@@ -71,6 +73,41 @@ const GoodsPicking = () => {
   // Заказы приходят в течение дня — обновляем сами, чтобы кладовщик не жал F5.
   // Раз в минуту и только пока на экран смотрят: свёрнутая вкладка не тратит ничего.
   usePolling(load, 60000);
+
+  /**
+   * Пересчёт подбора по всему складу.
+   *
+   * Обычно вещь встаёт в подбор сама — в момент, когда её кладут на полку. Но заказы
+   * приходят и другим путём: загрузка заявки FBO создаёт сразу сотни позиций, а
+   * готовый товар под них уже лежит на складе. Такие заказы в подбор не попадают и
+   * молча уходят в пошив, хотя шить ничего не нужно.
+   *
+   * Кнопка сверяет весь свободный остаток с новыми заказами и закрывает то, что
+   * закрывается складом.
+   */
+  const handleRematch = async () => {
+    setRematching(true);
+    try {
+      const res = await rematchStock();
+      toast({
+        title: res.matched
+          ? `Подобрано со склада: ${res.matched}`
+          : 'Новых совпадений нет',
+        description: res.matched
+          ? 'Эти заказы закрываются готовым товаром — шить их не нужно'
+          : 'Весь свободный остаток уже разобран по заказам',
+      });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось пересчитать',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setRematching(false);
+    }
+  };
 
   // Перед работой сверяем список с маркетплейсом: часть заказов, пока вещи лежали на
   // полке, уже уехала к покупателю или отменилась. Ярлык для них не выдадут, собрать
@@ -184,6 +221,24 @@ const GoodsPicking = () => {
               <Button onClick={() => setScanOpen(true)}>
                 <Icon name="ScanLine" size={16} className="mr-2" />
                 Сканер подбора
+              </Button>
+              {/* Заказы из загруженной заявки FBO приходят пачкой и в подбор сами не
+                  встают: подбор запускается, когда вещь КЛАДУТ на полку, а тут наоборот —
+                  вещи давно лежат, а заказы появились после. Кнопка сверяет остаток
+                  с новыми заказами, чтобы готовый товар не ушёл шиться заново. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRematch}
+                disabled={rematching}
+                title="Сверить свободный остаток склада с новыми заказами"
+              >
+                <Icon
+                  name={rematching ? 'Loader2' : 'Wand2'}
+                  size={14}
+                  className={`mr-1.5 ${rematching ? 'animate-spin' : ''}`}
+                />
+                Пересчитать подбор
               </Button>
               <Button variant="outline" size="sm" onClick={load} disabled={loading}>
                 <Icon
