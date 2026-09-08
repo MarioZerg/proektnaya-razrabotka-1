@@ -46,6 +46,20 @@
       "path": "/",
       "body": { "action": "nope" },
       "expectedStatus": 400
+    },
+    {
+      "name": "Приёмка по штрихкоду без кода отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "fetch_by_barcode", "barcode": "" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "SQL-инъекция в штрихкоде возврата безопасна",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "fetch_by_barcode", "barcode": "' OR 1=1--", "accept": true },
+      "expectedStatus": 404
     }
   ]
 }
