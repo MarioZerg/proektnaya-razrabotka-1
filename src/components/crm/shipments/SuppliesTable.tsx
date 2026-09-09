@@ -23,6 +23,7 @@ import Icon from '@/components/ui/icon';
 import type { Shipment } from '@/lib/shipmentsApi';
 import { formatDate, statusVariant } from '@/components/crm/shipments/fromSupplierShared';
 import { formatQuantity } from '@/lib/formatQuantity';
+import SuppliesCards from '@/components/crm/shipments/SuppliesCards';
 
 interface SuppliesTableProps {
   loading: boolean;
@@ -66,7 +67,20 @@ const SuppliesTable = ({
 
   return (
     <>
-      <div className="rounded-md border border-border">
+      {/* На телефоне таблица из девяти колонок уезжала вбок вместе с кнопкой
+          приёмки — там показываем карточки. */}
+      <div className="md:hidden">
+        <SuppliesCards
+          shipments={shipments}
+          isAdmin={isAdmin}
+          canEditPending={canEditPending}
+          onOpenReview={onOpenReview}
+          onPrintShipmentBarcodes={onPrintShipmentBarcodes}
+          onSetDeleteId={onSetDeleteId}
+        />
+      </div>
+
+      <div className="hidden rounded-md border border-border md:block">
         <Table>
           <TableHeader>
             <TableRow className="bg-primary hover:bg-primary">

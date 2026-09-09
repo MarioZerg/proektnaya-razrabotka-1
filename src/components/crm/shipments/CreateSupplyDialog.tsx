@@ -111,10 +111,14 @@ const CreateSupplyDialog = ({
                   Добавить материал
                 </Button>
               </div>
+              {/* На телефоне поля встают в две колонки — жёсткая сетка вылезала за экран. */}
               {rows.map((row, idx) => (
-                <div key={idx} className="grid grid-cols-[1fr_140px_100px_100px_auto] gap-2">
+                <div
+                  key={idx}
+                  className="grid grid-cols-2 gap-2 sm:grid-cols-[1fr_140px_100px_100px_auto]"
+                >
                   <Select value={row.materialId} onValueChange={(v) => updateRow(idx, 'materialId', v)}>
-                    <SelectTrigger>
+                    <SelectTrigger className="col-span-2 sm:col-span-1">
                       <SelectValue placeholder="Материал" />
                     </SelectTrigger>
                     <SelectContent>
@@ -130,7 +134,10 @@ const CreateSupplyDialog = ({
                     value={row.supplierId || '__main'}
                     onValueChange={(v) => updateRow(idx, 'supplierId', v === '__main' ? '' : v)}
                   >
-                    <SelectTrigger title="От кого приехал этот материал">
+                    <SelectTrigger
+                      title="От кого приехал этот материал"
+                      className="col-span-2 sm:col-span-1"
+                    >
                       <SelectValue placeholder="Поставщик" />
                     </SelectTrigger>
                     <SelectContent>
@@ -165,6 +172,7 @@ const CreateSupplyDialog = ({
                     type="button"
                     size="icon"
                     variant="ghost"
+                    className="col-span-2 w-full sm:col-span-1 sm:w-10"
                     onClick={() => removeRow(idx)}
                     disabled={rows.length === 1}
                   >

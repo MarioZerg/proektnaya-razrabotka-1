@@ -170,15 +170,17 @@ const ReviewSupplyDialog = ({
                 </div>
                 {reviewRows.map((row, idx) => (
                   <div key={idx} className="space-y-1">
+                  {/* На телефоне поля встают в две колонки: жёсткая сетка в семь
+                      колонок вылезала за экран, и кнопки подтверждения было не достать. */}
                   <div
-                    className={`grid gap-2 ${
+                    className={`grid grid-cols-2 gap-2 ${
                       canApprove
-                        ? 'grid-cols-[1fr_120px_90px_80px_90px_90px_auto]'
-                        : 'grid-cols-[1fr_140px_90px_80px_auto]'
+                        ? 'sm:grid-cols-[1fr_120px_90px_80px_90px_90px_auto]'
+                        : 'sm:grid-cols-[1fr_140px_90px_80px_auto]'
                     }`}
                   >
                     <Select value={row.materialId} onValueChange={(v) => updateReviewRow(idx, 'materialId', v)}>
-                      <SelectTrigger>
+                      <SelectTrigger className="col-span-2 sm:col-span-1">
                         <SelectValue placeholder="Материал" />
                       </SelectTrigger>
                       <SelectContent>
@@ -197,7 +199,10 @@ const ReviewSupplyDialog = ({
                         updateReviewRow(idx, 'supplierId', v === '__main' ? '' : v)
                       }
                     >
-                      <SelectTrigger title="От кого приехал этот материал">
+                      <SelectTrigger
+                        title="От кого приехал этот материал"
+                        className="col-span-2 sm:col-span-1"
+                      >
                         <SelectValue placeholder="Поставщик" />
                       </SelectTrigger>
                       <SelectContent>
@@ -265,6 +270,7 @@ const ReviewSupplyDialog = ({
                       type="button"
                       size="icon"
                       variant="ghost"
+                      className="col-span-2 w-full sm:col-span-1 sm:w-10"
                       onClick={() => removeReviewRow(idx)}
                       disabled={reviewRows.length === 1}
                     >
@@ -374,10 +380,12 @@ const ReviewSupplyDialog = ({
                 </div>
               )}
 
-              <div className="flex gap-2">
+              {/* Три кнопки в ряд на телефоне слипались в нечитаемые огрызки —
+                  на узком экране ставим их в столбик. */}
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Button
                   variant={canApprove ? 'outline' : 'default'}
-                  className="flex-1"
+                  className="order-2 flex-1 sm:order-1"
                   onClick={onSaveReview}
                   disabled={reviewSaving}
                 >
@@ -389,14 +397,19 @@ const ReviewSupplyDialog = ({
                   <>
                     <Button
                       variant="destructive"
-                      className="flex-1"
+                      className="order-3 flex-1"
                       onClick={() => setRejectId(reviewShipment.id)}
                       disabled={reviewSaving}
                     >
                       Отклонить
                     </Button>
-                    <Button className="flex-1" onClick={onApprove} disabled={reviewSaving}>
-                      {reviewSaving ? 'Подтверждение...' : 'Подтвердить'}
+                    {/* Главное действие — первым на телефоне: за ним сюда и заходят. */}
+                    <Button
+                      className="order-1 flex-1 sm:order-3"
+                      onClick={onApprove}
+                      disabled={reviewSaving}
+                    >
+                      {reviewSaving ? 'Подтверждение...' : 'Подтвердить приёмку'}
                     </Button>
                   </>
                 )}
