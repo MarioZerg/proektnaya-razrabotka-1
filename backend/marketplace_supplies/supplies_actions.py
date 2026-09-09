@@ -28,6 +28,7 @@ from shared import (
     log_action,
     ozon_posting_status_live,
     ozon_ship_postings,
+    release_cancelled_item,
     release_stale_supply_locks,
     resolve_ozon_barcode,
     return_wb_order_to_accumulator,
@@ -48,6 +49,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
         'scan_order', 'remove_item', 'create_box', 'delete_box', 'close_box',
         'add_order_to_box', 'remove_box_item', 'move_status', 'force_complete',
         'update', 'delete', 'add_sewing_orders', 'scan_bundle_label',
+        'cancelled_scan_to_shelf',
     )
 
     # Действия сборки: пока поставку держит один кладовщик, второй их выполнить
@@ -550,12 +552,23 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             ):
                 payload = {
                     'error': f'Заказ {order_number} ОТМЕНЁН — в поставку его класть '
-                             f'нельзя. Отложите вещь в сторону и передайте кладовщику '
-                             f'на разбор возвратов',
+                             f'нельзя. Положите вещь на полку хранения',
                     'cancelled': True,
                     'orderNumber': order_number,
                 }
+                # Данные вещи собираем ДО возврата в оборот: там ещё виден заказ,
+                # под который вещь ехала, — по нему берутся размер и площадка.
                 payload.update(cancelled_item_info(cur, goods_id))
+                # СРАЗУ ВОЗВРАЩАЕМ ВЕЩЬ В ОБОРОТ.
+                #
+                # Раньше мы только показывали штрихкод и отправляли кладовщика на
+                # склад. А там вещь часто числилась отгруженной: печать стикера для
+                # таких закрыта, в списке склада их нет — кладовщик упирался в тупик
+                # со стикером в руках, который негде напечатать.
+                release_cancelled_item(cur, goods_id)
+                conn.commit()
+                # Полку кладовщик выберет прямо в окне отмены — вещь у него в руках.
+                payload['needsShelf'] = True
                 return {
                     'statusCode': 409,
                     'headers': headers,
@@ -620,6 +633,17 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         payload['cancelled'] = True
                         payload['orderNumber'] = order_number
                         payload.update(cancelled_item_info(cur, goods_id))
+                        # Отмена подтверждена самой площадкой — возвращаем вещь в
+                        # свободный остаток тем же путём, что и выше. Иначе она
+                        # останется отгруженной, и стикер хранения будет негде
+                        # напечатать.
+                        payload['error'] = (
+                            f'{order_number}: заказ отменён покупателем. '
+                            f'Положите вещь на полку хранения'
+                        )
+                        release_cancelled_item(cur, goods_id)
+                        conn.commit()
+                        payload['needsShelf'] = True
                     return {
                         'statusCode': 409,
                         'headers': headers,
@@ -795,6 +819,62 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'group': group_hint,
                     # Готовая строка для дорисовки в таблице без перезагрузки.
                     'item': new_item,
+                }, ensure_ascii=False),
+            }
+
+        if action == 'cancelled_scan_to_shelf':
+            # Кладовщик пикнул в поставку вещь отменённого заказа и тут же, в окне
+            # отмены, выбрал полку. Вещь в поставку не попала (её туда не пустили),
+            # поэтому убирать неоткуда — нужно только записать полку.
+            #
+            # Отдельное действие, а не cancelled_to_shelf: то работает с позицией
+            # УЖЕ ЛЕЖАЩЕЙ в поставке (msi.id), а здесь позиции нет вовсе — есть
+            # только складская вещь, которую скан вернул в свободный остаток.
+            goods_id = body_data.get('goodsId')
+            shelf_id = body_data.get('shelfId')
+            if not goods_id or not shelf_id:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Укажите вещь и полку'},
+                                           ensure_ascii=False)}
+
+            cur.execute(
+                "SELECT gw.status, gw.storage_barcode, o.product "
+                "FROM goods_warehouse gw "
+                "LEFT JOIN orders o ON o.id = gw.order_id "
+                "WHERE gw.id = %s",
+                (int(goods_id),),
+            )
+            g_row = cur.fetchone()
+            if not g_row:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Вещь не найдена'}, ensure_ascii=False)}
+
+            cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+            sh_row = cur.fetchone()
+            if not sh_row:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Полка не найдена'}, ensure_ascii=False)}
+
+            # Статус вещи уже приведён в порядок при скане (release_cancelled_item):
+            # она снова свободный остаток. Здесь остаётся записать её место.
+            cur.execute(
+                "UPDATE goods_warehouse SET shelf_id = %s, status = 'in_stock' "
+                "WHERE id = %s",
+                (int(shelf_id), int(goods_id)),
+            )
+            log_action(
+                cur, actor_id, body_data.get('actorName'),
+                'cancelled_to_shelf', 'goods_warehouse', int(goods_id),
+                f'Отменённый заказ: вещь {g_row[1]} положена на полку {sh_row[0]}',
+            )
+            conn.commit()
+            return {
+                'statusCode': 200, 'headers': headers,
+                'body': json.dumps({
+                    'success': True,
+                    'shelfName': sh_row[0],
+                    'storageBarcode': g_row[1],
+                    'product': g_row[2],
                 }, ensure_ascii=False),
             }
 

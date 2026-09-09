@@ -303,6 +303,17 @@ export class CancelledOrderError extends Error {
       height?: number | null;
       storageBarcode?: string | null;
       marketplace?: string | null;
+      /** Складская запись вещи — по ней кладовщик кладёт её на полку прямо из окна. */
+      goodsId?: number | null;
+      /**
+       * Вещь уже возвращена в свободный остаток и ждёт полку.
+       *
+       * Сервер снимает с неё отгрузку, бронь отменённого заказа и ярлык
+       * маркетплейса ещё в момент скана. Раньше он только показывал штрихкод,
+       * а вещь оставалась «отгруженной»: на складе её было не найти и стикер
+       * не напечатать.
+       */
+      needsShelf?: boolean;
     },
   ) {
     super(message);
@@ -416,6 +427,31 @@ export const cancelledToShelf = (
     actorId: actor?.id,
     actorName: actor?.name,
   }) as Promise<{ movedCount: number; shelfName: string; groupKey: string | null }>;
+
+/**
+ * Положить на полку вещь, отсканированную в поставку с отменённым заказом.
+ *
+ * Отличается от cancelledToShelf: там вещь УЖЕ лежит в поставке и её оттуда
+ * вынимают, а здесь её в поставку не пустили — есть только складская запись.
+ * Кладовщик держит вещь в руках и выбирает полку прямо в окне отмены.
+ */
+export const cancelledScanToShelf = (
+  goodsId: number,
+  shelfId: number,
+  actor?: { id?: number | null; name?: string | null },
+): Promise<{ success: true; shelfName: string; storageBarcode: string; product: string | null }> =>
+  postAction({
+    action: 'cancelled_scan_to_shelf',
+    goodsId,
+    shelfId,
+    actorId: actor?.id,
+    actorName: actor?.name,
+  }) as Promise<{
+    success: true;
+    shelfName: string;
+    storageBarcode: string;
+    product: string | null;
+  }>;
 
 export interface CreateBoxResult {
   id: number;
