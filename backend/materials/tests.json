@@ -19,13 +19,34 @@
       "expectedStatus": 200
     },
     {
-      "name": "Create material without data fails",
+      "name": "Создание материала без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "create_material"
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
+    },
+    {
+      "name": "Правка материала без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "update_material",
+        "id": 1,
+        "unit": "шт"
+      },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Удаление материала без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "delete_material",
+        "id": 1
+      },
+      "expectedStatus": 401
     }
   ]
 }

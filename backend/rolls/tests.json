@@ -19,11 +19,53 @@
       "expectedStatus": 404
     },
     {
-      "name": "Create roll without barcode fails",
+      "name": "Создание рулона без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": { "action": "create" },
-      "expectedStatus": 400
+      "expectedStatus": 401
+    },
+    {
+      "name": "Роль admin в теле запроса больше не даёт прав",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "create", "actorRole": "admin", "barcode": "HACK-1", "materialId": 1, "initialQuantity": 100 },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Списание материала без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "write_off", "id": 1, "quantity": 10, "actorId": 1 },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Чужой actorId в теле запроса не даёт списать материал",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "write_off", "id": 1, "quantity": 10, "actorId": 10, "reason": "подмена" },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Удаление рулона без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "delete", "id": 1 },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Закрытие рулона без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "close_roll", "id": 1, "shortage": 0 },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Начисление штрафа без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "charge_penalty", "id": 1 },
+      "expectedStatus": 401
     },
     {
       "name": "Возврат на рулон без вещи запрещён (метраж нельзя рисовать)",
@@ -47,39 +89,11 @@
       "expectedStatus": 400
     },
     {
-      "name": "Списание отрицательного количества запрещено",
+      "name": "Неизвестное действие отклоняется",
       "method": "POST",
       "path": "/",
-      "body": { "action": "write_off", "id": 1, "quantity": -10, "role": "admin", "actorId": 1 },
+      "body": { "action": "nope" },
       "expectedStatus": 400
-    },
-    {
-      "name": "Списание нулевого количества запрещено",
-      "method": "POST",
-      "path": "/",
-      "body": { "action": "write_off", "id": 1, "quantity": 0, "role": "admin", "actorId": 1 },
-      "expectedStatus": 400
-    },
-    {
-      "name": "Списывать материал может только администратор",
-      "method": "POST",
-      "path": "/",
-      "body": { "action": "write_off", "id": 1, "quantity": 1, "role": "cutter", "actorId": 1 },
-      "expectedStatus": 403
-    },
-    {
-      "name": "Закрытие рулона без id запрещено",
-      "method": "POST",
-      "path": "/",
-      "body": { "action": "close_roll", "shortage": 0 },
-      "expectedStatus": 400
-    },
-    {
-      "name": "Закрытие несуществующего рулона возвращает 404",
-      "method": "POST",
-      "path": "/",
-      "body": { "action": "close_roll", "id": 999999999, "shortage": 0 },
-      "expectedStatus": 404
     }
   ]
 }

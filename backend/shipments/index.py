@@ -3,6 +3,15 @@ import os
 
 import psycopg2
 
+from authz import (
+    AuthError,
+    auth_error_response,
+    current_user,
+    require_admin,
+    require_auth,
+    require_role,
+)
+
 
 VALID_TYPES = {'from_supplier', 'to_workshop', 'return_to_supplier', 'defect_writeoff', 'workshop_writeoff'}
 
@@ -399,14 +408,26 @@ def handler(event: dict, context) -> dict:
     if method == 'POST':
         body_data = json.loads(event.get('body') or '{}')
         action = body_data.get('action')
-        actor_id = body_data.get('actorId')
-        actor_name = body_data.get('actorName')
 
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
 
+            # КТО ПРИШЁЛ — из ключа сессии, а не из тела запроса.
+            #
+            # Раньше здесь стояло actor_id = body_data.get('actorId'): исполнителя
+            # называл сам браузер. Любой сотрудник мог подставить чужой id и
+            # оформить движение материала от его имени — в журнале осталось бы
+            # чужое имя, а найти настоящего было бы нечем.
+            me = current_user(cur, event)
+            actor_id = me['id'] if me else None
+            actor_name = me['name'] if me else None
+
             if action == 'create':
+                # Любой документ движения материала оформляет вошедший сотрудник:
+                # анонимных приёмок и списаний быть не должно, у каждого документа
+                # обязан быть автор. Кто именно что может — проверяется ниже по типу.
+                require_auth(cur, event)
                 doc_type = body_data.get('type')
                 supplier_id = body_data.get('supplierId')
                 comment = (body_data.get('comment') or '').strip()
@@ -429,7 +450,9 @@ def handler(event: dict, context) -> dict:
 
                 supplier_sql = int(supplier_id) if supplier_id not in (None, '') else 'NULL'
                 comment_esc = comment.replace("'", "''")
-                created_by = body_data.get('createdBy')
+                # Автора документа берём из ключа сессии: подписать приёмку или
+                # списание чужим именем через тело запроса больше нельзя.
+                created_by = actor_id
                 created_by_sql = int(created_by) if created_by not in (None, '') else 'NULL'
 
                 if doc_type == 'from_supplier':
@@ -502,7 +525,13 @@ def handler(event: dict, context) -> dict:
                 # Списание брака может оформлять ТОЛЬКО штатный сотрудник того цеха, где
                 # находится рулон. Если сотрудник пришёл работать в чужой цех — брак за него
                 # списывает штатный работник этого цеха, отсканировав свой штрихкод.
-                if doc_type == 'defect_writeoff' and created_by not in (None, ''):
+                #
+                # Кто оформляет — берём из ключа сессии. Раньше это был created_by из
+                # тела запроса: чтобы обойти запрет для кладовщика, достаточно было
+                # подставить id закройщицы.
+                if doc_type == 'defect_writeoff':
+                    doer = require_auth(cur, event)
+                    created_by = doer['id']
                     cur.execute(
                         "SELECT w.id, u.role FROM users u LEFT JOIN workshops w ON w.name = u.workshop "
                         "WHERE u.id = %s",
@@ -510,7 +539,7 @@ def handler(event: dict, context) -> dict:
                     )
                     au = cur.fetchone()
                     home_ws_id = au[0] if au else None
-                    actor_role = au[1] if au else None
+                    actor_role = doer['role']
 
                     # КЛАДОВЩИКУ РУЧНОЕ СПИСАНИЕ БРАКА ЗАКРЫТО.
                     #
@@ -752,18 +781,10 @@ def handler(event: dict, context) -> dict:
 
                 # Права проверяем по базе, а не по флагу из браузера: правка метража меняет
                 # остатки склада и себестоимость.
-                actor_id_req = body_data.get('actorId')
-                if actor_id_req:
-                    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id_req),))
-                    actor_row = cur.fetchone()
-                    if not actor_row or actor_row[0] != 'admin':
-                        return {'statusCode': 403, 'headers': headers,
-                                'body': json.dumps({'error': 'Менять метраж рулона может только администратор'},
-                                                   ensure_ascii=False)}
-                else:
-                    return {'statusCode': 403, 'headers': headers,
-                            'body': json.dumps({'error': 'Менять метраж рулона может только администратор'},
-                                               ensure_ascii=False)}
+                # Метраж рулона — это остаток на складе в чистом виде. Права берём
+                # из ключа сессии: раньше проверялся actorId из тела, и достаточно
+                # было подставить id администратора.
+                require_admin(cur, event)
 
                 cur.execute(
                     "SELECT si.shipment_id, si.roll_id, r.status, r.initial_quantity, "
@@ -840,18 +861,9 @@ def handler(event: dict, context) -> dict:
                             'body': json.dumps({'error': 'Стоимость должна быть больше нуля'},
                                                ensure_ascii=False)}
 
-                actor_id_req = body_data.get('actorId')
-                if actor_id_req:
-                    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id_req),))
-                    actor_row = cur.fetchone()
-                    if not actor_row or actor_row[0] != 'admin':
-                        return {'statusCode': 403, 'headers': headers,
-                                'body': json.dumps({'error': 'Указать логистику может только администратор'},
-                                                   ensure_ascii=False)}
-                else:
-                    return {'statusCode': 403, 'headers': headers,
-                            'body': json.dumps({'error': 'Указать логистику может только администратор'},
-                                               ensure_ascii=False)}
+                # Логистика ложится в себестоимость каждого метра — это деньги.
+                # Права из ключа сессии, а не из actorId в теле запроса.
+                require_admin(cur, event)
 
                 cur.execute(
                     "SELECT type, status, COALESCE(logistics_cost, 0) FROM shipments WHERE id = %s",
@@ -889,6 +901,11 @@ def handler(event: dict, context) -> dict:
             if action == 'approve_supply':
                 # Подтверждение поставки от поставщика: только теперь создаются реальные
                 # рулоны на складе (status='in_storage') и генерируются штрихкоды.
+                #
+                # Это ПРИХОД материала и фиксация его себестоимости — решение
+                # администратора. Проверки прав здесь не было: кладовщик мог сам
+                # подтвердить свою же приёмку с любым метражом.
+                require_admin(cur, event)
                 shipment_id = body_data.get('id')
                 if not shipment_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -1127,7 +1144,10 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'createdRolls': created_rolls})}
 
+            # Отклонить приёмку — решение администратора: позиции удаляются,
+            # материал на склад не встаёт.
             if action == 'reject_supply':
+                require_admin(cur, event)
                 shipment_id = body_data.get('id')
                 if not shipment_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -1602,6 +1622,13 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'workshop_writeoff':
+                # СПИСАНИЕ МАТЕРИАЛА В ЦЕХЕ — ТОЛЬКО АДМИНИСТРАЦИЯ.
+                #
+                # Здесь не было НИ ОДНОЙ проверки прав, а действие снимает метраж
+                # с рулонов цеха и сразу закрывает документ статусом «Выполнена».
+                # Кладовщик мог списать сотни метров, не спрашивая никого: рядом,
+                # в defect_writeoff, ему это запрещено явно — а тут забыли.
+                require_role(cur, event, 'admin', 'manager')
                 workshop_id = body_data.get('workshopId')
                 shift_number = body_data.get('shiftNumber')
                 comment = (body_data.get('comment') or '').strip()
@@ -1610,14 +1637,16 @@ def handler(event: dict, context) -> dict:
                 if not items:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Добавьте хотя бы одну позицию'})}
 
-                workshop_sql = int(workshop_id) if workshop_id not in (None, '') else 'NULL'
-                shift_sql = int(shift_number) if shift_number not in (None, '') else 'NULL'
-                comment_esc = comment.replace("'", "''")
+                workshop_val = int(workshop_id) if workshop_id not in (None, '') else None
+                shift_val = int(shift_number) if shift_number not in (None, '') else None
 
+                # Значения подставляет драйвер: комментарий приходит от человека,
+                # и вклеивать его в текст запроса нельзя.
                 cur.execute(
-                    f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment, completed_at) "
-                    f"VALUES ('workshop_writeoff', 'Выполнена', {workshop_sql}, {shift_sql}, '{comment_esc}', now()) "
-                    f"RETURNING id"
+                    "INSERT INTO shipments (type, status, workshop_id, shift_number, comment, completed_at) "
+                    "VALUES ('workshop_writeoff', 'Выполнена', %s, %s, %s, now()) "
+                    "RETURNING id",
+                    (workshop_val, shift_val, comment),
                 )
                 shipment_id = cur.fetchone()[0]
 
@@ -1657,12 +1686,31 @@ def handler(event: dict, context) -> dict:
                         if remaining_to_take <= 0:
                             break
                         take = min(float(roll_remaining), remaining_to_take)
-                        new_remaining = float(roll_remaining) - take
-                        status_sql = ", status = 'completed', completed_at = now()" if new_remaining <= 0 else ""
-                        cur.execute(f"UPDATE rolls SET remaining_quantity = {new_remaining}{status_sql} WHERE id = {roll_id}")
+                        # Вычитает сама база одним запросом, а не «прочитал → посчитал →
+                        # записал»: между чтением и записью материал мог уйти в раскрой,
+                        # и расход одного списания затирал бы другой.
                         cur.execute(
-                            f"INSERT INTO shipment_items (shipment_id, material_id, roll_id, quantity) "
-                            f"VALUES ({shipment_id}, {int(material_id)}, {roll_id}, {take})"
+                            "UPDATE rolls SET remaining_quantity = round(remaining_quantity - %s, 3), "
+                            "status = CASE WHEN remaining_quantity - %s <= 0 THEN 'completed' ELSE status END, "
+                            "completed_at = CASE WHEN remaining_quantity - %s <= 0 THEN now() ELSE completed_at END "
+                            "WHERE id = %s AND remaining_quantity >= %s "
+                            "RETURNING remaining_quantity",
+                            (take, take, take, roll_id, take - 0.001),
+                        )
+                        if not cur.fetchone():
+                            conn.rollback()
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': 'Материал разобрали, пока шло списание — '
+                                             'обновите экран и повторите'
+                                }, ensure_ascii=False),
+                            }
+                        cur.execute(
+                            "INSERT INTO shipment_items (shipment_id, material_id, roll_id, quantity) "
+                            "VALUES (%s, %s, %s, %s)",
+                            (shipment_id, int(material_id), roll_id, take),
                         )
                         remaining_to_take -= take
 
@@ -1674,6 +1722,10 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}
 
             if action == 'delete':
+                # Удаление документа движения материала — только администратор.
+                # Раньше прав не спрашивали вовсе, а вместе с подтверждённой
+                # приёмкой удаляются и созданные ею рулоны.
+                require_admin(cur, event)
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -1766,6 +1818,10 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
+        except AuthError as e:
+            # Отказ по правам — единый ответ во всех действиях функции.
+            conn.rollback()
+            return auth_error_response(e, headers)
         except psycopg2.Error as db_err:
             # Сбой на середине операции: откатываем всё, чтобы в базе не осталось
             # половины приёмки. И главное — отвечаем человеческим текстом: раньше

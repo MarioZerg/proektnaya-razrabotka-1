@@ -84,15 +84,20 @@ export const useEmployeeActions = ({ load }: UseEmployeeActionsArgs) => {
     setEnteringId(emp.id);
     try {
       const target = await impersonateUser(user.id, emp.id);
-      impersonate({
-        id: target.id,
-        name: target.name,
-        role: target.role,
-        availableRoles: target.availableRoles,
-        workshopId: target.workshopId,
-        workshopName: target.workshopName,
-        shiftNumber: target.shiftNumber,
-      });
+      impersonate(
+        {
+          id: target.id,
+          name: target.name,
+          role: target.role,
+          availableRoles: target.availableRoles,
+          workshopId: target.workshopId,
+          workshopName: target.workshopName,
+          shiftNumber: target.shiftNumber,
+        },
+        // Ключ с правами сотрудника: админ должен видеть ровно его панель.
+        // Сервер помнит, что за этим ключом стоит администратор.
+        target.token,
+      );
       navigate('/');
     } catch (e) {
       toast({

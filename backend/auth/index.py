@@ -10,6 +10,28 @@ import psycopg2
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner', 'admin', 'manager'}
 
 
+def issue_session(cur, user_id, role, real_user_id=None) -> str:
+    """Заводит сессию и возвращает токен.
+
+    Токен — единственное, по чему сервер потом понимает, кто делает запрос.
+    Раньше исполнителя брали из тела запроса (actorId, actorRole), и любой
+    сотрудник мог назваться администратором прямо из консоли браузера.
+
+    real_user_id заполняется, когда админ смотрит панель сотрудника его
+    глазами: права при этом уже сотрудника, но в журнале должно остаться
+    имя того, кто реально нажал кнопку.
+    """
+    token = secrets.token_urlsafe(48)[:64]
+    cur.execute(
+        "INSERT INTO auth_sessions (token, user_id, role, real_user_id) "
+        "VALUES (%s, %s, %s, %s)",
+        (token, int(user_id), role, int(real_user_id) if real_user_id else None),
+    )
+    # Заодно подчищаем протухшее: таблица не должна расти вечно.
+    cur.execute("DELETE FROM auth_sessions WHERE expires_at < now()")
+    return token
+
+
 def normalize_phone(raw: str) -> str | None:
     """Приводит номер к формату +7XXXXXXXXXX. Возвращает None, если не похоже на телефон."""
     digits = re.sub(r'\D', '', raw or '')
@@ -557,24 +579,29 @@ def handler(event: dict, context) -> dict:
                 (role, int(user_id)),
             )
             row = cur.fetchone()
+
+            if not row:
+                return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Пользователь не найден'})}
+
+            (user_id, full_name, is_active, workshop_name, shift_number, workshop_id,
+             is_approved, terminated_at) = row
+            if not is_active:
+                return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Учётная запись отключена'})}
+            # Договор расторгнут — в систему не пускаем (п. 5.7).
+            if terminated_at:
+                return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                    {'error': 'Договор расторгнут, доступ в систему закрыт. '
+                              'По вопросам расчётов обратитесь к администратору'},
+                    ensure_ascii=False)}
+            if not is_approved:
+                return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Эта должность ещё не утверждена администратором'})}
+
+            # Роль подтверждена — выдаём токен. Дальше все функции определяют
+            # права по нему, а не по тому, что написано в теле запроса.
+            token = issue_session(cur, user_id, role)
+            conn.commit()
         finally:
             conn.close()
-
-        if not row:
-            return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Пользователь не найден'})}
-
-        (user_id, full_name, is_active, workshop_name, shift_number, workshop_id,
-         is_approved, terminated_at) = row
-        if not is_active:
-            return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Учётная запись отключена'})}
-        # Договор расторгнут — в систему не пускаем (п. 5.7).
-        if terminated_at:
-            return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
-                {'error': 'Договор расторгнут, доступ в систему закрыт. '
-                          'По вопросам расчётов обратитесь к администратору'},
-                ensure_ascii=False)}
-        if not is_approved:
-            return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Эта должность ещё не утверждена администратором'})}
 
         return {
             'statusCode': 200,
@@ -587,6 +614,7 @@ def handler(event: dict, context) -> dict:
                     'workshopId': workshop_id,
                     'workshopName': workshop_name,
                     'shiftNumber': shift_number,
+                    'token': token,
                 }
             ),
         }
@@ -643,15 +671,21 @@ def handler(event: dict, context) -> dict:
                 (uid,),
             )
             roles = [r[0] for r in cur.fetchall()]
+
+            if not roles:
+                return {'statusCode': 403, 'headers': headers,
+                        'body': json.dumps({'error': 'У сотрудника нет утверждённых должностей'})}
+            if role and role not in roles:
+                return {'statusCode': 403, 'headers': headers,
+                        'body': json.dumps({'error': 'Эта должность у сотрудника не утверждена'})}
+
+            # Токен на время просмотра чужой панели. Права в нём — сотрудника
+            # (админ и должен видеть ровно то, что видит он), но real_user_id
+            # хранит настоящего человека: в журнале останется имя администратора.
+            token = issue_session(cur, uid, role or roles[0], real_user_id=int(admin_id))
+            conn.commit()
         finally:
             conn.close()
-
-        if not roles:
-            return {'statusCode': 403, 'headers': headers,
-                    'body': json.dumps({'error': 'У сотрудника нет утверждённых должностей'})}
-        if role and role not in roles:
-            return {'statusCode': 403, 'headers': headers,
-                    'body': json.dumps({'error': 'Эта должность у сотрудника не утверждена'})}
 
         return {
             'statusCode': 200,
@@ -665,6 +699,7 @@ def handler(event: dict, context) -> dict:
                     'workshopId': workshop_id,
                     'workshopName': workshop_name,
                     'shiftNumber': shift_number,
+                    'token': token,
                 },
                 ensure_ascii=False,
             ),

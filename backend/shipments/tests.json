@@ -13,25 +13,56 @@
       "expectedStatus": 200
     },
     {
-      "name": "Create shipment without type fails",
+      "name": "Создание документа без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": { "action": "create" },
-      "expectedStatus": 400
+      "expectedStatus": 401
     },
     {
-      "name": "Delete without id fails",
+      "name": "Списание материала в цехе без входа отклоняется",
       "method": "POST",
       "path": "/",
-      "body": { "action": "delete" },
-      "expectedStatus": 400
+      "body": {
+        "action": "workshop_writeoff",
+        "workshopId": 1,
+        "items": [{ "materialId": 1, "quantity": 100 }]
+      },
+      "expectedStatus": 401
     },
     {
-      "name": "Delete non-existing shipment fails",
+      "name": "Чужой actorId в теле запроса не даёт списать материал",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "workshop_writeoff",
+        "workshopId": 1,
+        "actorId": 10,
+        "actorName": "Администратор",
+        "items": [{ "materialId": 1, "quantity": 100 }]
+      },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Подтверждение приёмки без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "approve_supply", "id": 1 },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Правка метража рулона без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "edit_item_quantity", "itemId": 1, "quantity": 999, "actorId": 10 },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Удаление документа без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": { "action": "delete", "id": 999999 },
-      "expectedStatus": 404
+      "expectedStatus": 401
     },
     {
       "name": "Reject receive without shipmentId fails",

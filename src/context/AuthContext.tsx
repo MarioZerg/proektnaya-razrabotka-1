@@ -1,6 +1,12 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import type { Role } from '@/lib/roles';
 import { checkAccess } from '@/lib/authApi';
+import {
+  setAuthToken,
+  clearAuthToken,
+  stashAdminToken,
+  restoreAdminToken,
+} from '@/lib/authToken';
 
 export interface User {
   id: number;
@@ -25,12 +31,13 @@ export interface User {
 
 interface AuthContextValue {
   user: User | null;
-  login: (user: User) => void;
+  /** Второй аргумент — ключ сессии, по нему сервер проверяет права. */
+  login: (user: User, token?: string) => void;
   logout: () => void;
   switchRole: (role: Role) => void;
   setActiveShift: (workshopId: number | null, shiftNumber: number | null) => void;
   /** Войти в аккаунт сотрудника, запомнив свой. */
-  impersonate: (target: User) => void;
+  impersonate: (target: User, token?: string) => void;
   /** Вернуться в свой аккаунт администратора. */
   stopImpersonation: () => void;
 }
@@ -47,7 +54,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return raw ? (JSON.parse(raw) as User) : null;
   });
 
-  const login = (u: User) => {
+  const login = (u: User, token?: string) => {
+    // Ключ сессии сохраняем ДО пользователя: с этого момента каждый запрос уходит
+    // с ним, и сервер определяет права сам, не доверяя тому, что прислал браузер.
+    if (token) setAuthToken(token);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(u));
     setUser(u);
   };
@@ -55,16 +65,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logout = () => {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(ADMIN_BACKUP_KEY);
+    clearAuthToken();
     setUser(null);
   };
 
   // Админ уходит смотреть панель сотрудника. Свой аккаунт откладываем отдельно,
   // чтобы вернуться одной кнопкой и не логиниться заново.
-  const impersonate = (target: User) => {
+  const impersonate = (target: User, token?: string) => {
     setUser((prev) => {
       if (prev && !prev.isImpersonated) {
         localStorage.setItem(ADMIN_BACKUP_KEY, JSON.stringify(prev));
+        // Свой ключ откладываем рядом с аккаунтом: вернуться нужно одной кнопкой.
+        stashAdminToken();
       }
+      // Ключ на время просмотра — с правами сотрудника. Сервер помнит, что за
+      // ним стоит администратор, и запишет в журнал именно его.
+      if (token) setAuthToken(token);
       const next = { ...target, isImpersonated: true };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       return next;
@@ -77,6 +93,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const admin = JSON.parse(raw) as User;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(admin));
     localStorage.removeItem(ADMIN_BACKUP_KEY);
+    restoreAdminToken();
     setUser(admin);
   };
 

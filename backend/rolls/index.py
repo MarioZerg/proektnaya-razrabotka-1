@@ -3,6 +3,14 @@ import os
 
 import psycopg2
 
+from authz import (
+    AuthError,
+    auth_error_response,
+    current_user,
+    require_admin,
+    require_role,
+)
+
 # Сколько рулонов отдаём в общий список. Больше на экране всё равно не смотрят:
 # страница показывает по 20 с кнопкой «показать ещё», а конкретный рулон ищут
 # по штрихкоду.
@@ -1106,20 +1114,24 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
+            # КТО ПРИШЁЛ — определяем по ключу сессии, а не по телу запроса.
+            #
+            # Раньше исполнителя брали из actorId/actorRole, то есть сотрудник сам
+            # писал, кто он такой. Из консоли браузера можно было назваться
+            # администратором и списать материал. Теперь личность берётся только
+            # из ключа, выданного при входе.
+            me = current_user(cur, event)
+
             if action == 'create':
                 # Рулоны появляются в системе ТОЛЬКО через приёмку от поставщика — так у
                 # каждой партии есть документ прихода, поставщик и цена. Ручное создание
                 # доступно лишь администратору (исправление данных), кладовщику — нет.
-                actor_role = (body_data.get('actorRole') or '').strip()
-                if actor_role and actor_role != 'admin':
-                    return {
-                        'statusCode': 403,
-                        'headers': headers,
-                        'body': json.dumps({
-                            'error': 'Рулоны заводятся приёмкой от поставщика '
-                                     '(Отгрузки → Отгрузка от поставщика)'
-                        }),
-                    }
+                #
+                # Раньше проверка выглядела так: «если роль передана и она не admin —
+                # отказать». Достаточно было не передавать роль вовсе, и она
+                # пропускалась. Теперь роль берётся из ключа сессии и пропустить её
+                # нельзя.
+                require_admin(cur, event)
 
                 barcode = (body_data.get('barcode') or '').strip()
                 material_id = body_data.get('materialId')
@@ -1154,8 +1166,9 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'При выборе цеха укажите смену'}),
                     }
 
-                barcode_esc = barcode.replace("'", "''")
-                cur.execute(f"SELECT id FROM rolls WHERE barcode = '{barcode_esc}'")
+                # Значения подставляет драйвер (%s): ручное экранирование кавычек —
+                # ненадёжная защита, а штрихкод приходит снаружи.
+                cur.execute("SELECT id FROM rolls WHERE barcode = %s", (barcode,))
                 if cur.fetchone():
                     return {
                         'statusCode': 409,
@@ -1163,28 +1176,32 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': f'Рулон со штрихкодом {barcode} уже существует'}),
                     }
 
-                workshop_sql = int(workshop_id) if workshop_id not in (None, '') else 'NULL'
-                shift_sql = int(shift_number) if shift_number not in (None, '') else 'NULL'
-                status = 'in_workshop' if workshop_id not in (None, '') else 'in_storage'
+                workshop_val = int(workshop_id) if workshop_id not in (None, '') else None
+                shift_val = int(shift_number) if shift_number not in (None, '') else None
+                status = 'in_workshop' if workshop_val is not None else 'in_storage'
 
                 # Рулон, ЗАВЕДЁННЫЙ сразу в цех, считается принятым: его не везли со
                 # склада заявкой, кладовщик оформляет то, что уже лежит у смены в руках.
                 # Подтверждать нечего, и без отметки такой рулон навсегда остался бы
                 # «не принят» — его нельзя было бы ни использовать, ни закрыть.
-                accepted_sql = 'now()' if status == 'in_workshop' else 'NULL'
-
                 cur.execute(
-                    f"INSERT INTO rolls (barcode, material_id, workshop_id, shift_number, "
-                    f"initial_quantity, remaining_quantity, status, accepted_at) "
-                    f"VALUES ('{barcode_esc}', {int(material_id)}, {workshop_sql}, {shift_sql}, "
-                    f"{float(initial_quantity)}, {float(initial_quantity)}, '{status}', {accepted_sql}) "
-                    f"RETURNING id"
+                    "INSERT INTO rolls (barcode, material_id, workshop_id, shift_number, "
+                    "initial_quantity, remaining_quantity, status, accepted_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, "
+                    "        CASE WHEN %s = 'in_workshop' THEN now() ELSE NULL END) "
+                    "RETURNING id",
+                    (barcode, int(material_id), workshop_val, shift_val,
+                     float(initial_quantity), float(initial_quantity), status, status),
                 )
                 new_id = cur.fetchone()[0]
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 
             if action == 'update':
+                # Правка рулона двигает материал между складом и цехом. Отдаём её
+                # тем, кто отвечает за перемещения: склад и администрация.
+                require_role(cur, event, 'admin', 'manager',
+                             'storekeeper', 'senior_storekeeper')
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -1211,10 +1228,19 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'Для статуса "в цехе" укажите и цех, и смену'}),
                     }
 
+                # Имена полей задаём мы сами, значения подставляет драйвер (%s):
+                # раньше они вклеивались в текст запроса вручную.
                 fields = []
+                values = []
                 if 'status' in body_data:
-                    status_esc = str(body_data['status']).replace("'", "''")
-                    fields.append(f"status = '{status_esc}'")
+                    # Статус — из закрытого списка: чужое значение сюда не попадёт.
+                    new_st = str(body_data['status'])
+                    if new_st not in ('in_storage', 'in_workshop', 'completed'):
+                        return {'statusCode': 400, 'headers': headers,
+                                'body': json.dumps({'error': 'Неизвестный статус рулона'},
+                                                   ensure_ascii=False)}
+                    fields.append("status = %s")
+                    values.append(new_st)
                     if body_data['status'] == 'completed':
                         fields.append("completed_at = now()")
                     # Рулон УХОДИТ СО СКЛАДА В ЦЕХ — но принятым НЕ считается.
@@ -1232,15 +1258,21 @@ def handler(event: dict, context) -> dict:
                         fields.append("accepted_at = NULL")
                 if 'workshopId' in body_data:
                     val = body_data['workshopId']
-                    fields.append(f"workshop_id = {int(val) if val not in (None, '') else 'NULL'}")
+                    fields.append("workshop_id = %s")
+                    values.append(int(val) if val not in (None, '') else None)
                 if 'shiftNumber' in body_data:
                     val = body_data['shiftNumber']
-                    fields.append(f"shift_number = {int(val) if val not in (None, '') else 'NULL'}")
+                    fields.append("shift_number = %s")
+                    values.append(int(val) if val not in (None, '') else None)
 
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 
-                cur.execute(f"UPDATE rolls SET {', '.join(fields)} WHERE id = {int(item_id)}")
+                values.append(int(item_id))
+                cur.execute(
+                    f"UPDATE rolls SET {', '.join(fields)} WHERE id = %s",
+                    tuple(values),
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
@@ -1668,18 +1700,14 @@ def handler(event: dict, context) -> dict:
 
                 # Списание вручную доступно только администратору. Заказу
                 # (order_id) списание приходит из терминала — там свои проверки.
+                #
+                # Права берём из ключа сессии: раньше сюда передавали actorId, и
+                # кладовщику достаточно было подставить id администратора.
+                actor = None
                 if not order_id:
-                    if not actor_id:
-                        return {'statusCode': 403, 'headers': headers,
-                                'body': json.dumps({'error': 'Списывать материал может только администратор'},
-                                                   ensure_ascii=False)}
-                    cur.execute("SELECT role, full_name FROM users WHERE id = %s",
-                                (int(actor_id),))
-                    actor = cur.fetchone()
-                    if not actor or actor[0] != 'admin':
-                        return {'statusCode': 403, 'headers': headers,
-                                'body': json.dumps({'error': 'Списывать материал может только администратор'},
-                                                   ensure_ascii=False)}
+                    admin = require_admin(cur, event)
+                    actor_id = admin['id']
+                    actor = (admin['role'], admin['name'])
                     if not reason:
                         return {'statusCode': 400, 'headers': headers,
                                 'body': json.dumps({'error': 'Укажите причину списания — иначе в журнале '
@@ -1806,6 +1834,15 @@ def handler(event: dict, context) -> dict:
             # полностью, а если ткани не хватило — дополнительно фиксируется недостача (метраж,
             # которого не оказалось в рулоне). Рулон переводится в статус completed.
             if action == 'close_roll':
+                # Закрытие обнуляет остаток — это движение материала, и делать его
+                # может только тот, кто работает с рулоном руками: цех и админ.
+                # Раньше проверки не было совсем, а имя закрывшего бралось из тела
+                # запроса: подписать закрытие можно было кем угодно.
+                closer = require_role(
+                    cur, event,
+                    'admin', 'manager', 'cutter', 'sewer', 'packer',
+                    'storekeeper', 'senior_storekeeper',
+                )
                 item_id = body_data.get('id')
                 shortage = body_data.get('shortage') or 0
                 if not item_id:
@@ -1927,8 +1964,12 @@ def handler(event: dict, context) -> dict:
 
                 # Запоминаем, кто закрыл рулон: по этим данным копится статистика недостач
                 # в разрезе закройщиков и тканей — она понадобится для будущих норм списания.
-                closed_by_id = body_data.get('userId')
-                closed_by_name = (body_data.get('userName') or '').strip()
+                #
+                # Имя берём из ключа сессии, а не из тела запроса: по этой подписи
+                # потом считают недостачи и удержания, и подставить сюда чужое имя
+                # было бы прямым способом перевести штраф на другого человека.
+                closed_by_id = closer['id']
+                closed_by_name = closer['name']
                 # Недостача не может превышать остаток: закройщик списывает то, чего не
                 # хватило В САМОМ РУЛОНЕ, а не вообще. Если по системе на рулоне 5 м, а
                 # недостача заявлена 90 м — это опечатка (лишний ноль, метры вместо
@@ -2148,6 +2189,9 @@ def handler(event: dict, context) -> dict:
 
             # Администратор рассмотрел недостачу и решил удержать деньги с сотрудников.
             if action == 'charge_penalty':
+                # Это удержание из зарплаты — только администратор. Проверки здесь
+                # не было вообще: любой мог начислить штраф на чужое имя.
+                require_admin(cur, event)
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -2179,6 +2223,8 @@ def handler(event: dict, context) -> dict:
             # Администратор решил не штрафовать: недостача признана виной поставщика.
             # Помечаем нулём, чтобы рулон ушёл из очереди и не мозолил глаза.
             if action == 'dismiss_penalty':
+                # Простить недостачу — тоже решение о деньгах: только администратор.
+                require_admin(cur, event)
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -2190,6 +2236,12 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             if action == 'delete':
+                # УДАЛЕНИЕ РУЛОНА — ТОЛЬКО АДМИНИСТРАТОР.
+                #
+                # Раньше проверки не было вовсе, и запись не попадала в журнал: рулон
+                # с остатком исчезал бесследно, если по нему ещё не резали заказы.
+                # Это был самый тихий способ спрятать недостачу.
+                admin = require_admin(cur, event)
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -2200,11 +2252,32 @@ def handler(event: dict, context) -> dict:
                         'headers': headers,
                         'body': json.dumps({'error': 'Нельзя удалить рулон — по нему уже есть списания на заказы'}),
                     }
-                cur.execute(f"DELETE FROM rolls WHERE id = {int(item_id)}")
+                # Пишем в журнал ДО удаления: после него данных о рулоне уже не будет.
+                cur.execute(
+                    "SELECT barcode, remaining_quantity FROM rolls WHERE id = %s",
+                    (int(item_id),),
+                )
+                del_row = cur.fetchone()
+                if not del_row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Рулон не найден'}, ensure_ascii=False)}
+                cur.execute(
+                    "INSERT INTO audit_log (category, user_id, user_name, action, "
+                    "entity_type, entity_id, description) VALUES "
+                    "('warehouse', %s, %s, 'roll_delete', 'roll', %s, %s)",
+                    (admin['id'], admin['name'], int(item_id),
+                     f'Удалил рулон {del_row[0]} (остаток был '
+                     f'{round(float(del_row[1] or 0), 2)})'),
+                )
+                cur.execute("DELETE FROM rolls WHERE id = %s", (int(item_id),))
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
+        except AuthError as e:
+            # Отказ по правам — единый ответ во всех действиях функции.
+            conn.rollback()
+            return auth_error_response(e, headers)
         finally:
             conn.close()
 

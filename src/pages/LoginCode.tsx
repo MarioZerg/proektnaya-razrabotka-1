@@ -126,18 +126,23 @@ const LoginCode = () => {
     workshopId: number | null;
     workshopName: string | null;
     shiftNumber: number | null;
+    /** Ключ сессии — по нему сервер проверяет права на каждом действии. */
+    token?: string;
   }) => {
-    login({
-      id: data.id,
-      name: data.name,
-      role: data.role as Role,
-      availableRoles: pendingUser
-        ? pendingUser.roles.filter((r) => r.isApproved).map((r) => r.role)
-        : [data.role as Role],
-      workshopId: data.workshopId ?? null,
-      workshopName: data.workshopName ?? null,
-      shiftNumber: data.shiftNumber ?? null,
-    });
+    login(
+      {
+        id: data.id,
+        name: data.name,
+        role: data.role as Role,
+        availableRoles: pendingUser
+          ? pendingUser.roles.filter((r) => r.isApproved).map((r) => r.role)
+          : [data.role as Role],
+        workshopId: data.workshopId ?? null,
+        workshopName: data.workshopName ?? null,
+        shiftNumber: data.shiftNumber ?? null,
+      },
+      data.token,
+    );
     navigate('/crm');
   };
 

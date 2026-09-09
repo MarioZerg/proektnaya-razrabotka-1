@@ -13,72 +13,73 @@
       "expectedStatus": 200
     },
     {
-      "name": "Create user without data fails",
+      "name": "Создание сотрудника без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "create"
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
     },
     {
-      "name": "Create user with invalid role fails",
+      "name": "Нельзя завести себе аккаунт администратора без входа",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "create",
-        "fullName": "Тест Тестов",
-        "email": "test@example.com",
-        "role": "unknown",
+        "fullName": "Взлом Взломов",
+        "email": "hack@example.com",
+        "role": "admin",
         "password": "12345678"
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
     },
     {
-      "name": "Add role without data fails",
+      "name": "Выдача роли без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "add_role"
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
     },
     {
-      "name": "Approve role without data fails",
+      "name": "Утверждение роли без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "approve_role"
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
     },
     {
-      "name": "Remove role without data fails",
+      "name": "Снятие роли без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "remove_role"
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
     },
     {
-      "name": "Delete without id fails",
+      "name": "Удаление сотрудника без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "delete"
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
     },
     {
-      "name": "Delete user with work history fails",
+      "name": "Роль admin в теле запроса больше не даёт прав",
       "method": "POST",
       "path": "/",
       "body": {
-        "action": "delete",
-        "id": 20
+        "action": "unlock_salary",
+        "id": 20,
+        "actorRole": "admin"
       },
-      "expectedStatus": 409
+      "expectedStatus": 401
     },
     {
       "name": "Chat: get messages",
@@ -113,22 +114,22 @@
       "expectedStatus": 400
     },
     {
-      "name": "Archive without id fails",
+      "name": "Увольнение без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "archive"
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
     },
     {
-      "name": "Unarchive without id fails",
+      "name": "Возврат из архива без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "unarchive"
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
     }
   ]
 }

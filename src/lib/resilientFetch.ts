@@ -14,6 +14,8 @@
  * мог бы провести операцию дважды. Деньги и остатки задваивать нельзя.
  */
 
+import { getAuthToken } from '@/lib/authToken';
+
 /** Сколько ждём ответ, прежде чем считать запрос зависшим. */
 const TIMEOUT_MS = 20000;
 
@@ -29,6 +31,22 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isAppRequest = (url: string): boolean =>
   url.includes('functions.poehali.dev') || url.startsWith('/api');
 
+/**
+ * Подставляет ключ сессии в заголовки нашего запроса.
+ *
+ * Делаем это здесь, в одном месте, а не в каждом файле API: стоит забыть ключ в
+ * одном запросе — и там появится дыра, через которую действие пройдёт без
+ * проверки прав. Заголовок X-Auth-Token выбран потому, что обычный Authorization
+ * облачный провайдер до функции не доносит.
+ */
+const withAuthHeader = (init?: RequestInit): RequestInit | undefined => {
+  const token = getAuthToken();
+  if (!token) return init;
+  const headers = new Headers(init?.headers || {});
+  headers.set('X-Auth-Token', token);
+  return { ...init, headers };
+};
+
 export const setupResilientFetch = () => {
   const originalFetch = window.fetch.bind(window);
 
@@ -37,8 +55,16 @@ export const setupResilientFetch = () => {
       typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
 
-    // Чужие запросы и отправку данных пропускаем как есть, без вмешательства.
-    if (!isAppRequest(url) || method !== 'GET') return originalFetch(input, init);
+    // Чужие запросы не трогаем вовсе: ключ сессии уходит только на наш сервер.
+    if (!isAppRequest(url)) return originalFetch(input, init);
+
+    // Ключ сессии добавляем ко ВСЕМ нашим запросам, включая отправку данных.
+    const authInit = withAuthHeader(init);
+
+    // Отправку данных дальше не трогаем: повторять её нельзя.
+    if (method !== 'GET') return originalFetch(input, authInit);
+
+    init = authInit;
 
     // Если запрос уже умеет отменяться сам (страница закрыта, фильтр сменился),
     // не мешаем: свой предел ожидания не навязываем.

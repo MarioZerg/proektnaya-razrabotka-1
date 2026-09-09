@@ -3,6 +3,8 @@ import os
 
 import psycopg2
 
+from authz import AuthError, auth_error_response, require_admin
+
 
 def handler(event: dict, context) -> dict:
     """Управляет справочником типов и материалов (тюль, аксессуары, упаковка и т.д.).
@@ -150,16 +152,25 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
+            # СПРАВОЧНИК МАТЕРИАЛОВ ПРАВИТ ТОЛЬКО АДМИНИСТРАТОР.
+            #
+            # Проверок здесь не было вовсе. Через правку материала можно тихо
+            # подменить единицу измерения или норму расхода — и остатки по всему
+            # складу поедут, а выглядеть это будет как ошибка учёта, а не как
+            # чьё-то действие.
+            require_admin(cur, event)
+
             if action == 'create_type':
                 name = (body_data.get('name') or '').strip()
                 if not name:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите название типа'})}
-                name_esc = name.replace("'", "''")
+                # Значения подставляет драйвер (%s): название приходит от человека.
                 cur.execute(
-                    f"INSERT INTO material_types (name, sort_order) "
-                    f"VALUES ('{name_esc}', (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM material_types)) "
-                    f"ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name "
-                    f"RETURNING id"
+                    "INSERT INTO material_types (name, sort_order) "
+                    "VALUES (%s, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM material_types)) "
+                    "ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name "
+                    "RETURNING id",
+                    (name,),
                 )
                 new_id = cur.fetchone()[0]
                 conn.commit()
@@ -172,16 +183,14 @@ def handler(event: dict, context) -> dict:
                 status = (body_data.get('status') or 'active').strip()
                 if not type_id or not name:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите тип и название'})}
-                name_esc = name.replace("'", "''")
-                unit_esc = unit.replace("'", "''")
-                status_esc = status.replace("'", "''")
-                overlock_sql = 'true' if body_data.get('requiresOverlock') else 'false'
                 # Цену при создании не задаём: она придёт от поставщика при первой приёмке.
                 cur.execute(
-                    f"INSERT INTO materials (type_id, name, unit, status, requires_overlock, sort_order) "
-                    f"VALUES ({int(type_id)}, '{name_esc}', '{unit_esc}', '{status_esc}', {overlock_sql}, "
-                    f"(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM materials WHERE type_id = {int(type_id)})) "
-                    f"RETURNING id"
+                    "INSERT INTO materials (type_id, name, unit, status, requires_overlock, sort_order) "
+                    "VALUES (%s, %s, %s, %s, %s, "
+                    "(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM materials WHERE type_id = %s)) "
+                    "RETURNING id",
+                    (int(type_id), name, unit, status,
+                     bool(body_data.get('requiresOverlock')), int(type_id)),
                 )
                 new_id = cur.fetchone()[0]
                 conn.commit()
@@ -191,22 +200,31 @@ def handler(event: dict, context) -> dict:
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                # Имена полей задаём мы, значения подставляет драйвер (%s).
                 fields = []
+                values = []
                 if 'name' in body_data:
-                    fields.append(f"name = '{str(body_data['name']).replace(chr(39), chr(39)*2)}'")
+                    fields.append("name = %s")
+                    values.append(str(body_data['name']))
                 if 'unit' in body_data:
-                    fields.append(f"unit = '{str(body_data['unit']).replace(chr(39), chr(39)*2)}'")
+                    fields.append("unit = %s")
+                    values.append(str(body_data['unit']))
                 if 'status' in body_data:
-                    fields.append(f"status = '{str(body_data['status']).replace(chr(39), chr(39)*2)}'")
+                    fields.append("status = %s")
+                    values.append(str(body_data['status']))
                 if 'typeId' in body_data:
-                    fields.append(f"type_id = {int(body_data['typeId'])}")
+                    fields.append("type_id = %s")
+                    values.append(int(body_data['typeId']))
                 if 'requiresOverlock' in body_data:
-                    fields.append(
-                        f"requires_overlock = {'true' if body_data['requiresOverlock'] else 'false'}"
-                    )
+                    fields.append("requires_overlock = %s")
+                    values.append(bool(body_data['requiresOverlock']))
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
-                cur.execute(f"UPDATE materials SET {', '.join(fields)} WHERE id = {int(item_id)}")
+                values.append(int(item_id))
+                cur.execute(
+                    f"UPDATE materials SET {', '.join(fields)} WHERE id = %s",
+                    tuple(values),
+                )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
@@ -215,7 +233,8 @@ def handler(event: dict, context) -> dict:
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
                 cur.execute(
-                    f"SELECT COUNT(*) FROM material_movements WHERE material_id = {int(item_id)}"
+                    "SELECT COUNT(*) FROM material_movements WHERE material_id = %s",
+                    (int(item_id),),
                 )
                 movements_count = cur.fetchone()[0]
                 if movements_count > 0:
@@ -226,7 +245,7 @@ def handler(event: dict, context) -> dict:
                             {'error': 'Материал участвовал в движениях по заказам — удалить нельзя. Переведите его в архив.'}
                         ),
                     }
-                cur.execute(f"DELETE FROM materials WHERE id = {int(item_id)}")
+                cur.execute("DELETE FROM materials WHERE id = %s", (int(item_id),))
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
@@ -255,6 +274,9 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
+        except AuthError as e:
+            conn.rollback()
+            return auth_error_response(e, headers)
         finally:
             conn.close()
 

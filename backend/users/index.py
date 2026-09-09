@@ -9,6 +9,8 @@ import uuid
 import boto3
 import psycopg2
 
+from authz import AuthError, auth_error_response, require_admin
+
 
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner', 'admin', 'manager'}
 
@@ -314,6 +316,18 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            # ВСЁ, ЧТО КАСАЕТСЯ СОТРУДНИКОВ И ИХ ПРАВ, — ТОЛЬКО АДМИНИСТРАТОР.
+            #
+            # Раньше здесь не проверялось НИЧЕГО. Любой сотрудник мог отправить
+            # запрос и завести себе второй аккаунт с ролью «администратор», а
+            # дальше делать в системе что угодно уже законно. Это обесценивало
+            # все остальные проверки прав.
+            #
+            # Чат сотрудников — исключение: писать в него может каждый, там нет
+            # ни денег, ни материалов.
+            if action not in ('chat_send', 'chat_hide'):
+                require_admin(cur, event)
 
             if action == 'chat_send':
                 chat_user_id = body_data.get('userId')
@@ -829,6 +843,9 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
+        except AuthError as e:
+            conn.rollback()
+            return auth_error_response(e, headers)
         finally:
             conn.close()
 
