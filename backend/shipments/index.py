@@ -332,6 +332,23 @@ def handler(event: dict, context) -> dict:
                     'exchangeRate': float(row[18]) if row[18] is not None else None,
                     'items': items,
                 }
+
+                # РУЛОНЫ ОТ СОРВАВШИХСЯ ПОПЫТОК.
+                #
+                # Приёмка ещё «Новая», а рулоны по ней на складе уже есть — значит
+                # прошлое подтверждение оборвалось на полпути. Подтверждать поверх
+                # нельзя: остатки задвоятся (так на приёмке #325 набралось 83 рулона
+                # вместо 73). Отдаём их число, чтобы карточка показала предупреждение
+                # и закрыла кнопку приёма до очистки.
+                stray_rolls = 0
+                if row[1] == 'from_supplier' and row[2] == 'Новый':
+                    cur.execute(
+                        "SELECT COUNT(*) FROM rolls WHERE shipment_id = %s",
+                        (int(shipment_id),),
+                    )
+                    stray_rolls = int(cur.fetchone()[0])
+                detail['strayRolls'] = stray_rolls
+
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'shipment': detail})}
 
             supplier_filter = params.get('supplier_id')
@@ -907,6 +924,100 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers,
                         'body': json.dumps({'success': True, 'logisticsCost': cost}, ensure_ascii=False)}
+
+            if action == 'reset_supply_attempt':
+                """Убирает следы сорвавшихся подтверждений, не принимая поставку.
+
+                ЗАЧЕМ. Приёмка упала на полпути: рулоны в базе уже есть, а сама она
+                висит в статусе «Новый». Повторные нажатия «Принять» плодили новые
+                рулоны поверх старых — на приёмке #325 их набралось 83 вместо 73,
+                а пакеты задвоились до 32 пачек вместо 9.
+
+                Чистка встроена и в само подтверждение, но администратору нужно
+                СНАЧАЛА увидеть чистый документ и сверить его с накладной, а уже
+                потом принимать. Отдельная кнопка это и даёт: склад возвращается к
+                состоянию «до приёмки», позиции кладовщика остаются нетронутыми.
+
+                Тронутые рулоны не удаляем: за ними стоит чей-то раскрой.
+                """
+                require_admin(cur, event)
+                shipment_id = body_data.get('id')
+                if not shipment_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите id'}, ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT type, status FROM shipments WHERE id = %s", (int(shipment_id),)
+                )
+                sh_row = cur.fetchone()
+                if not sh_row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Поставка не найдена'}, ensure_ascii=False)}
+                if sh_row[0] != 'from_supplier' or sh_row[1] != 'Новый':
+                    return {
+                        'statusCode': 409, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Сбросить можно только неподтверждённую приёмку. '
+                                      'Эта уже обработана — её материал живёт на складе '
+                                      'своей жизнью'},
+                            ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "SELECT COUNT(*) FROM rolls WHERE shipment_id = %s "
+                    "  AND (status <> 'in_storage' OR remaining_quantity <> initial_quantity)",
+                    (int(shipment_id),),
+                )
+                touched = int(cur.fetchone()[0])
+                if touched:
+                    return {
+                        'statusCode': 409, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'{touched} рулон(ов) из этой приёмки уже пустили в '
+                                      f'работу — снести их нельзя. Разберите эти рулоны '
+                                      f'вручную, потом сбрасывайте'},
+                            ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "SELECT COUNT(*) FROM rolls WHERE shipment_id = %s", (int(shipment_id),)
+                )
+                rolls_count = int(cur.fetchone()[0])
+
+                # Строки, порождённые сорвавшимися попытками: у настоящей позиции
+                # number_rolls заполняет кладовщик, у порождённой он пустой.
+                cur.execute(
+                    "DELETE FROM shipment_items WHERE shipment_id = %s AND number_rolls IS NULL",
+                    (int(shipment_id),),
+                )
+                extra_rows = cur.rowcount
+
+                # Настоящие позиции возвращаем в исходный вид: снимаем ссылки на рулоны,
+                # которые сейчас удалим, и восстанавливаем количество всей партии.
+                cur.execute(
+                    "UPDATE shipment_items "
+                    "SET roll_id = NULL, barcode = NULL, "
+                    "    quantity = COALESCE(total_quantity, quantity) "
+                    "WHERE shipment_id = %s",
+                    (int(shipment_id),),
+                )
+
+                cur.execute("DELETE FROM rolls WHERE shipment_id = %s", (int(shipment_id),))
+
+                log_action(
+                    cur, actor_id, actor_name, 'reset_supply_attempt', 'shipment', shipment_id,
+                    f'Сбросил незавершённую приёмку #{shipment_id}: удалено рулонов '
+                    f'{rolls_count}, лишних строк {extra_rows}',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'deletedRolls': rolls_count,
+                        'deletedRows': extra_rows,
+                    }, ensure_ascii=False),
+                }
 
             if action == 'approve_supply':
                 # Подтверждение поставки от поставщика: только теперь создаются реальные

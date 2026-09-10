@@ -11,6 +11,7 @@ import {
   updatePendingSupply,
   approveSupply,
   rejectSupply,
+  resetSupplyAttempt,
   deleteShipment,
   type Shipment,
   type ShipmentDetail,
@@ -275,6 +276,33 @@ const FromSupplier = () => {
     }
   };
 
+  /**
+   * Убрать рулоны, оставшиеся от сорвавшихся подтверждений.
+   *
+   * Склад возвращается к состоянию «до приёмки»: задвоенные остатки исчезают,
+   * позиции кладовщика остаются. После этого приёмку принимают заново — одним
+   * чистым заходом.
+   */
+  const handleResetAttempt = async () => {
+    if (!reviewShipment) return;
+    setReviewSaving(true);
+    try {
+      const res = await resetSupplyAttempt(reviewShipment.id);
+      toast({
+        title: 'Задвоенные остатки убраны',
+        description: `Удалено рулонов: ${res.deletedRolls}. Теперь примите приёмку заново`,
+      });
+      // Перечитываем карточку: предупреждение исчезнет, кнопка приёма разблокируется.
+      const detail = await fetchShipmentDetail(reviewShipment.id);
+      setReviewShipment(detail);
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setReviewSaving(false);
+    }
+  };
+
   const handleReject = async () => {
     if (!rejectId) return;
     try {
@@ -396,6 +424,8 @@ const FromSupplier = () => {
         rejectId={rejectId}
         setRejectId={setRejectId}
         onReject={handleReject}
+        strayRolls={reviewShipment?.strayRolls ?? 0}
+        onResetAttempt={handleResetAttempt}
         exchangeRate={exchangeRate}
         setExchangeRate={setExchangeRate}
         logisticsCost={logisticsCost}

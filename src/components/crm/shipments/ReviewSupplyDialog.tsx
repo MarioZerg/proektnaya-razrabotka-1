@@ -45,6 +45,13 @@ interface ReviewSupplyDialogProps {
   rejectId: number | null;
   setRejectId: (id: number | null) => void;
   onReject: () => void;
+  /**
+   * Сколько рулонов уже висит на складе от сорвавшихся попыток подтверждения.
+   * Больше нуля — приёмка «Новая», но материал по ней уже частично оприходован:
+   * повторное «Принять» задвоит остатки, сначала нужен сброс.
+   */
+  strayRolls: number;
+  onResetAttempt: () => void;
   /** Курс валюты на момент приёмки — подставляется из карточки поставщика. */
   exchangeRate: string;
   setExchangeRate: (value: string) => void;
@@ -74,6 +81,8 @@ const ReviewSupplyDialog = ({
   rejectId,
   setRejectId,
   onReject,
+  strayRolls,
+  onResetAttempt,
   exchangeRate,
   setExchangeRate,
   logisticsCost,
@@ -144,6 +153,32 @@ const ReviewSupplyDialog = ({
           </DialogHeader>
           {reviewShipment && (
             <div className="space-y-4">
+              {/* Приёмка не принята, а рулоны по ней на складе уже есть — значит прошлое
+                  подтверждение оборвалось. Принимать поверх нельзя: остатки задвоятся.
+                  Показываем это до всех полей, чтобы админ не нажал «Подтвердить» вслепую. */}
+              {canApprove && strayRolls > 0 && (
+                <div className="rounded-md border-2 border-destructive bg-destructive/10 p-3">
+                  <p className="flex items-center gap-2 font-semibold text-destructive">
+                    <Icon name="TriangleAlert" size={18} />
+                    Приёмка принималась с ошибкой
+                  </p>
+                  <p className="mt-1 text-sm">
+                    На складе уже висит <b>{strayRolls}</b> рулон(ов) от незавершённых
+                    попыток. Если подтвердить сейчас — остатки задвоятся ещё раз.
+                    Сначала уберите их: позиции ниже останутся на месте.
+                  </p>
+                  <Button
+                    variant="destructive"
+                    className="mt-2 w-full"
+                    onClick={onResetAttempt}
+                    disabled={reviewSaving}
+                  >
+                    <Icon name="Eraser" size={16} className="mr-2" />
+                    Убрать задвоенные остатки ({strayRolls})
+                  </Button>
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <Label>Основной поставщик</Label>
                 <Select value={reviewSupplierId} onValueChange={setReviewSupplierId}>
@@ -403,11 +438,18 @@ const ReviewSupplyDialog = ({
                     >
                       Отклонить
                     </Button>
-                    {/* Главное действие — первым на телефоне: за ним сюда и заходят. */}
+                    {/* Главное действие — первым на телефоне: за ним сюда и заходят.
+                        Пока на складе висят рулоны от сорвавшихся попыток, приём
+                        закрыт: иначе поверх задвоенных остатков ляжет ещё один слой. */}
                     <Button
                       className="order-1 flex-1 sm:order-3"
                       onClick={onApprove}
-                      disabled={reviewSaving}
+                      disabled={reviewSaving || strayRolls > 0}
+                      title={
+                        strayRolls > 0
+                          ? 'Сначала уберите задвоенные остатки от прошлых попыток'
+                          : undefined
+                      }
                     >
                       {reviewSaving ? 'Подтверждение...' : 'Подтвердить приёмку'}
                     </Button>

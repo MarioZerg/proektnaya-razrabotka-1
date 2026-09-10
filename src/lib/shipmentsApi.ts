@@ -77,6 +77,14 @@ export interface ShipmentDetail extends Shipment {
   /** Стоимость логистики приёмки. Ноль — её ещё не указали. */
   logisticsCost?: number;
   exchangeRate?: number | null;
+  /**
+   * Рулоны, оставшиеся на складе от сорвавшихся подтверждений.
+   *
+   * Приёмка ещё «Новая», а материал по ней уже частично оприходован. Принимать
+   * поверх нельзя — остатки задвоятся. Больше нуля: карточка требует сначала
+   * убрать их кнопкой сброса.
+   */
+  strayRolls?: number;
 }
 
 export interface ShipmentFilters {
@@ -173,6 +181,23 @@ export const approveSupply = (
   postAction({ action: 'approve_supply', id, ...(payload || {}) });
 
 export const rejectSupply = (id: number) => postAction({ action: 'reject_supply', id });
+
+export interface ResetSupplyResult {
+  success: true;
+  deletedRolls: number;
+  deletedRows: number;
+}
+
+/**
+ * Сброс следов сорвавшегося подтверждения (только администратор).
+ *
+ * Если приёмка упала на полпути, рулоны от неё остаются на складе, а сама она висит
+ * «Новой». Повторные нажатия «Принять» плодят рулоны поверх старых — остатки задваиваются.
+ * Сброс возвращает склад к состоянию «до приёмки»: удаляет все рулоны документа и лишние
+ * строки, оставляя позиции кладовщика нетронутыми. После этого приёмку принимают заново.
+ */
+export const resetSupplyAttempt = (id: number): Promise<ResetSupplyResult> =>
+  postAction({ action: 'reset_supply_attempt', id });
 
 /**
  * Правка метража одного рулона в уже принятой приёмке (только администратор).
