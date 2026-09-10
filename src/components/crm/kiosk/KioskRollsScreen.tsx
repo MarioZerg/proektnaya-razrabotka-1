@@ -2,7 +2,16 @@ import { useEffect, useState } from 'react';
 import { useGlobalScanner } from '@/hooks/useGlobalScanner';
 import { playScanSound } from '@/lib/scanSound';
 import { useToast } from '@/hooks/use-toast';
-import { fetchRolls, closeRoll, flagRollDefect, acceptRoll, type Roll } from '@/lib/rollsApi';
+import {
+  fetchRolls,
+  closeRoll,
+  flagRollDefect,
+  acceptRoll,
+  PackerPiecesError,
+  type Roll,
+  type PackerPiece,
+} from '@/lib/rollsApi';
+import KioskPackerPiecesCard from '@/components/crm/kiosk/KioskPackerPiecesCard';
 import KioskRollCloseCard from '@/components/crm/kiosk/KioskRollCloseCard';
 import KioskRollScanPrompt from '@/components/crm/kiosk/KioskRollScanPrompt';
 import KioskRollsList from '@/components/crm/kiosk/KioskRollsList';
@@ -46,6 +55,12 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   const [listOpen, setListOpen] = useState(false);
   const [shortage, setShortage] = useState('');
   const [saving, setSaving] = useState(false);
+  /** Невыкроенные куски от упаковщицы: пока они есть, рулон закрыть нельзя. */
+  const [packerBlock, setPackerBlock] = useState<{
+    total: number;
+    pieces: PackerPiece[];
+    unit: string;
+  } | null>(null);
   // Окно «отставить рулон»: брак в начале полотна, резать дальше нельзя.
   const [defectOpen, setDefectOpen] = useState(false);
   const [defectReason, setDefectReason] = useState('');
@@ -196,6 +211,13 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
       setListOpen(false);
       load();
     } catch (e) {
+      // В цехе лежит невыкроенный материал от упаковщицы — это не обычная ошибка,
+      // а задача закройщице. Показываем крупной карточкой со списком кусков:
+      // мелкую строку внизу экрана от станка не разглядеть.
+      if (e instanceof PackerPiecesError) {
+        setPackerBlock({ total: e.total, pieces: e.pieces, unit: e.unit });
+        return;
+      }
       toast({
         title: 'Не удалось закрыть рулон',
         description: e instanceof Error ? e.message : undefined,
@@ -250,9 +272,24 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
     (Number(shortage) > Number(selected.remainingQuantity || 0) ||
       (maxPossibleShortage != null && Number(shortage) > maxPossibleShortage));
 
+  // Куски от упаковщицы перекрывают любой экран: пока ткань не перекроена, рулон
+  // закрыть нельзя, и закройщице надо увидеть список, что искать в цехе.
+  const packerCard = packerBlock ? (
+    <KioskPackerPiecesCard
+      total={packerBlock.total}
+      pieces={packerBlock.pieces}
+      unit={packerBlock.unit}
+      rollBarcode={selected?.barcode}
+      materialName={selected?.materialName}
+      onClose={() => setPackerBlock(null)}
+    />
+  ) : null;
+
   if (selected) {
     return (
-      <KioskRollCloseCard
+      <>
+        {packerCard}
+        <KioskRollCloseCard
         selected={selected}
         shortage={shortage}
         setShortage={setShortage}
@@ -269,8 +306,9 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
         setDefectOpen={setDefectOpen}
         defectReason={defectReason}
         setDefectReason={setDefectReason}
-        onFlagDefect={handleFlagDefect}
-      />
+          onFlagDefect={handleFlagDefect}
+        />
+      </>
     );
   }
 

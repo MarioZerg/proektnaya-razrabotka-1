@@ -1713,6 +1713,20 @@ def handler(event: dict, context) -> dict:
                                 'body': json.dumps({'error': 'Укажите причину списания — иначе в журнале '
                                                              'останется расход без объяснения'},
                                                    ensure_ascii=False)}
+                else:
+                    # СПИСАНИЕ НА ЗАКАЗ ТОЖЕ ТРЕБУЕТ ВХОДА.
+                    #
+                    # Раньше ветка с order_id не проверяла НИЧЕГО: достаточно было
+                    # передать номер заказа, и метраж списывался с любого рулона без
+                    # входа в систему и без следа о том, кто это сделал. Материал —
+                    # это деньги, анонимного расхода быть не должно.
+                    worker = require_role(
+                        cur, event,
+                        'admin', 'manager', 'cutter', 'sewer', 'packer',
+                        'storekeeper', 'senior_storekeeper',
+                    )
+                    actor_id = worker['id']
+                    actor = (worker['role'], worker['name'])
 
                 cur.execute(
                     "SELECT remaining_quantity, material_id, status, accepted_at, barcode "
@@ -1950,13 +1964,82 @@ def handler(event: dict, context) -> dict:
                 # при нуле: у рулона 1-005190 вернули 9 м, все они выкроены, на рулоне
                 # осталось 2.75 м обрезков — а терминал требовал «выкроите возврат».
                 #
-                # Поэтому отдельной блокировки по возврату больше нет: живой материал
-                # и так удерживает проверка остатка выше — она смотрит на фактические
-                # метры рулона, куда возврат уже вошёл. Пока ткани больше порога, рулон
-                # не закроется независимо от её происхождения; ниже порога это обрезки.
+                # Поэтому считаем не «сколько вернули за всё время», а сколько из
+                # возвращённого ЕЩЁ НЕ ВЫКРОЕНО. Каждый кусок лежит отдельной строкой в
+                # roll_packer_returns со своим временем, и раскрой после этого времени
+                # гасит куски по очереди — от самого старого к свежему.
                 #
-                # На штраф это не влияет: calc_shortage_penalty вычитает возвраты
-                # упаковщиц из недостачи отдельно — за чужой материал не удерживают.
+                # Так у рулона 1-005190 (вернули 9 м тремя кусками, после этого в заказы
+                # ушло 34.5 м) невыкроенным не остаётся ничего, и рулон закрывается.
+                # А у 1-005165, где вернули 4 м и с тех пор не кроили, эти 4 м так и
+                # висят — закрыть нельзя, пока их не пустят в дело.
+                cur.execute(
+                    "SELECT pr.quantity, pr.created_at, "
+                    "  COALESCE((SELECT SUM(omu.quantity) FROM order_material_usage omu "
+                    "            WHERE omu.roll_id = pr.roll_id "
+                    "              AND omu.created_at > pr.created_at), 0) "
+                    "FROM roll_packer_returns pr WHERE pr.roll_id = %s "
+                    "ORDER BY pr.created_at",
+                    (int(item_id),),
+                )
+                # ОДИН МЕТР РАСКРОЯ ГАСИТ ТОЛЬКО ОДИН КУСОК.
+                #
+                # Раскрой, сделанный после третьего возврата, сделан и после первого —
+                # поэтому засчитывать его каждому куску отдельно нельзя, иначе 34 м
+                # раскроя «погасят» все три куска трижды. Ведём общий счётчик уже
+                # использованных метров и вычитаем его: кусок гасится только тем
+                # раскроем, который не ушёл на предыдущие.
+                pieces = []
+                spent = 0.0
+                for piece_qty, piece_at, cut_after in cur.fetchall():
+                    piece_qty = float(piece_qty or 0)
+                    if piece_qty <= 0.001:
+                        continue
+                    available = max(0.0, float(cut_after or 0) - spent)
+                    used = min(piece_qty, available)
+                    spent += used
+                    left = piece_qty - used
+                    if left > 0.001:
+                        pieces.append({'qty': round(left, 3), 'at': piece_at})
+
+                # Больше физического остатка невыкроенным быть не может: если ткань
+                # ушла другим путём (списание брака, возврат на склад), куски погашены.
+                unused_pieces = round(min(sum(p['qty'] for p in pieces), remaining_now), 3)
+
+                if unused_pieces > 0.001:
+                    cur.execute(
+                        "SELECT m.unit FROM rolls r JOIN materials m ON m.id = r.material_id "
+                        "WHERE r.id = %s", (int(item_id),),
+                    )
+                    pr_row = cur.fetchone()
+                    pr_unit = (pr_row[0] if pr_row and pr_row[0] else 'м')
+                    # Перечисляем куски по одному: закройщице нужно понимать, что искать
+                    # в цехе — «три куска по 3 м» и «один на 9 м» ищутся по-разному.
+                    piece_list = ', '.join(
+                        f"{p['qty']:g} {pr_unit}" for p in pieces
+                    )
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': (
+                                f'В цехе лежит материал от упаковщицы: '
+                                f'{round(unused_pieces, 2)} {pr_unit} '
+                                f'({len(pieces)} шт: {piece_list}). '
+                                f'Это годная ткань — перекроите её в заказы, и рулон '
+                                f'закроется. Если кусок испорчен, спишите его через брак'
+                            ),
+                            # Терминал показывает это отдельной карточкой: сколько
+                            # всего и какими кусками искать.
+                            'packerReturned': round(unused_pieces, 3),
+                            'packerPieces': [
+                                {'quantity': p['qty'],
+                                 'returnedAt': p['at'].isoformat() + 'Z'}
+                                for p in pieces
+                            ],
+                            'unit': pr_unit,
+                        }, ensure_ascii=False),
+                    }
 
                 # Запоминаем, кто закрыл рулон: по этим данным копится статистика недостач
                 # в разрезе закройщиков и тканей — она понадобится для будущих норм списания.

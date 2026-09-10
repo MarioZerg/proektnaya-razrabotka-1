@@ -181,6 +181,30 @@ export const fetchRolls = async (filters?: {
   return data.rolls || [];
 };
 
+/** Один кусок ткани, возвращённый упаковщицей и ещё не пущенный в раскрой. */
+export interface PackerPiece {
+  quantity: number;
+  returnedAt: string;
+}
+
+/**
+ * Рулон не закрыть: в цехе лежит невыкроенный материал от упаковщицы.
+ *
+ * Отдельная ошибка, потому что закройщице нужен не текст, а список: сколько кусков
+ * искать и какого размера. Терминал показывает это крупной карточкой.
+ */
+export class PackerPiecesError extends Error {
+  constructor(
+    message: string,
+    public readonly total: number,
+    public readonly pieces: PackerPiece[],
+    public readonly unit: string,
+  ) {
+    super(message);
+    this.name = 'PackerPiecesError';
+  }
+}
+
 const postAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(ROLLS_URL, {
     method: 'POST',
@@ -189,6 +213,16 @@ const postAction = async (payload: Record<string, unknown>) => {
   });
   const data = await res.json();
   if (!res.ok) {
+    // Невыкроенные куски от упаковщицы: пробрасываем их списком, чтобы терминал
+    // показал закройщице, что именно искать в цехе.
+    if (data.packerPieces) {
+      throw new PackerPiecesError(
+        data.error || 'В цехе есть материал от упаковщицы',
+        data.packerReturned || 0,
+        data.packerPieces,
+        data.unit || 'м',
+      );
+    }
     throw new Error(data.error || 'Ошибка запроса');
   }
   return data;
