@@ -1181,9 +1181,42 @@ def handler(event: dict, context) -> dict:
                     (logistics_cost, shipment_rate, int(shipment_id)),
                 )
 
+                # СПРАВОЧНИКИ ЧИТАЕМ ОДНИМ ЗАПРОСОМ, А НЕ В ЦИКЛЕ.
+                #
+                # Раньше на каждую позицию уходил отдельный запрос за типом материала,
+                # а на каждый штрихкод — ещё один, «занят ли он». На приёмке #325 это
+                # 66 позиций и больше сотни кодов: полторы сотни обращений к базе, и
+                # функция не укладывалась в отведённые 5 секунд — приёмка падала с
+                # таймаутом, успев создать часть рулонов.
+                #
+                # Теперь тип материала берём разом для всех материалов документа...
+                material_ids = {int(it[1]) for it in pending_items if it[1]}
+                type_by_material = {}
+                if material_ids:
+                    mids_sql = ','.join(str(i) for i in material_ids)
+                    cur.execute(f"SELECT id, type_id FROM materials WHERE id IN ({mids_sql})")
+                    type_by_material = {int(m): t for m, t in cur.fetchall()}
+
+                # ...а занятые штрихкоды — одним списком. Проверяем только те коды,
+                # что забронированы позициями этой приёмки: остальные нас не касаются.
+                reserved_all = set()
+                for it in pending_items:
+                    for c in (it[7] or '').split(','):
+                        if c:
+                            reserved_all.add(c)
+                busy_codes = set()
+                if reserved_all:
+                    codes_in = ','.join("'" + c.replace("'", "''") + "'" for c in reserved_all)
+                    cur.execute(f"SELECT barcode FROM rolls WHERE barcode IN ({codes_in})")
+                    busy_codes = {r[0] for r in cur.fetchall()}
+
                 created_rolls = []
                 # Коды, уже использованные в этом подтверждении: один штрихкод — один рулон.
                 taken_codes = set()
+                # Заготовки для трёх итоговых запросов: строки рулонов и план того,
+                # как разложить их по позициям приёмки.
+                roll_rows = []
+                plan = []
                 for (item_id, material_id, quantity, number_rolls, item_price, item_currency,
                      item_supplier, reserved) in pending_items:
                     quantity = float(quantity or 0)
@@ -1240,8 +1273,18 @@ def handler(event: dict, context) -> dict:
                             ),
                         }
 
-                    cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
-                    type_id = cur.fetchone()[0]
+                    type_id = type_by_material.get(int(material_id))
+                    if type_id is None:
+                        conn.rollback()
+                        return {
+                            'statusCode': 404,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': f'Материал #{material_id} не найден — '
+                                          f'исправьте позицию перед подтверждением'},
+                                ensure_ascii=False,
+                            ),
+                        }
 
                     # КЛЮЧЕВОЕ: берём штрихкоды, забронированные при оформлении приёмки, —
                     # именно они уже наклеены на рулоны. Сгенерировать новые здесь значило бы
@@ -1252,12 +1295,11 @@ def handler(event: dict, context) -> dict:
                     # к двум позициям. Раньше такая приёмка просто падала с «ошибкой
                     # запроса», и кладовщик не мог её принять вообще никак — теперь для
                     # занятых кодов молча выдаём новые, а остальные стикеры остаются в силе.
+                    # Занятость проверяем по списку busy_codes, собранному одним запросом
+                    # выше: раньше здесь был отдельный SELECT на КАЖДЫЙ штрихкод.
                     codes = []
                     for c in (reserved or '').split(','):
-                        if not c or c in taken_codes:
-                            continue
-                        cur.execute("SELECT 1 FROM rolls WHERE barcode = %s", (c,))
-                        if cur.fetchone():
+                        if not c or c in taken_codes or c in busy_codes:
                             continue
                         codes.append(c)
                         taken_codes.add(c)
@@ -1267,37 +1309,91 @@ def handler(event: dict, context) -> dict:
                         taken_codes.update(extra)
 
                     per_roll_qty = round(quantity / number_rolls, 3)
-                    new_rolls = []
-                    for barcode in codes[:number_rolls]:
-                        cur.execute(
-                            f"INSERT INTO rolls (barcode, material_id, initial_quantity, remaining_quantity, status, "
-                            f"supplier_id, shipment_id, purchase_price, purchase_currency, purchase_rate, "
-                            f"logistics_per_unit, cost_per_unit, shortage_norm_percent) "
-                            f"VALUES ('{barcode}', {material_id}, {per_roll_qty}, {per_roll_qty}, 'in_storage', "
-                            f"{supplier_sql}, {int(shipment_id)}, {price_sql}, '{currency}', {unit_rate}, "
-                            f"{round(logistics_per_unit, 4)}, {cost_sql}, {norm_sql}) "
-                            f"RETURNING id"
-                        )
-                        new_rolls.append((cur.fetchone()[0], barcode))
-                        created_rolls.append(barcode)
 
-                    # Первая строка позиции обновляется до первого рулона, остальные рулоны
-                    # добавляются новыми строками shipment_items (у исходной позиции roll_id был NULL).
-                    first_roll_id, first_barcode = new_rolls[0]
-                    cur.execute(
-                        f"UPDATE shipment_items SET roll_id = {first_roll_id}, barcode = '{first_barcode}', "
-                        f"quantity = {per_roll_qty}, price = {price_sql}, currency = '{currency}' "
-                        f"WHERE id = {item_id}"
-                    )
-                    for extra_roll_id, extra_barcode in new_rolls[1:]:
-                        # number_rolls у порождённых строк остаётся NULL — это признак,
-                        # по которому чистка выше отличает их от настоящих позиций.
-                        cur.execute(
-                            f"INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity, "
-                            f"price, currency, supplier_id) "
-                            f"VALUES ({int(shipment_id)}, {material_id}, '{extra_barcode}', {extra_roll_id}, "
-                            f"{per_roll_qty}, {price_sql}, '{currency}', {supplier_sql})"
+                    # НИЧЕГО НЕ ПИШЕМ ВНУТРИ ЦИКЛА — ТОЛЬКО КОПИМ.
+                    #
+                    # Раньше каждая позиция делала свои INSERT и UPDATE. У приёмки #325
+                    # это 66 позиций и 73 рулона — под две сотни обращений к базе, и
+                    # функция не укладывалась в отведённые 5 секунд: приёмка падала с
+                    # таймаутом, успев создать часть рулонов. Теперь всё записывается
+                    # тремя запросами после цикла.
+                    for bc in codes[:number_rolls]:
+                        roll_rows.append(
+                            f"('{bc}', {material_id}, {per_roll_qty}, {per_roll_qty}, 'in_storage', "
+                            f"{supplier_sql}, {int(shipment_id)}, {price_sql}, '{currency}', {unit_rate}, "
+                            f"{round(logistics_per_unit, 4)}, {cost_sql}, {norm_sql})"
                         )
+                    # Что потом сделать с созданными рулонами этой позиции: первый
+                    # привязывается к самой позиции, остальные становятся новыми строками.
+                    plan.append({
+                        'itemId': item_id,
+                        'materialId': material_id,
+                        'codes': codes[:number_rolls],
+                        'perRoll': per_roll_qty,
+                        'priceSql': price_sql,
+                        'currency': currency,
+                        'supplierSql': supplier_sql,
+                    })
+
+                # ---- ЗАПИСЬ: ТРИ ЗАПРОСА НА ВСЮ ПРИЁМКУ ----
+
+                if not roll_rows:
+                    conn.rollback()
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'В приёмке не осталось позиций для оприходования'},
+                            ensure_ascii=False,
+                        ),
+                    }
+
+                # 1. Создаём разом все рулоны документа и получаем их id.
+                cur.execute(
+                    f"INSERT INTO rolls (barcode, material_id, initial_quantity, remaining_quantity, status, "
+                    f"supplier_id, shipment_id, purchase_price, purchase_currency, purchase_rate, "
+                    f"logistics_per_unit, cost_per_unit, shortage_norm_percent) "
+                    f"VALUES {','.join(roll_rows)} RETURNING id, barcode"
+                )
+                roll_id_by_code = {bc: rid for rid, bc in cur.fetchall()}
+                created_rolls = [bc for p in plan for bc in p['codes']]
+
+                # 2. Привязываем первый рулон к самой позиции — одним UPDATE через
+                #    список значений вместо запроса на каждую позицию.
+                update_rows = []
+                extra_rows = []
+                for p in plan:
+                    first_code = p['codes'][0]
+                    update_rows.append(
+                        f"({p['itemId']}, {roll_id_by_code[first_code]}, '{first_code}', "
+                        f"{p['perRoll']}, {p['priceSql']}, '{p['currency']}')"
+                    )
+                    # Остальные рулоны позиции становятся отдельными строками.
+                    # number_rolls у них остаётся NULL — по этому признаку чистка
+                    # отличает порождённые строки от настоящих позиций кладовщика.
+                    for bc in p['codes'][1:]:
+                        extra_rows.append(
+                            f"({int(shipment_id)}, {p['materialId']}, '{bc}', {roll_id_by_code[bc]}, "
+                            f"{p['perRoll']}, {p['priceSql']}, '{p['currency']}', {p['supplierSql']})"
+                        )
+
+                # Типы указываем явно: у позиции без цены в списке стоит NULL, и без
+                # приведения база не смогла бы определить тип такого столбца.
+                cur.execute(
+                    f"UPDATE shipment_items si SET roll_id = v.roll_id::int, "
+                    f"  barcode = v.barcode::varchar, quantity = v.qty::numeric, "
+                    f"  price = v.price::numeric, currency = v.cur::varchar "
+                    f"FROM (VALUES {','.join(update_rows)}) "
+                    f"  AS v(item_id, roll_id, barcode, qty, price, cur) "
+                    f"WHERE si.id = v.item_id::int"
+                )
+
+                # 3. Добавляем строки для рулонов сверх первого.
+                if extra_rows:
+                    cur.execute(
+                        f"INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity, "
+                        f"price, currency, supplier_id) VALUES {','.join(extra_rows)}"
+                    )
 
                 cur.execute(f"UPDATE shipments SET status = 'Завершено', completed_at = now() WHERE id = {int(shipment_id)}")
                 log_action(
