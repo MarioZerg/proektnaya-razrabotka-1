@@ -247,8 +247,13 @@ def handler(event: dict, context) -> dict:
                     # Прайс подтягиваем по поставщику САМОЙ ПОЗИЦИИ (а если у неё своего нет —
                     # по поставщику документа): в одной приёмке материал может быть от разных
                     # поставщиков, и цена у каждого своя.
+                    # У неподтверждённой позиции показываем ИСХОДНОЕ количество всей
+                    # партии (total_quantity): именно его вводил кладовщик. У принятой
+                    # строка уже привязана к рулону, и там quantity — метраж рулона.
                     "SELECT si.id, si.material_id, m.name, m.unit, si.barcode, si.roll_id, r.barcode, "
-                    "si.quantity, si.requested_quantity, si.number_rolls, si.price, si.currency, "
+                    "CASE WHEN si.roll_id IS NULL THEN COALESCE(si.total_quantity, si.quantity) "
+                    "     ELSE si.quantity END, "
+                    "si.requested_quantity, si.number_rolls, si.price, si.currency, "
                     "r.cost_per_unit, sp.price, sp.currency, si.supplier_id, isup.name, "
                     "si.reserved_barcodes, r.status, r.initial_quantity, r.remaining_quantity "
                     "FROM shipment_items si "
@@ -508,10 +513,13 @@ def handler(event: dict, context) -> dict:
                         codes = reserve_barcodes(cur, mat_row[1], number_rolls)
                         codes_sql = "'" + ','.join(codes).replace("'", "''") + "'"
 
+                        # total_quantity — исходное количество позиции, которое больше
+                        # никто не перезаписывает. Подтверждение делит на рулоны именно
+                        # его, поэтому повторная попытка не может «поделить поделённое».
                         cur.execute(
-                            f"INSERT INTO shipment_items (shipment_id, material_id, quantity, number_rolls, "
-                            f"supplier_id, reserved_barcodes) "
-                            f"VALUES ({shipment_id}, {material_id}, {quantity}, {number_rolls}, "
+                            f"INSERT INTO shipment_items (shipment_id, material_id, quantity, total_quantity, "
+                            f"number_rolls, supplier_id, reserved_barcodes) "
+                            f"VALUES ({shipment_id}, {material_id}, {quantity}, {quantity}, {number_rolls}, "
                             f"{item_supplier_sql}, {codes_sql})"
                         )
 
@@ -733,11 +741,13 @@ def handler(event: dict, context) -> dict:
                     used_codes.update(codes)
                     codes_sql = "'" + ','.join(codes).replace("'", "''") + "'" if codes else 'NULL'
 
+                    # Исходное количество дублируем в total_quantity: подтверждение
+                    # считает разбивку по рулонам только от него (см. approve_supply).
                     cur.execute(
-                        f"INSERT INTO shipment_items (shipment_id, material_id, quantity, number_rolls, "
-                        f"price, currency, supplier_id, reserved_barcodes) "
-                        f"VALUES ({int(shipment_id)}, {int(material_id)}, {float(quantity)}, {int(number_rolls)}, "
-                        f"{price_sql}, {currency_sql}, {item_supplier_sql}, {codes_sql})"
+                        f"INSERT INTO shipment_items (shipment_id, material_id, quantity, total_quantity, "
+                        f"number_rolls, price, currency, supplier_id, reserved_barcodes) "
+                        f"VALUES ({int(shipment_id)}, {int(material_id)}, {float(quantity)}, {float(quantity)}, "
+                        f"{int(number_rolls)}, {price_sql}, {currency_sql}, {item_supplier_sql}, {codes_sql})"
                     )
 
                 if 'supplierId' in body_data:
@@ -986,9 +996,17 @@ def handler(event: dict, context) -> dict:
                     (int(shipment_id),),
                 )
 
+                # КОЛИЧЕСТВО БЕРЁМ ИЗ total_quantity — оно неприкосновенно.
+                #
+                # Ниже quantity позиции перезаписывается размером ОДНОГО рулона. Если
+                # подтверждение сорвётся и его нажмут снова, чтение из quantity дало бы
+                # деление уже поделённого: на приёмке #325 пачки 1200 шт превратились в
+                # 150 → 18.75 → 2.344 штуки. total_quantity не меняется никогда, поэтому
+                # сколько бы попыток ни было — разбивка выйдет одна и та же.
+                # COALESCE — для позиций, созданных до появления колонки.
                 cur.execute(
-                    "SELECT id, material_id, quantity, number_rolls, price, currency, "
-                    "supplier_id, reserved_barcodes "
+                    "SELECT id, material_id, COALESCE(total_quantity, quantity), number_rolls, "
+                    "price, currency, supplier_id, reserved_barcodes "
                     "FROM shipment_items WHERE shipment_id = %s",
                     (int(shipment_id),),
                 )
@@ -1161,6 +1179,8 @@ def handler(event: dict, context) -> dict:
                         f"WHERE id = {item_id}"
                     )
                     for extra_roll_id, extra_barcode in new_rolls[1:]:
+                        # number_rolls у порождённых строк остаётся NULL — это признак,
+                        # по которому чистка выше отличает их от настоящих позиций.
                         cur.execute(
                             f"INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity, "
                             f"price, currency, supplier_id) "
