@@ -11,6 +11,8 @@ interface SuppliesCardsProps {
   isAdmin: boolean;
   canEditPending: boolean;
   onOpenReview: (shipmentId: number) => void;
+  /** Открыть окно ввода логистики: сумму перевозки дописывают после приёмки. */
+  onOpenLogistics: (shipmentId: number) => void;
   onPrintShipmentBarcodes: (shipmentId: number) => void;
   onSetDeleteId: (id: number | null) => void;
 }
@@ -25,6 +27,7 @@ const SuppliesCards = ({
   isAdmin,
   canEditPending,
   onOpenReview,
+  onOpenLogistics,
   onPrintShipmentBarcodes,
   onSetDeleteId,
 }: SuppliesCardsProps) => {
@@ -97,6 +100,25 @@ const SuppliesCards = ({
                 >
                   <Icon name={isAdmin ? 'ClipboardCheck' : 'Pencil'} size={14} className="mr-1" />
                   {isAdmin ? 'Проверить и принять' : 'Изменить'}
+                </Button>
+              )}
+              {/* Логистику дописывают после приёмки: счёт за машину приходит позже.
+                  Пропущенную подсвечиваем — без неё себестоимость метра занижена. */}
+              {isAdmin && !isPending && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={
+                    s.logisticsCost
+                      ? undefined
+                      : 'border-amber-400 text-amber-800 hover:bg-amber-50'
+                  }
+                  onClick={() => onOpenLogistics(s.id)}
+                >
+                  <Icon name="Truck" size={14} className="mr-1" />
+                  {s.logisticsCost
+                    ? `${s.logisticsCost.toLocaleString('ru-RU')} ₽`
+                    : 'Логистика'}
                 </Button>
               )}
               <Button

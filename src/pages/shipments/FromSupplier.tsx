@@ -26,6 +26,7 @@ import DefectRollsPanel from '@/components/crm/shipments/DefectRollsPanel';
 import SuppliesFilters from '@/components/crm/shipments/SuppliesFilters';
 import SuppliesTable from '@/components/crm/shipments/SuppliesTable';
 import ReviewSupplyDialog from '@/components/crm/shipments/ReviewSupplyDialog';
+import LogisticsDialog from '@/components/crm/shipments/LogisticsDialog';
 
 const FromSupplier = () => {
   const { toast } = useToast();
@@ -64,6 +65,8 @@ const FromSupplier = () => {
   const [lastCreatedRolls, setLastCreatedRolls] = useState<{ shipmentId: number; rolls: string[] } | null>(null);
 
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  /** Приёмка, которой дописывают стоимость перевозки. */
+  const [logisticsShipmentId, setLogisticsShipmentId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const load = () => {
@@ -401,6 +404,7 @@ const FromSupplier = () => {
           isAdmin={isAdmin}
           canEditPending={canEditPending}
           onOpenReview={openReview}
+          onOpenLogistics={setLogisticsShipmentId}
           onPrintShipmentBarcodes={printShipmentBarcodes}
           deleteId={deleteId}
           deleting={deleting}
@@ -408,6 +412,12 @@ const FromSupplier = () => {
           onDelete={handleDelete}
         />
       </div>
+
+      <LogisticsDialog
+        shipment={shipments.find((s) => s.id === logisticsShipmentId) || null}
+        onClose={() => setLogisticsShipmentId(null)}
+        onSaved={load}
+      />
 
       <ReviewSupplyDialog
         reviewShipment={reviewShipment}

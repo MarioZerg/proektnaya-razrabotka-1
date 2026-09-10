@@ -387,7 +387,10 @@ def handler(event: dict, context) -> dict:
                 # Все поставщики документа: приёмка может быть общей на несколько поставщиков,
                 # и в списке нужно видеть их всех, а не только основного.
                 f"(SELECT STRING_AGG(DISTINCT isup.name, ', ') FROM shipment_items si "
-                f"JOIN suppliers isup ON isup.id = si.supplier_id WHERE si.shipment_id = s.id) as item_suppliers "
+                f"JOIN suppliers isup ON isup.id = si.supplier_id WHERE si.shipment_id = s.id) as item_suppliers, "
+                # Логистика нужна прямо в списке: счёт за перевозку приходит позже машины,
+                # и по списку сразу видно, в какой приёмке сумму ещё не проставили.
+                f"COALESCE(s.logistics_cost, 0) as logistics_cost "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                 f"LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -419,6 +422,8 @@ def handler(event: dict, context) -> dict:
                     'rejectReason': r[18],
                     # Перечень поставщиков приёмки — если он один, совпадает с supplierName.
                     'itemSuppliers': r[19],
+                    # Ноль — логистику ещё не проставили: в списке это видно сразу.
+                    'logisticsCost': float(r[20]) if r[20] is not None else 0.0,
                 }
                 for r in cur.fetchall()
             ]
@@ -869,8 +874,11 @@ def handler(event: dict, context) -> dict:
                 с нулевой логистикой, а через день стала известна сумма. Без неё
                 себестоимость метра занижена — а по ней считаются недостачи и цены.
 
-                Менять указанную логистику не даём: если по ней уже посчитали недостачи и
-                зарплаты, задним числом трогать нельзя. Дозаполнить можно только ноль.
+                ИСПРАВИТЬ уже указанную сумму тоже можно — но лишь пока ВЕСЬ материал
+                приёмки лежит на складе целым. Как только из рулона начали кроить или он
+                уехал в цех, его себестоимость ушла в чужие расчёты: списания, недостачи,
+                зарплату за раскрой. Такую цифру задним числом не трогаем.
+                Это то же правило, что и для правки метража рулона.
                 """
                 shipment_id = body_data.get('id')
                 cost = body_data.get('logisticsCost')
@@ -904,12 +912,24 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers,
                             'body': json.dumps({'error': 'Действие только для приёмок от поставщика'},
                                                ensure_ascii=False)}
+                # Сумма уже стояла — значит это ИСПРАВЛЕНИЕ. Разрешаем, только пока весь
+                # материал приёмки цел на складе: тронутый рулон уже унёс свою
+                # себестоимость в раскрои, списания и зарплату.
                 if float(sh[2]) > 0:
-                    return {'statusCode': 409, 'headers': headers,
-                            'body': json.dumps(
-                                {'error': f'Логистика уже указана ({float(sh[2]):.0f} ₽) — '
-                                          f'изменить её нельзя'},
-                                ensure_ascii=False)}
+                    cur.execute(
+                        "SELECT COUNT(*) FROM rolls WHERE shipment_id = %s "
+                        "  AND (status <> 'in_storage' OR remaining_quantity <> initial_quantity)",
+                        (int(shipment_id),),
+                    )
+                    used = int(cur.fetchone()[0])
+                    if used:
+                        return {'statusCode': 409, 'headers': headers,
+                                'body': json.dumps(
+                                    {'error': f'Логистика указана ({float(sh[2]):.0f} ₽), и '
+                                              f'{used} рулон(ов) уже пустили в работу. '
+                                              f'Менять сумму задним числом нельзя — по ней '
+                                              f'уже посчитаны раскрои и недостачи'},
+                                    ensure_ascii=False)}
 
                 cur.execute(
                     "UPDATE shipments SET logistics_cost = %s WHERE id = %s",
@@ -917,9 +937,12 @@ def handler(event: dict, context) -> dict:
                 )
                 recalc_shipment_costs(cur, shipment_id)
 
+                was = float(sh[2])
                 log_action(
                     cur, actor_id, actor_name, 'update_logistics', 'shipment', shipment_id,
-                    f'Указал логистику приёмки #{shipment_id}: {cost}',
+                    (f'Исправил логистику приёмки #{shipment_id}: {was:.0f} → {cost}'
+                     if was > 0 else
+                     f'Указал логистику приёмки #{shipment_id}: {cost}'),
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers,

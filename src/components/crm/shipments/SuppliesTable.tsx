@@ -32,6 +32,8 @@ interface SuppliesTableProps {
   /** Кладовщик: правит и печатает стикеры, но не подтверждает приёмку. */
   canEditPending: boolean;
   onOpenReview: (shipmentId: number) => void;
+  /** Открыть окно ввода логистики: сумму перевозки дописывают после приёмки. */
+  onOpenLogistics: (shipmentId: number) => void;
   onPrintShipmentBarcodes: (shipmentId: number) => void;
   deleteId: number | null;
   deleting: boolean;
@@ -45,6 +47,7 @@ const SuppliesTable = ({
   isAdmin,
   canEditPending,
   onOpenReview,
+  onOpenLogistics,
   onPrintShipmentBarcodes,
   deleteId,
   deleting,
@@ -75,6 +78,7 @@ const SuppliesTable = ({
           isAdmin={isAdmin}
           canEditPending={canEditPending}
           onOpenReview={onOpenReview}
+          onOpenLogistics={onOpenLogistics}
           onPrintShipmentBarcodes={onPrintShipmentBarcodes}
           onSetDeleteId={onSetDeleteId}
         />
@@ -148,6 +152,33 @@ const SuppliesTable = ({
                               className="mr-1"
                             />
                             {isAdmin ? 'Проверить' : 'Изменить'}
+                          </Button>
+                        )}
+                        {/* ЛОГИСТИКА. Счёт за машину приходит позже самой машины, и
+                            сумму почти всегда дописывают потом. Раньше за этим нужно
+                            было открыть приёмку, найти рулоны и уже там заметить жёлтую
+                            плашку — про неё просто не знали. Теперь видно из списка:
+                            пропущенная логистика подсвечена и правится в один клик. */}
+                        {isAdmin && !isPending && !s.logisticsCost && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-amber-400 text-amber-800 hover:bg-amber-50"
+                            title="Логистика не указана — себестоимость метра занижена"
+                            onClick={() => onOpenLogistics(s.id)}
+                          >
+                            <Icon name="Truck" size={14} className="mr-1" />
+                            Логистика
+                          </Button>
+                        )}
+                        {isAdmin && !isPending && !!s.logisticsCost && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title={`Логистика: ${s.logisticsCost.toLocaleString('ru-RU')} ₽`}
+                            onClick={() => onOpenLogistics(s.id)}
+                          >
+                            <Icon name="Truck" size={14} />
                           </Button>
                         )}
                         {/* Печать стикеров доступна сразу: коды выдаются при оформлении,
