@@ -51,10 +51,17 @@
       "expectedStatus": 401
     },
     {
+      "name": "Подтверждение приёмки без id отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "approve_supply" },
+      "expectedStatus": 401
+    },
+    {
       "name": "Правка метража рулона без входа отклоняется",
       "method": "POST",
       "path": "/",
-      "body": { "action": "edit_item_quantity", "itemId": 1, "quantity": 999, "actorId": 10 },
+      "body": { "action": "update_roll_quantity", "itemId": 1, "quantity": 999, "actorId": 10 },
       "expectedStatus": 401
     },
     {
