@@ -23,6 +23,7 @@ import {
   updateSupply,
   lockSupply,
   unlockSupply,
+  moveSupplyStatus,
   CancelledOrderError,
   type SupplyDetail,
   type SupplyCandidate,
@@ -48,6 +49,7 @@ const MarketplaceSupplyAssemble = () => {
   const [supply, setSupply] = useState<SupplyDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [addingBox, setAddingBox] = useState(false);
+  const [completing, setCompleting] = useState(false);
 
   const [candidatesOpen, setCandidatesOpen] = useState(false);
   const [candidates, setCandidates] = useState<SupplyCandidate[]>([]);
@@ -250,6 +252,57 @@ const MarketplaceSupplyAssemble = () => {
     }
   };
 
+  // ПОСТАВКА СОБРАНА: переводим её из «На сборке» в «Отгрузка».
+  //
+  // Это последний шаг кладовщика — дальше поставка уезжает, и вещи в неё уже не
+  // кладут. Раньше кнопки не было вовсе: кладовщик закрывал короба и не понимал,
+  // что делать дальше, а статус менял менеджер из списка поставок.
+  const handleSupplyAssembled = async () => {
+    setCompleting(true);
+    try {
+      await moveSupplyStatus(supplyId, 'Отгрузка');
+      toast({
+        title: 'Поставка собрана',
+        description: 'Она перешла в отгрузку — вещи в неё больше не добавляются',
+      });
+      navigate(`/crm/shipments/to-marketplace/${supplyId}`);
+    } catch (e) {
+      toast({
+        title: 'Не удалось завершить сборку',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setCompleting(false);
+    }
+  };
+
+  // ЗАКРЫТИЕ ОДНОГО КОРОБА OZON FBO.
+  //
+  // Кладовщик работает коробами: набил — закрыл — наклеил этикетку — взял
+  // следующий. Раньше закрыть можно было только всю поставку разом, в конце: к
+  // тому моменту короба уже заклеены скотчем, и разложить по ним этикетки нечем.
+  const handleCloseOzonBox = async (boxId: number) => {
+    try {
+      const r = await closeOzonBoxes(supplyId, boxId);
+      toast({
+        title: 'Короб закрыт',
+        description:
+          r.note ||
+          (r.stickersSaved
+            ? 'Стикер получен с OZON — можно печатать'
+            : 'Грузоместо создано на OZON'),
+      });
+      load(true);
+    } catch (e) {
+      toast({
+        title: 'Не удалось закрыть короб',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    }
+  };
+
   // Закрытие коробов OZON FBO: создаёт грузоместа на OZON из состава каждого короба и тянет
   // PDF-этикетки. Действует на реальной заявке OZON.
   const handleCloseBoxes = async () => {
@@ -332,6 +385,11 @@ const MarketplaceSupplyAssemble = () => {
   const isWbFbo = supply.marketplace === 'WB' && supply.type === 'FBO';
   // Закрывать короба можно, когда есть непустые короба (у OZON FBO это создаёт грузоместа на OZON).
   const canCloseBoxes = isOzonFbo && totalBoxedItems > 0;
+  // Непустые короба, которые ещё не заклеены: пока такие есть, поставку
+  // закрывать рано — их состав ещё может измениться.
+  const openBoxes = supply.boxes.filter(
+    (b) => b.items.length > 0 && !b.closedAt,
+  ).length;
 
   return (
     <CrmLayout>
@@ -453,6 +511,8 @@ const MarketplaceSupplyAssemble = () => {
                   supply={supply}
                   canEdit={canEdit}
                   isWbFbo={isWbFbo}
+                  isOzonFbo={isOzonFbo}
+                  onCloseOzonBox={handleCloseOzonBox}
                   onAddOrder={handleAddOrderToBox}
                   onRemoveItem={handleRemoveItem}
                   onDeleteBox={handleDeleteBox}
@@ -462,6 +522,40 @@ const MarketplaceSupplyAssemble = () => {
             </div>
           )}
         </div>
+
+        {/* ПОСТАВКА СОБРАНА — последний шаг кладовщика.
+            Появляется, когда все короба заклеены: дальше поставка уходит в
+            отгрузку, и вещи в неё уже не добавляют. Раньше кладовщик закрывал
+            короба и не понимал, что делать дальше — статус приходилось менять
+            менеджеру из списка поставок. */}
+        {canEdit && supply.boxes.length > 0 && (
+          <div className="rounded-lg border border-border bg-muted/40 p-4">
+            {openBoxes > 0 ? (
+              <p className="text-sm text-muted-foreground">
+                <Icon name="Info" size={14} className="mr-1.5 inline" />
+                Закройте все короба — осталось открытых: <b>{openBoxes}</b>
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium">Все короба закрыты</p>
+                  <p className="text-sm text-muted-foreground">
+                    В коробах {totalBoxedItems} шт. После подтверждения поставка
+                    уйдёт в отгрузку — добавить вещи будет нельзя
+                  </p>
+                </div>
+                <Button onClick={handleSupplyAssembled} disabled={completing}>
+                  <Icon
+                    name={completing ? 'Loader2' : 'CircleCheck'}
+                    size={16}
+                    className={`mr-1.5 ${completing ? 'animate-spin' : ''}`}
+                  />
+                  Поставка собрана
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Отсканирована вещь отменённого заказа: показываем, что с ней делать.

@@ -15,6 +15,10 @@ interface SupplyBoxCardProps {
   canEdit: boolean;
   /** WB FBO: закрыть короб в нашей системе и напечатать стикер WB. */
   isWbFbo: boolean;
+  /** OZON FBO: закрыть короб — создаётся грузоместо на OZON и тянется этикетка. */
+  isOzonFbo?: boolean;
+  /** Закрыть ОДИН короб OZON и подтянуть его стикер. */
+  onCloseOzonBox?: (boxId: number) => Promise<void>;
   onAddOrder: (boxId: number, orderNumber: string) => Promise<void>;
   onRemoveItem: (itemId: number) => void;
   onDeleteBox: (boxId: number) => void;
@@ -26,6 +30,8 @@ const SupplyBoxCard = ({
   supply,
   canEdit,
   isWbFbo,
+  isOzonFbo = false,
+  onCloseOzonBox,
   onAddOrder,
   onRemoveItem,
   onDeleteBox,
@@ -35,6 +41,18 @@ const SupplyBoxCard = ({
   const [scanning, setScanning] = useState(false);
   const [closing, setClosing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // OZON FBO: закрываем короб — сервер создаёт грузоместо на OZON и тянет PDF
+  // этикетки именно этого короба. Печатать её кладовщик будет кнопкой ниже.
+  const handleCloseOzon = async () => {
+    if (!onCloseOzonBox) return;
+    setClosing(true);
+    try {
+      await onCloseOzonBox(box.id);
+    } finally {
+      setClosing(false);
+    }
+  };
 
   const handleCloseAndPrint = async () => {
     setClosing(true);
@@ -46,24 +64,35 @@ const SupplyBoxCard = ({
     }
   };
 
+  /**
+   * ПОЛЕ НЕ БЛОКИРУЕМ — СКАНЕР БЫСТРЕЕ СЕТИ.
+   *
+   * Раньше на время запроса поле уходило в disabled: кладовщик пикал следующую
+   * вещь, а ввод улетал в никуда — браузер не принимает текст в заблокированное
+   * поле. При хорошем темпе так терялась каждая вторая вещь, и приходилось
+   * сканировать медленно, дожидаясь ответа сервера.
+   *
+   * Теперь поле живёт всегда: значение очищается сразу (защита от повторной
+   * отправки того же кода), а ответ сервера догоняет позже и дорисовывает строку.
+   * Так же сделано в FBS — там сканируют подряд без пауз.
+   */
   const handleAdd = async () => {
     const value = orderNumber.trim();
     if (!value) return;
-    // Поле очищаем сразу, до ответа сервера — чтобы не было повторных отправок того же
-    // номера при ошибке (автосканирование иначе попыталось бы отправить его снова).
     setOrderNumber('');
     setScanning(true);
+    // Фокус возвращаем немедленно, не дожидаясь сервера: следующий пик сканера
+    // должен попасть в поле, даже если предыдущий запрос ещё в пути.
+    inputRef.current?.focus();
     try {
       await onAddOrder(box.id, value);
     } finally {
       setScanning(false);
-      // setTimeout — иначе .focus() сработает раньше, чем React снимет disabled с поля
-      // после ререндера, и браузер молча проигнорирует вызов на задизейбленном инпуте.
-      setTimeout(() => inputRef.current?.focus(), 0);
+      inputRef.current?.focus();
     }
   };
 
-  useScannerAutoSubmit(orderNumber, handleAdd, canEdit && !scanning);
+  useScannerAutoSubmit(orderNumber, handleAdd, canEdit);
 
   return (
     <Card className="border-border shadow-none">
@@ -90,7 +119,6 @@ const SupplyBoxCard = ({
               value={orderNumber}
               onChange={(e) => setOrderNumber(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-              disabled={scanning}
               className="font-mono-tech"
             />
             {scanning && (
@@ -126,6 +154,24 @@ const SupplyBoxCard = ({
               </div>
             ))}
           </div>
+        )}
+
+        {/* OZON FBO: короб набит — закрываем. Сервер заводит грузоместо на OZON
+            и возвращает этикетку на ЭТОТ короб, её сразу можно печатать. */}
+        {isOzonFbo && box.items.length > 0 && !box.closedAt && (
+          <Button
+            size="sm"
+            className="w-full"
+            onClick={handleCloseOzon}
+            disabled={closing}
+          >
+            <Icon
+              name={closing ? 'Loader2' : 'PackageCheck'}
+              size={14}
+              className={`mr-1.5 ${closing ? 'animate-spin' : ''}`}
+            />
+            {closing ? 'Закрываем короб и получаем стикер…' : 'Закрыть короб'}
+          </Button>
         )}
 
         {isWbFbo && box.items.length > 0 && !box.closedAt && (

@@ -1106,16 +1106,153 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите короб и отсканируйте стикер хранения'})}
 
             cur.execute(
-                "SELECT mb.supply_id, s.status FROM marketplace_supply_boxes mb "
+                "SELECT mb.supply_id, s.status, s.type, mb.closed_at "
+                "FROM marketplace_supply_boxes mb "
                 "JOIN marketplace_supplies s ON s.id = mb.supply_id WHERE mb.id = %s",
                 (int(box_id),),
             )
             box_row = cur.fetchone()
             if not box_row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Короб не найден'})}
-            supply_id, supply_status = box_row
+            supply_id, supply_status, supply_type, box_closed_at = box_row
             if supply_status not in ('Открытая', 'На сборке'):
                 return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять товары'})}
+
+            # Закрытый короб не трогаем: он уже заклеен, а на OZON по нему заведено
+            # грузоместо со своей этикеткой. Доложить вещь — значит разойтись с тем,
+            # что площадка ждёт по документам.
+            if box_closed_at:
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': 'Короб закрыт — вещи в него больше не добавляются. '
+                                 'Откройте новый короб'
+                    }, ensure_ascii=False),
+                }
+
+            # ============================================================
+            # FBO: В КОРОБ КЛАДЁТСЯ ТОВАР СО СКЛАДА, А НЕ ЗАКАЗ ПОКУПАТЕЛЯ.
+            # ============================================================
+            #
+            # Вся проверка ниже написана под FBS: там вещь едет конкретному
+            # покупателю, на ней ярлык маркетплейса с номером отправления, и по
+            # этому номеру её и ищут.
+            #
+            # У FBO всё иначе. Это поставка НА СКЛАД площадки — обезличенный товар
+            # без покупателя и без отправления. На вещи наклеен только НАШ складской
+            # стикер GW-XXXXXX, других штрихкодов на ней нет и быть не может.
+            #
+            # А код на такой стикер отвечал «Это складской стикер хранения, сканируйте
+            # ярлык маркетплейса» — то есть требовал ярлык, которого у FBO не
+            # существует в природе. Собрать FBO-поставку было невозможно вообще.
+            #
+            # Поэтому для FBO идём своей веткой: находим вещь по складскому стикеру,
+            # проверяем, что она свободна и лежит на складе, и кладём в короб.
+            if (supply_type or '').upper() == 'FBO':
+                scan_esc = order_number.replace("'", "''")
+                cur.execute(
+                    "SELECT gw.id, gw.status, gw.storage_barcode, "
+                    "       o.material, o.width, o.height, o.product "
+                    "FROM goods_warehouse gw "
+                    "LEFT JOIN orders o ON o.id = COALESCE(gw.order_id, gw.reserved_order_id) "
+                    f"WHERE gw.storage_barcode = '{scan_esc}'"
+                )
+                fbo_row = cur.fetchone()
+                if not fbo_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Стикер {order_number} не найден. В короб FBO '
+                                     f'сканируется складской стикер вещи (GW-…)'
+                        }, ensure_ascii=False),
+                    }
+                (fbo_gid, fbo_status, fbo_barcode,
+                 fbo_material, fbo_width, fbo_height, fbo_product) = fbo_row
+
+                # Вещь уже лежит в какой-то живой поставке — второй раз её не положить.
+                cur.execute(
+                    "SELECT si.supply_id, s.status FROM marketplace_supply_items si "
+                    "JOIN marketplace_supplies s ON s.id = si.supply_id "
+                    "WHERE si.goods_warehouse_id = %s "
+                    "  AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена') "
+                    "LIMIT 1",
+                    (int(fbo_gid),),
+                )
+                busy = cur.fetchone()
+                if busy:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Эта вещь уже в поставке #{busy[0]} ({busy[1]})'
+                        }, ensure_ascii=False),
+                    }
+
+                # Товар должен физически лежать на складе. Уехавшую или списанную
+                # вещь в короб класть нечем — её нет.
+                if fbo_status not in ('in_stock', 'awaiting_supply'):
+                    status_ru = {
+                        'shipped': 'уже отгружена',
+                        'lost': 'списана как утерянная',
+                        'reserved': 'зарезервирована под заказ покупателя',
+                        'repacking': 'на перепаковке',
+                        'checking': 'на проверке',
+                    }.get(fbo_status, f'в статусе «{fbo_status}»')
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Вещь {fbo_barcode} {status_ru} — '
+                                     f'в поставку её положить нельзя'
+                        }, ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "INSERT INTO marketplace_supply_items "
+                    "  (supply_id, goods_warehouse_id, box_id) "
+                    "VALUES (%s, %s, %s) RETURNING id",
+                    (int(supply_id), int(fbo_gid), int(box_id)),
+                )
+                new_item_id = cur.fetchone()[0]
+                # Вещь занята под поставку: на полке её больше не подберут под заказ.
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'awaiting_supply' WHERE id = %s",
+                    (int(fbo_gid),),
+                )
+                # Первый скан переводит поставку в работу.
+                if supply_status == 'Открытая':
+                    cur.execute(
+                        "UPDATE marketplace_supplies SET status = 'На сборке' WHERE id = %s",
+                        (int(supply_id),),
+                    )
+                conn.commit()
+
+                name = fbo_product or (
+                    f'{fbo_material or ""} {fbo_width or ""}x{fbo_height or ""}'.strip()
+                )
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        # Готовая строка для экрана: терминал дорисовывает её сам,
+                        # без перезагрузки страницы — так скан идёт без задержки.
+                        'item': {
+                            'id': new_item_id,
+                            'goodsWarehouseId': fbo_gid,
+                            'boxId': int(box_id),
+                            'orderNumber': fbo_barcode,
+                            'storageBarcode': fbo_barcode,
+                            'product': name or 'Товар',
+                            'material': fbo_material,
+                            'width': fbo_width,
+                            'height': fbo_height,
+                        },
+                        'supplyStatus': 'На сборке',
+                    }, ensure_ascii=False),
+                }
 
             # В короб товар кладётся ТОЛЬКО сканированием стикера хранения (GW-XXXXXX).
             # Номер заказа маркетплейса руками не вводится: так в поставку не попадёт

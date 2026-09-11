@@ -472,8 +472,17 @@ def poll_operation(path, client_id, api_key, operation_id, attempts=8, delay=1.2
 def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     """Закрывает короба поставки OZON FBO: создаёт грузоместа (cargoes) на стороне OZON из
     состава каждого короба (группировка по ozon_sku), затем получает PDF-этикетки коробов и
-    сохраняет их. Действует на реальной заявке OZON."""
+    сохраняет их. Действует на реальной заявке OZON.
+
+    boxId (необязательный) — закрыть ОДИН короб, а не всю поставку разом.
+
+    Кладовщик работает коробами: набил — заклеил — наклеил этикетку — взял
+    следующий. Закрывать всё скопом в конце неудобно и неверно: к тому моменту
+    короба уже заклеены скотчем, и если этикетка не встанет на свой короб,
+    вскрывать придётся все.
+    """
     supply_id = body_data.get('supplyId')
+    one_box_id = body_data.get('boxId')
     if not supply_id:
         return _resp(400, {'error': 'Укажите supplyId'})
 
@@ -504,11 +513,29 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     cur.execute("SELECT material, width, height, ozon_sku FROM marketplace_items WHERE ozon_sku IS NOT NULL")
     sku_by_mwh = {(r[0], r[1], r[2]): r[3] for r in cur.fetchall()}
 
-    cur.execute(
-        "SELECT b.id, b.box_number, b.ozon_cargo_id FROM marketplace_supply_boxes b "
-        "WHERE b.supply_id = %s ORDER BY b.box_number",
-        (int(supply_id),),
-    )
+    # КАКИЕ КОРОБА ОТПРАВЛЯЕМ НА OZON.
+    #
+    # Тонкость: /v1/cargoes/create с delete_current_version пересоздаёт ВЕСЬ
+    # список грузомест заявки. Отправить только один короб нельзя — у ранее
+    # закрытых пропали бы cargo_id и этикетки, а кладовщик уже наклеил их на
+    # заклеенные короба.
+    #
+    # Поэтому при закрытии одного короба отправляем состав ВСЕХ уже закрытых
+    # плюс закрываемый. Открытые (недобранные) в список не идут: их состав ещё
+    # меняется, и фиксировать его рано.
+    if one_box_id:
+        cur.execute(
+            "SELECT b.id, b.box_number, b.ozon_cargo_id FROM marketplace_supply_boxes b "
+            "WHERE b.supply_id = %s AND (b.id = %s OR b.closed_at IS NOT NULL) "
+            "ORDER BY b.box_number",
+            (int(supply_id), int(one_box_id)),
+        )
+    else:
+        cur.execute(
+            "SELECT b.id, b.box_number, b.ozon_cargo_id FROM marketplace_supply_boxes b "
+            "WHERE b.supply_id = %s ORDER BY b.box_number",
+            (int(supply_id),),
+        )
     boxes = cur.fetchall()
     if not boxes:
         return _resp(400, {'error': 'В поставке нет коробов'})
@@ -572,10 +599,24 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     conn.commit()
 
     # 3) Запрашиваем генерацию этикеток коробов.
+    #
+    # При закрытии ОДНОГО короба просим этикетку только на него: OZON отдаёт
+    # один PDF на все переданные грузоместа, и общий файл на десять коробов
+    # кладовщику бесполезен — ему нужна наклейка на тот короб, что в руках.
     stickers_saved = 0
+    label_cargo_ids = cargo_ids
+    if one_box_id:
+        cur.execute(
+            "SELECT ozon_cargo_id FROM marketplace_supply_boxes WHERE id = %s",
+            (int(one_box_id),),
+        )
+        one_row = cur.fetchone()
+        if one_row and one_row[0]:
+            label_cargo_ids = [int(one_row[0])]
+
     st, lbl = ozon_post('/v1/cargoes-label/create', client_id, api_key, {
         'supply_id': int(ozon_supply_id),
-        'cargo_ids': cargo_ids,
+        'cargo_ids': label_cargo_ids,
     })
     label_op = lbl.get('operation_id') if isinstance(lbl, dict) else None
     if label_op:
@@ -587,21 +628,33 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
         if content:
             try:
                 pdf = base64.b64decode(content)
-                url = upload_pdf(pdf, f'supply-{supply_id}')
-                cur.execute(
-                    "UPDATE marketplace_supply_boxes SET sticker_url = %s, sticker_name = %s "
-                    "WHERE supply_id = %s AND ozon_cargo_id IS NOT NULL",
-                    (url, f'Этикетки коробов #{supply_id}.pdf', int(supply_id)),
-                )
-                stickers_saved = len(cargo_ids)
+                if one_box_id:
+                    # Этикетка ОДНОГО короба — привязываем только к нему. Раньше
+                    # ссылка проставлялась всем коробам поставки разом, и после
+                    # закрытия второго короба на первом оказывался чужой PDF.
+                    url = upload_pdf(pdf, f'supply-{supply_id}-box-{one_box_id}')
+                    cur.execute(
+                        "UPDATE marketplace_supply_boxes SET sticker_url = %s, "
+                        "  sticker_name = %s WHERE id = %s",
+                        (url, f'Стикер короба #{one_box_id}.pdf', int(one_box_id)),
+                    )
+                    stickers_saved = 1
+                else:
+                    url = upload_pdf(pdf, f'supply-{supply_id}')
+                    cur.execute(
+                        "UPDATE marketplace_supply_boxes SET sticker_url = %s, sticker_name = %s "
+                        "WHERE supply_id = %s AND ozon_cargo_id IS NOT NULL",
+                        (url, f'Этикетки коробов #{supply_id}.pdf', int(supply_id)),
+                    )
+                    stickers_saved = len(cargo_ids)
             except Exception:
                 pass
     conn.commit()
 
     return _resp(200, {
-        'closedBoxes': len(cargo_ids),
+        'closedBoxes': 1 if one_box_id else len(cargo_ids),
         'stickersSaved': stickers_saved,
-        'note': None if stickers_saved else 'Грузоместа созданы, но этикетка ещё готовится — обновите через минуту.',
+        'note': None if stickers_saved else 'Грузоместо создано, но этикетка ещё готовится — обновите через минуту.',
     })
 
 

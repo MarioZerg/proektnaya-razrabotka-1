@@ -85,5 +85,15 @@ export interface OzonCloseBoxesResult {
   note: string | null;
 }
 
-export const closeOzonBoxes = (supplyId: number): Promise<OzonCloseBoxesResult> =>
-  post({ action: 'close_boxes', supplyId }) as Promise<OzonCloseBoxesResult>;
+/**
+ * Закрыть короба поставки OZON FBO: создаёт грузоместа на OZON и тянет этикетки.
+ *
+ * boxId — закрыть ОДИН короб. Кладовщик работает коробами: набил, заклеил,
+ * наклеил этикетку, взял следующий. Закрывать всё скопом в конце неудобно —
+ * к тому моменту короба уже заклеены, и разложить по ним этикетки нечем.
+ */
+export const closeOzonBoxes = (
+  supplyId: number,
+  boxId?: number,
+): Promise<OzonCloseBoxesResult> =>
+  post({ action: 'close_boxes', supplyId, boxId }) as Promise<OzonCloseBoxesResult>;
