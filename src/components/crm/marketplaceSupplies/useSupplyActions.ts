@@ -10,6 +10,7 @@ import {
   forceCompleteSupply,
   deleteSupply,
   addSewingOrdersToSupply,
+  removeSewingOrderFromSupply,
   supplyStatusFlow,
   type SupplyDetail,
   type WbSupplyOrder,
@@ -114,6 +115,26 @@ export const useSupplyActions = ({
       });
     } finally {
       setAddingOrders(false);
+    }
+  };
+
+  /**
+   * Убрать товар из состава поставки.
+   *
+   * Сервер разрешит только нетронутое: «Новый» или «Со склада». Раскроенное и
+   * сшитое не отдаст — ткань потрачена, работа сделана и оплачена.
+   */
+  const handleRemoveSewingOrder = async (order: { id: number; orderNumber: string }) => {
+    try {
+      await removeSewingOrderFromSupply(order.id);
+      toast({ title: `Товар ${order.orderNumber} убран из состава` });
+      load(true);
+    } catch (e) {
+      toast({
+        title: 'Не удалось убрать товар',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
     }
   };
 
@@ -421,6 +442,7 @@ export const useSupplyActions = ({
     forceCompleting,
     addOrdersOpen,
     setAddOrdersOpen,
+    handleRemoveSewingOrder,
     addingOrders,
     scanOrderNumber,
     setScanOrderNumber,

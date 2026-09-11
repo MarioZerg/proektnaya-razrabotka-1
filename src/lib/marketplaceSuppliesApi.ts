@@ -554,6 +554,23 @@ export const deleteSupply = (id: number) =>
   postAction({ action: 'delete', id }) as Promise<{ success: true; deletedOrders: number }>;
 
 /** Догружает в поставку товары на пошив: каждая штука станет отдельным заказом на конвейере. */
+/**
+ * Убрать товар из состава поставки FBO.
+ *
+ * Менеджер загружает состав заявки пачкой, и в него попадает лишнее: заявку на
+ * площадке урезали, товар решили не везти. Раньше состав правился только в одну
+ * сторону — догрузкой.
+ *
+ * Сервер разрешит убрать только нетронутое: заказ «Новый» (никто не брал в работу)
+ * или «Со склада» (вещь вернётся на полку). Раскроенное и сшитое не отдаст —
+ * ткань уже потрачена, работа сделана.
+ */
+export const removeSewingOrderFromSupply = (orderId: number) =>
+  postAction({ action: 'remove_sewing_order', orderId }) as Promise<{
+    success: true;
+    orderNumber: string;
+  }>;
+
 export const addSewingOrdersToSupply = (
   supplyId: number,
   items: { marketplaceItemId: number; quantity: number }[],

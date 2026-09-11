@@ -128,7 +128,10 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete, canManage }: OrdersTab
         </TableHeader>
         <TableBody>
           {pagedOrders.map((o) => {
-            const isCancelled = o.status === 'Отменён';
+            // Отмену видит маркетплейс: наш status при этом не меняется,
+            // поэтому берём готовый признак с сервера (isCancelled).
+            const isCancelled =
+              !!o.isCancelled || o.status === 'Отменён' || o.sewingStatus === 'Отменён';
             return (
             <TableRow key={o.id} className={isCancelled ? 'text-muted-foreground line-through opacity-70' : ''}>
               <TableCell>{o.id}</TableCell>

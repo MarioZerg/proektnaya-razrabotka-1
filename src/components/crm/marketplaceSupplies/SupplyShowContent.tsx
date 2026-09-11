@@ -57,6 +57,8 @@ interface SupplyShowContentProps {
     forceCompleting: boolean;
     addOrdersOpen: boolean;
     setAddOrdersOpen: Dispatch<SetStateAction<boolean>>;
+    /** Убрать товар из состава поставки: только «Новый» и «Со склада». */
+    handleRemoveSewingOrder: (order: { id: number; orderNumber: string }) => void;
     addingOrders: boolean;
     scanOrderNumber: string;
     setScanOrderNumber: Dispatch<SetStateAction<string>>;
@@ -170,6 +172,10 @@ const SupplyShowContent = ({
             flags.isManager && supply.status !== 'Отгрузка' && supply.status !== 'Выполнена'
           }
           onAdd={() => actions.setAddOrdersOpen(true)}
+          canRemove={
+            flags.isManager && supply.status !== 'Отгрузка' && supply.status !== 'Выполнена'
+          }
+          onRemove={actions.handleRemoveSewingOrder}
         />
       )}
 

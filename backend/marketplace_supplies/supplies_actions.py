@@ -11,6 +11,8 @@ import time
 
 import psycopg2
 
+from authz import AuthError, auth_error_response, require_role
+
 from shared import (
     OZON_DEAD_STATUSES,
     OZON_SHIP_BATCH,
@@ -2043,6 +2045,116 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             conn.commit()
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
+        if action == 'remove_sewing_order':
+            """Убрать товар из состава поставки FBO.
+
+            ЗАЧЕМ. Менеджер загружает состав заявки с маркетплейса пачкой, и в него
+            попадает лишнее: заявку на площадке урезали, товар решили не везти,
+            позицию завели по ошибке. Убрать её было нечем — состав правился только
+            догрузкой, в одну сторону.
+
+            ЧТО МОЖНО УБРАТЬ. Только то, что ещё никто не трогал:
+      • заказ на пошив в статусе «Новый» — за него не бралась ни одна закройщица;
+      • вещь, подобранную со склада («Со склада»), — она просто вернётся на полку.
+
+            Раскроенный или сшитый товар не трогаем: ткань уже потрачена, работа
+            сделана и оплачена. Такую вещь довозят или списывают отдельно — молча
+            стирать её из состава значит потерять и материал, и выработку людей.
+            """
+            order_id = body_data.get('orderId')
+            if not order_id:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Укажите товар'}, ensure_ascii=False)}
+
+            # Состав поставки — это деньги и план производства. Права берём из ключа
+            # сессии, а не из тела запроса: actorRole сотрудник задаёт себе сам.
+            actor = require_role(cur, event, 'admin', 'manager')
+
+            cur.execute(
+                "SELECT o.supply_id, o.sewing_status, o.order_number, o.status, "
+                "       o.fulfilled_from_stock_id, s.status, s.type "
+                "FROM orders o "
+                "LEFT JOIN marketplace_supplies s ON s.id = o.supply_id "
+                "WHERE o.id = %s FOR UPDATE OF o",
+                (int(order_id),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Товар не найден'}, ensure_ascii=False)}
+            (o_supply_id, o_sewing, o_number, o_status,
+             o_from_stock, s_status, s_type) = row
+
+            if not o_supply_id:
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps({'error': 'Этот товар не привязан к поставке'},
+                                           ensure_ascii=False)}
+            if s_status in ('Отгрузка', 'Выполнена'):
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Поставка уже уехала — менять её состав нельзя'},
+                            ensure_ascii=False)}
+
+            # Вещь уже уложена в короб: сначала выньте её оттуда, иначе короб
+            # разойдётся с тем, что записано на площадке.
+            # Связь состава с заказом идёт ТОЛЬКО через складскую вещь: в
+            # marketplace_supply_items нет колонки order_id, там лишь
+            # goods_warehouse_id.
+            cur.execute(
+                "SELECT 1 FROM marketplace_supply_items msi "
+                "WHERE msi.supply_id = %s AND msi.box_id IS NOT NULL "
+                "  AND msi.goods_warehouse_id IN "
+                "      (SELECT id FROM goods_warehouse "
+                "        WHERE order_id = %s OR reserved_order_id = %s) LIMIT 1",
+                (int(o_supply_id), int(order_id), int(order_id)),
+            )
+            if cur.fetchone():
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Товар {o_number} уже лежит в коробе. '
+                                      f'Сначала уберите его из короба'},
+                            ensure_ascii=False)}
+
+            # Работу, которая уже сделана, не стираем: ткань потрачена, люди своё
+            # отработали. Разрешаем только нетронутое.
+            if o_sewing not in ('Новый', 'Со склада'):
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Товар {o_number} уже в работе ({o_sewing}) — '
+                                      f'убрать его из состава нельзя. Ткань на него '
+                                      f'уже раскроена'},
+                            ensure_ascii=False)}
+
+            # Вещь была подобрана с полки — возвращаем её обратно в свободный остаток.
+            if o_from_stock:
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "  reserved_order_id = NULL, matched_at = NULL "
+                    "WHERE id = %s AND status <> 'shipped'",
+                    (int(o_from_stock),),
+                )
+
+            # Строку состава (если заводилась) и сам заказ убираем вместе.
+            cur.execute(
+                "DELETE FROM marketplace_supply_items "
+                "WHERE supply_id = %s AND goods_warehouse_id IN "
+                "  (SELECT id FROM goods_warehouse "
+                "    WHERE order_id = %s OR reserved_order_id = %s)",
+                (int(o_supply_id), int(order_id), int(order_id)),
+            )
+            cur.execute("DELETE FROM orders WHERE id = %s", (int(order_id),))
+
+            log_action(
+                cur, actor['realUserId'], actor['name'],
+                'remove_sewing_order', 'supply', o_supply_id,
+                f'Убрал товар {o_number} из состава поставки #{o_supply_id} '
+                f'(было: {o_sewing})',
+            )
+            conn.commit()
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({'success': True, 'orderNumber': o_number},
+                                       ensure_ascii=False)}
+
         if action == 'add_sewing_orders':
             # Догрузка товаров на пошив в уже существующую поставку. Нужна, когда состав
             # заявки на маркетплейсе дополнили, или менеджер решил довезти ещё товара.
@@ -2341,5 +2453,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             }
 
         return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
+    except AuthError as err:
+        # Не вошёл или роль не та — человеческий текст вместо ошибки сервера.
+        conn.rollback()
+        return auth_error_response(err, headers)
     finally:
         conn.close()

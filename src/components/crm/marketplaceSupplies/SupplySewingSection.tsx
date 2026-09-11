@@ -29,11 +29,25 @@ interface SupplySewingSectionProps {
   /** Догрузка доступна менеджеру, пока поставка не уехала. */
   canAdd: boolean;
   onAdd: () => void;
+  /**
+   * Убрать товар из состава — менеджеру и администратору, пока поставка не уехала.
+   *
+   * Раньше состав правился только в одну сторону, догрузкой: заявку на площадке
+   * урезали, а лишняя позиция так и оставалась в плане производства.
+   */
+  canRemove?: boolean;
+  onRemove?: (order: SupplySewingOrder) => void;
 }
 
 /** Прогресс производства по поставке: сколько изделий сшито, сколько ещё в работе,
  * и кнопка догрузки товаров в пошив. */
-const SupplySewingSection = ({ orders, canAdd, onAdd }: SupplySewingSectionProps) => {
+const SupplySewingSection = ({
+  orders,
+  canAdd,
+  onAdd,
+  canRemove = false,
+  onRemove,
+}: SupplySewingSectionProps) => {
   const active = orders.filter((o) => !o.isCancelled);
   const done = active.filter((o) => o.sewingStatus === 'Готовые' || o.sewingStatus === 'Со склада');
   const inWork = active.filter((o) => IN_PROGRESS.includes(o.sewingStatus));
@@ -80,6 +94,7 @@ const SupplySewingSection = ({ orders, canAdd, onAdd }: SupplySewingSectionProps
                 <TableHead className="text-primary-foreground">Материал</TableHead>
                 <TableHead className="text-primary-foreground">Размер</TableHead>
                 <TableHead className="text-primary-foreground">Этап</TableHead>
+                {canRemove && <TableHead className="text-primary-foreground" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -103,6 +118,25 @@ const SupplySewingSection = ({ orders, canAdd, onAdd }: SupplySewingSectionProps
                       <Badge className={statusStyle[o.sewingStatus] || ''}>{o.sewingStatus}</Badge>
                     )}
                   </TableCell>
+                  {/* Убрать можно только нетронутое: «Новый» (никто не брал в
+                      работу) и «Со склада» (вещь просто вернётся на полку).
+                      Раскроенное и сшитое не трогаем — ткань уже потрачена,
+                      работа сделана и оплачена. */}
+                  {canRemove && (
+                    <TableCell className="w-10">
+                      {(o.sewingStatus === 'Новый' || o.sewingStatus === 'Со склада') && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          title="Убрать товар из состава поставки"
+                          onClick={() => onRemove?.(o)}
+                        >
+                          <Icon name="Trash2" size={14} />
+                        </Button>
+                      )}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

@@ -307,9 +307,14 @@ const MarketplaceOrders = () => {
   const DONE_STAGES = ['Готовые', 'Со склада'];
   const matchesStatus = (o: Order): boolean => {
     // Отменяют заказ на любом этапе, и sewingStatus при этом остаётся прежним
-    // («Новый», «Готовые», «Со склада»). Признак отмены — только поле status,
-    // поэтому проверяем его первым и до всех остальных условий.
-    const cancelled = o.status === 'Отменён' || o.sewingStatus === 'Отменён';
+    // («Новый», «Готовые», «Со склада»), поэтому проверяем отмену первой.
+    //
+    // isCancelled считает сервер: отмену видит МАРКЕТПЛЕЙС, и у каждой площадки
+    // своё слово для неё (ozon_status='cancelled', ym_status='...CANCELLED'), а наш
+    // собственный status при этом не меняется вовсе. Раньше здесь смотрели только
+    // на наш status — и вкладка «Отменённые» показывала 149 заказов вместо 1416.
+    const cancelled =
+      !!o.isCancelled || o.status === 'Отменён' || o.sewingStatus === 'Отменён';
     if (statusFilter === 'cancelled') return cancelled;
     if (cancelled) return false;
     if (statusFilter === 'new') return o.sewingStatus === 'Новый';
