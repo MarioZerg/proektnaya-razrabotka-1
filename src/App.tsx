@@ -76,9 +76,8 @@ const Kiosk = lazy(() => import("./pages/Kiosk"));
 const Contracts = lazy(() => import("./pages/Contracts"));
 const PrivacyPolicy = lazy(() => import("./pages/legal/PrivacyPolicy"));
 const PersonalDataConsent = lazy(() => import("./pages/legal/PersonalDataConsent"));
-const RollShortageAnalysis = lazy(() => import("./pages/analytics/RollShortageAnalysis"));
+const MaterialAnalysis = lazy(() => import("./pages/analytics/MaterialAnalysis"));
 const ReturnsAnalysis = lazy(() => import("./pages/analytics/ReturnsAnalysis"));
-const DefectAnalysis = lazy(() => import("./pages/analytics/DefectAnalysis"));
 const ProductCost = lazy(() => import("./pages/analytics/ProductCost"));
 const UnitEconomics = lazy(() => import("./pages/analytics/UnitEconomics"));
 const Promotion = lazy(() => import("./pages/analytics/Promotion"));
@@ -121,9 +120,12 @@ const App = () => (
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/chat" element={<Chat />} />
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
-            <Route path="/crm/analytics/roll-shortage" element={<RollShortageAnalysis />} />
+            <Route path="/crm/analytics/material" element={<MaterialAnalysis />} />
+            {/* Старые адреса ведут на объединённую страницу: на них есть ссылки
+                в уведомлениях и закладках сотрудников. */}
+            <Route path="/crm/analytics/roll-shortage" element={<MaterialAnalysis />} />
+            <Route path="/crm/analytics/defects" element={<MaterialAnalysis />} />
             <Route path="/crm/analytics/returns" element={<ReturnsAnalysis />} />
-            <Route path="/crm/analytics/defects" element={<DefectAnalysis />} />
             <Route path="/crm/analytics/product-cost" element={<ProductCost />} />
             <Route path="/crm/analytics/unit-economics" element={<UnitEconomics />} />
             <Route path="/crm/analytics/promotion" element={<Promotion />} />

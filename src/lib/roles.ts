@@ -368,9 +368,10 @@ const adminNav: NavItem[] = [
       // со склада товара, инструкции собраны в отдельном разделе «Инструкции».
       { label: 'Приём брака из цеха', path: '/crm/inventory/defect-receive' },
       { label: 'Рулоны', path: '/crm/inventory/rolls' },
-      { label: 'Анализ недостач', path: '/crm/analytics/roll-shortage' },
+      // Недостачи и брак — один вопрос «куда девается материал», поэтому и
+      // страница одна: порознь эти цифры связать глазами невозможно.
+      { label: 'Анализ сырья', path: '/crm/analytics/material' },
       { label: 'Анализ возвратов', path: '/crm/analytics/returns' },
-      { label: 'Анализ брака', path: '/crm/analytics/defects' },
     ],
   },
   {

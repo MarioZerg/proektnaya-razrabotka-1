@@ -414,6 +414,113 @@ export interface ShortageRoll {
   penaltyTotal: number | null;
 }
 
+/**
+ * Сигнал по сотруднику — то, ради чего отчёт и делался.
+ *
+ * Система сама ищет закономерности, которые глазами в таблице не выцепить:
+ * брак не оформляют вовсе, списывают полотном вместо обрезков, недостача
+ * кратно выше, чем у коллег на той же работе.
+ */
+export interface MaterialSignal {
+  kind: 'no_defects' | 'big_pieces' | 'rare_big' | 'shortage_high';
+  text: string;
+}
+
+/** Строка сотрудника в анализе сырья: недостача и брак рядом. */
+export interface MaterialPerson {
+  userId?: number;
+  userName: string;
+  role: string | null;
+  shifts: number;
+  rollsClosed: number;
+  shortageQty: number;
+  shortagePercent: number;
+  shortageMoney: number;
+  /** Сколько рулонов админ списал на поставщика: деньги не удержаны. */
+  forgivenRolls: number;
+  defectCount: number;
+  defectQty: number;
+  defectAvgPiece: number;
+  defectMaxPiece: number;
+  /** Списаний кусками от 5 — это уже не обрезки. */
+  bigPieces: number;
+  defectMoney: number;
+  defectDays: number;
+  signals: MaterialSignal[];
+}
+
+/** Материал: где теряем больше всего — и на недостаче, и на браке. */
+export interface MaterialLossRow {
+  materialId: number;
+  material: string;
+  unit: string;
+  rollsClosed: number;
+  shortageQty: number;
+  shortagePercent: number;
+  shortageMoney: number;
+  defectQty: number;
+  defectMoney: number;
+}
+
+/** День, когда у человека брака кратно больше его обычного. */
+export interface MaterialSpike {
+  userName: string;
+  date: string;
+  count: number;
+  quantity: number;
+  maxPiece: number;
+}
+
+export interface MaterialAnalysis {
+  people: MaterialPerson[];
+  byMaterial: MaterialLossRow[];
+  spikes: MaterialSpike[];
+  totals: {
+    shortageQty: number;
+    shortageMoney: number;
+    defectQty: number;
+    defectMoney: number;
+    rollsClosed: number;
+    signalsCount: number;
+  };
+}
+
+/**
+ * Анализ сырья: недостачи и брак в одном отчёте.
+ *
+ * Раньше это были две страницы, и связать их глазами было невозможно. А связь
+ * прямая: кто не оформляет брак — у того высокая недостача (обрезки ушли молча),
+ * и наоборот. По отдельности обе картины выглядят нормально, вместе — видны.
+ */
+export const fetchMaterialAnalysis = async (params?: {
+  from?: string;
+  to?: string;
+  role?: string;
+  workshop?: string;
+}): Promise<MaterialAnalysis> => {
+  const qs = new URLSearchParams({ material_analysis: '1' });
+  if (params?.from) qs.set('from', params.from);
+  if (params?.to) qs.set('to', params.to);
+  if (params?.role) qs.set('role', params.role);
+  if (params?.workshop) qs.set('workshop', params.workshop);
+  const res = await fetch(`${ROLLS_URL}?${qs.toString()}`);
+  if (!res.ok) throw new Error('Не удалось загрузить анализ сырья');
+  const data = await res.json();
+  return {
+    people: data.people || [],
+    byMaterial: data.byMaterial || [],
+    spikes: data.spikes || [],
+    totals: data.totals || {
+      shortageQty: 0,
+      shortageMoney: 0,
+      defectQty: 0,
+      defectMoney: 0,
+      rollsClosed: 0,
+      signalsCount: 0,
+    },
+  };
+};
+
 export const fetchShortageStats = async (params?: {
   from?: string;
   to?: string;

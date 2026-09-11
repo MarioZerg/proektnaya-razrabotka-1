@@ -388,6 +388,317 @@ def handler(event: dict, context) -> dict:
         status = params.get('status')
         roll_id = params.get('id')
 
+        # ЕДИНЫЙ ОТЧЁТ «АНАЛИЗ СЫРЬЯ»: НЕДОСТАЧИ И БРАК В ОДНОМ МЕСТЕ.
+        #
+        # Раньше это были две отдельные страницы, и в этом была главная беда: они
+        # отвечают на один вопрос — «куда девается материал» — но смотреть их
+        # приходилось порознь, а связать глазами невозможно.
+        #
+        # А связь тут прямая и денежная. Закройщица, которая не оформляет брак,
+        # получает высокую недостачу: обрезки ушли молча, и в отчёте это выглядит
+        # как «не хватило ткани». И наоборот: кто-то списывает в брак огромные
+        # куски, и у него недостача идеальная — потери просто переехали в другую
+        # графу. По отдельности обе картины выглядят нормально, вместе — видны.
+        #
+        # Поэтому отчёт считает по КАЖДОМУ сотруднику обе цифры сразу и ищет
+        # закономерности, которые человек глазами не выцепит:
+        #   • брак не оформляет вовсе, а недостача есть — обрезки выбрасывают молча;
+        #   • списывает кусками по 20-30 м — это не обрезки, а полотно;
+        #   • всплески: в один день брака больше, чем обычно за неделю;
+        #   • недостача сильно выше, чем у коллег на той же работе.
+        if params.get('material_analysis'):
+            date_from = (params.get('from') or '').strip()
+            date_to = (params.get('to') or '').strip()
+            role_filter = (params.get('role') or '').strip()
+            workshop_filter = (params.get('workshop') or '').strip()
+
+            def _period(field):
+                """Условие периода для конкретной таблицы."""
+                out = []
+                if date_from:
+                    out.append(f"{field} >= '{date_from.replace(chr(39), chr(39)*2)}'")
+                if date_to:
+                    out.append(
+                        f"{field} < ('{date_to.replace(chr(39), chr(39)*2)}'::date + 1)"
+                    )
+                return out
+
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+
+                # --- НЕДОСТАЧИ ПО СОТРУДНИКАМ ---
+                #
+                # Недостача — остаток, который числился на рулоне, но в изделия не
+                # ушёл. Считаем по факту закрытия, а не по числу, которое вписала
+                # сотрудница: его почти никогда не заполняют.
+                sh_where = ["r.status = 'completed'", "r.initial_quantity > 0",
+                            "r.completed_at IS NOT NULL"]
+                sh_where += _period('r.completed_at')
+                if workshop_filter:
+                    sh_where.append(f"r.workshop_id = {int(workshop_filter)}")
+                sh_sql = "COALESCE(r.remaining_at_close, r.shortage_quantity, 0)"
+                cur.execute(
+                    "SELECT r.closed_by_user_id, COALESCE(r.closed_by_name, 'Не указан'), "
+                    "  COUNT(*), "
+                    f"  COALESCE(SUM({sh_sql}), 0), "
+                    f"  COALESCE(AVG({sh_sql} / r.initial_quantity * 100), 0), "
+                    f"  COALESCE(SUM({sh_sql} * COALESCE(r.cost_per_unit, 0)), 0), "
+                    # Сколько рулонов администратор списал на поставщика: деньги не
+                    # удержаны, но материал всё равно потерян — факт остаётся.
+                    "  COUNT(*) FILTER (WHERE r.penalty_total = 0) "
+                    "FROM rolls r "
+                    f"WHERE {' AND '.join(sh_where)} "
+                    "GROUP BY r.closed_by_user_id, r.closed_by_name"
+                )
+                shortage_rows = cur.fetchall()
+
+                # --- БРАК ПО СОТРУДНИКАМ ---
+                d_where = ['1=1'] + _period('d.created_at')
+                if role_filter:
+                    d_where.append(
+                        "d.user_role = '" + role_filter.replace("'", "''") + "'"
+                    )
+                if workshop_filter:
+                    d_where.append(f"d.workshop_id = {int(workshop_filter)}")
+                cur.execute(
+                    "SELECT d.user_id, COALESCE(d.user_name, 'Не указан'), d.user_role, "
+                    "  COUNT(*), COALESCE(SUM(d.quantity), 0), "
+                    "  COALESCE(AVG(d.quantity), 0), COALESCE(MAX(d.quantity), 0), "
+                    # Крупные куски: от 5 метров это уже не обрезок, а полотно.
+                    "  COUNT(*) FILTER (WHERE d.quantity >= 5), "
+                    "  COALESCE(SUM(d.quantity * COALESCE(r.cost_per_unit, 0)), 0), "
+                    "  COUNT(DISTINCT d.created_at::date) "
+                    "FROM material_defects d "
+                    "LEFT JOIN rolls r ON r.id = d.roll_id "
+                    f"WHERE {' AND '.join(d_where)} "
+                    "GROUP BY d.user_id, d.user_name, d.user_role"
+                )
+                defect_rows = cur.fetchall()
+
+                # --- ВСПЛЕСКИ: ДЕНЬ, КОГДА БРАКА КРАТНО БОЛЬШЕ ОБЫЧНОГО ---
+                #
+                # Разовый крупный кусок сам по себе ни о чём не говорит — бывает
+                # брак полотна. Важно другое: у человека день выбивается из его же
+                # обычного поведения. Такие дни показываем отдельно, с цифрами.
+                cur.execute(
+                    "SELECT user_name, day, cnt, qty, max_piece FROM ("
+                    "  SELECT COALESCE(d.user_name, 'Не указан') AS user_name, "
+                    "    d.created_at::date AS day, COUNT(*) AS cnt, "
+                    "    SUM(d.quantity) AS qty, MAX(d.quantity) AS max_piece, "
+                    "    AVG(SUM(d.quantity)) OVER (PARTITION BY d.user_name) AS avg_day "
+                    "  FROM material_defects d "
+                    f"  WHERE {' AND '.join(d_where)} "
+                    "  GROUP BY d.user_name, d.created_at::date"
+                    ") t "
+                    # Всплеск = день вдвое тяжелее среднего дня этого же человека
+                    # и не меньше 10 метров: мелочь разбирать незачем.
+                    "WHERE qty > avg_day * 2 AND qty >= 10 "
+                    "ORDER BY qty DESC LIMIT 30"
+                )
+                spikes = [
+                    {
+                        'userName': r[0],
+                        'date': r[1].isoformat(),
+                        'count': int(r[2]),
+                        'quantity': round(float(r[3] or 0), 2),
+                        'maxPiece': round(float(r[4] or 0), 2),
+                    }
+                    for r in cur.fetchall()
+                ]
+
+                # --- КТО ВООБЩЕ РАБОТАЛ В ПЕРИОД ---
+                #
+                # Нужны, чтобы найти тех, у кого брака нет ВОВСЕ. Пустая строка у
+                # работавшего человека — это не идеальная работа, а необорудованный
+                # брак: обрезки есть у всех.
+                w_where = ["u.is_active", "u.contract_terminated_at IS NULL",
+                           "u.role IN ('sewer', 'cutter', 'packer')"]
+                if role_filter:
+                    w_where.append("u.role = '" + role_filter.replace("'", "''") + "'")
+                cur.execute(
+                    "SELECT u.id, u.full_name, u.role, "
+                    "  (SELECT COUNT(*) FROM shift_sessions s WHERE s.user_id = u.id"
+                    + (f" AND s.opened_at >= '{date_from}'" if date_from else "")
+                    + (f" AND s.opened_at < ('{date_to}'::date + 1)" if date_to else "")
+                    + ") AS shifts "
+                    "FROM users u "
+                    f"WHERE {' AND '.join(w_where)}"
+                )
+                workers = cur.fetchall()
+
+                # --- СВОДИМ ВСЁ ПО ЧЕЛОВЕКУ ---
+                people = {}
+
+                def _slot(name):
+                    if name not in people:
+                        people[name] = {
+                            'userName': name, 'role': None, 'shifts': 0,
+                            'rollsClosed': 0, 'shortageQty': 0.0, 'shortagePercent': 0.0,
+                            'shortageMoney': 0.0, 'forgivenRolls': 0,
+                            'defectCount': 0, 'defectQty': 0.0, 'defectAvgPiece': 0.0,
+                            'defectMaxPiece': 0.0, 'bigPieces': 0, 'defectMoney': 0.0,
+                            'defectDays': 0, 'signals': [],
+                        }
+                    return people[name]
+
+                for uid, name, role, shifts in workers:
+                    p = _slot(name)
+                    p['userId'] = uid
+                    p['role'] = role
+                    p['shifts'] = int(shifts or 0)
+
+                for uid, name, cnt, qty, pct, money, forgiven in shortage_rows:
+                    p = _slot(name)
+                    p['rollsClosed'] = int(cnt)
+                    p['shortageQty'] = round(float(qty or 0), 2)
+                    p['shortagePercent'] = round(float(pct or 0), 2)
+                    p['shortageMoney'] = round(float(money or 0), 2)
+                    p['forgivenRolls'] = int(forgiven or 0)
+
+                for (uid, name, role, cnt, qty, avg_p, max_p,
+                     big, money, days) in defect_rows:
+                    p = _slot(name)
+                    if role and not p['role']:
+                        p['role'] = role
+                    p['defectCount'] = int(cnt)
+                    p['defectQty'] = round(float(qty or 0), 2)
+                    p['defectAvgPiece'] = round(float(avg_p or 0), 2)
+                    p['defectMaxPiece'] = round(float(max_p or 0), 2)
+                    p['bigPieces'] = int(big or 0)
+                    p['defectMoney'] = round(float(money or 0), 2)
+                    p['defectDays'] = int(days or 0)
+
+                # --- СИГНАЛЫ: ТО, РАДИ ЧЕГО ОТЧЁТ И ДЕЛАЛСЯ ---
+                #
+                # Считаем средние по цеху отдельно для каждой должности: сравнивать
+                # закройщицу со швеёй бессмысленно — у них разная работа с тканью.
+                for role in ('cutter', 'sewer', 'packer'):
+                    peers = [p for p in people.values()
+                             if p['role'] == role and p['rollsClosed'] > 0]
+                    if len(peers) < 2:
+                        continue
+                    avg_short = sum(p['shortagePercent'] for p in peers) / len(peers)
+                    for p in peers:
+                        # Недостача заметно выше, чем у коллег на той же работе.
+                        if avg_short > 0 and p['shortagePercent'] > avg_short * 1.5:
+                            p['signals'].append({
+                                'kind': 'shortage_high',
+                                'text': f'Недостача {p["shortagePercent"]:.1f}% — '
+                                        f'в {p["shortagePercent"] / avg_short:.1f} раза выше '
+                                        f'среднего по должности ({avg_short:.1f}%)',
+                            })
+
+                for p in people.values():
+                    # Работал, недостача есть, а брак не оформлял ни разу.
+                    if (p['shifts'] > 0 and p['defectCount'] == 0
+                            and p['shortageQty'] > 0):
+                        p['signals'].append({
+                            'kind': 'no_defects',
+                            'text': f'Ни одной записи о браке за период, '
+                                    f'при этом недостача {p["shortageQty"]:.1f}. '
+                                    f'Похоже, обрезки выбрасывают молча',
+                        })
+                    # Списывает не обрезки, а полотно.
+                    if p['defectMaxPiece'] >= 15:
+                        p['signals'].append({
+                            'kind': 'big_pieces',
+                            'text': f'Куски до {p["defectMaxPiece"]:.1f} — это уже не '
+                                    f'обрезки, а полотно. Крупных кусков: {p["bigPieces"]}',
+                        })
+                    elif p['bigPieces'] >= 3:
+                        p['signals'].append({
+                            'kind': 'big_pieces',
+                            'text': f'{p["bigPieces"]} списаний кусками от 5 — '
+                                    f'стоит посмотреть, что это за брак',
+                        })
+                    # Брак оформляют редко, но помногу: копят и списывают разом.
+                    if p['defectCount'] > 0 and p['defectAvgPiece'] >= 8:
+                        p['signals'].append({
+                            'kind': 'rare_big',
+                            'text': f'Средний кусок {p["defectAvgPiece"]:.1f} при '
+                                    f'{p["defectCount"]} записях — списывают редко '
+                                    f'и помногу',
+                        })
+
+                # ФИЛЬТР ПО ДОЛЖНОСТИ ПРИМЕНЯЕМ К ИТОГОВОМУ СПИСКУ.
+                #
+                # У недостачи должности нет: рулон закрывает кто угодно, и в
+                # rolls.closed_by_name лежит только имя. Поэтому фильтр по роли
+                # отсекал брак, но недостачи пропускал — при выборе «закройщики»
+                # в таблицу попадали швеи. Роль знаем уже после сборки строк,
+                # здесь и отсекаем.
+                rows = [
+                    p for p in people.values()
+                    if not role_filter or p['role'] == role_filter
+                ]
+                rows = sorted(
+                    rows,
+                    key=lambda p: p['shortageMoney'] + p['defectMoney'],
+                    reverse=True,
+                )
+
+                # --- ПО МАТЕРИАЛАМ: ГДЕ ТЕРЯЕМ БОЛЬШЕ ВСЕГО ---
+                cur.execute(
+                    "SELECT m.id, m.name, m.unit, COUNT(*), "
+                    f"  COALESCE(SUM({sh_sql}), 0), "
+                    f"  COALESCE(AVG({sh_sql} / r.initial_quantity * 100), 0), "
+                    f"  COALESCE(SUM({sh_sql} * COALESCE(r.cost_per_unit, 0)), 0) "
+                    "FROM rolls r JOIN materials m ON m.id = r.material_id "
+                    f"WHERE {' AND '.join(sh_where)} "
+                    "GROUP BY m.id, m.name, m.unit ORDER BY 7 DESC"
+                )
+                by_material = [
+                    {
+                        'materialId': r[0], 'material': r[1], 'unit': r[2],
+                        'rollsClosed': int(r[3]),
+                        'shortageQty': round(float(r[4] or 0), 2),
+                        'shortagePercent': round(float(r[5] or 0), 2),
+                        'shortageMoney': round(float(r[6] or 0), 2),
+                        'defectQty': 0.0, 'defectMoney': 0.0,
+                    }
+                    for r in cur.fetchall()
+                ]
+                # Брак по тем же материалам — подмешиваем в те же строки.
+                cur.execute(
+                    "SELECT d.material_id, COALESCE(SUM(d.quantity), 0), "
+                    "  COALESCE(SUM(d.quantity * COALESCE(r.cost_per_unit, 0)), 0) "
+                    "FROM material_defects d "
+                    "LEFT JOIN rolls r ON r.id = d.roll_id "
+                    f"WHERE {' AND '.join(d_where)} "
+                    "GROUP BY d.material_id"
+                )
+                defect_by_mat = {
+                    r[0]: (float(r[1] or 0), float(r[2] or 0)) for r in cur.fetchall()
+                }
+                for m in by_material:
+                    got = defect_by_mat.get(m['materialId'])
+                    if got:
+                        m['defectQty'] = round(got[0], 2)
+                        m['defectMoney'] = round(got[1], 2)
+
+                totals = {
+                    'shortageQty': round(sum(p['shortageQty'] for p in rows), 2),
+                    'shortageMoney': round(sum(p['shortageMoney'] for p in rows), 2),
+                    'defectQty': round(sum(p['defectQty'] for p in rows), 2),
+                    'defectMoney': round(sum(p['defectMoney'] for p in rows), 2),
+                    'rollsClosed': sum(p['rollsClosed'] for p in rows),
+                    'signalsCount': sum(len(p['signals']) for p in rows),
+                }
+            finally:
+                conn.close()
+
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({
+                    'people': rows,
+                    'byMaterial': by_material,
+                    'spikes': spikes,
+                    'totals': totals,
+                }, ensure_ascii=False, default=str),
+            }
+
         # Статистика недостач по закрытым рулонам: сколько метров в среднем «не хватает»
         # в целом рулоне по каждому материалу. Нужна, чтобы за месяц набрать реальные цифры
         # и на их основе задать нормы недостачи. Пока никого не штрафуем — только считаем.
@@ -2337,7 +2648,7 @@ def handler(event: dict, context) -> dict:
                         # рулона (удержать с сотрудницы или списать на поставщика).
                         # Раньше здесь стоял несуществующий адрес /crm/warehouse/rolls,
                         # и кнопка «Открыть» в уведомлении вела на страницу 404.
-                        link='/crm/analytics/roll-shortage',
+                        link='/crm/analytics/material',
                         entity_type='roll', entity_id=int(item_id),
                     )
 
