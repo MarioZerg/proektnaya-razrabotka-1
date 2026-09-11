@@ -25,88 +25,86 @@
       "expectedStatus": 200
     },
     {
-      "name": "Manual accrual without userId fails",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "manual_accrual"
-      },
-      "expectedStatus": 400
-    },
-    {
-      "name": "Penalty without userId fails",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "penalty"
-      },
-      "expectedStatus": 400
-    },
-    {
-      "name": "Delete accrual without id fails",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "delete_accrual"
-      },
-      "expectedStatus": 400
-    },
-    {
-      "name": "Payout without userId fails",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "payout"
-      },
-      "expectedStatus": 400
-    },
-    {
-      "name": "Update rate without id fails",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "update_rate"
-      },
-      "expectedStatus": 400
-    },
-    {
       "name": "Get cash box",
       "method": "GET",
       "path": "/?cashBox=1",
       "expectedStatus": 200
     },
     {
-      "name": "Update accrual without id fails",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "update_accrual"
-      },
-      "expectedStatus": 400
-    },
-    {
-      "name": "Delete payout without id fails",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "delete_payout"
-      },
-      "expectedStatus": 400
-    },
-    {
-      "name": "Cash deposit without amount fails",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "cash_deposit"
-      },
-      "expectedStatus": 400
-    },
-    {
       "name": "Get missed accruals",
       "method": "GET",
       "path": "/?missedAccruals=1",
       "expectedStatus": 200
+    },
+    {
+      "name": "Ручное начисление без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "manual_accrual" },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Штраф без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "penalty" },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Удаление начисления без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "delete_accrual", "id": 1 },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Чужой actorId в теле не даёт удалить начисление",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "delete_accrual", "id": 1, "actorId": 10, "actorName": "Андрей" },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Отмена штрафа без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "cancel_penalty", "id": 1, "reason": "подмена" },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Выплата без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "payout" },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Пополнение кассы без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "cash_deposit", "amount": 100000 },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Правка ставки без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "update_rate" },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Правка начисления без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "update_accrual" },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Удаление выплаты без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "delete_payout" },
+      "expectedStatus": 401
     }
   ]
 }

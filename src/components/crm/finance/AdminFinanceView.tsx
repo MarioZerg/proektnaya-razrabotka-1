@@ -37,6 +37,8 @@ interface AdminFinanceViewProps {
   filteredTotal: number;
   onDeleteAccrual: (id: number) => Promise<void>;
   onEditAccrual: (id: number, amount: number, description: string) => Promise<void>;
+  /** Перечитать начисления: после отмены штрафа появляется строка возврата. */
+  onReload: () => void;
   totalToAccrue: number;
   totalDebts: number;
   totalPenalties: number;
@@ -81,6 +83,7 @@ const AdminFinanceView = ({
   filteredTotal,
   onDeleteAccrual,
   onEditAccrual,
+  onReload,
   totalToAccrue,
   totalDebts,
   totalPenalties,
@@ -132,6 +135,7 @@ const AdminFinanceView = ({
           filteredTotal={filteredTotal}
           onDeleteAccrual={onDeleteAccrual}
           onEditAccrual={onEditAccrual}
+          onReload={onReload}
         />
 
         <div className="space-y-6 lg:col-span-1">

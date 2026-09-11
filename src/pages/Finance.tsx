@@ -374,6 +374,7 @@ const Finance = () => {
       filteredTotal={filteredTotal}
       onDeleteAccrual={handleDeleteAccrual}
       onEditAccrual={handleEditAccrual}
+      onReload={loadOperations}
       totalToAccrue={totalToAccrue}
       totalDebts={totalDebts}
       totalPenalties={totalPenalties}

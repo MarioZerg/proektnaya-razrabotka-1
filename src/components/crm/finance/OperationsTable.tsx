@@ -22,6 +22,7 @@ import {
 } from '@/components/crm/finance/financeShared';
 import EditAccrualDialog from '@/components/crm/finance/EditAccrualDialog';
 import ConfirmDeleteButton from '@/components/crm/finance/ConfirmDeleteButton';
+import CancelPenaltyDialog from '@/components/crm/finance/CancelPenaltyDialog';
 
 interface OperationsTableProps {
   operations: SalaryOperation[];
@@ -32,6 +33,8 @@ interface OperationsTableProps {
   savingAccrual: boolean;
   onDelete: (id: number) => void;
   onEdit: (id: number, amount: number, description: string) => Promise<void>;
+  /** Перезагрузить список после отмены штрафа. */
+  onReload: () => void;
 }
 
 const OperationsTable = ({
@@ -43,6 +46,7 @@ const OperationsTable = ({
   savingAccrual,
   onDelete,
   onEdit,
+  onReload,
 }: OperationsTableProps) => {
   return (
     <div className="space-y-4">
@@ -120,6 +124,21 @@ const OperationsTable = ({
                   />
                 </div>
               )}
+
+              {/* Выплаченный штраф удалить нельзя — деньги уже удержаны. Но отменить
+                  его можно: сумма вернётся сотруднику отдельным начислением. */}
+              {!!op.paidAt && (op.type === 'penalty' || op.type === 'deduction') && (
+                <div className="mt-2 flex items-center gap-1 border-t border-border pt-2">
+                  <CancelPenaltyDialog
+                    id={op.id}
+                    userName={op.userName}
+                    amount={op.amount}
+                    description={op.description}
+                    onDone={onReload}
+                  />
+                  <span className="text-xs text-muted-foreground">Отменить штраф</span>
+                </div>
+              )}
             </div>
           ))
         )}
@@ -194,7 +213,7 @@ const OperationsTable = ({
                   <TableCell className="whitespace-nowrap">{formatDateTime(op.createdAt)}</TableCell>
                   <TableCell className="whitespace-nowrap">{op.paidAt ? formatDateTime(op.paidAt) : '—'}</TableCell>
                   <TableCell>
-                    {!op.paidAt && (
+                    {!op.paidAt ? (
                       <div className="flex items-center">
                         <EditAccrualDialog operation={op} saving={savingAccrual} onSubmit={onEdit} />
                         <ConfirmDeleteButton
@@ -203,6 +222,18 @@ const OperationsTable = ({
                           onConfirm={() => onDelete(op.id)}
                         />
                       </div>
+                    ) : (
+                      // Выплаченный штраф удалить нельзя (деньги удержаны), но можно
+                      // отменить — сумма вернётся сотруднику отдельным начислением.
+                      (op.type === 'penalty' || op.type === 'deduction') && (
+                        <CancelPenaltyDialog
+                          id={op.id}
+                          userName={op.userName}
+                          amount={op.amount}
+                          description={op.description}
+                          onDone={onReload}
+                        />
+                      )
                     )}
                   </TableCell>
                 </TableRow>

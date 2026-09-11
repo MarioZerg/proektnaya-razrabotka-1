@@ -28,6 +28,8 @@ interface AdminOperationsPanelProps {
   filteredTotal: number;
   onDeleteAccrual: (id: number) => Promise<void>;
   onEditAccrual: (id: number, amount: number, description: string) => Promise<void>;
+  /** Перечитать начисления: после отмены штрафа появляется строка возврата. */
+  onReload: () => void;
 }
 
 /**
@@ -61,6 +63,7 @@ const AdminOperationsPanel = ({
   filteredTotal,
   onDeleteAccrual,
   onEditAccrual,
+  onReload,
 }: AdminOperationsPanelProps) => (
   <div className="space-y-4 lg:col-span-3">
     <FinanceToolbar
@@ -104,6 +107,7 @@ const AdminOperationsPanel = ({
       savingAccrual={savingAccrual}
       onDelete={onDeleteAccrual}
       onEdit={onEditAccrual}
+      onReload={onReload}
     />
   </div>
 );

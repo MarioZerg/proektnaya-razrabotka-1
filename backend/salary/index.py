@@ -4,6 +4,12 @@ from datetime import date, timedelta
 
 import psycopg2
 
+from authz import (
+    AuthError,
+    auth_error_response,
+    require_admin,
+)
+
 # Бонусная программа швей: сколько метров нужно сдать на стикеровку за календарный
 # месяц и сколько за это платим. Первый расчётный период — сентябрь 2026.
 BONUS_METERS_TARGET = 5000
@@ -907,6 +913,20 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
+            # ДЕНЬГИ — ТОЛЬКО АДМИНИСТРАТОРУ.
+            #
+            # Здесь живут штрафы, ручные начисления, выплаты и касса. Проверки прав
+            # не было вообще: исполнитель приходил в теле запроса (actorId), а его
+            # сотрудник задаёт сам. Любой вошедший мог из консоли браузера удалить
+            # свой штраф, начислить себе премию или опустошить кассу — кнопки на
+            # экране этому не мешают, запрос отправляется мимо них.
+            #
+            # Имя для журнала тоже берём из ключа сессии: под записью «удалил штраф»
+            # должно стоять имя того, кто реально нажал кнопку.
+            admin = require_admin(cur, event)
+            actor_id = admin['realUserId']
+            actor_name = admin['name']
+
             if action == 'dismiss_missed_accrual':
                 # Крестик на предупреждении «работа без начисления».
                 #
@@ -1231,7 +1251,18 @@ def handler(event: dict, context) -> dict:
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Начисление не найдено'})}
                 if row[0] is not None:
-                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Нельзя удалить уже выплаченное начисление'})}
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Начисление уже выплачено — удалить его нельзя, '
+                                     'иначе разойдётся выплаченная сумма. '
+                                     'Штраф можно отменить: сотруднику вернётся сумма '
+                                     'отдельным начислением',
+                            # Фронт по этому признаку предлагает отмену вместо удаления.
+                            'canCancel': True,
+                        }, ensure_ascii=False),
+                    }
 
                 cur.execute("DELETE FROM salary_accruals WHERE id = %s", (int(accrual_id),))
                 log_action(
@@ -1240,6 +1271,127 @@ def handler(event: dict, context) -> dict:
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'cancel_penalty':
+                """Отмена ВЫПЛАЧЕННОГО штрафа — возвратом денег сотруднику.
+
+                ЗАЧЕМ. Удалить выплаченный штраф нельзя: он уже вычтен из выплаты,
+                деньги на руках, и если стереть строку — расчётный лист разойдётся
+                с кассой, а в истории выплат появится сумма, которой неоткуда взяться.
+
+                Но отменять штрафы приходится: разобрались, что виноват поставщик, а
+                не закройщица; ошиблись суммой; наказали не того человека. Раньше
+                выхода не было вовсе — кнопка удаления у выплаченных штрафов просто
+                не показывалась, и админ упирался в стену.
+
+                Поэтому не стираем прошлое, а исправляем его открыто: начисляем
+                сотруднику ту же сумму обратно. Штраф остаётся в истории с пометкой
+                «отменён», возврат идёт отдельной строкой — видно и что наказали, и
+                что отменили, и кто это сделал.
+                """
+                accrual_id = body_data.get('id')
+                reason = (body_data.get('reason') or '').strip()
+                if not accrual_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите штраф'}, ensure_ascii=False)}
+                if not reason:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Укажите причину отмены — она останется '
+                                          'в расчётном листе сотрудника'},
+                                ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT a.user_id, a.type, a.amount, a.description, a.paid_at, "
+                    "       u.full_name "
+                    "FROM salary_accruals a "
+                    "LEFT JOIN users u ON u.id = a.user_id "
+                    "WHERE a.id = %s FOR UPDATE OF a",
+                    (int(accrual_id),),
+                )
+                p_row = cur.fetchone()
+                if not p_row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Штраф не найден'}, ensure_ascii=False)}
+                p_user_id, p_type, p_amount, p_desc, p_paid_at, p_user_name = p_row
+
+                # Отменяем только наказания. Отменить сдельную оплату за сшитую вещь
+                # этой кнопкой нельзя — для ошибок в начислениях есть правка суммы.
+                if p_type not in ('penalty', 'deduction'):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Отменять можно только штрафы и удержания'},
+                                ensure_ascii=False)}
+
+                p_amount = float(p_amount or 0)
+                if p_amount >= 0:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'У этого штрафа нет удержанной суммы'},
+                                ensure_ascii=False)}
+
+                # Невыплаченный штраф отменять не надо — его можно просто удалить,
+                # деньги ещё не ушли. Иначе получилось бы два действия с одним смыслом
+                # и лишняя строка возврата в расчётном листе.
+                if p_paid_at is None:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Штраф ещё не выплачен — его нужно удалить, '
+                                          'а не отменять: деньги пока не удержаны'},
+                                ensure_ascii=False)}
+
+                # Повторную отмену не даём: иначе сотруднику вернули бы деньги дважды.
+                cur.execute(
+                    "SELECT 1 FROM salary_accruals "
+                    "WHERE type = 'penalty_refund' AND user_id = %s "
+                    "  AND description LIKE %s LIMIT 1",
+                    (int(p_user_id), f'%#{int(accrual_id)}:%'),
+                )
+                if cur.fetchone():
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Этот штраф уже отменён — деньги сотруднику '
+                                          'возвращены'},
+                                ensure_ascii=False)}
+
+                refund = abs(p_amount)
+                # В описании возврата храним номер исходного штрафа: по нему видно,
+                # что именно отменили, и он же защищает от повторной отмены.
+                refund_desc = (
+                    f'Отмена штрафа #{int(accrual_id)}: {p_desc or "без описания"}. '
+                    f'Причина отмены: {reason}'
+                )
+                cur.execute(
+                    "INSERT INTO salary_accruals (user_id, type, amount, description, "
+                    "  accrued_for, created_by) "
+                    "VALUES (%s, 'penalty_refund', %s, %s, CURRENT_DATE, %s) RETURNING id",
+                    (int(p_user_id), refund, refund_desc, int(actor_id) if actor_id else None),
+                )
+                refund_id = cur.fetchone()[0]
+
+                # Сам штраф оставляем в истории, но помечаем отменённым: расчётный
+                # лист прошлого периода не должен задним числом меняться.
+                cur.execute(
+                    "UPDATE salary_accruals SET description = %s WHERE id = %s",
+                    (f'[ОТМЕНЁН] {p_desc or ""}'.strip(), int(accrual_id)),
+                )
+
+                log_action(
+                    cur, actor_id, actor_name, 'cancel_penalty', 'salary_accrual', accrual_id,
+                    f'Отменил штраф #{accrual_id} сотруднику {p_user_name or p_user_id} '
+                    f'на {refund:.2f} ₽. Причина: {reason}. '
+                    f'Возврат начислен строкой #{refund_id}',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'refundId': refund_id,
+                        'amount': refund,
+                    }, ensure_ascii=False),
+                }
 
             if action == 'payout_preview':
                 # Сколько выйдет к выплате за выбранный период — до нажатия
@@ -1609,6 +1761,11 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
+        except AuthError as err:
+            # Не вошёл или не администратор — отвечаем человеческим текстом,
+            # а не сырой ошибкой сервера.
+            conn.rollback()
+            return auth_error_response(err, headers)
         finally:
             conn.close()
 

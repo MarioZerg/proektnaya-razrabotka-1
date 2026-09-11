@@ -220,6 +220,23 @@ export const createDeduction = (payload: {
 export const deleteAccrual = (id: number, actorId?: number, actorName?: string) =>
   postAction({ action: 'delete_accrual', id, actorId, actorName });
 
+/**
+ * Отменить УЖЕ ВЫПЛАЧЕННЫЙ штраф — возвратом денег сотруднику.
+ *
+ * Удалить такой штраф нельзя: он вычтен из выплаты, деньги на руках, и стирание
+ * строки развалило бы расчётный лист. Поэтому прошлое не переписываем, а
+ * исправляем открыто: сумма возвращается отдельным начислением, сам штраф
+ * остаётся в истории с пометкой «отменён».
+ *
+ * Причина обязательна — она попадёт в расчётный лист сотрудника.
+ */
+export const cancelPenalty = (id: number, reason: string) =>
+  postAction({ action: 'cancel_penalty', id, reason }) as Promise<{
+    success: true;
+    refundId: number;
+    amount: number;
+  }>;
+
 export const updateAccrual = (payload: {
   id: number;
   amount: number;
