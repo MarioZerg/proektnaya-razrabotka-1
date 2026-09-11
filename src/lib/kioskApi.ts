@@ -1,3 +1,5 @@
+import { setAuthToken } from '@/lib/authToken';
+
 const KIOSK_URL = 'https://functions.poehali.dev/646f604e-57e9-47fb-b2ca-dd424abfba48';
 
 export interface KioskOrder {
@@ -268,7 +270,7 @@ export interface KioskShift {
 /** Вход на терминал по личному QR-коду сотрудника (формат "{id}-{смена}-{дата}"). */
 export const kioskLoginByCode = async (
   code: string
-): Promise<{ user: KioskUser; shift: KioskShift }> => {
+): Promise<{ user: KioskUser; shift: KioskShift; token?: string }> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -278,6 +280,12 @@ export const kioskLoginByCode = async (
   if (!res.ok) {
     throw new Error(data.error || 'Не удалось войти');
   }
+  // КЛЮЧ СЕССИИ СОХРАНЯЕМ СРАЗУ.
+  //
+  // Все действия с материалом сервер разрешает только по этому ключу. Раньше вход
+  // по бейджу его не выдавал, и на закрытии рулона терминал отвечал «Войдите в
+  // систему заново» — рулоны тесьмы в цехе не закрывались вообще.
+  if (data.token) setAuthToken(data.token);
   return data;
 };
 

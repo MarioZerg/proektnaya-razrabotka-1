@@ -1251,6 +1251,49 @@ def handler(event: dict, context) -> dict:
                     )
                     order_ids = sorted({r[0] for r in cur.fetchall()} | set(order_ids))
 
+                # ОТПРАВЛЕНИЯ ОДНОЙ ПОКУПКИ OZON — ОДНОМУ ЗАКРОЙЩИКУ.
+                #
+                # Покупатель OZON заказал две одинаковые шторы — приходят два
+                # РАЗНЫХ отправления: 87011164-0186-1 и 87011164-0186-3. У каждого
+                # свой ярлык, отгружаются они порознь, поэтому связкой Яндекса (одна
+                # вешалка, один ярлык) их делать нельзя — это сломало бы отгрузку.
+                #
+                # Но и разъезжаться по разным закройщикам они не должны. Именно так
+                # вышло 11.09: «-3» попал в стек, «-1» добрали отдельной кнопкой
+                # через 12 минут. Обе вещи — Лен 300×255, обе легли на вешалку 1,
+                # различить их можно было только по бирке, которой у одной не было.
+                # Швеи и закройщицы час искали, где чей крой.
+                #
+                # Поэтому добираем в тот же стек остальные отправления этой покупки:
+                # закройщик получает их разом, видит на листе «ОДНА ПОКУПКА 1/2» и
+                # вешает на разные вешалки, зная, что вещи похожи.
+                # В режиме «Взять 1 заказ» добор не делаем: закройщица берёт ровно
+                # одну вещь под остаток ткани, и лишние ей сейчас не нужны. Бирку на
+                # такую вещь терминал печатает сразу — этого достаточно.
+                if order_ids and not first_group_key and not single_mode:
+                    ids_for_siblings = ','.join(str(int(i)) for i in order_ids)
+                    cur.execute(
+                        "SELECT id FROM orders WHERE sewing_status = 'Новый' "
+                        "AND fulfilled_from_stock_id IS NULL "
+                        "AND COALESCE(status, '') <> 'Отменён' "
+                        "AND marketplace = 'OZON' "
+                        "AND ozon_posting_number IS NOT NULL "
+                        "AND material IN (" + names_csv + ") "
+                        # Префикс отправления — номер покупки без хвоста «-1», «-3».
+                        "AND regexp_replace(ozon_posting_number, '-[0-9]+$', '') IN ("
+                        "  SELECT regexp_replace(ozon_posting_number, '-[0-9]+$', '') "
+                        "  FROM orders WHERE id IN (" + ids_for_siblings + ") "
+                        "    AND marketplace = 'OZON' AND ozon_posting_number IS NOT NULL) "
+                        f"AND id NOT IN ({ids_for_siblings}) "
+                        # Предохранитель от аномалии: покупка на сотню отправлений не
+                        # должна одна забить весь стек закройщика.
+                        "LIMIT 20 "
+                        "FOR UPDATE SKIP LOCKED"
+                    )
+                    siblings = [r[0] for r in cur.fetchall()]
+                    if siblings:
+                        order_ids = sorted(set(order_ids) | set(siblings))
+
                     # Связку отдаём закройщику ТОЛЬКО если тюля в его цехе хватит на ВСЕ её
                     # вещи. Заказ покупателя раскраивается по принципу «всё или ничего»:
                     # если материал кончится на середине, связка застрянет разорванной —
@@ -1355,13 +1398,39 @@ def handler(event: dict, context) -> dict:
                     f"SELECT o.id, o.order_number, o.order_type, o.marketplace, o.material, "
                     f"o.width, o.height, o.group_key, o.group_size, o.group_position, "
                     f"COALESCE((SELECT m.requires_overlock FROM materials m "
-                    f"          WHERE m.name = o.material LIMIT 1), false) "
+                    f"          WHERE m.name = o.material LIMIT 1), false), "
+                    # НОМЕР ПОКУПКИ OZON и сколько её отправлений в этом стеке.
+                    #
+                    # Два отправления одной покупки — это часто две ОДИНАКОВЫЕ вещи
+                    # (Лен 300×255 и Лен 300×255). На вешалке их не различить, и
+                    # закройщица должна видеть это заранее, на бумаге: вещи похожи,
+                    # бирки путать нельзя. Отгружаются они порознь, каждая по своему
+                    # ярлыку, поэтому это НЕ связка Яндекса — вешать вместе не надо.
+                    f"CASE WHEN o.marketplace = 'OZON' AND o.ozon_posting_number IS NOT NULL "
+                    f"     THEN regexp_replace(o.ozon_posting_number, '-[0-9]+$', '') END "
                     f"FROM orders o WHERE o.id IN ({ids_csv}) "
                     f"ORDER BY o.material, o.group_key NULLS FIRST, "
                     f"         o.group_position NULLS LAST, o.id"
                 )
-                taken_orders = [
-                    {
+                raw_taken = cur.fetchall()
+                # Считаем, сколько отправлений каждой покупки OZON попало в стек:
+                # метку печатаем только когда их два и больше — одиночному заказу
+                # предупреждать не о чем.
+                purchase_counts = {}
+                for r in raw_taken:
+                    if r[11]:
+                        purchase_counts[r[11]] = purchase_counts.get(r[11], 0) + 1
+                purchase_seen = {}
+
+                taken_orders = []
+                for r in raw_taken:
+                    purchase = r[11]
+                    total = purchase_counts.get(purchase, 0) if purchase else 0
+                    position = None
+                    if purchase and total > 1:
+                        position = purchase_seen.get(purchase, 0) + 1
+                        purchase_seen[purchase] = position
+                    taken_orders.append({
                         'id': r[0],
                         'orderNumber': r[1],
                         'orderType': r[2],
@@ -1376,9 +1445,13 @@ def handler(event: dict, context) -> dict:
                         'groupPosition': r[9],
                         # Ткань с осыпающимся краем — на листе печатается «ОВЕРЛОК».
                         'requiresOverlock': bool(r[10]),
-                    }
-                    for r in cur.fetchall()
-                ]
+                        # Отправления одной покупки OZON: вещи часто одинаковые, на
+                        # вешалке их не различить. Отгружаются порознь — вешать вместе
+                        # НЕ надо, но бирки путать нельзя.
+                        'purchaseKey': purchase if total > 1 else None,
+                        'purchaseSize': total if total > 1 else None,
+                        'purchasePosition': position,
+                    })
 
                 conn.commit()
                 return {
@@ -3127,6 +3200,49 @@ def handler(event: dict, context) -> dict:
                     )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'log_print_sheet':
+                """Отмечает в журнале, что лист закройщика распечатан.
+
+                ЗАЧЕМ. Бирка с номером заказа — единственное, чем крой отличается от
+                такого же куска ткани рядом. Когда вещь теряется на вешалке, первый
+                вопрос: печаталась ли на неё бирка вообще? Раньше ответа не было
+                нигде — факт печати нигде не сохранялся, и разбор случая с заказом
+                87011164-0186-1 занял час гаданий по косвенным признакам.
+
+                Теперь в журнале остаётся запись: кто, когда и на какие заказы
+                распечатал лист. Это не мешает работе: не записалось — печать всё
+                равно идёт, лист важнее журнала.
+                """
+                order_ids = body_data.get('orderIds') or []
+                kind = (body_data.get('kind') or 'stack').strip()
+                if not order_ids:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Нечего записывать'},
+                                               ensure_ascii=False)}
+
+                ids = [int(i) for i in order_ids if str(i).isdigit()][:200]
+                if not ids:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Неверные заказы'},
+                                               ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT order_number FROM orders WHERE id IN ("
+                    + ','.join(str(i) for i in ids) + ") ORDER BY id"
+                )
+                numbers = [r[0] for r in cur.fetchall() if r[0]]
+                what = ('бирку на добранный заказ' if kind == 'single'
+                        else f'лист на {len(ids)} заказов')
+                log_action(
+                    cur, actor_id, actor_name, 'print_cutting_sheet', 'order', None,
+                    f'Распечатал {what}: ' + ', '.join(numbers[:30])
+                    + ('…' if len(numbers) > 30 else ''),
+                    {'orderIds': ids, 'kind': kind},
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True})}
 
             if action == 'cancel_order':
                 item_id = body_data.get('id')

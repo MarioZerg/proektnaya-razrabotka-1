@@ -17,9 +17,17 @@ const workedFor = (openedAt: string, now: number) => {
   return h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
 };
 
-/** «17:20» из ISO-времени. */
+/** «17:20» из ISO-времени — всегда по Москве.
+ *
+ * Без указания пояса бралось время устройства: на планшете с чужими настройками
+ * смена показывалась открытой не в тот час, и это расходилось с отчётами.
+ * Производство живёт по московскому времени. */
 const atTime = (iso: string) =>
-  new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  new Date(iso).toLocaleTimeString('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Moscow',
+  });
 
 /** «08:00» из «08:00:00». */
 const shortTime = (t?: string | null) => (t ? t.slice(0, 5) : null);

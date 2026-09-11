@@ -38,12 +38,29 @@ const CELL_HEIGHT_PX = 79;
 // ячейке и наезжал на QR — казалось, что надпись сдвинута вправо и висит криво.
 const QR_SIZE_PX = 64;
 
-const formatToday = () => {
-  const d = new Date();
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `${dd}/${mm}/${d.getFullYear()}`;
-};
+/** Дата листа — всегда московская.
+ *
+ * Раньше брали дату устройства: планшет в цехе с чужим часовым поясом или
+ * неверными настройками печатал вчерашнее число, и листы за смену расходились
+ * с отчётами. Производство живёт по московскому времени — его и печатаем. */
+const MSK_TZ = 'Europe/Moscow';
+
+const formatToday = () =>
+  new Date().toLocaleDateString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: MSK_TZ,
+  });
+
+/** Время печати листа (МСК) — по нему видно, когда закройщица взяла работу.
+ * Нужно при разборе: на вешалке лежат крои с разных листов одной смены. */
+const formatNowTime = () =>
+  new Date().toLocaleTimeString('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: MSK_TZ,
+  });
 
 /** Группирует заказы по материалу, сохраняя порядок первого появления материала. Внутри
  * материала вещи одной связки Яндекса идут подряд и по порядку — их вешают на одну вешалку,
@@ -74,6 +91,26 @@ const groupNote = (o: TakenOrder) =>
     : '';
 
 /**
+ * Метка «ОДНА ПОКУПКА» — отправления одного покупателя OZON.
+ *
+ * Покупатель заказал две одинаковые шторы: приходят два РАЗНЫХ отправления со
+ * своими ярлыками. Отгружаются они порознь, поэтому вешать их вместе, как связку
+ * Яндекса, нельзя — но вещи одинаковые, и на вешалке их не различить.
+ *
+ * Именно так потерялся заказ 87011164-0186-1: два одинаковых Лена 300×255 из одной
+ * покупки легли на вешалку 1, и швеи час выясняли, где чей крой. Метка предупреждает
+ * закройщицу заранее: вещи похожи, бирки путать нельзя.
+ */
+const purchaseNote = (o: TakenOrder) =>
+  o.purchaseSize && o.purchaseSize > 1
+    ? `<div style="margin-top:1px;font-size:10px;font-weight:900;white-space:nowrap;
+                   line-height:1.15;border:2px solid #000;border-radius:2px;
+                   padding:0 3px;display:inline-block;">1 ПОКУПАТЕЛЬ ${
+                     o.purchasePosition
+                   }/${o.purchaseSize} — НЕ ПУТАТЬ</div>`
+    : '';
+
+/**
  * Метка «ОВЕРЛОК» на листе закройщика.
  *
  * Такую вещь после раскроя вешают не в общую очередь на прямострочку, а в очередь
@@ -96,6 +133,14 @@ const chunk = <T,>(arr: T[], size: number): T[][] => {
 };
 
 const sizeLabel = (o: TakenOrder) => `${o.material || '—'} ${o.width ?? '—'} × ${o.height ?? '—'}`;
+
+/** Есть ли у позиции подпись под номером (связка или покупка OZON).
+ *
+ * Подпись занимает строку, и при полном кегле она не влезает в ячейку — текст
+ * обрезается ровно посередине предупреждения. Поэтому в таких позициях печатаем
+ * размер и номер помельче: предупреждение важнее лишних двух пунктов кегля. */
+const hasNote = (o: TakenOrder) =>
+  !!(o.groupSize && o.groupSize > 1) || !!(o.purchaseSize && o.purchaseSize > 1);
 
 /** Размер шрифта под длину строки: «Мрамор 300 × 250» длиннее «Лен 200 × 245» и при
  * одинаковом кегле переносится на вторую строку, съедая место у номера заказа.
@@ -197,24 +242,50 @@ const buildChecklistPageHtml = (
          </div>
        </div>`
     : '';
+
+  // Сводка покупок OZON: два отправления одного покупателя — это, как правило, две
+  // ОДИНАКОВЫЕ вещи. Отгружаются они порознь (у каждой свой ярлык), поэтому вешать
+  // надо на РАЗНЫЕ вешалки, а бирки не перепутать. Предупреждаем сверху, чтобы
+  // закройщица увидела это до раскроя, а не искала потом вещь на вешалке.
+  const purchaseCounts = new Map<string, number>();
+  for (const o of pageOrders) {
+    if (o.purchaseKey && o.purchaseSize && o.purchaseSize > 1) {
+      purchaseCounts.set(o.purchaseKey, (purchaseCounts.get(o.purchaseKey) || 0) + 1);
+    }
+  }
+  const purchasesBanner = purchaseCounts.size
+    ? `<div style="border:3px solid #000;padding:5px 10px;margin-bottom:6px;font-weight:800;">
+         <div style="font-size:15px;">ОДИН ПОКУПАТЕЛЬ — НЕСКОЛЬКО ВЕЩЕЙ. ВЕЩИ ПОХОЖИ,
+           БИРКИ НЕ ПУТАТЬ, ВЕШАТЬ НА РАЗНЫЕ ВЕШАЛКИ</div>
+         <div style="font-size:12px;margin-top:2px;">
+           ${Array.from(purchaseCounts.entries())
+             .map(([key, cnt]) => `${key} — ${cnt} шт.`)
+             .join(' &nbsp;·&nbsp; ')}
+         </div>
+       </div>`
+    : '';
+
   const header = `
     <div style="display:flex;justify-content:space-between;align-items:stretch;margin-bottom:8px;">
       <div style="border:2px solid #000;padding:4px 12px;font-size:16px;font-weight:800;">${cutterName}</div>
-      <div style="border:2px solid #000;padding:4px 12px;font-size:16px;font-weight:800;">${date}</div>
-    </div>` + groupsBanner;
+      <div style="border:2px solid #000;padding:4px 12px;font-size:16px;font-weight:800;">
+        ${date} ${formatNowTime()}
+      </div>
+    </div>` + groupsBanner + purchasesBanner;
   const grid = groupedGrid(
     pageOrders,
     (o) => `
       <div style="padding:4px 10px;text-align:center;display:flex;flex-direction:column;
                   justify-content:center;height:100%;box-sizing:border-box;">
-        <div style="font-size:${sizeFont(o, o.groupSize && o.groupSize > 1 ? 20 : 23)}px;
+        <div style="font-size:${sizeFont(o, hasNote(o) ? 19 : 23)}px;
                     font-weight:800;line-height:1.05;white-space:nowrap;">${sizeLabel(o)}</div>
-        <div style="font-size:${numberFont(o, o.groupSize && o.groupSize > 1 ? 20 : 23)}px;
+        <div style="font-size:${numberFont(o, hasNote(o) ? 19 : 23)}px;
                     font-weight:800;margin-top:2px;letter-spacing:0.3px;white-space:nowrap;
                     line-height:1.1;">${o.orderNumber}</div>
-        <div style="font-size:${o.groupSize && o.groupSize > 1 ? 9 : 11}px;font-weight:700;
+        <div style="font-size:${hasNote(o) ? 9 : 11}px;font-weight:700;
                     color:#222;margin-top:1px;line-height:1;">${o.marketplace}</div>
         ${groupNote(o)}
+        ${purchaseNote(o)}
         ${overlockNote(o)}
       </div>`,
     cutterId
@@ -244,6 +315,7 @@ const buildQrPageHtml = (
           ${o.marketplace} [${o.orderType}]
         </div>
         ${groupNote(o)}
+        ${purchaseNote(o)}
         ${overlockNote(o)}
       </div>`,
     cutterId

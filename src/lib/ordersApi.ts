@@ -262,6 +262,19 @@ export interface TakenOrder {
   groupPosition?: number | null;
   /** Ткань с осыпающимся краем: на листе закройщика печатается метка «ОВЕРЛОК». */
   requiresOverlock?: boolean;
+  /**
+   * ОТПРАВЛЕНИЯ ОДНОЙ ПОКУПКИ OZON.
+   *
+   * Покупатель заказал две одинаковые шторы — приходят два разных отправления
+   * («…-0186-1» и «…-0186-3») со своими ярлыками. Отгружаются они ПОРОЗНЬ,
+   * поэтому это не связка Яндекса: вешать на одну вешалку не нужно.
+   *
+   * Но вещи часто одинаковые, и на вешалке их не различить — закройщица должна
+   * видеть это на листе, чтобы не перепутать бирки.
+   */
+  purchaseKey?: string | null;
+  purchaseSize?: number | null;
+  purchasePosition?: number | null;
 }
 
 export interface TakeStackResult {
@@ -359,3 +372,22 @@ export const overlockDone = (
 ) => postAction({ action: 'overlock_done', id, next, actorId });
 
 export const cancelOrder = (id: number) => postAction({ action: 'cancel_order', id });
+
+/**
+ * Отметить в журнале, что лист закройщика распечатан.
+ *
+ * Бирка с номером — единственное, чем крой отличается от такого же куска ткани
+ * рядом. Когда вещь теряется на вешалке, первый вопрос: печаталась ли бирка? Без
+ * этой записи ответа нет нигде, и разбор превращается в гадание.
+ *
+ * Печати не мешает: ошибку глушим — лист важнее журнала.
+ */
+export const logPrintSheet = (
+  orderIds: number[],
+  kind: 'stack' | 'single',
+  actorId?: number,
+  actorName?: string,
+) =>
+  postAction({ action: 'log_print_sheet', orderIds, kind, actorId, actorName }).catch(
+    () => undefined,
+  );

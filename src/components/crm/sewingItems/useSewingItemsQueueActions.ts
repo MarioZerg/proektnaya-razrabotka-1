@@ -4,6 +4,7 @@ import {
   takeStack,
   takeOrder,
   fetchSewingWaits,
+  logPrintSheet,
   type SewingStatus,
   type TakenOrder,
 } from '@/lib/ordersApi';
@@ -52,6 +53,8 @@ interface UseSewingItemsQueueActionsArgs {
   ordersLoading: boolean;
   /** Швея ли смотрит страницу — только ей нужен отсчёт до следующего заказа. */
   isSewer?: boolean;
+  /** Включена ли печать бирок в цехе. Выключена — не печатаем и добор. */
+  printEnabled?: boolean;
 }
 
 /** Действия закройщика (взять стек заказов + распечатать задание) и швеи (получить новый
@@ -69,6 +72,7 @@ export const useSewingItemsQueueActions = ({
   unfinishedOrders,
   ordersLoading,
   isSewer = false,
+  printEnabled = true,
 }: UseSewingItemsQueueActionsArgs) => {
   const { toast } = useToast();
 
@@ -196,8 +200,34 @@ export const useSewingItemsQueueActions = ({
       toast({ title: `Взято в работу заказов: ${res.count}` });
       setActiveTab('На раскрое');
       load();
-      setLastTakenStack(res.orders);
-      saveStoredStack(userId, res.orders);
+
+      if (single) {
+        // ДОБРАННЫЙ ЗАКАЗ ПЕЧАТАЕМ СРАЗУ, НЕ ТРОГАЯ ОБЩИЙ СТЕК.
+        //
+        // Лист печатают один раз — сразу после «Взять стек». Заказ, добранный
+        // кнопкой «Взять 1 заказ» позже, в тот лист не попадал, и бирки на него
+        // не было вовсе: крой уходил в цех голым куском ткани.
+        //
+        // Так потерялся заказ 87011164-0186-1: его добрали отдельно, раскроили
+        // через 5 минут и повесили на ту же вешалку, где уже висела такая же
+        // вещь из этой покупки. Швея различить их не могла, а закройщицы не
+        // находили номер на своих листах — его там и не было.
+        //
+        // Сохранённый стек при этом НЕ перезаписываем ни при каких условиях:
+        // иначе кнопка «Распечатать задание» начала бы печатать один добранный
+        // заказ вместо всего стека, который ещё не раскроен.
+        if (res.orders.length > 0 && printEnabled) {
+          printCuttingSheet(res.orders, userName || '', userId ?? null);
+          logPrintSheet(res.orders.map((o) => o.id), 'single', userId, userName);
+          toast({
+            title: 'Печатаем бирку на добранный заказ',
+            description: 'Прикрепите её к крою — без бирки вещь не отличить на вешалке',
+          });
+        }
+      } else {
+        setLastTakenStack(res.orders);
+        saveStoredStack(userId, res.orders);
+      }
     } catch (e) {
       toast({
         title: single ? 'Не удалось взять заказ' : 'Не удалось взять стек',
@@ -218,6 +248,9 @@ export const useSewingItemsQueueActions = ({
     // ID закройщика (внутренний id пользователя) печатается на листе — по нему швея находит
     // крои закройщика на вешалках в цехе.
     printCuttingSheet(toPrint, userName || '', userId ?? null);
+    // След в журнале: кто и на какие заказы напечатал лист. По нему потом видно,
+    // была ли у потерявшейся вещи бирка вообще.
+    logPrintSheet(toPrint.map((o) => o.id), 'stack', userId, userName);
   };
 
   const handleTakeOrder = async () => {

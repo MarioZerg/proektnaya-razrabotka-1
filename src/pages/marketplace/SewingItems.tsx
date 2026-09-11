@@ -150,6 +150,7 @@ const SewingItems = () => {
     unfinishedOrders: myUnfinishedOrders,
     ordersLoading: loading,
     isSewer,
+    printEnabled: printQrCuttingEnabled,
   });
 
   return (

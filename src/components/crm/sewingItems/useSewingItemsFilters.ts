@@ -199,9 +199,41 @@ export const useSewingItemsFilters = ({
   // Нераскроенные заказы закройщика — и число, и сами заказы. По ним печатается лист
   // задания, поэтому важно брать их с сервера, а не из памяти браузера: планшет могли
   // сменить, вкладку открыть заново, кэш очистить — а лист всё равно нужен.
-  const myUnfinishedOrders = orders.filter(
+  const myUnfinishedOrdersRaw = orders.filter(
     (o) => o.sewingStatus === 'На раскрое' && o.assignedUserId === userId
   );
+
+  // ОТПРАВЛЕНИЯ ОДНОЙ ПОКУПКИ OZON помечаем и здесь.
+  //
+  // Лист можно распечатать не только сразу после взятия стека, но и позже кнопкой
+  // «Распечатать задание» — тогда заказы берутся из общего списка, где готовой
+  // метки нет. Считаем её тут по номеру отправления: «87011164-0186-1» и
+  // «87011164-0186-3» — одна покупка, вещи в ней часто одинаковые.
+  const purchaseOf = (o: Order): string | null =>
+    o.marketplace === 'OZON' && o.ozonPostingNumber
+      ? o.ozonPostingNumber.replace(/-\d+$/, '')
+      : null;
+
+  const purchaseTotals = myUnfinishedOrdersRaw.reduce<Record<string, number>>((acc, o) => {
+    const key = purchaseOf(o);
+    if (key) acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const purchaseSeen: Record<string, number> = {};
+  const myUnfinishedOrders = myUnfinishedOrdersRaw.map((o) => {
+    const key = purchaseOf(o);
+    const total = key ? purchaseTotals[key] : 0;
+    if (!key || total < 2) return o;
+    purchaseSeen[key] = (purchaseSeen[key] || 0) + 1;
+    return {
+      ...o,
+      purchaseKey: key,
+      purchaseSize: total,
+      purchasePosition: purchaseSeen[key],
+    };
+  });
+
   const myUnfinishedCount = myUnfinishedOrders.length;
 
   const myInWorkCount = orders.filter(
