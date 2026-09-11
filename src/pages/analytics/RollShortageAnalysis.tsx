@@ -74,8 +74,10 @@ const RollShortageAnalysis = () => {
         <div>
           <h1 className="text-2xl font-bold">Анализ недостач по рулонам</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Сбор статистики: сколько ткани в среднем не хватает в целом рулоне. Пока никто не
-            штрафуется — копим данные, чтобы задать справедливые нормы.
+            Недостача — метраж, который числился на рулоне, но в изделия не ушёл.
+            Считается по факту на момент закрытия, а не по цифре, которую вписала
+            сотрудница. Рулоны, списанные на поставщика, тоже здесь: деньги с них не
+            удержаны, но материал всё равно потерян.
           </p>
         </div>
 
@@ -173,7 +175,7 @@ const RollShortageAnalysis = () => {
                 <TableBody>
                   {byMaterial.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                         {loading ? 'Загрузка…' : 'Закрытых рулонов за период нет'}
                       </TableCell>
                     </TableRow>
@@ -246,12 +248,13 @@ const RollShortageAnalysis = () => {
                     <TableHead>Закрыл</TableHead>
                     <TableHead>Дата</TableHead>
                     <TableHead className="text-right">Потери</TableHead>
+                    <TableHead>Решение</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rolls.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                         {loading ? 'Загрузка…' : 'Закрытых рулонов за период нет'}
                       </TableCell>
                     </TableRow>
@@ -283,6 +286,22 @@ const RollShortageAnalysis = () => {
                         <TableCell>{r.closedBy || '—'}</TableCell>
                         <TableCell>{formatDate(r.completedAt)}</TableCell>
                         <TableCell className="text-right">{money(r.cost)}</TableCell>
+                        {/* Решение администратора. Списание на поставщика снимает
+                            деньги, но недостача остаётся в статистике: метры всё
+                            равно не ушли в изделия, и по человеку это видно. */}
+                        <TableCell>
+                          {r.penaltyTotal == null ? (
+                            <span className="text-muted-foreground">не разобран</span>
+                          ) : r.penaltyTotal > 0 ? (
+                            <Badge variant="secondary" className="bg-red-100 text-red-700 hover:bg-red-100">
+                              удержано {money(r.penaltyTotal)}
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary" className="bg-slate-100 text-slate-700 hover:bg-slate-100">
+                              на поставщика
+                            </Badge>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))
                   )}

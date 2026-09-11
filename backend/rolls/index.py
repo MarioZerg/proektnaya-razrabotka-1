@@ -635,9 +635,33 @@ def handler(event: dict, context) -> dict:
             }
 
         if params.get('shortage_stats'):
+            # ЧТО ЗДЕСЬ СЧИТАЕТСЯ НЕДОСТАЧЕЙ.
+            #
+            # Недостача — это метраж, который числился на рулоне, но в изделия не
+            # ушёл. То есть ОСТАТОК НА МОМЕНТ ЗАКРЫТИЯ (remaining_at_close), а не
+            # цифра, которую сотрудница вписала в поле «недостача» на терминале.
+            #
+            # Раньше страница считала строго по введённому числу — и была пустой.
+            # За сентябрь заявленная недостача равна нулю КАЖДЫЙ день: швеи просто
+            # жмут «закрыть», не заполняя поле. При этом фактически в никуда ушло
+            # 1487 метров за один день 11 сентября. Вся аналитика показывала нули,
+            # хотя материал терялся.
+            #
+            # Та же формула уже используется в расчёте штрафа (calc_shortage_penalty)
+            # — теперь страница и деньги считают одинаково, а не расходятся.
+            #
+            # Заявленное число сохраняем отдельной колонкой: это пояснение
+            # сотрудницы (сколько, по её мнению, недомотал поставщик), полезное
+            # для сверки, но не основание для цифр.
+            shortage_sql = "COALESCE(r.remaining_at_close, r.shortage_quantity, 0)"
+
             date_from = (params.get('from') or '').strip()
             date_to = (params.get('to') or '').strip()
             where = ["r.status = 'completed'", "r.initial_quantity > 0"]
+            # Рулоны без даты закрытия — наследие переноса данных: по ним неизвестно
+            # ни когда закрыли, ни кто. В аналитике они создавали 1684 пустые строки
+            # с нулями, из-за которых таблица выглядела сломанной.
+            where.append("r.completed_at IS NOT NULL")
             if date_from:
                 where.append(f"r.completed_at >= '{date_from.replace(chr(39), chr(39)*2)}'")
             if date_to:
@@ -660,16 +684,16 @@ def handler(event: dict, context) -> dict:
                     "SELECT m.id, m.name, m.unit, COALESCE(AVG(NULLIF(r.cost_per_unit, 0)), 0), "
                     "m.shortage_norm_percent, "
                     "COUNT(*), "
-                    "COALESCE(SUM(r.shortage_quantity), 0), "
-                    "COALESCE(AVG(r.shortage_quantity / r.initial_quantity * 100), 0), "
-                    "COALESCE(MAX(r.shortage_quantity / r.initial_quantity * 100), 0), "
-                    "COUNT(*) FILTER (WHERE r.shortage_quantity > 0), "
-                    "COALESCE(SUM(r.shortage_quantity * COALESCE(r.cost_per_unit, 0)), 0), "
+                    f"COALESCE(SUM({shortage_sql}), 0), "
+                    f"COALESCE(AVG({shortage_sql} / r.initial_quantity * 100), 0), "
+                    f"COALESCE(MAX({shortage_sql} / r.initial_quantity * 100), 0), "
+                    f"COUNT(*) FILTER (WHERE {shortage_sql} > 0), "
+                    f"COALESCE(SUM({shortage_sql} * COALESCE(r.cost_per_unit, 0)), 0), "
                     "COALESCE(AVG(NULLIF(r.cost_per_unit, 0)), 0) "
                     "FROM rolls r JOIN materials m ON m.id = r.material_id "
                     f"WHERE {where_sql} "
                     "GROUP BY m.id, m.name, m.unit, m.shortage_norm_percent "
-                    "ORDER BY 8 DESC"
+                    "ORDER BY 11 DESC"
                 )
                 by_material = [
                     {
@@ -695,13 +719,13 @@ def handler(event: dict, context) -> dict:
                 # на списание, когда нормы будут введены.
                 cur.execute(
                     "SELECT r.closed_by_user_id, COALESCE(r.closed_by_name, 'Не указан'), "
-                    "COUNT(*), COALESCE(SUM(r.shortage_quantity), 0), "
-                    "COALESCE(AVG(r.shortage_quantity / r.initial_quantity * 100), 0), "
-                    "COALESCE(SUM(r.shortage_quantity * COALESCE(r.cost_per_unit, 0)), 0) "
+                    f"COUNT(*), COALESCE(SUM({shortage_sql}), 0), "
+                    f"COALESCE(AVG({shortage_sql} / r.initial_quantity * 100), 0), "
+                    f"COALESCE(SUM({shortage_sql} * COALESCE(r.cost_per_unit, 0)), 0) "
                     "FROM rolls r JOIN materials m ON m.id = r.material_id "
                     f"WHERE {where_sql} "
                     "GROUP BY r.closed_by_user_id, r.closed_by_name "
-                    "ORDER BY 5 DESC"
+                    "ORDER BY 6 DESC"
                 )
                 by_user = [
                     {
@@ -718,13 +742,18 @@ def handler(event: dict, context) -> dict:
                 # Полный список закрытых рулонов — чтобы можно было посмотреть каждый случай.
                 cur.execute(
                     "SELECT r.id, r.barcode, m.name, m.unit, r.initial_quantity, "
-                    "r.shortage_quantity, "
+                    f"{shortage_sql}, "
                     "CASE WHEN r.initial_quantity > 0 "
-                    "THEN r.shortage_quantity / r.initial_quantity * 100 ELSE 0 END, "
+                    f"THEN {shortage_sql} / r.initial_quantity * 100 ELSE 0 END, "
                     "COALESCE(r.closed_by_name, ''), r.completed_at, "
                     # Себестоимость именно этого рулона: раньше здесь бралась общая цена
                     # материала, из-за чего детализация расходилась с итоговой суммой.
-                    "r.shortage_quantity * COALESCE(r.cost_per_unit, 0) "
+                    f"{shortage_sql} * COALESCE(r.cost_per_unit, 0), "
+                    # Что вписала сотрудница руками — для сверки с фактом.
+                    "COALESCE(r.shortage_quantity, 0), "
+                    # Решение администратора: NULL — ещё не разбирал, 0 — списал на
+                    # поставщика, больше нуля — удержал с сотрудницы.
+                    "r.penalty_total "
                     "FROM rolls r JOIN materials m ON m.id = r.material_id "
                     f"WHERE {where_sql} "
                     "ORDER BY r.completed_at DESC LIMIT 500"
@@ -741,6 +770,10 @@ def handler(event: dict, context) -> dict:
                         'closedBy': row[7],
                         'completedAt': (row[8].isoformat() + 'Z') if row[8] else None,
                         'cost': float(row[9]),
+                        # Сколько недостачи заявила сотрудница на терминале.
+                        'declaredShortage': float(row[10]),
+                        # Решение администратора по рулону. None — не рассматривал.
+                        'penaltyTotal': float(row[11]) if row[11] is not None else None,
                     }
                     for row in cur.fetchall()
                 ]
