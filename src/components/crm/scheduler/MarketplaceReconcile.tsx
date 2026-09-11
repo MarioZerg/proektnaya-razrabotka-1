@@ -127,7 +127,37 @@ const MarketplaceReconcile = () => {
                         Не доехало: {r.missing} — цех про них не знает
                       </p>
                     ) : (
-                      <p className="text-emerald-700">Всё сходится</p>
+                      // «Всё сходится» только когда и зависших нет: иначе зелёная
+                      // надпись успокаивала бы рядом с жёлтым предупреждением.
+                      !r.stuck && <p className="text-emerald-700">Всё сходится</p>
+                    )}
+
+                    {/* ЗАВИСШИЕ. У нас заказ отгружен, а площадка всё ещё ждёт: для
+                        неё товар не уехал, идёт просрочка и штрафы. Сама система это
+                        не исправит — отправление нужно отгрузить в личном кабинете,
+                        поэтому показываем номера, чтобы их можно было найти. */}
+                    {!!r.stuck && r.stuck > 0 && (
+                      <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2">
+                        <p className="font-bold text-amber-900">
+                          Зависло: {r.stuck} — у нас отгружено, площадка ещё ждёт
+                        </p>
+                        <p className="mt-0.5 text-xs text-amber-800">
+                          Для маркетплейса товар не уехал — идёт просрочка. Отгрузите
+                          эти отправления в личном кабинете
+                        </p>
+                        <ul className="mt-1 space-y-0.5">
+                          {r.stuckOrders?.map((o) => (
+                            <li key={o.posting} className="font-mono-tech text-xs">
+                              {o.posting}
+                              {o.shippedAt && (
+                                <span className="ml-2 font-sans text-muted-foreground">
+                                  у нас с {o.shippedAt}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
                     )}
                   </div>
                 ))}

@@ -99,9 +99,37 @@ def _ozon(cur, creds):
         # по ним кнопка «Догрузить» забирает заказы точечно, не перебирая всю ленту.
         # Больше двадцати в подсказке не нужно — остальное доберёт планировщик.
         missing_numbers = [n for n in nums if n not in have_set]
-        out.append({'title': title, 'onMarketplace': len(nums), 'inSystem': len(have_set),
-                    'missing': len(missing_numbers),
-                    'missingNumbers': missing_numbers[:20]})
+        row = {'title': title, 'onMarketplace': len(nums), 'inSystem': len(have_set),
+               'missing': len(missing_numbers),
+               'missingNumbers': missing_numbers[:20]}
+
+        # ЗАВИСШИЕ: У НАС ОТГРУЖЕНО, А OZON ВСЁ ЕЩЁ ЖДЁТ.
+        #
+        # Сверка ловила только потери в одну сторону — заказ есть на площадке, а у
+        # нас его нет. Обратный случай не видел никто: вещь уехала в коробе, заказ
+        # закрыт как «Отгружен», а на OZON отправление так и висит в «ожидает
+        # отгрузки». Для площадки товар не уехал — идут часы просрочки и штрафы,
+        # а по нашей системе всё в порядке.
+        #
+        # Так потерялось отправление 73591649-0090-1: ушло в коробе 08.09 вместе с
+        # 488 другими, у всех статус сменился, а у него — нет. Заметили случайно,
+        # через три дня. Теперь такие видно сразу и по номерам.
+        if status == 'awaiting_deliver' and nums:
+            cur.execute(
+                "SELECT ozon_posting_number, completed_at::date "
+                "FROM orders "
+                "WHERE ozon_posting_number = ANY(%s) "
+                "  AND status IN ('Отгружен', 'Доставлен') "
+                "  AND cancelled_at IS NULL "
+                "ORDER BY completed_at",
+                (nums,),
+            )
+            stuck = [{'posting': r[0], 'shippedAt': str(r[1] or '')}
+                     for r in cur.fetchall()]
+            row['stuck'] = len(stuck)
+            row['stuckOrders'] = stuck[:20]
+
+        out.append(row)
     return out
 
 

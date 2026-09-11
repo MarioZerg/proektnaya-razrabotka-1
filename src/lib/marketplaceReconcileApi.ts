@@ -9,6 +9,14 @@ export interface ReconcileRow {
   missing: number;
   /** Номера недостающих отправлений — по ним работает точечная догрузка. */
   missingNumbers?: string[];
+  /**
+   * Зависшие: у нас заказ отгружен, а площадка всё ещё ждёт отгрузку.
+   *
+   * Для маркетплейса товар не уехал — идёт просрочка и штрафы, хотя по нашей
+   * системе всё закрыто. Такие заказы надо отгрузить в личном кабинете руками.
+   */
+  stuck?: number;
+  stuckOrders?: { posting: string; shippedAt: string }[];
 }
 
 export interface ReconcileMarketplace {
