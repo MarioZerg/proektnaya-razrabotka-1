@@ -89,6 +89,20 @@
       "expectedStatus": 400
     },
     {
+      "name": "Перемещение рулона без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "move_roll", "id": 1, "target": "storage", "reason": "тест" },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Перемещение рулона чужим actorId не проходит",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "move_roll", "id": 1, "target": "workshop", "workshopId": 1, "shiftNumber": 1, "reason": "подмена", "actorId": 1 },
+      "expectedStatus": 401
+    },
+    {
       "name": "Неизвестное действие отклоняется",
       "method": "POST",
       "path": "/",

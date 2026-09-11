@@ -23,6 +23,28 @@ from authz import (
 ROLLS_LIST_LIMIT = 2000
 
 
+def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description):
+    """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit().
+
+    Перемещения рулона — это движение материала на десятки тысяч рублей, и по нему
+    должен оставаться именной след: кто и когда перевёл рулон со склада в цех или
+    между сменами.
+    """
+    cur.execute(
+        "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, "
+        "  entity_id, description) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            'warehouse',
+            action,
+            entity_type,
+            int(entity_id) if entity_id not in (None, '') else None,
+            description,
+        ),
+    )
+
+
 def notify_admin(cur, kind, title, message, actor_id, actor_name, link=None,
                  entity_type=None, entity_id=None):
     """Кладёт событие на панель администратора.
@@ -1275,6 +1297,149 @@ def handler(event: dict, context) -> dict:
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'move_roll':
+                """Перемещение рулона администратором: вернуть на склад или отдать другой смене.
+
+                ЗАЧЕМ. Рулон уехал в цех, а там он не нужен: смену закрыли, заказ
+                отменили, ткань не подошла. Или наоборот — материал нужен соседней
+                смене, и гонять рулон через склад ради смены цифры в системе глупо:
+                ткань физически лежит в том же цехе, а лишний круг «вернуть — выдать»
+                занимает время кладовщика и плодит записи о движении, которого не было.
+
+                Раньше это правилось только через общее действие update — без проверок,
+                без следа в журнале и без единой причины. Материал на десятки тысяч
+                рублей менял место молча.
+                """
+                mover = require_admin(cur, event)
+                item_id = body_data.get('id')
+                target = (body_data.get('target') or '').strip()
+                reason = (body_data.get('reason') or '').strip()
+
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите рулон'}, ensure_ascii=False)}
+                if target not in ('storage', 'workshop'):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Куда перемещаем: на склад или в смену'},
+                                               ensure_ascii=False)}
+                if not reason:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Укажите причину — иначе в журнале останется '
+                                          'перемещение материала без объяснения'},
+                                ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT r.status, r.workshop_id, r.shift_number, r.barcode, "
+                    "  m.name, w.name "
+                    "FROM rolls r "
+                    "LEFT JOIN materials m ON m.id = r.material_id "
+                    "LEFT JOIN workshops w ON w.id = r.workshop_id "
+                    "WHERE r.id = %s FOR UPDATE OF r",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Рулон не найден'}, ensure_ascii=False)}
+                st, cur_ws, cur_shift, barcode, mat_name, cur_ws_name = row
+
+                # Закрытый рулон не двигаем: его остаток обнулён, недостача посчитана,
+                # а по ней могли уже начислить удержание. Оживлять его перемещением —
+                # значит ломать закрытую статистику.
+                if st == 'completed':
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Рулон закрыт — перемещать его нельзя'},
+                                ensure_ascii=False)}
+
+                if target == 'storage':
+                    if st == 'in_storage':
+                        return {'statusCode': 409, 'headers': headers,
+                                'body': json.dumps({'error': 'Рулон уже на складе'},
+                                                   ensure_ascii=False)}
+                    # Возврат на склад: цех и смену снимаем, приёмку сбрасываем —
+                    # когда рулон снова поедет в цех, его примут заново.
+                    cur.execute(
+                        "UPDATE rolls SET status = 'in_storage', workshop_id = NULL, "
+                        "  shift_number = NULL, accepted_at = NULL WHERE id = %s",
+                        (int(item_id),),
+                    )
+                    log_action(
+                        cur, mover['id'], mover['name'], 'roll_move_to_storage',
+                        'roll', item_id,
+                        f'Вернул рулон {barcode} ({mat_name}) из цеха '
+                        f'{cur_ws_name or "—"} смена {cur_shift or "—"} на склад. '
+                        f'Причина: {reason}',
+                    )
+                    conn.commit()
+                    return {'statusCode': 200, 'headers': headers,
+                            'body': json.dumps({'success': True, 'status': 'in_storage'},
+                                               ensure_ascii=False)}
+
+                # target == 'workshop': выдать цеху/смене или передать между сменами.
+                new_ws = body_data.get('workshopId')
+                new_shift = body_data.get('shiftNumber')
+                if new_ws in (None, '') or new_shift in (None, ''):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите цех и смену'},
+                                               ensure_ascii=False)}
+                new_ws, new_shift = int(new_ws), int(new_shift)
+
+                cur.execute("SELECT name FROM workshops WHERE id = %s", (new_ws,))
+                ws_row = cur.fetchone()
+                if not ws_row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Цех не найден'}, ensure_ascii=False)}
+                new_ws_name = ws_row[0]
+
+                if st == 'in_workshop' and cur_ws == new_ws and cur_shift == new_shift:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': f'Рулон уже в цехе {new_ws_name}, смена {new_shift}'},
+                                ensure_ascii=False)}
+
+                # ПЕРЕДАЧА МЕЖДУ СМЕНАМИ ОДНОГО ЦЕХА — БЕЗ ПОВТОРНОЙ ПРИЁМКИ.
+                #
+                # Рулон физически никуда не едет: он лежит в том же цехе, просто
+                # переходит другой смене. Требовать заново «подтвердите приёмку»
+                # бессмысленно — ткань уже здесь и уже в работе. А вот перевод в
+                # ДРУГОЙ цех означает реальную перевозку, и там приёмку сбрасываем:
+                # рулон должен доехать и его должны взять в руки.
+                same_workshop = st == 'in_workshop' and cur_ws == new_ws
+                accepted_sql = '' if same_workshop else ', accepted_at = NULL'
+                cur.execute(
+                    f"UPDATE rolls SET status = 'in_workshop', workshop_id = %s, "
+                    f"  shift_number = %s{accepted_sql} WHERE id = %s",
+                    (new_ws, new_shift, int(item_id)),
+                )
+
+                if same_workshop:
+                    what = (f'Передал рулон {barcode} ({mat_name}) в цехе {new_ws_name} '
+                            f'со смены {cur_shift or "—"} на смену {new_shift}')
+                elif st == 'in_storage':
+                    what = (f'Выдал рулон {barcode} ({mat_name}) со склада в цех '
+                            f'{new_ws_name}, смена {new_shift}')
+                else:
+                    what = (f'Перевёл рулон {barcode} ({mat_name}) из цеха '
+                            f'{cur_ws_name or "—"} смена {cur_shift or "—"} в цех '
+                            f'{new_ws_name}, смена {new_shift}')
+                log_action(
+                    cur, mover['id'], mover['name'], 'roll_move_to_workshop',
+                    'roll', item_id, f'{what}. Причина: {reason}',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'status': 'in_workshop',
+                        # Приёмка нужна только если рулон реально едет в другой цех.
+                        'needsAccept': not same_workshop,
+                    }, ensure_ascii=False),
+                }
 
             # ПРИЁМКА РУЛОНА СМЕНОЙ.
             #

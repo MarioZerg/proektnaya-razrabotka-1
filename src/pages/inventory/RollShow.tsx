@@ -12,6 +12,8 @@ import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
 import { printBarcodes } from '@/lib/printBarcodes';
 import RollWriteOffDialog from '@/components/crm/rolls/RollWriteOffDialog';
+import RollMoveDialog from '@/components/crm/rolls/RollMoveDialog';
+import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { currencySymbols } from '@/lib/suppliersApi';
 
 const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | 'default' | 'outline' }> = {
@@ -48,6 +50,9 @@ const RollShow = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [writeOffOpen, setWriteOffOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  /** Цеха нужны для выбора смены при перемещении рулона. */
+  const [workshops, setWorkshops] = useState<Workshop[]>([]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -58,6 +63,11 @@ const RollShow = () => {
   }, [rollId]);
 
   useEffect(() => load(), [load]);
+
+  // Список цехов грузим только администратору: перемещать рулон может он один.
+  useEffect(() => {
+    if (isAdmin) fetchWorkshops().then(setWorkshops).catch(() => setWorkshops([]));
+  }, [isAdmin]);
 
   if (loading) {
     return (
@@ -156,7 +166,33 @@ const RollShow = () => {
                 Списать метраж
               </Button>
             )}
+
+            {/* ПЕРЕМЕЩЕНИЕ РУЛОНА. Рулон уехал в цех, а там не нужен — смену
+                закрыли, заказ отменили. Или материал нужен соседней смене: раньше
+                ради этого рулон «возвращали» на склад и тут же выдавали заново,
+                хотя ткань физически не двигалась. Закрытый рулон не трогаем: его
+                остаток обнулён и недостача уже посчитана. */}
+            {isAdmin && roll.status !== 'completed' && (
+              <Button size="sm" variant="outline" onClick={() => setMoveOpen(true)}>
+                <Icon name="ArrowRightLeft" size={14} className="mr-1" />
+                {roll.status === 'in_workshop' ? 'Вернуть или передать' : 'Выдать в цех'}
+              </Button>
+            )}
           </div>
+
+          <RollMoveDialog
+            open={moveOpen}
+            onOpenChange={setMoveOpen}
+            rollId={roll.id}
+            barcode={roll.barcode}
+            materialName={roll.materialName || 'Материал'}
+            status={roll.status}
+            workshopId={roll.workshopId}
+            workshopName={roll.workshopName}
+            shiftNumber={roll.shiftNumber}
+            workshops={workshops}
+            onDone={load}
+          />
           <RollWriteOffDialog
             open={writeOffOpen}
             onOpenChange={setWriteOffOpen}
