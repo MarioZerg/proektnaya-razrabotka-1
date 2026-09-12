@@ -251,6 +251,15 @@ export interface PayoutResult {
   /** Сколько старых долгов удержали этой выплатой. */
   repaidTotal?: number;
   repaid?: { id: number; repaid: number; rest: number }[];
+  /**
+   * Недоплаченный остаток, перенесённый на следующий расчёт.
+   *
+   * Появляется, когда админ выплатил меньше начисленного: разница остаётся
+   * невыплаченной отдельной строкой и сама войдёт в ближайшую выплату.
+   */
+  carryOver?: number;
+  /** Сколько было начислено за период до частичной выплаты. */
+  accruedTotal?: number;
 }
 
 /** Что выйдет к выплате за период — до нажатия кнопки. */
@@ -311,9 +320,15 @@ export const payoutSalary = (
   periodTo?: string,
   /** Отмеченные галочкой старые долги — их удержат из этой выплаты. */
   debtIds?: number[],
+  /**
+   * Выплатить МЕНЬШЕ начисленного. Разница останется невыплаченной и сама
+   * попадёт в следующий расчёт. Пусто — платим весь период целиком.
+   */
+  amount?: number,
 ): Promise<PayoutResult> =>
   postAction({
     action: 'payout', userId, actorId, actorName, periodFrom, periodTo, debtIds,
+    amount,
   });
 
 export const deletePayout = (id: number, actorId?: number, actorName?: string) =>

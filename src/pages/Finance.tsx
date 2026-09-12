@@ -255,19 +255,27 @@ const Finance = () => {
     periodFrom?: string,
     periodTo?: string,
     debtIds?: number[],
+    /** Выплатить меньше начисленного: остаток уедет в следующий расчёт. */
+    amount?: number,
   ) => {
     setSavingAccrual(true);
     try {
       const res = await payoutSalary(
-        userId, user?.id, user?.name, periodFrom, periodTo, debtIds,
+        userId, user?.id, user?.name, periodFrom, periodTo, debtIds, amount,
       );
       // Когда часть заработка ушла на долги — говорим об этом прямо, иначе
       // сумма выглядит меньше ожидаемой без объяснений.
       const repaid = res.repaidTotal || 0;
+      // Перенос остатка называем прямо: админ должен видеть, что деньги не
+      // пропали, а остались за сотрудником до следующего расчёта.
+      const carry = res.carryOver || 0;
       toast({
-        title: 'Зарплата выплачена',
+        title: carry > 0 ? 'Выплачено частично' : 'Зарплата выплачена',
         description: `Сумма: ${res.amount.toFixed(2)} ₽`
-          + (repaid > 0 ? ` · удержано долгов: ${repaid.toFixed(2)} ₽` : ''),
+          + (repaid > 0 ? ` · удержано долгов: ${repaid.toFixed(2)} ₽` : '')
+          + (carry > 0
+            ? ` · на следующий период перенесено ${carry.toFixed(2)} ₽`
+            : ''),
       });
       loadOperations();
       loadPayouts();

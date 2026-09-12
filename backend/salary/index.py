@@ -1585,6 +1585,46 @@ def handler(event: dict, context) -> dict:
                         balance -= take
                         repaid.append({'id': d_id, 'repaid': take, 'rest': rest})
 
+                # ЧАСТИЧНАЯ ВЫПЛАТА: ПЛАТИМ МЕНЬШЕ, ОСТАТОК ЕДЕТ ДАЛЬШЕ.
+                #
+                # Живая касса не всегда закрывает период целиком: денег хватило не
+                # на всю сумму, договорились выдать часть сейчас, остальное —
+                # в следующий расчёт. Раньше выбора не было: либо весь период,
+                # либо ничего, и бухгалтер закрывал период «как есть», а разницу
+                # держал в голове.
+                #
+                # Админ вводит сумму руками в окне выплаты. Всё, что не вошло,
+                # остаётся НЕвыплаченным и само попадёт в следующую выплату —
+                # ровно так же, как обычные начисления следующего периода.
+                accrued_total = balance          # сколько начислено за период
+                carry_over = 0.0                 # что переносим на следующий раз
+                custom_amount = body_data.get('amount')
+                if custom_amount not in (None, ''):
+                    try:
+                        custom_amount = round(float(custom_amount), 2)
+                    except (TypeError, ValueError):
+                        return {'statusCode': 400, 'headers': headers,
+                                'body': json.dumps({'error': 'Сумма указана неверно'},
+                                                   ensure_ascii=False)}
+                    if custom_amount <= 0:
+                        return {'statusCode': 400, 'headers': headers,
+                                'body': json.dumps({'error': 'Сумма должна быть больше нуля'},
+                                                   ensure_ascii=False)}
+                    # Больше начисленного не платим: это уже не выплата, а аванс.
+                    # Для аванса есть отдельное ручное начисление.
+                    if custom_amount > balance + 0.009:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'К выплате за период {balance:.2f} ₽ — '
+                                         f'больше этой суммы выплатить нельзя. '
+                                         f'Для аванса используйте ручное начисление'
+                            }, ensure_ascii=False),
+                        }
+                    carry_over = round(balance - custom_amount, 2)
+                    balance = custom_amount
+
                 # Выплата списывается из кассы компании — если денег в кассе недостаточно,
                 # выплата блокируется полностью (частичных выплат нет).
                 cur.execute("SELECT COALESCE(SUM(amount), 0) FROM cash_box_transactions")
@@ -1643,6 +1683,34 @@ def handler(event: dict, context) -> dict:
                         sp,
                     )
 
+                # ОСТАТОК НЕДОПЛАТЫ — ОТДЕЛЬНЫМ НАЧИСЛЕНИЕМ НА СЛЕДУЮЩИЙ РАЗ.
+                #
+                # Период закрыт целиком (все его записи помечены выплаченными),
+                # поэтому недоплаченную часть заводим новой строкой. Она остаётся
+                # невыплаченной и попадёт в ближайшую следующую выплату сама —
+                # ни бухгалтеру, ни сотруднику ничего помнить не нужно.
+                #
+                # Дата — СЕГОДНЯШНЯЯ, а не из закрытого периода: иначе запись
+                # снова попала бы в те же даты, и при повторной выплате за тот
+                # же период всё повторилось бы по кругу.
+                if carry_over > 0.009:
+                    period_label = (
+                        f'{p_from}—{p_to}' if p_from and p_to
+                        else (f'с {p_from}' if p_from else (f'по {p_to}' if p_to else 'весь остаток'))
+                    )
+                    cur.execute(
+                        "INSERT INTO salary_accruals "
+                        "(user_id, type, amount, description, accrued_for, created_by, "
+                        " carry_from_payout_id) "
+                        "VALUES (%s, 'manual', %s, %s, (now() + interval '3 hours')::date, "
+                        "        %s, %s)",
+                        (int(user_id), carry_over,
+                         f'Остаток зарплаты за {period_label}: начислено '
+                         f'{accrued_total:.2f} ₽, выплачено {balance:.2f} ₽',
+                         int(actor_id) if actor_id not in (None, '') else None,
+                         payout_id),
+                    )
+
                 cur.execute(
                     f"INSERT INTO cash_box_transactions (amount, description, payout_id, created_by) "
                     f"VALUES ({-balance}, 'Выплата зарплаты сотруднику #{int(user_id)}"
@@ -1654,7 +1722,9 @@ def handler(event: dict, context) -> dict:
                 log_action(
                     cur, actor_id, actor_name, 'payout', 'salary_payout', payout_id,
                     f'Выплатил сотруднику #{user_id} {balance}'
-                    + (f', удержано долгов {repaid_total}' if repaid_total else ''),
+                    + (f', удержано долгов {repaid_total}' if repaid_total else '')
+                    + (f', перенесено на следующую выплату {carry_over}'
+                       if carry_over > 0.009 else ''),
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
@@ -1662,6 +1732,10 @@ def handler(event: dict, context) -> dict:
                     'amount': balance,
                     'repaidTotal': repaid_total,
                     'repaid': repaid,
+                    # Сколько ушло на следующий расчёт: интерфейс показывает это
+                    # сразу после выплаты, чтобы админ видел результат решения.
+                    'carryOver': carry_over,
+                    'accruedTotal': accrued_total,
                 })}
 
             if action == 'delete_payout':
@@ -1705,6 +1779,22 @@ def handler(event: dict, context) -> dict:
                         "WHERE id = %s",
                         (rest_id,),
                     )
+
+                # АННУЛИРУЕМ ОСТАТОК ЧАСТИЧНОЙ ВЫПЛАТЫ.
+                #
+                # Если платили не всю сумму, разница уехала на следующий период
+                # отдельной строкой. Сейчас период вернётся в «невыплаченные»
+                # ЦЕЛИКОМ — и остаток по нему же стал бы вторым долгом компании:
+                # одна и та же работа к выплате дважды.
+                #
+                # Строку не удаляем, а обнуляем с пометкой: история расчётов с
+                # людьми задним числом не переписывается.
+                cur.execute(
+                    "UPDATE salary_accruals SET amount = 0, paid_at = now(), "
+                    "description = description || ' — отменено (выплата отменена)' "
+                    "WHERE carry_from_payout_id = %s AND paid_at IS NULL",
+                    (int(payout_id),),
+                )
 
                 # Начисления, входившие в эту выплату, возвращаются в невыплаченные — снова
                 # появятся в "К выплате", сотруднику можно будет выплатить заново корректно.

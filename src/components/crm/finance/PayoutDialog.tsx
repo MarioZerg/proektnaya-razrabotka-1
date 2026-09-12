@@ -33,6 +33,8 @@ interface PayoutDialogProps {
     periodFrom?: string,
     periodTo?: string,
     debtIds?: number[],
+    /** Выплатить меньше начисленного — остаток уедет на следующий расчёт. */
+    amount?: number,
   ) => Promise<void>;
 }
 
@@ -84,6 +86,14 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
   const [copied, setCopied] = useState(false);
   /** Отмеченные старые долги — их удержим из этой выплаты. */
   const [debtIds, setDebtIds] = useState<number[]>([]);
+  /**
+   * Сумма к выдаче, если платим НЕ всю начисленную.
+   *
+   * Пусто — платим период целиком, как раньше. Введено меньшее число —
+   * выдаём его, а разница остаётся невыплаченной и сама попадёт
+   * в следующий расчёт.
+   */
+  const [payAmount, setPayAmount] = useState('');
 
   // Сумма пересчитывается при смене сотрудника или дат: админ должен видеть,
   // сколько уйдёт из кассы, ДО нажатия кнопки, а не узнавать постфактум.
@@ -95,6 +105,9 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
     let cancelled = false;
     setLoading(true);
     setError('');
+    // Сумма частичной выплаты привязана к конкретному человеку и периоду.
+    // Сменили любое из них — прежнее число уже не к месту.
+    setPayAmount('');
     previewPayout(Number(userId), from || undefined, to || undefined)
       .then((d) => {
         if (cancelled) return;
@@ -120,7 +133,16 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
 
   const handleSubmit = async () => {
     if (!userId) return;
-    await onSubmit(Number(userId), from || undefined, to || undefined, debtIds);
+    // Сумму передаём, только если её задали руками: иначе сервер платит
+    // период целиком, как было до появления частичной выплаты.
+    const typed = payAmount.trim() ? Number(payAmount.replace(',', '.')) : undefined;
+    await onSubmit(
+      Number(userId),
+      from || undefined,
+      to || undefined,
+      debtIds,
+      typed && Number.isFinite(typed) ? typed : undefined,
+    );
 
     // ОКНО НЕ ЗАКРЫВАЕМ.
     //
@@ -131,6 +153,9 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
     // списка пропадёт, а следующего выбирают тут же.
     setUserId('');
     setPreview(null);
+    // Сумму сбрасываем обязательно: следующему сотруднику она не подходит,
+    // а забытое число молча урезало бы ему выплату.
+    setPayAmount('');
   };
 
   const debts = preview?.outsideDebts || [];
@@ -145,7 +170,27 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
   const willRepay = Math.min(debtSum, Math.max(accrued, 0));
   const carryOver = debtSum - willRepay;
 
-  const amount = Math.max(accrued - willRepay, 0);
+  /** Сколько выйдет к выдаче, если платить период целиком. */
+  const fullAmount = Math.max(accrued - willRepay, 0);
+
+  // ЧАСТИЧНАЯ ВЫПЛАТА.
+  //
+  // Поле пустое — платим всё, как раньше. Ввели меньшую сумму — выдаём её,
+  // а разницу сервер оставит невыплаченной, и она сама попадёт в следующий
+  // расчёт. Больше начисленного ввести нельзя: это уже аванс, для него есть
+  // отдельное ручное начисление.
+  const typedAmount = payAmount.trim()
+    ? Number(payAmount.replace(',', '.'))
+    : null;
+  const amountValid =
+    typedAmount === null ||
+    (Number.isFinite(typedAmount) && typedAmount > 0 && typedAmount <= fullAmount + 0.009);
+  const amount =
+    typedAmount !== null && amountValid ? typedAmount : fullAmount;
+  /** Что уедет на следующий период из-за недоплаты. */
+  const restToNextPeriod =
+    typedAmount !== null && amountValid ? Math.max(fullAmount - typedAmount, 0) : 0;
+
   const notEnough = !!preview && preview.cashBalance < amount;
   const wholePeriod = !from && !to;
 
@@ -401,7 +446,73 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
                       ? 'Весь невыплаченный остаток'
                       : 'К выплате за выбранный период'}
                   </p>
-                  <p className="text-lg font-bold">{formatMoney(amount)} ₽</p>
+                  <p className="text-lg font-bold">{formatMoney(fullAmount)} ₽</p>
+
+                  {/* ЧАСТИЧНАЯ ВЫПЛАТА.
+                      Денег в кассе хватило не на всё, договорились выдать
+                      часть — вводим сумму здесь. Разница не теряется и не
+                      требует памяти бухгалтера: она остаётся невыплаченной
+                      и сама войдёт в следующий расчёт. */}
+                  {fullAmount > 0 && (
+                    <div className="mt-3 border-t border-border pt-3">
+                      <Label className="text-xs text-muted-foreground">
+                        Выплатить сейчас (можно меньше — остаток перейдёт
+                        в следующий период)
+                      </Label>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <Input
+                          inputMode="decimal"
+                          placeholder={fullAmount.toFixed(2)}
+                          value={payAmount}
+                          onChange={(e) => setPayAmount(e.target.value)}
+                          className="h-9 w-40"
+                        />
+                        <span className="text-sm text-muted-foreground">₽</span>
+                        {payAmount.trim() && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() => setPayAmount('')}
+                          >
+                            Всю сумму
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* Ошибку показываем сразу, а не отказом сервера после
+                          нажатия: админ должен понять причину, пока правит. */}
+                      {!amountValid && (
+                        <p className="mt-1.5 flex items-start gap-1.5 text-xs text-destructive">
+                          <Icon
+                            name="TriangleAlert"
+                            size={12}
+                            className="mt-0.5 shrink-0"
+                          />
+                          Сумма должна быть больше нуля и не больше{' '}
+                          {formatMoney(fullAmount)} ₽. Чтобы выдать сверх
+                          заработанного, оформите аванс отдельным начислением
+                        </p>
+                      )}
+
+                      {restToNextPeriod > 0 && (
+                        <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-blue-50 p-2 text-xs text-blue-900">
+                          <Icon
+                            name="ArrowRight"
+                            size={12}
+                            className="mt-0.5 shrink-0"
+                          />
+                          <span>
+                            На следующий период перейдёт{' '}
+                            <b>{formatMoney(restToNextPeriod)} ₽</b> — сумма
+                            останется за сотрудником и сама войдёт в ближайшую
+                            выплату
+                          </span>
+                        </p>
+                      )}
+                    </div>
+                  )}
                   {!!preview && preview.count > 0 && (
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {preview.count} начислений
@@ -449,7 +560,7 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
           <Button
             className="w-full"
             onClick={handleSubmit}
-            disabled={saving || !userId || amount <= 0 || notEnough}
+            disabled={saving || !userId || amount <= 0 || notEnough || !amountValid}
           >
             {saving
               ? 'Выплата...'
