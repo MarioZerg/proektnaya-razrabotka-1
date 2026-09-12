@@ -73,6 +73,14 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
   const [to, setTo] = useState('');
   const [preview, setPreview] = useState<PayoutPreview | null>(null);
   const [loading, setLoading] = useState(false);
+  /**
+   * Почему сумма не посчиталась.
+   *
+   * Раньше ошибка запроса глушилась молча: сессия истекла, связь моргнула,
+   * админ смотрел панель глазами сотрудника — а на экране просто «0 ₽».
+   * Выглядело так, будто человеку нечего платить, хотя начисления есть.
+   */
+  const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   /** Отмеченные старые долги — их удержим из этой выплаты. */
   const [debtIds, setDebtIds] = useState<number[]>([]);
@@ -86,6 +94,7 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
     }
     let cancelled = false;
     setLoading(true);
+    setError('');
     previewPayout(Number(userId), from || undefined, to || undefined)
       .then((d) => {
         if (cancelled) return;
@@ -94,7 +103,15 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
         // проще, чем вспомнить о забытом штрафе.
         setDebtIds((d.outsideDebts || []).map((x) => x.id));
       })
-      .catch(() => !cancelled && setPreview(null))
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setPreview(null);
+        // Показываем причину вместо нуля: «0 ₽» и «не смог посчитать» —
+        // разные вещи, и по первому админ решает, что платить нечего.
+        setError(
+          e instanceof Error ? e.message : 'Не удалось посчитать сумму',
+        );
+      })
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
@@ -360,6 +377,23 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
                   <Icon name="Loader2" size={14} className="animate-spin" />
                   Считаю сумму...
                 </div>
+              ) : error ? (
+                /* Запрос не прошёл. Молчаливый ноль здесь опаснее ошибки:
+                   по нему решают, что человеку платить нечего. */
+                <div className="flex items-start gap-2 text-sm text-destructive">
+                  <Icon
+                    name="TriangleAlert"
+                    size={14}
+                    className="mt-0.5 shrink-0"
+                  />
+                  <span>
+                    Не удалось посчитать сумму: {error}
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      Обновите страницу или войдите заново — начисления никуда
+                      не делись
+                    </span>
+                  </span>
+                </div>
               ) : (
                 <>
                   <p className="text-muted-foreground">
@@ -374,6 +408,16 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
                       {preview.firstDate &&
                         preview.lastDate &&
                         ` · ${preview.firstDate} — ${preview.lastDate}`}
+                    </p>
+                  )}
+                  {/* Ноль без объяснения читается как поломка. Говорим прямо:
+                      в этих датах начислений нет — либо их уже выплатили,
+                      либо работа записана другими днями. */}
+                  {!!preview && preview.count === 0 && (
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {wholePeriod
+                        ? 'Невыплаченных начислений нет — всё уже выплачено'
+                        : 'В выбранных датах невыплаченных начислений нет: возможно, период уже закрыт выплатой или работа записана другими днями. Нажмите «Всё целиком», чтобы увидеть остаток.'}
                     </p>
                   )}
                   {/* Расшифровка, когда часть заработка ушла на долги: без неё
