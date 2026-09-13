@@ -239,7 +239,7 @@ const LoginCode = () => {
                 Код получен, входим…
               </p>
             ) : (
-              <p className="text-center text-sm text-muted-foreground">
+              <p className="text-center text-sm text-muted-foreground font-medium">
                 {awaitingContact
                   ? 'Нажмите в чате кнопку «Поделиться номером» — и возвращайтесь сюда, код подставится сам.'
                   : 'Ожидаем код из чата с ботом — он подставится сам. Или введите его вручную.'}
