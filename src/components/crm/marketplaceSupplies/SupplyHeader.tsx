@@ -13,6 +13,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import Icon from '@/components/ui/icon';
+import ShopBadge from '@/components/crm/ShopBadge';
 import { printLabelFromUrl } from '@/lib/printMarketplaceLabel';
 import type { SupplyDetail, SupplyStatus } from '@/lib/marketplaceSuppliesApi';
 import {
@@ -77,6 +78,9 @@ const SupplyHeader = ({
           </Button>
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold">Поставка #{supply.id}</h1>
+            {/* Магазин поставки — первым делом: короб МЕГАТЮЛЬ и короб ДЮНЫ
+                стоят рядом, и перепутать их нельзя. */}
+            <ShopBadge name={supply.shopName} color={supply.shopColor} />
             {isOzonFbo ? (
               <Badge variant={supply.ozonStatus === 'Сформирована' ? 'default' : 'secondary'}>
                 {supply.ozonStatus || 'Заполнение данных'}

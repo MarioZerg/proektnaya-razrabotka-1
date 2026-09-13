@@ -11,6 +11,8 @@ import {
   type SupplyType,
   type OzonDeliveryMethod,
 } from '@/lib/marketplaceSuppliesApi';
+import { fetchMarketplaceIntegrations, type Shop } from '@/lib/marketplaceIntegrationsApi';
+import ShopTabs from '@/components/crm/ShopTabs';
 import CreateOzonFboDialog from '@/components/crm/marketplaceSupplies/CreateOzonFboDialog';
 import SupplyTypeWidgets from '@/components/crm/marketplaceSupplies/SupplyTypeWidgets';
 import ToMarketplaceFilters from '@/components/crm/marketplaceSupplies/ToMarketplaceFilters';
@@ -41,6 +43,12 @@ const ToMarketplace = () => {
     ? createOptions.filter((o) => o.type !== 'FBS')
     : createOptions;
 
+  // Магазин, с которым работают сейчас. FBS собирают по кабинетам: вещь ДЮНЫ
+  // в коробе МЕГАТЮЛЬ на приёмке площадки не примут, поэтому поставки этих
+  // магазинов не должны стоять в одном списке вперемешку.
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [shopId, setShopId] = useState<number | null>(null);
+
   const [statusFilter, setStatusFilter] = useState('open');
   const [typeFilter, setTypeFilter] = useState('all');
   const [marketplaceFilter, setMarketplaceFilter] = useState('all');
@@ -64,6 +72,7 @@ const ToMarketplace = () => {
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
       search: search || undefined,
+      shopId: shopId || undefined,
     })
       .then((data) =>
         setAllSupplies(
@@ -74,10 +83,22 @@ const ToMarketplace = () => {
       .finally(() => setLoading(false));
   };
 
+  // Магазины грузим один раз: по ним строятся вкладки, и первый становится
+  // рабочим — кладовщик всегда собирает поставку конкретного кабинета.
   useEffect(() => {
+    fetchMarketplaceIntegrations()
+      .then(({ shops: shopList }) => {
+        setShops(shopList);
+        setShopId((prev) => prev ?? shopList[0]?.id ?? null);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!shopId) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, marketplaceFilter, dateFrom, dateTo]);
+  }, [shopId, statusFilter, marketplaceFilter, dateFrom, dateTo]);
 
   // Плашки FBS/FBO считаем по полному списку: выбрав FBS, кладовщик должен
   // видеть в плашке FBO реальное число, а не ноль — иначе кажется, что поставки
@@ -121,9 +142,11 @@ const ToMarketplace = () => {
   };
 
   const createSupplyNow = async (marketplace: string, type: SupplyType) => {
+    // Поставка всегда заводится в тот магазин, чья вкладка открыта.
+    if (!shopId) return;
     setCreating(true);
     try {
-      const res = await createSupply({ marketplace, type, createdBy: user?.id });
+      const res = await createSupply({ marketplace, type, shopId, createdBy: user?.id });
       toast({ title: 'Поставка создана', description: `#${res.id} — заполните товары на карточке` });
       navigate(`/crm/shipments/to-marketplace/${res.id}`);
     } catch (e) {
@@ -156,11 +179,13 @@ const ToMarketplace = () => {
   };
 
   const handleCreateOzonDraft = async (deliveryMethod: OzonDeliveryMethod) => {
+    if (!shopId) return;
     setCreating(true);
     try {
       const res = await createSupply({
         marketplace: 'OZON',
         type: 'FBO',
+        shopId,
         createdBy: user?.id,
         ozonDeliveryMethod: deliveryMethod,
       });
@@ -173,6 +198,8 @@ const ToMarketplace = () => {
       setCreating(false);
     }
   };
+
+  const currentShop = shops.find((s) => s.id === shopId) || null;
 
   const resetFilters = () => {
     setStatusFilter('open');
@@ -189,9 +216,16 @@ const ToMarketplace = () => {
         <div>
           <h1 className="text-xl font-bold">Поставка в маркет</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Формирование отгрузки готового товара со склада на маркетплейс
+            {currentShop
+              ? `Отгрузка готового товара магазина «${currentShop.name}» на маркетплейс`
+              : 'Формирование отгрузки готового товара со склада на маркетплейс'}
           </p>
         </div>
+
+        {/* Вкладки магазинов. У МЕГАТЮЛЬ и ДЮНЫ разные кабинеты на площадке:
+            поставки собираются отдельно, а вещь чужого магазина в короб не
+            отсканируется. Пока магазин один, вкладки не рисуются. */}
+        <ShopTabs shops={shops} value={shopId} onChange={setShopId} />
 
         {/* Плашки по схемам: сколько работы каждого вида прямо сейчас. Таблица ниже
             отвечает «что с конкретной поставкой», а это — «сколько всего сегодня».

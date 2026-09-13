@@ -169,28 +169,42 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             comment = (body_data.get('comment') or '').strip()
             created_by = body_data.get('createdBy')
             ozon_delivery_method = (body_data.get('ozonDeliveryMethod') or '').strip()
+            # Магазин обязателен: МЕГАТЮЛЬ и ДЮНА — разные кабинеты на площадке,
+            # и вещь одного магазина в поставку другого на приёмке не примут.
+            shop_id = body_data.get('shopId')
 
             if not marketplace:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите маркетплейс'})}
+            # Права проверяем ДО магазина: менеджеру FBS закрыт в принципе, и
+            # отвечать ему «укажите магазин» — значит посылать дозаполнять форму,
+            # которую всё равно не примут.
             denied = deny_manager_fbs(cur, supply_type=supply_type, actor_role=actor_role)
             if denied:
                 return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': denied}, ensure_ascii=False)}
             if supply_type not in ('FBO', 'FBS'):
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Тип поставки должен быть FBO или FBS'})}
+            if not shop_id:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Укажите магазин'}, ensure_ascii=False)}
             if marketplace == 'OZON' and supply_type == 'FBO' and ozon_delivery_method not in ('direct', 'cross_docking'):
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите способ поставки: прямая или кросс-докинг'})}
 
             marketplace_esc = marketplace.replace("'", "''")
 
-            # Сборка FBS может быть только одна на маркетплейс. Две открытые сборки
-            # означают, что вещи из одного контейнера расходятся по разным коробам —
-            # на маркетплейсе это разные поставки, и часть заказов уедет не туда.
+            # Сборка FBS может быть только одна на маркетплейс — И ТОЛЬКО ВНУТРИ
+            # МАГАЗИНА. Две открытые сборки одного кабинета означают, что вещи из
+            # одного контейнера расходятся по разным коробам, и часть заказов уедет
+            # не туда. А вот OZON FBS у МЕГАТЮЛЬ и OZON FBS у ДЮНЫ — это две разные
+            # поставки в два разных кабинета: они идут параллельно и друг другу
+            # не мешают.
             if supply_type == 'FBS' and marketplace in ('WB', 'OZON'):
                 cur.execute(
                     "SELECT id FROM marketplace_supplies "
                     f"WHERE marketplace = '{marketplace_esc}' AND type = 'FBS' "
                     "AND COALESCE(is_accumulator, false) = false "
-                    "AND status IN ('Открытая', 'На сборке') LIMIT 1"
+                    "AND shop_id = %s "
+                    "AND status IN ('Открытая', 'На сборке') LIMIT 1",
+                    (int(shop_id),),
                 )
                 active = cur.fetchone()
                 if active:
@@ -198,8 +212,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({
-                            'error': f'Сборка #{active[0]} ещё не завершена. Передайте её '
-                                     f'в доставку — потом создавайте новую',
+                            'error': f'Сборка #{active[0]} этого магазина ещё не завершена. '
+                                     f'Передайте её в доставку — потом создавайте новую',
                             'activeSupplyId': active[0],
                         }, ensure_ascii=False),
                     }
@@ -212,9 +226,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             cur.execute(
                 f"INSERT INTO marketplace_supplies (marketplace, type, status, comment, created_by, "
-                f"ozon_delivery_method, ozon_status) "
+                f"ozon_delivery_method, ozon_status, shop_id) "
                 f"VALUES ('{marketplace_esc}', '{type_esc}', 'Открытая', '{comment_esc}', {created_by_sql}, "
-                f"{ozon_delivery_method_sql}, {ozon_status_sql}) RETURNING id"
+                f"{ozon_delivery_method_sql}, {ozon_status_sql}, {int(shop_id)}) RETURNING id"
             )
             supply_id = cur.fetchone()[0]
 
@@ -364,10 +378,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not supply_id or not storage_barcode:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку и штрихкод хранения товара'})}
 
-            cur.execute("SELECT status FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
+            cur.execute(
+                "SELECT s.status, s.shop_id, shp.name FROM marketplace_supplies s "
+                "LEFT JOIN shops shp ON shp.id = s.shop_id WHERE s.id = %s",
+                (int(supply_id),),
+            )
             row = cur.fetchone()
             if not row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
+            supply_shop_id, supply_shop_name = row[1], row[2]
             if row[0] not in ('Открытая', 'На сборке'):
                 return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять заказы'})}
 
@@ -575,6 +594,34 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'statusCode': 409,
                     'headers': headers,
                     'body': json.dumps(payload, ensure_ascii=False),
+                }
+
+            # ВЕЩЬ ЧУЖОГО МАГАЗИНА В КОРОБ НЕ КЛАДЁМ.
+            #
+            # МЕГАТЮЛЬ и ДЮНА — разные кабинеты на площадке. Вещь ДЮНЫ, уехавшая
+            # в поставку МЕГАТЮЛЬ, на приёмке не опознается: отправление числится
+            # за другим продавцом. Ловим это на сканировании, пока вещь в руках,
+            # а не на складе маркетплейса.
+            cur.execute(
+                "SELECT COALESCE(ro.shop_id, o.shop_id), COALESCE(rs.name, os_.name) "
+                "FROM goods_warehouse gw "
+                "LEFT JOIN orders o ON o.id = gw.order_id "
+                "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                "LEFT JOIN shops rs ON rs.id = ro.shop_id "
+                "LEFT JOIN shops os_ ON os_.id = o.shop_id "
+                "WHERE gw.id = %s",
+                (goods_id,),
+            )
+            shop_row = cur.fetchone()
+            if shop_row and shop_row[0] and supply_shop_id and shop_row[0] != supply_shop_id:
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': f'Вещь {order_number} — магазина «{shop_row[1]}», '
+                                 f'а это поставка «{supply_shop_name}». Отложите её '
+                                 f'в короб своего магазина',
+                    }, ensure_ascii=False),
                 }
 
             # Ярлык маркетплейса ещё не наклеен: вещь лежит на полке, в короб её

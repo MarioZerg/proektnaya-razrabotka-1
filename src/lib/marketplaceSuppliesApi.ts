@@ -218,6 +218,10 @@ export interface SupplyDetail extends Supply {
   /** Реквизиты клиента-отправителя для упаковочного листа (общие настройки). */
   gazelkaClientName: string;
   gazelkaClientPhone: string;
+  /** Магазин поставки: МЕГАТЮЛЬ или ДЮНА — кабинеты на площадке разные. */
+  shopId?: number | null;
+  shopName?: string | null;
+  shopColor?: string | null;
 }
 
 export interface SupplyFilters {
@@ -227,6 +231,8 @@ export interface SupplyFilters {
   dateFrom?: string;
   dateTo?: string;
   search?: string;
+  /** Магазин: кладовщик работает в одном кабинете за раз. */
+  shopId?: number;
 }
 
 export const fetchSupplies = async (filters?: SupplyFilters): Promise<Supply[]> => {
@@ -237,6 +243,7 @@ export const fetchSupplies = async (filters?: SupplyFilters): Promise<Supply[]> 
   if (filters?.dateFrom) params.set('date_from', filters.dateFrom);
   if (filters?.dateTo) params.set('date_to', filters.dateTo);
   if (filters?.search) params.set('search', filters.search);
+  if (filters?.shopId) params.set('shop_id', String(filters.shopId));
   const qs = params.toString();
   const res = await fetch(qs ? `${SUPPLIES_URL}?${qs}` : SUPPLIES_URL);
   const data = await res.json();
@@ -342,6 +349,8 @@ const postAction = async (payload: Record<string, unknown>) => {
 export const createSupply = (payload: {
   marketplace: string;
   type: SupplyType;
+  /** Магазин поставки: у МЕГАТЮЛЬ и ДЮНЫ разные кабинеты, короба не смешиваются. */
+  shopId: number;
   comment?: string;
   createdBy?: number;
   goodsWarehouseIds?: number[];

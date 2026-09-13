@@ -133,10 +133,14 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "s.supply_date, s.timeslot, s.shipment_type, s.packaging_type, "
                 "s.packaging_count, s.gazelka_pickup, s.ozon_supply_order_id, s.ozon_cargo_type, "
                 "s.gazelka_plan_id, s.gazelka_ids, s.gazelka_idm, "
-                "s.locked_by, lu.full_name, s.locked_at "
+                "s.locked_by, lu.full_name, s.locked_at, "
+                # Магазин поставки: кладовщик должен видеть в шапке, чей это
+                # кабинет — МЕГАТЮЛЬ или ДЮНА.
+                "s.shop_id, shp.name, shp.color "
                 "FROM marketplace_supplies s "
                 "LEFT JOIN users u ON u.id = s.created_by "
                 "LEFT JOIN users lu ON lu.id = s.locked_by "
+                "LEFT JOIN shops shp ON shp.id = s.shop_id "
                 "WHERE s.id = %s",
                 (int(supply_id),),
             )
@@ -367,8 +371,12 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 cur.execute(
                     "SELECT COUNT(*) FROM wb_supply_orders wso "
                     "JOIN marketplace_supplies acc ON acc.id = wso.supply_id "
+                    "JOIN orders wo ON wo.id = wso.order_id "
                     "WHERE acc.is_accumulator = true "
-                    "AND acc.status IN ('Открытая', 'На сборке')"
+                    "AND acc.status IN ('Открытая', 'На сборке') "
+                    # Буфер общий на все магазины, но поставка — одного кабинета.
+                    "AND wo.shop_id = %s",
+                    (row[35],),
                 )
                 wb_ready_count = cur.fetchone()[0]
 
@@ -390,7 +398,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
                     "WHERE acc.is_accumulator = true "
                     "AND acc.status IN ('Открытая', 'На сборке') "
-                    "ORDER BY wso.scanned_at"
+                    "AND o.shop_id = %s "
+                    "ORDER BY wso.scanned_at",
+                    (row[35],),
                 )
                 wb_awaiting = [
                     {
@@ -436,6 +446,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "  AND gw.shipped_at IS NULL "
                 "  AND COALESCE(ro.marketplace, so.marketplace) = %s "
                 "  AND COALESCE(ro.order_type, so.order_type) = %s "
+                # Только свой магазин: вещь ДЮНЫ в коробе МЕГАТЮЛЬ не примут.
+                "  AND COALESCE(ro.shop_id, so.shop_id) = %s "
                 "  AND (%s <> 'FBO' OR %s IS NULL "
                 "       OR COALESCE(ro.cluster, so.cluster) = %s) "
                 # Заказ должен быть живым: отменённые и уже уехавшие в короб не идут.
@@ -448,7 +460,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "                  JOIN marketplace_supplies s2 ON s2.id = msi2.supply_id "
                 "                  WHERE msi2.goods_warehouse_id = gw.id "
                 "                    AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена'))",
-                (row[1], row[2], row[2], row[8], row[8]),
+                (row[1], row[2], row[35], row[2], row[8], row[8]),
             )
             awaiting_ship = int(cur.fetchone()[0] or 0)
 
@@ -497,6 +509,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "  AND gw.shipped_at IS NULL "
                 "  AND COALESCE(ro.marketplace, so.marketplace) = %s "
                 "  AND COALESCE(ro.order_type, so.order_type) = %s "
+                # Только свой магазин — как и в счётчике выше.
+                "  AND COALESCE(ro.shop_id, so.shop_id) = %s "
                 "  AND (%s <> 'FBO' OR %s IS NULL "
                 "       OR COALESCE(ro.cluster, so.cluster) = %s) "
                 # Заказ должен быть живым: отменённые и уже уехавшие в короб не идут.
@@ -506,7 +520,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "                  WHERE msi2.goods_warehouse_id = gw.id "
                 "                    AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена')) "
                 "ORDER BY gw.shipping_labeled_at ASC",
-                (row[1], row[2], row[2], row[8], row[8]),
+                (row[1], row[2], row[35], row[2], row[8], row[8]),
             )
             awaiting_items = [
                 {
@@ -591,6 +605,10 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'lockedBy': row[32],
                 'lockedByName': row[33],
                 'lockedAt': (row[34].isoformat() + 'Z') if row[34] else None,
+                # Магазин поставки — метка в шапке карточки.
+                'shopId': row[35],
+                'shopName': row[36],
+                'shopColor': row[37],
             }
             # Реквизиты клиента для упаковочного листа Газельки — общие настройки.
             cur.execute(
@@ -626,6 +644,10 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
         if marketplace_filter:
             mp_esc = marketplace_filter.replace("'", "''")
             conditions.append(f"s.marketplace = '{mp_esc}'")
+        # Магазин: кладовщик работает в одном кабинете за раз — вперемешку
+        # поставки МЕГАТЮЛЬ и ДЮНЫ читать нельзя, вещи уедут не туда.
+        if params.get('shop_id'):
+            conditions.append(f"s.shop_id = {int(params['shop_id'])}")
         if date_from:
             date_from_esc = date_from.replace("'", "''")
             conditions.append(f"s.created_at >= '{date_from_esc}'::date")
@@ -680,8 +702,12 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"(CASE WHEN s.marketplace = 'WB' AND s.type = 'FBS' THEN ("
             f"   SELECT COUNT(*) FROM wb_supply_orders wso "
             f"   JOIN marketplace_supplies acc ON acc.id = wso.supply_id "
+            f"   JOIN orders wo ON wo.id = wso.order_id "
             f"   WHERE acc.is_accumulator = true "
-            f"     AND acc.status IN ('Открытая', 'На сборке')"
+            f"     AND acc.status IN ('Открытая', 'На сборке') "
+            # Буфер общий, но заказы в нём от разных магазинов: кладовщику
+            # МЕГАТЮЛЬ незачем видеть в своей поставке вещи ДЮНЫ.
+            f"     AND wo.shop_id = s.shop_id"
             f" ) ELSE ("
             f"SELECT COUNT(*) FROM goods_warehouse gw "
             f" LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -691,6 +717,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"   AND gw.shipped_at IS NULL "
             f"   AND COALESCE(ro.marketplace, so.marketplace) = s.marketplace "
             f"   AND COALESCE(ro.order_type, so.order_type) = s.type "
+            # Магазин вещи должен совпасть с магазином поставки: вещь ДЮНЫ
+            # в коробе МЕГАТЮЛЬ на приёмке не примут.
+            f"   AND COALESCE(ro.shop_id, so.shop_id) = s.shop_id "
             f"   AND (s.type <> 'FBO' OR s.cluster IS NULL "
             f"        OR COALESCE(ro.cluster, so.cluster) = s.cluster) "
             # Заказ должен быть живым: отменённые и уже уехавшие в короб не идут.
