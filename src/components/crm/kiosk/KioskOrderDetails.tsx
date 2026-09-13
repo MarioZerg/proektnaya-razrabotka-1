@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import type { KioskOrder } from '@/lib/kioskApi';
+import ShopBadge from '@/components/crm/ShopBadge';
 
 /** Строка «свойство — значение». На широком экране такие строки встают в две
  *  колонки, поэтому подпись и значение прижаты к краям своей ячейки. */
@@ -24,6 +25,21 @@ const KioskOrderDetails = ({ order }: { order: KioskOrder }) => (
       label="Заказ"
       value={<span className="font-mono-tech font-bold">{order.orderNumber}</span>}
     />
+    {/* Магазин — сразу под номером. Упаковка и вложения у МЕГАТЮЛЬ и ДЮНЫ
+        разные, а вещи едут по общему конвейеру вперемешку: упаковщица должна
+        видеть, чей это заказ, до того как возьмёт пакет. */}
+    {order.shopName && (
+      <Line
+        label="Магазин"
+        value={
+          <ShopBadge
+            name={order.shopName}
+            color={order.shopColor}
+            className="px-2 py-1 text-base"
+          />
+        }
+      />
+    )}
     <Line label="Товар" value={order.product} />
     <Line label="Материал" value={order.material || '—'} />
     <Line

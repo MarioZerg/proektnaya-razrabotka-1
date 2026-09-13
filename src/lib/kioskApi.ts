@@ -41,6 +41,9 @@ export interface KioskOrder {
   matchedByFallback?: boolean;
   /** Что именно отсканировали — показываем рядом для сверки. */
   scannedCode?: string | null;
+  /** Магазин вещи: у МЕГАТЮЛЬ и ДЮНЫ разные упаковка и вложения. */
+  shopName?: string | null;
+  shopColor?: string | null;
 }
 
 /** Заказ уже закрыт, но вещь физически осталась у упаковщицы: её можно сдать на склад

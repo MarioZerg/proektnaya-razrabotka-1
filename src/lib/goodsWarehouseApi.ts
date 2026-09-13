@@ -95,6 +95,9 @@ export interface GoodsWarehouseItem {
    * не оплатит.
    */
   orderCancelled?: boolean;
+  /** Магазин вещи: у МЕГАТЮЛЬ и ДЮНЫ разные поставки и упаковка. */
+  shopName?: string | null;
+  shopColor?: string | null;
 }
 
 export interface GoodsWarehouseFilters {
@@ -364,6 +367,9 @@ export interface PickingOrder {
    * видно, есть ли на складе замена и с какой полки её взять.
    */
   alsoOnShelves?: { shelfName: string; count: number }[];
+  /** Магазин заказа: вещи МЕГАТЮЛЬ и ДЮНЫ едут в разные поставки. */
+  shopName?: string | null;
+  shopColor?: string | null;
 }
 
 /** Заказы, ожидающие подбора со склада: ещё не шьются и вещь под них не найдена. */

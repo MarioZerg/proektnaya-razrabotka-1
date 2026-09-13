@@ -4,6 +4,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import Icon from '@/components/ui/icon';
 import { zoneBarClass, zoneLabels } from '@/lib/workZone';
 import { shortProductName } from '@/lib/shortProductName';
+import ShopBadge from '@/components/crm/ShopBadge';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useAuth } from '@/context/AuthContext';
 import { getAccessZone } from '@/lib/roles';
@@ -91,8 +92,12 @@ const GoodsWarehouseCards = ({
                 />
               )}
               <div className="min-w-0">
-                <div className="font-semibold" title={i.product || ''}>
-                  {shortProductName(i)}
+                <div className="flex items-center gap-1.5">
+                  {/* Чья вещь — видно до того, как её понесут к коробу. */}
+                  <ShopBadge name={i.shopName} color={i.shopColor} />
+                  <span className="font-semibold" title={i.product || ''}>
+                    {shortProductName(i)}
+                  </span>
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {i.orderNumber || 'без заказа'} · #{i.id}

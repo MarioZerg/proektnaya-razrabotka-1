@@ -633,10 +633,14 @@ def handler(event: dict, context) -> dict:
                 # Статус Яндекс.Маркета — вторая площадка со своим полем отмены.
                 "o.ym_status, "
                 # Номер отправления — по нему сверяем, точно ли совпало со сканом.
-                "o.ozon_posting_number "
+                "o.ozon_posting_number, "
+                # Магазин вещи: цех общий, но упаковка и вложения у МЕГАТЮЛЬ и
+                # ДЮНЫ разные. Упаковщица видит метку и берёт нужный пакет.
+                "shp.name, shp.color "
                 "FROM orders o LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                 "LEFT JOIN users su ON su.id = o.sewer_user_id "
+                "LEFT JOIN shops shp ON shp.id = o.shop_id "
                 # Ищем по номеру заказа ИЛИ по номеру отправления маркетплейса.
                 #
                 # На ярлыке OZON напечатан номер ОТПРАВЛЕНИЯ (0152210646-0165-1), а в
@@ -718,6 +722,10 @@ def handler(event: dict, context) -> dict:
                             'width': row[4],
                             'height': row[5],
                             'sewingStatus': row[6],
+                            # Магазин нужен и здесь: вещь сдают на склад как
+                            # свободный остаток, и она должна лечь под свой кабинет.
+                            'shopName': row[23],
+                            'shopColor': row[24],
                         },
                     }, ensure_ascii=False),
                 }
@@ -762,6 +770,9 @@ def handler(event: dict, context) -> dict:
                 # чтобы упаковщица сверила вещь, а не молча клеила чужой ярлык.
                 'matchedByFallback': not exact_match,
                 'scannedCode': order_number,
+                # Магазин вещи — по нему упаковщица берёт правильную упаковку.
+                'shopName': row[23],
+                'shopColor': row[24],
             }
         finally:
             conn.close()

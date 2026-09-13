@@ -547,10 +547,14 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # Схема поставки и кластер: по ним кладовщик сразу видит, куда поедет
                 # вещь. FBS клеится ярлык маркетплейса и едет отдельным пакетом,
                 # FBO уходит коробкой на склад площадки — работа разная.
-                "       o.order_type, o.cluster "
+                "       o.order_type, o.cluster, "
+                # Магазин заказа: вещь МЕГАТЮЛЬ и вещь ДЮНЫ едут в разные
+                # поставки, и кладовщик должен видеть это прямо в списке подбора.
+                "       shp.name, shp.color "
                 "FROM goods_warehouse gw "
                 "JOIN orders o ON o.id = gw.reserved_order_id "
                 "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                "LEFT JOIN shops shp ON shp.id = o.shop_id "
                 # Вещь остаётся в подборе, пока её физически не положили в короб.
                 #
                 # 'picking'         — отобрана под заказ, лежит на полке;
@@ -655,6 +659,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                         'status': r[11],
                         'orderType': r[12],
                         'cluster': r[13],
+                        # Магазин вещи — по нему она уедет в свою поставку.
+                        'shopName': r[14],
+                        'shopColor': r[15],
                         # Свободные такие же вещи на складе — запасной вариант,
                         # если по своей полке вещи не оказалось.
                         'alsoOnShelves': stock_by_product.get(r[2], []),
@@ -976,10 +983,15 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # в пошив, а шить для отменённого покупателя нечего — цех получает
             # работу, которую никто не оплатит. Кладовщику эту кнопку не
             # показываем, см. фронт.
-            f"(COALESCE(o.ozon_status, '') = 'cancelled' OR o.cancelled_at IS NOT NULL) "
+            f"(COALESCE(o.ozon_status, '') = 'cancelled' OR o.cancelled_at IS NOT NULL), "
+            # Магазин вещи: берём у закреплённого заказа, а если его нет — у того,
+            # в котором вещь сшили. Вещь МЕГАТЮЛЬ и вещь ДЮНЫ едут в разные
+            # поставки, и на складе их надо различать.
+            f"shp.name, shp.color "
             f"FROM goods_warehouse gw "
             f"LEFT JOIN orders o ON o.id = gw.order_id "
             f"LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+            f"LEFT JOIN shops shp ON shp.id = COALESCE(ro.shop_id, o.shop_id) "
             f"LEFT JOIN shelves s ON s.id = gw.shelf_id "
             f"{where_clause} "
             f"ORDER BY gw.received_at DESC, gw.id DESC{limit_clause}"
@@ -1020,6 +1032,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # оно true — иначе на 1176 вещах это лишние килобайты в цех, и
                 # ответ упирается в предельный размер.
                 'orderCancelled': True if r[26] else None,
+                # Магазин вещи — по нему она уедет в свою поставку.
+                'shopName': r[27],
+                'shopColor': r[28],
             }
             for r in cur.fetchall()
         ]

@@ -18,6 +18,7 @@ import {
   PaginationLink,
 } from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
+import ShopBadge from '@/components/crm/ShopBadge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { Order } from '@/lib/ordersApi';
 import {
@@ -163,6 +164,9 @@ const SewingItemsTable = ({
                       />
                     )}
                     {o.orderNumber}
+                    {/* Чья это вещь: цех общий, но упаковка и вложения у
+                        МЕГАТЮЛЬ и ДЮНЫ разные — различать надо одним взглядом. */}
+                    <ShopBadge name={o.shopName} color={o.shopColor} />
                     {canPrintStickerForOrder(o, canPrintSticker) && (
                       <Tooltip>
                         <TooltipTrigger asChild>

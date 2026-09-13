@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
+import ShopBadge from '@/components/crm/ShopBadge';
 import { zoneDotClass, zoneLabels } from '@/lib/workZone';
 import { shortProductName } from '@/lib/shortProductName';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
@@ -94,8 +95,13 @@ const GoodsWarehouseTableRow = ({
                   {/* Коротко: ткань и размер — по ним вещь ищут на полке. Полный
                       заголовок с маркетплейса занимал три строки и прятал главное;
                       он остался в подсказке при наведении. */}
-                  <div className="font-medium" title={i.product || ''}>
-                    {shortProductName(i)}
+                  <div className="flex items-center gap-1.5">
+                    {/* Чья вещь: короба магазинов стоят рядом, а вещь примут
+                        только в поставку своего кабинета. */}
+                    <ShopBadge name={i.shopName} color={i.shopColor} />
+                    <span className="font-medium" title={i.product || ''}>
+                      {shortProductName(i)}
+                    </span>
                   </div>
                   <div className="text-xs text-muted-foreground">{i.orderNumber || '—'}</div>
                   {i.status === 'lost' && i.lostReason && (

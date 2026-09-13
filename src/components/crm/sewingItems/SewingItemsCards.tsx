@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
+import ShopBadge from '@/components/crm/ShopBadge';
 import type { Order } from '@/lib/ordersApi';
 import {
   marketplaceLogo,
@@ -181,6 +182,10 @@ const SewingItemsCards = ({
               <p className="overflow-hidden text-ellipsis whitespace-nowrap font-mono-tech text-sm font-bold leading-tight tracking-tight sm:text-base">
                 {o.orderNumber}
               </p>
+
+              {/* Чей это заказ. Цех общий, но упаковка и вложения у магазинов
+                  разные — швея должна видеть метку, не открывая карточку. */}
+              <ShopBadge name={o.shopName} color={o.shopColor} />
 
               {/* Материал и размер — то, по чему швея берёт ткань в работу. Самый
                   крупный текст карточки: видно с вытянутой руки, не наклоняясь. */}

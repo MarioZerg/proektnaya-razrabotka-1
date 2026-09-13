@@ -14,6 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
+import ShopBadge from '@/components/crm/ShopBadge';
 import PickingScanDialog from '@/components/crm/goodsWarehouse/PickingScanDialog';
 import ShippedStuckPanel from '@/components/crm/goodsWarehouse/ShippedStuckPanel';
 import {
@@ -381,8 +382,13 @@ const GoodsPicking = () => {
                       className="cursor-pointer hover:bg-muted/60"
                     >
                       <TableCell>
-                        <div className="font-medium" title={o.product || ''}>
-                          {shortProductName(o)}
+                        <div className="flex items-center gap-1.5">
+                          {/* Чья вещь: короба МЕГАТЮЛЬ и ДЮНЫ стоят рядом, и
+                              отсканировать её можно только в свою поставку. */}
+                          <ShopBadge name={o.shopName} color={o.shopColor} />
+                          <span className="font-medium" title={o.product || ''}>
+                            {shortProductName(o)}
+                          </span>
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {o.orderNumber || '—'}
