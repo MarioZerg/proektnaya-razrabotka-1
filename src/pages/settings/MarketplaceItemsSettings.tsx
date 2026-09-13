@@ -14,7 +14,9 @@ import {
   syncMarketplaceItems,
   type MarketplaceItem,
   type MarketplaceItemMaterial,
+  type Shop,
 } from '@/lib/marketplaceItemsApi';
+import ShopTabs from '@/components/crm/ShopTabs';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import {
   emptyForm,
@@ -32,6 +34,12 @@ const MarketplaceItemsSettings = () => {
   const [items, setItems] = useState<MarketplaceItem[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Магазин, ассортимент которого сейчас смотрят. Кабинеты МЕГАТЮЛЬ и ДЮНА
+  // разные, и карточки нельзя показывать вперемешку: товар одного магазина,
+  // добавленный в поставку другого, уедет не туда.
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [shopId, setShopId] = useState<number | null>(null);
 
   const [skuQuery, setSkuQuery] = useState('');
   const [materialFilter, setMaterialFilter] = useState(ALL_MATERIALS);
@@ -54,7 +62,13 @@ const MarketplaceItemsSettings = () => {
       .catch(() => {});
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchMarketplaceItems()
-      .then(setItems)
+      .then(({ items: list, shops: shopList }) => {
+        setItems(list);
+        setShops(shopList);
+        // При первом заходе открываем первый магазин, а не «все»: работают
+        // всегда в контексте одного кабинета.
+        setShopId((prev) => prev ?? shopList[0]?.id ?? null);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -124,7 +138,10 @@ const MarketplaceItemsSettings = () => {
       if (editingId) {
         await updateMarketplaceItem(editingId, payload);
       } else {
-        const res = await createMarketplaceItem(payload);
+        // Новый товар заводим в тот магазин, вкладка которого открыта, —
+        // иначе карточка исчезнет из виду сразу после создания.
+        if (!shopId) return;
+        const res = await createMarketplaceItem({ ...payload, shopId });
         itemId = res.id;
       }
 
@@ -174,9 +191,12 @@ const MarketplaceItemsSettings = () => {
   };
 
   const handleSync = async () => {
+    // Тянем карточки того кабинета, чья вкладка открыта: ключи площадок
+    // у магазинов разные, общей синхронизации не бывает.
+    if (!shopId) return;
     setSyncing(true);
     try {
-      const res = await syncMarketplaceItems();
+      const res = await syncMarketplaceItems(shopId);
       const warn = res.warnings.length ? ` Предупреждения: ${res.warnings.join('; ')}` : '';
       toast({
         title: `Синхронизация завершена`,
@@ -196,11 +216,23 @@ const MarketplaceItemsSettings = () => {
     }
   };
 
+  // Счётчик карточек по магазинам — видно, что у нового магазина ассортимент
+  // ещё не заведён, без переключения вкладок.
+  const shopCounts = items.reduce<Record<number, number>>((acc, item) => {
+    acc[item.shopId] = (acc[item.shopId] || 0) + 1;
+    return acc;
+  }, {});
+
+  // Всё остальное на странице (материалы в фильтре, счётчики, пагинация)
+  // считаем уже внутри выбранного магазина.
+  const shopItems = shopId === null ? items : items.filter((i) => i.shopId === shopId);
+  const currentShop = shops.find((s) => s.id === shopId) || null;
+
   const materialOptions = Array.from(
-    new Set(items.map((i) => i.material).filter((m): m is string => !!m))
+    new Set(shopItems.map((i) => i.material).filter((m): m is string => !!m))
   ).sort((a, b) => a.localeCompare(b));
 
-  const filteredItems = items.filter((item) => {
+  const filteredItems = shopItems.filter((item) => {
     const matchesSku = skuQuery.trim()
       ? (item.article || '').toLowerCase().includes(skuQuery.trim().toLowerCase())
       : true;
@@ -224,7 +256,8 @@ const MarketplaceItemsSettings = () => {
             <h1 className="text-xl font-bold">Товары маркетплейса</h1>
             {!loading && (
               <Badge variant="secondary" className="text-sm font-normal">
-                Всего товаров: {items.length}
+                {currentShop ? `Товаров в «${currentShop.name}»` : 'Всего товаров'}:{' '}
+                {shopItems.length}
               </Badge>
             )}
           </div>
@@ -236,7 +269,11 @@ const MarketplaceItemsSettings = () => {
                 size={16}
                 className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
               />
-              {syncing ? 'Синхронизация…' : 'Синхронизировать карточки'}
+              {syncing
+                ? 'Синхронизация…'
+                : currentShop
+                  ? `Синхронизировать «${currentShop.name}»`
+                  : 'Синхронизировать карточки'}
             </Button>
 
           <ItemFormDialog
@@ -264,7 +301,19 @@ const MarketplaceItemsSettings = () => {
           </div>
         </div>
 
-        {!loading && items.length > 0 && (
+        {!loading && (
+          <ShopTabs
+            shops={shops}
+            value={shopId}
+            onChange={(id) => {
+              setShopId(id);
+              setPage(1);
+            }}
+            counts={shopCounts}
+          />
+        )}
+
+        {!loading && shopItems.length > 0 && (
           <ItemsToolbar
             skuQuery={skuQuery}
             setSkuQuery={setSkuQuery}
@@ -278,7 +327,12 @@ const MarketplaceItemsSettings = () => {
 
         <ItemsGrid
           loading={loading}
-          items={items}
+          items={shopItems}
+          emptyLabel={
+            currentShop
+              ? `В магазине «${currentShop.name}» товаров пока нет — добавьте первый или синхронизируйте карточки с площадок.`
+              : undefined
+          }
           filteredItems={filteredItems}
           pagedItems={pagedItems}
           currentPage={currentPage}

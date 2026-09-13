@@ -30,6 +30,7 @@ const MarketplaceSupplyShow = () => {
     readyGoods,
     setReadyGoods,
     marketplaceItems,
+    shops,
     now,
     load,
     fields,
@@ -63,6 +64,7 @@ const MarketplaceSupplyShow = () => {
         now={now}
         readyGoods={readyGoods}
         marketplaceItems={marketplaceItems}
+        shops={shops}
         load={load}
         fields={fields}
         actions={actions}
@@ -78,6 +80,7 @@ const SupplyShowLoaded = ({
   now,
   readyGoods,
   marketplaceItems,
+  shops,
   load,
   fields,
   actions,
@@ -87,6 +90,7 @@ const SupplyShowLoaded = ({
   now: Date;
   readyGoods: ReturnType<typeof useSupplyData>['readyGoods'];
   marketplaceItems: ReturnType<typeof useSupplyData>['marketplaceItems'];
+  shops: ReturnType<typeof useSupplyData>['shops'];
   load: (silent?: boolean) => void;
   fields: ReturnType<typeof useSupplyData>['fields'];
   actions: ReturnType<typeof useSupplyActions>;
@@ -100,6 +104,7 @@ const SupplyShowLoaded = ({
       now={now}
       readyGoods={readyGoods}
       marketplaceItems={marketplaceItems}
+      shops={shops}
       load={load}
       fields={fields}
       flags={flags}

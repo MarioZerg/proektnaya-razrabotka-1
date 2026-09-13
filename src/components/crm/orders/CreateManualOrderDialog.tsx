@@ -4,7 +4,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
-import type { MarketplaceItem } from '@/lib/marketplaceItemsApi';
+import type { MarketplaceItem, Shop } from '@/lib/marketplaceItemsApi';
 import { emptyManualRow, type ManualOrderRow } from '@/components/crm/orders/ordersShared';
 import MarketplaceItemPicker from '@/components/crm/orders/MarketplaceItemPicker';
 
@@ -14,6 +14,8 @@ interface CreateManualOrderDialogProps {
   rows: ManualOrderRow[];
   setRows: Dispatch<SetStateAction<ManualOrderRow[]>>;
   marketplaceItems: MarketplaceItem[];
+  /** Магазины — товар выбирают из общего списка, и метка не даёт спутать кабинеты. */
+  shops?: Shop[];
   manualSaving: boolean;
   onCreate: () => void;
 }
@@ -24,6 +26,7 @@ const CreateManualOrderDialog = ({
   rows,
   setRows,
   marketplaceItems,
+  shops = [],
   manualSaving,
   onCreate,
 }: CreateManualOrderDialogProps) => {
@@ -74,6 +77,7 @@ const CreateManualOrderDialog = ({
                 <Label>Материал и размер</Label>
                 <MarketplaceItemPicker
                   items={marketplaceItems}
+                  shops={shops}
                   value={row.marketplaceItemId}
                   onChange={(itemId) => updateRow(row.key, { marketplaceItemId: itemId })}
                 />

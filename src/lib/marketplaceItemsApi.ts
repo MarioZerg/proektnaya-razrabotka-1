@@ -1,4 +1,8 @@
+import type { Shop } from '@/lib/marketplaceIntegrationsApi';
+
 const ITEMS_URL = 'https://functions.poehali.dev/9959a7b8-9bf6-4fbe-8170-68cc9e031f77';
+
+export type { Shop };
 
 export interface MarketplaceItem {
   id: number;
@@ -14,6 +18,8 @@ export interface MarketplaceItem {
   barcode: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Магазин-владелец карточки: у МЕГАТЮЛЬ и ДЮНЫ разные кабинеты и ассортимент. */
+  shopId: number;
 }
 
 export interface MarketplaceItemMaterial {
@@ -28,10 +34,18 @@ export interface MarketplaceItemDetail extends MarketplaceItem {
   materials: MarketplaceItemMaterial[];
 }
 
-export const fetchMarketplaceItems = async (): Promise<MarketplaceItem[]> => {
+/**
+ * Справочник товаров вместе со списком магазинов — по ним строятся вкладки.
+ * Карточки тянем сразу все: их меньше тысячи, а переключение вкладок без
+ * повторного запроса ощущается мгновенным.
+ */
+export const fetchMarketplaceItems = async (): Promise<{
+  items: MarketplaceItem[];
+  shops: Shop[];
+}> => {
   const res = await fetch(ITEMS_URL);
   const data = await res.json();
-  return data.items || [];
+  return { items: data.items || [], shops: data.shops || [] };
 };
 
 export const fetchMarketplaceItemDetail = async (id: number): Promise<MarketplaceItemDetail> => {
@@ -55,6 +69,7 @@ const postAction = async (payload: Record<string, unknown>) => {
 
 export const createMarketplaceItem = (payload: {
   name: string;
+  shopId: number;
   article?: string;
   width?: number;
   height?: number;
@@ -77,6 +92,7 @@ export const updateMarketplaceItem = (
     ymSku: string;
     material: string;
     barcode: string;
+    shopId: number;
   }>
 ) => postAction({ action: 'update', id, ...fields });
 
@@ -93,12 +109,16 @@ export interface SyncResult {
   warnings: string[];
 }
 
-/** Синхронизация карточек товаров из OZON и Wildberries — добавляет новые в справочник. */
-export const syncMarketplaceItems = async (): Promise<SyncResult> => {
+/**
+ * Синхронизация карточек товаров из OZON и Wildberries — добавляет новые в справочник.
+ * Всегда для конкретного магазина: ключи кабинетов разные, и карточки должны
+ * попасть на вкладку своего магазина.
+ */
+export const syncMarketplaceItems = async (shopId: number): Promise<SyncResult> => {
   const res = await fetch(SYNC_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'sync' }),
+    body: JSON.stringify({ action: 'sync', shopId }),
   });
   const data = await res.json();
   if (!res.ok) {

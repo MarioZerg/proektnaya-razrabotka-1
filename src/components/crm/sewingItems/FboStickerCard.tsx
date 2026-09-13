@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { updateOrder, type Order, type OrderDetail } from '@/lib/ordersApi';
-import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
+import { fetchMarketplaceItems, type MarketplaceItem, type Shop } from '@/lib/marketplaceItemsApi';
 import { printFboSticker } from '@/lib/printFboSticker';
 
 interface FboStickerCardProps {
@@ -30,24 +30,36 @@ interface FboStickerCardProps {
 const FboStickerCard = ({ order, orderDetail, onSaved }: FboStickerCardProps) => {
   const { toast } = useToast();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
+  const [shops, setShops] = useState<Shop[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchMarketplaceItems().then(setItems).catch(() => setItems([]));
+    fetchMarketplaceItems()
+      .then(({ items: list, shops: shopList }) => {
+        setItems(list);
+        setShops(shopList);
+      })
+      .catch(() => setItems([]));
   }, []);
 
   // Кандидаты — товары того же материала и размера, что и заказ. Именно среди них выбираем,
   // какой штрихкод печатать (на один размер может приходиться несколько артикулов OZON).
-  const candidates = useMemo(
-    () =>
-      items.filter(
-        (i) =>
-          (!order.material || i.material === order.material) &&
-          (order.width == null || i.width === order.width) &&
-          (order.height == null || i.height === order.height)
-      ),
-    [items, order.material, order.width, order.height]
-  );
+  //
+  // Отсекаем чужие магазины: у МЕГАТЮЛЬ и ДЮНЫ бывают одинаковые размеры, но
+  // штрихкоды и коды OZON разные. Стикер с чужим кодом отправит вещь в поставку
+  // не того кабинета, и маркетплейс её не примет.
+  const candidates = useMemo(() => {
+    const orderShopId = order.shopName
+      ? shops.find((s) => s.name === order.shopName)?.id ?? null
+      : null;
+    return items.filter(
+      (i) =>
+        (orderShopId == null || i.shopId === orderShopId) &&
+        (!order.material || i.material === order.material) &&
+        (order.width == null || i.width === order.width) &&
+        (order.height == null || i.height === order.height)
+    );
+  }, [items, shops, order.shopName, order.material, order.width, order.height]);
 
   const selectedItemId = orderDetail?.marketplaceItemId ?? null;
   const isOzon = order.marketplace === 'OZON';

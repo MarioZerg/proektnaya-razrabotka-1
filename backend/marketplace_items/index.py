@@ -8,10 +8,15 @@ def handler(event: dict, context) -> dict:
     """Управляет товарами на маркетплейсе: карточка товара с артикулами (свой/OZON/WB)
     и расходом материалов на пошив (материал + количество на единицу товара).
 
-    GET  /                        - получить список товаров
+    Справочник разделён по магазинам (МЕГАТЮЛЬ, ДЮНА): у каждого свой кабинет на
+    площадках и свой ассортимент, поэтому карточки нельзя держать общей кучей —
+    товар ДЮНЫ, попавший в поставку МЕГАТЮЛЬ, уедет не на тот склад.
+
+    GET  /                        - список товаров (всех магазинов) + справочник магазинов
+    GET  /?shopId=2               - только товары указанного магазина
     GET  /?id=1                   - получить детальную карточку товара с расходом материалов
-    POST /  { action: 'create', name, width?, height?, article?, ozonSku?, wbSku?, ymSku?, material?, barcode? }
-    POST /  { action: 'update', id, name?, width?, height?, article?, ozonSku?, wbSku?, ymSku?, material?, barcode? }
+    POST /  { action: 'create', name, shopId, width?, height?, article?, ozonSku?, wbSku?, ymSku?, material?, barcode? }
+    POST /  { action: 'update', id, shopId?, name?, width?, height?, article?, ozonSku?, wbSku?, ymSku?, material?, barcode? }
     POST /  { action: 'delete', id }
         - запрещено, если по товару (material+width+height) уже есть заказы (движение)
     POST /  { action: 'set_materials', itemId, materials: [{materialId, quantity}] }
@@ -44,14 +49,24 @@ def handler(event: dict, context) -> dict:
     if method == 'GET':
         params = event.get('queryStringParameters') or {}
         item_id = params.get('id')
+        shop_id = params.get('shopId')
 
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
 
+            # Магазины отдаём вместе со списком: вкладки на странице строятся
+            # по ним, отдельный запрос ради двух строк не нужен.
+            cur.execute(
+                "SELECT id, code, name, color FROM shops WHERE is_active = true "
+                "ORDER BY sort_order, id"
+            )
+            shops = [{'id': r[0], 'code': r[1], 'name': r[2], 'color': r[3]}
+                     for r in cur.fetchall()]
+
             if item_id:
                 cur.execute(
-                    "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku "
+                    "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id "
                     "FROM marketplace_items WHERE id = %s",
                     (int(item_id),),
                 )
@@ -90,14 +105,19 @@ def handler(event: dict, context) -> dict:
                     'createdAt': row[9].isoformat() + 'Z',
                     'updatedAt': row[10].isoformat() + 'Z',
                     'ymSku': row[11],
+                    'shopId': row[12],
                     'materials': materials,
                 }
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'item': detail})}
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'item': detail, 'shops': shops})}
 
-            cur.execute(
-                "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku "
-                "FROM marketplace_items ORDER BY id DESC"
+            sql = (
+                "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id "
+                "FROM marketplace_items"
             )
+            if shop_id:
+                sql += f" WHERE shop_id = {int(shop_id)}"
+            cur.execute(sql + " ORDER BY id DESC")
             items = [
                 {
                     'id': r[0],
@@ -112,13 +132,15 @@ def handler(event: dict, context) -> dict:
                     'createdAt': r[9].isoformat() + 'Z',
                     'updatedAt': r[10].isoformat() + 'Z',
                     'ymSku': r[11],
+                    'shopId': r[12],
                 }
                 for r in cur.fetchall()
             ]
         finally:
             conn.close()
 
-        return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'items': items})}
+        return {'statusCode': 200, 'headers': headers,
+                'body': json.dumps({'items': items, 'shops': shops})}
 
     if method == 'POST':
         body_data = json.loads(event.get('body') or '{}')
@@ -142,6 +164,13 @@ def handler(event: dict, context) -> dict:
                 if not name:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите название товара'})}
 
+                # Магазин обязателен: карточка без него не попадёт ни в одну
+                # вкладку и потеряется в справочнике.
+                shop_id = body_data.get('shopId')
+                if not shop_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Не указан магазин'})}
+
                 name_esc = name.replace("'", "''")
                 article_esc = article.replace("'", "''")
                 ozon_sku_esc = ozon_sku.replace("'", "''")
@@ -153,8 +182,8 @@ def handler(event: dict, context) -> dict:
                 height_sql = int(height) if height not in (None, '') else 'NULL'
 
                 cur.execute(
-                    f"INSERT INTO marketplace_items (name, sku, width, height, ozon_sku, wb_sku, material, barcode, ym_sku) "
-                    f"VALUES ('{name_esc}', '{article_esc}', {width_sql}, {height_sql}, '{ozon_sku_esc}', '{wb_sku_esc}', '{material_esc}', '{barcode_esc}', '{ym_sku_esc}') "
+                    f"INSERT INTO marketplace_items (name, sku, width, height, ozon_sku, wb_sku, material, barcode, ym_sku, shop_id) "
+                    f"VALUES ('{name_esc}', '{article_esc}', {width_sql}, {height_sql}, '{ozon_sku_esc}', '{wb_sku_esc}', '{material_esc}', '{barcode_esc}', '{ym_sku_esc}', {int(shop_id)}) "
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
@@ -181,6 +210,8 @@ def handler(event: dict, context) -> dict:
                     fields.append(f"ym_sku = '{str(body_data['ymSku']).replace(chr(39), chr(39)*2)}'")
                 if 'barcode' in body_data:
                     fields.append(f"barcode = '{str(body_data['barcode']).replace(chr(39), chr(39)*2)}'")
+                if body_data.get('shopId'):
+                    fields.append(f"shop_id = {int(body_data['shopId'])}")
                 if 'width' in body_data:
                     val = body_data['width']
                     fields.append(f"width = {int(val) if val not in (None, '') else 'NULL'}")

@@ -8,7 +8,7 @@ import {
   deleteOrder,
   type Order,
 } from '@/lib/ordersApi';
-import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
+import { fetchMarketplaceItems, type MarketplaceItem, type Shop } from '@/lib/marketplaceItemsApi';
 import { syncWbOrders } from '@/lib/wbFbsApi';
 import { syncOzonOrders, refreshAllOzonStatuses } from '@/lib/ozonFbsApi';
 import { syncYandexOrders } from '@/lib/yandexMarketApi';
@@ -42,6 +42,9 @@ const MarketplaceOrders = () => {
   const [refreshingOzon, setRefreshingOzon] = useState(false);
   const [loading, setLoading] = useState(true);
   const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
+  // Магазины нужны в подборе товара: карточки МЕГАТЮЛЬ и ДЮНЫ лежат вперемешку,
+  // и без метки один и тот же размер не отличить.
+  const [shops, setShops] = useState<Shop[]>([]);
 
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [form, setForm] = useState<EditFormState | null>(null);
@@ -66,7 +69,10 @@ const MarketplaceOrders = () => {
 
   useEffect(() => {
     load();
-    fetchMarketplaceItems().then(setMarketplaceItems);
+    fetchMarketplaceItems().then(({ items, shops: shopList }) => {
+      setMarketplaceItems(items);
+      setShops(shopList);
+    });
   }, []);
 
   const openEdit = (order: Order) => {
@@ -400,6 +406,7 @@ const MarketplaceOrders = () => {
         rows={manualRows}
         setRows={setManualRows}
         marketplaceItems={marketplaceItems}
+        shops={shops}
         manualSaving={manualSaving}
         onCreate={handleManualCreate}
       />

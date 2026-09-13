@@ -2,7 +2,7 @@ import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { SupplyDetail, SupplyStatus, WbSupplyOrder } from '@/lib/marketplaceSuppliesApi';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
-import type { MarketplaceItem } from '@/lib/marketplaceItemsApi';
+import type { MarketplaceItem, Shop } from '@/lib/marketplaceItemsApi';
 import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFboApplicationCard';
 import GazelkaShippingCard from '@/components/crm/marketplaceSupplies/GazelkaShippingCard';
 import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
@@ -24,6 +24,7 @@ interface SupplyShowContentProps {
   now: Date;
   readyGoods: GoodsWarehouseItem[];
   marketplaceItems: MarketplaceItem[];
+  shops?: Shop[];
   load: (silent?: boolean) => void;
   fields: {
     supplyNumber: string;
@@ -92,6 +93,7 @@ const SupplyShowContent = ({
   now,
   readyGoods,
   marketplaceItems,
+  shops = [],
   load,
   fields,
   flags,
@@ -217,6 +219,7 @@ const SupplyShowContent = ({
         open={actions.addOrdersOpen}
         onOpenChange={actions.setAddOrdersOpen}
         marketplaceItems={marketplaceItems}
+        shops={shops}
         saving={actions.addingOrders}
         onCreate={actions.handleAddSewingOrders}
       />

@@ -11,6 +11,11 @@ import psycopg2
 # не трогает — ручные правки сохраняются). Товары OZON и WB объединяются по артикулу
 # (offer_id OZON = vendorCode WB = наш sku): в одну карточку пишем и ozon_sku, и wb_sku.
 # Материал/расход не заполняем — их укажут сотрудники; товар всё равно попадёт на конвейер.
+#
+# Магазинов несколько (МЕГАТЮЛЬ, ДЮНА), у каждого свой кабинет на площадке и свои
+# ключи. Поэтому синхронизация всегда идёт по конкретному магазину: карточки ДЮНЫ
+# должны лечь под её shop_id, иначе они смешаются с чужим ассортиментом. Артикулы
+# у магазинов могут совпадать — сравниваем существующие только внутри магазина.
 
 OZON_API_BASE = 'https://api-seller.ozon.ru'
 WB_CONTENT_BASE = 'https://content-api.wildberries.ru'
@@ -46,9 +51,11 @@ def parse_size_from_sku(sku):
 
 # ---------- OZON ----------
 
-def get_ozon_credentials(cur):
+def get_ozon_credentials(cur, shop_id):
     cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = 'ozon' AND shop_id = %s LIMIT 1",
+        (int(shop_id),),
     )
     row = cur.fetchone()
     if not row:
@@ -136,9 +143,11 @@ def _ozon_err(status, data):
 
 # ---------- Wildberries ----------
 
-def get_wb_credentials(cur):
+def get_wb_credentials(cur, shop_id):
     cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'wildberries' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = 'wildberries' AND shop_id = %s LIMIT 1",
+        (int(shop_id),),
     )
     row = cur.fetchone()
     if not row:
@@ -195,9 +204,9 @@ def fetch_wb_cards(api_key):
 
 # ---------- Синхронизация ----------
 
-def handle_sync(cur):
-    client_id, ozon_key, ozon_on = get_ozon_credentials(cur)
-    wb_key, wb_on = get_wb_credentials(cur)
+def handle_sync(cur, shop_id):
+    client_id, ozon_key, ozon_on = get_ozon_credentials(cur, shop_id)
+    wb_key, wb_on = get_wb_credentials(cur, shop_id)
 
     # Собираем товары по артикулу: sku -> {name, ozon_sku, wb_sku, barcode}
     merged = {}
@@ -237,11 +246,19 @@ def handle_sync(cur):
     elif wb_on:
         errors.append('WB: не заполнен Api-Key')
 
+    if not ozon_on and not wb_on:
+        return _resp(400, {'error': 'У магазина не включены интеграции OZON и Wildberries — '
+                                    'заполните ключи в разделе «Интеграции»'})
+
     if not merged and errors:
         return _resp(400, {'error': '; '.join(errors)})
 
-    # Уже существующие артикулы — их не трогаем (добавляем только новые).
-    cur.execute("SELECT sku FROM marketplace_items WHERE sku IS NOT NULL")
+    # Уже существующие артикулы этого магазина — их не трогаем (добавляем только новые).
+    # Артикул другого магазина не помеха: у ДЮНЫ может быть свой vyal3_260.
+    cur.execute(
+        "SELECT sku FROM marketplace_items WHERE sku IS NOT NULL AND shop_id = %s",
+        (int(shop_id),),
+    )
     existing = {r[0] for r in cur.fetchall()}
 
     created = 0
@@ -251,12 +268,12 @@ def handle_sync(cur):
         width, height = parse_size_from_sku(sku)
         name = data['name'] or sku
         cur.execute(
-            "INSERT INTO marketplace_items (name, sku, ozon_sku, wb_sku, barcode, width, height) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO marketplace_items (name, sku, ozon_sku, wb_sku, barcode, width, height, shop_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 name[:200], sku[:100],
                 (data['ozon_sku'] or None), (data['wb_sku'] or None), (data['barcode'] or None),
-                width, height,
+                width, height, int(shop_id),
             ),
         )
         created += 1
@@ -273,7 +290,10 @@ def handle_sync(cur):
 
 def handler(event: dict, context) -> dict:
     """Синхронизация карточек товаров из OZON и Wildberries в справочник marketplace_items.
-    Добавляет новые карточки (по артикулу), существующие не изменяет."""
+    Добавляет новые карточки (по артикулу) для указанного магазина, существующие не изменяет.
+
+    POST / { action: 'sync', shopId } — shopId обязателен: ключи площадок у каждого
+    магазина свои, и карточки должны лечь под его shop_id."""
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
@@ -285,10 +305,14 @@ def handler(event: dict, context) -> dict:
     if action != 'sync':
         return _resp(400, {'error': 'Неизвестное действие'})
 
+    shop_id = body_data.get('shopId')
+    if not shop_id:
+        return _resp(400, {'error': 'Не указан магазин'})
+
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
     try:
         cur = conn.cursor()
-        result = handle_sync(cur)
+        result = handle_sync(cur, int(shop_id))
         conn.commit()
         return result
     finally:

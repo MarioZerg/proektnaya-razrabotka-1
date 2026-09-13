@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
-import type { MarketplaceItem } from '@/lib/marketplaceItemsApi';
+import type { MarketplaceItem, Shop } from '@/lib/marketplaceItemsApi';
 import MarketplaceItemPicker from '@/components/crm/orders/MarketplaceItemPicker';
 
 export interface AddOrdersRow {
@@ -23,6 +23,8 @@ interface AddSewingOrdersDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   marketplaceItems: MarketplaceItem[];
+  /** Магазины — метка не даёт добавить в поставку карточку чужого кабинета. */
+  shops?: Shop[];
   saving: boolean;
   onCreate: (rows: { marketplaceItemId: number; quantity: number }[]) => void;
 }
@@ -33,6 +35,7 @@ const AddSewingOrdersDialog = ({
   open,
   onOpenChange,
   marketplaceItems,
+  shops = [],
   saving,
   onCreate,
 }: AddSewingOrdersDialogProps) => {
@@ -96,6 +99,7 @@ const AddSewingOrdersDialog = ({
                 <Label>Материал и размер</Label>
                 <MarketplaceItemPicker
                   items={marketplaceItems}
+                  shops={shops}
                   value={row.marketplaceItemId}
                   onChange={(itemId) => updateRow(row.key, { marketplaceItemId: itemId })}
                 />

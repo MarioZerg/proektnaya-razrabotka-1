@@ -27,6 +27,8 @@ interface ItemsGridProps {
   deleteId: number | null;
   setDeleteId: (id: number | null) => void;
   onDelete: () => void;
+  /** Что показать, когда у магазина ещё нет ни одной карточки. */
+  emptyLabel?: string;
 }
 
 const ItemsGrid = ({
@@ -41,6 +43,7 @@ const ItemsGrid = ({
   deleteId,
   setDeleteId,
   onDelete,
+  emptyLabel,
 }: ItemsGridProps) => {
   const { toast } = useToast();
 
@@ -83,7 +86,9 @@ const ItemsGrid = ({
           Загрузка...
         </div>
       ) : items.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Товаров пока нет — добавьте первый.</p>
+        <p className="text-sm text-muted-foreground">
+          {emptyLabel || 'Товаров пока нет — добавьте первый.'}
+        </p>
       ) : filteredItems.length === 0 ? (
         <p className="text-sm text-muted-foreground">Ничего не найдено по заданным фильтрам.</p>
       ) : (

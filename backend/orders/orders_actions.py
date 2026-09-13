@@ -563,13 +563,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # ищет marketplace_items именно по этим трём полям), а не только в текстовый
             # product для отображения.
             cur.execute(
-                "SELECT name, material, width, height, barcode, ozon_sku FROM marketplace_items WHERE id = %s",
+                "SELECT name, material, width, height, barcode, ozon_sku, shop_id "
+                "FROM marketplace_items WHERE id = %s",
                 (int(marketplace_item_id),),
             )
             item_row = cur.fetchone()
             if not item_row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
-            item_name, item_material, item_width, item_height, item_barcode, item_ozon_sku = item_row
+            (item_name, item_material, item_width, item_height, item_barcode,
+             item_ozon_sku, item_shop_id) = item_row
             product = f"{item_material} {item_width}x{item_height}" if item_material and item_width and item_height else item_name
 
             marketplace_esc = marketplace.replace("'", "''")
@@ -582,6 +584,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             height_sql = str(int(item_height)) if item_height else 'NULL'
             barcode_sql = f"'{item_barcode.replace(chr(39), chr(39)*2)}'" if item_barcode else 'NULL'
             ozon_sku_sql = f"'{item_ozon_sku.replace(chr(39), chr(39)*2)}'" if item_ozon_sku else 'NULL'
+            # Магазин заказа берём из карточки товара: цех общий, но упаковка и
+            # вложения у МЕГАТЮЛЬ и ДЮНЫ разные — швея должна видеть метку.
+            shop_id_sql = str(int(item_shop_id)) if item_shop_id else 'NULL'
 
             # Создаём столько отдельных заявок, сколько изделий заказали: каждая
             # идёт по конвейеру самостоятельно (своя раскройка, свой пошив), но
@@ -605,10 +610,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 order_number_esc = candidate.replace("'", "''")
                 cur.execute(
                     f"INSERT INTO orders (order_number, marketplace, order_type, status, cluster, product, "
-                    f"quantity, source, material, width, height, marketplace_item_id, product_barcode, product_ozon_sku) "
+                    f"quantity, source, material, width, height, marketplace_item_id, product_barcode, product_ozon_sku, shop_id) "
                     f"VALUES ('{order_number_esc}', '{marketplace_esc}', '{order_type_esc}', 'Новый', "
                     f"'{cluster_esc}', '{product_esc}', 1, 'manual', {material_sql}, {width_sql}, {height_sql}, "
-                    f"{int(marketplace_item_id)}, {barcode_sql}, {ozon_sku_sql}) "
+                    f"{int(marketplace_item_id)}, {barcode_sql}, {ozon_sku_sql}, {shop_id_sql}) "
                     f"RETURNING id"
                 )
                 created_ids.append(cur.fetchone()[0])

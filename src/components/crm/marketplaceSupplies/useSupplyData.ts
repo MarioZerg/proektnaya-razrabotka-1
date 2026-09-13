@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchSupplyDetail, type SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { fetchGoodsWarehouse, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
-import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
+import { fetchMarketplaceItems, type MarketplaceItem, type Shop } from '@/lib/marketplaceItemsApi';
 
 /**
  * Данные карточки поставки: сама поставка, готовые к сборке вещи, справочник товаров
@@ -22,6 +22,9 @@ export const useSupplyData = (supplyId: number) => {
 
   const [readyGoods, setReadyGoods] = useState<GoodsWarehouseItem[]>([]);
   const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
+  // Магазины: в поставку кладут товар конкретного кабинета, и метка не даёт
+  // подобрать одноимённую карточку чужого магазина.
+  const [shops, setShops] = useState<Shop[]>([]);
 
   const [now, setNow] = useState(() => new Date());
 
@@ -88,7 +91,12 @@ export const useSupplyData = (supplyId: number) => {
 
   // Справочник товаров нужен для догрузки в пошив — грузим один раз при открытии карточки.
   useEffect(() => {
-    fetchMarketplaceItems().then(setMarketplaceItems).catch(() => setMarketplaceItems([]));
+    fetchMarketplaceItems()
+      .then(({ items, shops: shopList }) => {
+        setMarketplaceItems(items);
+        setShops(shopList);
+      })
+      .catch(() => setMarketplaceItems([]));
   }, []);
 
   return {
@@ -98,6 +106,7 @@ export const useSupplyData = (supplyId: number) => {
     readyGoods,
     setReadyGoods,
     marketplaceItems,
+    shops,
     now,
     load,
     fields: {

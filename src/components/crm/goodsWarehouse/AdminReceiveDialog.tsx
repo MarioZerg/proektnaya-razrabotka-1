@@ -20,7 +20,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { useAuth } from '@/context/AuthContext';
 import type { Shelf } from '@/lib/shelvesApi';
-import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
+import { fetchMarketplaceItems, type MarketplaceItem, type Shop } from '@/lib/marketplaceItemsApi';
+import ShopBadge from '@/components/crm/ShopBadge';
 import { adminReceiveGoods, findItemByCode } from '@/lib/goodsWarehouseApi';
 import { printStorageStickers } from '@/lib/printStorageSticker';
 
@@ -54,6 +55,9 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
   const { toast } = useToast();
   const { user } = useAuth();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
+  // Магазины нужны, чтобы в поиске было видно, чья это карточка: у МЕГАТЮЛЬ и
+  // ДЮНЫ бывают товары с одинаковым названием и размером, но разными кодами.
+  const [shops, setShops] = useState<Shop[]>([]);
   const [query, setQuery] = useState('');
   const [cart, setCart] = useState<CartRow[]>([]);
   const [shelfId, setShelfId] = useState('');
@@ -68,7 +72,10 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
   useEffect(() => {
     if (!open) return;
     fetchMarketplaceItems()
-      .then(setItems)
+      .then(({ items: list, shops: shopList }) => {
+        setItems(list);
+        setShops(shopList);
+      })
       .catch(() => setItems([]));
   }, [open]);
 
@@ -332,7 +339,13 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
                     onClick={() => addToCart(i)}
                     className="flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition hover:bg-muted"
                   >
-                    <span className="font-medium">{i.name}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <ShopBadge
+                        name={shops.find((s) => s.id === i.shopId)?.name}
+                        color={shops.find((s) => s.id === i.shopId)?.color}
+                      />
+                      <span className="truncate font-medium">{i.name}</span>
+                    </span>
                     <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                       {i.material} {i.width}×{i.height}
                       <Icon name="Plus" size={14} />
