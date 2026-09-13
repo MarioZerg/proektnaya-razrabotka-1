@@ -46,12 +46,24 @@ def log_action(cur, actor_id, actor_name, action, description, details=None):
     )
 
 
-def get_credentials(cur, code):
-    """Учётные данные маркетплейса из marketplace_integrations."""
-    cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = %s ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1",
-        (code,),
-    )
+def get_credentials(cur, code, shop_id=None):
+    """Учётные данные кабинета конкретного магазина.
+
+    Заявка на возврат приезжает из кабинета продавца, и забирать её надо по
+    коду того же кабинета. Без явного магазина брался первый попавшийся ключ —
+    возвраты второго кабинета в систему не приезжали вовсе.
+    """
+    if shop_id:
+        cur.execute(
+            "SELECT is_enabled, credentials FROM marketplace_integrations "
+            "WHERE marketplace_code = %s AND shop_id = %s LIMIT 1",
+            (code, int(shop_id)),
+        )
+    else:
+        cur.execute(
+            "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = %s ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1",
+            (code,),
+        )
     row = cur.fetchone()
     if not row:
         return {}, False
@@ -85,6 +97,16 @@ def error_text(data):
     if isinstance(data, dict):
         return data.get('message') or data.get('error') or data.get('detail') or json.dumps(data, ensure_ascii=False)
     return str(data)
+
+
+def list_return_shops(cur):
+    """Магазины с подключёнными кабинетами — загрузка обходит их по очереди."""
+    cur.execute(
+        "SELECT DISTINCT shop_id FROM marketplace_integrations "
+        "WHERE is_enabled = true AND credentials::text <> '{}' AND shop_id IS NOT NULL "
+        "ORDER BY shop_id"
+    )
+    return [r[0] for r in cur.fetchall()]
 
 
 def find_item(cur, sku, offer_id):
@@ -136,7 +158,7 @@ def find_order(cur, marketplace, posting_number):
     return row[0] if row else None
 
 
-def save_return(cur, marketplace, r):
+def save_return(cur, marketplace, r, shop_id=None):
     """Сохраняет одну заявку на возврат. Повторная загрузка обновляет статус, но не плодит
     дубли (уникальный индекс marketplace + external_id). Возвращает 'created'/'updated'."""
     # Сразу пробуем обновить: возвраты повторно загружаются гораздо чаще, чем появляются
@@ -160,8 +182,8 @@ def save_return(cur, marketplace, r):
     cur.execute(
         "INSERT INTO marketplace_returns (marketplace, external_id, posting_number, order_id, "
         "offer_id, sku, product_name, marketplace_item_id, quantity, mp_status, return_reason, "
-        "mp_created_at, return_barcode) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "mp_created_at, return_barcode, shop_id) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             marketplace,
             r['externalId'],
@@ -176,14 +198,16 @@ def save_return(cur, marketplace, r):
             r.get('reason'),
             r.get('createdAt'),
             r.get('returnBarcode'),
+            # Кабинет, из которого приехала заявка: забирать её надо его кодом.
+            shop_id,
         ),
     )
     return 'created'
 
 
-def sync_ozon(cur, days, r_statuses=None):
+def sync_ozon(cur, days, r_statuses=None, shop_id=None):
     """Заявки на возврат OZON (FBS и FBO). Читаем список возвратов за период."""
-    creds, enabled = get_credentials(cur, 'ozon')
+    creds, enabled = get_credentials(cur, 'ozon', shop_id)
     if not enabled:
         return {'created': 0, 'updated': 0, 'error': 'Интеграция OZON выключена'}
     client_id = (creds.get('clientId') or '').strip()
@@ -273,7 +297,7 @@ def sync_ozon(cur, days, r_statuses=None):
                 # записей подряд успевала съесть всё отведённое функции время.
                 if time.monotonic() > deadline:
                     break
-                if save_return(cur, 'OZON', rec) == 'created':
+                if save_return(cur, 'OZON', rec, shop_id) == 'created':
                     created += 1
                 else:
                     updated += 1
@@ -302,9 +326,9 @@ def sync_ozon(cur, days, r_statuses=None):
     }
 
 
-def sync_wb(cur, days):
+def sync_wb(cur, days, shop_id=None):
     """Заявки покупателей на возврат Wildberries."""
-    creds, enabled = get_credentials(cur, 'wildberries')
+    creds, enabled = get_credentials(cur, 'wildberries', shop_id)
     if not enabled:
         return {'created': 0, 'updated': 0, 'error': 'Интеграция Wildberries выключена'}
     api_key = (creds.get('apiKey') or '').strip()
@@ -365,7 +389,7 @@ def sync_wb(cur, days):
                     continue
             except ValueError:
                 pass
-        if save_return(cur, 'WB', rec) == 'created':
+        if save_return(cur, 'WB', rec, shop_id) == 'created':
             created += 1
         else:
             updated += 1
@@ -390,14 +414,14 @@ def ym_status_label(status):
     return labels.get(status, status)
 
 
-def sync_yandex(cur, days):
+def sync_yandex(cur, days, shop_id=None):
     """Возвраты Яндекс Маркета.
 
     Яндекс отдаёт возвраты по кампании и требует период — просим за последние дни.
     Отдельного «статуса заявки» как у WB здесь нет: возврат уже согласован площадкой,
     поэтому показываем его состояние доставки.
     """
-    creds, enabled = get_credentials(cur, 'yandex_market')
+    creds, enabled = get_credentials(cur, 'yandex_market', shop_id)
     if not enabled:
         return {'created': 0, 'updated': 0, 'error': 'Интеграция Яндекс Маркета выключена'}
     api_key = (creds.get('apiKey') or '').strip()
@@ -454,7 +478,7 @@ def sync_yandex(cur, days):
                     or it.get('returnType'),
                     'createdAt': it.get('creationDate') or it.get('createdAt'),
                 }
-                if save_return(cur, 'Yandex', rec) == 'created':
+                if save_return(cur, 'Yandex', rec, shop_id) == 'created':
                     created += 1
                 else:
                     updated += 1
@@ -876,9 +900,28 @@ def handler(event: dict, context) -> dict:
                 stock_picked_up_returns(cur, limit=25)
                 conn.commit()
 
-                ozon = sync_ozon(cur, days)
-                wb = sync_wb(cur, days)
-                yandex = sync_yandex(cur, days)
+                # ОБХОДИМ ВСЕ КАБИНЕТЫ.
+                #
+                # У МЕГАТЮЛЬ и ДЮНЫ разные кабинеты на площадках, и заявки на
+                # возврат приезжают из каждого своими. Раньше брался первый
+                # попавшийся ключ, и возвраты второго кабинета в систему не
+                # попадали вовсе — кладовщик про них не знал.
+                shops_to_sync = list_return_shops(cur) or [None]
+                ozon = {'created': 0, 'updated': 0, 'error': None}
+                wb = {'created': 0, 'updated': 0, 'error': None}
+                yandex = {'created': 0, 'updated': 0, 'error': None}
+                for sid in shops_to_sync:
+                    for res, part in (
+                        (ozon, sync_ozon(cur, days, shop_id=sid)),
+                        (wb, sync_wb(cur, days, shop_id=sid)),
+                        (yandex, sync_yandex(cur, days, shop_id=sid)),
+                    ):
+                        res['created'] += part.get('created') or 0
+                        res['updated'] += part.get('updated') or 0
+                        # Ошибку показываем первую: кабинетов несколько, но
+                        # человеку важен сам факт, что загрузка где-то не прошла.
+                        if part.get('error') and not res.get('error'):
+                            res['error'] = part['error']
                 total_created = ozon['created'] + wb['created'] + yandex['created']
                 # Пишем в журнал КАЖДЫЙ запуск, даже когда новых заявок нет: иначе
                 # исправное задание в спокойный час выглядит на странице «Планировщик»
@@ -1070,18 +1113,40 @@ def handler(event: dict, context) -> dict:
                 if accepted_other is not None:
                     return _resp(200, accepted_other)
 
-                creds, enabled = get_credentials(cur, 'ozon')
+                # КОД С КОРОБКИ СПРАШИВАЕМ У ВСЕХ КАБИНЕТОВ.
+                #
+                # Кладовщик привозит коробки обеих компаний вперемешку и не знает,
+                # чей пакет у него в руках, — на наклейке этого нет. Поэтому идём
+                # по кабинетам: первый, который узнал код, и есть владелец вещи.
+                #
+                # Заодно запоминаем его магазин: возврат должен лечь на склад под
+                # тем кабинетом, из которого приехал.
+                scan_shops = list_return_shops(cur) or [None]
+                rows = []
+                creds, enabled, scan_err = {}, False, None
+                shop_id = None
+                for sid in scan_shops:
+                    c_try, en_try = get_credentials(cur, 'ozon', sid)
+                    if not en_try:
+                        continue
+                    enabled = True
+                    st, data = http_json(
+                        OZON_API_BASE + '/v1/returns/list', 'POST',
+                        {'Client-Id': (c_try.get('clientId') or '').strip(),
+                         'Api-Key': (c_try.get('apiKey') or '').strip()},
+                        {'filter': {'barcode': code}, 'limit': 10, 'last_id': 0},
+                    )
+                    if st != 200:
+                        scan_err = scan_err or error_text(data)
+                        continue
+                    found_rows = (data or {}).get('returns') or []
+                    if found_rows:
+                        rows, creds, shop_id = found_rows, c_try, sid
+                        break
                 if not enabled:
                     return _resp(409, {'error': 'Интеграция OZON выключена'})
-                st, data = http_json(
-                    OZON_API_BASE + '/v1/returns/list', 'POST',
-                    {'Client-Id': (creds.get('clientId') or '').strip(),
-                     'Api-Key': (creds.get('apiKey') or '').strip()},
-                    {'filter': {'barcode': code}, 'limit': 10, 'last_id': 0},
-                )
-                if st != 200:
-                    return _resp(502, {'error': error_text(data)})
-                rows = (data or {}).get('returns') or []
+                if not rows and scan_err:
+                    return _resp(502, {'error': scan_err})
                 # Что считать попаданием.
                 #
                 # Раньше требовали, чтобы логистический штрихкод возврата в точности
@@ -1334,9 +1399,28 @@ def handler(event: dict, context) -> dict:
                 stock_picked_up_returns(cur, limit=25)
                 conn.commit()
 
-                ozon = sync_ozon(cur, days)
-                wb = sync_wb(cur, days)
-                yandex = sync_yandex(cur, days)
+                # ОБХОДИМ ВСЕ КАБИНЕТЫ.
+                #
+                # У МЕГАТЮЛЬ и ДЮНЫ разные кабинеты на площадках, и заявки на
+                # возврат приезжают из каждого своими. Раньше брался первый
+                # попавшийся ключ, и возвраты второго кабинета в систему не
+                # попадали вовсе — кладовщик про них не знал.
+                shops_to_sync = list_return_shops(cur) or [None]
+                ozon = {'created': 0, 'updated': 0, 'error': None}
+                wb = {'created': 0, 'updated': 0, 'error': None}
+                yandex = {'created': 0, 'updated': 0, 'error': None}
+                for sid in shops_to_sync:
+                    for res, part in (
+                        (ozon, sync_ozon(cur, days, shop_id=sid)),
+                        (wb, sync_wb(cur, days, shop_id=sid)),
+                        (yandex, sync_yandex(cur, days, shop_id=sid)),
+                    ):
+                        res['created'] += part.get('created') or 0
+                        res['updated'] += part.get('updated') or 0
+                        # Ошибку показываем первую: кабинетов несколько, но
+                        # человеку важен сам факт, что загрузка где-то не прошла.
+                        if part.get('error') and not res.get('error'):
+                            res['error'] = part['error']
                 total_created = ozon['created'] + wb['created'] + yandex['created']
                 if total_created:
                     log_action(

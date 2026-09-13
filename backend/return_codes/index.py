@@ -8,17 +8,40 @@ import psycopg2
 OZON_API_BASE = 'https://api-seller.ozon.ru'
 
 
-def get_ozon_credentials(cur):
-    """Ключи OZON из настроек интеграций."""
-    cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations "
-        "WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
-    )
+def get_ozon_credentials(cur, shop_id=None):
+    """Ключи OZON кабинета конкретного магазина.
+
+    Штрихкод выдачи возвратов принадлежит КАБИНЕТУ продавца: по коду МЕГАТЮЛЬ
+    пункт выдачи не отдаст коробки ДЮНЫ — для площадки это разные продавцы.
+    Без явного магазина брался первый попавшийся ключ, и кладовщик приезжал
+    на ПВЗ с кодом не того кабинета.
+    """
+    if shop_id:
+        cur.execute(
+            "SELECT is_enabled, credentials FROM marketplace_integrations "
+            "WHERE marketplace_code = 'ozon' AND shop_id = %s LIMIT 1",
+            (int(shop_id),),
+        )
+    else:
+        cur.execute(
+            "SELECT is_enabled, credentials FROM marketplace_integrations "
+            "WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
+        )
     row = cur.fetchone()
     if not row:
         return None, None, False
     creds = row[1] if isinstance(row[1], dict) else json.loads(row[1] or '{}')
     return (creds.get('clientId') or '').strip(), (creds.get('apiKey') or '').strip(), bool(row[0])
+
+
+def list_shops(cur):
+    """Активные магазины — по ним строятся вкладки на странице кодов."""
+    cur.execute(
+        "SELECT id, code, name, color FROM shops WHERE is_active = true "
+        "ORDER BY sort_order, id"
+    )
+    return [{'id': r[0], 'code': r[1], 'name': r[2], 'color': r[3]}
+            for r in cur.fetchall()]
 
 
 def ozon_post(path, client_id, api_key, payload=None):
@@ -70,7 +93,7 @@ def extract_barcode(data):
     return None
 
 
-def refresh_ozon_code(cur, reset=True):
+def refresh_ozon_code(cur, reset=True, shop_id=None):
     """Выпускает свежий штрихкод выдачи возвратов OZON.
 
     По умолчанию именно ВЫПУСКАЕТ новый код, а не читает текущий: метод barcode отдаёт
@@ -83,7 +106,7 @@ def refresh_ozon_code(cur, reset=True):
 
     Возвращает (код, ошибка, картинка_штрихкода_base64).
     """
-    client_id, api_key, enabled = get_ozon_credentials(cur)
+    client_id, api_key, enabled = get_ozon_credentials(cur, shop_id)
     if not client_id or not api_key:
         return None, 'Не заполнены ключи OZON в интеграциях', None
     if not enabled:
@@ -124,7 +147,7 @@ CORS_HEADERS = {
 OZON_WAITING_STATUSES = {'ReturnedToOzon'}
 
 
-def fetch_ozon_giveouts(cur):
+def fetch_ozon_giveouts(cur, shop_id=None):
     """Отправления возвратов OZON, готовые к выдаче продавцу.
 
     Это то, за чем реально едет кладовщик: OZON собирает возвраты в отправление и
@@ -132,7 +155,7 @@ def fetch_ozon_giveouts(cur):
 
     Возвращает (список, ошибка).
     """
-    client_id, api_key, enabled = get_ozon_credentials(cur)
+    client_id, api_key, enabled = get_ozon_credentials(cur, shop_id)
     if not client_id or not api_key or not enabled:
         return [], 'Интеграция OZON не настроена'
 
@@ -153,7 +176,7 @@ def fetch_ozon_giveouts(cur):
     return out, None
 
 
-def fetch_ozon_pvz_waiting(cur):
+def fetch_ozon_pvz_waiting(cur, shop_id=None):
     """Сколько возвратов физически лежит в пункте выдачи и ждёт, когда их заберут.
 
     Именно это число продавец видит в кабинете OZON. Раньше страница считала его по
@@ -171,7 +194,7 @@ def fetch_ozon_pvz_waiting(cur):
 
     Возвращает (всего, разбивка по пунктам, ошибка).
     """
-    client_id, api_key, enabled = get_ozon_credentials(cur)
+    client_id, api_key, enabled = get_ozon_credentials(cur, shop_id)
     if not client_id or not api_key or not enabled:
         return 0, [], 'Интеграция OZON не настроена'
 
@@ -208,14 +231,14 @@ def fetch_ozon_pvz_waiting(cur):
     return total, places, None
 
 
-def fetch_ozon_giveout_info(cur, giveout_id):
+def fetch_ozon_giveout_info(cur, giveout_id, shop_id=None):
     """Ход приёмки отправления: сколько коробок сотрудник ПВЗ уже отсканировал.
 
     Пока идёт выдача, OZON помечает подтверждённые позиции — по ним и считаем
     прогресс. Кладовщик видит на телефоне, сколько принято и сколько осталось,
     и может сверить итог, не пересчитывая вручную.
     """
-    client_id, api_key, enabled = get_ozon_credentials(cur)
+    client_id, api_key, enabled = get_ozon_credentials(cur, shop_id)
     if not client_id or not api_key or not enabled:
         return None, 'Интеграция OZON не настроена'
 
@@ -265,9 +288,12 @@ def fetch_ozon_giveout_info(cur, giveout_id):
             # Только те, что реально ехали к нам: на складе OZON лежат сотни заявок,
             # которые ещё никуда не отправлены — их забирать нечем.
             "    AND mp_status IN ('В пункте выдачи', 'Получен') "
+            # И только свой кабинет: выдача МЕГАТЮЛЬ не может закрыть возвраты
+            # ДЮНЫ — их на этом пункте выдачи никто не отдавал.
+            "    AND (%s IS NULL OR shop_id = %s) "
             "  ORDER BY id LIMIT %s"
             ")",
-            (giveout_id, int(total)),
+            (giveout_id, shop_id, shop_id, int(total)),
         )
 
     return {
@@ -323,7 +349,7 @@ def stock_picked_up_returns(cur, ids=None):
 
     cur.execute(
         "SELECT r.id, r.order_id, r.marketplace, r.external_id, r.product_name, "
-        "       mi.material, mi.width, mi.height, mi.name "
+        "       mi.material, mi.width, mi.height, mi.name, r.shop_id "
         "FROM marketplace_returns r "
         "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
         "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL "
@@ -346,7 +372,8 @@ def stock_picked_up_returns(cur, ids=None):
     rows = cur.fetchall()
     created = 0
 
-    for r_id, order_id, marketplace, external_id, product_name, material, width, height, item_name in rows:
+    for (r_id, order_id, marketplace, external_id, product_name, material,
+         width, height, item_name, ret_shop_id) in rows:
         if not order_id:
             product = (
                 f'{material} {width}x{height}'
@@ -356,10 +383,12 @@ def stock_picked_up_returns(cur, ids=None):
             order_number = f'RET-{marketplace}-{external_id}'
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, "
-                "sewing_status, product, quantity, source, material, width, height) "
-                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s) "
+                "sewing_status, product, quantity, source, material, width, height, shop_id) "
+                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
-                (order_number, marketplace, product, material, width, height),
+                # Магазин берём у самой заявки: вернувшаяся вещь принадлежит тому
+                # кабинету, из которого уехала, и на склад должна лечь под ним.
+                (order_number, marketplace, product, material, width, height, ret_shop_id),
             )
             created_order = cur.fetchone()
             if created_order:
@@ -425,7 +454,10 @@ def handler(event: dict, context) -> dict:
     у каждого маркетплейса он свой и постоянный. Коды заводит администратор, кладовщик
     открывает их с телефона и даёт отсканировать.
 
-    GET  /                                  - список кодов по маркетплейсам
+    Коды разделены по магазинам: у МЕГАТЮЛЬ и ДЮНЫ разные кабинеты продавца, и
+    по коду одного пункт выдачи не отдаст коробки другого.
+
+    GET  /?shopId=2                         - список кодов магазина + справочник магазинов
     POST /  { action: 'save', marketplaceCode, code, codeType?, comment?, actorId? }
     POST /  { action: 'refresh', marketplaceCode, actorId? }  - свежий код из кабинета
     POST /  { action: 'pickup_list' }        - что и где ждёт получения на ПВЗ
@@ -439,12 +471,23 @@ def handler(event: dict, context) -> dict:
         cur = conn.cursor()
 
         if method == 'GET':
+            # Магазин, чьи коды смотрят. У МЕГАТЮЛЬ и ДЮНЫ разные кабинеты на
+            # площадке: по коду одного пункт выдачи не отдаст коробки другого.
+            params = event.get('queryStringParameters') or {}
+            shop_id = params.get('shopId')
+            shop_id = int(shop_id) if shop_id not in (None, '') else None
+            shops = list_shops(cur)
+            if not shop_id and shops:
+                shop_id = shops[0]['id']
+
             # Сколько возвратов ждёт забора на ПВЗ по каждой площадке. Одобренные, но ещё
             # не принятые — это ровно те посылки, за которыми нужно ехать. По счётчику
             # кладовщик понимает, есть ли смысл в поездке и сколько мест забирать.
             cur.execute(
                 "SELECT marketplace, COUNT(*) FROM marketplace_returns "
-                "WHERE status = 'approved' GROUP BY marketplace"
+                "WHERE status = 'approved' AND (%s IS NULL OR shop_id = %s) "
+                "GROUP BY marketplace",
+                (shop_id, shop_id),
             )
             # В возвратах площадка записана коротким именем (WB, OZON), а у кодов —
             # системным (wildberries, ozon). Сводим их вместе.
@@ -464,7 +507,8 @@ def handler(event: dict, context) -> dict:
                 "COALESCE(code_image, ''), daily_refresh, "
                 # Свежесть кода: у площадок с ежедневным обновлением вчерашний уже не примут.
                 "((updated_at + interval '3 hours')::date = (now() + interval '3 hours')::date) "
-                "FROM return_pickup_codes ORDER BY title"
+                "FROM return_pickup_codes WHERE shop_id = %s ORDER BY title",
+                (shop_id,),
             )
             # Забираем строки СРАЗУ. Ниже идёт поход в OZON, который использует этот же
             # курсор: любой новый запрос затирает ещё не прочитанный результат, и список
@@ -476,7 +520,7 @@ def handler(event: dict, context) -> dict:
             # Штрихкоды от этого запроса не зависят: если OZON не ответит, коды всё
             # равно покажутся — без них кладовщик не заберёт возвраты вообще.
             try:
-                ozon_waiting, ozon_places, ozon_err = fetch_ozon_pvz_waiting(cur)
+                ozon_waiting, ozon_places, ozon_err = fetch_ozon_pvz_waiting(cur, shop_id)
             except Exception as e:
                 ozon_waiting, ozon_places, ozon_err = 0, [], str(e)[:200]
             if not ozon_err:
@@ -506,9 +550,20 @@ def handler(event: dict, context) -> dict:
                 # Разбивка по пунктам выдачи: кладовщик видит, куда именно ехать.
                 'ozonPlaces': ozon_places,
                 'ozonError': ozon_err,
+                # Магазины для вкладок и тот, что показан сейчас.
+                'shops': shops,
+                'shopId': shop_id,
             })
 
         body_data = json.loads(event.get('body') or '{}')
+
+        # Все действия идут по конкретному кабинету: код, список выдачи и приёмка
+        # у МЕГАТЮЛЬ и ДЮНЫ свои. Магазин не указан — берём первый, как раньше.
+        shop_id = body_data.get('shopId')
+        shop_id = int(shop_id) if shop_id not in (None, '') else None
+        if not shop_id:
+            _shops = list_shops(cur)
+            shop_id = _shops[0]['id'] if _shops else None
 
         # ВРЕМЕННАЯ диагностика: смотрим сырые ответы OZON, чтобы понять, каким методом
         # он отдаёт вещи, ждущие забора на ПВЗ.
@@ -528,15 +583,15 @@ def handler(event: dict, context) -> dict:
             # Автоподтягивание раз в сутки (silent) просто читает действующий код,
             # чтобы не гасить штрихкод, который кладовщик уже везёт на пункт выдачи.
             issue_new = not bool(body_data.get('readOnly'))
-            code, err, png = refresh_ozon_code(cur, reset=issue_new)
+            code, err, png = refresh_ozon_code(cur, reset=issue_new, shop_id=shop_id)
             if err:
                 return _resp(502, {'error': err})
 
             actor_id = body_data.get('actorId')
             cur.execute(
                 "UPDATE return_pickup_codes SET code = %s, code_image = %s, updated_at = now(), "
-                "updated_by = %s WHERE marketplace_code = 'ozon'",
-                (code, png, int(actor_id) if actor_id else None),
+                "updated_by = %s WHERE marketplace_code = 'ozon' AND shop_id = %s",
+                (code, png, int(actor_id) if actor_id else None, shop_id),
             )
             conn.commit()
             return _resp(200, {'success': True, 'code': code})
@@ -544,7 +599,7 @@ def handler(event: dict, context) -> dict:
         # Что и где ждёт получения на пунктах выдачи OZON.
         # Отправления, ожидающие получения в пункте выдачи.
         if body_data.get('action') == 'pickup_list':
-            giveouts, gerr = fetch_ozon_giveouts(cur)
+            giveouts, gerr = fetch_ozon_giveouts(cur, shop_id)
             if gerr:
                 return _resp(502, {'error': gerr})
             return _resp(200, {
@@ -557,7 +612,7 @@ def handler(event: dict, context) -> dict:
             giveout_id = body_data.get('giveoutId')
             if not giveout_id:
                 return _resp(400, {'error': 'Не указано отправление'})
-            info, err = fetch_ozon_giveout_info(cur, int(giveout_id))
+            info, err = fetch_ozon_giveout_info(cur, int(giveout_id), shop_id)
             if err:
                 return _resp(502, {'error': err})
             # Забранные с ПВЗ вещи сразу заводим на склад в «подвешенном» состоянии:
@@ -583,20 +638,24 @@ def handler(event: dict, context) -> dict:
             # Проверяем существование до обновления: rowcount после UPDATE равен нулю
             # и когда строки нет, и когда значения не изменились — различить нельзя.
             cur.execute(
-                "SELECT 1 FROM return_pickup_codes WHERE marketplace_code = %s", (mp,)
+                "SELECT 1 FROM return_pickup_codes WHERE marketplace_code = %s "
+                "  AND shop_id = %s",
+                (mp, shop_id),
             )
             if not cur.fetchone():
                 return _resp(404, {'error': 'Маркетплейс не найден'})
 
             cur.execute(
                 "UPDATE return_pickup_codes SET code = %s, code_type = %s, comment = %s, "
-                "updated_at = now(), updated_by = %s WHERE marketplace_code = %s",
+                "updated_at = now(), updated_by = %s "
+                "WHERE marketplace_code = %s AND shop_id = %s",
                 (
                     code,
                     code_type,
                     (body_data.get('comment') or '').strip() or None,
                     int(actor_id) if actor_id else None,
                     mp,
+                    shop_id,
                 ),
             )
             conn.commit()

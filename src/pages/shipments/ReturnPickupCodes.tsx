@@ -16,7 +16,9 @@ import {
   type ReturnPickupCode,
   type ReturnGiveout,
   type GiveoutProgress,
+  type Shop,
 } from '@/lib/returnCodesApi';
+import ShopTabs from '@/components/crm/ShopTabs';
 import ReturnCodeCard from '@/components/crm/returnCodes/ReturnCodeCard';
 import GiveoutList from '@/components/crm/returnCodes/GiveoutList';
 import GiveoutProgressDialog from '@/components/crm/returnCodes/GiveoutProgressDialog';
@@ -38,6 +40,11 @@ const ReturnPickupCodes = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const canView = isAdmin || isStorekeeperRole(user?.role);
+
+  // Кабинет, чьи коды смотрят. Штрихкод принадлежит продавцу: по коду МЕГАТЮЛЬ
+  // пункт выдачи не отдаст коробки ДЮНЫ — для площадки это разные продавцы.
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [shopId, setShopId] = useState<number | null>(null);
 
   const [items, setItems] = useState<ReturnPickupCode[]>([]);
   const [totalWaiting, setTotalWaiting] = useState(0);
@@ -61,27 +68,37 @@ const ReturnPickupCodes = () => {
 
   const load = () => {
     setLoading(true);
-    fetchReturnCodes()
+    fetchReturnCodes(shopId)
       .then((d) => {
         setItems(d.items);
         setTotalWaiting(d.totalWaiting);
         setOzonPlaces(d.ozonPlaces);
+        setShops(d.shops);
+        // Первый заход: сервер сам подставил рабочий кабинет — запоминаем его.
+        setShopId((prev) => prev ?? d.shopId);
       })
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  // Смена вкладки перезагружает и коды, и список выдачи: они у кабинетов разные.
+  useEffect(() => {
+    load();
+    // Автоподтягивание кода — своё для каждого кабинета.
+    autoTried.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shopId]);
 
   // Что лежит на складах OZON и что уже собрано к выдаче.
   const loadGiveouts = () => {
-    fetchPickupList()
+    fetchPickupList(shopId)
       .then((d) => setGiveouts(d.giveouts))
       .catch(() => setGiveouts([]))
       .finally(() => setListLoading(false));
   };
 
-  useEffect(loadGiveouts, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(loadGiveouts, [shopId]);
 
   // Пока идёт приёмка, сотрудник ПВЗ сканирует коробки — счётчик на телефоне кладовщика
   // растёт почти в реальном времени. 10 секунд достаточно: коробку сканируют дольше, а
@@ -89,10 +106,10 @@ const ReturnPickupCodes = () => {
   // Экран погас или кладовщик ушёл в другое приложение — опрос замирает до возвращения.
   const tickProgress = useCallback(() => {
     if (!watchingId) return;
-    return fetchGiveoutProgress(watchingId)
+    return fetchGiveoutProgress(watchingId, shopId)
       .then((d) => setProgress(d))
       .catch(() => undefined);
-  }, [watchingId]);
+  }, [watchingId, shopId]);
 
   usePolling(tickProgress, 10000, !!watchingId);
 
@@ -136,7 +153,7 @@ const ReturnPickupCodes = () => {
     setRefreshingId(item.marketplaceCode);
     try {
       // Тихое автообновление только читает код, ручное — выпускает новый.
-      await refreshReturnCode(item.marketplaceCode, user?.id, silent);
+      await refreshReturnCode(item.marketplaceCode, user?.id, silent, shopId);
       if (!silent) toast({ title: 'Код обновлён' });
       load();
     } catch (e) {
@@ -154,9 +171,11 @@ const ReturnPickupCodes = () => {
     if (!editing) return;
     setSaving(true);
     try {
+      if (!shopId) return;
       await saveReturnCode({
         marketplaceCode: editing.marketplaceCode,
         code: codeValue.trim(),
+        shopId,
         codeType: editing.codeType,
         actorId: user?.id,
       });
@@ -174,6 +193,8 @@ const ReturnPickupCodes = () => {
     }
   };
 
+  const currentShop = shops.find((sh) => sh.id === shopId) || null;
+
   if (!canView) {
     return (
       <CrmLayout>
@@ -188,9 +209,16 @@ const ReturnPickupCodes = () => {
         <div>
           <h1 className="text-xl font-bold">Коды для получения возвратов</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Покажите код приёмщику на пункте выдачи — без него возвраты не отдадут
+            {currentShop
+              ? `Код кабинета «${currentShop.name}» — покажите его приёмщику на пункте выдачи`
+              : 'Покажите код приёмщику на пункте выдачи — без него возвраты не отдадут'}
           </p>
         </div>
+
+        {/* Вкладки магазинов. Код выдачи принадлежит кабинету продавца: приехать
+            с кодом МЕГАТЮЛЬ за коробками ДЮНЫ нельзя — на ПВЗ их не отдадут.
+            Пока магазин один, вкладки не рисуются. */}
+        <ShopTabs shops={shops} value={shopId} onChange={setShopId} />
 
         {/* Общий счётчик: сразу видно, есть ли смысл ехать на пункты выдачи. */}
         {totalWaiting > 0 && (
