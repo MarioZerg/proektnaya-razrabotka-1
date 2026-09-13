@@ -26,6 +26,13 @@
       "expectedStatus": 403
     },
     {
+      "name": "Credit without admin fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "credit", "userId": 1, "amount": 10 },
+      "expectedStatus": 403
+    },
+    {
       "name": "Unknown action fails",
       "method": "POST",
       "path": "/",

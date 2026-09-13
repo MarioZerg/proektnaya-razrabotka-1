@@ -2,6 +2,13 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -21,6 +28,11 @@ const money = (v: number) =>
  * оказаться бракованной. Поэтому система сама никого не штрафует — она показывает
  * рулон, считает сумму сверх нормы поставщика и ждёт решения. Администратор либо
  * удерживает деньги, либо списывает недостачу на поставщика.
+ *
+ * На панели карточка держит только ИТОГ: сколько рулонов ждёт решения и на какую
+ * сумму. Раньше весь разбор вываливался прямо на главную — по десятку рулонов с
+ * расчётом на каждый, и панель уезжала на несколько экранов вниз ради очереди,
+ * которую разбирают раз в неделю. Сам список открывается по кнопке.
  */
 const ShortagePenaltyCard = () => {
   const { toast } = useToast();
@@ -28,6 +40,7 @@ const ShortagePenaltyCard = () => {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [open, setOpen] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -85,6 +98,7 @@ const ShortagePenaltyCard = () => {
   // Рулоны без штрафа: недостача уложилась в норму поставщика или нет данных для
   // расчёта. Решение по ним всё равно нужно — иначе они висят в очереди вечно.
   const noPenaltyItems = items.filter((i) => !!i.reason);
+  const penaltyItems = items.filter((i) => !i.reason);
 
   // Штрафные — наверх: с ними работают, остальные просто закрывают пачкой.
   const sortedItems = [...items].sort((a, b) => (b.reason ? 0 : b.total) - (a.reason ? 0 : a.total));
@@ -117,60 +131,92 @@ const ShortagePenaltyCard = () => {
   if (!loading && items.length === 0) return null;
 
   return (
-    <Card className="border-border shadow-none">
-      <CardContent className="space-y-3 pt-6">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Icon name="TriangleAlert" size={18} className="text-muted-foreground" />
-            <p className="font-medium">Недостача в закрытых рулонах</p>
-            {items.length > 0 && <Badge variant="secondary">{items.length}</Badge>}
-          </div>
-          {/* Итог по очереди: сколько денег на кону, если удержать всё сверх нормы. */}
-          {totalMoney > 0 && (
-            <p className="text-sm text-muted-foreground">
-              Сверх нормы на <b className="text-foreground">{money(totalMoney)} ₽</b>
-            </p>
-          )}
-        </div>
+    <>
+      <Card className="border-border shadow-none">
+        <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-3 p-4">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-700">
+            <Icon name="TriangleAlert" size={20} />
+          </span>
 
-        {/* Рулоны, где штрафовать не за что (недостача в пределах нормы, нет цены),
-            убираем пачкой. Иначе очередь копится по 10–20 штук в день, и разбирать
-            её по одной кнопке физически некогда — именно так она и разрослась
-            до двух тысяч записей в прошлый раз. */}
-        {noPenaltyItems.length > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full"
-            onClick={handleDismissAllClean}
-            disabled={bulkBusy}
-          >
-            {bulkBusy ? (
-              <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" />
+          <div className="min-w-[180px] flex-1">
+            <p className="text-sm font-semibold">Недостача в закрытых рулонах</p>
+            {loading ? (
+              <p className="text-xs text-muted-foreground">Загружаем очередь…</p>
             ) : (
-              <Icon name="ListChecks" size={14} className="mr-1.5" />
+              /* Итог одной строкой: сколько рулонов реально стоят денег, сколько
+                 просто ждут отметки, и на какую сумму идёт речь. */
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                <span>
+                  Ждут решения: <b className="text-foreground">{items.length}</b>
+                </span>
+                {penaltyItems.length > 0 && (
+                  <>
+                    <span aria-hidden>·</span>
+                    <span>
+                      со штрафом <b className="text-foreground">{penaltyItems.length}</b> на{' '}
+                      <b className="text-foreground">{money(totalMoney)} ₽</b>
+                    </span>
+                  </>
+                )}
+                {noPenaltyItems.length > 0 && (
+                  <>
+                    <span aria-hidden>·</span>
+                    <span>в пределах нормы {noPenaltyItems.length}</span>
+                  </>
+                )}
+              </p>
             )}
-            Убрать без штрафа: {noPenaltyItems.length} шт. в пределах нормы
-          </Button>
-        )}
-
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Icon name="Loader2" size={16} className="animate-spin" />
-            Загрузка…
           </div>
-        ) : (
-          <div className="space-y-2">
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Рулоны, где штрафовать не за что, убираем пачкой прямо отсюда:
+                ради этого открывать список не нужно. */}
+            {noPenaltyItems.length > 0 && (
+              <Button size="sm" variant="ghost" onClick={handleDismissAllClean} disabled={bulkBusy}>
+                <Icon
+                  name={bulkBusy ? 'Loader2' : 'ListChecks'}
+                  size={14}
+                  className={`mr-1.5 ${bulkBusy ? 'animate-spin' : ''}`}
+                />
+                Убрать {noPenaltyItems.length} без штрафа
+              </Button>
+            )}
+            <Button size="sm" variant="outline" onClick={() => setOpen(true)} disabled={loading}>
+              Разобрать
+              <Icon name="ChevronRight" size={14} className="ml-1" />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Разбор — в отдельном окне: он длинный, но нужен раз в неделю. */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-0 p-0">
+          <DialogHeader className="border-b px-4 py-3 sm:px-5">
+            <DialogTitle className="flex items-center gap-2 text-base">
+              Недостача в закрытых рулонах
+              <Badge variant="secondary">{items.length}</Badge>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {totalMoney > 0
+                ? `Сверх нормы поставщика — на ${money(totalMoney)} ₽`
+                : 'Штрафовать не за что: всё в пределах нормы'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4 sm:p-5">
+            {items.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Очередь разобрана — нерассмотренных рулонов нет
+              </p>
+            )}
             {sortedItems.map((item) => (
-              <div
-                key={item.rollId}
-                className="space-y-2 rounded-md border border-border p-3"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
+              <div key={item.rollId} className="space-y-2 rounded-md border border-border p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="font-medium">
+                    <p className="text-sm font-medium">
                       {item.materialName}{' '}
-                      <span className="font-mono-tech text-sm text-muted-foreground">
+                      <span className="font-mono-tech text-xs text-muted-foreground">
                         #{item.barcode}
                       </span>
                     </p>
@@ -183,7 +229,10 @@ const ShortagePenaltyCard = () => {
                         {item.shortage} {item.unit}
                       </b>
                       {item.normPercent != null && (
-                        <> · норма {item.normPercent}% = {item.allowed} {item.unit}</>
+                        <>
+                          {' '}
+                          · норма {item.normPercent}% = {item.allowed} {item.unit}
+                        </>
                       )}
                     </p>
                     {/* Кто закрыл рулон — и что сама написала в графе недостачи.
@@ -193,7 +242,10 @@ const ShortagePenaltyCard = () => {
                       <p className="text-xs text-muted-foreground">
                         Закрыла: {item.closedByName}
                         {item.declaredShortage != null && (
-                          <> · заявила недостачу {item.declaredShortage} {item.unit}</>
+                          <>
+                            {' '}
+                            · заявила недостачу {item.declaredShortage} {item.unit}
+                          </>
                         )}
                       </p>
                     )}
@@ -205,7 +257,17 @@ const ShortagePenaltyCard = () => {
 
                 {/* Причина, по которой штраф начислить нельзя — норма не задана и т.п. */}
                 {item.reason ? (
-                  <p className="text-sm text-muted-foreground">{item.reason}</p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-muted-foreground">{item.reason}</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleDismiss(item)}
+                      disabled={busyId === item.rollId}
+                    >
+                      Убрать из списка
+                    </Button>
+                  </div>
                 ) : (
                   <>
                     <p className="text-xs text-muted-foreground">
@@ -213,22 +275,15 @@ const ShortagePenaltyCard = () => {
                     </p>
                     {/* Поимённо, с суммой на каждого: администратор удерживает деньги
                         у живых людей и должен видеть, у кого именно и сколько, до
-                        нажатия кнопки, а не после. */}
-                    {/* Формулировка зависит от числа причастных.
-                        Раньше подпись всегда гласила «по X ₽ с КАЖДОЙ», и когда
-                        рулон кроил один человек, это читалось как «с каждой снимут
-                        по 1494 ₽» — то есть будто сумма умножается на количество.
-                        На деле сумма всегда делится, но текст пугал. */}
+                        нажатия кнопки, а не после.
+                        Формулировка зависит от числа причастных: «по X ₽ с каждой»
+                        при одном человеке читалось так, будто сумма умножается. */}
                     <div className="rounded-md bg-muted/40 p-2">
                       <p className="mb-1 text-xs font-medium">
                         {item.users.length === 1
                           ? `${item.role}: работала одна — вся сумма ${money(item.total)} ₽ на неё`
                           : `${item.role}: работали ${item.users.length} — сумма делится поровну, по ${money(item.perUser || 0)} ₽`}
                       </p>
-                      {/* Рядом с фамилией — сколько метража этот человек списал с
-                          рулона и сколько с него удержат. По коробке тесьмы работают
-                          семь швей, и без этих цифр непонятно, кого удержание
-                          касается всерьёз, а кто взял пару метров в конце смены. */}
                       <div className="flex flex-wrap gap-1">
                         {item.users.map((u) => (
                           <Badge key={u.id} variant="outline" className="font-normal">
@@ -269,23 +324,12 @@ const ShortagePenaltyCard = () => {
                     </div>
                   </>
                 )}
-
-                {item.reason && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleDismiss(item)}
-                    disabled={busyId === item.rollId}
-                  >
-                    Убрать из списка
-                  </Button>
-                )}
               </div>
             ))}
           </div>
-        )}
-      </CardContent>
-    </Card>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
 

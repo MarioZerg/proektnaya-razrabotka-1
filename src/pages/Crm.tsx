@@ -33,7 +33,6 @@ const CrmDashboard = () => {
         userName={user?.name}
         userId={user?.id}
         userRole={user?.role}
-        isAdmin={isAdmin}
         isSewer={isSewer}
         isStorekeeper={isStorekeeper}
         myShiftStatus={myShiftStatus}

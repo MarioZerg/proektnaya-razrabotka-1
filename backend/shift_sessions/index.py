@@ -284,15 +284,24 @@ def accrue_shift_salary(cur, user_id, session_id, session_workshop_id, accrual_d
 
 
 def _calendar_days(cur, month: str) -> list:
-    """Кто в какой день месяца выходил на смену — для календаря на главной."""
+    """Кто в какой день месяца выходил на смену — для календаря на главной.
+
+    Отдаём не только имена. Раньше день в календаре был просто списком фамилий,
+    и по нему нельзя было ответить ни на один вопрос, ради которого туда лезут:
+    сколько человек вышло, все ли отработали, кто опоздал, кто до сих пор на
+    смене. Приходилось открывать журнал смен отдельно. Теперь по каждому дню
+    приходят цифры для сводки и по каждому человеку — роль, цех, время и часы.
+    """
     month_esc = month.replace("'", "''")
     cur.execute(
         # Дату смены берём по Москве: смена, открытая 1-го числа в 02:00 МСК,
         # в UTC приходится ещё на 31-е и попадала бы в прошлый месяц.
         f"SELECT (ss.opened_at + interval '3 hours')::date, u.full_name, "
-        f"       ss.shift_number "
+        f"       ss.shift_number, u.id, COALESCE(ss.role, u.role), w.name, "
+        f"       ss.opened_at, ss.closed_at, ss.is_late "
         f"FROM shift_sessions ss "
         f"JOIN users u ON u.id = ss.user_id "
+        f"LEFT JOIN workshops w ON w.id = ss.workshop_id "
         f"WHERE to_char(ss.opened_at + interval '3 hours', 'YYYY-MM') "
         f"      = '{month_esc}' "
         f"ORDER BY ss.opened_at"
@@ -306,17 +315,70 @@ def _calendar_days(cur, month: str) -> list:
     # это просто две записи о его работе.
     #
     # Считаем людей, а не смены: список за день должен отвечать на вопрос «кто
-    # сегодня работал», а не «сколько раз открывали смену».
+    # сегодня работал», а не «сколько раз открывали смену». Повторные смены того
+    # же человека не плодят строку, а дописывают часы в уже существующую.
     seen: dict = {}
-    for opened_date, full_name, shift_number in cur.fetchall():
+    for (opened_date, full_name, shift_number, user_id, role, workshop,
+         opened_at, closed_at, is_late) in cur.fetchall():
         key = opened_date.isoformat()
         if key not in days:
-            days[key] = {'date': key, 'employees': [], 'activeShift': shift_number}
-            seen[key] = set()
-        if full_name in seen[key]:
+            days[key] = {
+                'date': key,
+                'employees': [],
+                'activeShift': shift_number,
+                'people': [],
+                'openCount': 0,
+                'lateCount': 0,
+                'shifts': [],
+            }
+            seen[key] = {}
+
+        hours = None
+        if closed_at:
+            hours = round((closed_at - opened_at).total_seconds() / 3600, 1)
+
+        prev = seen[key].get(user_id)
+        if prev is not None:
+            # Вторая смена того же человека за день: часы складываем, опоздание
+            # и «ещё на смене» — по любой из смен. Время закрытия сдвигаем на
+            # последнюю смену, иначе строка читалась как «05:00–05:00, 6.7 ч».
+            if hours is not None:
+                prev['hours'] = round((prev['hours'] or 0) + hours, 1)
+            if closed_at:
+                prev['closedAt'] = (closed_at + timedelta(hours=3)).strftime('%H:%M')
+            else:
+                prev['open'] = True
+                prev['closedAt'] = None
+            if is_late:
+                prev['late'] = True
             continue
-        seen[key].add(full_name)
+
+        person = {
+            'userId': user_id,
+            'name': full_name,
+            'role': role,
+            'workshop': workshop,
+            'shiftNumber': shift_number,
+            # Время показываем по Москве — как и всё остальное в системе.
+            'openedAt': (opened_at + timedelta(hours=3)).strftime('%H:%M'),
+            'closedAt': (closed_at + timedelta(hours=3)).strftime('%H:%M') if closed_at else None,
+            'hours': hours,
+            'open': not closed_at,
+            'late': bool(is_late),
+        }
+        seen[key][user_id] = person
+        days[key]['people'].append(person)
+        # employees оставляем ради старых мест, где ждут просто список имён.
         days[key]['employees'].append(full_name)
+        if shift_number and shift_number not in days[key]['shifts']:
+            days[key]['shifts'].append(shift_number)
+
+    for day in days.values():
+        day['openCount'] = sum(1 for p in day['people'] if p['open'])
+        day['lateCount'] = sum(1 for p in day['people'] if p['late'])
+        day['shifts'].sort()
+        # Часы за день суммой — сразу видно «пустой» день с одной короткой сменой.
+        day['totalHours'] = round(sum(p['hours'] or 0 for p in day['people']), 1)
     return list(days.values())
 
 

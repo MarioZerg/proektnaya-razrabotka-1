@@ -2,10 +2,8 @@ import DashboardWidgetsGrid from '@/components/crm/dashboard/DashboardWidgetsGri
 import WorkingTodayCard from '@/components/crm/dashboard/WorkingTodayCard';
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
-import LototronCard from '@/components/crm/dashboard/LototronCard';
-import CollapsibleSection from '@/components/crm/dashboard/CollapsibleSection';
+import AdminPeoplePanel from '@/components/crm/dashboard/AdminPeoplePanel';
 import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
-import StaffEfficiencyCard from '@/components/crm/dashboard/StaffEfficiencyCard';
 import FboShipmentsCard from '@/components/crm/dashboard/FboShipmentsCard';
 import StalledShipmentsCard from '@/components/crm/dashboard/StalledShipmentsCard';
 import { type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
@@ -69,31 +67,12 @@ const CrmDashboardSections = ({
 
     {canSeeWorkingToday && <WorkingTodayCard />}
 
-    {/* Эффективность цеха: кто сколько сделал, с каким темпом и с каким браком.
-        Только администратору — это оценка людей, а не рабочий инструмент смены. */}
-    {isAdmin && (
-      <CollapsibleSection
-        storageKey="efficiency"
-        title="Эффективность сотрудников"
-        hint="Выработка, темп и возвраты по швеям, закройщикам и упаковщикам"
-        icon="TrendingUp"
-      >
-        <StaffEfficiencyCard />
-      </CollapsibleSection>
-    )}
-
-    {/* Лототрон стоит сразу за эффективностью: оба блока про людей и их
-        результат, админ смотрит их в одном заходе. */}
-    {isAdmin && (
-      <CollapsibleSection
-        storageKey="lototron"
-        title="Лототрон"
-        hint="Розыгрыш и списание вариков"
-        icon="Coins"
-      >
-        <LototronCard actorId={userId} />
-      </CollapsibleSection>
-    )}
+    {/* Люди и результат: выработка, эффективность и лототрон одним блоком с
+        вкладками. Все три отчёта про одно — как работают люди и что им за это
+        причитается, — и раньше стояли тремя отдельными секциями подряд, каждая
+        со своим экраном прокрутки. Только администратору: это оценка людей,
+        а не рабочий инструмент смены. */}
+    {isAdmin && <AdminPeoplePanel actorId={userId} />}
 
     {/* Недостача в закрытых рулонах: администратор решает, удерживать ли деньги
         с сотрудников или списать на поставщика. Карточка сама скрывается, когда

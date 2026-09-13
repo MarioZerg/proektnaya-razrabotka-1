@@ -2,7 +2,6 @@ import AdminNotifications from '@/components/crm/dashboard/AdminNotifications';
 import EtrnToSignCard from '@/components/crm/dashboard/EtrnToSignCard';
 import VarikiPurchasesCard from '@/components/crm/variki/VarikiPurchasesCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
-import CollapsibleSection from '@/components/crm/dashboard/CollapsibleSection';
 import SewerBonusCard from '@/components/crm/dashboard/SewerBonusCard';
 import SewerDailyCard from '@/components/crm/dashboard/SewerDailyCard';
 import { type EmployeeShiftStatus } from '@/lib/shiftSessionsApi';
@@ -11,7 +10,6 @@ interface CrmDashboardHeaderProps {
   userName?: string;
   userId?: number;
   userRole?: string;
-  isAdmin: boolean;
   isSewer: boolean;
   isStorekeeper: boolean;
   myShiftStatus: EmployeeShiftStatus | null;
@@ -29,7 +27,6 @@ const CrmDashboardHeader = ({
   userName,
   userId,
   userRole,
-  isAdmin,
   isSewer,
   isStorekeeper,
   myShiftStatus,
@@ -80,19 +77,10 @@ const CrmDashboardHeader = ({
         <SewerBonusCard onlyUserId={userId} />
       </>
     )}
-    {isAdmin && (
-      <CollapsibleSection
-        storageKey="output"
-        title="Выработка сотрудников"
-        hint="Акция дня и премия за выработку по всем швеям"
-        icon="Trophy"
-      >
-        <div className="space-y-6">
-          <SewerDailyCard />
-          <SewerBonusCard />
-        </div>
-      </CollapsibleSection>
-    )}
+    {/* Выработка по всем швеям админу здесь БОЛЬШЕ НЕ ПОКАЗЫВАЕТСЯ: она уехала
+        во вкладку «Выработка» блока «Люди и результат» ниже, к эффективности и
+        лототрону. Там акция дня и премия месяца стоят в одной таблице, а не
+        двумя списками одних и тех же фамилий подряд. */}
   </>
 );
 

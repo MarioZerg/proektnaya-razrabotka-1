@@ -38,6 +38,31 @@ export const debitVariki = async (userId: number, amount: number, actorId?: numb
   return data;
 };
 
+/**
+ * Доначисление вариков сотруднику руками администратора.
+ *
+ * Обычно варики капают сами за отправленные заказы, но часть работы через
+ * систему не проходит: подменил коллегу, вышел в выходной, разобрал завал.
+ * Причина попадает в журнал — начисления «просто так» видно потом каждому.
+ */
+export const creditVariki = async (
+  userId: number,
+  amount: number,
+  actorId?: number,
+  reason?: string,
+) => {
+  const res = await fetch(VARIKI_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'credit', userId, amount, actorId, reason }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Не удалось начислить варики');
+  }
+  return data as { variki: number; fullName: string };
+};
+
 /** Подарок на витрине магазина вариков. */
 export interface ShopItem {
   id: number;

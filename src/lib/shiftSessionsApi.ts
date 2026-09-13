@@ -59,10 +59,36 @@ export const fetchEmployeeShifts = async (): Promise<EmployeeShiftStatus[]> => {
   return data.employees || [];
 };
 
+/** Один человек в календарном дне: во сколько пришёл, ушёл и сколько отработал. */
+export interface ShiftCalendarPerson {
+  userId: number;
+  name: string;
+  role: string;
+  workshop: string | null;
+  shiftNumber: number | null;
+  /** Время по Москве, ЧЧ:ММ. */
+  openedAt: string;
+  /** null — смена ещё идёт. */
+  closedAt: string | null;
+  /** Отработано часов, null — смена не закрыта. */
+  hours: number | null;
+  open: boolean;
+  late: boolean;
+}
+
 export interface ShiftCalendarDay {
   date: string;
+  /** Список имён — оставлен для старых мест, где детали не нужны. */
   employees: string[];
   activeShift: number | null;
+  /** Подробности по каждому человеку за день. */
+  people?: ShiftCalendarPerson[];
+  /** Сколько смен ещё открыто прямо сейчас. */
+  openCount?: number;
+  lateCount?: number;
+  /** Номера смен, которые в этот день работали. */
+  shifts?: number[];
+  totalHours?: number;
 }
 
 export const fetchShiftCalendar = async (month: string): Promise<ShiftCalendarDay[]> => {

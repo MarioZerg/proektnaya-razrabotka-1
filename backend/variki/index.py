@@ -110,6 +110,7 @@ def handler(event: dict, context) -> dict:
     GET /?download=N&actorId=N  - скачать сам файл сертификата
     POST / { action: 'delete_certificate', actorId, certificateId } - удалить файл
     POST / { action: 'debit', actorId, userId, amount } - списание вариков (только админ)
+    POST / { action: 'credit', actorId, userId, amount } - доначисление вариков (только админ)
     POST / { action: 'buy', userId, itemId }            - купить подарок за варики
         (сертификат со склада выдаётся сразу, если он есть)
     POST / { action: 'save_item', actorId, itemId?, title, price, ... } - товар в магазине
@@ -416,8 +417,64 @@ def handler(event: dict, context) -> dict:
                     (amount, int(user_id)),
                 )
                 new_balance = cur.fetchone()[0]
+                cur.execute(
+                    "INSERT INTO audit_log (category, user_id, user_name, action, "
+                    "  entity_type, entity_id, description) "
+                    "VALUES ('variki', %s, %s, 'variki_debit', 'user', %s, %s)",
+                    (int(actor_id), None, int(user_id),
+                     f'Списано {amount} вариков (лототрон), остаток {new_balance}'),
+                )
                 conn.commit()
                 return _resp(200, {'variki': new_balance})
+
+            if action == 'credit':
+                # Доначисление вариков вручную.
+                #
+                # Обычно варики капают сами при отправке заказа на стикеровку, но
+                # часть работы мимо системы не проходит: подменили коллегу, вышли
+                # в выходной, разобрали завал. Раньше отблагодарить за такое было
+                # нечем — начисление жило только в коде заказов. Теперь админ
+                # может добавить варики руками, и каждое такое начисление
+                # остаётся в журнале с указанием причины.
+                actor_id = body_data.get('actorId')
+                if not _is_admin(cur, actor_id):
+                    return _resp(403, {'error': 'Начислять варики может только администратор'})
+
+                user_id = body_data.get('userId')
+                try:
+                    amount = int(body_data.get('amount'))
+                except (TypeError, ValueError):
+                    return _resp(400, {'error': 'Укажите количество вариков'})
+                if not user_id or amount <= 0:
+                    return _resp(400, {'error': 'Укажите сотрудника и количество вариков'})
+                # Верхний предел — защита от опечатки: лишний ноль в поле ввода
+                # выдал бы человеку баланс на десяток лототронов вперёд.
+                if amount > 100000:
+                    return _resp(400, {'error': 'Слишком много за раз — не больше 100000'})
+
+                reason = (body_data.get('reason') or '').strip()[:300]
+
+                cur.execute(
+                    "UPDATE users SET variki = COALESCE(variki, 0) + %s WHERE id = %s "
+                    "RETURNING variki, full_name",
+                    (amount, int(user_id)),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return _resp(404, {'error': 'Сотрудник не найден'})
+                new_balance, full_name = row[0], row[1]
+
+                cur.execute(
+                    "INSERT INTO audit_log (category, user_id, user_name, action, "
+                    "  entity_type, entity_id, description) "
+                    "VALUES ('variki', %s, %s, 'variki_credit', 'user', %s, %s)",
+                    (int(actor_id), full_name, int(user_id),
+                     f'Начислено {amount} вариков'
+                     + (f': {reason}' if reason else '')
+                     + f', баланс {new_balance}'),
+                )
+                conn.commit()
+                return _resp(200, {'variki': new_balance, 'fullName': full_name})
 
             if action == 'buy':
                 # Покупка подарка за варики. Сотрудник покупает сам — админ только
