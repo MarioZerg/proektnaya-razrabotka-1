@@ -30,17 +30,78 @@ def _resp(status, body):
     }
 
 
-def get_ym_credentials(cur):
-    """Возвращает (api_key, campaign_id, is_enabled) для Яндекс Маркета."""
-    cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations "
-        "WHERE marketplace_code = 'yandex_market' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
+SELF_FUNC_URL = 'https://functions.poehali.dev/27689c0a-e080-4c26-b433-8e0979079d19'
+
+
+def _continue_later(payload):
+    """Запускает эту же функцию ещё раз — для другого кабинета.
+
+    Кабинетов несколько, а времени у функции мало: обойти их в одном запуске
+    нельзя. Первый забираем сами, на остальные шлём вызовы и ответа не ждём.
+    """
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret:
+        return False
+    body = dict(payload)
+    body['cronSecret'] = secret
+    req = urllib.request.Request(
+        SELF_FUNC_URL,
+        data=json.dumps(body).encode(),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
     )
+    try:
+        urllib.request.urlopen(req, timeout=1)
+    except Exception:
+        # Обрыв по таймауту — норма: запрос принят, функция уже работает.
+        pass
+    return True
+
+
+def get_ym_credentials(cur, shop_id=None):
+    """Возвращает (api_key, campaign_id, is_enabled) для кабинета Яндекса магазина.
+
+    У МЕГАТЮЛЬ и ДЮНЫ разные кампании на Маркете со своими ключами. Без явного
+    магазина брался первый попавшийся, и заказы второго кабинета в систему не
+    попадали вовсе.
+    """
+    if shop_id:
+        cur.execute(
+            "SELECT is_enabled, credentials FROM marketplace_integrations "
+            "WHERE marketplace_code = 'yandex_market' AND shop_id = %s LIMIT 1",
+            (int(shop_id),),
+        )
+    else:
+        cur.execute(
+            "SELECT is_enabled, credentials FROM marketplace_integrations "
+            "WHERE marketplace_code = 'yandex_market' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
+        )
     row = cur.fetchone()
     if not row:
         return None, None, False
     creds = row[1] if isinstance(row[1], dict) else json.loads(row[1] or '{}')
     return (creds.get('apiKey') or '').strip(), (creds.get('campaignId') or '').strip(), bool(row[0])
+
+
+def list_ym_shops(cur):
+    """id магазинов с подключённой кампанией Яндекса — обходим их по очереди."""
+    cur.execute(
+        "SELECT shop_id FROM marketplace_integrations "
+        "WHERE marketplace_code = 'yandex_market' AND is_enabled = true "
+        "  AND credentials::text <> '{}' AND shop_id IS NOT NULL "
+        "ORDER BY shop_id"
+    )
+    return [r[0] for r in cur.fetchall()]
+
+
+def shop_by_order(cur, order_number):
+    """Магазин заказа: ярлык печатается ключами того кабинета, где заказ живёт."""
+    cur.execute(
+        "SELECT shop_id FROM orders WHERE order_number = %s OR group_key = %s LIMIT 1",
+        (order_number, order_number),
+    )
+    row = cur.fetchone()
+    return row[0] if row and row[0] else None
 
 
 def ym_get(path, api_key):
@@ -82,7 +143,7 @@ def ym_post(path, api_key, payload=None):
         return 0, {'raw': str(e)[:500]}
 
 
-def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None):
+def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None, shop_id=None):
     """Ищет товар справочника по кодам из заказа Яндекса.
 
     Раньше искали только по артикулу продавца (sku) — если в Яндексе артикул отличался
@@ -97,8 +158,8 @@ def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None):
             continue
         cur.execute(
             "SELECT material, width, height, name, id FROM marketplace_items "
-            "WHERE ym_sku = %s AND ym_sku <> '' LIMIT 1",
-            (str(code).strip(),),
+            f"WHERE ym_sku = %s AND ym_sku <> ''" + shop_cond + " LIMIT 1",
+            (str(code).strip(), int(shop_id)) if shop_id else (str(code).strip(),),
         )
         row = cur.fetchone()
         if row:
@@ -109,8 +170,8 @@ def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None):
             continue
         cur.execute(
             "SELECT material, width, height, name, id FROM marketplace_items "
-            "WHERE sku = %s AND sku <> '' LIMIT 1",
-            (str(code).strip(),),
+            f"WHERE sku = %s AND sku <> ''" + shop_cond + " LIMIT 1",
+            (str(code).strip(), int(shop_id)) if shop_id else (str(code).strip(),),
         )
         row = cur.fetchone()
         if row:
@@ -121,8 +182,8 @@ def find_marketplace_item(cur, offer_id, shop_sku, barcodes=None):
             continue
         cur.execute(
             "SELECT material, width, height, name, id FROM marketplace_items "
-            "WHERE barcode = %s AND barcode <> '' LIMIT 1",
-            (str(code).strip(),),
+            f"WHERE barcode = %s AND barcode <> ''" + shop_cond + " LIMIT 1",
+            (str(code).strip(), int(shop_id)) if shop_id else (str(code).strip(),),
         )
         row = cur.fetchone()
         if row:
@@ -173,7 +234,7 @@ def parse_ym_date(raw):
     return None
 
 
-def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
+def sync_orders(cur, api_key, campaign_id, actor_id, actor_name, shop_id=None):
     """Тянет новые заказы Яндекс Маркета и ставит их на конвейер.
 
     Ключевое отличие от OZON и WB: у Яндекса покупатель заказывает несколько вещей ОДНИМ
@@ -241,7 +302,7 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
             # Штрихкоды из карточки Яндекса — запасной способ найти товар, если артикулы
             # в системах разошлись. Яндекс отдаёт их списком в barcodes.
             barcodes = it.get('barcodes') or []
-            item = find_marketplace_item(cur, offer_id, shop_sku, barcodes)
+            item = find_marketplace_item(cur, offer_id, shop_sku, barcodes, shop_id)
             if not item:
                 has_unknown = True
                 skipped_no_item += 1
@@ -281,8 +342,7 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                 "quantity, source, material, width, height, ym_order_id, ym_status, "
                 "marketplace_created_at, marketplace_item_id, group_key, group_size, group_position, shop_id) "
-                "VALUES (%s, 'Yandex', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                "(SELECT shop_id FROM marketplace_integrations WHERE marketplace_code = 'yandex_market' AND is_enabled = true ORDER BY shop_id LIMIT 1)) "
+                "VALUES (%s, 'Yandex', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (
                     unique_number,
@@ -297,6 +357,7 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name):
                     group_key,
                     group_size,
                     pos,
+                    shop_id,
                 ),
             )
             inserted = cur.fetchone()
@@ -435,7 +496,34 @@ def handler(event: dict, context) -> dict:
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
     try:
         cur = conn.cursor()
-        api_key, campaign_id, is_enabled = get_ym_credentials(cur)
+
+        # МАГАЗИН ЗАПУСКА.
+        #
+        # Кампании Яндекса у МЕГАТЮЛЬ и ДЮНЫ разные. Загрузка заказов обходит
+        # все подключённые кабинеты: первый забираем сами, остальные запускаем
+        # отдельными вызовами — за один запуск оба не успеть.
+        #
+        # Ярлык печатается ключами того кабинета, где заказ живёт: чужим ключом
+        # Яндекс отправление не отдаст.
+        shop_id = body_data.get('shopId') or params.get('shopId')
+        shop_id = int(shop_id) if shop_id not in (None, '') else None
+
+        if not shop_id and action == 'label':
+            ref = (body_data.get('orderNumber') or params.get('orderNumber') or '').strip()
+            if ref:
+                shop_id = shop_by_order(cur, ref)
+
+        if not shop_id and action in ('sync', 'check_statuses', 'match_items'):
+            shops = list_ym_shops(cur)
+            if not shops:
+                return _resp(400, {'error': 'Нет подключённых кампаний Яндекс Маркета. '
+                                            'Заполните ключи в разделе «Интеграции маркетплейсов».'})
+            if len(shops) > 1:
+                for extra in shops[1:]:
+                    _continue_later({'action': action, 'shopId': extra})
+            shop_id = shops[0]
+
+        api_key, campaign_id, is_enabled = get_ym_credentials(cur, shop_id)
         if not api_key or not campaign_id:
             return _resp(400, {'error': 'Не заполнены API-ключ и номер кампании Яндекс Маркета'})
         if not is_enabled:
@@ -490,8 +578,12 @@ def handler(event: dict, context) -> dict:
             # Справочник маленький (сотни строк) — читаем его целиком одним запросом
             # и сопоставляем в памяти. Так на страницу каталога уходит один поход в базу
             # вместо сотни, иначе функция не укладывается в отведённое время.
+            # Только карточки своего магазина: артикулы у МЕГАТЮЛЬ и ДЮНЫ
+            # совпадают, и привязка проставила бы код Яндекса чужой карточке.
             cur.execute(
-                "SELECT id, sku, barcode, COALESCE(ym_sku, '') FROM marketplace_items"
+                "SELECT id, sku, barcode, COALESCE(ym_sku, '') FROM marketplace_items "
+                "WHERE (%s IS NULL OR shop_id = %s)",
+                (shop_id, shop_id),
             )
             by_barcode, by_sku = {}, {}
             for r in cur.fetchall():
@@ -594,7 +686,9 @@ def handler(event: dict, context) -> dict:
                 "FROM orders WHERE marketplace = 'Yandex' AND ym_order_id IS NOT NULL "
                 "  AND COALESCE(status, '') NOT IN ('Отменён', 'Отгружен') "
                 "  AND sewing_status IN ('Новый', 'На раскрое', 'Раскроено', 'В работе', "
-                "                        'Стикеровка', 'Готовые', 'Со склада')"
+                "                        'Стикеровка', 'Готовые', 'Со склада') "
+                # Только свой кабинет: чужие заказы этот ключ не видит.
+                + (f"  AND shop_id = {int(shop_id)} " if shop_id else "")
             )
             rows = cur.fetchall()
             if not rows:
@@ -711,7 +805,7 @@ def handler(event: dict, context) -> dict:
             })
 
         if action == 'sync':
-            result = sync_orders(cur, api_key, campaign_id, actor_id, actor_name)
+            result = sync_orders(cur, api_key, campaign_id, actor_id, actor_name, shop_id)
             if 'error' in result:
                 conn.rollback()
                 return _resp(502, result)

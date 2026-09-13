@@ -29,11 +29,52 @@ def _resp(status, body):
     }
 
 
-def get_wb_credentials(cur):
-    """Возвращает (api_key, use_sandbox, is_enabled) для WildBerries из marketplace_integrations."""
-    cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'wildberries' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
+SELF_FUNC_URL = 'https://functions.poehali.dev/142096e2-0171-412b-b6df-1631cb52574a'
+
+
+def _continue_later(payload):
+    """Просит систему запустить эту же функцию ещё раз — для другого кабинета.
+
+    У функции пять секунд, а кабинетов несколько: обойти их в одном запуске
+    нельзя. Поэтому первый кабинет забираем сами, а на остальные шлём отдельные
+    вызовы и ответа НЕ ЖДЁМ — наш запуск на этом заканчивается.
+    """
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret:
+        return False
+    body = dict(payload)
+    body['cronSecret'] = secret
+    req = urllib.request.Request(
+        SELF_FUNC_URL,
+        data=json.dumps(body).encode(),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
     )
+    try:
+        urllib.request.urlopen(req, timeout=1)
+    except Exception:
+        # Обрыв по таймауту — норма: запрос принят, функция уже работает.
+        pass
+    return True
+
+
+def get_wb_credentials(cur, shop_id=None):
+    """Возвращает (api_key, use_sandbox, is_enabled) для кабинета WB конкретного магазина.
+
+    У МЕГАТЮЛЬ и ДЮНЫ разные кабинеты WB со своими ключами. Без явного магазина
+    брался первый попавшийся ключ, и заказы второго кабинета в систему не
+    попадали вовсе.
+    """
+    if shop_id:
+        cur.execute(
+            "SELECT is_enabled, credentials FROM marketplace_integrations "
+            "WHERE marketplace_code = 'wildberries' AND shop_id = %s LIMIT 1",
+            (int(shop_id),),
+        )
+    else:
+        cur.execute(
+            "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'wildberries' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
+        )
     row = cur.fetchone()
     if not row:
         return None, False, False
@@ -42,6 +83,27 @@ def get_wb_credentials(cur):
     api_key = (creds.get('apiKey') or '').strip()
     use_sandbox = bool(creds.get('useSandbox'))
     return api_key, use_sandbox, is_enabled
+
+
+def list_wb_shops(cur):
+    """id магазинов с подключённым кабинетом WB — загрузка обходит их по очереди."""
+    cur.execute(
+        "SELECT shop_id FROM marketplace_integrations "
+        "WHERE marketplace_code = 'wildberries' AND is_enabled = true "
+        "  AND credentials::text <> '{}' AND shop_id IS NOT NULL "
+        "ORDER BY shop_id"
+    )
+    return [r[0] for r in cur.fetchall()]
+
+
+def shop_by_order(cur, order_number):
+    """Магазин заказа: стикер печатается ключами того кабинета, где заказ живёт."""
+    cur.execute(
+        "SELECT shop_id FROM orders WHERE order_number = %s LIMIT 1",
+        (order_number,),
+    )
+    row = cur.fetchone()
+    return row[0] if row and row[0] else None
 
 
 def wb_get(path, api_key, use_sandbox):
@@ -184,29 +246,41 @@ def match_from_stock(cur, order_id, item_id) -> bool:
     return True
 
 
-def find_marketplace_item(cur, nm_id, skus, article):
+def find_marketplace_item(cur, nm_id, skus, article, shop_id=None):
     """Ищет товар в marketplace_items: сначала по wb_sku (nmId), затем по любому баркоду
-    из skus, затем по sku (артикул продавца). Возвращает (material, width, height, name, id) или None."""
+    из skus, затем по sku (артикул продавца). Возвращает (material, width, height, name, id) или None.
+
+    Ищем ТОЛЬКО среди карточек своего магазина: артикулы у МЕГАТЮЛЬ и ДЮНЫ
+    совпадают, и без этого заказ привязался бы к карточке чужого кабинета —
+    с чужим штрихкодом и чужим расходом ткани.
+    """
+    shop_cond = " AND shop_id = %s" if shop_id else ""
+    def _args(value):
+        return (value, int(shop_id)) if shop_id else (value,)
+
     if nm_id:
         cur.execute(
-            "SELECT material, width, height, name, id FROM marketplace_items WHERE wb_sku = %s LIMIT 1",
-            (str(nm_id),),
+            "SELECT material, width, height, name, id FROM marketplace_items "
+            f"WHERE wb_sku = %s{shop_cond} LIMIT 1",
+            _args(str(nm_id)),
         )
         row = cur.fetchone()
         if row:
             return row
     for sku in (skus or []):
         cur.execute(
-            "SELECT material, width, height, name, id FROM marketplace_items WHERE barcode = %s LIMIT 1",
-            (str(sku),),
+            "SELECT material, width, height, name, id FROM marketplace_items "
+            f"WHERE barcode = %s{shop_cond} LIMIT 1",
+            _args(str(sku)),
         )
         row = cur.fetchone()
         if row:
             return row
     if article:
         cur.execute(
-            "SELECT material, width, height, name, id FROM marketplace_items WHERE sku = %s LIMIT 1",
-            (str(article),),
+            "SELECT material, width, height, name, id FROM marketplace_items "
+            f"WHERE sku = %s{shop_cond} LIMIT 1",
+            _args(str(article)),
         )
         row = cur.fetchone()
         if row:
@@ -490,7 +564,7 @@ def _cleanup_empty_accumulator(cur, supply_id):
         )
 
 
-def handle_remove_order(cur, conn, body_data, api_key, use_sandbox):
+def handle_remove_order(cur, conn, body_data, api_key, use_sandbox, shop_id=None):
     """Убирает ошибочно отсканированный заказ из WB FBS-поставки: удаляет сборочное задание
     из поставки на стороне WB (DELETE /api/v3/supplies/{sid}/orders/{orderId}) и снимает
     связь у нас. Заказ снова становится готовым к отгрузке. Доступно, пока поставка не
@@ -543,7 +617,7 @@ def handle_remove_order(cur, conn, body_data, api_key, use_sandbox):
     #
     # Поэтому переставляем связь обратно в накопительный буфер — туда же, откуда заказ
     # попал в сборку. Если буфера нет (его удалили как пустой), заводим новый.
-    err, acc_id, acc_wb_id = ensure_open_supply(cur, conn, api_key, use_sandbox)
+    err, acc_id, acc_wb_id = ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id)
     if err or not acc_id:
         # Накопитель недоступен (WB не ответил) — тогда честно сообщаем и НЕ убираем
         # заказ: молча потерять его из всех списков хуже, чем не выполнить действие.
@@ -568,7 +642,7 @@ def handle_remove_order(cur, conn, body_data, api_key, use_sandbox):
     return _resp(200, {'success': True, 'orderNumber': order_number})
 
 
-def _close_finished_supplies(cur, conn, api_key, use_sandbox):
+def _close_finished_supplies(cur, conn, api_key, use_sandbox, shop_id=None):
     """Закрывает у нас поставки, которые уже закрыты (отгружены) на стороне WB.
 
     Кладовщик закрывает поставку — короб уезжает на маркетплейс. WB переводит её
@@ -590,7 +664,10 @@ def _close_finished_supplies(cur, conn, api_key, use_sandbox):
         "  AND COALESCE(s.is_accumulator, false) = false "
         "  AND s.status IN ('Открытая', 'На сборке', 'Отгрузка') "
         "  AND s.wb_supply_id IS NOT NULL "
-        "  AND EXISTS (SELECT 1 FROM wb_supply_orders w WHERE w.supply_id = s.id)"
+        # Только поставки своего кабинета: чужие этим ключом не проверить.
+        "  AND (%s IS NULL OR s.shop_id = %s) "
+        "  AND EXISTS (SELECT 1 FROM wb_supply_orders w WHERE w.supply_id = s.id)",
+        (shop_id, shop_id),
     )
     closed_orders = 0
 
@@ -629,7 +706,8 @@ def _close_finished_supplies(cur, conn, api_key, use_sandbox):
     return closed_orders
 
 
-def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_name=None):
+def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None,
+                          actor_name=None, shop_id=None):
     """Сверяет статусы наших готовых FBS-заказов с WB.
 
     В счётчике копились заказы, которые на стороне WB давно уехали или отменены —
@@ -650,6 +728,9 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_
         "                      'Стикеровка', 'Готовые', 'Со склада') "
         "AND wb_order_id IS NOT NULL "
         "AND status <> 'Отгружен' "
+        # Только свой кабинет: чужие задания этот ключ не видит, и они бы
+        # навсегда остались «ненайденными» у WB.
+        + (f"AND shop_id = {int(shop_id)} " if shop_id else "") +
         # Заказы, лежащие в НАКОПИТЕЛЕ, тоже проверяем. Раньше проверка пропускала
         # всё, что попало в любую поставку, — а накопитель это и есть поставка.
         # В итоге вещи, которые физически уже уехали на WB, годами висели в счётчике
@@ -676,7 +757,7 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None, actor_
 
     # Затем закрываем поставки, которые уже уехали по данным WB: их заказы должны
     # стать отгруженными, а не висеть в системе непонятно где.
-    released_stuck = _close_finished_supplies(cur, conn, api_key, use_sandbox)
+    released_stuck = _close_finished_supplies(cur, conn, api_key, use_sandbox, shop_id)
     if not rows:
         conn.commit()
         return _resp(200, {'checked': 0, 'closed': 0, 'cancelled': 0,
@@ -1150,7 +1231,7 @@ def handle_supply_qr(cur, conn, body_data, api_key, use_sandbox):
 
 
 
-def drop_stale_accumulator(cur, conn, api_key, use_sandbox):
+def drop_stale_accumulator(cur, conn, api_key, use_sandbox, shop_id=None):
     """Закрывает накопительную поставку WB, которой на стороне маркетплейса больше нет.
 
     Заказы копятся в одной служебной поставке, и стикер WB рисует только для задания,
@@ -1165,7 +1246,9 @@ def drop_stale_accumulator(cur, conn, api_key, use_sandbox):
         "SELECT id, wb_supply_id FROM marketplace_supplies "
         "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
         "AND status IN ('Открытая', 'На сборке') AND wb_supply_id IS NOT NULL "
-        "ORDER BY id DESC LIMIT 1"
+        "AND (%s IS NULL OR shop_id = %s) "
+        "ORDER BY id DESC LIMIT 1",
+        (shop_id, shop_id),
     )
     row = cur.fetchone()
     if not row:
@@ -1192,7 +1275,7 @@ def drop_stale_accumulator(cur, conn, api_key, use_sandbox):
     return True
 
 
-def ensure_open_supply(cur, conn, api_key, use_sandbox):
+def ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id=None):
     """Находит свободную поставку WB FBS, а если её нет — заводит новую.
 
     Упаковщица печатает стикеры весь день и не должна думать о поставках. Поэтому
@@ -1207,11 +1290,14 @@ def ensure_open_supply(cur, conn, api_key, use_sandbox):
     """
     # Берём ИМЕННО накопительную (служебную) поставку. Сборку кладовщика трогать нельзя:
     # он собирает её руками, сканируя стикеры, и чужие вещи туда падать не должны.
+    # Накопитель свой на каждый кабинет: у МЕГАТЮЛЬ и ДЮНЫ разные поставки WB.
     cur.execute(
         "SELECT id, wb_supply_id FROM marketplace_supplies "
         "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
         "AND status IN ('Открытая', 'На сборке') "
-        "ORDER BY id DESC LIMIT 1"
+        "AND shop_id = %s "
+        "ORDER BY id DESC LIMIT 1",
+        (shop_id,),
     )
     row = cur.fetchone()
     supply_id = row[0] if row else None
@@ -1219,9 +1305,9 @@ def ensure_open_supply(cur, conn, api_key, use_sandbox):
 
     if not supply_id:
         cur.execute(
-            "INSERT INTO marketplace_supplies (marketplace, type, status, comment, is_accumulator) "
-            "VALUES ('WB', 'FBS', 'Открытая', %s, true) RETURNING id",
-            ('Накопительная поставка: заказы добавляются при стикеровке',),
+            "INSERT INTO marketplace_supplies (marketplace, type, status, comment, is_accumulator, shop_id) "
+            "VALUES ('WB', 'FBS', 'Открытая', %s, true, %s) RETURNING id",
+            ('Накопительная поставка: заказы добавляются при стикеровке', shop_id),
         )
         supply_id = cur.fetchone()[0]
 
@@ -1265,7 +1351,7 @@ def wb_add_orders_to_supply(api_key, use_sandbox, wb_supply_id, wb_order_ids):
     )
 
 
-def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
+def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number, shop_id=None):
     """Кладёт заказ в свободную поставку WB при печати стикера.
 
     Раньше готовый заказ просто ждал, пока кладовщик отсканирует его в поставку вручную.
@@ -1321,7 +1407,7 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
         (order_id,),
     )
 
-    err, supply_id, wb_supply_id = ensure_open_supply(cur, conn, api_key, use_sandbox)
+    err, supply_id, wb_supply_id = ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id)
     if err:
         return err
 
@@ -1354,7 +1440,7 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number):
             (supply_id,),
         )
         conn.commit()
-        err, supply_id, wb_supply_id = ensure_open_supply(cur, conn, api_key, use_sandbox)
+        err, supply_id, wb_supply_id = ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id)
         if err:
             return err
         status_code, data = wb_add_orders_to_supply(
@@ -1593,7 +1679,33 @@ def handler(event: dict, context) -> dict:
     try:
         cur = conn.cursor()
 
-        api_key, use_sandbox, is_enabled = get_wb_credentials(cur)
+        # МАГАЗИН ЗАПУСКА.
+        #
+        # Кабинеты WB у МЕГАТЮЛЬ и ДЮНЫ разные. Загрузка заказов обходит все
+        # подключённые кабинеты: первый забираем сами, остальные запускаем
+        # отдельными вызовами — пяти секунд не хватит на оба сразу.
+        #
+        # Точечные действия (стикер, сборка поставки) идут по конкретному
+        # заказу: ключи берём того кабинета, где заказ живёт.
+        shop_id = body_data.get('shopId')
+        shop_id = int(shop_id) if shop_id not in (None, '') else None
+
+        if not shop_id and action == 'label':
+            ref = (body_data.get('orderNumber') or '').strip()
+            if ref:
+                shop_id = shop_by_order(cur, ref)
+
+        if not shop_id and action in ('sync_orders', 'check_statuses'):
+            shops = list_wb_shops(cur)
+            if not shops:
+                return _resp(400, {'error': 'Нет подключённых кабинетов WildBerries. '
+                                            'Заполните ключи в разделе «Интеграции маркетплейсов».'})
+            if len(shops) > 1:
+                for extra in shops[1:]:
+                    _continue_later({'action': action, 'shopId': extra})
+            shop_id = shops[0]
+
+        api_key, use_sandbox, is_enabled = get_wb_credentials(cur, shop_id)
         if not is_enabled:
             return _resp(400, {'error': 'Интеграция с WildBerries выключена. Включите её в разделе «Интеграции маркетплейсов».'})
         if not api_key:
@@ -1606,11 +1718,12 @@ def handler(event: dict, context) -> dict:
         if action == 'scan_order_to_supply':
             return handle_scan_order(cur, conn, body_data, api_key, use_sandbox)
         if action == 'remove_order_from_supply':
-            return handle_remove_order(cur, conn, body_data, api_key, use_sandbox)
+            return handle_remove_order(cur, conn, body_data, api_key, use_sandbox, shop_id)
         if action == 'shelf_cancelled_order':
             return handle_shelf_cancelled(cur, conn, body_data, api_key, use_sandbox)
         if action == 'check_statuses':
-            return handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id, actor_name)
+            return handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id,
+                                         actor_name, shop_id)
         if action == 'list_pending_orders':
             return handle_list_pending(cur, body_data)
         if action == 'move_orders_to_supply':
@@ -1625,7 +1738,7 @@ def handler(event: dict, context) -> dict:
             # в поставке. Поэтому сначала кладём вещь в свободную поставку, и лишь
             # затем просим ярлык — иначе WB отвечает пустым списком стикеров.
             supply_warning = add_order_to_open_supply(
-                cur, conn, api_key, use_sandbox, order_number
+                cur, conn, api_key, use_sandbox, order_number, shop_id
             )
             err, png_b64 = get_order_sticker(cur, api_key, use_sandbox, order_number)
             # Связь с поставкой сохраняем в любом случае: на стороне WB задание уже
@@ -1675,7 +1788,7 @@ def handler(event: dict, context) -> dict:
         # закрыли или отгрузили в кабинете, печать стикеров ломается для всех заказов WB
         # разом. Закрываем устаревшую запись здесь, а не в момент печати — упаковщица
         # не должна упираться в ошибку с вещью в руках.
-        supply_reset = drop_stale_accumulator(cur, conn, api_key, use_sandbox)
+        supply_reset = drop_stale_accumulator(cur, conn, api_key, use_sandbox, shop_id)
 
         status_code, data = wb_get('/api/v3/orders/new', api_key, use_sandbox)
         if status_code == 401:
@@ -1715,7 +1828,7 @@ def handler(event: dict, context) -> dict:
             nm_id = wb.get('nmId')
             skus = wb.get('skus') or []
             article = wb.get('article')
-            item = find_marketplace_item(cur, nm_id, skus, article)
+            item = find_marketplace_item(cur, nm_id, skus, article, shop_id)
             if not item:
                 skipped_no_item += 1
                 unmatched.append({'wbOrderId': wb_order_id, 'nmId': nm_id, 'article': article, 'skus': skus})
@@ -1743,8 +1856,7 @@ def handler(event: dict, context) -> dict:
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                 "quantity, source, material, width, height, wb_order_id, marketplace_created_at, "
                 "marketplace_item_id, shop_id) "
-                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, "
-                "(SELECT shop_id FROM marketplace_integrations WHERE marketplace_code = 'wildberries' AND is_enabled = true ORDER BY shop_id LIMIT 1)) "
+                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (
                     order_number,
@@ -1755,6 +1867,7 @@ def handler(event: dict, context) -> dict:
                     int(wb_order_id),
                     mp_created_at,
                     int(item_id) if item_id else None,
+                    shop_id,
                 ),
             )
             row_new = cur.fetchone()

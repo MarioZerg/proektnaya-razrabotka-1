@@ -154,11 +154,23 @@ def _resp(status, body):
     }
 
 
-def get_ozon_credentials(cur):
-    """Возвращает (client_id, api_key, is_enabled) для OZON из marketplace_integrations."""
-    cur.execute(
-        "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
-    )
+def get_ozon_credentials(cur, shop_id=None):
+    """Возвращает (client_id, api_key, is_enabled) для кабинета OZON конкретного магазина.
+
+    У МЕГАТЮЛЬ и ДЮНЫ РАЗНЫЕ кабинеты на OZON со своими ключами. Без явного
+    магазина брался первый попавшийся ключ — и заказы второго кабинета не
+    приезжали в систему вовсе: цех про них просто не знал.
+    """
+    if shop_id:
+        cur.execute(
+            "SELECT is_enabled, credentials FROM marketplace_integrations "
+            "WHERE marketplace_code = 'ozon' AND shop_id = %s LIMIT 1",
+            (int(shop_id),),
+        )
+    else:
+        cur.execute(
+            "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
+        )
     row = cur.fetchone()
     if not row:
         return None, None, False
@@ -167,6 +179,38 @@ def get_ozon_credentials(cur):
     client_id = (creds.get('clientId') or '').strip()
     api_key = (creds.get('apiKey') or '').strip()
     return client_id, api_key, is_enabled
+
+
+def shop_by_order(cur, order_number):
+    """Магазин заказа по его номеру или номеру отправления.
+
+    Ярлык печатается ключами ТОГО кабинета, где заказ живёт. Ключом МЕГАТЮЛЬ
+    этикетку отправления ДЮНЫ не получить: OZON ответит «отправление не
+    найдено», и упаковщица упрётся в кнопку, которая не работает.
+    """
+    cur.execute(
+        "SELECT shop_id FROM orders "
+        "WHERE order_number = %s OR ozon_posting_number = %s "
+        "ORDER BY (order_number = %s) DESC, id LIMIT 1",
+        (order_number, order_number, order_number),
+    )
+    row = cur.fetchone()
+    return row[0] if row and row[0] else None
+
+
+def list_ozon_shops(cur):
+    """id магазинов, у которых кабинет OZON включён и ключи заполнены.
+
+    По этому списку загрузка обходит кабинеты по очереди: каждый магазин —
+    свой запуск со своими ключами.
+    """
+    cur.execute(
+        "SELECT shop_id FROM marketplace_integrations "
+        "WHERE marketplace_code = 'ozon' AND is_enabled = true "
+        "  AND credentials::text <> '{}' AND shop_id IS NOT NULL "
+        "ORDER BY shop_id"
+    )
+    return [r[0] for r in cur.fetchall()]
 
 
 def ozon_post(path, client_id, api_key, payload, timeout=None):
@@ -291,7 +335,7 @@ def split_posting(client_id, api_key, posting_number, products):
     return result or None
 
 
-def load_items_index(cur):
+def load_items_index(cur, shop_id=None):
     """Загружает справочник товаров в память одним запросом.
 
     Раньше карточка искалась отдельным запросом на КАЖДЫЙ товар отправления (а то и
@@ -300,10 +344,21 @@ def load_items_index(cur):
     заказы не создавались. Карточек меньше тысячи, поэтому дешевле забрать их разом.
 
     Возвращает два указателя: по ozon_sku и по артикулу продавца.
+
+    Берём карточки ТОЛЬКО своего магазина: артикулы у МЕГАТЮЛЬ и ДЮНЫ могут
+    совпадать, и без этого заказ ДЮНЫ привязался бы к карточке чужого кабинета —
+    с чужим штрихкодом и чужим расходом материала.
     """
-    cur.execute(
-        "SELECT material, width, height, name, id, ozon_sku, sku FROM marketplace_items"
-    )
+    if shop_id:
+        cur.execute(
+            "SELECT material, width, height, name, id, ozon_sku, sku "
+            "FROM marketplace_items WHERE shop_id = %s",
+            (int(shop_id),),
+        )
+    else:
+        cur.execute(
+            "SELECT material, width, height, name, id, ozon_sku, sku FROM marketplace_items"
+        )
     by_ozon_sku = {}
     by_sku = {}
     for material, width, height, name, item_id, ozon_sku, sku in cur.fetchall():
@@ -513,7 +568,7 @@ def _continue_later(payload):
     return True
 
 
-def _verify_and_pull(cur, client_id, api_key, chain):
+def _verify_and_pull(cur, client_id, api_key, chain, shop_id=None):
     """Сверяет очередь сборки с OZON и добирает недостающее.
 
     Это тот самый обход, который раньше приходилось запускать руками кнопкой
@@ -556,7 +611,9 @@ def _verify_and_pull(cur, client_id, api_key, chain):
 
     cur.execute(
         "SELECT ozon_posting_number FROM orders "
-        "WHERE ozon_posting_number = ANY(%s)", (list(on_mp),))
+        "WHERE ozon_posting_number = ANY(%s) "
+        "  AND (%s IS NULL OR shop_id = %s)",
+        (list(on_mp), shop_id, shop_id))
     have = {r[0] for r in cur.fetchall()}
     missing = sorted(on_mp - have)
 
@@ -572,6 +629,9 @@ def _verify_and_pull(cur, client_id, api_key, chain):
             'action': 'sync_orders',
             'postingNumbers': missing[:OZON_CREATE_PER_RUN],
             'chain': chain + 1,
+            # Магазин несём дальше по цепочке: без него следующий запуск
+            # возьмёт ключи чужого кабинета и ничего не найдёт.
+            'shopId': shop_id,
         })
 
     return {'checked': True, 'onMarketplace': len(on_mp),
@@ -580,7 +640,7 @@ def _verify_and_pull(cur, client_id, api_key, chain):
 
 
 def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name,
-                         body_data=None):
+                         body_data=None, shop_id=None):
     """Делит на OZON отправления, которые попали в систему ДО появления деления.
 
     Такие заказы лежат в «Новых» слипшимися: три шторы одного покупателя едут одним
@@ -594,7 +654,8 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name,
     body_data = body_data or {}
 
     chain_now = int(body_data.get('chain') or 0)
-    if chain_now > 0 and not _claim_chain_step(cur, conn, 'ozon_split', chain_now):
+    if chain_now > 0 and not _claim_chain_step(
+            cur, conn, f'ozon_split_{shop_id or 0}', chain_now):
         return _resp(200, {'splitDone': 0, 'skippedDuplicateRun': True})
 
     cur.execute(
@@ -603,6 +664,8 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name,
         "WHERE o.marketplace = 'OZON' AND o.order_type = 'FBS' "
         "  AND o.ozon_status = 'awaiting_packaging' "
         "  AND o.ozon_posting_number IS NOT NULL "
+        # Только свой кабинет: чужое отправление нашим ключом не поделить.
+        + (f"  AND o.shop_id = {int(shop_id)} " if shop_id else "") +
         "GROUP BY o.ozon_posting_number "
         # Делим, пока НИ НА ОДНУ вещь отправления не наклеен ярлык OZON.
         #
@@ -734,6 +797,7 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name,
         chained = _continue_later({
             'action': 'split_pending',
             'chain': chain + 1,
+            'shopId': shop_id,
         })
 
     return _resp(200, {
@@ -747,7 +811,7 @@ def handle_split_pending(cur, conn, client_id, api_key, actor_id, actor_name,
 
 
 def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
-                       only_numbers=None, body_data=None):
+                       only_numbers=None, body_data=None, shop_id=None):
     """Тянет новые FBS-заказы OZON (status=awaiting_packaging) и создаёт их в системе.
 
     only_numbers — точечная догрузка: забрать конкретные отправления по номерам,
@@ -762,7 +826,8 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
     # Шаги дальше идут из цепочки, и вот их надо защищать от повтора: один
     # вызов «не дожидаясь ответа» легко превращается в два.
     chain_now = int(body_data.get('chain') or 0)
-    if chain_now > 0 and not _claim_chain_step(cur, conn, 'ozon_sync', chain_now):
+    if chain_now > 0 and not _claim_chain_step(
+            cur, conn, f'ozon_sync_{shop_id or 0}', chain_now):
         return _resp(200, {'created': 0, 'skippedDuplicateRun': True})
 
     # Часы запускаем ДО первого обращения к OZON: ответ маркетплейса — самая долгая
@@ -887,6 +952,21 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
                 )
         if status_code in (401, 403):
             return _resp(400, {'error': 'OZON отклонил ключ (проверьте Client ID и API-ключ в настройках интеграции).'})
+        # ПЛОЩАДКА ПРОСИТ СБАВИТЬ ТЕМП (429).
+        #
+        # Кабинетов теперь два, и запросов к OZON стало вдвое больше: площадка
+        # ограничивает их частоту на секунду. Это не ошибка ключа и не повод
+        # ронять загрузку — выжидаем полсекунды и пробуем ту же страницу ещё раз.
+        # Не вышло со второй попытки — выходим с тем, что успели набрать:
+        # остаток заберёт следующий запуск.
+        if status_code == 429:
+            left = OZON_RUN_DEADLINE_SEC - (time.monotonic() - run_started)
+            if left > 1.0:
+                time.sleep(0.5)
+                status_code, data = ozon_post(
+                    '/v3/posting/fbs/unfulfilled/list', client_id, api_key,
+                    payload, timeout=min(OZON_HTTP_TIMEOUT_SEC, left - 0.5),
+                )
         if status_code != 200:
             # МЕДЛЕННЫЙ ОТВЕТ — НЕ ПОВОД ВЫБРОСИТЬ НАБРАННОЕ.
             #
@@ -899,6 +979,9 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
             # успели собрать. Остаток заберёт следующий запуск через 15 минут.
             if postings:
                 break
+            if status_code == 429:
+                return _resp(502, {'error': 'OZON ограничивает частоту запросов. '
+                                            'Загрузка продолжится автоматически через несколько минут.'})
             return _resp(502, {'error': f'OZON вернул ошибку ({status_code}): {ozon_error_text(status_code, data)}'})
 
         result = (data.get('result', {}) or {}) if isinstance(data, dict) else {}
@@ -966,7 +1049,7 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
             existing_format[pn] = (first_number == pn)
 
     # Справочник товаров забираем ОДИН раз на всю страницу, а не по запросу на товар.
-    items_index = load_items_index(cur)
+    items_index = load_items_index(cur, shop_id)
 
     # Сколько отправлений уже разделили за этот запуск и сколько раз OZON отказал.
     split_done = 0
@@ -1096,12 +1179,13 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
                         "marketplace_created_at, marketplace_item_id, "
                         "is_legal_entity, legal_company_name, legal_inn, shop_id) "
                         "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, "
-                        "%s, %s, %s, (SELECT shop_id FROM marketplace_integrations WHERE marketplace_code = 'ozon' AND is_enabled = true ORDER BY shop_id LIMIT 1)) "
+                        "%s, %s, %s, %s) "
                         "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                         (
                             unit_number, product_name, material, width, height,
                             unit_number, ozon_status, mp_created_at, item_id,
                             is_legal, legal_company or None, legal_inn or None,
+                            shop_id,
                         ),
                     )
                     if cur.fetchone():
@@ -1173,7 +1257,7 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
                     "marketplace_created_at, marketplace_item_id, "
                     "is_legal_entity, legal_company_name, legal_inn, shop_id) "
                     "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, "
-                    "%s, %s, %s, (SELECT shop_id FROM marketplace_integrations WHERE marketplace_code = 'ozon' AND is_enabled = true ORDER BY shop_id LIMIT 1)) "
+                    "%s, %s, %s, %s) "
                     "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                     (
                         unique_number,
@@ -1188,6 +1272,7 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
                         is_legal,
                         legal_company or None,
                         legal_inn or None,
+                        shop_id,
                     ),
                 )
                 inserted = cur.fetchone()
@@ -1310,11 +1395,13 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
         chained = _continue_later({
             'action': 'sync_orders',
             'chain': chain + 1,
+            'shopId': shop_id,
         })
     elif has_more and chain < MAX_CHAIN and not only_numbers:
         chained = _continue_later({
             'action': 'sync_orders',
             'chain': chain + 1,
+            'shopId': shop_id,
         })
     elif not only_numbers:
         # РАБОТА КОНЧИЛАСЬ — СВЕРЯЕМСЯ.
@@ -1339,7 +1426,7 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
         # Заказы важнее сверки: сначала сохраняем их, а пересчёт делаем, когда
         # успеваем. Не успели — он пройдёт при следующем запуске через 15 минут.
         if time.monotonic() - run_started < OZON_VERIFY_DEADLINE_SEC:
-            verified = _verify_and_pull(cur, client_id, api_key, chain)
+            verified = _verify_and_pull(cur, client_id, api_key, chain, shop_id)
             chained = bool(verified.get('pulling'))
 
     return _resp(200, {
@@ -1394,7 +1481,8 @@ def handle_refresh_status(cur, conn, client_id, api_key, body_data):
     return _resp(200, {'postingNumber': posting_number, 'ozonStatus': ozon_status})
 
 
-def handle_refresh_all(cur, conn, client_id, api_key, body_data=None, actor_id=None, actor_name=None):
+def handle_refresh_all(cur, conn, client_id, api_key, body_data=None, actor_id=None,
+                       actor_name=None, shop_id=None):
     """Разом обновляет статусы всех OZON FBS-заказов в системе. Проходит по списку
     отправлений OZON (/v3/posting/fbs/list, ТОЛЬКО чтение) постранично и для каждого
     отправления, которое есть у нас, сохраняет актуальный ozon_status. Заказы на стороне
@@ -1417,10 +1505,14 @@ def handle_refresh_all(cur, conn, client_id, api_key, body_data=None, actor_id=N
     cur.execute(
         "SELECT DISTINCT ozon_posting_number FROM orders "
         "WHERE marketplace = 'OZON' AND ozon_posting_number IS NOT NULL "
+        # Только заказы своего кабинета: чужие отправления этот ключ не видит,
+        # и они бы бесконечно числились «ненайденными».
+        "  AND (%s IS NULL OR shop_id = %s) "
         "  AND NOT ("
         "    COALESCE(ozon_status, '') IN ('delivered', 'cancelled', 'not_accepted') "
         "    AND created_at < now() - interval '7 days'"
-        "  )"
+        "  )",
+        (shop_id, shop_id),
     )
     known = {r[0] for r in cur.fetchall()}
     if not known:
@@ -1946,7 +2038,56 @@ def handler(event: dict, context) -> dict:
     try:
         cur = conn.cursor()
 
-        client_id, api_key, is_enabled = get_ozon_credentials(cur)
+        # МАГАЗИН ЗАПУСКА.
+        #
+        # У МЕГАТЮЛЬ и ДЮНЫ разные кабинеты OZON со своими ключами. Раньше
+        # загрузка брала первый попавшийся ключ, и заказы второго кабинета
+        # не приезжали в систему вообще — цех про них не знал.
+        #
+        # Если магазин указан — работаем по нему. Если нет (обычный запуск
+        # планировщика или кнопка в CRM) — обходим все подключённые кабинеты
+        # по очереди, каждый со своими ключами.
+        shop_id = body_data.get('shopId')
+        shop_id = int(shop_id) if shop_id not in (None, '') else None
+
+        # Точечные действия идут по конкретному заказу: ярлык и статус берутся
+        # ключами ТОГО кабинета, где заказ живёт. Иначе OZON ответит
+        # «отправление не найдено» — ключ чужого продавца его не видит.
+        if not shop_id and action in ('label', 'refresh_status'):
+            ref = (body_data.get('orderNumber')
+                   or body_data.get('postingNumber') or '').strip()
+            if ref:
+                shop_id = shop_by_order(cur, ref)
+
+        if action in ('sync_orders', 'split_pending', 'refresh_all_statuses') and not shop_id:
+            shops = list_ozon_shops(cur)
+            if not shops:
+                return _resp(400, {'error': 'Нет подключённых кабинетов OZON. '
+                                            'Заполните ключи в разделе «Интеграции маркетплейсов».'})
+            # Один кабинет — работаем как раньше, без лишнего слоя.
+            if len(shops) == 1:
+                shop_id = shops[0]
+            else:
+                # Несколько кабинетов: первый забираем сами, остальные
+                # запускаем отдельными вызовами. Делить нельзя — пяти секунд
+                # не хватит даже на один кабинет, не то что на два.
+                # РАЗВОДИМ КАБИНЕТЫ ВО ВРЕМЕНИ.
+                #
+                # OZON ограничивает частоту запросов на секунду. Запущенные
+                # одновременно кабинеты бьются в этот лимит и оба получают 429.
+                # Полсекунды паузы хватает, чтобы второй пошёл следом, а не
+                # вплотную к первому.
+                time.sleep(0.5)
+                for extra in shops[1:]:
+                    extra_payload = {'action': action, 'shopId': extra}
+                    # Обновление статусов идёт окнами — номер окна несём дальше,
+                    # иначе второй кабинет всегда смотрел бы только первое.
+                    if body_data.get('window') is not None:
+                        extra_payload['window'] = body_data['window']
+                    _continue_later(extra_payload)
+                shop_id = shops[0]
+
+        client_id, api_key, is_enabled = get_ozon_credentials(cur, shop_id)
         if not is_enabled:
             return _resp(400, {'error': 'Интеграция с OZON выключена. Включите её в разделе «Интеграции маркетплейсов».'})
         if not client_id or not api_key:
@@ -1960,14 +2101,16 @@ def handler(event: dict, context) -> dict:
                 only = [n.strip() for n in only.split(',') if n.strip()]
             return handle_sync_orders(cur, conn, client_id, api_key, actor_id,
                                       actor_name, only_numbers=only,
-                                      body_data=body_data)
+                                      body_data=body_data, shop_id=shop_id)
         if action == 'split_pending':
             return handle_split_pending(cur, conn, client_id, api_key,
-                                        actor_id, actor_name, body_data)
+                                        actor_id, actor_name, body_data,
+                                        shop_id=shop_id)
         if action == 'refresh_status':
             return handle_refresh_status(cur, conn, client_id, api_key, body_data)
         if action == 'refresh_all_statuses':
-            return handle_refresh_all(cur, conn, client_id, api_key, body_data, actor_id, actor_name)
+            return handle_refresh_all(cur, conn, client_id, api_key, body_data,
+                                      actor_id, actor_name, shop_id=shop_id)
         if action == 'find_by_barcode':
             # Кладовщик отсканировал штрихкод с ярлыка OZON — возвращаем номер
             # отправления, по которому вещь ищется в нашей системе.

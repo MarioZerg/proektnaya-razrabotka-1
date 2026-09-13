@@ -529,19 +529,27 @@ def return_wb_order_to_accumulator(cur, goods_id):
 
     # Резервная поставка: открытая накопительная. Если её нет — заводим свою запись.
     # Идентификатор на стороне WB здесь не нужен: он появится при сканировании.
+    # Буфер СВОЙ У КАЖДОГО МАГАЗИНА: кабинеты WB у МЕГАТЮЛЬ и ДЮНЫ разные,
+    # и вещи в общем буфере попали бы в поставку чужого продавца.
+    cur.execute("SELECT shop_id FROM orders WHERE id = %s", (int(order_id),))
+    shop_row = cur.fetchone()
+    order_shop_id = shop_row[0] if shop_row else None
+
     cur.execute(
         "SELECT id FROM marketplace_supplies "
         "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
-        "  AND status IN ('Открытая', 'На сборке') ORDER BY id DESC LIMIT 1"
+        "  AND status IN ('Открытая', 'На сборке') "
+        "  AND shop_id = %s ORDER BY id DESC LIMIT 1",
+        (order_shop_id,),
     )
     acc = cur.fetchone()
     if acc:
         acc_id = acc[0]
     else:
         cur.execute(
-            "INSERT INTO marketplace_supplies (marketplace, type, status, comment, is_accumulator) "
-            "VALUES ('WB', 'FBS', 'Открытая', %s, true) RETURNING id",
-            ('Резервная поставка: вещи ждут сканирования в поставку',),
+            "INSERT INTO marketplace_supplies (marketplace, type, status, comment, is_accumulator, shop_id) "
+            "VALUES ('WB', 'FBS', 'Открытая', %s, true, %s) RETURNING id",
+            ('Резервная поставка: вещи ждут сканирования в поставку', order_shop_id),
         )
         acc_id = cur.fetchone()[0]
 
