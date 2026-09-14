@@ -6,6 +6,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { statusBadgeClass } from '@/components/crm/sewingItems/sewingItemsShared';
 import { Button } from '@/components/ui/button';
@@ -55,6 +65,9 @@ interface SewingItemDetailDialogProps {
   isPackerView?: boolean;
   /** Перезагрузка заказа после привязки товара (штрихкод стикера FBO). */
   onOrderUpdated?: () => void;
+  /** Снять заказ с конвейера насовсем — только для администратора. */
+  onDeleteOrder?: () => void;
+  deleting?: boolean;
 }
 
 const SewingItemDetailDialog = ({
@@ -84,11 +97,28 @@ const SewingItemDetailDialog = ({
   cancelOrderPenalty = 0,
   isPackerView = false,
   onOrderUpdated,
+  onDeleteOrder,
+  deleting = false,
 }: SewingItemDetailDialogProps) => {
   const { user } = useAuth();
   // Менеджер смотрит заказы только как справку и стикерами не занимается.
   const isManager = user?.role === 'manager';
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
+  // СНЯТЬ С КОНВЕЙЕРА — ПРАВО АДМИНИСТРАТОРА, И ТОЛЬКО ЗДЕСЬ.
+  //
+  // Раньше удалить заказ можно было исключительно во вкладке «Заказы»: админ
+  // видел лишнюю вещь прямо на конвейере, а убрать её оттуда было нечем — надо
+  // было идти в другой раздел и искать заказ по номеру. Показываем кнопку и
+  // здесь, но только тому, кто и так имеет на это право.
+  //
+  // Уже снятый заказ второй раз не снимают: кнопки у него нет.
+  const isCancelled =
+    !!selectedOrder?.isCancelled ||
+    selectedOrder?.status === 'Отменён' ||
+    selectedOrder?.sewingStatus === 'Отменён';
+  const canDelete = !!onDeleteOrder && user?.role === 'admin' && !isCancelled;
 
   // Работать на оверлоке может швея с допуском (галочка в карточке сотрудника)
   // и администратор. Допуск приходит вместе со списком сотрудников.
@@ -158,8 +188,54 @@ const SewingItemDetailDialog = ({
                 Отменить заказ
               </Button>
             )}
+            {canDelete && (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="w-fit"
+                onClick={() => setDeleteConfirmOpen(true)}
+                disabled={deleting}
+              >
+                <Icon
+                  name={deleting ? 'Loader2' : 'Trash2'}
+                  size={14}
+                  className={`mr-1.5 ${deleting ? 'animate-spin' : ''}`}
+                />
+                Снять с конвейера
+              </Button>
+            )}
           </div>
         </DialogHeader>
+
+        <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Снять заказ с конвейера?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Заказ {selectedOrder?.orderNumber} уйдёт из очереди цеха и будет
+                помечен отменённым. Из системы он не пропадёт — останется во вкладке
+                «Заказы», фильтр «Отменённые». Невыплаченные начисления по нему
+                снимутся.
+              </AlertDialogDescription>
+              <AlertDialogDescription className="font-medium text-destructive">
+                На маркетплейсе заказ при этом НЕ отменяется — если он ещё ждёт
+                отгрузки, отмените его в кабинете площадки.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Не снимать</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() => {
+                  setDeleteConfirmOpen(false);
+                  onDeleteOrder?.();
+                }}
+              >
+                Снять с конвейера
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <SewingItemCancelConfirm
           open={cancelConfirmOpen}

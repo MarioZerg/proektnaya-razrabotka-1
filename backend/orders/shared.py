@@ -59,12 +59,32 @@ CANCELLED_ORDERS_LIMIT = 300
 # полторы сотни, а по статусам площадок — почти полторы тысячи. Условие одно
 # на весь файл, чтобы вкладка «Отменённые», выборка истории и признак в строке
 # считались одинаково и не разъезжались.
-CANCELLED_SQL = (
-    "o.status = 'Отменён' OR o.sewing_status = 'Отменён' "
-    "OR o.cancelled_at IS NOT NULL "
-    "OR COALESCE(o.ozon_status, '') ILIKE 'cancel%' "
-    "OR COALESCE(o.ym_status, '') ILIKE '%CANCEL%'"
-)
+def cancelled_sql(alias: str = 'o') -> str:
+    """Условие отмены для запроса с псевдонимом таблицы или без него (FROM orders).
+
+    Очереди раскроя и пошива написаны без алиаса, и раньше они проверяли отмену
+    только по нашему полю status. Из-за этого отменённый покупателем заказ
+    (ozon_status='cancelled', а наш status остался «Новый») спокойно уезжал
+    закройщику в стек: ткань резали на вещь, которую никто не ждёт.
+
+    Внутри НЕТ знака процента, хотя по смыслу это поиск по началу и по вхождению.
+    Процент в тексте запроса psycopg2 принимает за место для подстановки значения,
+    и запрос с параметрами (а очередь раскроя именно такая) падал бы на ровном
+    месте. strpos делает то же самое и без ловушки.
+    """
+    p = f'{alias}.' if alias else ''
+    return (
+        f"{p}status = 'Отменён' OR {p}sewing_status = 'Отменён' "
+        f"OR {p}cancelled_at IS NOT NULL "
+        # 'cancelled', 'cancelled_from_split' и прочие варианты OZON — всё, что
+        # начинается на cancel.
+        f"OR strpos(lower(COALESCE({p}ozon_status, '')), 'cancel') = 1 "
+        # У Яндекса слово стоит в середине: 'CANCELLED_BEFORE_PROCESSING'.
+        f"OR strpos(upper(COALESCE({p}ym_status, '')), 'CANCEL') > 0"
+    )
+
+
+CANCELLED_SQL = cancelled_sql('o')
 
 # ПОТОЛОК ОТВЕТА ПЛАТФОРМЫ — 3.5 МБ. Больше него функция не отдаёт НИЧЕГО: вместо
 # данных прилетает 502 JobResponseTooLong, и страница остаётся пустой.

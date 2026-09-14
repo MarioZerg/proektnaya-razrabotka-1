@@ -101,6 +101,13 @@
       "path": "/",
       "body": {"action": "bulk_cancel_orders", "orderIds": [999999]},
       "expectedStatus": 401
+    },
+    {
+      "name": "Delete order without auth is rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "delete_order", "id": 999999},
+      "expectedStatus": 401
     }
   ]
 }

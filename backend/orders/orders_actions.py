@@ -15,6 +15,7 @@ from shared import (
     GROUP_CUT_BATCH,
     STATUS_ORDER,
     apply_penalty,
+    cancelled_sql,
     award_variki,
     can_work_as,
     format_wait,
@@ -247,7 +248,13 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "SELECT id, group_key, group_size, COALESCE(width, 0) FROM orders "
                 "WHERE sewing_status = 'Новый' "
                 "AND fulfilled_from_stock_id IS NULL "
-                "AND COALESCE(status, '') <> 'Отменён' "
+                # ОТМЕНЁННОЕ ПОКУПАТЕЛЕМ В РАСКРОЙ НЕ ОТДАЁМ.
+                #
+                # Отмену видит площадка (ozon_status='cancelled'), а наш status при
+                # этом остаётся «Новый». Раньше здесь проверялось только наше поле —
+                # и отменённый заказ попадал закройщику в стек: ткань резали на вещь,
+                # которую уже никто не ждёт.
+                f"AND NOT ({cancelled_sql('')}) "
                 "AND material IN (" + names_csv + ") "
                 + single_sql +
                 "ORDER BY " + cut_ozon_last_sql +
@@ -306,7 +313,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur.execute(
                     "SELECT id FROM orders WHERE sewing_status = 'Новый' "
                     "AND fulfilled_from_stock_id IS NULL "
-                    "AND COALESCE(status, '') <> 'Отменён' "
+                    f"AND NOT ({cancelled_sql('')}) "
                     f"AND group_key IN ({keys_csv}) "
                     "AND material IN (" + names_csv + ") "
                     "FOR UPDATE SKIP LOCKED"
@@ -337,7 +344,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur.execute(
                     "SELECT id FROM orders WHERE sewing_status = 'Новый' "
                     "AND fulfilled_from_stock_id IS NULL "
-                    "AND COALESCE(status, '') <> 'Отменён' "
+                    f"AND NOT ({cancelled_sql('')}) "
                     "AND marketplace = 'OZON' "
                     "AND ozon_posting_number IS NOT NULL "
                     "AND material IN (" + names_csv + ") "
@@ -1513,6 +1520,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             orders_priority_setting = get_setting(cur, session_workshop_id, 'orders_priority', 'by_date')
 
             where_parts = ["sewing_status = 'Раскроено'"]
+            # Отменённую вещь швея в работу не берёт: её уже не отгрузят, а время
+            # и тесьма уйдут. Проверяем отмену так же, как весь остальной код, —
+            # по статусам площадок, а не только по нашему полю.
+            where_parts.append(f"NOT ({cancelled_sql('')})")
             # Швея берёт в работу только заказы, раскроенные в ЕЁ цехе (цех текущей
             # открытой смены) — цеха изолированы: заказ, раскроенный в цехе №2, швея
             # цеха №1 взять не может. Без открытой смены цех неизвестен — брать нечего.
@@ -2361,6 +2372,16 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
         if action == 'delete_order':
+            # Снятие заказа доступно только администратору, и проверяется это по
+            # токену сессии, а не по кнопке на экране: кнопку можно не нажимать, а
+            # запрос отправить напрямую из консоли браузера.
+            try:
+                admin = require_admin(cur, event)
+            except AuthError as e:
+                return auth_error_response(e, headers)
+            actor_id = admin['realUserId']
+            actor_name = admin['name']
+
             item_id = body_data.get('id')
             if not item_id:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -2376,8 +2397,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             cur.execute(
                 "DELETE FROM salary_accruals WHERE order_id = %s AND paid_at IS NULL", (int(item_id),)
             )
+            # cancelled_at проставляем вместе со status: по нему заказ считается
+            # отменённым везде — и в очереди раскроя, и в очереди пошива, и в
+            # списке заказов. Без этой отметки «удалённый» заказ оставался виден
+            # как обычный на конвейере и мог снова уехать закройщику.
             cur.execute(
-                "UPDATE orders SET status = 'Отменён' WHERE id = %s", (int(item_id),)
+                "UPDATE orders SET status = 'Отменён', "
+                "cancelled_at = COALESCE(cancelled_at, now()) WHERE id = %s",
+                (int(item_id),),
             )
             log_action(
                 cur, actor_id, actor_name, 'delete_order', 'order', item_id,

@@ -71,6 +71,26 @@ export const marketplaceLogo: Record<string, { label: string; className: string 
 
 export const marketplaceOptions: Marketplace[] = ['OZON', 'WB', 'Yandex'];
 
+/**
+ * ОТМЕНЁННЫЙ ЗАКАЗ — ЭТО НЕ РАБОТА.
+ *
+ * Отмену видит МАРКЕТПЛЕЙС: у каждой площадки своё слово для неё
+ * (ozon_status='cancelled', ym_status='...CANCELLED'), а наш собственный status
+ * при этом остаётся прежним — «Новый». Поэтому признак считает сервер и кладёт
+ * в isCancelled, а здесь мы им просто пользуемся.
+ *
+ * Из-за разного счёта конвейер и вкладка «Заказы» расходились: восемь заказов
+ * «Шифон» стояли на конвейере в «Новых» как живая очередь, а во вкладке заказов
+ * их не было вовсе — все восемь отменил покупатель. Закройщик видел работу,
+ * которой нет, и не мог понять, куда она делась из списка заказов.
+ */
+export const isOrderCancelled = (o: {
+  isCancelled?: boolean | null;
+  status?: string;
+  sewingStatus?: string;
+}): boolean =>
+  !!o.isCancelled || o.status === 'Отменён' || o.sewingStatus === 'Отменён';
+
 /** Сокращает ФИО до "Фамилия И.О." — например "Коротаева Наталья Александровна" → "Коротаева Н.А.". */
 export const shortFio = (fullName: string): string => {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);

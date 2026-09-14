@@ -119,9 +119,20 @@ const MarketplaceOrders = () => {
     }
   };
 
+  // Право на снятие заказа проверяет сервер по токену сессии, а не эта кнопка.
+  // Отказ и любую другую ошибку показываем: молча ничего не менявшийся список
+  // читается как «нажал, и не сработало», и человек жмёт ещё раз.
   const handleDelete = async (id: number) => {
-    await deleteOrder(id);
-    load();
+    try {
+      await deleteOrder(id);
+      load();
+    } catch (err) {
+      toast({
+        title: 'Не удалось снять заказ',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    }
   };
 
   // Загрузка новых FBS-заказов с WildBerries через API. Создаёт их в системе со статусом

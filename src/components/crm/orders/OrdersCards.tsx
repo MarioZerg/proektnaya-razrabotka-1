@@ -31,7 +31,12 @@ const OrdersCards = ({
   return (
     <div className="space-y-3">
       {orders.map((o) => {
-        const isCancelled = o.status === 'Отменён';
+        // Признак отмены считает сервер: у каждой площадки своё слово для неё
+        // (ozon_status='cancelled', ym_status='...CANCELLED'), а наш status при
+        // этом остаётся прежним. Раньше здесь смотрели только на наш status — и на
+        // телефоне у отменённого заказа оставалась живая кнопка «Удалить».
+        const isCancelled =
+          !!o.isCancelled || o.status === 'Отменён' || o.sewingStatus === 'Отменён';
         return (
           <div
             key={o.id}

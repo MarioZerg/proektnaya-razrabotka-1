@@ -7,6 +7,7 @@ import {
   cutOrderGroup,
   sendToStickering,
   cancelOrder,
+  deleteOrder,
   type Order,
   type OrderDetail,
   type SewingStatus,
@@ -42,6 +43,7 @@ export const useSewingItemOrderDetail = ({
   const [saving, setSaving] = useState(false);
   const [cutting, setCutting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const loadDetail = async (orderId: number) => {
     setDetailLoading(true);
@@ -207,6 +209,37 @@ export const useSewingItemOrderDetail = ({
     }
   };
 
+  /**
+   * СНЯТЬ ЗАКАЗ С КОНВЕЙЕРА (администратор).
+   *
+   * Это не то же, что «Отменить заказ» у швеи: там вещь возвращается в очередь и
+   * её возьмёт другой человек. Здесь заказ уходит из работы совсем — помечается
+   * отменённым и остаётся только в истории, во вкладке «Заказы».
+   *
+   * Право проверяет сервер по токену сессии, а не эта кнопка.
+   */
+  const handleDeleteOrder = async () => {
+    if (!selectedOrder) return;
+    setDeleting(true);
+    try {
+      await deleteOrder(selectedOrder.id);
+      toast({
+        title: 'Заказ снят с конвейера',
+        description: 'Ищите его во вкладке «Заказы», фильтр «Отменённые»',
+      });
+      setDialogOpen(false);
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось снять заказ',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   // Перезагрузка текущего заказа после привязки товара к стикеру FBO: обновляем и деталь
   // (marketplaceItemId), и сам selectedOrder (productBarcode для печати), и общий список.
   const reloadSelected = async () => {
@@ -245,6 +278,7 @@ export const useSewingItemOrderDetail = ({
     saving,
     cutting,
     cancelling,
+    deleting,
     openDetail,
     handleAssignUser,
     handleAssignWorkshop,
@@ -253,6 +287,7 @@ export const useSewingItemOrderDetail = ({
     handleCutGroup,
     handleSendToStickering,
     handleCancelOrder,
+    handleDeleteOrder,
     reloadSelected,
     myFabricRolls,
     myTrimRolls,

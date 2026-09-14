@@ -106,6 +106,7 @@ const SewingItems = () => {
     saving,
     cutting,
     cancelling,
+    deleting,
     openDetail,
     handleAssignUser,
     handleAssignWorkshop,
@@ -114,6 +115,7 @@ const SewingItems = () => {
     handleCutGroup,
     handleSendToStickering,
     handleCancelOrder,
+    handleDeleteOrder,
     reloadSelected,
     myFabricRolls,
     myTrimRolls,
@@ -428,6 +430,8 @@ const SewingItems = () => {
           isPackerView={isPacker}
           cancelling={cancelling}
           onOrderUpdated={reloadSelected}
+          onDeleteOrder={handleDeleteOrder}
+          deleting={deleting}
         />
       </div>
     </CrmLayout>
