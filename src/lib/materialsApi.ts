@@ -1,9 +1,26 @@
 const MATERIALS_URL = 'https://functions.poehali.dev/642e7cf2-2a7e-4c6e-81c6-c31c19737524';
 
+import type { Shop } from '@/lib/marketplaceIntegrationsApi';
+
+export type { Shop };
+
 export interface MaterialType {
   id: number;
   name: string;
   sortOrder: number;
+}
+
+/**
+ * ПРИВЯЗКА МАТЕРИАЛА К МАГАЗИНУ.
+ *
+ * Ассортимент у МЕГАТЮЛЬ и ДЮНЫ разный, а обработка бокового шва у одной и той
+ * же ткани может отличаться: где-то её обмётывают на оверлоке (отдельный этап и
+ * отдельное начисление), где-то шьют обычной прямострочкой. Поэтому признак
+ * оверлока живёт не на материале, а здесь — у пары «материал + магазин».
+ */
+export interface MaterialShop {
+  shopId: number;
+  requiresOverlock: boolean;
 }
 
 export interface Material {
@@ -27,19 +44,33 @@ export interface Material {
   /**
    * Ткань с осыпающимся краем: заказ из неё сначала обмётывают на оверлоке и
    * только потом отдают швее на прямострочку.
+   *
+   * Общая настройка «на весь цех». Работает как запасная: если у материала
+   * заданы магазины, решает настройка магазина (см. shops).
    */
   requiresOverlock?: boolean;
+  /**
+   * Каким магазинам подходит материал и нужен ли им оверлок.
+   * Пустой список — материал общий, подходит всем магазинам.
+   */
+  shops?: MaterialShop[];
 }
 
 export interface MaterialsData {
   types: MaterialType[];
   materials: Material[];
+  /** Активные магазины — галочки в карточке материала. */
+  shops: Shop[];
 }
 
 export const fetchMaterialsData = async (): Promise<MaterialsData> => {
   const res = await fetch(MATERIALS_URL);
   const data = await res.json();
-  return { types: data.types || [], materials: data.materials || [] };
+  return {
+    types: data.types || [],
+    materials: data.materials || [],
+    shops: data.shops || [],
+  };
 };
 
 /** Одна строка справочника упаковки: для такой ткани и такой ширины — такой пакет. */
@@ -96,7 +127,8 @@ export const createMaterial = async (
   name: string,
   unit: string,
   status: string,
-  requiresOverlock = false
+  requiresOverlock = false,
+  shops: MaterialShop[] = []
 ) => {
   const res = await fetch(MATERIALS_URL, {
     method: 'POST',
@@ -108,6 +140,7 @@ export const createMaterial = async (
       unit,
       status,
       requiresOverlock,
+      shops,
     }),
   });
   return res.json();
@@ -121,6 +154,8 @@ export const updateMaterial = async (
     status: string;
     typeId: number;
     requiresOverlock: boolean;
+    /** Полный список магазинов материала — сервер перезаписывает привязку целиком. */
+    shops: MaterialShop[];
   }>
 ) => {
   const res = await fetch(MATERIALS_URL, {

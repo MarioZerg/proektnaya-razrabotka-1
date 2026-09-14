@@ -15,13 +15,15 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import Icon from '@/components/ui/icon';
-import type { Material } from '@/lib/materialsApi';
+import type { Material, Shop } from '@/lib/materialsApi';
 
 interface MaterialsTableProps {
   loading: boolean;
   materials: Material[];
   pagedMaterials: Material[];
   typeById: Map<number, string>;
+  /** Магазины по id — подписи меток в колонке «Магазины». */
+  shopById: Map<number, Shop>;
   page: number;
   totalPages: number;
   setPage: Dispatch<SetStateAction<number>>;
@@ -29,13 +31,14 @@ interface MaterialsTableProps {
   onAskDelete: (id: number) => void;
 }
 
-/** Таблица справочника материалов со страницами: строка материала, метка оверлока,
- *  средняя цена по рулонам и кнопки редактирования/удаления. */
+/** Таблица справочника материалов со страницами: строка материала, магазины и
+ *  обработка края, средняя цена по рулонам и кнопки редактирования/удаления. */
 const MaterialsTable = ({
   loading,
   materials,
   pagedMaterials,
   typeById,
+  shopById,
   page,
   totalPages,
   setPage,
@@ -58,6 +61,7 @@ const MaterialsTable = ({
               <TableHead className="text-primary-foreground">#</TableHead>
               <TableHead className="text-primary-foreground">Тип</TableHead>
               <TableHead className="text-primary-foreground">Название</TableHead>
+              <TableHead className="text-primary-foreground">Магазины</TableHead>
               <TableHead className="text-primary-foreground">Ед.измерения</TableHead>
               <TableHead className="text-primary-foreground">Средняя цена</TableHead>
               <TableHead className="text-primary-foreground">Статус</TableHead>
@@ -71,9 +75,10 @@ const MaterialsTable = ({
                 <TableCell>{typeById.get(m.typeId) || '—'}</TableCell>
                 <TableCell className="font-medium">
                   {m.name}
-                  {/* Метка прямо в списке: админу видно, какие ткани идут через
-                      оверлок, без открытия карточки каждой. */}
-                  {m.requiresOverlock && (
+                  {/* Общий признак оверлока показываем, только пока материал не
+                      разведён по магазинам: иначе он противоречил бы колонке
+                      магазинов, где у каждого своя обработка. */}
+                  {m.requiresOverlock && !(m.shops && m.shops.length > 0) && (
                     <Badge
                       variant="outline"
                       className="ml-2 gap-1 border-fuchsia-300 bg-fuchsia-50 font-normal text-fuchsia-700"
@@ -81,6 +86,34 @@ const MaterialsTable = ({
                       <Icon name="Scissors" size={11} />
                       Оверлок
                     </Badge>
+                  )}
+                </TableCell>
+                {/* Кому подходит материал и как там обрабатывают край. Видно списком,
+                    без захода в карточку каждой ткани. */}
+                <TableCell>
+                  {!m.shops || m.shops.length === 0 ? (
+                    <span className="text-xs text-muted-foreground">Все магазины</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {m.shops.map((s) => {
+                        const shop = shopById.get(s.shopId);
+                        if (!shop) return null;
+                        return (
+                          <Badge
+                            key={s.shopId}
+                            variant="outline"
+                            className={`gap-1 font-normal ${
+                              s.requiresOverlock
+                                ? 'border-fuchsia-300 bg-fuchsia-50 text-fuchsia-700'
+                                : ''
+                            }`}
+                          >
+                            {shop.name}
+                            {s.requiresOverlock && <Icon name="Scissors" size={11} />}
+                          </Badge>
+                        );
+                      })}
+                    </div>
                   )}
                 </TableCell>
                 <TableCell>{m.unit}</TableCell>

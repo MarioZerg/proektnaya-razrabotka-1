@@ -466,7 +466,13 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             cur.execute(
                 f"SELECT o.id, o.order_number, o.order_type, o.marketplace, o.material, "
                 f"o.width, o.height, o.group_key, o.group_size, o.group_position, "
-                f"COALESCE((SELECT m.requires_overlock FROM materials m "
+                # Настройка магазина заказа главнее общей: та же ткань в соседнем
+                # магазине может шиться без обмётки. Если для магазина ткань не
+                # настроена — падаем на общий признак материала.
+                f"COALESCE((SELECT ms.requires_overlock FROM material_shops ms "
+                f"          JOIN materials m ON m.id = ms.material_id "
+                f"          WHERE m.name = o.material AND ms.shop_id = o.shop_id LIMIT 1), "
+                f"         (SELECT m.requires_overlock FROM materials m "
                 f"          WHERE m.name = o.material LIMIT 1), false), "
                 # НОМЕР ПОКУПКИ OZON и сколько её отправлений в этом стеке.
                 #
@@ -1332,13 +1338,28 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # завтра, а вещи, уже запущенные в работу, должны пройти тот
                 # маршрут, по которому их отправили: иначе крой, висящий на
                 # вешалке, внезапно поменяет очередь.
+                # ОБРАБОТКА КРАЯ ЗАВИСИТ ОТ МАГАЗИНА.
+                #
+                # Одна и та же вуаль в МЕГАТЮЛЬ идёт через оверлок, а в ДЮНЕ шьётся
+                # обычной прямострочкой: это разные товары с разной себестоимостью и
+                # разной оплатой швее. Поэтому сначала спрашиваем настройку магазина
+                # заказа (material_shops), и только если магазин у ткани не настроен —
+                # берём общий признак самого материала, как было раньше.
                 needs_overlock = False
                 if fabric_material_id:
                         cur.execute(
-                                "SELECT requires_overlock FROM materials WHERE id = %s",
-                                (fabric_material_id,),
+                                "SELECT ms.requires_overlock FROM material_shops ms "
+                                "JOIN orders o ON o.id = %s AND o.shop_id = ms.shop_id "
+                                "WHERE ms.material_id = %s LIMIT 1",
+                                (int(item_id), fabric_material_id),
                         )
                         ov_row = cur.fetchone()
+                        if ov_row is None:
+                                cur.execute(
+                                        "SELECT requires_overlock FROM materials WHERE id = %s",
+                                        (fabric_material_id,),
+                                )
+                                ov_row = cur.fetchone()
                         needs_overlock = bool(ov_row and ov_row[0])
                 overlock_sql = ", requires_overlock = true" if needs_overlock else ""
 

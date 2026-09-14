@@ -20,6 +20,7 @@ import {
   deleteMaterialType,
   type Material,
   type MaterialType,
+  type Shop,
 } from '@/lib/materialsApi';
 import MaterialFormDialog from '@/components/crm/materials/MaterialFormDialog';
 import MaterialTypesRow from '@/components/crm/materials/MaterialTypesRow';
@@ -35,6 +36,8 @@ const MaterialsSettings = () => {
   const { toast } = useToast();
   const [types, setTypes] = useState<MaterialType[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
+  // Магазины: по ним разводится ассортимент и обработка бокового шва.
+  const [shops, setShops] = useState<Shop[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
 
@@ -50,6 +53,7 @@ const MaterialsSettings = () => {
       .then((data) => {
         setTypes(data.types);
         setMaterials(data.materials);
+        setShops(data.shops);
       })
       .finally(() => setLoading(false));
   };
@@ -63,6 +67,12 @@ const MaterialsSettings = () => {
     types.forEach((t) => map.set(t.id, t.name));
     return map;
   }, [types]);
+
+  const shopById = useMemo(() => {
+    const map = new Map<number, Shop>();
+    shops.forEach((s) => map.set(s.id, s));
+    return map;
+  }, [shops]);
 
   const totalPages = Math.max(1, Math.ceil(materials.length / PAGE_SIZE));
   const pagedMaterials = materials.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -82,6 +92,7 @@ const MaterialsSettings = () => {
       unit: m.unit,
       status: m.status,
       requiresOverlock: !!m.requiresOverlock,
+      shops: m.shops ? m.shops.map((s) => ({ ...s })) : [],
     });
     setDialogOpen(true);
   };
@@ -114,6 +125,7 @@ const MaterialsSettings = () => {
           status: form.status,
           requiresOverlock: form.requiresOverlock,
           typeId,
+          shops: form.shops,
         });
       } else {
         await createMaterial(
@@ -121,7 +133,8 @@ const MaterialsSettings = () => {
           form.name.trim(),
           form.unit.trim() || 'шт',
           form.status,
-          form.requiresOverlock
+          form.requiresOverlock,
+          form.shops
         );
       }
 
@@ -182,6 +195,7 @@ const MaterialsSettings = () => {
             }}
             onCreateClick={openCreateDialog}
             types={types}
+            shops={shops}
             editingId={editingId}
             form={form}
             setForm={setForm}
@@ -201,6 +215,7 @@ const MaterialsSettings = () => {
           materials={materials}
           pagedMaterials={pagedMaterials}
           typeById={typeById}
+          shopById={shopById}
           page={page}
           totalPages={totalPages}
           setPage={setPage}

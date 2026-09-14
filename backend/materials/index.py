@@ -100,6 +100,31 @@ def handler(event: dict, context) -> dict:
             cur.execute("SELECT id, name, sort_order FROM material_types ORDER BY sort_order, id")
             types = [{'id': r[0], 'name': r[1], 'sortOrder': r[2]} for r in cur.fetchall()]
 
+            # Магазины — для галочек в карточке материала.
+            cur.execute(
+                "SELECT id, code, name, color FROM shops WHERE is_active = true "
+                "ORDER BY sort_order, id"
+            )
+            shops = [
+                {'id': r[0], 'code': r[1], 'name': r[2], 'color': r[3]}
+                for r in cur.fetchall()
+            ]
+
+            # ПРИВЯЗКА МАТЕРИАЛА К МАГАЗИНАМ.
+            #
+            # Забираем одним запросом и раскладываем по материалам в памяти: подзапрос
+            # на каждую строку справочника — это сотни обращений к базе на ровном месте.
+            cur.execute(
+                "SELECT ms.material_id, ms.shop_id, ms.requires_overlock "
+                "FROM material_shops ms JOIN shops s ON s.id = ms.shop_id "
+                "WHERE s.is_active = true ORDER BY s.sort_order, s.id"
+            )
+            shops_by_material = {}
+            for material_id, shop_id, needs_overlock in cur.fetchall():
+                shops_by_material.setdefault(material_id, []).append(
+                    {'shopId': shop_id, 'requiresOverlock': bool(needs_overlock)}
+                )
+
             # Справочной цены у материала больше нет — себестоимость приходит от поставщика
             # и хранится на каждом рулоне. Для справки отдаём среднюю цену по тем рулонам,
             # что сейчас лежат на складе: видно, почём материал обходится на самом деле.
@@ -132,6 +157,9 @@ def handler(event: dict, context) -> dict:
                     'warehouseQuantity': float(r[8]),
                     'warehouseRolls': r[9],
                     'requiresOverlock': bool(r[10]),
+                    # Каким магазинам подходит материал и нужен ли им оверлок.
+                    # Пустой список = материал общий, подходит всем.
+                    'shops': shops_by_material.get(r[0], []),
                 }
                 for r in cur.fetchall()
             ]
@@ -141,7 +169,10 @@ def handler(event: dict, context) -> dict:
         return {
             'statusCode': 200,
             'headers': headers,
-            'body': json.dumps({'types': types, 'materials': materials}),
+            'body': json.dumps(
+                {'types': types, 'materials': materials, 'shops': shops},
+                ensure_ascii=False,
+            ),
         }
 
     if method == 'POST':
@@ -159,6 +190,36 @@ def handler(event: dict, context) -> dict:
             # складу поедут, а выглядеть это будет как ошибка учёта, а не как
             # чьё-то действие.
             require_admin(cur, event)
+
+            def save_material_shops(material_id, shops_payload):
+                """Переписывает привязку материала к магазинам.
+
+                shops_payload — список вида [{shopId, requiresOverlock}]. Пустой
+                список означает «материал общий»: подходит всем магазинам, и тогда
+                строк в material_shops у него нет вовсе.
+
+                Переписываем целиком, а не правим по одной: форма присылает конечное
+                состояние галочек, и любое хитрое слияние здесь только разошлось бы
+                с тем, что видит человек на экране.
+                """
+                cur.execute(
+                    "DELETE FROM material_shops WHERE material_id = %s", (int(material_id),)
+                )
+                for row in shops_payload or []:
+                    shop_id = row.get('shopId') if isinstance(row, dict) else None
+                    if not shop_id:
+                        continue
+                    cur.execute(
+                        "INSERT INTO material_shops (material_id, shop_id, requires_overlock) "
+                        "VALUES (%s, %s, %s) "
+                        "ON CONFLICT (material_id, shop_id) DO UPDATE "
+                        "SET requires_overlock = EXCLUDED.requires_overlock",
+                        (
+                            int(material_id),
+                            int(shop_id),
+                            bool(row.get('requiresOverlock')),
+                        ),
+                    )
 
             if action == 'create_type':
                 name = (body_data.get('name') or '').strip()
@@ -193,6 +254,8 @@ def handler(event: dict, context) -> dict:
                      bool(body_data.get('requiresOverlock')), int(type_id)),
                 )
                 new_id = cur.fetchone()[0]
+                if 'shops' in body_data:
+                    save_material_shops(new_id, body_data.get('shops'))
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 
@@ -218,13 +281,19 @@ def handler(event: dict, context) -> dict:
                 if 'requiresOverlock' in body_data:
                     fields.append("requires_overlock = %s")
                     values.append(bool(body_data['requiresOverlock']))
-                if not fields:
+                # Привязку магазинов правят отдельно от полей материала: галочки можно
+                # менять, ничего больше не трогая, и «нет полей» тогда не ошибка.
+                has_shops = 'shops' in body_data
+                if not fields and not has_shops:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
-                values.append(int(item_id))
-                cur.execute(
-                    f"UPDATE materials SET {', '.join(fields)} WHERE id = %s",
-                    tuple(values),
-                )
+                if fields:
+                    values.append(int(item_id))
+                    cur.execute(
+                        f"UPDATE materials SET {', '.join(fields)} WHERE id = %s",
+                        tuple(values),
+                    )
+                if has_shops:
+                    save_material_shops(item_id, body_data.get('shops'))
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
