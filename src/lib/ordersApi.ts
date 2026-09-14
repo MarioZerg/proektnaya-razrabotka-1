@@ -257,6 +257,82 @@ export const cutOrderGroup = async (
 
 export const deleteOrder = (id: number) => postAction({ action: 'delete_order', id });
 
+/**
+ * МАССОВОЕ СНЯТИЕ ЗАКАЗОВ С КОНВЕЙЕРА, КОГДА ЗАКОНЧИЛСЯ МАТЕРИАЛ.
+ *
+ * Шить нечем, а в очереди стоят десятки заказов из этой ткани. Их нужно убрать
+ * и у себя, и на маркетплейсе — иначе площадка ждёт отгрузку и начисляет просрочку.
+ */
+export interface BulkCancelPreview {
+  material: string;
+  /** Что именно снимется — этот список фронт отдаёт обратно при подтверждении. */
+  orderIds: number[];
+  /** Первые полсотни номеров — показать админу, что за заказы уйдут. */
+  orderNumbers: string[];
+  total: number;
+  /** Сколько среди них связок Яндекса (снимаются целиком). */
+  groups: number;
+  byMarketplace: Record<string, number>;
+  /** Заказы этого материала, которые останутся: они уже в раскрое или в пошиве. */
+  keptInWork: number;
+  /** Связки, которые не тронули: часть их вещей уже в работе. */
+  blockedGroups: number;
+}
+
+export const previewBulkCancel = (
+  material: string,
+  marketplace?: string
+): Promise<BulkCancelPreview> =>
+  postAction({ action: 'bulk_cancel_preview', material, marketplace }) as Promise<BulkCancelPreview>;
+
+export interface BulkCancelResult {
+  done: { id: number; orderNumber: string; note?: string | null }[];
+  failed: { id: number; orderNumber: string; error: string }[];
+  /** Заказы, которые успели взять в работу между подтверждением и отменой. */
+  skipped: { id: number; orderNumber: string }[];
+}
+
+/**
+ * Снимает заказы порциями, пока список не кончится.
+ *
+ * Каждый заказ нужно отменить на стороне маркетплейса, а это сетевой запрос —
+ * сотню таких в один вызов функции не уложить, она оборвётся по таймауту на
+ * середине. Поэтому сервер за раз берёт небольшую порцию и возвращает остаток,
+ * а мы спокойно ходим за ним снова. onProgress двигает полоску на экране, чтобы
+ * админ видел: процесс идёт, а не завис.
+ */
+export const bulkCancelOrders = async (
+  material: string,
+  orderIds: number[],
+  onProgress?: (processed: number, total: number) => void
+): Promise<BulkCancelResult> => {
+  const result: BulkCancelResult = { done: [], failed: [], skipped: [] };
+  let remaining = [...orderIds];
+  const total = orderIds.length;
+
+  // Потолок на число заходов: если сервер вдруг перестанет разбирать очередь,
+  // страница не должна крутиться вечно.
+  for (let pass = 0; pass < 200 && remaining.length > 0; pass += 1) {
+    const res = (await postAction({
+      action: 'bulk_cancel_orders',
+      material,
+      orderIds: remaining,
+    })) as BulkCancelResult & { remaining: number[] };
+
+    result.done.push(...(res.done || []));
+    result.failed.push(...(res.failed || []));
+    result.skipped.push(...(res.skipped || []));
+
+    const next = res.remaining || [];
+    // Ничего не сдвинулось — дальше ходить бессмысленно, иначе зациклимся.
+    if (next.length === remaining.length) break;
+    remaining = next;
+    onProgress?.(total - remaining.length, total);
+  }
+
+  return result;
+};
+
 export interface TakenOrder {
   id: number;
   orderNumber: string;

@@ -9,6 +9,8 @@ import json
 
 import psycopg2
 
+from authz import AuthError, auth_error_response, require_admin
+from bulk_cancel import handle_bulk_cancel, handle_bulk_preview
 from shared import (
     GROUP_CUT_BATCH,
     STATUS_ORDER,
@@ -36,6 +38,22 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
     conn = psycopg2.connect(dsn)
     try:
         cur = conn.cursor()
+
+        # МАССОВОЕ СНЯТИЕ ЗАКАЗОВ ПРИ НЕХВАТКЕ МАТЕРИАЛА.
+        #
+        # Действие сносит заказы сразу и у нас, и на маркетплейсе, поэтому доступно
+        # только администратору и проверяется по токену сессии, а не по actorId из
+        # тела запроса: его можно написать любой.
+        if action in ('bulk_cancel_preview', 'bulk_cancel_orders'):
+            try:
+                admin = require_admin(cur, event)
+            except AuthError as e:
+                return auth_error_response(e, headers)
+            if action == 'bulk_cancel_preview':
+                return handle_bulk_preview(cur, headers, body_data)
+            return handle_bulk_cancel(
+                cur, conn, headers, body_data, admin['realUserId'], admin['name'],
+            )
 
         if action == 'take_stack':
             user_id = body_data.get('userId')

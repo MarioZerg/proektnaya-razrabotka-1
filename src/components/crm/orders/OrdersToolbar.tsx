@@ -33,6 +33,12 @@ interface OrdersToolbarProps {
   onMarketplaceChange: (v: MarketplaceFilter) => void;
   typeFilter: TypeFilter;
   onTypeChange: (v: TypeFilter) => void;
+  /** Материалы, встречающиеся в заказах — по ним админ ищет то, что закончилось. */
+  materials: string[];
+  materialFilter: string;
+  onMaterialChange: (v: string) => void;
+  /** Снять с конвейера все нетронутые FBS-заказы выбранного материала. */
+  onBulkCancel: () => void;
 }
 
 const OrdersToolbar = ({
@@ -53,6 +59,10 @@ const OrdersToolbar = ({
   onMarketplaceChange,
   typeFilter,
   onTypeChange,
+  materials,
+  materialFilter,
+  onMaterialChange,
+  onBulkCancel,
 }: OrdersToolbarProps) => {
   return (
     <>
@@ -153,6 +163,30 @@ const OrdersToolbar = ({
             <SelectItem value="Индивидуальный">Индивидуальный</SelectItem>
           </SelectContent>
         </Select>
+
+        {/* Материал — по нему снимают заказы, когда ткань кончилась. */}
+        <Select value={materialFilter} onValueChange={onMaterialChange}>
+          <SelectTrigger className="w-full sm:w-[220px]">
+            <SelectValue placeholder="Все материалы" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все материалы</SelectItem>
+            {materials.map((m) => (
+              <SelectItem key={m} value={m}>
+                {m}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Кнопка появляется только когда материал выбран: снимать «всё подряд»
+            нельзя — это отмена сотен заказов и у нас, и на маркетплейсе. */}
+        {canManage && materialFilter !== 'all' && (
+          <Button variant="destructive" onClick={onBulkCancel}>
+            <Icon name="Trash2" size={16} className="mr-1.5" />
+            Удалить с конвейера
+          </Button>
+        )}
       </div>
     </>
   );

@@ -24,6 +24,7 @@ import OrdersSummary from '@/components/crm/orders/OrdersSummary';
 import EditOrderDialog from '@/components/crm/orders/EditOrderDialog';
 import CreateManualOrderDialog from '@/components/crm/orders/CreateManualOrderDialog';
 import PullOrderByNumberDialog from '@/components/crm/orders/PullOrderByNumberDialog';
+import BulkCancelDialog from '@/components/crm/orders/BulkCancelDialog';
 import { findDuplicateOrders } from '@/lib/findDuplicateOrders';
 import Icon from '@/components/ui/icon';
 
@@ -59,6 +60,9 @@ const MarketplaceOrders = () => {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('new');
   const [marketplaceFilter, setMarketplaceFilter] = useState<MarketplaceFilter>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  // Материал, который закончился: по нему админ снимает заказы с конвейера.
+  const [materialFilter, setMaterialFilter] = useState<string>('all');
+  const [bulkCancelOpen, setBulkCancelOpen] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -336,8 +340,15 @@ const MarketplaceOrders = () => {
     (o) =>
       matchesStatus(o) &&
       (marketplaceFilter === 'all' || o.marketplace === marketplaceFilter) &&
-      (typeFilter === 'all' || o.orderType === typeFilter)
+      (typeFilter === 'all' || o.orderType === typeFilter) &&
+      (materialFilter === 'all' || o.material === materialFilter)
   );
+
+  // Материалы для фильтра берём из самих заказов: в списке должно быть только то,
+  // что реально стоит в очереди — иначе админ выберет ткань, по которой снимать нечего.
+  const materials = Array.from(
+    new Set(orders.map((o) => o.material).filter((m): m is string => !!m))
+  ).sort((a, b) => a.localeCompare(b, 'ru'));
 
   return (
     <CrmLayout>
@@ -380,6 +391,10 @@ const MarketplaceOrders = () => {
           onMarketplaceChange={setMarketplaceFilter}
           typeFilter={typeFilter}
           onTypeChange={setTypeFilter}
+          materials={materials}
+          materialFilter={materialFilter}
+          onMaterialChange={setMaterialFilter}
+          onBulkCancel={() => setBulkCancelOpen(true)}
         />
 
         <OrdersTable
@@ -414,6 +429,14 @@ const MarketplaceOrders = () => {
       <PullOrderByNumberDialog
         open={pullOpen}
         onOpenChange={setPullOpen}
+        onDone={load}
+      />
+
+      <BulkCancelDialog
+        open={bulkCancelOpen}
+        material={materialFilter === 'all' ? '' : materialFilter}
+        marketplace={marketplaceFilter}
+        onClose={() => setBulkCancelOpen(false)}
         onDone={load}
       />
     </CrmLayout>
