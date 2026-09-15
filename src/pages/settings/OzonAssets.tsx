@@ -80,7 +80,7 @@ const GROUPS: AssetGroup[] = [
     icon: 'Images',
     files: [
       { path: '/ozon/rich/rich-01.jpg', title: '01. МОЛОЧНАЯ ВУАЛЬ', where: 'Обложка блока — с логотипом', size: '1440×720', preview: true },
-      { path: '/ozon/rich/rich-02.jpg', title: '02. ГОТОВ К ПОВЕШЕНИЮ', where: 'Распаковали и сразу на карниз', size: '1440×720', preview: true },
+      { path: '/ozon/rich/rich-02.jpg', title: '02. ГОТОВА К ВЫВЕШИВАНИЮ', where: 'Распаковали и сразу на карниз', size: '1440×720', preview: true },
       { path: '/ozon/rich/rich-03.jpg', title: '03. МАТОВАЯ ВУАЛЬ', where: 'Без блеска, плотность 80 г/м²', size: '1440×720', preview: true },
       { path: '/ozon/rich/rich-04.jpg', title: '04. МЯГКИЙ СВЕТ', where: 'Пропускает день, скрывает от улицы', size: '1440×720', preview: true },
       { path: '/ozon/rich/rich-05.jpg', title: '05. ЛЕНТА 4 СМ', where: 'Две хлопковые нити', size: '1440×720', preview: true },
@@ -100,7 +100,7 @@ const GROUPS: AssetGroup[] = [
     icon: 'Smartphone',
     files: [
       { path: '/ozon/rich-mobile/rich-m-01.jpg', title: '01. Тюль на окне', where: 'Обложка блока — общий вид в комнате', size: '720×720 · 100 КБ', preview: true },
-      { path: '/ozon/rich-mobile/rich-m-02.jpg', title: '02. Вешают на карниз', where: 'Готов к повешению — руки и крючки', size: '720×720 · 84 КБ', preview: true },
+      { path: '/ozon/rich-mobile/rich-m-02.jpg', title: '02. Вешают на карниз', where: 'Готова к вывешиванию — руки и крючки', size: '720×720 · 84 КБ', preview: true },
       { path: '/ozon/rich-mobile/rich-m-03.jpg', title: '03. Текстура вуали', where: 'Матовая ткань крупным планом', size: '720×720 · 83 КБ', preview: true },
       { path: '/ozon/rich-mobile/rich-m-04.jpg', title: '04. Свет сквозь тюль', where: 'Мягкий дневной свет в комнате', size: '720×720 · 92 КБ', preview: true },
       { path: '/ozon/rich-mobile/rich-m-05.jpg', title: '05. Шторная лента', where: 'Лента 4 см и хлопковые нити', size: '720×720 · 101 КБ', preview: true },
