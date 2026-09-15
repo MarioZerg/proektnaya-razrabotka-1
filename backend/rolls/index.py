@@ -71,8 +71,13 @@ def calc_shortage_penalty(cur, roll_id):
     Возвращает словарь с суммой, превышением над нормой и списком сотрудников,
     которых коснётся удержание, либо причину, по которой штрафовать нельзя.
     """
+    # Норму берём с рулона — это снимок на момент приёмки. Если снимка нет
+    # (рулон заводили вручную на терминале, там поставщик не спрашивается),
+    # подставляем действующую норму поставщика, иначе рулон навсегда завис бы
+    # с отговоркой «норма не задана» и недостача по нему не считалась бы вовсе.
     cur.execute(
-        "SELECT r.initial_quantity, r.shortage_quantity, r.shortage_norm_percent, "
+        "SELECT r.initial_quantity, r.shortage_quantity, "
+        "COALESCE(r.shortage_norm_percent, s.shortage_norm_percent), "
         "r.cost_per_unit, mt.name, r.barcode, m.name, m.unit, r.penalty_total, "
         # Сколько метров числилось на рулоне, когда закройщик назвал недостачу.
         # Без этой цифры администратор не может перепроверить заявленную недостачу.
@@ -83,6 +88,7 @@ def calc_shortage_penalty(cur, roll_id):
         "FROM rolls r "
         "JOIN materials m ON m.id = r.material_id "
         "LEFT JOIN material_types mt ON mt.id = m.type_id "
+        "LEFT JOIN suppliers s ON s.id = r.supplier_id "
         "WHERE r.id = %s",
         (roll_id,),
     )
@@ -241,11 +247,17 @@ def charge_shortage_penalty(cur, roll_id, shortage):
     if not shortage or shortage <= 0:
         return None
 
+    # Норма — та же, что показал предпросмотр на дашборде: снимок с рулона, а при
+    # его отсутствии действующая норма поставщика. Иначе удержание разошлось бы
+    # с суммой, которую администратор видел перед нажатием кнопки.
     cur.execute(
-        "SELECT r.initial_quantity, r.shortage_norm_percent, r.cost_per_unit, mt.name "
+        "SELECT r.initial_quantity, "
+        "COALESCE(r.shortage_norm_percent, s.shortage_norm_percent), "
+        "r.cost_per_unit, mt.name "
         "FROM rolls r "
         "JOIN materials m ON m.id = r.material_id "
         "LEFT JOIN material_types mt ON mt.id = m.type_id "
+        "LEFT JOIN suppliers s ON s.id = r.supplier_id "
         "WHERE r.id = %s",
         (roll_id,),
     )

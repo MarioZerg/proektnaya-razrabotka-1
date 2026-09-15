@@ -153,11 +153,16 @@ def handler(event: dict, context) -> dict:
                         "exchange_rate = NULL" if rate in (None, '')
                         else f"exchange_rate = {float(rate)}"
                     )
-                if 'shortageNormPercent' in body_data:
+                # Норма недостачи. Меняем её и здесь же протягиваем в рулоны —
+                # см. подробности ниже, сразу после UPDATE suppliers.
+                norm_changed = 'shortageNormPercent' in body_data
+                new_norm = None
+                if norm_changed:
                     norm = body_data['shortageNormPercent']
+                    new_norm = None if norm in (None, '') else float(norm)
                     fields.append(
-                        "shortage_norm_percent = NULL" if norm in (None, '')
-                        else f"shortage_norm_percent = {float(norm)}"
+                        "shortage_norm_percent = NULL" if new_norm is None
+                        else f"shortage_norm_percent = {new_norm}"
                     )
                 fields.append("updated_at = now()")
 
@@ -165,8 +170,38 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 
                 cur.execute(f"UPDATE suppliers SET {', '.join(fields)} WHERE id = {int(supplier_id)}")
+
+                # НОВАЯ НОРМА ПРОТЯГИВАЕТСЯ В НЕРЕШЁННЫЕ РУЛОНЫ.
+                #
+                # Норма хранится копией на каждом рулоне (rolls.shortage_norm_percent):
+                # снимок берётся в момент приёмки, чтобы уже оплаченные удержания не
+                # пересчитывались задним числом, когда норму поправят.
+                #
+                # Но снимок замораживал и те рулоны, по которым ещё ничего не решено:
+                # администратор менял норму с 5% на 7%, а склад и очередь недостач
+                # продолжали считать по старым 5% — приходили штрафы по отменённой норме.
+                #
+                # Поэтому обновляем норму там, где деньги ещё НЕ тронуты:
+                # penalty_total IS NULL — штраф не начислен и недостача не прощена.
+                # Это все рулоны на складе, в цехе и закрытые, ждущие решения.
+                # Рулоны с уже начисленным (или прощённым) штрафом не трогаем никогда.
+                rolls_updated = 0
+                if norm_changed:
+                    norm_sql = 'NULL' if new_norm is None else str(new_norm)
+                    cur.execute(
+                        f"UPDATE rolls SET shortage_norm_percent = {norm_sql} "
+                        f"WHERE supplier_id = {int(supplier_id)} "
+                        f"  AND penalty_total IS NULL "
+                        f"  AND shortage_norm_percent IS DISTINCT FROM {norm_sql}"
+                    )
+                    rolls_updated = cur.rowcount or 0
+
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'rollsUpdated': rolls_updated}),
+                }
 
             if action == 'set_prices':
                 # Прайс поставщика: цена каждого материала в его валюте. Полностью
