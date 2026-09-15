@@ -1779,6 +1779,14 @@ def assemble_posting(client_id, api_key, posting_number, debug=None):
     ]
 
     def _try_ship():
+        """Пробует собрать отправление. Возвращает (статус, ответ) последней неудачи.
+
+        ВАЖНО: если OZON пожаловался на незаполненные экземпляры — отдаём ИМЕННО
+        эту жалобу и дальше форматы не перебираем. Иначе её затирал ответ на
+        упрощённый вызов («packages must contain at least 1 item»), заказ юрлица
+        выглядел как ошибка формата, экземпляры никто не заполнял, и вещь
+        намертво зависала на стикеровке с ярлыком, который не приходит.
+        """
         last_status, last_data = None, None
         for payload in attempts:
             ship_status, ship_data = ozon_post(
@@ -1791,6 +1799,8 @@ def assemble_posting(client_id, api_key, posting_number, debug=None):
                 debug.setdefault('shipAttempts', []).append({
                     'status': ship_status, 'response': str(ship_data)[:400],
                 })
+            if 'EXEMPLAR' in str(ship_data).upper():
+                return ship_status, ship_data
         return last_status, last_data
 
     ship_status, ship_data = _try_ship()
