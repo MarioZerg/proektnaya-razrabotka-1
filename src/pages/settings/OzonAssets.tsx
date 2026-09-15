@@ -75,6 +75,23 @@ const GROUPS: AssetGroup[] = [
     ],
   },
   {
+    title: 'Картинки для rich-контента',
+    hint: 'Формат 1440×720. Крупный шрифт — текст читается и на телефоне. Логотип только на первой',
+    icon: 'Images',
+    files: [
+      { path: '/ozon/rich/rich-01.jpg', title: '01. МОЛОЧНАЯ ВУАЛЬ', where: 'Обложка блока — с логотипом', size: '1440×720', preview: true },
+      { path: '/ozon/rich/rich-02.jpg', title: '02. ГОТОВ К ПОВЕШЕНИЮ', where: 'Распаковали и сразу на карниз', size: '1440×720', preview: true },
+      { path: '/ozon/rich/rich-03.jpg', title: '03. МАТОВАЯ ВУАЛЬ', where: 'Без блеска, плотность 80 г/м²', size: '1440×720', preview: true },
+      { path: '/ozon/rich/rich-04.jpg', title: '04. МЯГКИЙ СВЕТ', where: 'Пропускает день, скрывает от улицы', size: '1440×720', preview: true },
+      { path: '/ozon/rich/rich-05.jpg', title: '05. ЛЕНТА 4 СМ', where: 'Две хлопковые нити', size: '1440×720', preview: true },
+      { path: '/ozon/rich/rich-06.jpg', title: '06. РОЛЕВОЙ ШОВ', where: 'Тонкий аккуратный край', size: '1440×720', preview: true },
+      { path: '/ozon/rich/rich-07.jpg', title: '07. КАК ВЫБРАТЬ РАЗМЕР', where: 'Ширина и высота по карнизу', size: '1440×720', preview: true },
+      { path: '/ozon/rich/rich-08.jpg', title: '08. МОЛОЧНЫЙ ОТТЕНОК', where: 'Мягче холодного белого', size: '1440×720', preview: true },
+      { path: '/ozon/rich/rich-09.jpg', title: '09. УХОД ПРОСТОЙ', where: 'Стирка 30 °C', size: '1440×720', preview: true },
+      { path: '/ozon/rich/rich-10.jpg', title: '10. УПАКОВКА ДЮНА', where: 'Фирменный zip-пакет', size: '1440×720', preview: true },
+    ],
+  },
+  {
     title: 'Таблицы товаров',
     hint: 'Заполненный шаблон OZON: названия, аннотации, хештеги, rich-контент',
     icon: 'FileSpreadsheet',
