@@ -121,8 +121,8 @@ const GROUPS: AssetGroup[] = [
         // и почтовых клиентов — ссылка приходит битой.
         path: '/download/ozon-duna-tul-vual-100-tovarov.xlsx',
         title: 'Шаблон OZON — 100 товаров',
-        where: 'Загрузить в кабинет: Товары → Загрузить через XLS. Rich-контент на 10 блоков',
-        size: 'XLSX · 556 КБ',
+        where: 'Загрузить в кабинет: Товары → Загрузить через XLS. Rich на 10 блоков, тексты у всех карточек разные',
+        size: 'XLSX · 612 КБ',
       },
       {
         path: '/download/ozon-tul-vual-molochnaya-annotacii.xlsx',
