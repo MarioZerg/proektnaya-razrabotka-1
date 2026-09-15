@@ -437,6 +437,9 @@ const adminNav: NavItem[] = [
       { label: 'Поставщики', path: '/crm/settings/suppliers' },
       { label: 'Товары на маркетплейсе', path: '/crm/settings/marketplace-items' },
       { label: 'Интеграции маркетплейсов', path: '/crm/settings/marketplace-integrations' },
+      // Готовые картинки и таблицы для кабинета OZON: логотип, баннеры,
+      // заполненный шаблон товаров, листовки в пакет.
+      { label: 'Материалы для OZON', path: '/crm/settings/ozon-assets' },
       { label: 'Планировщик', path: '/crm/settings/scheduler' },
       { label: 'Полки на складе', path: '/crm/settings/shelves' },
       { label: 'Вешалки', path: '/crm/settings/hangers' },

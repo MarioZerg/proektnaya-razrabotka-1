@@ -49,6 +49,7 @@ const TerminationGuide = lazy(() => import("./pages/inventory/TerminationGuide")
 const CuttingGuide = lazy(() => import("./pages/inventory/CuttingGuide"));
 const ShelvesSettings = lazy(() => import("./pages/settings/ShelvesSettings"));
 const MaterialsSettings = lazy(() => import("./pages/settings/MaterialsSettings"));
+const OzonAssets = lazy(() => import("./pages/settings/OzonAssets"));
 const HangersSettings = lazy(() => import("./pages/settings/HangersSettings"));
 const UsersSettings = lazy(() => import("./pages/settings/UsersSettings"));
 const CompanySettings = lazy(() => import("./pages/settings/CompanySettings"));
@@ -165,6 +166,8 @@ const App = () => (
             <Route path="/crm/inventory/cutting-guide" element={<CuttingGuide />} />
             <Route path="/crm/settings/shelves" element={<ShelvesSettings />} />
             <Route path="/crm/settings/materials" element={<MaterialsSettings />} />
+            {/* Готовые картинки и таблицы для кабинета OZON. */}
+            <Route path="/crm/settings/ozon-assets" element={<OzonAssets />} />
             <Route path="/crm/settings/hangers" element={<HangersSettings />} />
             <Route path="/crm/settings/users" element={<UsersSettings />} />
             <Route path="/crm/settings/company" element={<CompanySettings />} />
