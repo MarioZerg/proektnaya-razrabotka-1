@@ -92,6 +92,26 @@ const GROUPS: AssetGroup[] = [
     ],
   },
   {
+    // Мобильная версия rich-контента: на телефоне картинка ужимается до ширины
+    // экрана, и надпись на ней становится нечитаемой. Поэтому здесь чистые
+    // фотографии без текста — подписи идут отдельными текстовыми блоками рядом.
+    title: 'Картинки для rich-контента — телефон',
+    hint: 'Квадрат 720×720 без надписей: текст на мобильной картинке не читается, его выносим в текстовые блоки',
+    icon: 'Smartphone',
+    files: [
+      { path: '/ozon/rich-mobile/rich-m-01.jpg', title: '01. Тюль на окне', where: 'Обложка блока — общий вид в комнате', size: '720×720 · 100 КБ', preview: true },
+      { path: '/ozon/rich-mobile/rich-m-02.jpg', title: '02. Вешают на карниз', where: 'Готов к повешению — руки и крючки', size: '720×720 · 84 КБ', preview: true },
+      { path: '/ozon/rich-mobile/rich-m-03.jpg', title: '03. Текстура вуали', where: 'Матовая ткань крупным планом', size: '720×720 · 83 КБ', preview: true },
+      { path: '/ozon/rich-mobile/rich-m-04.jpg', title: '04. Свет сквозь тюль', where: 'Мягкий дневной свет в комнате', size: '720×720 · 92 КБ', preview: true },
+      { path: '/ozon/rich-mobile/rich-m-05.jpg', title: '05. Шторная лента', where: 'Лента 4 см и хлопковые нити', size: '720×720 · 101 КБ', preview: true },
+      { path: '/ozon/rich-mobile/rich-m-06.jpg', title: '06. Ролевой шов', where: 'Край полотна крупным планом', size: '720×720 · 89 КБ', preview: true },
+      { path: '/ozon/rich-mobile/rich-m-07.jpg', title: '07. Замеры карниза', where: 'Как выбрать размер — рулетка', size: '720×720 · 80 КБ', preview: true },
+      { path: '/ozon/rich-mobile/rich-m-08.jpg', title: '08. Сравнение оттенков', where: 'Молочный рядом с холодным белым', size: '720×720 · 79 КБ', preview: true },
+      { path: '/ozon/rich-mobile/rich-m-09.jpg', title: '09. Стирка', where: 'Уход — тюль в машинке', size: '720×720 · 98 КБ', preview: true },
+      { path: '/ozon/rich-mobile/rich-m-10.jpg', title: '10. Упаковка', where: 'Zip-пакет и вкладыш', size: '720×720 · 84 КБ', preview: true },
+    ],
+  },
+  {
     title: 'Таблицы товаров',
     hint: 'Заполненный шаблон OZON: названия, аннотации, хештеги, rich-контент',
     icon: 'FileSpreadsheet',
