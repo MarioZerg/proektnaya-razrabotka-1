@@ -10,6 +10,28 @@ NOT_URGENT_OZON = (
     'driver_pickup', 'awaiting_deliver',
 )
 
+# ОТМЕНЁННЫЕ ЗАКАЗЫ НЕ РАБОТА — И В ПЛИТКАХ ИХ БЫТЬ НЕ ДОЛЖНО.
+#
+# У закройщицы на главной висел «1 заказ в раскрое», а на конвейере вкладка
+# «На раскрое» была пуста. Заказ существовал, был закреплён за ней и лежал в
+# статусе «На раскрое», но покупатель его к тому моменту отменил: ozon_status
+# стал 'cancelled', а наш sewing_status остался прежним. Конвейер отменённые
+# снимает с очереди (isOrderCancelled), а плитка считала всё подряд — числа
+# разъезжались, и человек искал работу, которой нет.
+#
+# Условие повторяет cancelled_sql из backend/orders/shared.py: отмена видна и по
+# нашему полю, и по статусу площадки. Внутри НЕТ знака процента (strpos вместо
+# LIKE) — процент psycopg2 принимает за место для подстановки значения.
+NOT_CANCELLED = (
+    "status <> 'Отменён' AND sewing_status <> 'Отменён' "
+    "AND cancelled_at IS NULL "
+    # 'cancelled', 'cancelled_from_split' и прочие варианты OZON — всё, что
+    # начинается на cancel.
+    "AND strpos(lower(COALESCE(ozon_status, '')), 'cancel') <> 1 "
+    # У Яндекса слово стоит в середине: 'CANCELLED_BEFORE_PROCESSING'.
+    "AND strpos(upper(COALESCE(ym_status, '')), 'CANCEL') = 0"
+)
+
 # Рулон считается заканчивающимся, если в нём меньше 20 погонных метров.
 ROLL_LOW_STOCK_THRESHOLD = 20
 
@@ -91,6 +113,10 @@ def handler(event: dict, context) -> dict:
         if is_cutter and user_id:
             stick_parts.append(f'cutter_user_id = {user_id}')
         mine_stick = (' AND ' + ' AND '.join(stick_parts)) if stick_parts else ''
+        # «Раскроено» у закройщика — его собственная сдача: на конвейере эта вкладка
+        # отбирается по cutter_user_id, а не по assigned_user_id (заказ к тому моменту
+        # уже ушёл швее). Швея и все остальные видят общий пул.
+        mine_cut = f' AND cutter_user_id = {user_id}' if is_cutter and user_id else ''
 
         not_urgent = ', '.join(f"'{s}'" for s in NOT_URGENT_OZON)
 
@@ -109,14 +135,17 @@ def handler(event: dict, context) -> dict:
             # «Новые задания» — общая очередь, её разбирают все. Считаем только
             # заказы, реально пришедшие с площадок: ручной импорт сюда попадать
             # не должен, иначе цифра расходится с кабинетом маркетплейса.
-            "COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api') AS new_orders, "
-            f"COUNT(*) FILTER (WHERE sewing_status = 'В работе'{mine_sewing}) AS in_sewing, "
-            f"COUNT(*) FILTER (WHERE sewing_status = 'На раскрое'{mine_cutting}) AS in_cutting, "
-            f"COUNT(*) FILTER (WHERE sewing_status = 'Стикеровка'{mine_stick}) AS in_stickering, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND {NOT_CANCELLED}) AS new_orders, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'В работе' AND {NOT_CANCELLED}{mine_sewing}) AS in_sewing, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'На раскрое' AND {NOT_CANCELLED}{mine_cutting}) AS in_cutting, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Стикеровка' AND {NOT_CANCELLED}{mine_stick}) AS in_stickering, "
             # «Раскроено» — общий пул: закройщики сдали работу, швеи её разбирают.
-            "COUNT(*) FILTER (WHERE sewing_status = 'Раскроено') AS cut, "
+            # Закройщику же плитка открывает его собственный список сданного кроя,
+            # поэтому ему и считаем только его вещи — иначе цифра и список разойдутся.
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Раскроено' AND {NOT_CANCELLED}{mine_cut}) AS cut, "
             "COUNT(*) FILTER (WHERE order_type = 'FBS' "
             "  AND sewing_status IN ('Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка') "
+            f"  AND {NOT_CANCELLED} "
             f"  AND COALESCE(ozon_status, '') NOT IN ({not_urgent})) AS urgent_fbs "
             "FROM orders)",
 
