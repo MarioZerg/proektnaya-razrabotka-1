@@ -45,22 +45,33 @@ const GROUPS: AssetGroup[] = [
   },
   {
     title: 'Баннеры витрины',
-    hint: 'Оформление магазина в стиле шапки ДЮНА',
+    hint: 'Размеры заданы кабинетом OZON, вес — в пределах 500 КБ',
     icon: 'Image',
     files: [
-      { path: '/ozon/banner-1500x600.jpg', title: 'Главный баннер', where: 'Витрина магазина, десктоп', size: '1500×600 · 152 КБ', preview: true },
-      { path: '/ozon/banner-mobile-1200x900.jpg', title: 'Мобильный баннер', where: 'Витрина магазина, телефон', size: '1200×900 · 180 КБ', preview: true },
+      { path: '/ozon/banner-desktop-2832x600.jpg', title: 'Баннер витрины — компьютер', where: 'Витрина магазина, широкий экран', size: '2832×600 · 178 КБ', preview: true },
+      { path: '/ozon/banner-mobile-686x650.jpg', title: 'Баннер витрины — телефон', where: 'Витрина магазина, мобильная версия', size: '686×650 · 88 КБ', preview: true },
     ],
   },
   {
-    title: 'Плитки категорий',
-    hint: 'Разбивка по ширине — главный вопрос покупателя «подойдёт ли на моё окно»',
+    title: 'Плитки категорий — компьютер',
+    hint: 'Формат 672×440. Разбивка по ширине: покупатель сразу видит свой размер',
     icon: 'LayoutGrid',
     files: [
-      { path: '/ozon/tile-1-uzkie.jpg', title: '200–300 см', where: 'Кухня, балкон, спальня', size: '720×720 · 112 КБ', preview: true },
-      { path: '/ozon/tile-2-shirokie.jpg', title: '400–500 см', where: 'Гостиная и зал', size: '720×720 · 112 КБ', preview: true },
-      { path: '/ozon/tile-3-maxi.jpg', title: '600–800 см', where: 'Панорамные окна', size: '720×720 · 116 КБ', preview: true },
-      { path: '/ozon/tile-4-vysokie.jpg', title: 'До 295 см', where: 'Высокие потолки', size: '720×720 · 104 КБ', preview: true },
+      { path: '/ozon/tile-desktop-1-uzkie-672x440.jpg', title: '200–300 см', where: 'Кухня, балкон, спальня', size: '672×440 · 66 КБ', preview: true },
+      { path: '/ozon/tile-desktop-2-shirokie-672x440.jpg', title: '400–500 см', where: 'Гостиная и зал', size: '672×440 · 63 КБ', preview: true },
+      { path: '/ozon/tile-desktop-3-maxi-672x440.jpg', title: '600–800 см', where: 'Панорамные окна', size: '672×440 · 67 КБ', preview: true },
+      { path: '/ozon/tile-desktop-4-vysokie-672x440.jpg', title: 'До 295 см', where: 'Высокие потолки', size: '672×440 · 60 КБ', preview: true },
+    ],
+  },
+  {
+    title: 'Плитки категорий — телефон',
+    hint: 'Квадрат 336×336. Третью строку убрали — на маленькой плитке её не прочесть',
+    icon: 'Smartphone',
+    files: [
+      { path: '/ozon/tile-mobile-1-uzkie-336x336.jpg', title: '200–300 см', where: 'Кухня, балкон, спальня', size: '336×336 · 29 КБ', preview: true },
+      { path: '/ozon/tile-mobile-2-shirokie-336x336.jpg', title: '400–500 см', where: 'Гостиная и зал', size: '336×336 · 30 КБ', preview: true },
+      { path: '/ozon/tile-mobile-3-maxi-336x336.jpg', title: '600–800 см', where: 'Панорамные окна', size: '336×336 · 31 КБ', preview: true },
+      { path: '/ozon/tile-mobile-4-vysokie-336x336.jpg', title: 'До 295 см', where: 'Высокие потолки', size: '336×336 · 28 КБ', preview: true },
     ],
   },
   {
