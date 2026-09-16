@@ -73,7 +73,10 @@ const EtrnToSignCard = () => {
               className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-amber-200 bg-background p-3"
             >
               <div className="min-w-0 flex-1">
-                <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                {/* Именно div, а не p: внутри стоит Badge, а он рисуется через div.
+                    Блочный элемент внутри абзаца браузер выбрасывает наружу — React
+                    ругался в консоли, а вёрстка строки разъезжалась. */}
+                <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
                   {d.number ? `ЭТрН № ${d.number}` : 'ЭТрН без номера'}
                   <Badge variant="outline">
                     {mpLabel[d.marketplace] || d.marketplace} · {d.supplyType}
@@ -81,7 +84,7 @@ const EtrnToSignCard = () => {
                   {d.cluster && (
                     <span className="text-xs text-muted-foreground">{d.cluster}</span>
                   )}
-                </p>
+                </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {/* Водитель и машина — то, по чему руководитель узнаёт конкретный
                       выезд: номеров поставок он наизусть не помнит. */}
