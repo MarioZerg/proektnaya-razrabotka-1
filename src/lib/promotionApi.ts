@@ -1,4 +1,6 @@
-const PROMOTION_URL = 'https://functions.poehali.dev/5fc24d57-7e45-4a1a-898d-a610c310093a';
+import func2url from '../../backend/func2url.json';
+
+const PROMOTION_URL = (func2url as Record<string, string>).promotion;
 
 export type MarketplaceCode = 'ozon' | 'wildberries' | 'yandex_market';
 

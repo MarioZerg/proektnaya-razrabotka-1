@@ -10,6 +10,7 @@ import {
   type RobotMarketplace,
   type RobotStatus,
 } from '@/lib/priceRobotApi';
+import { fetchOverview, type PriceAdvice } from '@/lib/promotionApi';
 
 const MARKETPLACES: { code: RobotMarketplace; label: string }[] = [
   { code: 'ozon', label: 'OZON' },
@@ -38,9 +39,15 @@ const PromotionPage = () => {
   const [busy, setBusy] = useState(false);
   const [moveProgress, setMoveProgress] = useState<string | null>(null);
   const [robot, setRobot] = useState<RobotStatus | null>(null);
+  // Советы считаются отдельной функцией: она смотрит маржу, рекламу и СПП.
+  // Ошибку советов не показываем поверх подъёма — без них страница работает.
+  const [advice, setAdvice] = useState<PriceAdvice[] | null>(null);
 
   const loadRobot = useCallback(() => {
     if (!isAdmin) return;
+    fetchOverview(marketplace, user?.id)
+      .then((d) => setAdvice(d.items || []))
+      .catch(() => setAdvice([]));
     fetchRobotStatus(marketplace, user?.id)
       .then(setRobot)
       .catch((e) => {
@@ -55,6 +62,7 @@ const PromotionPage = () => {
 
   useEffect(() => {
     setRobot(null);
+    setAdvice(null);
     loadRobot();
   }, [loadRobot]);
 
@@ -131,6 +139,7 @@ const PromotionPage = () => {
           <RobotTabPanel
             key={marketplace}
             robot={robot}
+            advice={advice}
             busy={busy}
             onRaise={raiseNow}
             moveProgress={moveProgress}

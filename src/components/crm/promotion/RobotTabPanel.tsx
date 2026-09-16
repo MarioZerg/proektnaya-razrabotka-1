@@ -1,10 +1,15 @@
+import { useMemo, useState } from 'react';
 import RobotRunsList from '@/components/crm/promotion/RobotRunsList';
 import RobotManualMove from '@/components/crm/promotion/RobotManualMove';
+import RobotAdviceCard from '@/components/crm/promotion/RobotAdviceCard';
 import Icon from '@/components/ui/icon';
 import type { RobotStatus } from '@/lib/priceRobotApi';
+import type { PriceAdvice } from '@/lib/promotionApi';
 
 interface RobotTabPanelProps {
   robot: RobotStatus | null;
+  /** Советы по ценам этой площадки; null — ещё считаются. */
+  advice: PriceAdvice[] | null;
   busy: boolean;
   onRaise: (
     step: number,
@@ -23,10 +28,25 @@ interface RobotTabPanelProps {
  */
 const RobotTabPanel = ({
   robot,
+  advice,
   busy,
   onRaise,
   moveProgress,
 }: RobotTabPanelProps) => {
+  const [onlyAdvice, setOnlyAdvice] = useState(false);
+
+  // Какие карточки система советует поднять — по ним фильтруется таблица.
+  const raiseIds = useMemo(
+    () => new Set((advice || []).filter((i) => i.action === 'raise').map((i) => i.itemId)),
+    [advice],
+  );
+
+  const catalog = useMemo(() => {
+    const all = robot?.catalog || [];
+    if (!onlyAdvice || raiseIds.size === 0) return all;
+    return all.filter((i) => raiseIds.has(i.itemId));
+  }, [robot, onlyAdvice, raiseIds]);
+
   if (!robot) {
     return (
       <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
@@ -53,8 +73,15 @@ const RobotTabPanel = ({
         </div>
       </div>
 
+      <RobotAdviceCard
+        advice={advice}
+        onlyAdvice={onlyAdvice}
+        onOnlyAdviceChange={setOnlyAdvice}
+      />
+
       <RobotManualMove
-        catalog={robot.catalog}
+        key={onlyAdvice ? 'advice' : 'all'}
+        catalog={catalog}
         onRaise={onRaise}
         busy={busy}
         progress={moveProgress}

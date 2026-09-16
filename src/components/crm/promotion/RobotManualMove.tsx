@@ -26,6 +26,7 @@ import {
   catalogTitle,
   chipClass,
   formatRub,
+  normalizeSearch,
   raisedPrice,
 } from '@/components/crm/promotion/raiseShared';
 import type { CatalogItem } from '@/lib/priceRobotApi';
@@ -124,10 +125,12 @@ const RobotManualMove = ({
   // Поиск только прячет строки, выбор не сбрасываем: снятая галочка
   // не должна вернуться, потому что человек набрал в поле другое слово.
   const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = normalizeSearch(search);
     if (!q) return matched;
     return matched.filter((i) => {
-      const hay = `${catalogTitle(i)} ${i.name} ${i.sku || ''}`.toLowerCase();
+      const hay = normalizeSearch(
+        `${catalogTitle(i)} ${i.name} ${i.sku || ''} ${i.material || ''} ${i.width ?? ''}x${i.height ?? ''}`,
+      );
       return hay.includes(q);
     });
   }, [matched, search]);
