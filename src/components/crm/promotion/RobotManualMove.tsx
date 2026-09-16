@@ -1,33 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import Icon from '@/components/ui/icon';
 import RobotRaiseTable from '@/components/crm/promotion/RobotRaiseTable';
+import RobotManualMovePending from '@/components/crm/promotion/RobotManualMovePending';
+import RobotManualMoveFilters, {
+  ANY,
+} from '@/components/crm/promotion/RobotManualMoveFilters';
+import RobotManualMoveControls from '@/components/crm/promotion/RobotManualMoveControls';
+import RobotManualMoveConfirm from '@/components/crm/promotion/RobotManualMoveConfirm';
 import {
   catalogTitle,
-  chipClass,
-  formatRub,
   normalizeSearch,
-  raisedPrice,
 } from '@/components/crm/promotion/raiseShared';
 import type { CatalogItem } from '@/lib/priceRobotApi';
 
@@ -45,8 +27,6 @@ interface Props {
   maxStep: number;
   pendingLeft: number;
 }
-
-const ANY = 'any';
 
 const RobotManualMove = ({
   catalog,
@@ -98,14 +78,6 @@ const RobotManualMove = ({
     });
     return [...set].sort((a, b) => a - b);
   }, [catalog]);
-
-  const toggleChip = (list: number[], value: number, set: (v: number[]) => void) =>
-    set(list.includes(value) ? list.filter((x) => x !== value) : [...list, value].sort((a, b) => a - b));
-
-  const toggleMaterial = (name: string) =>
-    setMaterials((prev) =>
-      prev.includes(name) ? prev.filter((m) => m !== name) : [...prev, name],
-    );
 
   const matched = useMemo(() => {
     const from = widthFrom === ANY ? null : Number(widthFrom);
@@ -210,8 +182,6 @@ const RobotManualMove = ({
     );
   };
 
-  const examples = pickedItems.slice(0, 5);
-
   return (
     <Card>
       <CardContent className="space-y-4 p-4">
@@ -224,175 +194,28 @@ const RobotManualMove = ({
         </div>
 
         {pending && (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
-            <Icon
-              name="Loader2"
-              size={16}
-              className={`mt-0.5 shrink-0 text-amber-700 ${busy ? 'animate-spin' : ''}`}
-            />
-            <div>
-              <p className="font-medium text-amber-900">
-                Предыдущий подъём ещё отправляется: осталось {pendingLeft}
-              </p>
-              <p className="text-amber-800">
-                Новый выбор начнётся, когда дойдут все карточки. Нажмите
-                кнопку — досыл продолжится.
-              </p>
-            </div>
-          </div>
+          <RobotManualMovePending pendingLeft={pendingLeft} busy={busy} />
         )}
 
-        {shops.length > 1 && (
-          <div className="space-y-1.5">
-            <Label>Магазин</Label>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                className={chipClass(shopId == null)}
-                onClick={() => setShopId(null)}
-                disabled={disabled}
-              >
-                Все
-              </button>
-              {shops.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={chipClass(shopId === s.id)}
-                  onClick={() => setShopId(s.id)}
-                  disabled={disabled}
-                >
-                  {s.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {materialOptions.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Ткань</Label>
-              {materials.length > 0 && (
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-                  onClick={() => setMaterials([])}
-                  disabled={disabled}
-                >
-                  Сбросить
-                </button>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {materialOptions.map((name) => (
-                <button
-                  key={name}
-                  type="button"
-                  className={chipClass(materials.includes(name))}
-                  onClick={() => toggleMaterial(name)}
-                  disabled={disabled}
-                >
-                  {name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {widthOptions.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Ширина</Label>
-              {widths.length > 0 && (
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-                  onClick={() => setWidths([])}
-                  disabled={disabled}
-                >
-                  Сбросить
-                </button>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {widthOptions.map((w) => (
-                <button
-                  key={w}
-                  type="button"
-                  className={chipClass(widths.includes(w))}
-                  onClick={() => toggleChip(widths, w, setWidths)}
-                  disabled={disabled}
-                >
-                  {w}
-                </button>
-              ))}
-            </div>
-            <div className="max-w-[180px] space-y-1">
-              <Label className="text-xs font-normal text-muted-foreground">
-                Или все от ширины
-              </Label>
-              <Select
-                value={widthFrom}
-                onValueChange={setWidthFrom}
-                disabled={disabled}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Любая" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ANY}>Любая</SelectItem>
-                  {widthOptions.map((w) => (
-                    <SelectItem key={`from-${w}`} value={String(w)}>
-                      от {w}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        )}
-
-        {heightOptions.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Высота</Label>
-              {heights.length > 0 && (
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-                  onClick={() => setHeights([])}
-                  disabled={disabled}
-                >
-                  Сбросить
-                </button>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {heightOptions.map((h) => (
-                <button
-                  key={h}
-                  type="button"
-                  className={chipClass(heights.includes(h))}
-                  onClick={() => toggleChip(heights, h, setHeights)}
-                  disabled={disabled}
-                >
-                  {h}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="space-y-1.5">
-          <Label>Найти карточку</Label>
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Название, ткань или артикул"
-            disabled={disabled}
-          />
-        </div>
+        <RobotManualMoveFilters
+          shops={shops}
+          materialOptions={materialOptions}
+          widthOptions={widthOptions}
+          heightOptions={heightOptions}
+          shopId={shopId}
+          setShopId={setShopId}
+          materials={materials}
+          setMaterials={setMaterials}
+          widths={widths}
+          setWidths={setWidths}
+          heights={heights}
+          setHeights={setHeights}
+          widthFrom={widthFrom}
+          setWidthFrom={setWidthFrom}
+          search={search}
+          setSearch={setSearch}
+          disabled={disabled}
+        />
 
         <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
           Выбрано{' '}
@@ -412,89 +235,31 @@ const RobotManualMove = ({
           showShop={shops.length > 1}
         />
 
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1.5">
-            <Label>На сколько, %</Label>
-            <Input
-              type="number"
-              step="0.5"
-              min={0.1}
-              max={maxStep}
-              value={step}
-              onChange={(e) => setStep(e.target.value)}
-              className="w-[110px]"
-              disabled={busy}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Не больше {maxStep}% за раз
-            </p>
-          </div>
-          <div className="min-w-[200px] flex-1 space-y-1.5">
-            <Label>Причина (в журнал)</Label>
-            <Input
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Например: выровнять после акции"
-              disabled={busy}
-            />
-          </div>
-          <Button
-            onClick={startRaise}
-            disabled={busy || !stepOk || (!pending && pickedItems.length === 0)}
-          >
-            <Icon
-              name={busy ? 'Loader2' : 'TrendingUp'}
-              size={15}
-              className={`mr-1.5 ${busy ? 'animate-spin' : ''}`}
-            />
-            {pending
-              ? 'Продолжить отправку'
-              : `Поднять ${pickedItems.length} на ${Math.abs(value) || 0}%`}
-          </Button>
-        </div>
-
-        {busy && progress && (
-          <p className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 p-2 text-sm font-medium">
-            <Icon name="Loader2" size={15} className="animate-spin" />
-            {progress}
-          </p>
-        )}
+        <RobotManualMoveControls
+          step={step}
+          setStep={setStep}
+          note={note}
+          setNote={setNote}
+          maxStep={maxStep}
+          busy={busy}
+          stepOk={stepOk}
+          pending={pending}
+          pickedCount={pickedItems.length}
+          value={value}
+          onStart={startRaise}
+          progress={progress}
+        />
       </CardContent>
 
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Поднять {pickedItems.length} карточек на {value}%?
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2 text-left text-sm text-muted-foreground">
-                <p>
-                  Цены уйдут на витрину сразу. {scope}.
-                  {note ? ` Причина: ${note}.` : ''}
-                </p>
-                <ul className="space-y-1">
-                  {examples.map((i) => (
-                    <li key={i.itemId} className="tabular-nums">
-                      {catalogTitle(i)}:{' '}
-                      {formatRub(i.price)} → {formatRub(raisedPrice(i.price, value))}
-                    </li>
-                  ))}
-                </ul>
-                {pickedItems.length > examples.length && (
-                  <p>и ещё {pickedItems.length - examples.length}</p>
-                )}
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmRaise}>
-              Поднять цены
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <RobotManualMoveConfirm
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        pickedItems={pickedItems}
+        value={value}
+        scope={scope}
+        note={note}
+        onConfirm={confirmRaise}
+      />
     </Card>
   );
 };
