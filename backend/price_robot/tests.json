@@ -26,11 +26,18 @@
       "expectedStatus": 403
     },
     {
-      "name": "Save without admin forbidden",
+      "name": "Move without admin forbidden",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "move", "step": 0.5},
+      "expectedStatus": 403
+    },
+    {
+      "name": "Unknown POST action fails",
       "method": "POST",
       "path": "/",
       "body": {"action": "save", "stepPercent": 0.5},
-      "expectedStatus": 403
+      "expectedStatus": 400
     }
   ]
 }

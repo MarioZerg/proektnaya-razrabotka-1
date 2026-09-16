@@ -3,10 +3,7 @@ import Icon from '@/components/ui/icon';
 import type { RobotRun } from '@/lib/priceRobotApi';
 
 /**
- * Журнал робота: что он решил и почему.
- *
- * Без журнала автоматика — чёрный ящик: цены поехали, а причина неизвестна.
- * Здесь каждый шаг подписан словами, с продажами до и после.
+ * Журнал подъёмов: что подняли, на сколько и какой фильтр стоял.
  */
 interface Props {
   runs: RobotRun[];
@@ -30,8 +27,7 @@ const LOOK: Record<
   hold: { icon: 'Pause', label: 'Выждали', className: 'text-muted-foreground' },
   skip: { icon: 'Clock', label: 'Рано', className: 'text-muted-foreground' },
   test: { icon: 'FlaskConical', label: 'Проверка', className: 'text-muted-foreground' },
-  // Ручной шаг владельца — выделяем, чтобы не путать с решением робота.
-  manual: { icon: 'Hand', label: 'Сдвинули вручную', className: 'text-blue-700' },
+  manual: { icon: 'Hand', label: 'Подняли вручную', className: 'text-blue-700' },
 };
 
 /**
@@ -57,7 +53,7 @@ const RobotRunsList = ({ runs }: Props) => {
     return (
       <Card>
         <CardContent className="p-6 text-center text-sm text-muted-foreground">
-          Робот ещё не делал шагов. Первый появится здесь после запуска
+          Пока не было подъёмов. Первый появится здесь после нажатия кнопки
         </CardContent>
       </Card>
     );
@@ -100,7 +96,7 @@ const RobotRunsList = ({ runs }: Props) => {
                   {r.reason}
                 </p>
                 <div className="mt-1 flex flex-wrap gap-x-4 text-xs text-muted-foreground">
-                  {r.driftPercent !== null && (
+                  {typeof r.driftPercent === 'number' && (
                     <span>
                       Цены от старта{' '}
                       <span className="font-medium text-foreground">
@@ -109,7 +105,7 @@ const RobotRunsList = ({ runs }: Props) => {
                       </span>
                     </span>
                   )}
-                  {r.unitsChange !== null && (
+                  {typeof r.unitsChange === 'number' && (
                     <span>
                       Спрос {r.unitsBefore} → {r.unitsAfter} шт{' '}
                       <span

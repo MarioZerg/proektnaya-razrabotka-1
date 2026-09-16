@@ -94,24 +94,37 @@
       "expectedStatus": 200
     },
     {
-      "name": "Chat: send without text fails",
+      "name": "Chat: нельзя написать от чужого имени без входа",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "chat_send",
-        "userId": 1
+        "userId": 1,
+        "text": "Привет от чужого имени"
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
     },
     {
-      "name": "Chat: hide without id fails",
+      "name": "Chat: удаление сообщения без входа отклоняется",
       "method": "POST",
       "path": "/",
       "body": {
         "action": "chat_hide",
+        "id": 1,
         "actorId": 1
       },
-      "expectedStatus": 400
+      "expectedStatus": 401
+    },
+    {
+      "name": "Chat: нельзя подменить чужое фото без входа",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "chat_avatar",
+        "id": 1,
+        "avatarBase64": "data:image/png;base64,iVBORw0KGgo="
+      },
+      "expectedStatus": 401
     },
     {
       "name": "Увольнение без входа отклоняется",

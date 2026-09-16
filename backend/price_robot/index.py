@@ -3,7 +3,6 @@ import os
 import tempfile
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
 
 import certifi
 import psycopg2
@@ -23,32 +22,9 @@ PRICE_PUSH_URL = (
     'https://functions.poehali.dev/fc1cfb34-b57c-41d4-97d9-fcee27c9af6a')
 
 
-# Робот двигает цены всего ассортимента разом, поэтому шаг ограничен жёстко:
-# 3% за раз по всему магазину — уже заметное движение для выдачи.
+# Потолок одного нажатия: 3% — уже заметное движение для выдачи, а опечатка
+# в поле «50» стоила бы витрины. Опускать этой кнопкой больше нельзя.
 MAX_STEP_PERCENT = 3.0
-
-
-# Москва — UTC+3. Сервер работает по UTC, владелец думает по-московски.
-MSK_OFFSET = timedelta(hours=3)
-
-
-def _msk_now():
-    """Текущее московское время: в нём владелец задаёт час запуска."""
-    return datetime.utcnow() + MSK_OFFSET
-
-
-def _utc_now():
-    """Время в том же счёте, что и метки в базе.
-
-    База пишет now() по UTC, и сравнивать её метки с московским временем
-    нельзя: разница в три часа превратилась бы в «прошло 3 часа» сразу после
-    шага, и робот двинул бы цены раньше срока.
-    """
-    return datetime.utcnow()
-
-
-def _msk_hour():
-    return _msk_now().hour
 
 
 def _resp(code, body):
@@ -61,7 +37,7 @@ def _db():
 
 
 def _is_admin(cur, actor_id):
-    """Настройки робота меняет только владелец: это витрина и деньги."""
+    """Цены двигает только владелец: это витрина и деньги."""
     if not actor_id:
         return False
     cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
@@ -69,107 +45,26 @@ def _is_admin(cur, actor_id):
     return bool(row and row[0] == 'admin')
 
 
-def _settings(cur, mp='ozon'):
-    cur.execute(
-        "SELECT is_active, dry_run, step_percent, step_days, run_hour, "
-        "       target_total_percent, drop_percent, max_total_percent, "
-        "       updated_at, demand_window_days, require_second_signal "
-        "FROM price_robot_settings WHERE marketplace_code = %s", (mp,))
-    r = cur.fetchone()
-    if not r:
-        return None
-    return {
-        'isActive': bool(r[0]), 'dryRun': bool(r[1]),
-        'stepPercent': float(r[2]), 'stepDays': int(r[3]),
-        'runHour': int(r[4]),
-        # ЦЕЛЬ: на сколько всего поднять цены. Не маржа — просто процент.
-        'targetTotalPercent': float(r[5]),
-        'dropPercent': float(r[6]), 'maxTotalPercent': float(r[7]),
-        'updatedAt': r[8],
-        # Сколько дней продаж сравнивать. Короткое окно шумит: один слабый
-        # день даёт минус 30% и откат цены на ровном месте.
-        'demandWindowDays': max(3, int(r[9] or 3)),
-        # Откатывать только после второго падения подряд.
-        'requireSecondSignal': bool(r[10]),
-    }
-
-
-def _units_in_period(cur, d_from, d_to):
-    """Сколько вещей FBS продано за отрезок — по нему судим о спросе."""
-    cur.execute(
-        "SELECT coalesce(sum(s.quantity), 0) FROM marketplace_sales s "
-        "WHERE NOT s.is_return AND s.scheme = 'FBS' "
-        f"  AND s.sold_at >= '{d_from}'::date "
-        f"  AND s.sold_at < '{d_to}'::date")
-    return int((cur.fetchone() or [0])[0] or 0)
-
-
-def _last_run(cur, mp='ozon', dry_run=False):
-    """Последний РЕЗУЛЬТАТИВНЫЙ шаг: подъём или откат.
-
-    Прогоны с решением «рано» и «цель достигнута» цену не двигали, и отсчитывать
-    паузу от них нельзя — иначе робот, запускаемый ежедневно, никогда бы не
-    дождался своих двух дней.
-
-    Режим тоже разделён: шаги наблюдения и боевые живут отдельными дорожками.
-    """
-    cur.execute(
-        "SELECT ran_at, decision, step_percent, units_after "
-        "FROM price_robot_runs "
-        # Ручной сдвиг — тоже шаг: после него роботу нужно выждать паузу и
-        # посмотреть на спрос, иначе он ночью двинет цены поверх свежей ручной
-        # правки, не дав ей проявиться.
-        "WHERE marketplace_code = %s "
-        "  AND decision IN ('raise', 'rollback', 'manual') "
-        "  AND dry_run = %s "
-        "ORDER BY ran_at DESC LIMIT 1", (mp, bool(dry_run)))
-    r = cur.fetchone()
-    if not r:
-        return None
-    return {'ranAt': r[0], 'decision': r[1],
-            'stepPercent': float(r[2] or 0), 'unitsAfter': int(r[3] or 0)}
-
-
-def _total_drift(cur, mp='ozon', dry_run=False):
-    """Насколько цены уже уехали от точки старта, %.
-
-    Мелкие шаги копятся: двадцать подъёмов по 0.5% — это уже +10%. По этому
-    счётчику робот понимает, дошёл ли до цели, и не даёт себе уйти дальше
-    предела.
-
-    Считаем ОТДЕЛЬНО для наблюдения и для боевого режима. В наблюдении цены
-    не двигались, но робот должен вести себя как настоящий: иначе счётчик
-    стоял бы на нуле, и он вечно повторял бы первый шаг, а владелец так и не
-    увидел бы, как робот доходит до цели и останавливается. При этом смешивать
-    их нельзя — переключившись в бой, робот считал бы уже поднятыми те
-    проценты, которых на витрине никогда не было.
-    """
-    cur.execute(
-        "SELECT coalesce(sum(step_percent), 0) FROM price_robot_runs "
-        # Ручной сдвиг двигал те же цены, что и робот, поэтому считается
-        # наравне: опустили руками на 2% — роботу до цели снова дальше.
-        "WHERE marketplace_code = %s "
-        "  AND decision IN ('raise', 'rollback', 'manual') "
-        "  AND dry_run = %s", (mp, bool(dry_run)))
-    return round(float((cur.fetchone() or [0])[0] or 0), 2)
-
-
 def _log_run(cur, mp, decision, reason, **kw):
+    """Пишет шаг в журнал.
+
+    dry_run всегда false: режима наблюдения больше нет — цены двигает владелец
+    кнопкой, и каждый шаг настоящий. Колонка осталась ради старых записей.
+    """
     cur.execute(
         "INSERT INTO price_robot_runs (marketplace_code, decision, reason, "
-        "  step_percent, drift_percent, units_after, units_before, units_change, "
-        "  items_pushed, items_failed, dry_run) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-        (mp, decision, reason, kw.get('step'), kw.get('drift'),
-         kw.get('unitsAfter'), kw.get('unitsBefore'), kw.get('unitsChange'),
-         kw.get('pushed', 0), kw.get('failed', 0), kw.get('dryRun', True)))
+        "  step_percent, items_pushed, items_failed, dry_run) "
+        "VALUES (%s, %s, %s, %s, %s, %s, false) RETURNING id",
+        (mp, decision, reason, kw.get('step'),
+         kw.get('pushed', 0), kw.get('failed', 0)))
     return (cur.fetchone() or [None])[0]
 
 
 # ── УВЕДОМЛЕНИЯ АДМИНУ В MAX ────────────────────────────────────────────────
 #
-# Робот работает ночью и без спроса. Владелец должен узнавать о его шагах
-# сразу, а не когда откроет систему через неделю и обнаружит уехавшие цены.
+# Сдвиг цен могут запустить с любого устройства, а досыл остатка доделывает
+# планировщик уже без человека. Сообщение в MAX — единственный способ узнать
+# итог, не заходя в систему специально.
 
 MAX_API_URL = 'https://platform-api2.max.ru'
 
@@ -287,24 +182,17 @@ def _send_max(max_user_id, text):
 # «Рано» и «выждали» происходят почти каждую ночь и ничего не меняют — слать
 # их значит приучить владельца пролистывать сообщения робота не читая. Пишем
 # только когда цены реально поехали или робот остановился.
-NOTIFY_ON = ('raise', 'rollback', 'stop', 'manual')
-
 DECISION_TITLE = {
-    'raise': 'Робот поднял цены',
-    'rollback': 'Робот откатил цены назад',
-    'stop': 'Робот остановился — цель достигнута',
     'manual': 'Цены сдвинуты вручную',
 }
 
 
-def _notify_admins(cur, decision, d, pushed, dry_run):
-    """Пишет админам в MAX о шаге робота.
+def _notify_admins(cur, decision, reason, pushed):
+    """Пишет админам в MAX о сдвиге цен.
 
-    Ошибку отправки глушим: если MAX недоступен, робот всё равно отработал,
-    и валить из-за этого весь цикл нельзя.
+    Ошибку отправки глушим: если MAX недоступен, цены всё равно ушли, и валить
+    из-за этого весь шаг нельзя.
     """
-    if decision not in NOTIFY_ON:
-        return {'sent': 0, 'errors': []}
     cur.execute(
         "SELECT max_user_id FROM users "
         "WHERE role = 'admin' AND max_user_id IS NOT NULL")
@@ -312,22 +200,9 @@ def _notify_admins(cur, decision, d, pushed, dry_run):
     if not admins:
         return {'sent': 0, 'errors': ['Нет админов с привязанным MAX']}
 
-    head = DECISION_TITLE.get(decision, 'Робот цен')
-    if dry_run:
-        head += ' (наблюдение)'
-
-    lines = [head, '', d.get('reason') or '']
-    if d.get('drift') is not None:
-        lines.append(f'Цены подняты на {d["drift"]}% от старта')
-    if d.get('unitsChange') is not None:
-        lines.append(
-            f'Продажи: {d.get("unitsBefore")} → {d.get("unitsAfter")} шт '
-            f'({d["unitsChange"]:+}%)')
+    lines = [DECISION_TITLE.get(decision, 'Цены сдвинуты'), '', reason or '']
     if pushed:
         lines.append(f'Карточек изменено: {pushed}')
-    if dry_run and decision in ('raise', 'rollback'):
-        lines.append('')
-        lines.append('Цены на витрине НЕ менялись — робот в режиме наблюдения')
 
     text = '\n'.join(l for l in lines if l is not None)
     sent, errors = 0, []
@@ -340,18 +215,51 @@ def _notify_admins(cur, decision, d, pushed, dry_run):
     return {'sent': sent, 'errors': errors}
 
 
-def _all_items(cur, mp='ozon'):
-    """Весь ассортимент площадки с текущими ценами.
+def _catalog(cur, mp='ozon'):
+    """Ассортимент площадки с ценами — из него владелец набирает подъём.
 
-    Робот двигает магазин целиком, а не отдельные карточки: смысл в том, чтобы
-    поднять общий уровень цен и посмотреть, как отреагирует спрос.
+    Отдаём вместе с материалом, размерами и магазином: подъём теперь не всегда
+    идёт по всему магазину, и выбирать товары надо на экране, а не в SQL. По
+    этим же полям на странице работает фильтр «только ширина 300» и подобные.
     """
     cur.execute(
+        "SELECT mi.id, mi.name, mi.material, mi.width, mi.height, mi.sku, "
+        "       mi.shop_id, s.name, mp2.price "
+        "FROM marketplace_items mi "
+        "JOIN marketplace_prices mp2 ON mp2.marketplace_item_id = mi.id "
+        "  AND mp2.marketplace_code = %s "
+        "LEFT JOIN shops s ON s.id = mi.shop_id "
+        "WHERE mp2.price > 0 AND mi.sku IS NOT NULL "
+        "ORDER BY mi.material, mi.width, mi.height", (mp,))
+    return [{
+        'itemId': int(r[0]), 'name': r[1], 'material': r[2],
+        'width': int(r[3]) if r[3] is not None else None,
+        'height': int(r[4]) if r[4] is not None else None,
+        'sku': r[5],
+        'shopId': int(r[6]) if r[6] is not None else None,
+        'shopName': r[7],
+        'price': float(r[8]),
+    } for r in cur.fetchall()]
+
+
+def _all_items(cur, mp='ozon', item_ids=None):
+    """Товары площадки с ценой, которым можно двигать цену.
+
+    item_ids — выбор владельца на экране (фильтр по материалу и размерам).
+    Пересекаем его с тем, что реально есть в базе с живой ценой: список пришёл
+    из браузера, и полагаться на него как на источник правды нельзя. Без
+    выбора двигаем весь ассортимент — как было раньше.
+    """
+    sql = (
         "SELECT mi.id, mp2.price "
         "FROM marketplace_items mi "
         "JOIN marketplace_prices mp2 ON mp2.marketplace_item_id = mi.id "
         "  AND mp2.marketplace_code = %s "
-        "WHERE mp2.price > 0 AND mi.sku IS NOT NULL", (mp,))
+        "WHERE mp2.price > 0 AND mi.sku IS NOT NULL")
+    if item_ids:
+        ids = ','.join(str(int(i)) for i in item_ids)
+        sql += f" AND mi.id IN ({ids})"
+    cur.execute(sql, (mp,))
     return [{'itemId': int(r[0]), 'price': float(r[1])} for r in cur.fetchall()]
 
 
@@ -380,42 +288,6 @@ def _push(mp, items, actor_id):
         return {'error': str(e)}
 
 
-def _decide(cur, st, mp='ozon'):
-    """РЕШЕНИЕ: можно ли двигать цены прямо сейчас.
-
-    АВТОМАТИКА ПО СПРОСУ УБРАНА — и вот почему.
-
-    Робот сам поднимал цены по ночам, а если продажи проседали, откатывал их
-    назад. Беда в том, что «спрос» он считал по выгрузке продаж, а она может
-    отстать: площадка задержала отчёт, синхронизация не прошла — и в базе за
-    вчера честный ноль. Для робота это выглядело как обвал спроса на 100%.
-
-    Так и вышло 28 августа: 24-го владелец поднял 674 карточки на 0.5%, а
-    робот увидел «622 → 0 шт», счёл это резким падением и опустил 613 цен.
-    Продажи при этом шли — просто выгрузка остановилась 23-го числа.
-
-    Теперь робот ничего не решает сам. Цены двигает только владелец кнопкой,
-    когда сам видит, что пора. Здесь остались лишь два предохранителя,
-    защищающие от опечатки и случайного двойного нажатия.
-    """
-    drift = _total_drift(cur, mp, st['dryRun'])
-    target = st['targetTotalPercent']
-
-    if drift >= target > 0:
-        return {'decision': 'stop', 'drift': drift,
-                'reason': f'Цель достигнута: цены подняты на {drift}% '
-                          f'при цели {target}%'}
-
-    if drift >= st['maxTotalPercent'] > 0:
-        return {'decision': 'hold', 'drift': drift,
-                'reason': f'Достигнут предел: цены подняты на {drift}% '
-                          f'при пределе {st["maxTotalPercent"]}%. '
-                          f'Поднимите предел вручную, если это осознанно'}
-
-    return {'decision': 'manual_only', 'drift': drift,
-            'reason': 'Автоподъём отключён: цены двигаются только вручную'}
-
-
 # Сколько карточек отправляем за один вызов.
 #
 # Здесь работает ЦЕПОЧКА ИЗ ДВУХ функций: робот вызывает функцию отправки, и
@@ -431,11 +303,19 @@ def _decide(cur, st, mp='ozon'):
 BATCH_SIZE = 25
 
 
-def _start_step(cur, mp, step, decision, reason, actor_id):
-    """Начинает шаг: запоминает список товаров и отправляет первую пачку."""
-    items = _all_items(cur, mp)
+def _start_step(cur, mp, step, decision, reason, actor_id, item_ids=None):
+    """Начинает шаг: запоминает список товаров и отправляет первую пачку.
+
+    item_ids — карточки, отобранные фильтром на экране. Список фиксируется
+    здесь и лежит в price_robot_pending до конца шага: если между пачками
+    кто-то заведёт новый товар, он в этот подъём не попадёт. Иначе владелец
+    поднял бы не то, что видел на экране, когда нажимал кнопку.
+    """
+    items = _all_items(cur, mp, item_ids)
     if not items:
-        return 0, 0, 0, 'Нет товаров с ценой — двигать нечего'
+        return 0, 0, 0, ('Под фильтр не попал ни один товар с ценой'
+                         if item_ids else
+                         'Нет товаров с ценой — двигать нечего')
     cur.execute(
         "INSERT INTO price_robot_pending (marketplace_code, step_percent, "
         "  decision, reason, remaining_ids, started_by) "
@@ -569,31 +449,29 @@ def _repair_to(cur, mp, actor_id, baseline_date, uplift, limit=200):
     return pushed, failed, len(rows)
 
 
-def _manual_move(cur, mp, step, actor_id, note=''):
-    """РУЧНОЙ СДВИГ ЦЕН — по кнопке владельца, вне расписания робота.
+def _manual_move(cur, mp, step, actor_id, note='', item_ids=None, scope=''):
+    """СДВИГ ЦЕН ПО КНОПКЕ ВЛАДЕЛЬЦА — единственный способ двигать цены.
 
-    Бывает, что двинуть цены нужно прямо сейчас и по своей воле: площадка
-    режет выдачу, конкурент уронил цену, началась распродажа. Ждать ночного
-    запуска робота в такой момент неправильно.
+    Автоподъём по спросу убран: спрос считался по выгрузке продаж, а она может
+    отстать. 28 августа выгрузка стояла с 23-го, робот увидел в базе ноль,
+    счёл это обвалом и опустил 613 карточек, поднятых четырьмя днями раньше.
+    Режима наблюдения тоже нет: раз цены двигает человек, каждый шаг настоящий.
 
-    Сдвиг попадает в тот же журнал и в тот же счётчик пути к цели: если руками
-    опустили на 2%, роботу до цели снова дальше, и он это учтёт. Иначе две
-    силы двигали бы цены, не зная друг о друге.
+    item_ids — карточки под фильтром «материал и размеры»: поднимать весь
+    магазин разом нужно не всегда, чаще — только широкие полотна или один
+    материал. scope описывает выбор словами и уходит в журнал: через месяц по
+    записи «подняли на 1%» иначе не понять, что именно подорожало.
     """
-    st = _settings(cur, mp)
-    if not st:
-        return {'error': 'Робот не настроен'}
-    if not step:
-        return {'error': 'Укажите, на сколько процентов двигать'}
-    # Тот же потолок, что и у робота: разовый рывок по всему магазину опаснее
-    # всего, а опечатка в поле «-50» стоила бы витрины.
-    if abs(step) > MAX_STEP_PERCENT:
+    if not step or step <= 0:
+        return {'error': 'Цены двигаются только вверх — укажите, на сколько процентов'}
+    # Потолок на одно нажатие: разовый рывок по всему магазину опаснее всего,
+    # а опечатка в поле «50» стоила бы витрины.
+    if step > MAX_STEP_PERCENT:
         return {'error': f'За один раз не больше {MAX_STEP_PERCENT}% — '
-                         f'слишком резко для всего ассортимента'}
+                         f'слишком резко для витрины'}
 
-    drift = _total_drift(cur, mp, st['dryRun'])
-    direction = 'подняли' if step > 0 else 'опустили'
-    reason = (f'Ручной сдвиг: {direction} цены на {abs(step)}%'
+    reason = (f'Ручной подъём: подняли цены на {step}%'
+              + (f'. {scope}' if scope else '')
               + (f'. {note}' if note else ''))
 
     # Незаконченный шаг сначала дожимаем, а не отказываем: владелец нажал
@@ -621,44 +499,36 @@ def _manual_move(cur, mp, step, actor_id, note=''):
                               f'осталось {left}'}
         done = _finish_step(cur, mp)
         if done:
-            drift = _total_drift(cur, mp, st['dryRun']) + done['step']
             reason = f'{done["reason"]}. Карточек изменено: {done["pushed"]}'
             run_id = _log_run(cur, mp, done['decision'], reason,
-                              step=done['step'], drift=round(drift, 2),
-                              pushed=done['pushed'], failed=done['failed'],
-                              dryRun=st['dryRun'])
+                              step=done['step'],
+                              pushed=done['pushed'], failed=done['failed'])
             return {'ok': True, 'runId': run_id, 'step': done['step'],
-                    'pushed': done['pushed'], 'reason': reason,
-                    'drift': round(drift, 2)}
+                    'pushed': done['pushed'], 'reason': reason}
 
-    pushed = failed = 0
-    if st['dryRun']:
-        reason += '. Наблюдение: цены на витрине не менялись'
-    else:
-        # Отправка идёт пачками: весь магазин за один вызов не успевает.
-        pushed, failed, left, err = _start_step(
-            cur, mp, step, 'manual', reason, actor_id)
-        # Первая пачка не прошла, но очередь заведена — продолжаем кругами,
-        # а не роняем весь прогон из-за одной осечки площадки.
-        if err and left:
-            return {'ok': True, 'inProgress': True, 'step': step,
-                    'pushed': pushed, 'left': left,
-                    'reason': f'{reason}. Площадка притормозила, '
-                              f'осталось {left} — продолжаем'}
-        if err:
-            return {'error': err}
-        if left:
-            # Шаг не закончен: в журнал попадёт, когда уйдут все карточки.
-            return {'ok': True, 'inProgress': True, 'step': step,
-                    'pushed': pushed, 'left': left,
-                    'reason': f'{reason}. Отправлено {pushed}, '
-                              f'осталось {left} — продолжаем'}
-        _finish_step(cur, mp)
-        reason += f'. Карточек изменено: {pushed}'
+    # Отправка идёт пачками: весь магазин за один вызов не успевает.
+    pushed, failed, left, err = _start_step(
+        cur, mp, step, 'manual', reason, actor_id, item_ids)
+    # Первая пачка не прошла, но очередь заведена — продолжаем кругами,
+    # а не роняем весь прогон из-за одной осечки площадки.
+    if err and left:
+        return {'ok': True, 'inProgress': True, 'step': step,
+                'pushed': pushed, 'left': left,
+                'reason': f'{reason}. Площадка притормозила, '
+                          f'осталось {left} — продолжаем'}
+    if err:
+        return {'error': err}
+    if left:
+        # Шаг не закончен: в журнал попадёт, когда уйдут все карточки.
+        return {'ok': True, 'inProgress': True, 'step': step,
+                'pushed': pushed, 'left': left,
+                'reason': f'{reason}. Отправлено {pushed}, '
+                          f'осталось {left} — продолжаем'}
+    _finish_step(cur, mp)
+    reason += f'. Карточек изменено: {pushed}'
 
     run_id = _log_run(cur, mp, 'manual', reason, step=step,
-                      drift=round(drift + step, 2),
-                      pushed=pushed, failed=failed, dryRun=st['dryRun'])
+                      pushed=pushed, failed=failed)
 
     cur.execute(
         "INSERT INTO audit_log (user_id, user_name, category, action, "
@@ -666,134 +536,79 @@ def _manual_move(cur, mp, step, actor_id, note=''):
         "VALUES (%s, 'Робот цен', 'prices', 'price_robot_manual', "
         "  'price_robot', %s, %s, %s, now())",
         (actor_id, run_id, reason[:500], json.dumps(
-            {'step': step, 'pushed': pushed, 'dryRun': st['dryRun']},
+            {'step': step, 'pushed': pushed, 'scope': scope},
             ensure_ascii=False)))
 
-    notify = _notify_admins(cur, 'manual',
-                            {'reason': reason, 'drift': round(drift + step, 2)},
-                            pushed, st['dryRun'])
+    notify = _notify_admins(cur, 'manual', reason, pushed)
     return {'ok': True, 'runId': run_id, 'step': step, 'pushed': pushed,
-            'failed': failed, 'dryRun': st['dryRun'], 'reason': reason,
-            'drift': round(drift + step, 2), 'notify': notify}
+            'failed': failed, 'reason': reason, 'notify': notify}
 
 
-def _run(cur, mp, actor_id, force=False):
-    """Один цикл робота: решить и, если нужно, сдвинуть цены."""
-    st = _settings(cur, mp)
-    if not st:
-        return {'error': 'Робот не настроен'}
-    if not st['isActive'] and not force:
-        return {'ok': True, 'decision': 'off', 'reason': 'Робот выключен'}
+def _run(cur, mp, actor_id):
+    """ДОСЫЛ НЕЗАКОНЧЕННОГО ШАГА — всё, что осталось от ночного цикла.
 
-    # СНАЧАЛА ДОСЫЛАЕМ НЕЗАКОНЧЕННЫЙ ШАГ.
-    #
-    # Магазин не должен оставаться в разнобое: часть цен поднята, часть нет.
-    # Пока остаток не ушёл, новых решений не принимаем.
-    if _pending_left(cur, mp):
-        pushed, failed, left, err = _continue_step(cur, mp, actor_id)
-        if err:
-            return {'ok': True, 'decision': 'hold', 'reason': err,
-                    'pushed': pushed, 'left': left}
-        if left:
-            return {'ok': True, 'decision': 'sending', 'pushed': pushed,
-                    'left': left,
-                    'reason': f'Досылаем цены: отправлено {pushed}, '
-                              f'осталось {left}'}
-        done = _finish_step(cur, mp)
-        if done:
-            reason = f'{done["reason"]}. Карточек изменено: {done["pushed"]}'
-            drift = _total_drift(cur, mp, st['dryRun']) + done['step']
-            run_id = _log_run(cur, mp, done['decision'], reason,
-                              step=done['step'], drift=round(drift, 2),
-                              pushed=done['pushed'], failed=done['failed'],
-                              dryRun=st['dryRun'])
-            notify = _notify_admins(cur, done['decision'],
-                                    {'reason': reason, 'drift': round(drift, 2)},
-                                    done['pushed'], st['dryRun'])
-            return {'ok': True, 'runId': run_id, 'decision': done['decision'],
-                    'reason': reason, 'pushed': done['pushed'],
-                    'failed': done['failed'], 'drift': round(drift, 2),
-                    'notify': notify}
+    Своих решений робот больше не принимает: цены двигает владелец кнопкой.
+    Но одна работа для расписания есть. Шаг уходит пачками по 25 карточек, и
+    если браузер закрыли на середине, магазин остаётся в разнобое — часть цен
+    поднята, часть нет. Планировщик дёргает эту функцию раз в час и дожимает
+    остаток, в какой бы час это ни случилось.
+    """
+    if not _pending_left(cur, mp):
+        return {'ok': True, 'decision': 'idle',
+                'reason': 'Незаконченных шагов нет. Цены двигаются только '
+                          'вручную — кнопкой на странице продвижения'}
 
-    d = _decide(cur, st, mp)
-    pushed = failed = 0
+    pushed, failed, left, err = _continue_step(cur, mp, actor_id)
+    if err:
+        return {'ok': True, 'decision': 'hold', 'reason': err,
+                'pushed': pushed, 'left': left}
+    if left:
+        return {'ok': True, 'decision': 'sending', 'pushed': pushed,
+                'left': left,
+                'reason': f'Досылаем цены: отправлено {pushed}, '
+                          f'осталось {left}'}
 
-    # Сам робот цены больше НЕ ДВИГАЕТ — ни вверх, ни вниз.
-    #
-    # Раньше здесь он поднимал цены по спросу и откатывал их при просадке.
-    # Просадку он видел по выгрузке продаж, а та могла отстать — и ноль в
-    # базе он принимал за обвал спроса. Так 28 августа откатились 613 цен,
-    # поднятых владельцем четырьмя днями раньше, хотя продажи шли.
-    #
-    # Решение «raise»/«rollback» отсюда убрано вместе с расчётом спроса.
-    # Цены двигает только владелец кнопкой на странице продвижения.
-    if d['decision'] in ('raise', 'rollback'):
-        if st['dryRun']:
-            # РЕЖИМ НАБЛЮДЕНИЯ: считаем и пишем в журнал, витрину не трогаем.
-            items = _all_items(cur, mp)
-            d = {**d, 'reason': d['reason'] + f'. Наблюдение: цены не менялись '
-                                              f'(товаров было бы {len(items)})'}
-        else:
-            pushed, failed, left, err = _start_step(
-                cur, mp, d['step'], d['decision'], d['reason'], actor_id)
-            if err:
-                d = {**d, 'decision': 'hold', 'reason': err}
-            elif left:
-                # Не успели за один вызов — остаток уйдёт следующим запуском.
-                return {'ok': True, 'decision': 'sending', 'pushed': pushed,
-                        'left': left,
-                        'reason': f'{d["reason"]}. Отправлено {pushed}, '
-                                  f'осталось {left} — продолжаем'}
-            else:
-                _finish_step(cur, mp)
-                d = {**d, 'reason': d['reason'] +
-                     f'. Карточек изменено: {pushed}'}
+    done = _finish_step(cur, mp)
+    if not done:
+        return {'ok': True, 'decision': 'idle', 'pushed': pushed,
+                'reason': 'Остаток отправлен'}
 
-    run_id = _log_run(cur, mp, d['decision'], d['reason'],
-                      step=d.get('step'), drift=d.get('drift'),
-                      unitsAfter=d.get('unitsAfter'),
-                      unitsBefore=d.get('unitsBefore'),
-                      unitsChange=d.get('unitsChange'),
-                      pushed=pushed, failed=failed, dryRun=st['dryRun'])
-
-    # Цель достигнута — выключаем робота, чтобы он не гонял вхолостую.
-    if d['decision'] == 'stop':
-        cur.execute(
-            "UPDATE price_robot_settings SET is_active = false "
-            "WHERE marketplace_code = %s", (mp,))
+    reason = f'{done["reason"]}. Карточек изменено: {done["pushed"]}'
+    run_id = _log_run(cur, mp, done['decision'], reason, step=done['step'],
+                      pushed=done['pushed'], failed=done['failed'])
 
     # Отметка в общем журнале: по ней экран «Планировщик» понимает, что задание
-    # живо. Без неё робот выглядел бы там молчащим, даже когда исправно
-    # отрабатывает каждую ночь.
+    # живо. Без неё оно выглядело бы там молчащим.
     cur.execute(
         "INSERT INTO audit_log (user_id, user_name, category, action, "
         "  entity_type, entity_id, description, details, created_at) "
         "VALUES (%s, 'Робот цен', 'prices', 'price_robot', 'price_robot', "
         "  %s, %s, %s, now())",
-        (actor_id, run_id, d['reason'][:500], json.dumps(
-            {'decision': d['decision'], 'reason': d['reason'],
-             'pushed': pushed, 'dryRun': st['dryRun']}, ensure_ascii=False)))
+        (actor_id, run_id, reason[:500], json.dumps(
+            {'decision': done['decision'], 'pushed': done['pushed']},
+            ensure_ascii=False)))
 
-    # Сообщаем владельцу в MAX — робот работает ночью, и узнавать о сдвиге цен
-    # он должен сразу, а не когда откроет систему через неделю.
-    notify = _notify_admins(cur, d['decision'], d, pushed, st['dryRun'])
-
-    return {'ok': True, 'runId': run_id, 'pushed': pushed, 'failed': failed,
-            'dryRun': st['dryRun'], 'notify': notify, **d}
+    notify = _notify_admins(cur, done['decision'], reason, done['pushed'])
+    return {'ok': True, 'runId': run_id, 'decision': done['decision'],
+            'reason': reason, 'pushed': done['pushed'],
+            'failed': done['failed'], 'notify': notify}
 
 
 def handler(event: dict, context) -> dict:
-    """Робот подъёма цен: ведёт маржу FBS к цели и сам себя останавливает.
+    """Сдвиг цен на витрине по кнопке владельца.
 
-    Зачем: поднимать цены по всему магазину руками невозможно — восемьсот
-    карточек, и после каждого подъёма надо смотреть, не умерли ли продажи.
-    Робот делает это мелкими шагами с паузой и откатывает цену назад, если
-    спрос просел.
+    Автоматики здесь больше нет. Робот сам поднимал цены по спросу и откатывал
+    их при просадке, но спрос он считал по выгрузке продаж — а она отстаёт: 28
+    августа выгрузка стояла с 23-го, робот увидел ноль и опустил 613 карточек.
+    Теперь решение всегда за человеком, а функция лишь исполняет его аккуратно:
+    пачками по 25 карточек, с памятью о месте остановки.
 
-    GET  ?action=status&actorId=       — настройки, журнал, текущая маржа
-    POST { action: 'save', ... }       — сохранить настройки
-    POST { action: 'run', cronSecret } — цикл робота (планировщик)
-    POST { action: 'run', actorId, force: true } — прогон вручную
+    Поднимать весь магазин разом нужно не всегда, поэтому шаг принимает список
+    карточек — их владелец отбирает на экране фильтром по материалу и размерам.
+
+    GET  ?action=status&actorId=        — каталог с ценами, остаток, журнал
+    POST { action: 'move', step, itemIds?, scope?, note? } — сдвинуть цены
+    POST { action: 'run', cronSecret }  — дослать незаконченный шаг
     """
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
@@ -811,35 +626,25 @@ def handler(event: dict, context) -> dict:
                 return _resp(403, {'error': 'Только для администратора'})
 
             mp = params.get('marketplace') or 'ozon'
-            st = _settings(cur, mp)
             cur.execute(
-                "SELECT ran_at, decision, reason, step_percent, drift_percent, "
-                "  units_after, units_before, units_change, items_pushed, "
-                "  dry_run FROM price_robot_runs "
+                "SELECT ran_at, decision, reason, step_percent, items_pushed "
+                "FROM price_robot_runs "
                 "WHERE marketplace_code = %s ORDER BY ran_at DESC LIMIT 30",
                 (mp,))
             runs = [{
                 'ranAt': r[0], 'decision': r[1], 'reason': r[2],
                 'stepPercent': float(r[3]) if r[3] is not None else None,
-                # В этой колонке теперь сдвиг цен от старта, а не маржа.
-                'driftPercent': float(r[4]) if r[4] is not None else None,
-                'unitsAfter': r[5], 'unitsBefore': r[6],
-                'unitsChange': float(r[7]) if r[7] is not None else None,
-                'itemsPushed': r[8], 'dryRun': r[9],
+                'itemsPushed': r[4],
             } for r in cur.fetchall()]
 
-            cur.execute(
-                "SELECT count(*) FROM marketplace_prices "
-                "WHERE marketplace_code = %s AND price > 0", (mp,))
-            items_count = int((cur.fetchone() or [0])[0] or 0)
-
             return _resp(200, {
-                'settings': st,
-                # Сдвиг показываем для того режима, в котором робот сейчас.
-                'driftPercent': _total_drift(cur, mp, st['dryRun'] if st else False),
-                'itemsCount': items_count,
+                # Каталог отдаём целиком: фильтр по материалу и размерам живёт
+                # на странице, и пересчитывать выбор походом на сервер после
+                # каждой галочки незачем — карточек меньше тысячи.
+                'catalog': _catalog(cur, mp),
                 # Сколько карточек ждёт отправки: шаг идёт пачками.
                 'pendingLeft': _pending_left(cur, mp),
+                'maxStepPercent': MAX_STEP_PERCENT,
                 'runs': runs,
             })
 
@@ -849,30 +654,6 @@ def handler(event: dict, context) -> dict:
         body = json.loads(event.get('body') or '{}')
         action = body.get('action')
         mp = body.get('marketplace') or 'ozon'
-
-        if action == 'save':
-            if not _is_admin(cur, body.get('actorId')):
-                return _resp(403, {'error': 'Только для администратора'})
-            step = min(float(body.get('stepPercent') or 0.5), MAX_STEP_PERCENT)
-            cur.execute(
-                "UPDATE price_robot_settings SET is_active = %s, dry_run = %s, "
-                "  step_percent = %s, step_days = %s, run_hour = %s, "
-                "  target_total_percent = %s, drop_percent = %s, "
-                "  max_total_percent = %s, demand_window_days = %s, "
-                "  require_second_signal = %s, "
-                "  updated_at = now(), updated_by = %s "
-                "WHERE marketplace_code = %s",
-                (bool(body.get('isActive')), bool(body.get('dryRun', True)),
-                 step, max(1, int(body.get('stepDays') or 2)),
-                 int(body.get('runHour') or 3),
-                 float(body.get('targetTotalPercent') or 10),
-                 float(body.get('dropPercent') or 30),
-                 float(body.get('maxTotalPercent') or 20),
-                 # Окно короче трёх дней не пускаем: слишком шумно.
-                 max(3, int(body.get('demandWindowDays') or 3)),
-                 bool(body.get('requireSecondSignal', True)),
-                 body.get('actorId'), mp))
-            return _resp(200, {'ok': True, 'settings': _settings(cur, mp)})
 
         if action == 'repair':
             # Разовое выправление цен после сбоя 24 августа.
@@ -901,35 +682,36 @@ def handler(event: dict, context) -> dict:
                                'batch': total, 'left': left})
 
         if action == 'move':
-            # Ручной сдвиг цен — вне расписания, по кнопке владельца.
+            # Сдвиг цен по кнопке владельца — единственный способ их двигать.
             if not _is_admin(cur, body.get('actorId')):
                 return _resp(403, {'error': 'Только для администратора'})
+            # Карточки под фильтром. Пустой список и его отсутствие — разные
+            # вещи: без фильтра двигаем весь магазин, а пустой выбор двигать
+            # нечего, и молча поднять всё вместо ничего было бы худшим ответом.
+            raw_ids = body.get('itemIds')
+            if isinstance(raw_ids, list):
+                item_ids = [int(i) for i in raw_ids if str(i).strip()]
+                if not item_ids:
+                    return _resp(400, {'error': 'Не выбрано ни одного товара'})
+            else:
+                item_ids = None
             res = _manual_move(cur, mp, float(body.get('step') or 0),
                                body.get('actorId'),
-                               (body.get('note') or '').strip()[:200])
+                               (body.get('note') or '').strip()[:200],
+                               item_ids,
+                               (body.get('scope') or '').strip()[:200])
             return _resp(400 if res.get('error') else 200, res)
 
         if action == 'run':
+            # Досыл остатка. Часа запуска больше нет: своих решений робот не
+            # принимает, а недосланный шаг оставляет магазин в разнобое — его
+            # надо дожать при первой возможности, а не ждать назначенной ночи.
             secret = body.get('cronSecret')
             actor_id = body.get('actorId')
             by_cron = secret and secret == os.environ.get('CRON_SECRET')
             if not by_cron and not _is_admin(cur, actor_id):
                 return _resp(403, {'error': 'Только для администратора'})
-
-            st = _settings(cur, mp)
-            # Час запуска: планировщик может дёргать чаще, но работаем только
-            # в назначенное владельцем время. Ночью витрина спокойнее.
-            #
-            # Владелец задаёт час по Москве, а сервер живёт по UTC — без
-            # поправки «3:00» означало бы 6 утра по Москве.
-            # Незаконченный шаг досылаем в любой час: магазин не должен
-            # висеть в разнобое до следующей ночи.
-            if (by_cron and st and _msk_hour() != st['runHour']
-                    and not _pending_left(cur, mp)):
-                return _resp(200, {'ok': True, 'decision': 'skip',
-                                   'reason': 'Не час запуска'})
-            return _resp(200, _run(cur, mp, actor_id,
-                                   force=bool(body.get('force'))))
+            return _resp(200, _run(cur, mp, actor_id))
 
         return _resp(400, {'error': 'Неизвестное действие'})
     finally:

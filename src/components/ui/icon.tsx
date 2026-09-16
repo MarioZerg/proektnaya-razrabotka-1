@@ -2,6 +2,7 @@ import React from 'react';
 import type { LucideProps } from 'lucide-react';
 import {
   AlertTriangle,
+  ArrowDown,
   ArrowLeft,
   ArrowLeftRight,
   ArrowRight,
@@ -12,6 +13,7 @@ import {
   Boxes,
   Building2,
   Calendar,
+  Camera,
   CalendarClock,
   CalendarSync,
   Check,
@@ -53,6 +55,7 @@ import {
   Mail,
   MailCheck,
   MapPin,
+  MessagesSquare,
   MessageCircle,
   Minus,
   MinusCircle,
@@ -121,6 +124,7 @@ import {
  */
 const icons: Record<string, React.FC<LucideProps>> = {
   AlertTriangle,
+  ArrowDown,
   ArrowLeft,
   ArrowLeftRight,
   ArrowRight,
@@ -131,6 +135,7 @@ const icons: Record<string, React.FC<LucideProps>> = {
   Boxes,
   Building2,
   Calendar,
+  Camera,
   CalendarClock,
   CalendarSync,
   Check,
@@ -172,6 +177,7 @@ const icons: Record<string, React.FC<LucideProps>> = {
   Mail,
   MailCheck,
   MapPin,
+  MessagesSquare,
   MessageCircle,
   Minus,
   MinusCircle,
