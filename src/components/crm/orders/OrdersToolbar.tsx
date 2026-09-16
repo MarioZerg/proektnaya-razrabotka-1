@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -39,6 +40,11 @@ interface OrdersToolbarProps {
   onMaterialChange: (v: string) => void;
   /** Снять с конвейера все нетронутые FBS-заказы выбранного материала. */
   onBulkCancel: () => void;
+  /** Поиск по номеру заказа. Идёт на сервер — находит заказ любой давности. */
+  search: string;
+  onSearchChange: (v: string) => void;
+  /** Идёт запрос поиска: показываем это в поле, а не пустым списком. */
+  searching: boolean;
 }
 
 const OrdersToolbar = ({
@@ -63,6 +69,9 @@ const OrdersToolbar = ({
   materialFilter,
   onMaterialChange,
   onBulkCancel,
+  search,
+  onSearchChange,
+  searching,
 }: OrdersToolbarProps) => {
   return (
     <>
@@ -125,6 +134,38 @@ const OrdersToolbar = ({
         </Button>
       </div>
       )}
+
+      {/* ПОИСК ПО НОМЕРУ — ОТДЕЛЬНО ОТ ФИЛЬТРОВ И ВЫШЕ НИХ.
+          Фильтры просеивают то, что уже на экране, а список показывает лишь свежую
+          часть истории: заказа прошлого квартала в нём нет вовсе. Поиск спрашивает
+          сервер напрямую и находит заказ любой давности, поэтому пока в поле что-то
+          введено, фильтры к результату не применяются — иначе найденный заказ снова
+          пропал бы за выбранной вкладкой статуса. */}
+      <div className="relative w-full sm:max-w-md">
+        <Icon
+          name={searching ? 'Loader2' : 'Search'}
+          size={16}
+          className={`absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground ${
+            searching ? 'animate-spin' : ''
+          }`}
+        />
+        <Input
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="Поиск по номеру заказа или отправления"
+          className="pl-9 pr-9"
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => onSearchChange('')}
+            title="Очистить поиск"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted"
+          >
+            <Icon name="X" size={14} />
+          </button>
+        )}
+      </div>
 
       <div className="flex flex-wrap gap-3">
         <Select value={statusFilter} onValueChange={(v) => onStatusChange(v as StatusFilter)}>

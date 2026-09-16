@@ -10,7 +10,12 @@ import json
 import psycopg2
 
 from authz import AuthError, auth_error_response, require_admin
-from bulk_cancel import cancel_single_order, handle_bulk_cancel, handle_bulk_preview
+from bulk_cancel import (
+    cancel_single_order,
+    handle_bulk_cancel,
+    handle_bulk_preview,
+    restore_single_order,
+)
 from shared import (
     GROUP_CUT_BATCH,
     STATUS_ORDER,
@@ -2420,6 +2425,26 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # или шьющуюся вещь отменять поздно: ткань разрезана, швея получила деньги,
             # вещь нужно довести и отгрузить.
             return cancel_single_order(cur, conn, headers, int(item_id), actor_id, actor_name)
+
+        if action == 'restore_order':
+            # Возврат в работу — такое же сильное действие, как и снятие: заказ
+            # снова поедет по цеху и на него спишут ткань. Право проверяем по
+            # токену сессии, а не по кнопке на экране.
+            try:
+                admin = require_admin(cur, event)
+            except AuthError as e:
+                return auth_error_response(e, headers)
+
+            item_id = body_data.get('id')
+            if not item_id:
+                return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+            # ВЕРНУТЬ МОЖНО ТОЛЬКО СВОЮ ОТМЕНУ.
+            #
+            # Если заказ отменил маркетплейс, отправления на площадке уже нет:
+            # вещь некуда отгружать, и гнать её по цеху значит резать ткань
+            # впустую. Проверка — на сервере, внутри restore_single_order.
+            return restore_single_order(cur, conn, headers, int(item_id), admin['realUserId'], admin['name'])
 
         return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
     finally:

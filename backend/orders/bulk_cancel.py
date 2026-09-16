@@ -610,6 +610,86 @@ def _cancel_locally(cur, order_id):
     )
 
 
+# ВОЗВРАТ ЗАКАЗА В РАБОТУ — ТОЛЬКО ЕСЛИ ОТМЕНЯЛИ МЫ САМИ.
+#
+# Снять заказ с конвейера легко промахом: кнопка стоит в строке рядом с
+# «Изменить», и админ снимал не ту вещь. Раньше это было тупиком — заказ
+# оставался отменённым навсегда, и приходилось заводить его заново вручную,
+# теряя номер, привязку к товару и историю.
+#
+# Но вернуть можно НЕ ВСЁ. Если отмену сделал маркетплейс (покупатель передумал,
+# площадка отменила сама) — возвращать нечего: отправления на той стороне больше
+# нет, отгружать вещь некуда, а мы бы гнали её по цеху впустую и списывали ткань.
+# Такую отмену узнаём по статусам площадки, и возврат по ней запрещён.
+#
+# Возвращается заказ РОВНО В НАЧАЛО: этап «Новый», без исполнителя и цеха. Раскрой
+# и пошив по нему не начинались (снять можно было только нетронутый заказ), так
+# что восстанавливать в середине маршрута нечего.
+MARKETPLACE_CANCEL_SQL = (
+    "strpos(lower(COALESCE(ozon_status, '')), 'cancel') = 1 "
+    "OR strpos(upper(COALESCE(ym_status, '')), 'CANCEL') > 0"
+)
+
+
+def restore_single_order(cur, conn, headers, order_id, actor_id, actor_name):
+    """Вернуть ошибочно снятый заказ на конвейер. Связка Яндекса — целиком."""
+    cur.execute(
+        "SELECT COALESCE(sewing_status, 'Новый'), status, cancelled_at, group_key, "
+        f"       ({MARKETPLACE_CANCEL_SQL}) "
+        "FROM orders WHERE id = %s",
+        (int(order_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return _resp(headers, 404, {'error': 'Заказ не найден'})
+
+    sewing_status, status, cancelled_at, group_key, mp_cancelled = row
+
+    cancelled_here = (
+        status == 'Отменён' or sewing_status == 'Отменён' or cancelled_at is not None
+    )
+    if not cancelled_here and not mp_cancelled:
+        return _resp(headers, 409, {
+            'error': 'Заказ не отменён — возвращать его в работу не нужно',
+        })
+
+    # Отмена пришла с площадки: заказа там больше нет, и шить вещь бессмысленно.
+    if mp_cancelled:
+        return _resp(headers, 409, {
+            'error': 'Заказ отменил маркетплейс — вернуть его в работу нельзя. '
+                     'Отправления на площадке больше нет, отгружать вещь некуда. '
+                     'Если покупателю всё ещё нужен товар, он оформляет новый заказ.',
+        })
+
+    ids = [int(order_id)]
+    if group_key:
+        cur.execute("SELECT id FROM orders WHERE group_key = %s ORDER BY id", (group_key,))
+        ids = [r[0] for r in cur.fetchall()] or ids
+
+    # Возвращаем в самое начало конвейера. Невыплаченные начисления при снятии
+    # были удалены, и заново их создавать не нужно: работа по заказу не велась —
+    # деньги начислятся, когда вещь реально раскроят и отошьют.
+    cur.execute(
+        "UPDATE orders SET status = 'Новый', sewing_status = 'Новый', "
+        "  cancelled_at = NULL, assigned_user_id = NULL, workshop_id = NULL, "
+        "  cut_at = NULL, taken_at = NULL "
+        "WHERE id = ANY(%s)",
+        (ids,),
+    )
+
+    cur.execute("SELECT order_number FROM orders WHERE id = ANY(%s)", (ids,))
+    numbers = ', '.join(r[0] for r in cur.fetchall() if r[0])
+    log_action(
+        cur, actor_id, actor_name, 'restore_order', 'order', int(order_id),
+        f'Вернул заказ #{order_id} в работу'
+        + (f' ({numbers})' if numbers else '')
+        + (f'; вещей в связке: {len(ids)}' if len(ids) > 1 else ''),
+        {'orderIds': ids},
+    )
+    conn.commit()
+    return _resp(headers, 200, {'success': True, 'restoredIds': ids})
+
+
 def _resp(headers, status, body):
     return {
         'statusCode': status,

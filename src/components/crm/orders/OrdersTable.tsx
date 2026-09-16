@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
 import ShopBadge from '@/components/crm/ShopBadge';
-import { canPullFromConveyor, type Order } from '@/lib/ordersApi';
+import { canPullFromConveyor, canRestoreOrder, type Order } from '@/lib/ordersApi';
 import OrdersCards from '@/components/crm/orders/OrdersCards';
 
 const PAGE_SIZE = 50;
@@ -66,11 +66,20 @@ interface OrdersTableProps {
   orders: Order[];
   onEdit: (order: Order) => void;
   onDelete: (id: number) => void;
+  /** Вернуть ошибочно снятый заказ обратно на конвейер. */
+  onRestore: (order: Order) => void;
   /** Кладовщик и менеджер смотрят заказы только как справку — без правки и удаления. */
   canManage: boolean;
 }
 
-const OrdersTable = ({ loading, orders, onEdit, onDelete, canManage }: OrdersTableProps) => {
+const OrdersTable = ({
+  loading,
+  orders,
+  onEdit,
+  onDelete,
+  onRestore,
+  canManage,
+}: OrdersTableProps) => {
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE));
 
@@ -105,6 +114,7 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete, canManage }: OrdersTab
         orders={pagedOrders}
         onEdit={onEdit}
         onDelete={onDelete}
+        onRestore={onRestore}
         canManage={canManage}
         ozonStatusLabel={ozonStatusLabel}
       />
@@ -196,6 +206,19 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete, canManage }: OrdersTab
                           onClick={() => onDelete(o.id)}
                         >
                           <Icon name="Trash2" size={14} />
+                        </Button>
+                      )}
+                      {/* Промахнулись кнопкой снятия — заказ можно вернуть на конвейер.
+                          Кнопка появляется только у НАШЕЙ отмены: отменённое самим
+                          маркетплейсом не возвращается, отгружать вещь будет некуда. */}
+                      {canRestoreOrder(o) && (
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          title="Вернуть заказ в работу"
+                          onClick={() => onRestore(o)}
+                        >
+                          <Icon name="Undo2" size={14} />
                         </Button>
                       )}
                     </>

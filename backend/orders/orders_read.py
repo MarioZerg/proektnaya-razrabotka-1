@@ -19,6 +19,194 @@ from shared import (
 )
 
 
+# ОДИН НАБОР КОЛОНОК НА ВСЕ СПИСКИ ЗАКАЗОВ.
+#
+# Списков теперь два: общий конвейер и поиск по номеру. Колонки у них обязаны
+# совпадать до последней — интерфейс читает найденный заказ теми же полями, что
+# и строку конвейера, а разошлись бы наборы, и у найденного заказа пропала бы
+# половина сведений (магазин, отмена, оверлок) или, хуже, поля разъехались бы
+# по номерам. Поэтому выборка и разбор строки лежат здесь, рядом друг с другом,
+# и правятся всегда вместе.
+ORDER_LIST_COLUMNS = (
+    "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
+    "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
+    "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
+    "o.cutter_user_id, cu.full_name, o.hanger_number, "
+    "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
+    "o.ozon_status, o.ozon_posting_number, "
+    # Код товара берём из заказа, а если там пусто (заказы из старой
+    # системы) — из привязанной карточки товара.
+    "COALESCE(o.product_barcode, mi.barcode), "
+    "COALESCE(o.product_ozon_sku, mi.ozon_sku), "
+    "o.marketplace_created_at, o.group_key, o.group_size, o.group_position, "
+    # Заказ юридического лица (B2B с OZON): цех должен видеть пометку прямо
+    # в списке, а реквизиты компании — в карточке заказа.
+    "o.is_legal_entity, o.legal_company_name, o.legal_inn, "
+    # Реальный расход ткани на одно изделие из карточки товара: он включает
+    # запас на подгибку и потому больше «чистой» ширины. Именно эту цифру
+    # кладовщик должен видеть в сводке — столько ткани уйдёт со склада.
+    "(SELECT mim.quantity FROM marketplace_items fmi "
+    " JOIN marketplace_item_materials mim ON mim.marketplace_item_id = fmi.id "
+    " JOIN materials mm ON mm.id = mim.material_id "
+    " JOIN material_types mmt ON mmt.id = mm.type_id "
+    " WHERE mmt.name = 'Тюль' AND fmi.material = o.material "
+    "   AND fmi.width = o.width AND fmi.height = o.height LIMIT 1) AS fabric_per_item, "
+    # Когда вещь реально раскроили и отшили. По этим датам закройщик и швея
+    # сверяют свою выработку за смену или неделю: дата заказа покупателя для
+    # этого не годится — заказ мог пролежать в очереди неделю.
+    "o.cut_at, o.sewn_at, "
+    # Название вешалки — последним полем, чтобы не сдвигать индексы
+    # остальных колонок (их читают по номерам).
+    "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number), "
+    # Магазин заказа: цех общий, но швея должна видеть, чью вещь
+    # шьёт — у МЕГАТЮЛЬ и ДЮНА разные упаковка и вложения.
+    "shp.name, shp.color, "
+    # ЭТАП ОВЕРЛОКА. requires_overlock проставляется на раскрое по
+    # признаку ткани; overlocked_at заполняется, когда край обметали.
+    # По паре этих полей конвейер понимает, где вещь в маршруте:
+    # ждёт оверлок, уже обработана или этап ей вообще не нужен.
+    "o.requires_overlock, o.overlocked_at, o.overlock_user_id, ou.full_name, "
+    # ОТМЕНА — ГОТОВЫМ ПРИЗНАКОМ, А НЕ РАЗБОРОМ СТАТУСОВ НА ЭКРАНЕ.
+    #
+    # У каждой площадки своё слово для отмены, и держать этот разбор на
+    # фронте — значит рано или поздно забыть там очередной статус. Считаем
+    # один раз здесь, тем же условием, что и выборка выше.
+    #
+    # Поле идёт ПОСЛЕДНИМ: остальные колонки читаются по номерам с конца
+    # (r[-1], r[-2] …), и вставка в середину сдвинула бы их все.
+    f"({CANCELLED_SQL}) AS is_cancelled "
+    "FROM orders o "
+    "LEFT JOIN users u ON u.id = o.assigned_user_id "
+    "LEFT JOIN workshops w ON w.id = o.workshop_id "
+    "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+    "LEFT JOIN users su ON su.id = o.sewer_user_id "
+    "LEFT JOIN users pu ON pu.id = o.packer_user_id "
+    "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+    "LEFT JOIN shops shp ON shp.id = o.shop_id "
+    "LEFT JOIN users ou ON ou.id = o.overlock_user_id "
+)
+
+
+def _row_to_order(r) -> dict:
+    """Строка выборки -> заказ для интерфейса. Общая для конвейера и поиска."""
+    return {
+        'id': r[0],
+        'orderNumber': r[1],
+        'marketplace': r[2],
+        'orderType': r[3],
+        'status': r[4],
+        'cluster': r[5],
+        'product': r[6],
+        'quantity': float(r[7]),
+        'source': r[8],
+        'createdAt': r[9].isoformat() + 'Z',
+        'completedAt': (r[10].isoformat() + 'Z') if r[10] else None,
+        'material': r[11],
+        'width': r[12],
+        'height': r[13],
+        'sewingStatus': r[14],
+        'assignedUserId': r[15],
+        'assignedUserName': r[16],
+        'workshopId': r[17],
+        'workshopName': r[18],
+        'cutterUserId': r[19],
+        'cutterUserName': r[20],
+        'hangerNumber': r[21],
+        # Хвост списка колонок: вешалка, магазин с цветом и этап
+        # оверлока. Отсчёт с конца, потому что колонок много и
+        # номера легко сбить.
+        'hangerName': r[-8],
+        'shopName': r[-7],
+        'shopColor': r[-6],
+        # Этап оверлока: нужен ли он вещи и прошла ли она его.
+        'requiresOverlock': bool(r[-5]) or None,
+        'overlockedAt': (r[-4].isoformat() + 'Z') if r[-4] else None,
+        'overlockUserId': r[-3],
+        'overlockUserName': r[-2],
+        # Отмена покупателем — уже посчитанный признак: у каждой
+        # площадки своё слово для отмены, и разбирать их на экране
+        # значит однажды забыть очередное.
+        'isCancelled': bool(r[-1]) or None,
+        'sewerUserId': r[22],
+        'sewerUserName': r[23],
+        'packerUserId': r[24],
+        'packerUserName': r[25],
+        'ozonStatus': r[26],
+        'ozonPostingNumber': r[27],
+        'productBarcode': r[28],
+        'productOzonSku': r[29],
+        'marketplaceCreatedAt': (r[30].isoformat() + 'Z') if r[30] else None,
+        # Заказ покупателя из нескольких вещей (Яндекс Маркет): вещи связаны общим
+        # ключом и едут по цеху вместе — в интерфейсе показываем «1 из 3».
+        'groupKey': r[31],
+        'groupSize': r[32],
+        'groupPosition': r[33],
+        # Сколько ткани реально уйдёт со склада на одно изделие (с запасом на
+        # подгибку). None — если карточка товара с таким размером не заведена.
+        'isLegalEntity': bool(r[34]),
+        'legalCompanyName': r[35],
+        'legalInn': r[36],
+        'fabricPerItem': float(r[37]) if r[37] is not None else None,
+        'cutAt': (r[38].isoformat() + 'Z') if r[38] else None,
+        'sewnAt': (r[39].isoformat() + 'Z') if r[39] else None,
+    }
+
+
+def _strip_empty(orders: list) -> list:
+    """Выбрасывает пустые поля из ответа.
+
+    У заказа 40 полей, но у большинства половина из них пустая: кластер, связка
+    Яндекса, реквизиты юрлица, имена швеи и упаковщицы у ещё не сшитых вещей.
+    Пустое поле всё равно занимает место в каждой из полутора тысяч строк —
+    это сотни килобайт на пустоту, которые едут на планшет в цех по мобильному
+    интернету при каждом открытии страницы.
+
+    Для получателя ничего не меняется: отсутствующее поле читается так же,
+    как пустое, — интерфейс везде проверяет значение на пустоту.
+    """
+    return [{k: v for k, v in o.items() if v is not None and v != ''} for o in orders]
+
+
+# Сколько заказов отдаём на поиск по номеру. Номер — штука почти уникальная:
+# совпадений обычно один-два, десятки бывают только при поиске по куску номера.
+# Больше сотни на экране всё равно не читают, а вес ответа растёт.
+SEARCH_LIMIT = 100
+
+
+def _handle_search(cur, headers: dict, query: str) -> dict:
+    """ПОИСК ЗАКАЗА ПО НОМЕРУ — МИМО ЛИМИТОВ СПИСКА.
+
+    Общий список конвейера ограничен по объёму: истории в нём примерно месяц,
+    отмен — три недели, дальше ответ не помещается в потолок платформы. Поэтому
+    заказ, отгруженный в прошлом квартале, на экране не находился вообще: он
+    есть в базе, но в список не попадает, и искать его было негде.
+
+    Здесь запрос идёт прямо в базу по номеру, безо всяких лимитов свежести:
+    сколько бы лет заказу ни было, по номеру он найдётся. Ищем по трём номерам
+    сразу — нашему, отправления OZON и заказа покупателя Яндекса: в жизни
+    спрашивают любым из них, а человек за прилавком не обязан знать, чей это
+    номер.
+    """
+    like = f'%{query}%'
+    cur.execute(
+        ORDER_LIST_COLUMNS +
+        "WHERE o.order_number ILIKE %s "
+        "   OR COALESCE(o.ozon_posting_number, '') ILIKE %s "
+        "   OR COALESCE(o.wb_order_id::text, '') ILIKE %s "
+        "   OR COALESCE(o.ym_order_id::text, '') ILIKE %s "
+        # Свежие сверху: чаще ищут недавний заказ, а не однофамильца из архива.
+        "ORDER BY o.id DESC "
+        f"LIMIT {SEARCH_LIMIT}",
+        (like, like, like, like),
+    )
+    orders = _strip_empty([_row_to_order(r) for r in cur.fetchall()])
+    return {
+        'statusCode': 200,
+        'headers': headers,
+        'body': json.dumps({'orders': orders, 'search': query}, default=str),
+    }
+
+
 def handle_get(event: dict, headers: dict, dsn: str) -> dict:
     """Читающая часть конвейера: что показать цеху и менеджеру."""
     params = event.get('queryStringParameters') or {}
@@ -30,11 +218,26 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
     except (TypeError, ValueError):
         history_for = 0
     history_role = (params.get('historyRole') or '').strip()
+    # Поиск по номеру заказа. Идёт в базу напрямую, мимо лимитов списка, —
+    # поэтому находится и заказ полугодовой давности.
+    search = (params.get('search') or '').strip()
 
 
     conn = psycopg2.connect(dsn)
     try:
         cur = conn.cursor()
+
+        # Поиск отвечает раньше всего остального: он не зависит ни от смены, ни
+        # от роли — это просто выборка по номеру.
+        if search:
+            # Одна-две буквы дали бы половину базы: ответ тяжёлый, толку ноль.
+            if len(search) < 2:
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'orders': [], 'search': search}),
+                }
+            return _handle_search(cur, headers, search)
 
         # Сколько ещё шить каждую вещь, взятую швеёй в работу.
         #
@@ -382,63 +585,10 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"  ORDER BY id DESC LIMIT {CANCELLED_ORDERS_LIMIT}"
             ") "
             # Историю режем заранее (CTE выше), поэтому здесь обычная выборка —
-            # порядок и состав полей не меняются.
-            "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
-            "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
-            "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
-            "o.cutter_user_id, cu.full_name, o.hanger_number, "
-            "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
-            "o.ozon_status, o.ozon_posting_number, "
-            # Код товара берём из заказа, а если там пусто (заказы из старой
-            # системы) — из привязанной карточки товара.
-            "COALESCE(o.product_barcode, mi.barcode), "
-            "COALESCE(o.product_ozon_sku, mi.ozon_sku), "
-            "o.marketplace_created_at, o.group_key, o.group_size, o.group_position, "
-            # Заказ юридического лица (B2B с OZON): цех должен видеть пометку прямо
-            # в списке, а реквизиты компании — в карточке заказа.
-            "o.is_legal_entity, o.legal_company_name, o.legal_inn, "
-            # Реальный расход ткани на одно изделие из карточки товара: он включает
-            # запас на подгибку и потому больше «чистой» ширины. Именно эту цифру
-            # кладовщик должен видеть в сводке — столько ткани уйдёт со склада.
-            "(SELECT mim.quantity FROM marketplace_items fmi "
-            " JOIN marketplace_item_materials mim ON mim.marketplace_item_id = fmi.id "
-            " JOIN materials mm ON mm.id = mim.material_id "
-            " JOIN material_types mmt ON mmt.id = mm.type_id "
-            " WHERE mmt.name = 'Тюль' AND fmi.material = o.material "
-            "   AND fmi.width = o.width AND fmi.height = o.height LIMIT 1) AS fabric_per_item, "
-            # Когда вещь реально раскроили и отшили. По этим датам закройщик и швея
-            # сверяют свою выработку за смену или неделю: дата заказа покупателя для
-            # этого не годится — заказ мог пролежать в очереди неделю.
-            "o.cut_at, o.sewn_at, "
-            # Название вешалки — последним полем, чтобы не сдвигать индексы
-            # остальных колонок (их читают по номерам).
-            "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number), "
-            # Магазин заказа: цех общий, но швея должна видеть, чью вещь
-            # шьёт — у МЕГАТЮЛЬ и ДЮНА разные упаковка и вложения.
-            "shp.name, shp.color, "
-            # ЭТАП ОВЕРЛОКА. requires_overlock проставляется на раскрое по
-            # признаку ткани; overlocked_at заполняется, когда край обметали.
-            # По паре этих полей конвейер понимает, где вещь в маршруте:
-            # ждёт оверлок, уже обработана или этап ей вообще не нужен.
-            "o.requires_overlock, o.overlocked_at, o.overlock_user_id, ou.full_name, "
-            # ОТМЕНА — ГОТОВЫМ ПРИЗНАКОМ, А НЕ РАЗБОРОМ СТАТУСОВ НА ЭКРАНЕ.
-            #
-            # У каждой площадки своё слово для отмены, и держать этот разбор на
-            # фронте — значит рано или поздно забыть там очередной статус. Считаем
-            # один раз здесь, тем же условием, что и выборка выше.
-            #
-            # Поле идёт ПОСЛЕДНИМ: остальные колонки читаются по номерам с конца
-            # (r[-1], r[-2] …), и вставка в середину сдвинула бы их все.
-            f"({CANCELLED_SQL}) AS is_cancelled "
-            "FROM orders o "
-            "LEFT JOIN users u ON u.id = o.assigned_user_id "
-            "LEFT JOIN workshops w ON w.id = o.workshop_id "
-            "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
-            "LEFT JOIN users su ON su.id = o.sewer_user_id "
-            "LEFT JOIN users pu ON pu.id = o.packer_user_id "
-            "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
-            "LEFT JOIN shops shp ON shp.id = o.shop_id "
-            "LEFT JOIN users ou ON ou.id = o.overlock_user_id "
+            # порядок и состав полей не меняются. Колонки общие с поиском по
+            # номеру (ORDER_LIST_COLUMNS): оба списка показываются одной и той же
+            # таблицей, и разъехавшиеся наборы полей сразу её сломали бы.
+            + ORDER_LIST_COLUMNS +
             # Берём все активные заказы и только свежую часть истории (см. CTE выше).
             "WHERE o.sewing_status NOT IN ('Готовые', 'Со склада') "
             "   OR o.id IN (SELECT id FROM recent_closed) "
@@ -485,85 +635,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             "     THEN o.id END DESC, "
             "o.id ASC"
         )
-        orders = [
-            {
-                'id': r[0],
-                'orderNumber': r[1],
-                'marketplace': r[2],
-                'orderType': r[3],
-                'status': r[4],
-                'cluster': r[5],
-                'product': r[6],
-                'quantity': float(r[7]),
-                'source': r[8],
-                'createdAt': r[9].isoformat() + 'Z',
-                'completedAt': (r[10].isoformat() + 'Z') if r[10] else None,
-                'material': r[11],
-                'width': r[12],
-                'height': r[13],
-                'sewingStatus': r[14],
-                'assignedUserId': r[15],
-                'assignedUserName': r[16],
-                'workshopId': r[17],
-                'workshopName': r[18],
-                'cutterUserId': r[19],
-                'cutterUserName': r[20],
-                'hangerNumber': r[21],
-                # Хвост списка колонок: вешалка, магазин с цветом и этап
-                # оверлока. Отсчёт с конца, потому что колонок много и
-                # номера легко сбить.
-                'hangerName': r[-8],
-                'shopName': r[-7],
-                'shopColor': r[-6],
-                # Этап оверлока: нужен ли он вещи и прошла ли она его.
-                'requiresOverlock': bool(r[-5]) or None,
-                'overlockedAt': (r[-4].isoformat() + 'Z') if r[-4] else None,
-                'overlockUserId': r[-3],
-                'overlockUserName': r[-2],
-                # Отмена покупателем — уже посчитанный признак: у каждой
-                # площадки своё слово для отмены, и разбирать их на экране
-                # значит однажды забыть очередное.
-                'isCancelled': bool(r[-1]) or None,
-                'sewerUserId': r[22],
-                'sewerUserName': r[23],
-                'packerUserId': r[24],
-                'packerUserName': r[25],
-                'ozonStatus': r[26],
-                'ozonPostingNumber': r[27],
-                'productBarcode': r[28],
-                'productOzonSku': r[29],
-                'marketplaceCreatedAt': (r[30].isoformat() + 'Z') if r[30] else None,
-                # Заказ покупателя из нескольких вещей (Яндекс Маркет): вещи связаны общим
-                # ключом и едут по цеху вместе — в интерфейсе показываем «1 из 3».
-                'groupKey': r[31],
-                'groupSize': r[32],
-                'groupPosition': r[33],
-                # Сколько ткани реально уйдёт со склада на одно изделие (с запасом на
-                # подгибку). None — если карточка товара с таким размером не заведена.
-                'isLegalEntity': bool(r[34]),
-                'legalCompanyName': r[35],
-                'legalInn': r[36],
-                'fabricPerItem': float(r[37]) if r[37] is not None else None,
-                'cutAt': (r[38].isoformat() + 'Z') if r[38] else None,
-                'sewnAt': (r[39].isoformat() + 'Z') if r[39] else None,
-            }
-            for r in cur.fetchall()
-        ]
-
-        # Выбрасываем пустые поля из ответа.
-        #
-        # У заказа 40 полей, но у большинства половина из них пустая: кластер, связка
-        # Яндекса, реквизиты юрлица, имена швеи и упаковщицы у ещё не сшитых вещей.
-        # Пустое поле всё равно занимает место в каждой из полутора тысяч строк —
-        # это сотни килобайт на пустоту, которые едут на планшет в цех по мобильному
-        # интернету при каждом открытии страницы.
-        #
-        # Для получателя ничего не меняется: отсутствующее поле читается так же,
-        # как пустое, — интерфейс везде проверяет значение на пустоту.
-        orders = [
-            {k: v for k, v in o.items() if v is not None and v != ''}
-            for o in orders
-        ]
+        orders = _strip_empty([_row_to_order(r) for r in cur.fetchall()])
     finally:
         conn.close()
 

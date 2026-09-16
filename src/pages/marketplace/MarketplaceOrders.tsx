@@ -3,9 +3,11 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import { useToast } from '@/hooks/use-toast';
 import {
   fetchOrders,
+  searchOrders,
   createManualOrder,
   updateOrder,
   deleteOrder,
+  restoreOrder,
   type Order,
 } from '@/lib/ordersApi';
 import { fetchMarketplaceItems, type MarketplaceItem, type Shop } from '@/lib/marketplaceItemsApi';
@@ -81,6 +83,23 @@ const MarketplaceOrders = () => {
   // Заказ, который админ собрался снять с конвейера — ждёт подтверждения.
   const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Заказ, который возвращают на конвейер после ошибочного снятия.
+  const [restoreTarget, setRestoreTarget] = useState<Order | null>(null);
+  const [restoring, setRestoring] = useState(false);
+
+  // ПОИСК ПО НОМЕРУ ЗАКАЗА.
+  //
+  // Просеивать загруженный список бесполезно: сервер отдаёт только свежую часть
+  // истории (примерно месяц) и свежие отмены — дальше ответ не помещается в
+  // потолок платформы. Заказа прошлого квартала в списке физически НЕТ, и на
+  // вопрос «где мой заказ» ответить было нечем.
+  //
+  // Поэтому поиск уходит на сервер: он ищет прямо в базе и находит заказ любой
+  // давности. Результат показываем вместо списка, не трогая сам список, — стоит
+  // очистить поле, и конвейер возвращается на экран без перезагрузки.
+  const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<Order[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -96,6 +115,72 @@ const MarketplaceOrders = () => {
       setShops(shopList);
     });
   }, []);
+
+  // Ищем не на каждую букву: пока человек печатает номер, запрос ушёл бы
+  // десяток раз подряд, а нужен только последний. Ждём паузу в наборе.
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    let cancelled = false;
+    const t = setTimeout(() => {
+      searchOrders(q)
+        .then((found) => {
+          // Ответ на устаревший запрос игнорируем: иначе медленный ответ по
+          // старому куску номера перетёр бы результат свежего.
+          if (!cancelled) setSearchResults(found);
+        })
+        .catch(() => {
+          if (!cancelled) setSearchResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [search]);
+
+  // ВОЗВРАТ ОШИБОЧНО СНЯТОГО ЗАКАЗА НА КОНВЕЙЕР.
+  //
+  // Возвращаем только СВОЮ отмену: отменённое маркетплейсом сервер вернуть не
+  // даст — отправления на площадке уже нет, и вещь будет некуда отгрузить.
+  const handleRestore = async () => {
+    const order = restoreTarget;
+    if (!order) return;
+    setRestoring(true);
+    try {
+      const res = await restoreOrder(order.id);
+      const extra = res.restoredIds?.length > 1
+        ? ` Вместе со связкой Яндекса вернулось вещей: ${res.restoredIds.length}.`
+        : '';
+      toast({
+        title: `Заказ ${order.orderNumber} вернулся в работу`,
+        description: `Он снова в начале конвейера — ищите его в фильтре «Новые заказы».${extra}`,
+      });
+      setRestoreTarget(null);
+      // Обновляем и список, и результат поиска: заказ чаще всего нашли поиском,
+      // и в нём должен смениться статус, а не остаться старый.
+      load();
+      if (search.trim().length >= 2) {
+        searchOrders(search.trim()).then(setSearchResults).catch(() => undefined);
+      }
+    } catch (err) {
+      toast({
+        title: 'Заказ не вернулся в работу',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   const openEdit = (order: Order) => {
     setEditingOrder(order);
@@ -385,13 +470,22 @@ const MarketplaceOrders = () => {
   // Задвоенные заказы — одна вещь заведена дважды. Показываем предупреждение вверху.
   const duplicates = findDuplicateOrders(orders);
 
-  const filteredOrders = orders.filter(
+  const baseOrders = orders.filter(
     (o) =>
       matchesStatus(o) &&
       (marketplaceFilter === 'all' || o.marketplace === marketplaceFilter) &&
       (typeFilter === 'all' || o.orderType === typeFilter) &&
       (materialFilter === 'all' || o.material === materialFilter)
   );
+
+  // ПРИ ПОИСКЕ ФИЛЬТРЫ НЕ ПРИМЕНЯЕМ.
+  //
+  // Человек ищет конкретный заказ по номеру, и он может оказаться отменённым или
+  // отгруженным полгода назад. Наложи мы сверху вкладку статуса («Новые»), и
+  // найденный заказ тут же исчез бы с экрана — выглядело бы как «поиск не
+  // работает», хотя сервер его нашёл.
+  const searchActive = search.trim().length >= 2;
+  const visibleOrders = searchActive ? searchResults || [] : baseOrders;
 
   // Материалы для фильтра берём из самих заказов: в списке должно быть только то,
   // что реально стоит в очереди — иначе админ выберет ткань, по которой снимать нечего.
@@ -444,13 +538,30 @@ const MarketplaceOrders = () => {
           materialFilter={materialFilter}
           onMaterialChange={setMaterialFilter}
           onBulkCancel={() => setBulkCancelOpen(true)}
+          search={search}
+          onSearchChange={setSearch}
+          searching={searching}
         />
 
+        {/* Пока идёт поиск, говорим об этом словами: пустая таблица читается как
+            «ничего не нашлось», и человек уходит, не дождавшись ответа. */}
+        {searchActive && (
+          <p className="text-sm text-muted-foreground">
+            {searching
+              ? 'Ищем заказ по номеру...'
+              : `Найдено заказов: ${visibleOrders.length}. Поиск идёт по всей базе — ` +
+                'фильтры и вкладки статусов к нему не применяются.'}
+          </p>
+        )}
+
         <OrdersTable
-          loading={loading}
-          orders={filteredOrders}
+          loading={searchActive ? searching && !searchResults : loading}
+          orders={visibleOrders}
           onEdit={openEdit}
-          onDelete={(id) => setDeleteTarget(orders.find((o) => o.id === id) || null)}
+          onDelete={(id) =>
+            setDeleteTarget(visibleOrders.find((o) => o.id === id) || null)
+          }
+          onRestore={setRestoreTarget}
           canManage={canManageOrders}
         />
       </div>
@@ -488,6 +599,43 @@ const MarketplaceOrders = () => {
             >
               {deleting && <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" />}
               Снять и отменить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Возврат в работу: заказ снова поедет по цеху и на него спишут ткань,
+          поэтому спрашиваем подтверждение, как и при снятии. */}
+      <AlertDialog
+        open={!!restoreTarget}
+        onOpenChange={(open) => !open && !restoring && setRestoreTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Вернуть заказ в работу?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Заказ {restoreTarget?.orderNumber} вернётся в самое начало конвейера — этап
+              «Новый», без закройщика и цеха. Его снова возьмут в раскрой и отошьют.
+            </AlertDialogDescription>
+            <AlertDialogDescription>
+              На маркетплейсе при этом ничего не меняется: вернуть можно только заказ,
+              который сняли мы сами. Если отмену сделала площадка, сервер откажет —
+              отправления там больше нет и отгружать вещь некуда.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restoring}>Не возвращать</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={restoring}
+              onClick={(e) => {
+                // Закрываем диалог сами, после ответа сервера: отказ («отменил
+                // маркетплейс») админ должен увидеть, а не гадать.
+                e.preventDefault();
+                handleRestore();
+              }}
+            >
+              {restoring && <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" />}
+              Вернуть в работу
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

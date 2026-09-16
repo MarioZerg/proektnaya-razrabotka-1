@@ -108,6 +108,25 @@
       "path": "/",
       "body": {"action": "delete_order", "id": 999999},
       "expectedStatus": 401
+    },
+    {
+      "name": "Restore order without auth is rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "restore_order", "id": 999999},
+      "expectedStatus": 401
+    },
+    {
+      "name": "Search orders by number works",
+      "method": "GET",
+      "path": "/?search=0000",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Search with too short query returns empty",
+      "method": "GET",
+      "path": "/?search=1",
+      "expectedStatus": 200
     }
   ]
 }

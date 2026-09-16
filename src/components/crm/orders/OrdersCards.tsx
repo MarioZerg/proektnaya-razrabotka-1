@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import ShopBadge from '@/components/crm/ShopBadge';
-import { canPullFromConveyor, type Order } from '@/lib/ordersApi';
+import { canPullFromConveyor, canRestoreOrder, type Order } from '@/lib/ordersApi';
 import {
   formatDate,
   marketplaceLogo,
@@ -14,6 +14,8 @@ interface OrdersCardsProps {
   orders: Order[];
   onEdit: (order: Order) => void;
   onDelete: (id: number) => void;
+  /** Вернуть ошибочно снятый заказ обратно на конвейер. */
+  onRestore: (order: Order) => void;
   ozonStatusLabel: (s?: string | null) => string | null;
   /** Кладовщик и менеджер смотрят заказы только как справку — без правки и удаления. */
   canManage: boolean;
@@ -25,6 +27,7 @@ const OrdersCards = ({
   orders,
   onEdit,
   onDelete,
+  onRestore,
   ozonStatusLabel,
   canManage,
 }: OrdersCardsProps) => {
@@ -96,6 +99,14 @@ const OrdersCards = ({
                   <Button size="sm" variant="destructive" onClick={() => onDelete(o.id)}>
                     <Icon name="Trash2" size={14} className="mr-1.5" />
                     Снять с конвейера
+                  </Button>
+                )}
+                {/* Снятый по ошибке заказ возвращается на конвейер. Отменённый
+                    самим маркетплейсом — нет: отгружать вещь будет некуда. */}
+                {canRestoreOrder(o) && (
+                  <Button size="sm" variant="outline" onClick={() => onRestore(o)}>
+                    <Icon name="Undo2" size={14} className="mr-1.5" />
+                    Вернуть в работу
                   </Button>
                 )}
               </div>
