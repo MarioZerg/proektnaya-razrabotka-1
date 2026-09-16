@@ -1,20 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
@@ -27,7 +13,12 @@ import {
 } from '@/lib/shipmentsApi';
 import { printBarcodes } from '@/lib/printBarcodes';
 import { formatQuantity } from '@/lib/formatQuantity';
-import { formatDateTime } from '@/lib/dateUtils';
+import SupplyShowHeader, {
+  SupplyShowSearch,
+} from '@/components/crm/shipments/SupplyShowHeader';
+import SupplyShowSummary from '@/components/crm/shipments/SupplyShowSummary';
+import SupplyShowCards from '@/components/crm/shipments/SupplyShowCards';
+import SupplyShowTable from '@/components/crm/shipments/SupplyShowTable';
 
 /**
  * Карточка приёмки от поставщика.
@@ -207,362 +198,57 @@ const SupplyShow = () => {
   return (
     <CrmLayout>
       <div className="min-w-0 space-y-4 overflow-x-hidden">
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <Button variant="ghost" size="sm" className="mb-1 px-0" onClick={() => navigate(-1)}>
-              <Icon name="ChevronLeft" size={16} className="mr-1" />
-              К приёмкам
-            </Button>
-            <h1 className="text-xl font-bold">Приёмка #{id}</h1>
-            {detail && (
-              <p className="mt-1 break-words text-sm text-muted-foreground">
-                {detail.itemSuppliers || detail.supplierName || 'Поставщик не указан'} ·{' '}
-                {formatDateTime(detail.completedAt || detail.createdAt)}
-                {detail.comment ? ` · ${detail.comment}` : ''}
-              </p>
-            )}
-          </div>
-          <Button
-            variant="outline"
-            className="w-full shrink-0 sm:w-auto"
-            onClick={printAllFound}
-            disabled={loading}
-          >
-            <Icon name="Barcode" size={16} className="mr-1" />
-            Печать всех ({filtered.length})
-          </Button>
-        </div>
+        <SupplyShowHeader
+          id={id}
+          detail={detail}
+          loading={loading}
+          filteredCount={filtered.length}
+          onBack={() => navigate(-1)}
+          onPrintAllFound={printAllFound}
+        />
 
         {loading && <p className="text-muted-foreground">Загрузка...</p>}
 
         {detail && (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Card className="shadow-none">
-                <CardContent className="py-4">
-                  <p className="text-sm text-muted-foreground">Статус</p>
-                  <Badge variant={isPending ? 'secondary' : 'default'} className="mt-1">
-                    {isPending ? 'Ожидает подтверждения' : detail.status}
-                  </Badge>
-                </CardContent>
-              </Card>
-              <Card className="shadow-none">
-                <CardContent className="py-4">
-                  <p className="text-sm text-muted-foreground">Рулонов</p>
-                  <p className="text-2xl font-bold">{totals.count}</p>
-                  <p className="text-xs text-muted-foreground">на складе: {totals.inStorage}</p>
-                </CardContent>
-              </Card>
-              <Card className="shadow-none">
-                <CardContent className="py-4">
-                  <p className="text-sm text-muted-foreground">Всего метров/шт</p>
-                  <p className="text-2xl font-bold">{formatQuantity(totals.quantity)}</p>
-                </CardContent>
-              </Card>
-              <Card className="shadow-none">
-                <CardContent className="py-4">
-                  <p className="text-sm text-muted-foreground">Логистика</p>
-                  <p className="text-2xl font-bold">
-                    {detail.logisticsCost ? `${detail.logisticsCost.toLocaleString('ru-RU')} ₽` : '—'}
-                  </p>
-                  {!detail.logisticsCost && (
-                    <p className="text-xs text-amber-700">не указана</p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+            <SupplyShowSummary
+              detail={detail}
+              totals={totals}
+              isPending={isPending}
+              isAdmin={isAdmin}
+              logisticsValue={logisticsValue}
+              setLogisticsValue={setLogisticsValue}
+              savingLogistics={savingLogistics}
+              onSaveLogistics={saveLogistics}
+            />
 
-            {/* Счёт за перевозку часто приходит позже машины. Дозаполнить сумму можно
-                только пока её нет: по проставленной логистике уже считались недостачи. */}
-            {isAdmin && !detail.logisticsCost && !isPending && (
-              <Card className="border-amber-300 bg-amber-50 shadow-none">
-                <CardContent className="flex min-w-0 flex-wrap items-end gap-3 py-4">
-                  <div className="min-w-0 flex-1 space-y-1.5 sm:flex-none">
-                    <Label className="text-amber-900">Логистика за поставку, ₽</Label>
-                    <Input
-                      inputMode="decimal"
-                      placeholder="25450"
-                      className="w-full bg-white sm:w-40"
-                      value={logisticsValue}
-                      onChange={(e) => setLogisticsValue(e.target.value)}
-                    />
-                  </div>
-                  <Button onClick={saveLogistics} disabled={savingLogistics}>
-                    {savingLogistics ? 'Сохранение...' : 'Указать логистику'}
-                  </Button>
-                  <p className="text-xs text-amber-800">
-                    Разделится поровну на все метры приёмки и войдёт в себестоимость.
-                    Указать можно один раз
-                  </p>
-                </CardContent>
-              </Card>
-            )}
+            <SupplyShowSearch search={search} setSearch={setSearch} />
 
-            {/* Прямая инструкция администратору: без неё правку метража не находили —
-                искали отдельную кнопку «Редактировать», которой тут нет и не будет. */}
-            {isAdmin && !isPending && totals.inStorage > 0 && (
-              <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3">
-                <Icon name="Pencil" size={16} className="mt-0.5 shrink-0 text-primary" />
-                <p className="text-sm">
-                  <span className="font-medium">Метраж рулона правится прямо в таблице:</span>{' '}
-                  нажмите на число в столбце «Метраж» — оно обведено пунктиром у тех рулонов,
-                  которые ещё целыми лежат на складе. Рулоны в цехе и початые изменить нельзя
-                </p>
-              </div>
-            )}
+            <SupplyShowCards
+              filtered={filtered}
+              detail={detail}
+              isAdmin={isAdmin}
+              editItemId={editItemId}
+              setEditItemId={setEditItemId}
+              editValue={editValue}
+              setEditValue={setEditValue}
+              savingQty={savingQty}
+              onSaveQuantity={saveQuantity}
+              onPrintItem={printItem}
+            />
 
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative min-w-0 flex-1">
-                <Icon
-                  name="Search"
-                  size={15}
-                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-                />
-                <Input
-                  className="pl-8"
-                  placeholder="Штрихкод или материал — можно сканером"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </div>
-              {search && (
-                <Button variant="ghost" size="sm" onClick={() => setSearch('')}>
-                  Сбросить
-                </Button>
-              )}
-            </div>
-
-            <div className="space-y-3 md:hidden">
-              {filtered.length === 0 && (
-                <p className="py-6 text-center text-sm text-muted-foreground">Ничего не найдено</p>
-              )}
-              {filtered.map((item) => {
-                const code = item.barcode || item.reservedBarcodes?.[0];
-                const editing = editItemId === item.id;
-                return (
-                  <div key={item.id} className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3">
-                    <div className="min-w-0">
-                      <div className="break-words font-medium">{item.materialName}</div>
-                      <div className="mt-0.5 break-all font-mono-tech text-xs text-muted-foreground">
-                        {code || '—'}
-                      </div>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      {item.rollStatus === 'in_storage' && (
-                        <Badge variant="secondary">На складе</Badge>
-                      )}
-                      {item.rollStatus === 'in_workshop' && (
-                        <Badge variant="default">В цехе</Badge>
-                      )}
-                      {item.rollStatus === 'completed' && (
-                        <Badge variant="outline">Израсходован</Badge>
-                      )}
-                      {!item.rollStatus && (
-                        <span className="text-xs text-muted-foreground">не принят</span>
-                      )}
-                      <span className="text-xs text-muted-foreground">
-                        {item.supplierName || detail.supplierName || '—'}
-                      </span>
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                      {editing ? (
-                        <div className="flex min-w-0 items-center gap-1">
-                          <Input
-                            autoFocus
-                            inputMode="decimal"
-                            className="h-8 w-24 text-right"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                          />
-                          <Button
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => saveQuantity(item)}
-                            disabled={savingQty}
-                          >
-                            <Icon name="Check" size={14} />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8"
-                            onClick={() => setEditItemId(null)}
-                          >
-                            <Icon name="X" size={14} />
-                          </Button>
-                        </div>
-                      ) : isAdmin && item.canEditQuantity ? (
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1.5 rounded-md border border-dashed
-                                     border-primary/40 px-2 py-1 font-medium
-                                     hover:border-primary hover:bg-primary/5"
-                          title="Нажмите, чтобы изменить метраж рулона"
-                          onClick={() => {
-                            setEditItemId(item.id);
-                            setEditValue(String(item.quantity ?? ''));
-                          }}
-                        >
-                          <Icon name="Pencil" size={12} className="text-primary" />
-                          {formatQuantity(item.quantity)} {item.unit}
-                        </button>
-                      ) : (
-                        <span className="font-medium">
-                          {formatQuantity(item.quantity)} {item.unit}
-                        </span>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-muted-foreground">
-                          {item.costPerUnit != null
-                            ? `${item.costPerUnit.toFixed(2)} ₽`
-                            : '—'}
-                        </span>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          title="Печать стикера рулона (120×75 мм)"
-                          onClick={() => printItem(item)}
-                        >
-                          <Icon name="Barcode" size={14} />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="hidden min-w-0 overflow-hidden rounded-md border md:block">
-              <Table className="min-w-0 table-fixed">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[28%] whitespace-normal">Рулон</TableHead>
-                    <TableHead className="w-[18%] whitespace-normal text-right">
-                      Метраж
-                      {isAdmin && (
-                        <span className="ml-1 font-normal text-muted-foreground">
-                          (можно менять)
-                        </span>
-                      )}
-                    </TableHead>
-                    <TableHead className="w-[22%] whitespace-normal">Где / поставщик</TableHead>
-                    <TableHead className="w-[20%] whitespace-normal text-right">Себестоимость</TableHead>
-                    <TableHead className="w-[12%] whitespace-normal" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="py-6 text-center text-muted-foreground">
-                        Ничего не найдено
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {filtered.map((item) => {
-                    const code = item.barcode || item.reservedBarcodes?.[0];
-                    const editing = editItemId === item.id;
-                    return (
-                      <TableRow key={item.id}>
-                        <TableCell className="whitespace-normal break-words align-top">
-                          <div className="font-medium">{item.materialName}</div>
-                          <div className="mt-0.5 break-all font-mono-tech text-xs text-muted-foreground">
-                            {code || '—'}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right align-top">
-                          {editing ? (
-                            <div className="flex items-center justify-end gap-1">
-                              <Input
-                                autoFocus
-                                inputMode="decimal"
-                                className="h-8 w-24 text-right"
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                              />
-                              <Button
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => saveQuantity(item)}
-                                disabled={savingQty}
-                              >
-                                <Icon name="Check" size={14} />
-                              </Button>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-8 w-8"
-                                onClick={() => setEditItemId(null)}
-                              >
-                                <Icon name="X" size={14} />
-                              </Button>
-                            </div>
-                          ) : isAdmin && item.canEditQuantity ? (
-                            /* КЛИКАБЕЛЬНЫЙ МЕТРАЖ. Раньше правка висела серым карандашом
-                               в дальней колонке справа — администратор её просто не находил.
-                               Теперь нажимается само число: рядом с ним стоит карандаш,
-                               и подпись прямо говорит, что цифру можно менять. */
-                            <button
-                              type="button"
-                              className="ml-auto flex items-center gap-1.5 rounded-md border border-dashed
-                                         border-primary/40 px-2 py-1 text-right font-medium
-                                         hover:border-primary hover:bg-primary/5"
-                              title="Нажмите, чтобы изменить метраж рулона"
-                              onClick={() => {
-                                setEditItemId(item.id);
-                                setEditValue(String(item.quantity ?? ''));
-                              }}
-                            >
-                              <Icon name="Pencil" size={12} className="text-primary" />
-                              {formatQuantity(item.quantity)} {item.unit}
-                            </button>
-                          ) : (
-                            <span className="font-medium">
-                              {formatQuantity(item.quantity)} {item.unit}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="whitespace-normal break-words align-top">
-                          <div>
-                            {item.rollStatus === 'in_storage' && (
-                              <Badge variant="secondary">На складе</Badge>
-                            )}
-                            {item.rollStatus === 'in_workshop' && (
-                              <Badge variant="default">В цехе</Badge>
-                            )}
-                            {item.rollStatus === 'completed' && (
-                              <Badge variant="outline">Израсходован</Badge>
-                            )}
-                            {!item.rollStatus && (
-                              <span className="text-xs text-muted-foreground">не принят</span>
-                            )}
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {item.supplierName || detail.supplierName || '—'}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right text-sm align-top">
-                          {item.costPerUnit != null
-                            ? `${item.costPerUnit.toFixed(2)} ₽`
-                            : '—'}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              title="Печать стикера рулона (120×75 мм)"
-                              onClick={() => printItem(item)}
-                            >
-                              <Icon name="Barcode" size={14} />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+            <SupplyShowTable
+              filtered={filtered}
+              detail={detail}
+              isAdmin={isAdmin}
+              editItemId={editItemId}
+              setEditItemId={setEditItemId}
+              editValue={editValue}
+              setEditValue={setEditValue}
+              savingQty={savingQty}
+              onSaveQuantity={saveQuantity}
+              onPrintItem={printItem}
+            />
 
             <p className="text-xs text-muted-foreground">
               Принятую приёмку изменить нельзя — материал уже на складе.
