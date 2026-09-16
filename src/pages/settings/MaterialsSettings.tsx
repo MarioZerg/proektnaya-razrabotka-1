@@ -40,6 +40,9 @@ const MaterialsSettings = () => {
   const [shops, setShops] = useState<Shop[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  // Группа в чипах сверху: без фильтра таблица смешивает тюль, тесьму и пакеты,
+  // и нужный материал приходится искать по страницам.
+  const [typeFilter, setTypeFilter] = useState<number | 'all'>('all');
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -74,8 +77,31 @@ const MaterialsSettings = () => {
     return map;
   }, [shops]);
 
-  const totalPages = Math.max(1, Math.ceil(materials.length / PAGE_SIZE));
-  const pagedMaterials = materials.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const filteredMaterials = useMemo(
+    () => (typeFilter === 'all' ? materials : materials.filter((m) => m.typeId === typeFilter)),
+    [materials, typeFilter]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(filteredMaterials.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedMaterials = filteredMaterials.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
+
+  // Сменили группу — возвращаемся на первую страницу: иначе легко остаться на
+  // третьей, а в новой группе материалов меньше и таблица окажется пустой.
+  useEffect(() => {
+    setPage(1);
+  }, [typeFilter]);
+
+  // Группу удалили, а фильтр на неё ещё стоит — сбрасываем, иначе таблица
+  // молча останется пустой.
+  useEffect(() => {
+    if (typeFilter !== 'all' && !types.some((t) => t.id === typeFilter)) {
+      setTypeFilter('all');
+    }
+  }, [types, typeFilter]);
 
   const openCreateDialog = () => {
     setEditingId(null);
@@ -180,8 +206,8 @@ const MaterialsSettings = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="min-w-0 space-y-6 overflow-x-hidden">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-xl font-bold">Материалы</h1>
 
           <MaterialFormDialog
@@ -207,16 +233,19 @@ const MaterialsSettings = () => {
         <MaterialTypesRow
           types={types}
           materials={materials}
+          selectedTypeId={typeFilter}
+          onSelectType={setTypeFilter}
           onDeleteType={handleDeleteType}
         />
 
         <MaterialsTable
           loading={loading}
-          materials={materials}
+          materials={filteredMaterials}
           pagedMaterials={pagedMaterials}
+          filtered={typeFilter !== 'all'}
           typeById={typeById}
           shopById={shopById}
-          page={page}
+          page={currentPage}
           totalPages={totalPages}
           setPage={setPage}
           onEdit={openEditDialog}

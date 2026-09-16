@@ -55,13 +55,13 @@ const ToWorkshopCards = ({
         const canExpand = s.status === 'Отправлено' || s.status === 'Получено';
         const needsCorrection = s.status === 'Отправлено' && !!s.rejectReason;
         return (
-          <div key={s.id} className="rounded-md border border-border p-3">
+          <div key={s.id} className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="font-semibold">{s.materialNames || '—'}</div>
                 <div className="text-xs text-muted-foreground">Заявка #{s.id}</div>
               </div>
-              <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+              <div className="flex max-w-[50%] shrink-0 flex-wrap justify-end gap-1.5">
                 <Badge className={statusStyle(s.status, needsCorrection)}>
                   {needsCorrection ? 'Нужна правка' : s.status}
                 </Badge>
@@ -77,8 +77,8 @@ const ToWorkshopCards = ({
               <p className="mt-1 text-xs text-destructive">Отказано: {s.rejectReason}</p>
             )}
 
-            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
-              <div>
+            <div className="mt-2 space-y-1 text-sm">
+              <div className="break-words">
                 <span className="text-muted-foreground">Цех: </span>
                 {s.workshopName || '—'}
               </div>
@@ -94,14 +94,13 @@ const ToWorkshopCards = ({
                 <span className="text-muted-foreground">Создано: </span>
                 {formatDate(s.createdAt)}
               </div>
+              {s.comment && (
+                <div className="break-words">
+                  <span className="text-muted-foreground">Комментарий: </span>
+                  {s.comment}
+                </div>
+              )}
             </div>
-
-            {s.comment && (
-              <div className="mt-1 text-sm">
-                <span className="text-muted-foreground">Комментарий: </span>
-                {s.comment}
-              </div>
-            )}
 
             {canExpand && (
               <Collapsible open={isExpanded} className="mt-1.5">
@@ -137,20 +136,22 @@ const ToWorkshopCards = ({
               </Collapsible>
             )}
 
-            <div className="mt-3 flex flex-wrap justify-end gap-2">
+            <div className="mt-3 flex min-w-0 flex-wrap gap-2">
               {canAssemble && s.status === 'Новый' && (
-                <Button size="sm" variant="outline" onClick={() => onOpenShipment(s.id)}>
+                <Button size="sm" variant="outline" className="min-w-0 flex-1" onClick={() => onOpenShipment(s.id)}>
+                  <Icon name="ScanLine" size={14} className="mr-1" />
                   Собрать
                 </Button>
               )}
               {canAssemble && needsCorrection && (
-                <Button size="sm" variant="outline" onClick={() => onOpenShipment(s.id)}>
+                <Button size="sm" variant="outline" className="min-w-0 flex-1" onClick={() => onOpenShipment(s.id)}>
                   <Icon name="Wrench" size={14} className="mr-1" />
                   Исправить
                 </Button>
               )}
               {s.status === 'Отправлено' && canReceive(s) && (
-                <Button size="sm" onClick={() => onOpenReceiveDialog(s.id)}>
+                <Button size="sm" className="min-w-0 flex-1" onClick={() => onOpenReceiveDialog(s.id)}>
+                  <Icon name="PackageCheck" size={14} className="mr-1" />
                   Принять в цехе
                 </Button>
               )}

@@ -261,9 +261,9 @@ const storekeeperNav: NavItem[] = [
     icon: 'Truck',
     children: [
       { label: 'Отгрузка от поставщика', path: '/crm/shipments/from-supplier' },
+      { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
       { label: 'Возврат поставщику', path: '/crm/shipments/return-to-supplier' },
       { label: 'Списание брака', path: '/crm/shipments/defect-writeoff' },
-      { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
       { label: 'Поставка в маркет', path: '/crm/shipments/to-marketplace' },
       // «Приём возвратов» убран: там видно всё движение возврата и принимаются решения
       // по нему. Кладовщику это не нужно — он забирает вещи по кодам для ПВЗ и заводит
@@ -379,9 +379,9 @@ const adminNav: NavItem[] = [
     icon: 'Truck',
     children: [
       { label: 'Отгрузка от поставщика', path: '/crm/shipments/from-supplier' },
+      { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
       { label: 'Возврат поставщику', path: '/crm/shipments/return-to-supplier' },
       { label: 'Списание брака', path: '/crm/shipments/defect-writeoff' },
-      { label: 'Отгрузка в цех', path: '/crm/shipments/to-workshop' },
       { label: 'Поставка в маркет', path: '/crm/shipments/to-marketplace' },
       { label: 'Приём возвратов', path: '/crm/shipments/receive-returns' },
       // Штрихкоды продавца: без них возвраты на ПВЗ не выдают.

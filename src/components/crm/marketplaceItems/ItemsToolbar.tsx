@@ -31,8 +31,8 @@ const ItemsToolbar = ({
   filteredCount,
 }: ItemsToolbarProps) => {
   return (
-    <div className="flex flex-wrap items-end gap-3">
-      <div className="w-full max-w-xs space-y-1.5">
+    <div className="flex min-w-0 flex-wrap items-end gap-3">
+      <div className="w-full min-w-0 max-w-xs space-y-1.5">
         <Label>Поиск по SKU</Label>
         <div className="relative">
           <Icon
@@ -51,7 +51,7 @@ const ItemsToolbar = ({
           />
         </div>
       </div>
-      <div className="w-full max-w-xs space-y-1.5">
+      <div className="w-full min-w-0 max-w-xs space-y-1.5">
         <Label>Материал</Label>
         <Select
           value={materialFilter}

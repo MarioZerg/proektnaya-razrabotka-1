@@ -62,27 +62,32 @@ const ReceiveConfirmDialog = ({ shipment, onOpenChange, saving, onAccept, onReje
         </DialogHeader>
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Проверьте состав заявки перед подтверждением — {rolls.length} рулон(ов) на общую сумму.
+            Проверьте состав перед подтверждением: {rolls.length}{' '}
+            {rolls.length === 1 ? 'рулон' : 'рулонов'}
+            {rolls.length > 0
+              ? ` · ${formatQuantity(rolls.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0))} ${rolls[0]?.unit || ''}`
+              : ''}
+            .
           </p>
 
           {rolls.length === 0 ? (
             <p className="text-sm text-muted-foreground">В заявке нет рулонов</p>
           ) : (
-            <div className="rounded-md border border-border">
-              <Table>
+            <div className="min-w-0 overflow-hidden rounded-md border border-border">
+              <Table className="min-w-0 table-fixed">
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Рулон</TableHead>
-                    <TableHead>Материал</TableHead>
-                    <TableHead>Кол-во</TableHead>
+                  <TableRow className="bg-primary hover:bg-primary">
+                    <TableHead className="w-[34%] whitespace-normal text-primary-foreground">Рулон</TableHead>
+                    <TableHead className="w-[40%] whitespace-normal text-primary-foreground">Материал</TableHead>
+                    <TableHead className="w-[26%] whitespace-normal text-primary-foreground">Кол-во</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rolls.map((i) => (
                     <TableRow key={i.id}>
-                      <TableCell className="font-mono-tech">{i.rollBarcode}</TableCell>
-                      <TableCell>{i.materialName}</TableCell>
-                      <TableCell>
+                      <TableCell className="whitespace-normal break-all font-mono-tech">{i.rollBarcode}</TableCell>
+                      <TableCell className="whitespace-normal break-words">{i.materialName}</TableCell>
+                      <TableCell className="whitespace-normal">
                         {formatQuantity(i.quantity)} {i.unit}
                       </TableCell>
                     </TableRow>

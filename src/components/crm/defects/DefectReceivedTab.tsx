@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import { fetchDefectHistory, type DefectHistoryRow } from '@/lib/kioskApi';
 import { roleLabels, formatQty, formatDate } from './defectShared';
+import DefectReceivedCards from './DefectReceivedCards';
 
 /**
  * Вкладка «Принятый брак».
@@ -69,7 +70,7 @@ const DefectReceivedTab = () => {
   const unit = rows[0]?.unit || 'м';
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <Card className="border-border shadow-none">
         <CardContent className="grid gap-3 pt-6 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-1.5">
@@ -127,24 +128,43 @@ const DefectReceivedTab = () => {
           За выбранный период принятого брака нет
         </p>
       ) : (
-        <Card className="shadow-none">
-          <CardContent className="overflow-x-auto p-0">
-            <Table>
+        <>
+          <div className="md:hidden">
+            <DefectReceivedCards rows={visible} />
+          </div>
+          {/* Семь колонок уезжали за край вместе с рулоном и поставкой.
+              Связанные поля собраны в ячейки, таблица table-fixed занимает ширину экрана. */}
+          <div className="hidden min-w-0 overflow-hidden rounded-md border border-border md:block">
+            <Table className="min-w-0 table-fixed">
               <TableHeader>
-                <TableRow>
-                  <TableHead>Сотрудник</TableHead>
-                  <TableHead>Материал</TableHead>
-                  <TableHead className="text-right">Кол-во</TableHead>
-                  <TableHead>Рулон</TableHead>
-                  <TableHead>Поставка</TableHead>
-                  <TableHead>Причина</TableHead>
-                  <TableHead>Принят</TableHead>
+                <TableRow className="bg-primary hover:bg-primary">
+                  <TableHead className="w-[28%] whitespace-normal text-primary-foreground">
+                    Материал
+                  </TableHead>
+                  <TableHead className="w-[16%] whitespace-normal text-primary-foreground">
+                    Сотрудник
+                  </TableHead>
+                  <TableHead className="w-[24%] whitespace-normal text-primary-foreground">
+                    Рулон и поставка
+                  </TableHead>
+                  <TableHead className="w-[18%] whitespace-normal text-primary-foreground">
+                    Причина
+                  </TableHead>
+                  <TableHead className="w-[14%] whitespace-normal text-primary-foreground">
+                    Принят
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {visible.map((r) => (
                   <TableRow key={r.barcode}>
-                    <TableCell>
+                    <TableCell className="whitespace-normal break-words align-top">
+                      <div className="font-medium">{r.materialName}</div>
+                      <div className="text-sm font-semibold tabular-nums">
+                        {formatQty(r.quantity)} {r.unit || ''}
+                      </div>
+                    </TableCell>
+                    <TableCell className="whitespace-normal break-words align-top">
                       <div className="font-medium">{r.userName}</div>
                       {r.userRole && (
                         <div className="text-xs text-muted-foreground">
@@ -152,17 +172,11 @@ const DefectReceivedTab = () => {
                         </div>
                       )}
                     </TableCell>
-                    <TableCell>{r.materialName}</TableCell>
-                    <TableCell className="text-right font-semibold">
-                      {formatQty(r.quantity)} {r.unit || ''}
-                    </TableCell>
-                    <TableCell className="font-mono-tech text-sm">
-                      {r.rollBarcode || '—'}
-                    </TableCell>
-                    <TableCell className="text-sm">
+                    <TableCell className="whitespace-normal break-words align-top text-sm">
+                      <div className="break-all font-mono-tech">{r.rollBarcode || '—'}</div>
                       {/* Поставщик известен всегда, номер поставки — только у рулонов,
                           заведённых через приёмку. Показываем что есть. */}
-                      <div>{r.supplierName || '—'}</div>
+                      <div className="mt-0.5">{r.supplierName || '—'}</div>
                       {r.shipmentId && (
                         <div className="text-xs text-muted-foreground">
                           поставка №{r.shipmentId}
@@ -170,13 +184,17 @@ const DefectReceivedTab = () => {
                         </div>
                       )}
                     </TableCell>
-                    <TableCell className="text-sm">
-                      <Badge variant="secondary">{r.reasonLabel}</Badge>
+                    <TableCell className="whitespace-normal align-top text-sm">
+                      <Badge variant="secondary" className="whitespace-normal">
+                        {r.reasonLabel}
+                      </Badge>
                       {r.comment && (
-                        <div className="mt-1 text-xs text-muted-foreground">{r.comment}</div>
+                        <div className="mt-1 break-words text-xs text-muted-foreground">
+                          {r.comment}
+                        </div>
                       )}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell className="whitespace-normal break-words align-top text-sm text-muted-foreground">
                       {formatDate(r.receivedAt)}
                       {r.receivedByName && (
                         <div className="text-xs">{r.receivedByName}</div>
@@ -186,8 +204,8 @@ const DefectReceivedTab = () => {
                 ))}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
+          </div>
+        </>
       )}
     </div>
   );

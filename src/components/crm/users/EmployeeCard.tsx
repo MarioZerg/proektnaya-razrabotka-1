@@ -55,11 +55,11 @@ const EmployeeCard = ({
       </Avatar>
 
       <div className="min-w-0 flex-1">
-        {/* «Фамилия И. О.» в одну строку: полное ФИО переносилось на вторую строку,
-            из-за чего карточки прыгали по высоте, а на телефоне имя обрывалось
-            многоточием. Полное имя остаётся в подсказке и в карточке сотрудника. */}
+        {/* Имя и инициал отчества без обрезки: раньше truncate съедал «Елена А.»
+            и в списке оставалась одна фамилия. Значки документов — отдельной
+            строкой под именем, чтобы не отбирать у него ширину. */}
         <p
-          className="flex items-center gap-1.5 truncate text-sm font-semibold leading-tight sm:text-base"
+          className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold leading-snug sm:text-base"
           title={emp.fullName}
         >
           {/* Красный знак: сотрудник подписал Акт о расторжении и ждёт решения.
@@ -73,7 +73,7 @@ const EmployeeCard = ({
               aria-label="Договор подан на расторжение"
             />
           )}
-          <span className="truncate">{shortName(emp.fullName)}</span>
+          <span className="min-w-0 basis-full break-words">{shortName(emp.fullName)}</span>
           {/* Готовность документов тремя значками: сканы, паспорт, номер для
               выплат. Раньше это было видно только внутри карточки, и понять,
               кому чего не хватает, можно было лишь открыв каждого по очереди. */}

@@ -43,7 +43,7 @@ const DefectReceive = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
+      <div className="min-w-0 space-y-6">
         <div>
           <h1 className="text-xl font-bold">Приём брака из цеха</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -52,6 +52,7 @@ const DefectReceive = () => {
         </div>
 
         <Tabs
+          className="min-w-0"
           value={tab}
           onValueChange={(v) => {
             setTab(v);
@@ -67,7 +68,7 @@ const DefectReceive = () => {
           <TabsContent value="scan" className="mt-4">
             <DefectScanTab />
           </TabsContent>
-          <TabsContent value="received" className="mt-4">
+          <TabsContent value="received" className="mt-4 min-w-0">
             <DefectReceivedTab />
           </TabsContent>
           <TabsContent value="missing" className="mt-4">

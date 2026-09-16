@@ -250,30 +250,37 @@ const MarketplaceItemsSettings = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+      <div className="min-w-0 space-y-6 overflow-x-hidden">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
             <h1 className="text-xl font-bold">Товары маркетплейса</h1>
             {!loading && (
-              <Badge variant="secondary" className="text-sm font-normal">
+              <Badge variant="secondary" className="max-w-full text-sm font-normal">
                 {currentShop ? `Товаров в «${currentShop.name}»` : 'Всего товаров'}:{' '}
                 {shopItems.length}
               </Badge>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={handleSync} disabled={syncing}>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={handleSync}
+              disabled={syncing}
+              className="min-w-0 max-w-full"
+            >
               <Icon
                 name={syncing ? 'Loader2' : 'RefreshCw'}
                 size={16}
-                className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
+                className={`mr-1.5 shrink-0 ${syncing ? 'animate-spin' : ''}`}
               />
-              {syncing
-                ? 'Синхронизация…'
-                : currentShop
-                  ? `Синхронизировать «${currentShop.name}»`
-                  : 'Синхронизировать карточки'}
+              <span className="min-w-0 truncate">
+                {syncing
+                  ? 'Синхронизация…'
+                  : currentShop
+                    ? `Синхронизировать «${currentShop.name}»`
+                    : 'Синхронизировать карточки'}
+              </span>
             </Button>
 
           <ItemFormDialog

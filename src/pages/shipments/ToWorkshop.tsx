@@ -1,15 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
+import { cn } from '@/lib/utils';
 import {
   fetchShipments,
   fetchShipmentDetail,
@@ -28,6 +21,7 @@ import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { getAccessZone } from '@/lib/roles';
 import RequestMaterialDialog from '@/components/crm/shipments/RequestMaterialDialog';
+import ToWorkshopFilters from '@/components/crm/shipments/ToWorkshopFilters';
 import ToWorkshopTable from '@/components/crm/shipments/ToWorkshopTable';
 import AssembleShipmentView from '@/components/crm/shipments/AssembleShipmentView';
 import ReceiveConfirmDialog from '@/components/crm/shipments/ReceiveConfirmDialog';
@@ -173,6 +167,19 @@ const ToWorkshop = () => {
 
   const newCount = shiftFilteredShipments.filter((s) => !isCompletedStatus(s.status)).length;
   const completedCount = shiftFilteredShipments.filter((s) => isCompletedStatus(s.status)).length;
+
+  const activeFiltersCount = useMemo(
+    () =>
+      [materialFilter !== 'all', workshopFilter !== 'all', shiftFilter !== 'all'].filter(Boolean)
+        .length,
+    [materialFilter, workshopFilter, shiftFilter]
+  );
+
+  const resetFilters = () => {
+    setMaterialFilter('all');
+    setWorkshopFilter('all');
+    setShiftFilter('all');
+  };
 
   const openCreate = () => {
     setReqComment('');
@@ -356,11 +363,11 @@ const ToWorkshop = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="min-w-0 space-y-6 overflow-x-hidden">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h1 className="text-xl font-bold">Отгрузка в цех</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
               {isProduction
                 ? 'Запросите нужный материал — кладовщик соберёт рулоны и отправит вам'
                 : 'Заявку создаёт сотрудник цеха → сборка рулонов сканированием → отправка → приём в цехе'}
@@ -382,83 +389,46 @@ const ToWorkshop = () => {
           )}
         </div>
 
-        {/* На телефоне — выпадающий список. Две вкладки с длинными подписями и
-            счётчиками не помещались в ширину экрана: текст обрезался, а сама
-            полоса вкладок не прокручивалась, и до «Завершённых» было не добраться. */}
-        <div className="sm:hidden">
-          <Select value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="new">Новые заявки ({newCount})</SelectItem>
-              <SelectItem value="completed">Завершённые заявки ({completedCount})</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="grid grid-cols-2 gap-3">
+          {(
+            [
+              { value: 'new', title: 'Новые', hint: 'В работе', count: newCount },
+              { value: 'completed', title: 'Завершённые', hint: 'Приняты в цехе', count: completedCount },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setActiveTab(tab.value)}
+              className={cn(
+                'min-w-0 rounded-md border px-3 py-3 text-left transition-colors',
+                activeTab === tab.value
+                  ? 'border-primary bg-primary/5 shadow-sm'
+                  : 'border-border bg-card hover:bg-muted/40'
+              )}
+            >
+              <div className="text-sm font-semibold">{tab.title}</div>
+              <div className="mt-1 text-2xl font-bold tabular-nums leading-none">{tab.count}</div>
+              <div className="mt-1.5 text-xs text-muted-foreground">{tab.hint}</div>
+            </button>
+          ))}
         </div>
 
-        {/* На компьютере ширины хватает — привычные вкладки. */}
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) => setActiveTab(v as TabValue)}
-          className="hidden sm:block"
-        >
-          <TabsList>
-            <TabsTrigger value="new">Новые заявки ({newCount})</TabsTrigger>
-            <TabsTrigger value="completed">Завершённые заявки ({completedCount})</TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        <div className="grid gap-3 sm:flex sm:flex-wrap">
-          <Select value={materialFilter} onValueChange={setMaterialFilter}>
-            <SelectTrigger className="w-full sm:w-64">
-              <SelectValue placeholder="Все материалы" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Все материалы</SelectItem>
-              {filterMaterials.map((m) => (
-                <SelectItem key={m.id} value={String(m.id)}>
-                  {m.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* Фильтр по цеху/смене нужен только админу и кладовщику — сотрудники цеха
-              (швея/закройщик/упаковщик) и так видят только заявки своего цеха и смены,
-              им выбирать нечего. */}
-          {!isProduction && (
-            <>
-              <Select value={workshopFilter} onValueChange={setWorkshopFilter}>
-                <SelectTrigger className="w-full sm:w-56">
-                  <SelectValue placeholder="Все цеха" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Все цеха</SelectItem>
-                  {workshops.map((w) => (
-                    <SelectItem key={w.id} value={String(w.id)}>
-                      {w.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Select value={shiftFilter} onValueChange={setShiftFilter}>
-                <SelectTrigger className="w-full sm:w-56">
-                  <SelectValue placeholder="Все смены" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Все смены</SelectItem>
-                  {shiftOptions.map((num) => (
-                    <SelectItem key={num} value={String(num)}>
-                      {shiftOptionLabel(num)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </>
-          )}
-        </div>
+        <ToWorkshopFilters
+          materialFilter={materialFilter}
+          setMaterialFilter={setMaterialFilter}
+          materials={filterMaterials}
+          isProduction={isProduction}
+          workshopFilter={workshopFilter}
+          setWorkshopFilter={setWorkshopFilter}
+          workshops={workshops}
+          shiftFilter={shiftFilter}
+          setShiftFilter={setShiftFilter}
+          shiftOptions={shiftOptions}
+          shiftOptionLabel={shiftOptionLabel}
+          activeFiltersCount={activeFiltersCount}
+          onReset={resetFilters}
+        />
 
         <ToWorkshopTable
           loading={loading}

@@ -93,28 +93,24 @@ const ItemsGrid = ({
         <p className="text-sm text-muted-foreground">Ничего не найдено по заданным фильтрам.</p>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* min-w-0 на сетке и карточке: длинное название иначе не сжимается
+              и выталкивает кнопки правки за правый край экрана. */}
+          <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {pagedItems.map((item) => (
-              <Card key={item.id} className="border-border shadow-none">
-                <CardContent className="space-y-2 pt-6">
-                  <div className="flex items-start justify-between">
-                    <p className="font-medium">{item.name}</p>
-                    <div className="flex gap-1">
-                      <Button size="icon" variant="secondary" onClick={() => onEdit(item)}>
-                        <Icon name="Pencil" size={14} />
-                      </Button>
-                      <Button size="icon" variant="destructive" onClick={() => setDeleteId(item.id)}>
-                        <Icon name="Trash2" size={14} />
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
+              <Card key={item.id} className="min-w-0 overflow-hidden border-border shadow-none">
+                <CardContent className="min-w-0 space-y-2 pt-6">
+                  <p className="min-w-0 break-words font-medium">{item.name}</p>
+                  <div className="flex min-w-0 flex-wrap gap-1.5">
                     {item.article && (
-                      <Badge variant="secondary" className="font-mono-tech">
+                      <Badge variant="secondary" className="max-w-full break-all font-mono-tech">
                         {item.article}
                       </Badge>
                     )}
-                    {item.material && <Badge variant="outline">{item.material}</Badge>}
+                    {item.material && (
+                      <Badge variant="outline" className="max-w-full break-words">
+                        {item.material}
+                      </Badge>
+                    )}
                     {item.ozonSku && (
                       <Badge
                         role="button"
@@ -123,7 +119,7 @@ const ItemsGrid = ({
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') copyOzonCode(item.ozonSku!);
                         }}
-                        className="cursor-pointer gap-1 bg-blue-600 font-mono-tech text-white hover:bg-blue-700"
+                        className="max-w-full cursor-pointer gap-1 break-all bg-blue-600 font-mono-tech text-white hover:bg-blue-700"
                         title="SKU товара в OZON. Нажмите, чтобы скопировать код для поставки FBO"
                       >
                         OZN{item.ozonSku}
@@ -137,24 +133,44 @@ const ItemsGrid = ({
                   {/* Коды площадок и штрихкод — подписаны так же, как в карточке
                       товара, чтобы не гадать, какое поле к какому маркетплейсу. */}
                   {(item.wbSku || item.ymSku || item.barcode) && (
-                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       {item.wbSku && (
-                        <span>
+                        <span className="min-w-0 break-all">
                           Wildberries: <span className="font-mono-tech">{item.wbSku}</span>
                         </span>
                       )}
                       {item.ymSku && (
-                        <span>
+                        <span className="min-w-0 break-all">
                           Яндекс: <span className="font-mono-tech">{item.ymSku}</span>
                         </span>
                       )}
                       {item.barcode && (
-                        <span>
+                        <span className="min-w-0 break-all">
                           Штрихкод: <span className="font-mono-tech">{item.barcode}</span>
                         </span>
                       )}
                     </div>
                   )}
+                  <div className="flex min-w-0 flex-wrap gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="min-w-0 flex-1"
+                      onClick={() => onEdit(item)}
+                    >
+                      <Icon name="Pencil" size={14} className="mr-1" />
+                      Изменить
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="min-w-0 flex-1"
+                      onClick={() => setDeleteId(item.id)}
+                    >
+                      <Icon name="Trash2" size={14} className="mr-1" />
+                      Удалить
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))}

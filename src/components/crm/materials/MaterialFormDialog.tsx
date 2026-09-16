@@ -57,7 +57,9 @@ const MaterialFormDialog = ({
 }: MaterialFormDialogProps) => (
   <Dialog open={dialogOpen} onOpenChange={onDialogOpenChange}>
     <DialogTrigger asChild>
-      <Button onClick={onCreateClick}>Добавить материал</Button>
+      <Button className="w-full sm:w-auto" onClick={onCreateClick}>
+        Добавить материал
+      </Button>
     </DialogTrigger>
     {/* Окно стало выше: к полям материала добавился блок магазинов. На телефоне
         без прокрутки кнопка «Сохранить» оказывалась за краем экрана. */}
