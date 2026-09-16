@@ -38,7 +38,7 @@ const SuppliesCards = ({
       {shipments.map((s) => {
         const isPending = s.status === 'Новый';
         return (
-          <div key={s.id} className="rounded-md border border-border p-3">
+          <div key={s.id} className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="font-semibold">Приёмка #{s.id}</div>
@@ -46,7 +46,10 @@ const SuppliesCards = ({
                   {s.itemsCount} поз., {formatQuantity(s.totalQuantity)} метр/шт
                 </div>
               </div>
-              <Badge variant={statusVariant[s.status] || 'secondary'} className="shrink-0">
+              <Badge
+                variant={statusVariant[s.status] || 'secondary'}
+                className="max-w-[50%] shrink-0 whitespace-normal text-center"
+              >
                 {isPending ? 'Ожидает подтверждения' : s.status}
               </Badge>
             </div>
@@ -90,11 +93,11 @@ const SuppliesCards = ({
               </Button>
             )}
 
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-3 flex min-w-0 flex-wrap gap-2">
               {isPending && (isAdmin || canEditPending) && (
                 <Button
                   size="sm"
-                  className="flex-1"
+                  className="min-w-0 flex-1"
                   variant={isAdmin ? 'default' : 'outline'}
                   onClick={() => onOpenReview(s.id)}
                 >

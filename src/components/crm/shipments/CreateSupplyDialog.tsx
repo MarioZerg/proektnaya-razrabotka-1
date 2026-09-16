@@ -61,10 +61,10 @@ const CreateSupplyDialog = ({
   const materialUnit = (materialId: string) => materials.find((m) => String(m.id) === materialId)?.unit || '';
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div>
+    <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
         <h1 className="text-xl font-bold">Отгрузка от поставщика</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
           Приехала машина — указали материал, метраж и сколько рулонов привезли. Штрихкоды
           выдаются сразу: стикеры можно печатать и клеить при разгрузке. Материал появится
           на складе после проверки администратором
@@ -72,12 +72,12 @@ const CreateSupplyDialog = ({
       </div>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogTrigger asChild>
-          <Button onClick={onOpenCreate}>
+          <Button className="w-full shrink-0 sm:w-auto" onClick={onOpenCreate}>
             <Icon name="Plus" size={16} className="mr-2" />
             Новая приёмка
           </Button>
         </DialogTrigger>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>Приёмка от поставщика</DialogTitle>
           </DialogHeader>
@@ -104,21 +104,19 @@ const CreateSupplyDialog = ({
             </div>
 
             <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
                 <Label>Материалы</Label>
                 <Button type="button" size="sm" variant="outline" onClick={addRow}>
                   <Icon name="Plus" size={14} className="mr-1" />
                   Добавить материал
                 </Button>
               </div>
-              {/* На телефоне поля встают в две колонки — жёсткая сетка вылезала за экран. */}
+              {/* Карточка вместо жёсткой сетки: на узком экране и в диалоге
+                  колонки 140+100+100px вылезали за край, и поля обрезались. */}
               {rows.map((row, idx) => (
-                <div
-                  key={idx}
-                  className="grid grid-cols-2 gap-2 sm:grid-cols-[1fr_140px_100px_100px_auto]"
-                >
+                <div key={idx} className="min-w-0 space-y-2 rounded-lg border border-border bg-muted/20 p-3">
                   <Select value={row.materialId} onValueChange={(v) => updateRow(idx, 'materialId', v)}>
-                    <SelectTrigger className="col-span-2 sm:col-span-1">
+                    <SelectTrigger className="w-full min-w-0">
                       <SelectValue placeholder="Материал" />
                     </SelectTrigger>
                     <SelectContent>
@@ -136,7 +134,7 @@ const CreateSupplyDialog = ({
                   >
                     <SelectTrigger
                       title="От кого приехал этот материал"
-                      className="col-span-2 sm:col-span-1"
+                      className="w-full min-w-0"
                     >
                       <SelectValue placeholder="Поставщик" />
                     </SelectTrigger>
@@ -149,34 +147,43 @@ const CreateSupplyDialog = ({
                       ))}
                     </SelectContent>
                   </Select>
-                  {/* Метраж ОДНОГО рулона — как написано на самом рулоне. */}
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    title="Сколько в одном рулоне"
-                    placeholder={materialUnit(row.materialId) || 'метр/шт'}
-                    value={row.quantity}
-                    onChange={(e) => updateRow(idx, 'quantity', e.target.value)}
-                  />
-                  <Input
-                    type="number"
-                    step="1"
-                    min="1"
-                    title="Сколько таких рулонов пришло"
-                    placeholder="Рулонов"
-                    value={row.numberRolls}
-                    onChange={(e) => updateRow(idx, 'numberRolls', e.target.value)}
-                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="min-w-0 space-y-1">
+                      <Label className="text-xs text-muted-foreground">В одном рулоне</Label>
+                      {/* Метраж ОДНОГО рулона — как написано на самом рулоне. */}
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        title="Сколько в одном рулоне"
+                        placeholder={materialUnit(row.materialId) || 'метр/шт'}
+                        value={row.quantity}
+                        onChange={(e) => updateRow(idx, 'quantity', e.target.value)}
+                      />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <Label className="text-xs text-muted-foreground">Рулонов</Label>
+                      <Input
+                        type="number"
+                        step="1"
+                        min="1"
+                        title="Сколько таких рулонов пришло"
+                        placeholder="Рулонов"
+                        value={row.numberRolls}
+                        onChange={(e) => updateRow(idx, 'numberRolls', e.target.value)}
+                      />
+                    </div>
+                  </div>
                   <Button
                     type="button"
-                    size="icon"
+                    size="sm"
                     variant="ghost"
-                    className="col-span-2 w-full sm:col-span-1 sm:w-10"
+                    className="w-full"
                     onClick={() => removeRow(idx)}
                     disabled={rows.length === 1}
                   >
-                    <Icon name="Trash2" size={16} />
+                    <Icon name="Trash2" size={16} className="mr-1" />
+                    Убрать строку
                   </Button>
                 </div>
               ))}

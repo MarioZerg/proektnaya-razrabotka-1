@@ -84,19 +84,19 @@ const SuppliesTable = ({
         />
       </div>
 
-      <div className="hidden rounded-md border border-border md:block">
-        <Table>
+      {/* Таблица без горизонтальной прокрутки страницы.
+          Раньше было девять колонок, и кнопки «Проверить» / стикеры уезжали
+          за правый край — список приходилось двигать вправо. Связанные данные
+          собраны в одну ячейку, таблица table-fixed занимает ширину экрана. */}
+      <div className="hidden min-w-0 overflow-hidden rounded-md border border-border md:block">
+        <Table className="min-w-0 table-fixed">
           <TableHeader>
             <TableRow className="bg-primary hover:bg-primary">
-              <TableHead className="text-primary-foreground">#</TableHead>
-              <TableHead className="text-primary-foreground">Материалы</TableHead>
-              <TableHead className="text-primary-foreground">Статус</TableHead>
-              <TableHead className="text-primary-foreground">Кладовщик</TableHead>
-              <TableHead className="text-primary-foreground">Поставщик</TableHead>
-              <TableHead className="text-primary-foreground">Комментарий</TableHead>
-              <TableHead className="text-primary-foreground">Создано</TableHead>
-              <TableHead className="text-primary-foreground">Принято</TableHead>
-              <TableHead className="text-primary-foreground"></TableHead>
+              <TableHead className="w-[26%] whitespace-normal text-primary-foreground">Приёмка</TableHead>
+              <TableHead className="w-[16%] whitespace-normal text-primary-foreground">Статус</TableHead>
+              <TableHead className="w-[22%] whitespace-normal text-primary-foreground">Поставщик</TableHead>
+              <TableHead className="w-[14%] whitespace-normal text-primary-foreground">Сроки</TableHead>
+              <TableHead className="w-[22%] whitespace-normal text-primary-foreground" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -104,11 +104,16 @@ const SuppliesTable = ({
               const isPending = s.status === 'Новый';
               return (
                   <TableRow key={s.id}>
-                    <TableCell>{s.id}</TableCell>
-                    <TableCell>
-                      <div className="mb-1 font-semibold">
-                        Итого: {s.itemsCount} поз., {formatQuantity(s.totalQuantity)} метр/шт
+                    <TableCell className="whitespace-normal break-words align-top">
+                      <div className="font-semibold">#{s.id}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {s.itemsCount} поз. · {formatQuantity(s.totalQuantity)} метр/шт
                       </div>
+                      {s.comment ? (
+                        <div className="mt-1 break-words text-xs text-muted-foreground">
+                          {s.comment}
+                        </div>
+                      ) : null}
                       {/* Раньше рулоны раскрывались мелкой гармошкой прямо в списке:
                           на 284 позиции это нечитаемо. Теперь ведём на страницу приёмки —
                           там поиск по штрихкоду и печать стикера по одному рулону. */}
@@ -116,7 +121,7 @@ const SuppliesTable = ({
                         <Button
                           variant="link"
                           size="sm"
-                          className="h-auto px-0 py-0 text-xs"
+                          className="mt-1 h-auto px-0 py-0 text-xs"
                           onClick={() => navigate(`/crm/shipments/from-supplier/${s.id}`)}
                         >
                           <Icon name="ChevronRight" size={12} className="mr-1" />
@@ -124,34 +129,43 @@ const SuppliesTable = ({
                         </Button>
                       )}
                     </TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant[s.status] || 'secondary'}>
+                    <TableCell className="whitespace-normal align-top">
+                      <Badge variant={statusVariant[s.status] || 'secondary'} className="whitespace-normal">
                         {s.status === 'Новый' ? 'Ожидает подтверждения' : s.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>{s.createdByName || '—'}</TableCell>
-                    <TableCell>
-                      {s.itemSuppliers || s.supplierName || '—'}
+                    <TableCell className="whitespace-normal break-words align-top">
+                      <div>{s.itemSuppliers || s.supplierName || '—'}</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {s.createdByName || '—'}
+                      </div>
                     </TableCell>
-                    <TableCell>{s.comment || '—'}</TableCell>
-                    <TableCell>{formatDate(s.createdAt)}</TableCell>
-                    <TableCell>{s.completedAt ? formatDate(s.completedAt) : '—'}</TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-2">
+                    <TableCell className="whitespace-normal align-top text-xs">
+                      <div>{formatDate(s.createdAt)}</div>
+                      <div className="mt-0.5 text-muted-foreground">
+                        {s.completedAt ? formatDate(s.completedAt) : 'не принята'}
+                      </div>
+                    </TableCell>
+                    <TableCell className="min-w-0 align-top">
+                      <div className="flex min-w-0 flex-wrap justify-end gap-1">
                         {/* Админ проверяет и подтверждает, кладовщик — правит свой же
                             состав, пока приёмку не приняли. */}
                         {isPending && (isAdmin || canEditPending) && (
                           <Button
                             size="sm"
+                            className="px-2 lg:px-3"
                             variant={isAdmin ? 'default' : 'outline'}
+                            title={isAdmin ? 'Проверить' : 'Изменить'}
                             onClick={() => onOpenReview(s.id)}
                           >
                             <Icon
                               name={isAdmin ? 'ClipboardCheck' : 'Pencil'}
                               size={14}
-                              className="mr-1"
+                              className="lg:mr-1"
                             />
-                            {isAdmin ? 'Проверить' : 'Изменить'}
+                            <span className="hidden lg:inline">
+                              {isAdmin ? 'Проверить' : 'Изменить'}
+                            </span>
                           </Button>
                         )}
                         {/* ЛОГИСТИКА. Счёт за машину приходит позже самой машины, и
@@ -161,14 +175,13 @@ const SuppliesTable = ({
                             пропущенная логистика подсвечена и правится в один клик. */}
                         {isAdmin && !isPending && !s.logisticsCost && (
                           <Button
-                            size="sm"
+                            size="icon"
                             variant="outline"
                             className="border-amber-400 text-amber-800 hover:bg-amber-50"
                             title="Логистика не указана — себестоимость метра занижена"
                             onClick={() => onOpenLogistics(s.id)}
                           >
-                            <Icon name="Truck" size={14} className="mr-1" />
-                            Логистика
+                            <Icon name="Truck" size={14} />
                           </Button>
                         )}
                         {isAdmin && !isPending && !!s.logisticsCost && (

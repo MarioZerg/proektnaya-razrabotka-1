@@ -115,10 +115,10 @@ const DefectRollsPanel = () => {
     <>
       <Card className="border-amber-300 bg-amber-50 shadow-none">
         <CardContent className="space-y-3 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-start gap-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
               <Icon name="PackageX" size={22} className="mt-0.5 shrink-0 text-amber-600" />
-              <div>
+              <div className="min-w-0">
                 <p className="font-bold text-amber-900">
                   На производстве брак: {rolls.length} рулон
                   {rolls.length === 1 ? '' : rolls.length < 5 ? 'а' : 'ов'}
@@ -130,6 +130,7 @@ const DefectRollsPanel = () => {
               </div>
             </div>
             <Button
+              className="w-full shrink-0 sm:w-auto"
               onClick={() => {
                 setOpen(true);
                 setTimeout(() => inputRef.current?.focus(), 100);
@@ -147,9 +148,11 @@ const DefectRollsPanel = () => {
                 className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-background px-3 py-2"
               >
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">
-                    {r.materialName} — {formatQty(r.remainingQuantity)} {r.unit || ''}
-                    <Badge variant="secondary" className="ml-2 font-mono-tech">
+                  <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                    <span className="min-w-0 break-words">
+                      {r.materialName} — {formatQty(r.remainingQuantity)} {r.unit || ''}
+                    </span>
+                    <Badge variant="secondary" className="font-mono-tech">
                       {r.barcode}
                     </Badge>
                   </p>
@@ -180,9 +183,9 @@ const DefectRollsPanel = () => {
       {onStock.length > 0 && (
         <Card className="border-sky-300 bg-sky-50 shadow-none">
           <CardContent className="space-y-2 py-4">
-            <div className="flex items-start gap-3">
+            <div className="flex min-w-0 items-start gap-3">
               <Icon name="Warehouse" size={22} className="mt-0.5 shrink-0 text-sky-600" />
-              <div>
+              <div className="min-w-0">
                 <p className="font-bold text-sky-900">
                   На складе, ждут решения: {onStock.length} шт.
                 </p>
@@ -198,9 +201,11 @@ const DefectRollsPanel = () => {
                 className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-sky-200 bg-background px-3 py-2"
               >
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">
-                    {r.materialName} — {formatQty(r.remainingQuantity)} {r.unit || ''}
-                    <Badge variant="secondary" className="ml-2 font-mono-tech">
+                  <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                    <span className="min-w-0 break-words">
+                      {r.materialName} — {formatQty(r.remainingQuantity)} {r.unit || ''}
+                    </span>
+                    <Badge variant="secondary" className="font-mono-tech">
                       {r.barcode}
                     </Badge>
                   </p>

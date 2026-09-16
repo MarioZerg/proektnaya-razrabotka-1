@@ -348,7 +348,7 @@ const FromSupplier = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
+      <div className="min-w-0 space-y-6 overflow-x-hidden">
         {/* Бракованные рулоны из цеха: забираем сканером и решаем с поставщиком —
             возврат или скидка. Панель прячется сама, когда забирать нечего. */}
         <DefectRollsPanel />
@@ -370,7 +370,7 @@ const FromSupplier = () => {
         />
 
         {lastCreatedRolls && (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+          <div className="min-w-0 overflow-hidden rounded-md border border-emerald-200 bg-emerald-50 p-3">
             <p className="mb-1.5 text-sm font-medium text-emerald-800">
               Поставка #{lastCreatedRolls.shipmentId} подтверждена — создано рулонов: {lastCreatedRolls.rolls.length}
             </p>
