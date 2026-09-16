@@ -472,6 +472,125 @@ def handle_bulk_cancel(cur, conn, headers, body_data, actor_id, actor_name):
     })
 
 
+# ОДИНОЧНОЕ СНЯТИЕ ЗАКАЗА С КОНВЕЙЕРА.
+#
+# Условие то же по смыслу, что и у массового снятия, но без привязки к типу:
+# снять одну лишнюю вещь админ может и в FBO, и в индивидуальном заказе — там
+# просто нечего отменять на площадке. Главное неизменно: заказ НИКТО НЕ ВЗЯЛ и
+# ткань на него не резали. Раскроенное и шьющееся не снимается никогда — материал
+# уже потрачен, а швея за работу получила деньги.
+SINGLE_UNTOUCHED_SQL = (
+    "COALESCE(o.sewing_status, 'Новый') = 'Новый' "
+    "AND o.supply_id IS NULL "
+    "AND o.assigned_user_id IS NULL "
+    "AND o.cut_at IS NULL AND o.taken_at IS NULL "
+    "AND NOT EXISTS (SELECT 1 FROM order_material_usage u WHERE u.order_id = o.id) "
+    f"AND NOT ({CANCELLED_SQL})"
+)
+
+
+def single_order_state(cur, order_id):
+    """Можно ли снять этот заказ и почему нет. Возвращает (можно, причина, данные).
+
+    Причину называем словами самого цеха: «заказ уже раскроен», «его взяла швея» —
+    админ по ней сразу понимает, что вещь доводят до отгрузки, а не гадает, почему
+    кнопка не сработала.
+    """
+    cur.execute(
+        "SELECT COALESCE(sewing_status, 'Новый'), supply_id, assigned_user_id, "
+        "       cut_at, taken_at, order_type, group_key "
+        "FROM orders WHERE id = %s",
+        (int(order_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False, 'Заказ не найден', None
+    status, supply_id, assigned, cut_at, taken_at, order_type, group_key = row
+    info = {'sewingStatus': status, 'orderType': order_type, 'groupKey': group_key}
+
+    cur.execute(f"SELECT 1 FROM orders o WHERE o.id = %s AND {SINGLE_UNTOUCHED_SQL}", (int(order_id),))
+    if cur.fetchone():
+        return True, None, info
+
+    if status != 'Новый':
+        return False, f'Заказ уже в работе (этап «{status}») — снять с конвейера нельзя', info
+    if cut_at or taken_at or assigned:
+        return False, 'Заказ уже взят в цехе — снять с конвейера нельзя', info
+    if supply_id:
+        return False, 'Заказ попал в поставку — снять с конвейера нельзя', info
+    return False, 'Заказ уже отменён', info
+
+
+def cancel_single_order(cur, conn, headers, order_id, actor_id, actor_name):
+    """Снять один нетронутый заказ: сперва отмена на площадке, затем у себя.
+
+    ПОРЯДОК ВАЖЕН. Снять сначала у себя и не достучаться до маркетплейса — значит
+    оставить площадку ждать отгрузку заказа, которого у нас уже нет: приедет
+    просрочка и штраф. Не прошла отмена на площадке — заказ остаётся на конвейере,
+    а админ видит текст ошибки и решает сам.
+
+    Связка Яндекса снимается ЦЕЛИКОМ: заказ покупателя из нескольких вещей — одна
+    сущность с одним ярлыком, половину его отменить нельзя.
+    """
+    ok, reason, info = single_order_state(cur, order_id)
+    if not ok:
+        code = 404 if reason == 'Заказ не найден' else 409
+        return _resp(headers, code, {'error': reason})
+
+    # Вещи связки проверяем все разом: тронута хоть одна — не трогаем ни одной.
+    ids = [int(order_id)]
+    group_key = info.get('groupKey')
+    if group_key:
+        cur.execute("SELECT id FROM orders WHERE group_key = %s ORDER BY id", (group_key,))
+        ids = [r[0] for r in cur.fetchall()] or ids
+        for oid in ids:
+            g_ok, g_reason, _ = single_order_state(cur, oid)
+            if not g_ok and oid != int(order_id):
+                return _resp(headers, 409, {
+                    'error': f'Заказ входит в связку Яндекса, и другая её вещь '
+                             f'(#{oid}) уже в работе: {g_reason.lower()}. '
+                             f'Связка снимается только целиком.',
+                })
+
+    orders = _load_orders(cur, ids)
+    cache = {}
+    note = None
+    cancelled_ym = set()
+    for order in orders:
+        cancel = CANCEL_BY_MARKETPLACE.get(order['marketplace'])
+        # Индивидуальный заказ на площадке не живёт — отменять там нечего.
+        if not cancel or info.get('orderType') == 'Индивидуальный':
+            note = 'заказ снят только у нас — на маркетплейсе его нет'
+            continue
+        ym_id = order['ymOrderId']
+        if ym_id and int(ym_id) in cancelled_ym:
+            continue
+        mp_ok, mp_note = cancel(cur, cache, order)
+        if not mp_ok:
+            conn.rollback()
+            return _resp(headers, 502, {
+                'error': f'Маркетплейс не принял отмену: {mp_note}. '
+                         f'Заказ остался на конвейере.',
+            })
+        if ym_id:
+            cancelled_ym.add(int(ym_id))
+        note = mp_note or note
+
+    for oid in ids:
+        _cancel_locally(cur, oid)
+
+    numbers = ', '.join(o['orderNumber'] for o in orders if o['orderNumber'])
+    log_action(
+        cur, actor_id, actor_name, 'delete_order', 'order', int(order_id),
+        f'Снял с конвейера и отменил на маркетплейсе заказ #{order_id}'
+        + (f' ({numbers})' if numbers else '')
+        + (f'; вещей в связке: {len(ids)}' if len(ids) > 1 else ''),
+        {'orderIds': ids},
+    )
+    conn.commit()
+    return _resp(headers, 200, {'success': True, 'cancelledIds': ids, 'note': note})
+
+
 def _cancel_locally(cur, order_id):
     """Снятие заказа у себя: с конвейера убран, из истории не стёрт.
 

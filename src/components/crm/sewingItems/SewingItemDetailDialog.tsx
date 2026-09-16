@@ -21,7 +21,7 @@ import { statusBadgeClass } from '@/components/crm/sewingItems/sewingItemsShared
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { marketplaceLogo } from '@/components/crm/sewingItems/sewingItemsShared';
-import type { Order, OrderDetail } from '@/lib/ordersApi';
+import { canPullFromConveyor, type Order, type OrderDetail } from '@/lib/ordersApi';
 import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { Roll } from '@/lib/rollsApi';
@@ -113,12 +113,15 @@ const SewingItemDetailDialog = ({
   // было идти в другой раздел и искать заказ по номеру. Показываем кнопку и
   // здесь, но только тому, кто и так имеет на это право.
   //
-  // Уже снятый заказ второй раз не снимают: кнопки у него нет.
-  const isCancelled =
-    !!selectedOrder?.isCancelled ||
-    selectedOrder?.status === 'Отменён' ||
-    selectedOrder?.sewingStatus === 'Отменён';
-  const canDelete = !!onDeleteOrder && user?.role === 'admin' && !isCancelled;
+  // Снимается ТОЛЬКО нетронутый заказ — этап «Новый», никем не взят, не раскроен.
+  // Раскроенную или шьющуюся вещь отменять поздно: ткань разрезана, швея за работу
+  // получила деньги, вещь нужно довести и отгрузить. Раньше кнопка стояла у заказа
+  // на любом этапе, и ею снимали уже сшитое. Уже снятый заказ второй раз не снимают.
+  const canDelete =
+    !!onDeleteOrder &&
+    user?.role === 'admin' &&
+    !!selectedOrder &&
+    canPullFromConveyor(selectedOrder);
 
   // Работать на оверлоке может швея с допуском (галочка в карточке сотрудника)
   // и администратор. Допуск приходит вместе со списком сотрудников.
@@ -213,13 +216,13 @@ const SewingItemDetailDialog = ({
               <AlertDialogTitle>Снять заказ с конвейера?</AlertDialogTitle>
               <AlertDialogDescription>
                 Заказ {selectedOrder?.orderNumber} уйдёт из очереди цеха и будет
-                помечен отменённым. Из системы он не пропадёт — останется во вкладке
-                «Заказы», фильтр «Отменённые». Невыплаченные начисления по нему
-                снимутся.
+                отменён на маркетплейсе по API. Из системы он не пропадёт — останется
+                во вкладке «Заказы», фильтр «Отменённые». Невыплаченные начисления по
+                нему снимутся.
               </AlertDialogDescription>
               <AlertDialogDescription className="font-medium text-destructive">
-                На маркетплейсе заказ при этом НЕ отменяется — если он ещё ждёт
-                отгрузки, отмените его в кабинете площадки.
+                Отмену на площадке отыграть назад нельзя. Если маркетплейс отмену не
+                примет, заказ останется на конвейере — вы увидите его ответ.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

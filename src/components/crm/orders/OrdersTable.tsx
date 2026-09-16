@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
 import ShopBadge from '@/components/crm/ShopBadge';
-import type { Order } from '@/lib/ordersApi';
+import { canPullFromConveyor, type Order } from '@/lib/ordersApi';
 import OrdersCards from '@/components/crm/orders/OrdersCards';
 
 const PAGE_SIZE = 50;
@@ -183,8 +183,18 @@ const OrdersTable = ({ loading, orders, onEdit, onDelete, canManage }: OrdersTab
                       <Button size="icon" variant="secondary" onClick={() => onEdit(o)}>
                         <Icon name="Pencil" size={14} />
                       </Button>
-                      {!isCancelled && (
-                        <Button size="icon" variant="destructive" onClick={() => onDelete(o.id)}>
+                      {/* Снять с конвейера можно только НЕТРОНУТЫЙ заказ: его никто не
+                          взял и ткань на него не резали. Раскроенную или шьющуюся вещь
+                          отменять поздно — материал потрачен, швея за работу получила
+                          деньги, вещь нужно довести и отгрузить. Раньше кнопка стояла
+                          у любого заказа, и ею снимали уже сшитые. */}
+                      {canPullFromConveyor(o) && (
+                        <Button
+                          size="icon"
+                          variant="destructive"
+                          title="Снять с конвейера и отменить на маркетплейсе"
+                          onClick={() => onDelete(o.id)}
+                        >
                           <Icon name="Trash2" size={14} />
                         </Button>
                       )}

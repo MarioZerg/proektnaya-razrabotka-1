@@ -10,7 +10,7 @@ import json
 import psycopg2
 
 from authz import AuthError, auth_error_response, require_admin
-from bulk_cancel import handle_bulk_cancel, handle_bulk_preview
+from bulk_cancel import cancel_single_order, handle_bulk_cancel, handle_bulk_preview
 from shared import (
     GROUP_CUT_BATCH,
     STATUS_ORDER,
@@ -2406,33 +2406,20 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             item_id = body_data.get('id')
             if not item_id:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
-            cur.execute("SELECT status FROM orders WHERE id = %s", (int(item_id),))
-            del_row = cur.fetchone()
-            if not del_row:
-                return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-            # Удаление заказа админом — это МЯГКАЯ отмена: заказ не стирается из базы, а
-            # помечается status='Отменён' (в таблице он показывается зачёркнутым и остаётся
-            # в истории). Так же поступает отмена заказа через API FBS маркетплейса.
-            # Невыплаченные начисления зарплаты по этому заказу снимаются, выплаченные —
-            # остаются в истории (order_id сохраняется, заказ ведь никуда не делся).
-            cur.execute(
-                "DELETE FROM salary_accruals WHERE order_id = %s AND paid_at IS NULL", (int(item_id),)
-            )
-            # cancelled_at проставляем вместе со status: по нему заказ считается
-            # отменённым везде — и в очереди раскроя, и в очереди пошива, и в
-            # списке заказов. Без этой отметки «удалённый» заказ оставался виден
-            # как обычный на конвейере и мог снова уехать закройщику.
-            cur.execute(
-                "UPDATE orders SET status = 'Отменён', "
-                "cancelled_at = COALESCE(cancelled_at, now()) WHERE id = %s",
-                (int(item_id),),
-            )
-            log_action(
-                cur, actor_id, actor_name, 'delete_order', 'order', item_id,
-                f'Отменил (удалил) заказ #{item_id}',
-            )
-            conn.commit()
-            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            # СНЯТИЕ С КОНВЕЙЕРА = ОТМЕНА НА МАРКЕТПЛЕЙСЕ.
+            #
+            # Раньше заказ помечался отменённым только у нас, а на площадке оставался
+            # висеть как «ожидает сборки»: отгрузки никто не делал, приезжала просрочка
+            # и штраф. Теперь сперва отменяем по API площадки и только после её
+            # подтверждения снимаем у себя — иначе заказ остаётся на конвейере и админ
+            # видит, что именно ответил маркетплейс.
+            #
+            # Снять можно ТОЛЬКО нетронутый заказ (этап «Новый», никем не взят, не
+            # раскроен, не в поставке) — это проверяется здесь же, на сервере. Раскроенную
+            # или шьющуюся вещь отменять поздно: ткань разрезана, швея получила деньги,
+            # вещь нужно довести и отгрузить.
+            return cancel_single_order(cur, conn, headers, int(item_id), actor_id, actor_name)
 
         return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
     finally:

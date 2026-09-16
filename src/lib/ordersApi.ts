@@ -255,7 +255,38 @@ export const cutOrderGroup = async (
   return { cutCount: total };
 };
 
-export const deleteOrder = (id: number) => postAction({ action: 'delete_order', id });
+/**
+ * СНЯТЬ ЗАКАЗ С КОНВЕЙЕРА — И ОТМЕНИТЬ ЕГО НА МАРКЕТПЛЕЙСЕ.
+ *
+ * Снимается только нетронутый заказ: этап «Новый», никем не взят, не раскроен.
+ * Сервер сперва отменяет его по API площадки и лишь после подтверждения помечает
+ * отменённым у нас — иначе маркетплейс продолжал бы ждать отгрузку заказа,
+ * которого в цехе уже нет, и начислял просрочку.
+ *
+ * Связка Яндекса снимается целиком: cancelledIds — все вещи, которые ушли.
+ */
+export const deleteOrder = (id: number) =>
+  postAction({ action: 'delete_order', id }) as Promise<{
+    success: boolean;
+    cancelledIds: number[];
+    /** Пояснение, если на площадке отменять было нечего (индивидуальный заказ и т.п.). */
+    note?: string | null;
+  }>;
+
+/** Заказ ещё не тронут в цехе — только такой можно снять с конвейера.
+ *
+ * Правило одно на весь фронт, чтобы кнопка «Снять с конвейера» и в таблице заказов,
+ * и в карточке вещи появлялась по одному и тому же условию — а сервер проверял то же
+ * самое ещё раз, уже по токену сессии. */
+export const canPullFromConveyor = (o: Order): boolean => {
+  const cancelled = !!o.isCancelled || o.status === 'Отменён' || o.sewingStatus === 'Отменён';
+  if (cancelled) return false;
+  return (
+    (o.sewingStatus || 'Новый') === 'Новый' &&
+    !o.assignedUserId &&
+    !o.cutAt
+  );
+};
 
 /**
  * МАССОВОЕ СНЯТИЕ ЗАКАЗОВ С КОНВЕЙЕРА, КОГДА ЗАКОНЧИЛСЯ МАТЕРИАЛ.

@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import ShopBadge from '@/components/crm/ShopBadge';
-import type { Order } from '@/lib/ordersApi';
+import { canPullFromConveyor, type Order } from '@/lib/ordersApi';
 import {
   formatDate,
   marketplaceLogo,
@@ -90,10 +90,12 @@ const OrdersCards = ({
                   <Icon name="Pencil" size={14} className="mr-1.5" />
                   Изменить
                 </Button>
-                {!isCancelled && (
+                {/* Только нетронутый заказ: раскроенное и шьющееся с конвейера не
+                    снимается — ткань разрезана, работа оплачена, вещь нужно отгрузить. */}
+                {canPullFromConveyor(o) && (
                   <Button size="sm" variant="destructive" onClick={() => onDelete(o.id)}>
                     <Icon name="Trash2" size={14} className="mr-1.5" />
-                    Удалить
+                    Снять с конвейера
                   </Button>
                 )}
               </div>

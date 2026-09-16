@@ -13,7 +13,22 @@ import { syncWbOrders } from '@/lib/wbFbsApi';
 import { syncOzonOrders, refreshAllOzonStatuses } from '@/lib/ozonFbsApi';
 import { syncYandexOrders } from '@/lib/yandexMarketApi';
 import { useAuth } from '@/context/AuthContext';
-import { emptyManualRow, type EditFormState, type ManualOrderRow } from '@/components/crm/orders/ordersShared';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  emptyManualRow,
+  marketplaceLogo,
+  type EditFormState,
+  type ManualOrderRow,
+} from '@/components/crm/orders/ordersShared';
 import OrdersToolbar, {
   type StatusFilter,
   type MarketplaceFilter,
@@ -63,6 +78,9 @@ const MarketplaceOrders = () => {
   // Материал, который закончился: по нему админ снимает заказы с конвейера.
   const [materialFilter, setMaterialFilter] = useState<string>('all');
   const [bulkCancelOpen, setBulkCancelOpen] = useState(false);
+  // Заказ, который админ собрался снять с конвейера — ждёт подтверждения.
+  const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -119,19 +137,39 @@ const MarketplaceOrders = () => {
     }
   };
 
-  // Право на снятие заказа проверяет сервер по токену сессии, а не эта кнопка.
-  // Отказ и любую другую ошибку показываем: молча ничего не менявшийся список
-  // читается как «нажал, и не сработало», и человек жмёт ещё раз.
-  const handleDelete = async (id: number) => {
+  // СНЯТИЕ ЗАКАЗА — ДЕЙСТВИЕ НЕОБРАТИМОЕ, ПОЭТОМУ ЧЕРЕЗ ПОДТВЕРЖДЕНИЕ.
+  //
+  // Заказ уходит не только с нашего конвейера: сервер отменяет его по API
+  // маркетплейса, и вернуть его оттуда нельзя. Раньше кнопка срабатывала сразу от
+  // одного нажатия, а стояла в строке рядом с «Изменить» — промахнуться было легко.
+  const handleDelete = async () => {
+    const order = deleteTarget;
+    if (!order) return;
+    setDeleting(true);
     try {
-      await deleteOrder(id);
+      const res = await deleteOrder(order.id);
+      const extra = res.cancelledIds?.length > 1
+        ? ` Вместе со связкой Яндекса снято вещей: ${res.cancelledIds.length}.`
+        : '';
+      toast({
+        title: `Заказ ${order.orderNumber} снят с конвейера`,
+        description: res.note
+          ? `${res.note}.${extra}`
+          : `Отменён на маркетплейсе и скрыт из списка — найти его можно в фильтре «Отменённые».${extra}`,
+      });
+      setDeleteTarget(null);
       load();
     } catch (err) {
+      // Отказ показываем словами: сервер объясняет, почему снять нельзя (заказ уже
+      // раскроен, взят в цехе) или что именно ответил маркетплейс. Молча не
+      // изменившийся список читается как «нажал, и не сработало».
       toast({
-        title: 'Не удалось снять заказ',
+        title: 'Заказ не снят',
         description: err instanceof Error ? err.message : 'Попробуйте позже',
         variant: 'destructive',
       });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -412,10 +450,48 @@ const MarketplaceOrders = () => {
           loading={loading}
           orders={filteredOrders}
           onEdit={openEdit}
-          onDelete={handleDelete}
+          onDelete={(id) => setDeleteTarget(orders.find((o) => o.id === id) || null)}
           canManage={canManageOrders}
         />
       </div>
+
+      {/* Подтверждение снятия: говорим прямым текстом, что заказ отменится и на
+          площадке — это то, чего нельзя отыграть назад. */}
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Снять заказ с конвейера?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Заказ {deleteTarget?.orderNumber} будет отменён на маркетплейсе{' '}
+              {deleteTarget ? marketplaceLogo[deleteTarget.marketplace]?.label || deleteTarget.marketplace : ''}{' '}
+              по API и скрыт из списка заказов. Найти его потом можно фильтром «Отменённые».
+            </AlertDialogDescription>
+            <AlertDialogDescription className="font-medium text-destructive">
+              Отмену на площадке отыграть назад нельзя. Если маркетплейс отмену не примет,
+              заказ останется на конвейере и вы увидите его ответ.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Не снимать</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleting}
+              onClick={(e) => {
+                // Диалог закрываем сами — только после ответа сервера: иначе админ
+                // не увидит, что отмена на площадке не прошла.
+                e.preventDefault();
+                handleDelete();
+              }}
+            >
+              {deleting && <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" />}
+              Снять и отменить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <EditOrderDialog
         editingOrder={editingOrder}
