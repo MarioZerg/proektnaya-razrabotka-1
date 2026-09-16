@@ -11,23 +11,9 @@ import {
   type Order,
 } from '@/lib/ordersApi';
 import { fetchMarketplaceItems, type MarketplaceItem, type Shop } from '@/lib/marketplaceItemsApi';
-import { syncWbOrders } from '@/lib/wbFbsApi';
-import { syncOzonOrders, refreshAllOzonStatuses } from '@/lib/ozonFbsApi';
-import { syncYandexOrders } from '@/lib/yandexMarketApi';
 import { useAuth } from '@/context/AuthContext';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import {
   emptyManualRow,
-  marketplaceLogo,
   type EditFormState,
   type ManualOrderRow,
 } from '@/components/crm/orders/ordersShared';
@@ -38,12 +24,11 @@ import OrdersToolbar, {
 } from '@/components/crm/orders/OrdersToolbar';
 import OrdersTable from '@/components/crm/orders/OrdersTable';
 import OrdersSummary from '@/components/crm/orders/OrdersSummary';
-import EditOrderDialog from '@/components/crm/orders/EditOrderDialog';
-import CreateManualOrderDialog from '@/components/crm/orders/CreateManualOrderDialog';
-import PullOrderByNumberDialog from '@/components/crm/orders/PullOrderByNumberDialog';
-import BulkCancelDialog from '@/components/crm/orders/BulkCancelDialog';
+import OrdersDuplicatesAlert from '@/components/crm/orders/OrdersDuplicatesAlert';
+import OrdersConfirmDialogs from '@/components/crm/orders/OrdersConfirmDialogs';
+import OrdersPageDialogs from '@/components/crm/orders/OrdersPageDialogs';
+import { useOrdersSync } from '@/components/crm/orders/useOrdersSync';
 import { findDuplicateOrders } from '@/lib/findDuplicateOrders';
-import Icon from '@/components/ui/icon';
 
 const MarketplaceOrders = () => {
   const { toast } = useToast();
@@ -54,10 +39,6 @@ const MarketplaceOrders = () => {
   // в другом месте — в поставках FBO, где это часть его работы.
   const canManageOrders = user?.role === 'admin';
   const [orders, setOrders] = useState<Order[]>([]);
-  const [syncing, setSyncing] = useState(false);
-  const [syncingOzon, setSyncingOzon] = useState(false);
-  const [syncingYandex, setSyncingYandex] = useState(false);
-  const [refreshingOzon, setRefreshingOzon] = useState(false);
   const [loading, setLoading] = useState(true);
   const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
   // Магазины нужны в подборе товара: карточки МЕГАТЮЛЬ и ДЮНЫ лежат вперемешку,
@@ -107,6 +88,17 @@ const MarketplaceOrders = () => {
       .then(setOrders)
       .finally(() => setLoading(false));
   };
+
+  const {
+    syncing,
+    syncingOzon,
+    syncingYandex,
+    refreshingOzon,
+    handleSyncWb,
+    handleSyncOzon,
+    handleSyncYandex,
+    handleRefreshOzonStatuses,
+  } = useOrdersSync(user, load);
 
   useEffect(() => {
     load();
@@ -258,140 +250,6 @@ const MarketplaceOrders = () => {
     }
   };
 
-  // Загрузка новых FBS-заказов с WildBerries через API. Создаёт их в системе со статусом
-  // «Новые», чтобы конвейер производства их подхватил. Нераспознанные артикулы (нет товара
-  // в справочнике) показываем отдельным предупреждением.
-  const handleSyncWb = async () => {
-    setSyncing(true);
-    try {
-      const r = await syncWbOrders({ id: user?.id, name: user?.name });
-      const parts = [`создано ${r.created}`];
-      if (r.skippedExisting) parts.push(`уже были ${r.skippedExisting}`);
-      if (r.skippedNoItem) parts.push(`без товара ${r.skippedNoItem}`);
-      toast({
-        title: r.sandbox ? 'WB (тестовый режим): загрузка завершена' : 'Заказы WB загружены',
-        description: `Получено с WB: ${r.totalFromWb}. ${parts.join(', ')}.`,
-      });
-      if (r.skippedNoItem > 0) {
-        const arts = r.unmatched.map((u) => u.article || u.nmId).filter(Boolean).join(', ');
-        toast({
-          title: `Не распознано товаров: ${r.skippedNoItem}`,
-          description: `Добавьте артикулы в справочник товаров: ${arts}`,
-          variant: 'destructive',
-        });
-      }
-      load();
-    } catch (err) {
-      toast({
-        title: 'Не удалось загрузить заказы с WildBerries',
-        description: err instanceof Error ? err.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // Загрузка новых FBS-заказов с OZON (только новые, требующие сборки). Работает в режиме
-  // чтения — статусы на OZON не меняются. Нераспознанные артикулы показываем предупреждением.
-  const handleSyncOzon = async () => {
-    setSyncingOzon(true);
-    try {
-      const r = await syncOzonOrders({ id: user?.id, name: user?.name });
-      const parts = [`создано ${r.created}`];
-      if (r.skippedExisting) parts.push(`уже были ${r.skippedExisting}`);
-      if (r.skippedNoItem) parts.push(`без товара ${r.skippedNoItem}`);
-      toast({
-        title: 'Заказы OZON загружены',
-        description: `Новых отправлений с OZON: ${r.totalFromOzon}. ${parts.join(', ')}.`,
-      });
-      if (r.skippedNoItem > 0) {
-        const arts = r.unmatched.map((u) => u.ozonSku || u.offerId).filter(Boolean).join(', ');
-        toast({
-          title: `Не распознано товаров: ${r.skippedNoItem}`,
-          description: `Добавьте артикулы в справочник товаров: ${arts}`,
-          variant: 'destructive',
-        });
-      }
-      // Задвоение — серьёзно: одна вещь попала в систему дважды, значит дважды спишется
-      // материал и дважды начислится зарплата. Сообщаем сразу и называем отправления.
-      if (r.duplicates && r.duplicates.length > 0) {
-        const list = r.duplicates
-          .map((d) => `${d.postingNumber} (в системе ${d.actual}, у OZON ${d.expected})`)
-          .join('; ');
-        toast({
-          title: `Обнаружено задвоение заказов: ${r.duplicates.length}`,
-          description: `Проверьте отправления — лишние вещи нужно отменить: ${list}`,
-          variant: 'destructive',
-        });
-      }
-      load();
-    } catch (err) {
-      toast({
-        title: 'Не удалось загрузить заказы с OZON',
-        description: err instanceof Error ? err.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSyncingOzon(false);
-    }
-  };
-
-  // Загрузка новых FBS-заказов с Яндекс Маркета. Вещи одного заказа покупателя связываются
-  // в группу: ярлык на них общий, поэтому по цеху они едут вместе — один закройщик, одна швея.
-  const handleSyncYandex = async () => {
-    setSyncingYandex(true);
-    try {
-      const r = await syncYandexOrders({ id: user?.id, name: user?.name });
-      const parts = [`создано ${r.created}`];
-      if (r.skippedExisting) parts.push(`уже были ${r.skippedExisting}`);
-      if (r.matchedFromStock) parts.push(`закрыто со склада ${r.matchedFromStock}`);
-      toast({
-        title: 'Заказы Яндекс Маркета загружены',
-        description: `Заказов покупателей: ${r.orders.length}. ${parts.join(', ')}.`,
-      });
-      if (r.skippedNoItem > 0) {
-        const arts = r.unmatched.map((u) => u.offerId || u.shopSku).filter(Boolean).join(', ');
-        toast({
-          title: `Не распознано товаров: ${r.skippedNoItem}`,
-          description: `Добавьте артикулы в справочник товаров: ${arts}`,
-          variant: 'destructive',
-        });
-      }
-      load();
-    } catch (err) {
-      toast({
-        title: 'Не удалось загрузить заказы с Яндекс Маркета',
-        description: err instanceof Error ? err.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSyncingYandex(false);
-    }
-  };
-
-  // Разом обновляет статусы всех OZON-заказов (сборка/отгрузка/доставка/доставлен) — читает
-  // актуальные статусы с OZON, ничего не двигая на его стороне.
-  const handleRefreshOzonStatuses = async () => {
-    setRefreshingOzon(true);
-    try {
-      const r = await refreshAllOzonStatuses();
-      toast({
-        title: 'Статусы OZON обновлены',
-        description: `Проверено заказов: ${r.checked}, изменилось статусов: ${r.updated}.`,
-      });
-      load();
-    } catch (err) {
-      toast({
-        title: 'Не удалось обновить статусы OZON',
-        description: err instanceof Error ? err.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setRefreshingOzon(false);
-    }
-  };
-
   const openManual = () => {
     setManualRows([emptyManualRow()]);
     setManualOpen(true);
@@ -499,19 +357,7 @@ const MarketplaceOrders = () => {
         <h1 className="text-xl font-bold">Заказы</h1>
 
         {!loading && duplicates.length > 0 && (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
-            <Icon name="CopyX" size={18} className="mt-0.5 shrink-0 text-destructive" />
-            <div className="min-w-0">
-              <p className="font-medium text-destructive">
-                Задвоенные заказы: {duplicates.length}
-              </p>
-              <p className="mt-1 text-muted-foreground">
-                Одна вещь попала в систему дважды — лишнюю нужно отменить, иначе на неё
-                спишется материал и начислится зарплата. Отправления:{' '}
-                {duplicates.map((d) => d.postingNumber).join(', ')}
-              </p>
-            </div>
-          </div>
+          <OrdersDuplicatesAlert duplicates={duplicates} />
         )}
 
         {!loading && <OrdersSummary orders={orders} />}
@@ -566,113 +412,39 @@ const MarketplaceOrders = () => {
         />
       </div>
 
-      {/* Подтверждение снятия: говорим прямым текстом, что заказ отменится и на
-          площадке — это то, чего нельзя отыграть назад. */}
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Снять заказ с конвейера?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Заказ {deleteTarget?.orderNumber} будет отменён на маркетплейсе{' '}
-              {deleteTarget ? marketplaceLogo[deleteTarget.marketplace]?.label || deleteTarget.marketplace : ''}{' '}
-              по API и скрыт из списка заказов. Найти его потом можно фильтром «Отменённые».
-            </AlertDialogDescription>
-            <AlertDialogDescription className="font-medium text-destructive">
-              Отмену на площадке отыграть назад нельзя. Если маркетплейс отмену не примет,
-              заказ останется на конвейере и вы увидите его ответ.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Не снимать</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleting}
-              onClick={(e) => {
-                // Диалог закрываем сами — только после ответа сервера: иначе админ
-                // не увидит, что отмена на площадке не прошла.
-                e.preventDefault();
-                handleDelete();
-              }}
-            >
-              {deleting && <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" />}
-              Снять и отменить
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <OrdersConfirmDialogs
+        deleteTarget={deleteTarget}
+        setDeleteTarget={setDeleteTarget}
+        deleting={deleting}
+        onDelete={handleDelete}
+        restoreTarget={restoreTarget}
+        setRestoreTarget={setRestoreTarget}
+        restoring={restoring}
+        onRestore={handleRestore}
+      />
 
-      {/* Возврат в работу: заказ снова поедет по цеху и на него спишут ткань,
-          поэтому спрашиваем подтверждение, как и при снятии. */}
-      <AlertDialog
-        open={!!restoreTarget}
-        onOpenChange={(open) => !open && !restoring && setRestoreTarget(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Вернуть заказ в работу?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Заказ {restoreTarget?.orderNumber} вернётся в самое начало конвейера — этап
-              «Новый», без закройщика и цеха. Его снова возьмут в раскрой и отошьют.
-            </AlertDialogDescription>
-            <AlertDialogDescription>
-              На маркетплейсе при этом ничего не меняется: вернуть можно только заказ,
-              который сняли мы сами. Если отмену сделала площадка, сервер откажет —
-              отправления там больше нет и отгружать вещь некуда.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={restoring}>Не возвращать</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={restoring}
-              onClick={(e) => {
-                // Закрываем диалог сами, после ответа сервера: отказ («отменил
-                // маркетплейс») админ должен увидеть, а не гадать.
-                e.preventDefault();
-                handleRestore();
-              }}
-            >
-              {restoring && <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" />}
-              Вернуть в работу
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <EditOrderDialog
+      <OrdersPageDialogs
         editingOrder={editingOrder}
         form={form}
         setForm={setForm}
         saving={saving}
-        onClose={closeEdit}
+        onCloseEdit={closeEdit}
         onSave={handleSave}
-      />
-
-      <CreateManualOrderDialog
-        open={manualOpen}
-        onOpenChange={setManualOpen}
-        rows={manualRows}
-        setRows={setManualRows}
+        manualOpen={manualOpen}
+        setManualOpen={setManualOpen}
+        manualRows={manualRows}
+        setManualRows={setManualRows}
         marketplaceItems={marketplaceItems}
         shops={shops}
         manualSaving={manualSaving}
-        onCreate={handleManualCreate}
-      />
-
-      <PullOrderByNumberDialog
-        open={pullOpen}
-        onOpenChange={setPullOpen}
-        onDone={load}
-      />
-
-      <BulkCancelDialog
-        open={bulkCancelOpen}
-        material={materialFilter === 'all' ? '' : materialFilter}
-        marketplace={marketplaceFilter}
-        onClose={() => setBulkCancelOpen(false)}
-        onDone={load}
+        onManualCreate={handleManualCreate}
+        pullOpen={pullOpen}
+        setPullOpen={setPullOpen}
+        bulkCancelOpen={bulkCancelOpen}
+        onBulkCancelClose={() => setBulkCancelOpen(false)}
+        materialFilter={materialFilter}
+        marketplaceFilter={marketplaceFilter}
+        load={load}
       />
     </CrmLayout>
   );
