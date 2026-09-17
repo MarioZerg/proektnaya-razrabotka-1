@@ -15,7 +15,11 @@ import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { Roll } from '@/lib/rollsApi';
 import { fetchHangers, hangerLabel, type Hanger } from '@/lib/hangersApi';
-import { statusOptions, formatWait } from '@/components/crm/sewingItems/sewingItemsShared';
+import {
+  statusOptions,
+  formatWait,
+  isOrderCancelled,
+} from '@/components/crm/sewingItems/sewingItemsShared';
 import { formatQuantity } from '@/lib/formatQuantity';
 
 interface SewingItemActionsSectionProps {
@@ -134,6 +138,32 @@ const SewingItemActionsSection = ({
             <Icon name="Info" size={16} />
             Заказ уже в статусе «{selectedOrder?.sewingStatus}» — раскрой завершён, рулон и
             вешалку изменить нельзя.
+          </CardContent>
+        </Card>
+      );
+    }
+
+    // ЗАКАЗ ОТМЕНИЛИ, ПОКА ОН ЛЕЖАЛ В СТЕКЕ. Ткань ещё цела — резать её незачем,
+    // вещь всё равно никто не ждёт. Но заказ числится за закройщицей и мешает ей
+    // закрыть стек, поэтому прячем его от неё нельзя: она должна увидеть причину
+    // и снять заказ с себя кнопкой «Вернуть в очередь» (внизу карточки).
+    //
+    // Так было с заказом 0149246251-0168-1: покупатель отменил его через сутки
+    // после того, как закройщица взяла стек. Раньше заказ просто исчезал с
+    // конвейера — снять его с себя было нечем, и стек не закрывался.
+    if (isOrderCancelled(selectedOrder)) {
+      return (
+        <Card className="border-red-300 bg-red-50 shadow-none">
+          <CardContent className="space-y-1.5 py-4">
+            <p className="flex items-center gap-2 text-sm font-bold text-red-800">
+              <Icon name="XCircle" size={16} className="shrink-0" />
+              Покупатель отменил заказ — раскраивать не нужно
+            </p>
+            <p className="text-sm text-red-900">
+              Ткань ещё цела, резать её не надо: вещь никто не ждёт. Снимите заказ с
+              себя кнопкой «Вернуть в очередь» ниже — он уйдёт с вашего стека, и
+              штрафа за это не будет.
+            </p>
           </CardContent>
         </Card>
       );

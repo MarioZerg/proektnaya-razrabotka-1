@@ -2374,13 +2374,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
 
             cur.execute(
-                "SELECT sewing_status, workshop_id, assigned_user_id FROM orders WHERE id = %s",
+                "SELECT sewing_status, workshop_id, assigned_user_id, "
+                f"({cancelled_sql('')}) FROM orders WHERE id = %s",
                 (int(item_id),),
             )
             row = cur.fetchone()
             if not row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
-            current_status, order_workshop_id, order_assigned_user_id = row
+            current_status, order_workshop_id, order_assigned_user_id, buyer_cancelled = row
 
             if current_status == 'На раскрое':
                 cur.execute(
@@ -2403,7 +2404,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # цеха заказа) — начисляется сразу при отмене, защищён от дубля уникальным
             # индексом (order_id, type='penalty'), поэтому повторная отмена того же заказа
             # штраф не задвоит.
+            #
+            # ЗА ОТМЕНУ ПОКУПАТЕЛЯ НЕ ШТРАФУЕМ. Штраф придуман против того, чтобы
+            # работник отказывался от невыгодной работы. Но когда заказ отменил сам
+            # покупатель, вернуть его в очередь — единственное правильное действие:
+            # шить нечего, а заказ висит на человеке и держит его стек. Наказывать
+            # за это — значит заставлять людей возить по цеху мёртвые заказы.
             penalty = get_setting_float(cur, order_workshop_id, 'cancel_order_penalty', 0)
+            if buyer_cancelled:
+                penalty = 0
             if penalty > 0 and order_assigned_user_id:
                 apply_penalty(
                     cur, order_assigned_user_id, penalty,
