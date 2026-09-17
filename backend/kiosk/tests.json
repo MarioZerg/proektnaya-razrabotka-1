@@ -50,6 +50,47 @@
       "expectedStatus": 400
     },
     {
+      "name": "Список закройщиков цеха отдаётся",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "cutters_list",
+        "workshopId": 1
+      },
+      "expectedStatus": 200
+    },
+    {
+      "name": "Стек закройщика без cutterId отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "cutter_stack",
+        "workshopId": 1
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Стек несуществующего закройщика пустой, но не падает",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "cutter_stack",
+        "cutterId": 999999999
+      },
+      "expectedStatus": 200
+    },
+    {
+      "name": "Запись о печати листа без заказов отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "cutter_sheet_printed",
+        "cutterId": 1,
+        "orderIds": []
+      },
+      "expectedStatus": 400
+    },
+    {
       "name": "Repack scan without barcode fails",
       "method": "POST",
       "path": "/",

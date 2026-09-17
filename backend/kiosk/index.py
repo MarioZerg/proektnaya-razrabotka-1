@@ -319,6 +319,24 @@ def next_defect_barcode(cur):
 OZON_SHIPMENT_GONE = ('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup')
 
 
+# ЧТО СЧИТАЕТСЯ ОТМЕНЁННЫМ ЗАКАЗОМ — В ВИДЕ УСЛОВИЯ ДЛЯ SQL.
+#
+# Отменяет покупатель на стороне площадки, и приезжает это статусом маркетплейса
+# (ozon_status='cancelled', ym_status='...CANCELLED'), а наш собственный status
+# остаётся прежним. Судить об отмене только по нашему полю нельзя — конвейер
+# прячет такие заказы от закройщика, значит и лист печатать по ним не нужно.
+#
+# Внутри НЕТ знака процента: psycopg2 принимает его за место для подстановки
+# значения, и запрос с параметрами упал бы на ровном месте. strpos делает то же
+# самое без ловушки. Условие повторяет cancelled_sql() из backend/orders/shared.py.
+CANCELLED_ORDER_SQL = (
+    "o.status = 'Отменён' OR o.sewing_status = 'Отменён' "
+    "OR o.cancelled_at IS NOT NULL "
+    "OR strpos(lower(COALESCE(o.ozon_status, '')), 'cancel') = 1 "
+    "OR strpos(upper(COALESCE(o.ym_status, '')), 'CANCEL') > 0"
+)
+
+
 def is_label_gone(marketplace, ozon_status) -> bool:
     """Ярлык отправления уже не получить: вещь идёт на склад, а не покупателю."""
     return (marketplace or '').upper() == 'OZON' and (ozon_status or '') in OZON_SHIPMENT_GONE
@@ -431,6 +449,16 @@ def handler(event: dict, context) -> dict:
         - закройщик/швея/упаковщица сканирует штрихкод рулона (коробки), чтобы списать
           с него брак. Проверяет: рулон в цехе открытой смены сотрудника, из ЕГО смены,
           материал подходит его роли. Возвращает рулон, остаток и причины брака
+
+    POST /  { action: 'cutters_list', workshopId? }
+        - закройщики цеха, у которых прямо сейчас есть нераскроенный стек (с числом
+          заказов) — для плитки «Печать закройщиков» на терминале
+    POST /  { action: 'cutter_stack', cutterId, workshopId? }
+        - текущий (нераскроенный) стек закройщика: ровно те позиции, что печатаются
+          на листе. Раскроенное в ответ не попадает, поэтому повторная печать всегда
+          отражает реальное состояние стека
+    POST /  { action: 'cutter_sheet_printed', cutterId, orderIds }
+        - запись в журнал о печати листа на терминале: кто, когда и на какие заказы
 
     POST /  { action: 'find_unlabeled', sewerId?, width?, height? }
         - кладовщик ищет вещь без стикера хранения (упаковщица не наклеила / стикер потерян)
@@ -2134,6 +2162,152 @@ def handler(event: dict, context) -> dict:
                 )
                 sewers = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'sewers': sewers})}
+
+            if action == 'cutters_list':
+                # ЗАКРОЙЩИКИ, У КОТОРЫХ ПРЯМО СЕЙЧАС ЕСТЬ ВЗЯТЫЙ СТЕК.
+                #
+                # На терминале в цехе закройщица выбирает себя в списке и печатает лист
+                # заново: лист порвался, потерялся, планшет сменили. Показываем только
+                # тех, у кого реально есть нераскроенные заказы, — список всех
+                # сотрудников цеха здесь бесполезен, а выбрать чужую фамилию легко.
+                #
+                # Отменённые покупателем заказы не считаем: закройщик их не видит и
+                # раскроить не может, а в счётчике они создавали бы «фантомный» стек.
+                ws_id = body_data.get('workshopId')
+                ws_cond = f" AND o.workshop_id = {int(ws_id)}" if ws_id not in (None, '') else ''
+                cur.execute(
+                    "SELECT u.id, u.full_name, count(*), min(o.id) "
+                    "FROM orders o JOIN users u ON u.id = o.assigned_user_id "
+                    "WHERE o.sewing_status = 'На раскрое' "
+                    f"AND NOT ({CANCELLED_ORDER_SQL}){ws_cond} "
+                    "GROUP BY u.id, u.full_name ORDER BY u.full_name"
+                )
+                cutters = [
+                    {'id': r[0], 'name': r[1], 'count': r[2]} for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'cutters': cutters}, ensure_ascii=False),
+                }
+
+            if action == 'cutter_stack':
+                # ТЕКУЩИЙ СТЕК ЗАКРОЙЩИКА — РОВНО ТО, ЧТО ПЕЧАТАЕТСЯ НА ЛИСТЕ.
+                #
+                # Данные берём из базы, а не из памяти браузера: терминал стоит в цехе,
+                # стек закройщица брала на своём компьютере или на другом планшете.
+                # Раскроила часть — в ответ придёт только остаток, поэтому повторная
+                # печать всегда отражает реальное состояние стека.
+                cutter_id = body_data.get('cutterId')
+                ws_id = body_data.get('workshopId')
+                if not cutter_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Выберите закройщика'},
+                                               ensure_ascii=False)}
+                ws_cond = f" AND o.workshop_id = {int(ws_id)}" if ws_id not in (None, '') else ''
+                cur.execute(
+                    "SELECT o.id, o.order_number, o.order_type, o.marketplace, o.material, "
+                    "o.width, o.height, o.group_key, o.group_size, o.group_position, "
+                    # Признак оверлока берём У ТКАНИ: сам заказ получит его только в
+                    # момент раскроя, а лист печатается ДО него. Настройка магазина
+                    # главнее общей — та же ткань в соседнем магазине может шиться
+                    # без обмётки.
+                    "COALESCE((SELECT ms.requires_overlock FROM material_shops ms "
+                    "          JOIN materials m ON m.id = ms.material_id "
+                    "          WHERE m.name = o.material AND ms.shop_id = o.shop_id LIMIT 1), "
+                    "         (SELECT m.requires_overlock FROM materials m "
+                    "          WHERE m.name = o.material LIMIT 1), false), "
+                    # Номер покупки OZON без хвоста «-1», «-3»: два отправления одного
+                    # покупателя — часто две одинаковые вещи, на вешалке их не различить.
+                    "CASE WHEN o.marketplace = 'OZON' AND o.ozon_posting_number IS NOT NULL "
+                    "     THEN regexp_replace(o.ozon_posting_number, '-[0-9]+$', '') END "
+                    "FROM orders o WHERE o.assigned_user_id = %s "
+                    "AND o.sewing_status = 'На раскрое' "
+                    f"AND NOT ({CANCELLED_ORDER_SQL}){ws_cond} "
+                    "ORDER BY o.material, o.group_key NULLS FIRST, "
+                    "         o.group_position NULLS LAST, o.id",
+                    (int(cutter_id),),
+                )
+                raw = cur.fetchall()
+
+                # Сколько отправлений каждой покупки OZON в стеке: метку печатаем,
+                # только когда их два и больше — одиночному заказу предупреждать не о чем.
+                purchase_counts = {}
+                for r in raw:
+                    if r[11]:
+                        purchase_counts[r[11]] = purchase_counts.get(r[11], 0) + 1
+                purchase_seen = {}
+
+                orders_out = []
+                for r in raw:
+                    purchase = r[11]
+                    total = purchase_counts.get(purchase, 0) if purchase else 0
+                    position = None
+                    if purchase and total > 1:
+                        position = purchase_seen.get(purchase, 0) + 1
+                        purchase_seen[purchase] = position
+                    orders_out.append({
+                        'id': r[0],
+                        'orderNumber': r[1],
+                        'orderType': r[2],
+                        'marketplace': r[3],
+                        'material': r[4],
+                        'width': r[5],
+                        'height': r[6],
+                        'groupKey': r[7],
+                        'groupSize': r[8],
+                        'groupPosition': r[9],
+                        'requiresOverlock': bool(r[10]),
+                        'purchaseKey': purchase if total > 1 else None,
+                        'purchaseSize': total if total > 1 else None,
+                        'purchasePosition': position,
+                    })
+
+                cur.execute("SELECT full_name FROM users WHERE id = %s", (int(cutter_id),))
+                nm = cur.fetchone()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'cutterId': int(cutter_id),
+                        'cutterName': nm[0] if nm else '',
+                        'orders': orders_out,
+                    }, ensure_ascii=False),
+                }
+
+            if action == 'cutter_sheet_printed':
+                # Отмечаем в журнале факт печати листа на терминале.
+                #
+                # Бирка с номером — единственное, чем крой отличается от такого же куска
+                # ткани рядом. Когда вещь теряется на вешалке, первый вопрос: печаталась
+                # ли бирка? Без записи ответа нет нигде. Печати не мешаем: ошибку тут
+                # глушить нечего, но и данных достаточно минимума.
+                cutter_id = body_data.get('cutterId')
+                order_ids = body_data.get('orderIds') or []
+                ids = [int(i) for i in order_ids if str(i).isdigit()][:200]
+                if not cutter_id or not ids:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Нечего записывать'},
+                                               ensure_ascii=False)}
+                cur.execute("SELECT full_name FROM users WHERE id = %s", (int(cutter_id),))
+                nm = cur.fetchone()
+                cutter_name = nm[0] if nm else str(cutter_id)
+                cur.execute(
+                    "SELECT order_number FROM orders WHERE id IN ("
+                    + ','.join(str(i) for i in ids) + ") ORDER BY id"
+                )
+                numbers = [r[0] for r in cur.fetchall() if r[0]]
+                log_action(
+                    cur, actor_id or int(cutter_id), actor_name or cutter_name,
+                    'print_cutting_sheet', 'order', None,
+                    f'Распечатал на терминале лист закройщика {cutter_name} '
+                    f'({len(ids)} заказов): ' + ', '.join(numbers[:30])
+                    + ('…' if len(numbers) > 30 else ''),
+                    {'orderIds': ids, 'cutterId': int(cutter_id), 'kind': 'kiosk'},
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True})}
 
             if action == 'defect_report':
                 # Статистика брака: кто сколько находит и по каким причинам.

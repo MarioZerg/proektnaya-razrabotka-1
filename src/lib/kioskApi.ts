@@ -1,4 +1,5 @@
 import { setAuthToken } from '@/lib/authToken';
+import type { TakenOrder } from '@/lib/ordersApi';
 
 const KIOSK_URL = 'https://functions.poehali.dev/646f604e-57e9-47fb-b2ca-dd424abfba48';
 
@@ -867,3 +868,62 @@ export const fetchDefectStats = async (params?: {
   const data = await res.json();
   return { byUser: data.byUser || [], byReason: data.byReason || [], items: data.items || [] };
 };
+/** Закройщик со взятым стеком — строка списка на терминале. */
+export interface KioskCutter {
+  id: number;
+  name: string;
+  /** Сколько заказов стека ещё не раскроено — столько позиций уйдёт на лист. */
+  count: number;
+}
+
+/**
+ * Закройщики цеха, у которых прямо сейчас есть нераскроенный стек.
+ *
+ * Только они и попадают в список: выбирать себя среди всех сотрудников цеха
+ * бессмысленно, а ткнуть в чужую фамилию на планшете легко.
+ */
+export const fetchKioskCutters = async (workshopId: number | null): Promise<KioskCutter[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'cutters_list', workshopId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось получить список закройщиков');
+  return data.cutters || [];
+};
+
+/**
+ * Текущий стек закройщика — ровно то, что уйдёт на лист.
+ *
+ * Данные берутся из базы, а не из памяти браузера: терминал стоит в цехе, а стек
+ * закройщица брала со своего компьютера. Раскроенное в ответ не попадает, поэтому
+ * повторная печать всегда показывает реальный остаток работы.
+ */
+export const fetchKioskCutterStack = async (
+  cutterId: number,
+  workshopId: number | null,
+): Promise<{ cutterId: number; cutterName: string; orders: TakenOrder[] }> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'cutter_stack', cutterId, workshopId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось получить стек закройщика');
+  return { cutterId: data.cutterId, cutterName: data.cutterName || '', orders: data.orders || [] };
+};
+
+/**
+ * Отметить в журнале, что лист закройщика распечатан на терминале.
+ *
+ * Бирка с номером — единственное, чем крой отличается от такого же куска ткани
+ * рядом. Когда вещь теряется на вешалке, первый вопрос: печаталась ли бирка?
+ * Ошибку глушим — лист важнее журнала.
+ */
+export const logKioskCutterSheet = (cutterId: number, orderIds: number[]) =>
+  fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'cutter_sheet_printed', cutterId, orderIds }),
+  }).catch(() => undefined);

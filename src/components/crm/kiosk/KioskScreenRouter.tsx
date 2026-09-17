@@ -5,6 +5,7 @@ import KioskDefectWriteoffPanel from '@/components/crm/kiosk/KioskDefectWriteoff
 import KioskOrdersScreen from '@/components/crm/kiosk/KioskOrdersScreen';
 import KioskRepackScreen from '@/components/crm/kiosk/KioskRepackScreen';
 import KioskFlyerStickersScreen from '@/components/crm/kiosk/KioskFlyerStickersScreen';
+import KioskCutterSheetScreen from '@/components/crm/kiosk/KioskCutterSheetScreen';
 import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
 import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
@@ -106,6 +107,17 @@ const KioskScreenRouter = ({
           workshopId={currentWorkshopId}
           // Должность берём из СМЕНЫ: сотрудник мог выйти сегодня другой ролью.
           role={shift?.role || user.role}
+        />
+      </div>
+    )}
+
+    {/* Лист закройщика — во всю ширину: фамилии длинные, а плитки должны быть
+        крупными, в них попадают пальцем в перчатке. */}
+    {screen === 'cutterSheet' && (
+      <div className="mx-auto max-w-5xl">
+        <KioskCutterSheetScreen
+          workshopId={currentWorkshopId || Number(workshopId) || null}
+          currentUserId={user.id}
         />
       </div>
     )}

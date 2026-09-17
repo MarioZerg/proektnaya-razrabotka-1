@@ -341,10 +341,49 @@ const renderPageToPdf = async (pdf: jsPDFType, html: string, isFirstPage: boolea
   }
 };
 
+/**
+ * Куда отправить готовый лист.
+ *
+ * 'download' — сохранить PDF файлом. Так работает компьютер закройщицы: файл
+ *   остаётся на диске, его можно открыть и распечатать когда удобно.
+ * 'print'    — сразу открыть диалог печати, файл никуда не сохранять. Режим
+ *   терминала в цехе: на планшете скачанный PDF надо ещё найти в загрузках и
+ *   открыть сторонней читалкой — закройщица до принтера так и не доходит.
+ */
+export type CuttingSheetMode = 'download' | 'print';
+
+/** Отправить готовый PDF на принтер через скрытый iframe — без новых вкладок.
+ *
+ * Планшет в киоске открывает вкладку поверх терминала, и сотрудник теряет из
+ * виду экран; всплывающие окна к тому же часто блокируются браузером. Здесь
+ * документ живёт в невидимом iframe текущей страницы: браузер показывает
+ * обычный диалог печати, а терминал остаётся на том же месте. */
+const sendPdfToPrinter = (pdf: jsPDFType) => {
+  pdf.autoPrint();
+  const url = pdf.output('bloburl') as unknown as string;
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.src = url;
+  document.body.appendChild(iframe);
+  // Убираем iframe не сразу: пока открыт диалог печати, документ должен жить.
+  // Минута с запасом — дольше диалог не висит, а держать мусор в DOM незачем.
+  setTimeout(() => {
+    iframe.remove();
+    URL.revokeObjectURL(url);
+  }, 60000);
+};
+
 export const printCuttingSheet = async (
   orders: TakenOrder[],
   cutterName: string,
-  cutterId: number | null = null
+  cutterId: number | null = null,
+  mode: CuttingSheetMode = 'download'
 ) => {
   if (orders.length === 0) return;
 
@@ -378,6 +417,11 @@ export const printCuttingSheet = async (
   for (const pageOrders of qrPages) {
     await renderPageToPdf(pdf, buildQrPageHtml(pageOrders, qrDataUrls, cutterId), isFirstPage);
     isFirstPage = false;
+  }
+
+  if (mode === 'print') {
+    sendPdfToPrinter(pdf);
+    return;
   }
 
   pdf.save(`Лист закройщика ${date.replace(/\//g, '-')}.pdf`);

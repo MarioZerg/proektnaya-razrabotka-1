@@ -10,7 +10,8 @@ export type KioskScreen =
   | 'unlabeled'
   | 'defect'
   | 'repack'
-  | 'flyer';
+  | 'flyer'
+  | 'cutterSheet';
 
 interface KioskMenuProps {
   onSelect: (screen: KioskScreen) => void;
@@ -38,6 +39,12 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
     label: 'Печать заказов',
     icon: 'Printer',
     className: 'bg-emerald-500 hover:bg-emerald-600 text-white',
+  },
+  {
+    screen: 'cutterSheet',
+    label: 'Печать закройщиков',
+    icon: 'Scissors',
+    className: 'bg-indigo-600 hover:bg-indigo-700 text-white',
   },
   {
     screen: 'reviews',
@@ -94,9 +101,12 @@ const KioskMenu = ({ onSelect, role, repackCount = 0 }: KioskMenuProps) => {
   //   рекламную листовку, которая идёт в посылку. Кладовщик, швея и закройщик
   //   листовки не собирают.
   // «Отзывы» — доступны всем ролям на терминале.
+  // «Печать закройщиков» — плитка закройщика: он берёт стек на компьютере, а лист
+  //   с бирками печатает у принтера в цехе. Швея, упаковщица и кладовщик стеки не
+  //   берут, и чужой лист им печатать незачем.
   const hiddenByRole: Record<string, KioskScreen[]> = {
-    storekeeper: ['orders', 'rolls', 'defect', 'flyer'],
-    sewer: ['unlabeled', 'repack', 'flyer'],
+    storekeeper: ['orders', 'rolls', 'defect', 'flyer', 'cutterSheet'],
+    sewer: ['unlabeled', 'repack', 'flyer', 'cutterSheet'],
     cutter: ['unlabeled', 'repack', 'flyer'],
   };
 
@@ -111,7 +121,7 @@ const KioskMenu = ({ onSelect, role, repackCount = 0 }: KioskMenuProps) => {
       ? []
       : isStorekeeperRole(role)
         ? hiddenByRole.storekeeper
-        : hiddenByRole[role] || ['unlabeled'];
+        : hiddenByRole[role] || ['unlabeled', 'cutterSheet'];
 
   const visibleTiles = tiles.filter((t) => !hidden.includes(t.screen));
 
