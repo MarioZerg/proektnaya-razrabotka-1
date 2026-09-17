@@ -69,13 +69,32 @@ const TIMELINE = [
   },
 ];
 
+/** Пункты требования прокуратуры и разделы пакета, которыми каждый закрыт. */
 const REQUESTED = [
-  'Штатное расписание, сведения о штатной численности, правила внутреннего трудового распорядка, положение об оплате труда',
-  'Трудовые договоры со всеми работниками, в том числе с уже уволенными, за период с июня 2026 года; все приказы о приёме и увольнении',
-  'Графики работы, табель учёта рабочего времени всех работников за тот же период, расчётные листы и документы, подтверждающие выплаты',
-  'Справка о наличии (отсутствии) задолженности по заработной плате перед работниками',
-  'Отдельный расчёт задолженности по Новиковой А.А.: период работы, должность, размер оплаты, отработанные дни, начисления и выплаты, в том числе за неиспользованный отпуск',
-  'Сведения о проведении специальной оценки условий труда на рабочих местах',
+  {
+    text: 'Штатное расписание, сведения о штатной численности, правила внутреннего трудового распорядка, положение об оплате труда',
+    where: 'Разделы 1–3',
+  },
+  {
+    text: 'Трудовые договоры со всеми работниками, в том числе с уже уволенными, за период с июня 2026 года; все приказы о приёме и увольнении',
+    where: 'Раздел 4',
+  },
+  {
+    text: 'Графики работы, табель учёта рабочего времени всех работников за тот же период, расчётные листы и документы, подтверждающие выплаты',
+    where: 'Разделы 5–6',
+  },
+  {
+    text: 'Справка о наличии (отсутствии) задолженности по заработной плате перед работниками',
+    where: 'Раздел 7',
+  },
+  {
+    text: 'Отдельный расчёт задолженности по Новиковой А.А.: период работы, должность, размер оплаты, отработанные дни, начисления и выплаты, в том числе за неиспользованный отпуск',
+    where: 'Раздел 8',
+  },
+  {
+    text: 'Сведения о проведении специальной оценки условий труда на рабочих местах',
+    where: 'Раздел 9',
+  },
 ];
 
 const ProsecutorCase = () => {
@@ -128,24 +147,102 @@ const ProsecutorCase = () => {
           </p>
         </div>
 
-        <Card className="border-primary/30">
-          <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="flex items-center gap-2 font-semibold">
-                <Icon name="FileText" size={18} />
-                Письменные пояснения ИП Левкина А.С.
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Готовый документ на 4 листах: позиция по существу обращения, таблица
-                выплат, риски по 115-ФЗ и опись приложений. Распечатать и подписать.
-              </p>
+        {/* Главное на странице — один файл, который можно распечатать и отнести.
+            Всё остальное ниже оставлено для сверки: отдельные квитанции, скан
+            требования, короткие тезисы по позиции. */}
+        <Card className="border-2 border-primary/50 bg-primary/5">
+          <CardContent className="space-y-4 p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="flex items-center gap-2 text-lg font-semibold">
+                  <Icon name="FileCheck2" size={20} />
+                  Полный пакет для прокуратуры — один файл
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  20 страниц: девять разделов по всем пунктам требования, следом
+                  вшиты четыре банковские квитанции и скан самого требования.
+                  Везти с собой больше ничего не нужно — только паспорт.
+                </p>
+              </div>
+              <Button asChild size="lg" className="shrink-0">
+                <a
+                  href="/docs/prosecutor/paket-prokuratura-full.pdf"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Icon name="Download" size={18} className="mr-2" />
+                  Скачать пакет
+                </a>
+              </Button>
             </div>
-            <Button asChild className="shrink-0">
-              <a href="/docs/prosecutor/poyasneniya-prokuratura.pdf" target="_blank" rel="noreferrer">
-                <Icon name="Download" size={16} className="mr-2" />
-                Скачать PDF
-              </a>
-            </Button>
+
+            <div className="grid gap-2 text-sm sm:grid-cols-2">
+              {[
+                'Раздел 1. Работодатель и штатная численность',
+                'Раздел 2. Режим работы и правила распорядка',
+                'Раздел 3. Оплата труда и расценки',
+                'Раздел 4. Договоры с исполнителями',
+                'Раздел 5. Табель учёта рабочего времени',
+                'Раздел 6. Начислено и выплачено по каждому',
+                'Раздел 7. Справка об отсутствии задолженности',
+                'Раздел 8. Расчёт по Новиковой А.А.',
+                'Раздел 9. Специальная оценка условий труда',
+              ].map((s) => (
+                <div key={s} className="flex items-start gap-2">
+                  <Icon name="Check" size={15} className="mt-0.5 shrink-0 text-emerald-600" />
+                  <span>{s}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-2 border-t pt-3">
+              <Button asChild variant="outline" size="sm">
+                <a
+                  href="/docs/prosecutor/paket-prokuratura.pdf"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Icon name="FileText" size={14} className="mr-1.5" />
+                  Только текст, без приложений (15 стр.)
+                </a>
+              </Button>
+              <Button asChild variant="outline" size="sm">
+                <a
+                  href="/docs/prosecutor/poyasneniya-prokuratura.pdf"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Icon name="FileText" size={14} className="mr-1.5" />
+                  Краткие пояснения (4 стр.)
+                </a>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-5">
+            <h2 className="flex items-center gap-2 font-semibold">
+              <Icon name="Database" size={18} />
+              Что выгружено из системы
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Цифры в пакете взяты из одной выгрузки, поэтому табель, начисления и
+              выплаты не могут разойтись между разделами.
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-4">
+              {[
+                { v: '21', l: 'исполнитель в системе' },
+                { v: '357', l: 'смен в табеле' },
+                { v: '1 497 305 ₽', l: 'начислено за период' },
+                { v: '943 566 ₽', l: 'выплачено' },
+              ].map((s) => (
+                <div key={s.l} className="rounded border p-3">
+                  <div className="text-lg font-bold">{s.v}</div>
+                  <div className="text-xs text-muted-foreground">{s.l}</div>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
 
@@ -286,18 +383,28 @@ const ProsecutorCase = () => {
         <section className="space-y-3">
           <h2 className="flex items-center gap-2 text-lg font-semibold">
             <Icon name="ClipboardList" size={18} />
-            Что требует прокуратура взять с собой
+            Чем закрыт каждый пункт требования
           </h2>
           <Card>
             <CardContent className="p-5">
               <p className="mb-3 text-sm text-muted-foreground">
-                Паспорт — обязательно. Далее по списку из требования:
+                Все шесть пунктов закрыты разделами пакета. Из бумажного с собой —
+                только паспорт.
               </p>
-              <ul className="space-y-2 text-sm">
+              <ul className="space-y-3 text-sm">
                 {REQUESTED.map((r, i) => (
                   <li key={i} className="flex gap-2">
-                    <Icon name="Square" size={15} className="mt-0.5 shrink-0 text-muted-foreground" />
-                    <span>{r}</span>
+                    <Icon
+                      name="CheckCircle2"
+                      size={16}
+                      className="mt-0.5 shrink-0 text-emerald-600"
+                    />
+                    <span>
+                      {r.text}
+                      <span className="ml-1.5 whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
+                        {r.where}
+                      </span>
+                    </span>
                   </li>
                 ))}
               </ul>
