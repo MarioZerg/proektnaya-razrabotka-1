@@ -10,6 +10,7 @@ import {
   formatDate,
   statusBadgeClass,
   shortFio,
+  isOrderCancelled,
 } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
@@ -171,6 +172,14 @@ const SewingItemsCards = ({
                   <Badge className={`${statusBadgeClass[o.sewingStatus] || ''} shrink-0 text-[11px]`}>
                     {o.sewingStatus}
                   </Badge>
+                  {/* Вещь отменена покупателем уже ПОСЛЕ раскроя: ткань разрезана,
+                      поэтому вещь дошивают, но она поедет не покупателю, а на склад
+                      хранения — терминал стикеровки выдаст на неё стикер GW. */}
+                  {isOrderCancelled(o) && (
+                    <Badge className="shrink-0 bg-red-600 text-[11px] text-white hover:bg-red-600">
+                      Отменён → склад
+                    </Badge>
+                  )}
                 </div>
               </div>
 

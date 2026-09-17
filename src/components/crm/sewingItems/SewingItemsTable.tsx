@@ -25,6 +25,7 @@ import {
   marketplaceLogo,
   formatDate,
   statusBadgeClass,
+  isOrderCancelled,
 } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
@@ -151,6 +152,15 @@ const SewingItemsTable = ({
                   >
                     {o.sewingStatus}
                   </Badge>
+                  {/* ОТМЕНЁН, НО КРОЙ УЖЕ СДЕЛАН — вещь остаётся на конвейере.
+                      Ткань разрезана, вернуть её нельзя: вещь дошивают и кладут
+                      на склад хранения по стикеру GW, а не отгружают покупателю.
+                      Без этой метки швея не поняла бы, почему ярлыка нет. */}
+                  {isOrderCancelled(o) && (
+                    <Badge className="ml-1 whitespace-nowrap bg-red-600 text-white hover:bg-red-600">
+                      Отменён → склад
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell>
                   <span className="flex items-center gap-1.5 text-base font-bold">
