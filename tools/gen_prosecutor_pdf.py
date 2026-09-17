@@ -23,7 +23,7 @@ from datetime import datetime
 sys.path.insert(0, '/tmp/pylibs')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fpdf import FPDF
+from fpdf import FPDF, XPos, YPos
 import prosecutor_data as D
 
 FONT_DIR = '/usr/share/fonts/opensans/'
@@ -69,15 +69,18 @@ class PDF(FPDF):
         self.set_font('OS', '', 7.5)
         self.set_text_color(140)
         self.cell(0, 5, f'{ORG["name"]} · ИНН {ORG["inn"]} · пакет документов для прокуратуры',
-                  align='R')
+                  align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.set_text_color(0)
-        self.ln(7)
+        self.set_x(self.l_margin)
+        self.ln(3)
 
     def footer(self):
         self.set_y(-14)
+        self.set_x(self.l_margin)
         self.set_font('OS', '', 7.5)
         self.set_text_color(140)
-        self.cell(0, 5, f'Страница {self.page_no()}', align='C')
+        self.cell(0, 5, f'Страница {self.page_no()}', align='C',
+                  new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.set_text_color(0)
 
 
@@ -91,32 +94,70 @@ pdf.set_margins(18, 16, 15)
 W = 210 - 18 - 15
 
 
+def block(text, w, h, size, style='', fill=False):
+    """Текстовый блок, после которого курсор ГАРАНТИРОВАННО уходит на новую строку
+    к левому полю.
+
+    Здесь была причина «текст уезжает вправо». По умолчанию multi_cell оставляет
+    курсор справа от напечатанного блока (XPos.RIGHT), а не в начале следующей
+    строки. Пока за блоком шёл ещё один multi_cell на всю ширину, это было
+    незаметно — он сам переносил строку. Но там, где дальше шёл маркер списка или
+    номер приложения, следующий фрагмент начинал печататься от правого края
+    предыдущей строки и уходил за поле листа.
+
+    new_x=LMARGIN, new_y=NEXT возвращают курсор к левому полю на следующую строку —
+    это делает поведение одинаковым для всех блоков документа.
+    """
+    pdf.set_font('OS', style, size)
+    pdf.set_x(pdf.l_margin)
+    pdf.multi_cell(w, h, text, align='L', fill=fill,
+                   new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+
 def h1(t):
     pdf.ln(1)
-    pdf.set_font('OS', 'B', 13)
-    pdf.multi_cell(W, 6.5, t, align='L')
+    block(t, W, 6.5, 13, 'B')
     pdf.ln(2)
 
 
 def h2(t):
     pdf.ln(1.5)
-    pdf.set_font('OS', 'B', 10.5)
-    pdf.multi_cell(W, 5.5, t, align='L')
+    block(t, W, 5.5, 10.5, 'B')
     pdf.ln(0.8)
 
 
 def p(t, size=9.8, style=''):
-    pdf.set_font('OS', style, size)
-    pdf.multi_cell(W, 5.0, t, align='L')
+    block(t, W, 5.0, size, style)
     pdf.ln(1.2)
 
 
-def li(t, size=9.8):
+def li(t, size=9.8, marker='•'):
+    """Пункт списка с висячим отступом.
+
+    Маркер печатается отдельной ячейкой, поэтому она тоже обязана вернуть курсор
+    в нужное место — иначе текст пункта уедет вправо (см. пояснение в block).
+    """
     pdf.set_font('OS', '', size)
-    x = pdf.get_x()
-    pdf.cell(5, 5, '•')
-    pdf.set_x(x + 5)
-    pdf.multi_cell(W - 5, 5, t, align='L')
+    pdf.set_x(pdf.l_margin)
+    indent = 6
+    pdf.cell(indent, 5, marker, new_x=XPos.RIGHT, new_y=YPos.TOP)
+    pdf.multi_cell(W - indent, 5, t, align='L',
+                   new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+
+def fit(text, width, pad=2.0):
+    """Укорачивает текст так, чтобы он гарантированно поместился в ячейку.
+
+    Подбор идёт по реальной ширине строки в текущем шрифте, а не по числу
+    символов: «Привезенцева» и «11, 12, 13» при равной длине занимают разное
+    место. Если текст не влезает — режем и ставим многоточие.
+    """
+    limit = width - pad
+    if pdf.get_string_width(text) <= limit:
+        return text
+    while text and pdf.get_string_width(text + '…') > limit:
+        text = text[:-1]
+    return text + '…'
 
 
 def table(headers, widths, rows, aligns=None, size=8.3):
@@ -127,8 +168,10 @@ def table(headers, widths, rows, aligns=None, size=8.3):
     def head():
         pdf.set_font('OS', 'B', size)
         pdf.set_fill_color(232, 236, 241)
+        pdf.set_x(pdf.l_margin)
         for w, t in zip(mm, headers):
-            pdf.cell(w, 6.5, t, border=1, align='C', fill=True)
+            pdf.cell(w, 6.5, t, border=1, align='C', fill=True,
+                     new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.ln()
 
     head()
@@ -141,8 +184,13 @@ def table(headers, widths, rows, aligns=None, size=8.3):
         bold = str(r[0]).startswith('ИТОГО')
         if bold:
             pdf.set_font('OS', 'B', size)
+        pdf.set_x(pdf.l_margin)
         for w, t, a in zip(mm, r, aligns):
-            pdf.cell(w, 5.6, str(t), border=1, align=a)
+            # Ячейка не переносит текст: если он длиннее колонки, fpdf просто
+            # печатает его поверх соседних и за край листа. Поэтому обрезаем по
+            # фактической ширине — так строка физически не может выйти за поле.
+            pdf.cell(w, 5.6, fit(str(t), w), border=1, align=a,
+                     new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.ln()
         if bold:
             pdf.set_font('OS', '', size)
@@ -157,31 +205,40 @@ current = total_accrued - total_paid
 
 # ============================================================ ТИТУЛ
 pdf.add_page()
-pdf.set_font('OS', '', 9.5)
-pdf.set_xy(pdf.l_margin + W * 0.44, pdf.t_margin)
-pdf.multi_cell(W * 0.56, 4.8,
-               'В прокуратуру Дзержинского района г. Ярославля\n'
-               '150045, г. Ярославль, ул. Батова, д. 8\n'
-               'старшему помощнику прокурора района\nСмирновой И.А.', align='L')
+
+
+def corner(text):
+    """Блок «шапки» справа сверху. Ширина и левый край заданы явно, курсор после
+    блока возвращается на следующую строку — иначе следующий блок съезжает."""
+    pdf.set_font('OS', '', 9.5)
+    pdf.set_x(pdf.l_margin + W * 0.44)
+    pdf.multi_cell(W * 0.56, 4.8, text, align='L',
+                   new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+
+pdf.set_y(pdf.t_margin)
+corner('В прокуратуру Дзержинского района г. Ярославля\n'
+       '150045, г. Ярославль, ул. Батова, д. 8\n'
+       'старшему помощнику прокурора района\nСмирновой И.А.')
 pdf.ln(1.5)
-pdf.set_x(pdf.l_margin + W * 0.44)
-pdf.multi_cell(W * 0.56, 4.8,
-               'от индивидуального предпринимателя\nЛевкина Андрея Сергеевича\n'
-               f'ИНН {ORG["inn"]}, ОГРНИП {ORG["ogrnip"]}\nтел. {ORG["phone"]}', align='L')
+corner('от индивидуального предпринимателя\nЛевкина Андрея Сергеевича\n'
+       f'ИНН {ORG["inn"]}, ОГРНИП {ORG["ogrnip"]}\nтел. {ORG["phone"]}')
 pdf.ln(1.5)
-pdf.set_x(pdf.l_margin + W * 0.44)
-pdf.multi_cell(W * 0.56, 4.8,
-               'на № 202-4260-2026/20780003/Исорг714-26\nот 17.09.2026', align='L')
+corner('на № 202-4260-2026/20780003/Исорг714-26\nот 17.09.2026')
 pdf.ln(12)
 
 pdf.set_font('OS', 'B', 15)
-pdf.multi_cell(W, 7, 'ПАКЕТ ДОКУМЕНТОВ', align='C')
+pdf.set_x(pdf.l_margin)
+pdf.multi_cell(W, 7, 'ПАКЕТ ДОКУМЕНТОВ', align='C',
+               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 pdf.ln(1)
 pdf.set_font('OS', '', 10.5)
+pdf.set_x(pdf.l_margin)
 pdf.multi_cell(W, 5.5,
                'по требованию прокуратуры Дзержинского района г. Ярославля\n'
                'от 17.09.2026 № 202-4260-2026/20780003/Исорг714-26\n'
-               'в связи с обращением Новиковой Анастасии Александровны', align='C')
+               'в связи с обращением Новиковой Анастасии Александровны', align='C',
+               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 pdf.ln(8)
 
 p('Все сведения сформированы из внутренней информационной системы учёта производства '
@@ -191,8 +248,7 @@ p('Все сведения сформированы из внутренней и
 
 pdf.ln(3)
 pdf.set_fill_color(240, 244, 248)
-pdf.set_font('OS', 'B', 10)
-pdf.multi_cell(W, 6.5, '  СОДЕРЖАНИЕ', align='L', fill=True)
+block('  СОДЕРЖАНИЕ', W, 6.5, 10, 'B', fill=True)
 pdf.ln(2)
 toc = [
     ('Раздел 1', 'Сведения о работодателе и штатной численности'),
@@ -207,10 +263,10 @@ toc = [
 ]
 pdf.set_font('OS', '', 9.8)
 for num, name in toc:
-    x = pdf.get_x()
-    pdf.cell(22, 5.6, num)
-    pdf.set_x(x + 22)
-    pdf.multi_cell(W - 22, 5.6, name, align='L')
+    pdf.set_x(pdf.l_margin)
+    pdf.cell(24, 5.8, num, new_x=XPos.RIGHT, new_y=YPos.TOP)
+    pdf.multi_cell(W - 24, 5.8, name, align='L',
+                   new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
 # ============================================================ 1
 pdf.add_page()
@@ -325,8 +381,7 @@ p(f'Всего оформлено договоров: {len(D.CONTRACTS)}, из �
 
 pdf.ln(1)
 pdf.set_fill_color(253, 243, 225)
-pdf.set_font('OS', 'B', 10)
-pdf.multi_cell(W, 6.5, '  Договор с Новиковой А.А. отсутствует', align='L', fill=True)
+block('  Договор с Новиковой А.А. отсутствует', W, 6.5, 10, 'B', fill=True)
 pdf.ln(2)
 p('Новикова А.А. не подписала ни одного договора — ни возмездного оказания услуг, ни '
   'стажировки. Причина: ею не были представлены документы, удостоверяющие личность '
@@ -362,12 +417,11 @@ rows.append(('ИТОГО',
              '', '',
              hours(sum(r[5] for r in D.SHIFTS_TOTAL))))
 table(['Исполнитель', 'Должность', 'Смен', 'Первая', 'Последняя', 'Часов'],
-      [0.28, 0.16, 0.08, 0.15, 0.15, 0.18], rows,
+      [0.34, 0.14, 0.07, 0.14, 0.14, 0.17], rows,
       ['L', 'L', 'C', 'C', 'C', 'R'], size=7.8)
 
 pdf.set_fill_color(253, 243, 225)
-pdf.set_font('OS', 'B', 10)
-pdf.multi_cell(W, 6.5, '  Сведения о Новиковой А.А. в табеле отсутствуют', align='L', fill=True)
+block('  Сведения о Новиковой А.А. в табеле отсутствуют', W, 6.5, 10, 'B', fill=True)
 pdf.ln(2)
 p('Учётная запись на её имя в системе не создавалась: Новикова А.А. отказалась от '
   'регистрации, необходимой для электронного учёта смен. Вход в систему выполняется '
@@ -390,7 +444,7 @@ for name, role, plus, minus, total, paid in D.PAYROLL:
 rows.append(('ИТОГО', '', money(total_plus), money(total_minus),
              money(total_accrued), money(total_paid)))
 table(['Исполнитель', 'Должность', 'Начислено', 'Удержано', 'К выплате', 'Выплачено'],
-      [0.26, 0.145, 0.15, 0.135, 0.15, 0.16], rows,
+      [0.31, 0.12, 0.145, 0.125, 0.145, 0.155], rows,
       ['L', 'L', 'R', 'R', 'R', 'R'], size=7.6)
 
 p('Разница между графами «К выплате» и «Выплачено» по отдельным исполнителям — текущая '
@@ -402,12 +456,10 @@ pdf.add_page()
 h1('Раздел 7. Справка об отсутствии задолженности по заработной плате')
 
 pdf.set_fill_color(238, 247, 240)
-pdf.set_font('OS', '', 10)
-pdf.multi_cell(W, 5.6,
-               f'Настоящим подтверждаю, что по состоянию на {TODAY} просроченная '
-               f'задолженность по выплате вознаграждения перед исполнителями, '
-               f'привлечёнными {ORG["name"]}, отсутствует.',
-               align='L', fill=True)
+block(f'Настоящим подтверждаю, что по состоянию на {TODAY} просроченная '
+      f'задолженность по выплате вознаграждения перед исполнителями, '
+      f'привлечёнными {ORG["name"]}, отсутствует.',
+      W, 5.6, 10, fill=True)
 pdf.ln(4)
 
 h2('Сводные показатели')
@@ -480,13 +532,13 @@ li('Рабочее место покинуто добровольно, без у
    'прекращении сотрудничества и без письменных пояснений.')
 
 h2('8.4. Хронология событий')
-table(['Дата', 'Событие'], [0.24, 0.76],
+table(['Дата', 'Событие'], [0.21, 0.79],
       [
           ('Июнь – август 2026', 'Фактическое выполнение работы без оформления документов'),
           ('24.06 – 29.07.2026', 'Четыре перевода на общую сумму 48 000 руб.'),
           ('Август 2026', 'Добровольный уход с рабочего места без уведомления'),
           ('27.08.2026', 'Телефонный разговор: предложено отработать две недели и '
-                         'подписать договор стажировки. Ответ — «подумает»'),
+                         'подписать договор стажировки'),
           ('27.08.2026', 'SMS о подаче жалоб в трудовую инспекцию, прокуратуру и ФНС'),
           ('17.09.2026', 'Требование прокуратуры о явке и представлении документов'),
       ], ['C', 'L'], size=8.4)
@@ -547,23 +599,20 @@ apps = [
     'Квитанция АО «ТБанк» № 1-103-416-088-378 от 29.07.2026 на 6 000 руб. — на 1 л.',
     'Скриншот SMS-переписки с Новиковой А.А. от 27.08.2026 — на 1 л.',
 ]
-pdf.set_font('OS', '', 9.8)
 for i, a in enumerate(apps, 1):
-    x = pdf.get_x()
-    pdf.cell(6, 5.4, f'{i}.')
-    pdf.set_x(x + 6)
-    pdf.multi_cell(W - 6, 5.4, a, align='L')
+    li(a, size=9.8, marker=f'{i}.')
 
 pdf.ln(14)
 pdf.set_font('OS', '', 10)
-pdf.cell(W * 0.6, 6, 'Индивидуальный предприниматель')
-pdf.cell(W * 0.4, 6, '____________ / А.С. Левкин /', align='R')
+pdf.set_x(pdf.l_margin)
+pdf.cell(W * 0.6, 6, 'Индивидуальный предприниматель',
+         new_x=XPos.RIGHT, new_y=YPos.TOP)
+pdf.cell(W * 0.4, 6, '____________ / А.С. Левкин /', align='R',
+         new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 pdf.ln(14)
-pdf.set_font('OS', '', 8.5)
 pdf.set_text_color(120)
-pdf.multi_cell(W, 4.6,
-               f'Документ сформирован из информационной системы учёта производства '
-               f'{ORG["name"]} по состоянию на {TODAY}.', align='L')
+block(f'Документ сформирован из информационной системы учёта производства '
+      f'{ORG["name"]} по состоянию на {TODAY}.', W, 4.6, 8.5)
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 pdf.output(OUT)
