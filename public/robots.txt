@@ -1,5 +1,8 @@
 # Рабочие разделы системы закрыты от индексации: это экраны за входом по паролю,
 # в поиске им делать нечего. Открыты только главная и правовые страницы.
+#
+# Отдельно закрыта папка /docs/prosecutor — материалы по проверке прокуратуры:
+# персональные данные и суммы переводов, им в выдаче не место ни при каких условиях.
 
 User-agent: Googlebot
 Allow: /$
@@ -7,6 +10,7 @@ Allow: /privacy
 Allow: /consent
 Disallow: /crm
 Disallow: /kiosk
+Disallow: /docs/prosecutor
 
 User-agent: Yandex
 Allow: /$
@@ -14,6 +18,7 @@ Allow: /privacy
 Allow: /consent
 Disallow: /crm
 Disallow: /kiosk
+Disallow: /docs/prosecutor
 
 User-agent: Bingbot
 Allow: /$
@@ -21,6 +26,7 @@ Allow: /privacy
 Allow: /consent
 Disallow: /crm
 Disallow: /kiosk
+Disallow: /docs/prosecutor
 
 User-agent: Twitterbot
 Allow: /
@@ -34,5 +40,6 @@ Allow: /privacy
 Allow: /consent
 Disallow: /crm
 Disallow: /kiosk
+Disallow: /docs/prosecutor
 
 Sitemap: https://yarplan.ru/sitemap.xml

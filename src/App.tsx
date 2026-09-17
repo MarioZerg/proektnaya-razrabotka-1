@@ -77,6 +77,7 @@ const Kiosk = lazy(() => import("./pages/Kiosk"));
 const Contracts = lazy(() => import("./pages/Contracts"));
 const PrivacyPolicy = lazy(() => import("./pages/legal/PrivacyPolicy"));
 const PersonalDataConsent = lazy(() => import("./pages/legal/PersonalDataConsent"));
+const ProsecutorCase = lazy(() => import("./pages/legal/ProsecutorCase"));
 const MaterialAnalysis = lazy(() => import("./pages/analytics/MaterialAnalysis"));
 const ReturnsAnalysis = lazy(() => import("./pages/analytics/ReturnsAnalysis"));
 const ProductCost = lazy(() => import("./pages/analytics/ProductCost"));
@@ -194,6 +195,10 @@ const App = () => (
             <Route path="/crm/settings/marketplace-integrations" element={<MarketplaceIntegrationsSettings />} />
             <Route path="/crm/kiosk" element={<Kiosk />} />
             <Route path="/crm/contracts" element={<Contracts />} />
+            {/* Материалы по обращению в прокуратуру: только админ, только по прямой
+                ссылке. В меню пункта нет намеренно — внутри персональные данные
+                и позиция ИП по проверке. */}
+            <Route path="/crm/legal/prosecutor-case" element={<ProsecutorCase />} />
             {/* Юридические документы — открыты без входа: их читают до регистрации. */}
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/consent" element={<PersonalDataConsent />} />
