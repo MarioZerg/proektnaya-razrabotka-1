@@ -784,6 +784,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if 'product' in body_data:
                 fields.append(f"product = '{str(body_data['product']).replace(chr(39), chr(39)*2)}'")
             revert_cutter_accrual = False
+            # Этапы, чьи следы надо стереть при откате назад: за каждым стоит
+            # исполнитель, дата и деньги. Заполняется ниже, применяется одним
+            # UPDATE вместе с остальными полями.
+            rollback_sewer = False
+            rollback_packer = False
+            rollback_overlock = False
             if 'sewingStatus' in body_data:
                 sewing_status_val = str(body_data['sewingStatus']).replace(chr(39), chr(39) * 2)
                 fields.append(f"sewing_status = '{sewing_status_val}'")
@@ -792,6 +798,54 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # удаления из раскроя начисления пропадают")
                 if body_data['sewingStatus'] in ('Новый', 'На раскрое'):
                     revert_cutter_accrual = True
+
+                # ОТКАТ НАЗАД СНИМАЕТ ИСПОЛНИТЕЛЯ ЭТАПА, А НЕ ТОЛЬКО МЕНЯЕТ ВКЛАДКУ.
+                #
+                # Раньше админ переводил заказ со «Стикеровки» обратно в «Раскроено»,
+                # заказ уезжал на нужную вкладку — а швея, дата пошива и начисление
+                # за него оставались на месте. Получалось мёртвое состояние: вещь
+                # лежит в очереди раскроенной, но числится отшитой конкретной швеёй.
+                # Назначить другую было нельзя, а сама она взять заказ не могла —
+                # очередь отдаёт только то, что ни за кем не закреплено.
+                #
+                # Теперь при откате чистим ровно те этапы, которые заказ «отматывает»
+                # назад: исполнителя, его дату и неоплаченное начисление. Выплаченные
+                # деньги не трогаем — они уже ушли человеку, и снимать их задним
+                # числом нельзя: это разбирается вручную через корректировку.
+                if (
+                    body_data['sewingStatus'] in STATUS_ORDER
+                    and current_sewing in STATUS_ORDER
+                    and STATUS_ORDER.index(body_data['sewingStatus'])
+                    < STATUS_ORDER.index(current_sewing)
+                ):
+                    target_idx = STATUS_ORDER.index(body_data['sewingStatus'])
+                    # Откат ниже «Стикеровки» — упаковщица этап не выполняла.
+                    if target_idx < STATUS_ORDER.index('Стикеровка'):
+                        rollback_packer = True
+                    # Откат до «Раскроено» и ниже — пошива не было: снимаем швею,
+                    # дату пошива и оверлок (он идёт между раскроем и пошивом).
+                    if target_idx <= STATUS_ORDER.index('Раскроено'):
+                        rollback_sewer = True
+                        rollback_overlock = True
+
+            if rollback_sewer:
+                # assigned_user_id — «кто держит заказ сейчас». На пошиве это швея,
+                # и при откате заказ должен стать ничьим: иначе очередь «Раскроено»
+                # его не отдаст, а админ не сможет назначить другого человека.
+                fields.append("sewer_user_id = NULL")
+                fields.append("sewn_at = NULL")
+                fields.append("taken_at = NULL")
+                # Если админ тем же действием назначает нового исполнителя, его
+                # выбор главнее: очистку не добавляем, иначе одна колонка попала бы
+                # в UPDATE дважды и Postgres отклонил бы весь запрос.
+                if 'assignedUserId' not in body_data:
+                    fields.append("assigned_user_id = NULL")
+            if rollback_overlock:
+                fields.append("overlock_user_id = NULL")
+                fields.append("overlocked_at = NULL")
+            if rollback_packer:
+                fields.append("packer_user_id = NULL")
+                fields.append("packed_at = NULL")
             if 'assignedUserId' in body_data:
                 val = body_data['assignedUserId']
                 fields.append(f"assigned_user_id = {int(val) if val not in (None, '') else 'NULL'}")
@@ -827,6 +881,27 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if revert_cutter_accrual:
                 cur.execute(
                     "DELETE FROM salary_accruals WHERE order_id = %s AND type = 'cutter_cut' AND paid_at IS NULL",
+                    (int(item_id),),
+                )
+
+            # ДЕНЬГИ ЗА ОТКАТАННЫЙ ЭТАП СНИМАЕМ ВМЕСТЕ С ИСПОЛНИТЕЛЕМ.
+            #
+            # Иначе получалось двойное начисление: заказ вернули в «Раскроено»,
+            # его отшила другая швея, и деньги за один и тот же пошив получили
+            # обе. Уже ВЫПЛАЧЕННОЕ (paid_at заполнен) не трогаем — эти деньги у
+            # человека на руках, и снимать их задним числом нельзя.
+            rollback_types = []
+            if rollback_sewer:
+                rollback_types += ['sewer_piece', 'sewer_overlock']
+            if rollback_overlock:
+                rollback_types.append('overlock_piece')
+            if rollback_packer:
+                rollback_types += ['packer_stickering', 'packer_overlock']
+            if rollback_types:
+                types_csv = ','.join("'" + t + "'" for t in rollback_types)
+                cur.execute(
+                    f"DELETE FROM salary_accruals WHERE order_id = %s "
+                    f"AND type IN ({types_csv}) AND paid_at IS NULL",
                     (int(item_id),),
                 )
 
