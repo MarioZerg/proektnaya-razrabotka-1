@@ -769,6 +769,22 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         'body': json.dumps({'error': f'Заказ с номером {new_number} уже есть в системе'}),
                     }
 
+            # Текущий этап и признак «ждёт оверлок» — нужны при назначении швеи
+            # вручную: назначение на раскроенную вещь должно сразу отдавать её в
+            # работу. Читаем одним запросом здесь, чтобы не дёргать базу в середине
+            # сборки полей.
+            cur.execute(
+                "SELECT sewing_status, requires_overlock, overlocked_at "
+                "FROM orders WHERE id = %s",
+                (int(item_id),),
+            )
+            assign_row = cur.fetchone()
+            if not assign_row:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Заказ не найден'})}
+            current_sewing_for_assign = assign_row[0]
+            needs_overlock_first = bool(assign_row[1]) and assign_row[2] is None
+
             fields = []
             if 'orderNumber' in body_data:
                 fields.append(f"order_number = '{str(body_data['orderNumber']).replace(chr(39), chr(39)*2)}'")
@@ -849,6 +865,27 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if 'assignedUserId' in body_data:
                 val = body_data['assignedUserId']
                 fields.append(f"assigned_user_id = {int(val) if val not in (None, '') else 'NULL'}")
+
+                # НАЗНАЧИЛ ШВЕЮ НА РАСКРОЕННУЮ ВЕЩЬ — ЗНАЧИТ ОТДАЛ ЕЙ В РАБОТУ.
+                #
+                # Обычно швея берёт заказ сама кнопкой «Взять заказ»: та переводит
+                # его в «В работе» и ставит время взятия. Но админ раздаёт работу
+                # руками — например, после отката заказа назад. Раньше назначение
+                # меняло ТОЛЬКО исполнителя: заказ оставался в «Раскроено», у швеи
+                # в работе не появлялся, а из очереди его уже никто не мог взять —
+                # она отдаёт только ничьи вещи. Заказ повисал между этапами.
+                #
+                # Двигаем этап только с «Раскроено» и только если админ не задал
+                # статус этим же запросом (его выбор главнее) и вещь не ждёт
+                # оверлок: до обмётки края прямострочка не начинается.
+                if (
+                    val not in (None, '')
+                    and 'sewingStatus' not in body_data
+                    and current_sewing_for_assign == 'Раскроено'
+                    and not needs_overlock_first
+                ):
+                    fields.append("sewing_status = 'В работе'")
+                    fields.append("taken_at = now()")
             if 'workshopId' in body_data:
                 val = body_data['workshopId']
                 fields.append(f"workshop_id = {int(val) if val not in (None, '') else 'NULL'}")
