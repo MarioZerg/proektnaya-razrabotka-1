@@ -180,6 +180,30 @@ const ProsecutorCase = () => {
           <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="flex items-center gap-2 font-semibold">
+                <Icon name="FileSignature" size={18} />
+                Проект договора ГПХ (приложение № 8)
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Договор возмездного оказания услуг по упаковке с самозанятым + акт
+                сдачи-приёмки. Стоимость услуг — <b>2 000 ₽ за объём упаковки 100 единиц
+                изделий в день</b> (20 ₽ за единицу). Отдельным разделом закреплена
+                обязанность исполнителя передавать чеки «Мой налог». Распечатать и взять
+                с собой.
+              </p>
+            </div>
+            <Button asChild variant="outline" className="shrink-0">
+              <a href="/docs/prosecutor/proekt-dogovora-gph.pdf" target="_blank" rel="noreferrer">
+                <Icon name="Download" size={16} className="mr-2" />
+                Скачать PDF
+              </a>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="border-primary/30">
+          <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 font-semibold">
                 <Icon name="Table2" size={18} />
                 Прейскурант расценок (приложение № 7)
               </h2>
@@ -487,6 +511,18 @@ const ProsecutorCase = () => {
                     Прейскурант (прил. № 7)
                   </span>
                   <span className="text-xs text-muted-foreground">3 л.</span>
+                </a>
+                <a
+                  href="/docs/prosecutor/proekt-dogovora-gph.pdf"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center justify-between rounded border px-3 py-2 text-sm hover:bg-muted/50"
+                >
+                  <span className="flex items-center gap-2">
+                    <Icon name="FileSignature" size={14} />
+                    Проект договора ГПХ (прил. № 8)
+                  </span>
+                  <span className="text-xs text-muted-foreground">4 л.</span>
                 </a>
                 <div className="rounded border border-dashed px-3 py-2 text-xs text-muted-foreground">
                   Скриншот SMS-переписки от 27.08.2026 в материалы ещё не загружен —
