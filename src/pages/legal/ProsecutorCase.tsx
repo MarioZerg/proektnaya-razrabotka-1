@@ -136,12 +136,36 @@ const ProsecutorCase = () => {
                 Письменные пояснения ИП Левкина А.С.
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Готовый документ на 4 листах: позиция по существу обращения, таблица
-                выплат, риски по 115-ФЗ и опись приложений. Распечатать и подписать.
+                Готовый документ на 6 листах: позиция по существу, доказательства того, что
+                от расчёта никто не уклонялся, причины невозможности перевода, расчёт налога
+                НПД, предложение подписать ГПХ, таблица выплат и опись приложений.
+                Распечатать и подписать.
               </p>
             </div>
             <Button asChild className="shrink-0">
               <a href="/docs/prosecutor/poyasneniya-prokuratura.pdf" target="_blank" rel="noreferrer">
+                <Icon name="Download" size={16} className="mr-2" />
+                Скачать PDF
+              </a>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="border-primary/30">
+          <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 font-semibold">
+                <Icon name="Table2" size={18} />
+                Прейскурант расценок (приложение № 7)
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Все ставки по всем видам работ и должностям в обоих цехах: раскрой, пошив,
+                оверлок, стикеровка, перепаковка, оклады за смену, премии. Подтверждает,
+                что для Новиковой А.А. расценки те же, что и для остальных.
+              </p>
+            </div>
+            <Button asChild variant="outline" className="shrink-0">
+              <a href="/docs/prosecutor/prays-kurant.pdf" target="_blank" rel="noreferrer">
                 <Icon name="Download" size={16} className="mr-2" />
                 Скачать PDF
               </a>
@@ -180,6 +204,67 @@ const ProsecutorCase = () => {
                 <b>Чеки «Мой налог» не представлены.</b> Расчёты с исполнителями ведутся в
                 режиме НПД: после оплаты исполнитель формирует чек в приложении. Чеки за
                 полученные деньги Новикова А.А. не сформировала.
+              </p>
+              <p>
+                <b>От расчёта никто не скрывался.</b> Деньги переводились добровольно ещё в
+                ходе работы, до каких-либо претензий. Телефон, адрес производства и
+                банковские реквизиты не менялись, сведения об ИП открыты в ЕГРИП.
+                Урегулирование предложил сам ИП — 27.08.2026, явка в прокуратуру
+                обеспечена добровольно.
+              </p>
+              <p>
+                <b>В выплате не отказываем.</b> Порядок расчёта: паспорт, ИНН и СНИЛС →
+                подписание договора ГПХ → выплата по прейскуранту, действующему для всех
+                исполнителей. Проект договора готов и предоставляется по первому
+                требованию.
+              </p>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <Icon name="Ban" size={18} />
+            Почему перевод сейчас невозможен
+          </h2>
+          <Card>
+            <CardContent className="space-y-3 p-5 text-sm leading-relaxed">
+              <p>
+                <b>Нет договорных отношений.</b> Ни трудового, ни ГПХ. Паспорт, ИНН и СНИЛС
+                не представлены — у платежа нет ни правового основания, ни
+                идентифицированного получателя. Перевод по номеру телефона на карту
+                «Анастасии Н.» не подтверждает, кому и за что перечислены деньги.
+              </p>
+              <p>
+                <b>Нет чеков «Мой налог».</b> По ч. 1 ст. 14 Федерального закона от
+                27.11.2018 № 422-ФЗ формирование чека — обязанность исполнителя, заказчик
+                исполнить её за него не может. По всем четырём переводам отсутствуют
+                документы об основании платежа: на запрос банка или ФНС представить, кроме
+                квитанций, нечего.
+              </p>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <Icon name="Percent" size={18} />
+            Налог с 48 000 ₽ в 2026 году
+          </h2>
+          <Card>
+            <CardContent className="space-y-3 p-5 text-sm leading-relaxed">
+              <p>
+                Ставка НПД при доходе от ИП — <b>6 %</b> (ч. 2 ст. 10 Федерального закона
+                от 27.11.2018 № 422-ФЗ). С полученных 48 000 ₽ налог составляет{' '}
+                <b>2 880 ₽</b>, а с учётом налогового вычета 10 000 ₽ (ставка снижается до
+                4 %) — <b>1 920 ₽</b>. Страховые взносы плательщик НПД не уплачивает.
+              </p>
+              <p className="text-muted-foreground">
+                Для сравнения: по договору ГПХ с физлицом без НПД заказчик как налоговый
+                агент удерживает НДФЛ 13 % — 6 240 ₽ — и сверх того платит за свой счёт
+                страховые взносы по единому тарифу 30 % — 14 400 ₽. Этот вариант тоже
+                приемлем: обязанность лежит на ИП, но без подписанного договора и
+                паспортных данных исполнить её невозможно.
               </p>
             </CardContent>
           </Card>
@@ -356,6 +441,18 @@ const ProsecutorCase = () => {
                     </a>
                   ))}
                 </div>
+                <a
+                  href="/docs/prosecutor/prays-kurant.pdf"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center justify-between rounded border px-3 py-2 text-sm hover:bg-muted/50"
+                >
+                  <span className="flex items-center gap-2">
+                    <Icon name="Table2" size={14} />
+                    Прейскурант (прил. № 7)
+                  </span>
+                  <span className="text-xs text-muted-foreground">3 л.</span>
+                </a>
                 <div className="rounded border border-dashed px-3 py-2 text-xs text-muted-foreground">
                   Скриншот SMS-переписки от 27.08.2026 в материалы ещё не загружен —
                   приложите файл, он указан шестым пунктом в описи пояснений.
