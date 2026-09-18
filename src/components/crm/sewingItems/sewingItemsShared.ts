@@ -115,3 +115,25 @@ export const formatWait = (totalSec: number): string => {
 };
 
 export { formatDateTime as formatDate, timeAgo } from '@/lib/dateUtils';
+/**
+ * Подпись сотрудника в списке назначения: «Беляева Наталия · Цех №1, см. 1 · …86».
+ *
+ * ЗАЧЕМ. В цехе работают полные тёзки — «Беляева Наталия» и «Беляева Наталия
+ * Николаевна». В выпадающем списке они выглядели одинаково, и админ назначал
+ * заказ не на ту карточку: у самой швеи заказ в работе не появлялся, потому что
+ * он висел на однофамилице. Цех, смена и последние цифры телефона различают
+ * людей однозначно, а если и этого мало — показываем внутренний номер карточки.
+ */
+export const employeeLabel = (e: {
+  id: number;
+  fullName: string;
+  workshop?: string | null;
+  shiftNumber?: number | null;
+  phone?: string | null;
+}): string => {
+  const place = [e.workshop, e.shiftNumber ? `см. ${e.shiftNumber}` : null]
+    .filter(Boolean)
+    .join(', ');
+  const tail = e.phone ? `…${e.phone.replace(/\D/g, '').slice(-2)}` : `#${e.id}`;
+  return [e.fullName, place || null, tail].filter(Boolean).join(' · ');
+};

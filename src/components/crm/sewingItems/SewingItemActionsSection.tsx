@@ -16,9 +16,14 @@ import type { Workshop } from '@/lib/workshopsApi';
 import type { Roll } from '@/lib/rollsApi';
 import { fetchHangers, hangerLabel, type Hanger } from '@/lib/hangersApi';
 import {
+  fetchEmployeeShifts,
+  type EmployeeShiftStatus,
+} from '@/lib/shiftSessionsApi';
+import {
   statusOptions,
   formatWait,
   isOrderCancelled,
+  employeeLabel,
 } from '@/components/crm/sewingItems/sewingItemsShared';
 import { formatQuantity } from '@/lib/formatQuantity';
 
@@ -69,6 +74,34 @@ const SewingItemActionsSection = ({
   const [selectedRollId, setSelectedRollId] = useState<string>('');
   const [hangers, setHangers] = useState<Hanger[]>([]);
   const [selectedHanger, setSelectedHanger] = useState<string>('');
+  // Кто сейчас реально на смене. Нужно, чтобы предупредить админа: назначенный
+  // сотрудник смену не открывал и заказ у себя не увидит.
+  const [shifts, setShifts] = useState<EmployeeShiftStatus[]>([]);
+
+  useEffect(() => {
+    if (!dialogOpen) return;
+    fetchEmployeeShifts().then(setShifts).catch(() => setShifts([]));
+  }, [dialogOpen]);
+
+  // НАЗНАЧИЛИ НА ЧЕЛОВЕКА, КОТОРОГО НЕТ НА СМЕНЕ.
+  //
+  // Швея видит заказы только своего цеха и только пока у неё открыта смена:
+  // без смены страница конвейера для неё пуста. Админ же видит заказ в списке
+  // и считает, что работа роздана. Так заказ и зависал: у админа он «в работе
+  // у Беляевой», а сама Беляева его не видела.
+  //
+  // Проверяем и цех: сотрудник может быть на смене в другом цехе — тогда заказ
+  // этого цеха он тоже не увидит.
+  const assignedShift = selectedOrder.assignedUserId
+    ? shifts.find((s) => s.id === selectedOrder.assignedUserId)
+    : undefined;
+  const assignedNotOnShift = Boolean(selectedOrder.assignedUserId) && !assignedShift?.isOpen;
+  const assignedOtherWorkshop = Boolean(
+    assignedShift?.isOpen &&
+      selectedOrder.workshopId &&
+      assignedShift.sessionWorkshopId &&
+      assignedShift.sessionWorkshopId !== selectedOrder.workshopId
+  );
 
   // Список вешалок нужен только закройщику при раскрое.
   useEffect(() => {
@@ -426,11 +459,42 @@ const SewingItemActionsSection = ({
               <SelectItem value="none">Не назначен</SelectItem>
               {employees.map((e) => (
                 <SelectItem key={e.id} value={String(e.id)}>
-                  {e.fullName}
+                  {/* ПОЛНЫХ ТЁЗОК В СПИСКЕ РАЗЛИЧАТЬ НЕЧЕМ.
+                      В цехе работают два человека с почти одинаковым именем
+                      («Беляева Наталия» и «Беляева Наталия Николаевна»), и админ
+                      назначал заказ не на того: в списке они выглядели одинаково.
+                      Заказ уходил на карточку, под которой человек не работает, —
+                      у самой швеи он не появлялся. Показываем рядом смену, цех и
+                      последние цифры телефона: этого хватает, чтобы не промахнуться. */}
+                  {employeeLabel(e)}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+
+          {/* Назначить мало — человек должен увидеть заказ у себя. Пока смена
+              не открыта, конвейер у него пуст, и работа стоит. */}
+          {assignedNotOnShift && (
+            <p className="flex items-start gap-1.5 rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+              <Icon name="TriangleAlert" size={14} className="mt-0.5 shrink-0" />
+              <span>
+                Смена не открыта — сотрудник не увидит этот заказ у себя. Он появится
+                у него, как только смена будет открыта.
+              </span>
+            </p>
+          )}
+          {assignedOtherWorkshop && (
+            <p className="flex items-start gap-1.5 rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+              <Icon name="TriangleAlert" size={14} className="mt-0.5 shrink-0" />
+              <span>
+                Сотрудник на смене в другом цехе
+                {assignedShift?.sessionWorkshopName
+                  ? ` (${assignedShift.sessionWorkshopName})`
+                  : ''}{' '}
+                — заказ этого цеха он не увидит.
+              </span>
+            </p>
+          )}
         </div>
 
         <div className="w-full space-y-1.5 sm:w-48">
