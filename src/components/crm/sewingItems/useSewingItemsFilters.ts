@@ -3,7 +3,9 @@ import type { Order } from '@/lib/ordersApi';
 import type { Material } from '@/lib/materialsApi';
 import {
   OVERLOCK_TAB,
+  CANCELLED_CUT_TAB,
   isOrderCancelled,
+  isCancelledWithCut,
   type StatusTab,
   type TabValue,
 } from '@/components/crm/sewingItems/sewingItemsShared';
@@ -99,6 +101,20 @@ export const useSewingItemsFilters = ({
 
   const ordersInTab = activeOrders
     .filter((o) => {
+      // ВКЛАДКА «ОТМЕНЁННЫЕ С КРОЕМ» — СРЕЗ ПО ВСЕМ ЭТАПАМ СРАЗУ.
+      //
+      // Собирает вещи, у которых крой уже сделан, а заказ отменён покупателем.
+      // Такая вещь не пропадает бесследно только здесь: в остальных вкладках
+      // она лежит в своём статусе вперемешку с живой работой, и найти её можно
+      // лишь зная номер. Крой надо дошить и провести через стикеровку — там
+      // вещь получит складской стикер и уедет на полку.
+      if (activeTab === CANCELLED_CUT_TAB) {
+        return isCancelledWithCut(o);
+      }
+      // В обычные вкладки отменённый крой не подмешиваем: он уже собран в своей
+      // вкладке, а в очереди «Раскроено» смотрят живую работу.
+      if (isCancelledWithCut(o)) return false;
+
       // ВКЛАДКА «ОВЕРЛОК» — СРЕЗ ОЧЕРЕДИ «РАСКРОЕНО», А НЕ ОТДЕЛЬНЫЙ СТАТУС.
       //
       // Вещь из ткани с осыпающимся краем лежит в том же статусе «Раскроено», что
@@ -157,6 +173,14 @@ export const useSewingItemsFilters = ({
       if (doneFrom && day < doneFrom) return false;
       if (doneTo && day > doneTo) return false;
     }
+    // НА ВКЛАДКЕ «ОТМЕНЁННЫЕ С КРОЕМ» ФИЛЬТРЫ ВЛАДЕНИЯ НЕ ПРИМЕНЯЕМ.
+    //
+    // Это список «что доделать, чтобы крой не пропал». Вещь мог раскроить один
+    // человек, а дошивать будет другой — если показывать каждому только свои,
+    // вещь снова окажется невидимой для того, кто реально её закончит. Поэтому
+    // здесь цех видит весь список целиком.
+    if (activeTab === CANCELLED_CUT_TAB) return true;
+
     // Владение по вкладкам: закройщик на "На раскрое" видит только свой стек, швея на
     // "В работе" — только свои заказы. Упаковщица на "В работе" видит ЗАКАЗЫ ВСЕХ швей
     // (с именами), поэтому под этот фильтр не попадает.
@@ -189,46 +213,55 @@ export const useSewingItemsFilters = ({
   const totalPieces = filteredOrders.reduce((sum, o) => sum + o.quantity, 0);
 
   const countForTab = (status: TabValue) => {
+    // Отменённый крой считаем целиком по цеху и первым: этот счётчик —
+    // напоминание «столько вещей зависло», и он не должен зависеть от роли.
+    if (status === CANCELLED_CUT_TAB) {
+      return activeOrders.filter(isCancelledWithCut).length;
+    }
+    // Отменённый крой живёт в своей вкладке и в остальные счётчики не попадает —
+    // иначе очередь «Раскроено» показывала бы работу, которой там уже нет.
+    const workOrders = activeOrders.filter((o) => !isCancelledWithCut(o));
+
     // Счётчики повторяют деление очереди «Раскроено» на две вкладки: ждущие
     // обмётки — в «Оверлок», всё остальное — в «Раскроено».
     if (status === OVERLOCK_TAB) {
-      return activeOrders.filter(
+      return workOrders.filter(
         (o) => o.sewingStatus === 'Раскроено' && o.requiresOverlock && !o.overlockedAt
       ).length;
     }
     if (status === 'Раскроено' && !isCutter) {
-      return activeOrders.filter(
+      return workOrders.filter(
         (o) =>
           o.sewingStatus === 'Раскроено' && !(o.requiresOverlock && !o.overlockedAt)
       ).length;
     }
     if (status === 'На раскрое' && isCutter) {
-      return activeOrders.filter((o) => o.sewingStatus === status && o.assignedUserId === userId).length;
+      return workOrders.filter((o) => o.sewingStatus === status && o.assignedUserId === userId).length;
     }
     if (status === 'В работе' && isSewer) {
-      return activeOrders.filter((o) => o.sewingStatus === status && o.assignedUserId === userId).length;
+      return workOrders.filter((o) => o.sewingStatus === status && o.assignedUserId === userId).length;
     }
     // У закройщика на вкладке только его крой — счётчик считаем так же.
     if (status === 'В работе' && isCutter) {
-      return activeOrders.filter((o) => o.sewingStatus === status && o.cutterUserId === userId).length;
+      return workOrders.filter((o) => o.sewingStatus === status && o.cutterUserId === userId).length;
     }
     // "Стикеровка" и "Готовые" — считаем только свои: швея по sewerUserId, закройщик по cutterUserId.
     if ((status === 'Готовые' || status === 'Стикеровка') && isSewer) {
-      return activeOrders.filter((o) => o.sewingStatus === status && o.sewerUserId === userId).length;
+      return workOrders.filter((o) => o.sewingStatus === status && o.sewerUserId === userId).length;
     }
     if ((status === 'Готовые' || status === 'Стикеровка') && isCutter) {
-      return activeOrders.filter((o) => o.sewingStatus === status && o.cutterUserId === userId).length;
+      return workOrders.filter((o) => o.sewingStatus === status && o.cutterUserId === userId).length;
     }
     // На вкладке у закройщика только его крой — счётчик должен показывать то же число.
     if (status === 'Раскроено' && isCutter) {
-      return activeOrders.filter(
+      return workOrders.filter(
         (o) =>
           o.sewingStatus === status &&
           o.cutterUserId === userId &&
           !(o.requiresOverlock && !o.overlockedAt)
       ).length;
     }
-    return activeOrders.filter((o) => o.sewingStatus === status).length;
+    return workOrders.filter((o) => o.sewingStatus === status).length;
   };
 
   // Нераскроенные заказы закройщика — и число, и сами заказы. По ним печатается лист

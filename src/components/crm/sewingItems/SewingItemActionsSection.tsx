@@ -322,6 +322,23 @@ const SewingItemActionsSection = ({
 
     return (
       <Card className="border-border shadow-none">
+        {/* ОТМЕНЁННАЯ ВЕЩЬ С ГОТОВЫМ КРОЕМ — ШЬЁМ КАК ОБЫЧНО.
+            Швея видит красный бейдж «Отменён» и может решить, что работу делать
+            не надо, а вещь бросить. Но крой уже сделан, ткань не вернуть: вещь
+            дошивают и сдают на стикеровку, где ей печатают складской стикер. */}
+        {isOrderCancelled(selectedOrder) && (
+          <CardContent className="space-y-1.5 border-b border-amber-200 bg-amber-50 py-3">
+            <p className="flex items-center gap-2 text-sm font-bold text-amber-900">
+              <Icon name="TriangleAlert" size={16} className="shrink-0" />
+              Заказ отменён покупателем — вещь всё равно дошиваем
+            </p>
+            <p className="text-sm text-amber-900">
+              Ткань уже раскроена, обратно в рулон она не вернётся. Шейте и сдавайте
+              на стикеровку как обычно: там вещи напечатают складской стикер, и она
+              уедет на полку хранения вместо отправки покупателю.
+            </p>
+          </CardContent>
+        )}
         <CardHeader className="pb-3">
           {/* break-words обязателен: название материала приходит из справочника
               и бывает длинным, а без переноса эта строка задаёт карточке

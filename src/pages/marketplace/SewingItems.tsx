@@ -16,7 +16,10 @@ import { useSewingItemOrderDetail } from '@/components/crm/sewingItems/useSewing
 import { useSewingItemsQueueActions } from '@/components/crm/sewingItems/useSewingItemsQueueActions';
 import { isStorekeeperRole } from '@/lib/roles';
 import NextStackHint from '@/components/crm/sewingItems/NextStackHint';
-import { type TabValue } from '@/components/crm/sewingItems/sewingItemsShared';
+import {
+  CANCELLED_CUT_TAB,
+  type TabValue,
+} from '@/components/crm/sewingItems/sewingItemsShared';
 
 const SewingItems = () => {
   const {
@@ -381,6 +384,24 @@ const SewingItems = () => {
             ))}
           </TabsList>
         </Tabs>
+
+        {/* Объясняем, что это за список и что с ним делать. Без пояснения
+            вкладка выглядит как «мусорка отменённых», и вещи так и остались бы
+            висеть на вешалках: непонятно, шить их или выбрасывать. */}
+        {activeTab === CANCELLED_CUT_TAB && !loading && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="flex items-start gap-2 font-semibold">
+              <Icon name="Scissors" size={16} className="mt-0.5 shrink-0" />
+              Крой готов, но заказ отменил покупатель — вещи нужно доделать
+            </p>
+            <p className="mt-1">
+              Ткань уже разрезана и в рулон не вернётся. Такую вещь дошивают и сдают
+              на стикеровку как обычно: там ей напечатают складской стикер, и она
+              уедет на полку хранения — ярлыка покупателя у неё не будет. Пока вещь
+              не доведена до конца, она числится в цехе и на склад попасть не может.
+            </p>
+          </div>
+        )}
 
         {!loading && (
           <p className="text-sm text-muted-foreground">
