@@ -91,11 +91,21 @@ const BundleBlock = ({
                   : 'bg-amber-600 hover:bg-amber-600'
               }`}
             >
-              {group.inSupply} из {group.total}
+              {group.inSupply} из {group.total} в коробе
             </Badge>
             {!group.isComplete && (
+              // ЧТО ЗНАЧИТ «0 из 2».
+              //
+              // Это НЕ потеря вещей: счётчик показывает, сколько вещей связки уже
+              // отсканировано В КОРОБ. «0 из 2» значит, что обе вещи готовы и лежат
+              // на складе, но в короб их ещё не пикнули. Кладовщики читали это как
+              // «связка развалилась» и шли искать пропажу, которой не было.
+              //
+              // Поэтому пишем прямым текстом, что именно осталось сделать.
               <span className="text-xs font-medium text-amber-800">
-                нужно донести ещё {short} — заказ едет только целиком
+                {group.inSupply === 0
+                  ? `отсканируйте обе вещи в короб (${group.total} шт.) — заказ едет только целиком`
+                  : `отсканируйте в короб ещё ${short} — заказ едет только целиком`}
               </span>
             )}
             {group.isComplete && group.labelScanned && (
@@ -156,6 +166,37 @@ const BundleBlock = ({
       )}
 
       {open && rows.map(renderRow)}
+
+      {/* ВЕЩИ СВЯЗКИ, КОТОРЫХ НЕТ В СПИСКЕ.
+          
+          В чек-лист попадают только вещи, дошедшие до склада: отсканированные
+          в короб и застикерованные, ждущие скана. Вещь, которая ещё шьётся или
+          висит на стикеровке в цехе, в списке отсутствует — и кладовщик, открыв
+          связку «из 2», видел там ОДНУ строку. Выглядело как пропажа.
+          
+          Пишем прямо: сколько вещей связки ещё не доехало из цеха. */}
+      {open && rows.length < group.total && (
+        <TableRow className="bg-amber-50">
+          <TableCell colSpan={colSpan} className="py-2">
+            <div className="flex items-start gap-2 text-sm text-amber-900">
+              <Icon name="Factory" size={15} className="mt-0.5 shrink-0" />
+              <span>
+                <b>
+                  Ещё {group.total - rows.length} из {group.total} — в цехе.
+                </b>{' '}
+                Эти вещи заказа пока не застикерованы: их не видно в списке, пока
+                упаковщица не закроет их на терминале. Связка едет только целиком —
+                дождитесь их, прежде чем заклеивать коробку.
+                {group.orderNumbers && (
+                  <span className="mt-0.5 block font-mono-tech text-xs text-amber-800">
+                    Вещи заказа: {group.orderNumbers}
+                  </span>
+                )}
+              </span>
+            </div>
+          </TableCell>
+        </TableRow>
+      )}
     </>
   );
 };
