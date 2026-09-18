@@ -764,6 +764,48 @@ def handler(event: dict, context) -> dict:
                     if row[6] == 'Готовые'
                     else f'Заказ {order_number} не на стикеровке (статус: {row[6]})'
                 )
+
+                # СДАВАТЬ НА СКЛАД МОЖНО ТОЛЬКО ВЕЩЬ, КОТОРОЙ НЕКУДА ЕХАТЬ.
+                #
+                # «Свободный остаток» — это редкий случай: заказ закрыли вещью
+                # СО СКЛАДА (подбор), а швея тем временем дошила свою. Тогда вещь
+                # в цехе действительно ничья, и её сдают кладовщику.
+                #
+                # Но обычная FBS-вещь, которую только что закрыли на этом же
+                # терминале, ждёт поставки: у неё есть складская запись со
+                # статусом awaiting_supply и ярлык маркетплейса. Её надо положить
+                # в короб к отгрузке, а НЕ на полку хранения. Предлагать здесь
+                # склад — значит уводить готовое отправление из поставки: на
+                # Яндекс FBS вещи со склада не подбираются, и заказ зависнет.
+                #
+                # Поэтому спрашиваем: вещь уже едет в поставку? Если да — говорим
+                # об этом прямо и склад не предлагаем.
+                cur.execute(
+                    "SELECT gw.status, gw.shipping_labeled_at FROM goods_warehouse gw "
+                    "WHERE gw.order_id = %s "
+                    "ORDER BY (gw.status = 'awaiting_supply') DESC, gw.id DESC LIMIT 1",
+                    (row[0],),
+                )
+                gw_state = cur.fetchone()
+                goes_to_supply = bool(
+                    gw_state
+                    and gw_state[0] in ('awaiting_supply', 'picking', 'shipped')
+                )
+                if goes_to_supply:
+                    ship_msg = (
+                        f'Заказ {order_number} уже застикерован — вещь ждёт '
+                        f'ОТГРУЗКИ в поставку, а не склад. Положите её в короб '
+                        f'к отправке: кладовщик отсканирует её в поставку'
+                        if gw_state[0] != 'shipped'
+                        else f'Заказ {order_number} уже отгружен в поставку — '
+                             f'вещь у вас лишняя, позовите старшего'
+                    )
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': ship_msg}, ensure_ascii=False),
+                    }
+
                 return {
                     'statusCode': 409,
                     'headers': headers,
