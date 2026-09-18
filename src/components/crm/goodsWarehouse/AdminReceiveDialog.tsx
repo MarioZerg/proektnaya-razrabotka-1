@@ -187,6 +187,13 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
         status: string;
       }[] = [];
       let failed = 0;
+      // ПРИЧИНУ ОТКАЗА НАДО ПОКАЗАТЬ, А НЕ ПРОГЛОТИТЬ.
+      //
+      // Сервер отклоняет приём, когда по этому товару в цехе висит раскроенная,
+      // но недоделанная вещь: крой — не товар, на склад он не кладётся. Раньше
+      // текст ошибки терялся в пустом catch, и кладовщик видел только сухое
+      // «не удалось принять: 1», не понимая, что делать.
+      const errors: string[] = [];
 
       for (const row of cart) {
         try {
@@ -208,9 +215,22 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
           );
           // Стикеры печатаем только на реально заведённые вещи.
           failed += Math.max(0, row.qty - list.length);
-        } catch {
+        } catch (e) {
           failed += row.qty;
+          const text = e instanceof Error ? e.message : '';
+          if (text) errors.push(`${row.item.name}: ${text}`);
         }
+      }
+
+      // Отказ показываем отдельным сообщением и подольше: в нём номера вещей,
+      // которые нужно найти в цехе и довести по конвейеру.
+      if (errors.length) {
+        toast({
+          title: 'Часть товаров принять нельзя',
+          description: errors.join('\n'),
+          variant: 'destructive',
+          duration: 15000,
+        });
       }
 
       if (printed.length && autoPrint) {

@@ -83,6 +83,44 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not item_id:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товар'})}
 
+            # НА СКЛАД КЛАДЁТСЯ ТОЛЬКО ГОТОВАЯ ВЕЩЬ.
+            #
+            # Ручной приём заводит вещь сразу как «Готовые», минуя конвейер. Так им
+            # и пытались «пристроить» крой, зависший в цехе: заказ отменили после
+            # раскроя, вещь не сшита и не упакована, а её заводят на полку по
+            # названию товара. На складе появляется товар, которого физически нет —
+            # есть кусок ткани.
+            #
+            # Крой — НЕ товар. Он обязан пройти пошив и стикеровку: только там вещь
+            # получает стикер хранения GW и становится складским остатком.
+            #
+            # Проверяем ТОЛЬКО «Раскроено» и «В работе» — это вещи, которые ещё шьют.
+            # «Стикеровка» сюда не входит: там вещь уже сшита, доедет до склада сама
+            # за минуты, и блокировать из-за неё приём других вещей незачем.
+            cur.execute(
+                "SELECT o.order_number, o.sewing_status FROM orders o "
+                "WHERE o.marketplace_item_id = %s "
+                "  AND o.sewing_status IN ('Раскроено', 'В работе') "
+                "  AND o.cut_at IS NOT NULL "
+                "ORDER BY o.cut_at LIMIT 5",
+                (int(item_id),),
+            )
+            unfinished = cur.fetchall()
+            if unfinished:
+                where = ', '.join(f'{n} ({s.lower()})' for n, s in unfinished)
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': 'Нельзя принять на склад: по этому товару в цехе есть '
+                                 'раскроенные вещи, не дошедшие до конца конвейера — '
+                                 f'{where}. Раскроенная вещь не сшита и не упакована, '
+                                 'товаром она станет только после стикеровки: там ей '
+                                 'напечатают стикер хранения, и она попадёт на склад сама. '
+                                 'Доведите вещь по конвейеру, а не заводите её здесь заново.',
+                    }, ensure_ascii=False),
+                }
+
             cur.execute(
                 "SELECT name, material, width, height, barcode, ozon_sku FROM marketplace_items WHERE id = %s",
                 (int(item_id),),
@@ -2789,4 +2827,3 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
         return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
     finally:
         conn.close()
-
