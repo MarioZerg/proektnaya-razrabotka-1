@@ -205,11 +205,19 @@ def handle_list_warehouses(api_key):
 def match_from_stock(cur, order_id, item_id) -> bool:
     """Пробует закрыть новый заказ вещью, которая уже лежит на полке склада.
 
-    Подбор строго по товару справочника (marketplace_item_id) — та же карточка товара, значит
-    вещь подойдёт покупателю. Берём самую давно лежащую (FIFO). Заказ помечается как закрытый
-    со склада и на конвейер производства не уходит, вещь резервируется под него.
+    Берём самую давно лежащую (FIFO). Заказ помечается как закрытый со склада и на
+    конвейер производства не уходит, вещь резервируется под него.
+
+    Сверяемся по карточке товара ИЛИ по названию («Шифон 300x265»). Только карточки
+    мало: у вещей, пришедших возвратом с маркетплейса, и у части принятых вручную
+    marketplace_item_id пустой — такие вещи подбор не видел, и заказ уходил в пошив,
+    хотя товар лежал на полке. В названии — материал и размер, то есть ровно то, чем
+    вещи различаются на стеллаже.
     """
-    if not item_id:
+    cur.execute("SELECT product FROM orders WHERE id = %s", (int(order_id),))
+    prod_row = cur.fetchone()
+    order_product = prod_row[0] if prod_row else None
+    if not item_id and not order_product:
         return False
     cur.execute(
         "SELECT gw.id FROM goods_warehouse gw "
@@ -219,10 +227,10 @@ def match_from_stock(cur, order_id, item_id) -> bool:
         # на стеллаже нет.
         "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
         "AND gw.shelf_id IS NOT NULL "
-        "AND src.marketplace_item_id = %s "
+        "AND (src.marketplace_item_id = %s OR (%s IS NOT NULL AND src.product = %s)) "
         "ORDER BY gw.received_at ASC LIMIT 1 "
         "FOR UPDATE OF gw SKIP LOCKED",
-        (int(item_id),),
+        (int(item_id) if item_id else None, order_product, order_product),
     )
     row = cur.fetchone()
     if not row:

@@ -425,12 +425,22 @@ def log_action(cur, actor_id, actor_name, action, description):
 def match_from_stock(cur, order_id, item_id) -> bool:
     """Пробует закрыть новый заказ вещью, которая уже лежит на полке склада.
 
-    Подбор строго по товару справочника (marketplace_item_id) — это та же карточка товара,
-    значит вещь подойдёт покупателю. Берём самую давно лежащую вещь (FIFO). Если нашли:
-    заказ помечается как закрытый со склада и НЕ уходит на конвейер производства, а вещь
-    резервируется под него — кладовщик заберёт её с полки и наклеит стикер отправления.
+    Берём самую давно лежащую вещь (FIFO). Если нашли: заказ помечается как закрытый
+    со склада и НЕ уходит на конвейер производства, а вещь резервируется под него —
+    кладовщик заберёт её с полки и наклеит стикер отправления.
+
+    КЛЮЧ ПОДБОРА — КАРТОЧКА ТОВАРА ИЛИ ЕГО НАЗВАНИЕ («Шифон 300x265»).
+    Раньше сравнивали ТОЛЬКО marketplace_item_id. Но у вещей, пришедших возвратом
+    с маркетплейса (заказ RET-OZON-…) и у части принятых вручную, карточка не
+    проставлена — поле пустое. Такие вещи подбор не видел вовсе: кладовщик видел
+    товар на полке, а новый заказ всё равно уходил в пошив. Название содержит
+    материал и размер — ровно то, чем вещи различаются на стеллаже, поэтому
+    сверяемся ещё и по нему (так же, как это делает общий пересчёт подбора).
     """
-    if not item_id:
+    cur.execute("SELECT product FROM orders WHERE id = %s", (int(order_id),))
+    prod_row = cur.fetchone()
+    order_product = prod_row[0] if prod_row else None
+    if not item_id and not order_product:
         return False
     cur.execute(
         "SELECT gw.id FROM goods_warehouse gw "
@@ -443,12 +453,12 @@ def match_from_stock(cur, order_id, item_id) -> bool:
         # физически ещё лежит в цехе: кладовщик шёл к стеллажу, а её там нет.
         "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
         "AND gw.shelf_id IS NOT NULL "
-        "AND src.marketplace_item_id = %s "
+        "AND (src.marketplace_item_id = %s OR (%s IS NOT NULL AND src.product = %s)) "
         "ORDER BY gw.received_at ASC LIMIT 1 "
         # Вещь, которую параллельно резервирует другой процесс, пропускаем —
         # так одна вещь физически не может уйти в два заказа сразу.
         "FOR UPDATE OF gw SKIP LOCKED",
-        (int(item_id),),
+        (int(item_id) if item_id else None, order_product, order_product),
     )
     row = cur.fetchone()
     if not row:
@@ -1188,7 +1198,20 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
                             shop_id,
                         ),
                     )
-                    if cur.fetchone():
+                    split_inserted = cur.fetchone()
+                    if split_inserted:
+                        # ПОДБОР СО СКЛАДА НУЖЕН И ЗДЕСЬ.
+                        #
+                        # Эта ветка заводит вещи РАЗДЕЛЁННОГО отправления (OZON сам
+                        # выдал каждой вещи свой номер). Раньше подбор вызывался
+                        # только в ветке ниже — для неделёных отправлений, а сюда
+                        # его забыли добавить. Из-за этого любая вещь из многовещевого
+                        # заказа уходила в пошив, даже когда точно такая же лежала на
+                        # полке: кладовщик видел товар на стеллаже, выставлял размеры,
+                        # а заказ всё равно «не прилетал» на склад.
+                        matched += 1 if match_from_stock(
+                            cur, split_inserted[0], item_id
+                        ) else 0
                         created += 1
                         created_numbers.append(unit_number)
                         made_any = True
