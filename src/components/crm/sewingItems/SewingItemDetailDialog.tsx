@@ -17,7 +17,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { statusBadgeClass } from '@/components/crm/sewingItems/sewingItemsShared';
+import {
+  statusBadgeClass,
+  isOrderCancelled,
+} from '@/components/crm/sewingItems/sewingItemsShared';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { marketplaceLogo } from '@/components/crm/sewingItems/sewingItemsShared';
@@ -128,8 +131,16 @@ const SewingItemDetailDialog = ({
   const canOverlockThis =
     user?.role === 'admin' || employees.some((e) => e.id === user?.id && e.canOverlock);
 
+  // ОТМЕНЁННУЮ ВЕЩЬ В ОЧЕРЕДЬ НЕ ВОЗВРАЩАЮТ — ЕЁ ТАМ НИКТО НЕ УВИДИТ.
+  //
+  // Конвейер скрывает отменённые заказы, которые лежат в «Новом» и ни за кем не
+  // закреплены. Поэтому сброс такой вещи обратно в очередь означал, что она
+  // пропадала для всех: в списке её нет, взять некому, а крой или вешалка
+  // остаются в цехе (так завис заказ 40863907-0422-1). Сервер такой возврат
+  // теперь отклоняет — прячем и кнопку, чтобы человек не упирался в ошибку.
   const canCancel =
     !!onCancelOrder &&
+    !(selectedOrder && isOrderCancelled(selectedOrder)) &&
     ((isCutterView && selectedOrder?.sewingStatus === 'На раскрое') ||
       (isSewerView && selectedOrder?.sewingStatus === 'В работе'));
 
