@@ -1208,13 +1208,82 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     f"WHERE gw.storage_barcode = '{scan_esc}'"
                 )
                 fbo_row = cur.fetchone()
+
+                # НА ВЕЩИ FBO НАКЛЕЕН СТИКЕР ТОВАРА OZON, А НЕ СКЛАДСКОЙ GW.
+                #
+                # Стикер FBO печатается с кодом товара «OZN{ozon_sku}» — именно
+                # его требует приёмка площадки. Складского GW на такой вещи
+                # может не быть вовсе: её стикеруют сразу под поставку.
+                #
+                # Код же искал ТОЛЬКО по gw.storage_barcode и на реальный
+                # FBO-стикер отвечал «не найден» — собрать короб было нечем,
+                # кладовщик упирался в тупик со стикером в руках.
+                #
+                # Поэтому если по GW не нашли, разбираем скан как код товара
+                # (с префиксом OZN и без, с ведущими нулями) и берём ЛЮБУЮ
+                # свободную вещь этого товара со склада: у FBO товар
+                # обезличенный, вещи одного SKU взаимозаменяемы.
+                if not fbo_row:
+                    code = order_number.strip().strip('\r\n\t ').upper()
+                    bare = code[3:] if code.startswith('OZN') else code
+                    variants = {v for v in {code, bare, f'OZN{bare}', bare.lstrip('0')} if v}
+                    vals = ', '.join("'" + v.replace("'", "''") + "'" for v in variants)
+                    cur.execute(
+                        "SELECT gw.id, gw.status, gw.storage_barcode, "
+                        "       o.material, o.width, o.height, o.product "
+                        "FROM goods_warehouse gw "
+                        "JOIN orders o ON o.id = COALESCE(gw.order_id, gw.reserved_order_id) "
+                        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                        # Вещь должна лежать на складе и быть свободной от поставок.
+                        "WHERE gw.status IN ('in_stock', 'awaiting_supply') "
+                        "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items si "
+                        "                  JOIN marketplace_supplies s2 ON s2.id = si.supply_id "
+                        "                  WHERE si.goods_warehouse_id = gw.id "
+                        "                    AND COALESCE(s2.status, '') "
+                        "                        NOT IN ('Выполнена', 'Отменена')) "
+                        "  AND ("
+                        f"       upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}) "
+                        "  ) "
+                        # Сначала то, что уже отложено под поставку, затем самое
+                        # давнее на полке: склад разгружается по очереди.
+                        "ORDER BY (gw.status = 'awaiting_supply') DESC, gw.id "
+                        "LIMIT 1"
+                    )
+                    fbo_row = cur.fetchone()
+
+                    # Товар в справочнике есть, но свободных вещей на складе нет —
+                    # это другая ситуация, чем «код не найден», и ответ должен
+                    # быть другим: искать надо не стикер, а товар на полке.
+                    if not fbo_row:
+                        cur.execute(
+                            "SELECT name FROM marketplace_items WHERE "
+                            f"upper(trim(coalesce(ozon_sku, ''))) IN ({vals}) "
+                            f"OR upper(trim(coalesce(barcode, ''))) IN ({vals}) "
+                            "LIMIT 1"
+                        )
+                        known = cur.fetchone()
+                        if known:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': f'«{known[0]}» — на складе нет свободных вещей '
+                                             f'этого товара. Все уже разложены по поставкам '
+                                             f'или проданы',
+                                }, ensure_ascii=False),
+                            }
+
                 if not fbo_row:
                     return {
                         'statusCode': 404,
                         'headers': headers,
                         'body': json.dumps({
                             'error': f'Стикер {order_number} не найден. В короб FBO '
-                                     f'сканируется складской стикер вещи (GW-…)'
+                                     f'сканируется стикер товара (OZN…) или складской '
+                                     f'стикер вещи (GW-…)'
                         }, ensure_ascii=False),
                     }
                 (fbo_gid, fbo_status, fbo_barcode,

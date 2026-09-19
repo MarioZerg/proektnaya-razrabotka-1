@@ -10,6 +10,8 @@ import boto3
 import psycopg2
 from psycopg2.extras import execute_values
 
+from authz import AuthError, auth_error_response, require_role
+
 # OZON Seller API (Supply Order — заявки FBO). Ключ боевой (у OZON нет тестового контура),
 # поэтому функция работает ТОЛЬКО НА ЧТЕНИЕ заявок и их состава. Единственное изменение,
 # которое она делает — в НАШЕЙ базе (создаёт поставку и заказы на конвейер). На стороне OZON
@@ -512,6 +514,12 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     # Индекс товара по (material,width,height) -> ozon_sku, чтобы найти sku для заказа.
     cur.execute("SELECT material, width, height, ozon_sku FROM marketplace_items WHERE ozon_sku IS NOT NULL")
     sku_by_mwh = {(r[0], r[1], r[2]): r[3] for r in cur.fetchall()}
+    # Прямая связь «товар справочника -> ozon_sku». Надёжнее, чем подбор по
+    # материалу и размерам: у заказа хранится сам marketplace_item_id.
+    cur.execute("SELECT id, ozon_sku FROM marketplace_items WHERE ozon_sku IS NOT NULL")
+    sku_by_item = {r[0]: r[1] for r in cur.fetchall()}
+    # Короба, где нашлись вещи без ozon_sku: о них предупредим кладовщика.
+    unmatched_boxes = []
 
     # КАКИЕ КОРОБА ОТПРАВЛЯЕМ НА OZON.
     #
@@ -543,19 +551,46 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     cargoes_payload = []
     box_keys = {}  # key -> box_id
     for box_id, box_number, ozon_cargo_id in boxes:
-        # Собираем состав короба через order_id -> товар -> ozon_sku.
+        # СОСТАВ КОРОБА: вещь на складе -> её заказ -> товар -> ozon_sku.
+        #
+        # Раньше здесь читался msi.order_id, но такой колонки в
+        # marketplace_supply_items нет (только id, supply_id,
+        # goods_warehouse_id, box_id). Запрос падал с ошибкой колонки, и
+        # закрыть короб OZON было невозможно в принципе: кладовщик жал
+        # «Закрыть короб» и получал ошибку, грузоместо на площадке не
+        # создавалось.
+        #
+        # Связь у вещи одна — goods_warehouse. Заказ берём и по order_id
+        # (вещь сшили под этот заказ), и по reserved_order_id (вещь сняли с
+        # полки под заказ): у FBO-товара со склада заполнено то или другое.
+        #
+        # ozon_sku ищем сначала прямо у заказа (product_ozon_sku проставляется
+        # при импорте), затем через справочник по marketplace_item_id и лишь
+        # потом по материалу с размерами. Раньше был только третий путь, и
+        # товар, у которого в справочнике не совпала пара «ширина-высота»,
+        # молча выпадал из состава короба — на OZON уезжало меньше, чем в
+        # коробе лежит.
         cur.execute(
-            "SELECT o.material, o.width, o.height FROM marketplace_supply_items msi "
-            "JOIN orders o ON o.id = COALESCE(msi.order_id, "
-            "  (SELECT gw.order_id FROM goods_warehouse gw WHERE gw.id = msi.goods_warehouse_id)) "
+            "SELECT o.material, o.width, o.height, o.product_ozon_sku, o.marketplace_item_id "
+            "FROM marketplace_supply_items msi "
+            "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+            "JOIN orders o ON o.id = COALESCE(gw.order_id, gw.reserved_order_id) "
             "WHERE msi.supply_id = %s AND msi.box_id = %s",
             (int(supply_id), box_id),
         )
         sku_counts = {}
-        for material, width, height in cur.fetchall():
-            sku = sku_by_mwh.get((material, width, height))
-            if sku:
+        unmatched = 0
+        for material, width, height, order_sku, item_id in cur.fetchall():
+            sku = order_sku or sku_by_item.get(item_id) or sku_by_mwh.get((material, width, height))
+            if sku and str(sku).isdigit():
+                sku = str(sku)
                 sku_counts[sku] = sku_counts.get(sku, 0) + 1
+            else:
+                unmatched += 1
+        # Товар без sku на OZON не передать — но и молчать нельзя: короб
+        # заклеят, а в заявке будет меньше штук, чем внутри.
+        if unmatched:
+            unmatched_boxes.append((box_number, unmatched))
         if not sku_counts:
             continue
         key = f'box-{box_id}'
@@ -564,6 +599,20 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
             'key': key,
             'cargo_type': cargo_type,
             'items': [{'sku': int(sku), 'quantity': int(q)} for sku, q in sku_counts.items()],
+        })
+
+    # НЕ ОТПРАВЛЯЕМ КОРОБ, СОСТАВ КОТОРОГО РАСХОДИТСЯ С РЕАЛЬНЫМ.
+    #
+    # Если часть вещей без ozon_sku, на OZON уедет меньше штук, чем физически
+    # лежит в коробе. На приёмке это расхождение — недостача по документам, а
+    # короб к тому моменту уже заклеен. Лучше остановить кладовщика сейчас.
+    if unmatched_boxes:
+        parts = '; '.join(f'короб №{n}: {c} шт.' for n, c in unmatched_boxes)
+        return _resp(409, {
+            'error': 'В коробах есть товар, которого нет в справочнике OZON '
+                     f'({parts}). Пропишите товару OZON SKU в справочнике и '
+                     'закройте короб заново — иначе на площадку уедет меньше, '
+                     'чем лежит в коробе',
         })
 
     if not cargoes_payload:
@@ -705,6 +754,25 @@ def handler(event: dict, context) -> dict:
     conn = psycopg2.connect(dsn)
     try:
         cur = conn.cursor()
+
+        # КТО ПРИШЁЛ — ПРОВЕРЯЕМ ТОКЕНОМ, А НЕ ТЕЛОМ ЗАПРОСА.
+        #
+        # Раньше функция не проверяла права ВООБЩЕ: её адрес виден в коде
+        # страницы, и любой человек из интернета мог дёрнуть её напрямую.
+        # А она ходит в боевой кабинет OZON — создаёт грузоместа в реальной
+        # заявке и заводит заказы на конвейер. Чужой запрос мог переписать
+        # состав поставки или забить производство выдуманными заказами.
+        #
+        # Роли те же, что у сборки поставок: короба собирает кладовщик,
+        # заявки ведёт менеджер, администратор может всё.
+        try:
+            require_role(
+                cur, event,
+                'admin', 'manager', 'senior_storekeeper', 'storekeeper',
+            )
+        except AuthError as err:
+            return auth_error_response(err, CORS_HEADERS)
+
         client_id, api_key, is_enabled = get_ozon_credentials(cur)
         if not is_enabled:
             return _resp(400, {'error': 'Интеграция с OZON выключена. Включите её в разделе «Интеграции маркетплейсов».'})

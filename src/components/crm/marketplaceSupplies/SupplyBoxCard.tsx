@@ -103,6 +103,21 @@ const SupplyBoxCard = ({
           {box.closedAt && (
             <Badge variant="secondary" className="ml-2 align-middle text-[10px]">Закрыт</Badge>
           )}
+          {/* ГРУЗОМЕСТО НА ПЛОЩАДКЕ — ГЛАВНЫЙ ПРИЗНАК, ЧТО КОРОБ РЕАЛЬНО УЕХАЛ.
+              Закрытый короб без cargo_id означает, что на OZON его нет: заявка
+              придёт без этого грузоместа, и на приёмке короб окажется лишним.
+              Раньше оба состояния выглядели одинаково — просто «Закрыт». */}
+          {isOzonFbo && box.closedAt && (
+            box.ozonCargoId ? (
+              <Badge className="ml-1 bg-emerald-600 align-middle text-[10px] text-white hover:bg-emerald-600">
+                На OZON #{box.ozonCargoId}
+              </Badge>
+            ) : (
+              <Badge className="ml-1 bg-amber-600 align-middle text-[10px] text-white hover:bg-amber-600">
+                Не ушёл на OZON
+              </Badge>
+            )
+          )}
         </CardTitle>
         {canEdit && box.items.length === 0 && !box.closedAt && (
           <Button variant="ghost" size="icon" onClick={() => onDeleteBox(box.id)}>
@@ -113,9 +128,16 @@ const SupplyBoxCard = ({
       <CardContent className="space-y-3">
         {canEdit && (
           <div className="flex gap-2">
+            {/* У FBO на вещи наклеен стикер ТОВАРА (OZN…), складского GW на ней
+                может не быть вовсе. Подсказка называет оба кода, чтобы кладовщик
+                не искал на пакете штрихкод, которого там нет. */}
             <Input
               ref={inputRef}
-              placeholder="Сканируйте пакет с товаром"
+              placeholder={
+                isOzonFbo
+                  ? 'Сканируйте стикер товара (OZN…) или GW-…'
+                  : 'Сканируйте пакет с товаром'
+              }
               value={orderNumber}
               onChange={(e) => setOrderNumber(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
@@ -171,6 +193,28 @@ const SupplyBoxCard = ({
               className={`mr-1.5 ${closing ? 'animate-spin' : ''}`}
             />
             {closing ? 'Закрываем короб и получаем стикер…' : 'Закрыть короб'}
+          </Button>
+        )}
+
+        {/* КОРОБ ЗАКРЫТ, НО ГРУЗОМЕСТА НА OZON НЕТ — ДАЁМ ПОВТОРИТЬ.
+            Так бывает, когда площадка не ответила или отклонила состав. Без
+            этой кнопки короб оставался закрытым навсегда: кладовщик не мог ни
+            доложить вещь, ни отправить его на OZON, и поставка уезжала
+            неполной. Повтор отправляет состав заново. */}
+        {isOzonFbo && box.closedAt && !box.ozonCargoId && box.items.length > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full border-amber-500 text-amber-800 hover:bg-amber-50"
+            onClick={handleCloseOzon}
+            disabled={closing}
+          >
+            <Icon
+              name={closing ? 'Loader2' : 'RefreshCw'}
+              size={14}
+              className={`mr-1.5 ${closing ? 'animate-spin' : ''}`}
+            />
+            {closing ? 'Отправляем на OZON…' : 'Повторить отправку на OZON'}
           </Button>
         )}
 

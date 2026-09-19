@@ -20,11 +20,25 @@
       "expectedStatus": 405
     },
     {
-      "name": "Import without orderId fails",
+      "name": "Import without auth is rejected",
       "method": "POST",
       "path": "/",
       "body": {"action": "import_composition"},
-      "expectedStatus": 400
+      "expectedStatus": 401
+    },
+    {
+      "name": "Close boxes without auth is rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "close_boxes", "supplyId": 1},
+      "expectedStatus": 401
+    },
+    {
+      "name": "List applications without auth is rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "list_applications"},
+      "expectedStatus": 401
     }
   ]
 }
