@@ -97,6 +97,11 @@ def handler(event: dict, context) -> dict:
                                                комбинации материал+ширина среди товаров на
                                                маркетплейсе — аналогично дневному окладу админа
     GET  /?payouts=1&userId=1                 - история выплат (все или по сотруднику)
+    GET  /?myAward=1&userId=N                 - своя НАЗНАЧЕННАЯ разовая премия (one_time_awards),
+                                               пока она не выплачена: название, сумма, дата
+                                               выплаты и список заслуг для карточки на главной.
+                                               После начисления отдаёт {active:false} — карточка
+                                               у сотрудника исчезает сама
     GET  /?cashBox=1                          - касса компании: текущий баланс (сумма всех
                                                операций cash_box_transactions) и последние
                                                100 операций (пополнения — amount>0, списания
@@ -308,6 +313,68 @@ def handler(event: dict, context) -> dict:
                     (ch_date,),
                 )
                 conn.commit()
+
+            # --- Разовые именные премии (one_time_awards) --------------------------
+            # Премия назначается заранее: сотрудник видит на главной карточку с
+            # таймером «начислится такого-то числа», а в назначенный день деньги
+            # сами падают на баланс. Планировщика у платформы нет, поэтому расчёт,
+            # как и у премий швей, цепляется к любому обращению за зарплатой —
+            # страницу зарплаты открывают десятки раз в день, день выплаты не
+            # проскочит незамеченным.
+            #
+            # ЗАПЛАТИТЬ РОВНО ОДИН РАЗ — главное требование. Поэтому строки не
+            # «читаем, потом обновляем», а сразу забираем UPDATE ... RETURNING:
+            # он отбирает только ещё не оплаченные и в той же транзакции помечает
+            # их оплаченными. Параллельный вызов, пришедший в ту же секунду,
+            # дождётся блокировки и не увидит уже ни одной строки — дубля не будет.
+            cur.execute(
+                "UPDATE one_time_awards SET paid_at = now() "
+                "WHERE paid_at IS NULL AND pay_on <= (now() + interval '3 hours')::date "
+                "RETURNING id, user_id, amount, title, pay_on"
+            )
+            for aw_id, aw_user_id, aw_amount, aw_title, aw_pay_on in cur.fetchall():
+                cur.execute(
+                    "INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
+                    "VALUES (%s, 'bonus', %s, %s, %s) RETURNING id",
+                    (aw_user_id, aw_amount, aw_title, aw_pay_on),
+                )
+                cur.execute(
+                    "UPDATE one_time_awards SET accrual_id = %s WHERE id = %s",
+                    (cur.fetchone()[0], aw_id),
+                )
+            conn.commit()
+
+            if params.get('myAward'):
+                # Своя разовая премия для карточки на главной: отдаём только ещё не
+                # выплаченную. Как только деньги ушли на баланс, здесь пусто — и
+                # карточка с таймером исчезает у сотрудника сама, без правок кода.
+                award_user_id = params.get('userId')
+                if not award_user_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите userId'})}
+                cur.execute(
+                    "SELECT title, amount, pay_on, highlights FROM one_time_awards "
+                    "WHERE user_id = %s AND paid_at IS NULL ORDER BY pay_on LIMIT 1",
+                    (int(award_user_id),),
+                )
+                aw = cur.fetchone()
+                if not aw:
+                    return {'statusCode': 200, 'headers': headers,
+                            'body': json.dumps({'active': False})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'active': True,
+                        'title': aw[0],
+                        'amount': float(aw[1]),
+                        # Дата выплаты в московском времени: таймер в браузере
+                        # должен считать до полуночи цеха, а не до полуночи UTC.
+                        'payOn': aw[2].isoformat(),
+                        'payAt': aw[2].isoformat() + 'T00:00:00+03:00',
+                        'highlights': aw[3] or [],
+                    }, ensure_ascii=False),
+                }
 
             if params.get('sewerDaily'):
                 # Прогресс по акции ТЕКУЩЕГО дня — для шкалы на главной.

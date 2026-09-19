@@ -2,6 +2,7 @@ import AdminNotifications from '@/components/crm/dashboard/AdminNotifications';
 import EtrnToSignCard from '@/components/crm/dashboard/EtrnToSignCard';
 import VarikiPurchasesCard from '@/components/crm/variki/VarikiPurchasesCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
+import AwardCard from '@/components/crm/dashboard/AwardCard';
 import SewerBonusCard from '@/components/crm/dashboard/SewerBonusCard';
 import SewerDailyCard from '@/components/crm/dashboard/SewerDailyCard';
 import { type EmployeeShiftStatus } from '@/lib/shiftSessionsApi';
@@ -47,6 +48,11 @@ const CrmDashboardHeader = ({
           : 'Обзор производства и складских процессов на сегодня'}
       </p>
     </div>
+
+    {/* Назначенная премия — самым первым блоком: это личная новость сотрудника,
+        и она не должна теряться среди рабочих сводок. Карточка рисуется только
+        тому, кому премия назначена, и исчезает сама в день начисления. */}
+    <AwardCard userId={userId} />
 
     {/* Своя смена — первое, что видит кладовщик: идёт ли она и сколько
         принесёт при закрытии. */}

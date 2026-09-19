@@ -481,3 +481,29 @@ export const fetchSewerDaily = async (): Promise<SewerDailyInfo | null> => {
   if (!data || !data.active || !Array.isArray(data.sewers)) return null;
   return data as SewerDailyInfo;
 };
+/** Назначенная сотруднику разовая премия, которая ещё не выплачена. */
+export interface OneTimeAward {
+  title: string;
+  amount: number;
+  /** Дата начисления, ГГГГ-ММ-ДД. */
+  payOn: string;
+  /** Тот же момент с московской зоной — по нему считает таймер. */
+  payAt: string;
+  /** За что премия: короткие строки с достижениями за месяц. */
+  highlights: string[];
+}
+
+/**
+ * Своя разовая премия для карточки на главной.
+ *
+ * Возвращает null, когда премии нет ИЛИ она уже начислена: сервер отдаёт
+ * невыплаченную запись и только её. Поэтому карточка исчезает у сотрудника
+ * сама в день выплаты — отдельного выключателя для неё не нужно.
+ */
+export const fetchMyAward = async (userId: number): Promise<OneTimeAward | null> => {
+  const res = await fetch(`${SALARY_URL}?myAward=1&userId=${userId}`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!data || !data.active) return null;
+  return data as OneTimeAward;
+};

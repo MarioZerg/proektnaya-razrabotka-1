@@ -25,6 +25,18 @@
       "expectedStatus": 200
     },
     {
+      "name": "Разовая премия без userId отклоняется",
+      "method": "GET",
+      "path": "/?myAward=1",
+      "expectedStatus": 400
+    },
+    {
+      "name": "Разовая премия сотрудника",
+      "method": "GET",
+      "path": "/?myAward=1&userId=33",
+      "expectedStatus": 200
+    },
+    {
       "name": "Get cash box",
       "method": "GET",
       "path": "/?cashBox=1",
