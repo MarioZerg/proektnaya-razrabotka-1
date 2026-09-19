@@ -197,6 +197,7 @@ def count_orders_in_work(cur, user_id, role, session_workshop_id=None):
             return 0
         cur.execute(
             "SELECT COUNT(*) FROM orders "
+            "WHERE sewing_status = 'Стикеровка' AND workshop_id = %s "
             # Отменённый заказ упаковщицу ДЕРЖИТ: вещь уже сшита, её всё равно надо
             # закрыть — со стикером хранения вместо ярлыка отправления. Она
             # остаётся в очереди стикеровки на терминале, значит должна держать и
