@@ -780,8 +780,17 @@ def handler(event: dict, context) -> dict:
                 #
                 # Поэтому спрашиваем: вещь уже едет в поставку? Если да — говорим
                 # об этом прямо и склад не предлагаем.
+                # Признак «вещь из цеха, заклеенная ярлыком покупателя» —
+                # receive_reason='fbs_ready'. Он важнее статуса: статус вещи
+                # могли сбить (разбор поставки, неподтвердившаяся отмена), и
+                # запись оказывалась в 'in_stock'. Тогда терминал считал вещь
+                # свободным остатком и предлагал сдать её на склад — на живое
+                # отправление печатался складской стикер GW, ярлык покупателя
+                # снимали, и заказ навсегда выпадал из отгрузки.
                 cur.execute(
-                    "SELECT gw.status, gw.shipping_labeled_at FROM goods_warehouse gw "
+                    "SELECT gw.status, gw.shipping_labeled_at, "
+                    "       COALESCE(gw.receive_reason, '') "
+                    "FROM goods_warehouse gw "
                     "WHERE gw.order_id = %s "
                     "ORDER BY (gw.status = 'awaiting_supply') DESC, gw.id DESC LIMIT 1",
                     (row[0],),
@@ -789,7 +798,14 @@ def handler(event: dict, context) -> dict:
                 gw_state = cur.fetchone()
                 goes_to_supply = bool(
                     gw_state
-                    and gw_state[0] in ('awaiting_supply', 'picking', 'shipped')
+                    and (
+                        gw_state[0] in ('awaiting_supply', 'picking', 'shipped')
+                        # Вещь сшита под FBS и не списана: её место в коробе.
+                        # Заказ здесь заведомо живой — отменённые и уехавшие
+                        # отсеялись выше, в is_cancelled/label_gone.
+                        or (gw_state[2] == 'fbs_ready'
+                            and gw_state[0] not in ('lost', 'to_dispose'))
+                    )
                 )
                 if goes_to_supply:
                     ship_msg = (
@@ -2126,10 +2142,31 @@ def handler(event: dict, context) -> dict:
                 # Вещь на этот заказ уже заводили — отдаём тот же штрихкод, чтобы на складе
                 # не появилось два товара на одну физическую вещь.
                 cur.execute(
-                    "SELECT storage_barcode FROM goods_warehouse WHERE order_id = %s",
+                    "SELECT storage_barcode, COALESCE(receive_reason, ''), status "
+                    "FROM goods_warehouse WHERE order_id = %s",
                     (int(order_id),),
                 )
                 sp_exist = cur.fetchone()
+
+                # ЖИВОЕ ОТПРАВЛЕНИЕ НА СКЛАД НЕ СДАЁТСЯ.
+                #
+                # 'fbs_ready' означает, что эту самую вещь упаковщица закрыла как
+                # FBS-заказ и заклеила ярлыком покупателя. Сдать её «лишней» нельзя:
+                # покупатель ждёт посылку, а на складе она получит второй, складской
+                # стикер и потеряется между двумя учётами. Лишней бывает только
+                # вещь-дубль, у которой своей складской записи ещё нет.
+                if sp_exist and sp_exist[1] == 'fbs_ready' and sp_exist[2] != 'lost':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Заказ {sp_number} — это FBS-отправление, вещь '
+                                     f'уже заклеена ярлыком покупателя. На склад она '
+                                     f'не сдаётся: положите её в короб к отгрузке, '
+                                     f'кладовщик отсканирует её в поставку',
+                        }, ensure_ascii=False),
+                    }
+
                 if sp_exist:
                     sp_barcode = sp_exist[0]
                 else:

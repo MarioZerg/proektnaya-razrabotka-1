@@ -159,9 +159,25 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "COALESCE(ro.product, o.product), COALESCE(ro.material, o.material), "
                 "COALESCE(ro.width, o.width), COALESCE(ro.height, o.height), "
                 "gw.status, gw.shipped_at, msi.box_id, "
-                "COALESCE(ro.group_key, o.group_key), "
-                "COALESCE(ro.group_size, o.group_size), "
-                "COALESCE(ro.group_position, o.group_position), "
+                # СВЯЗКУ БЕРЁМ ТОЛЬКО У ЗАКАЗА, ПОД КОТОРЫЙ ВЕЩЬ ЕДЕТ СЕЙЧАС.
+                #
+                # Здесь нельзя ставить COALESCE. Вещь сшили под заказ Яндекса из
+                # нескольких предметов (у него есть group_key), заказ отменили,
+                # вещь легла на полку и потом ушла в подбор под ОБЫЧНОЕ
+                # отправление OZON — у того связки нет. COALESCE подставлял
+                # старый ямовский ключ, и одиночная вещь OZON показывалась в
+                # поставке как «связка Яндекса»: кладовщик искал ещё три
+                # предмета, которых не существует, а отгрузка блокировалась
+                # «неполной связкой».
+                #
+                # Как только у вещи есть reserved_order_id — судьбу вещи решает
+                # ТОЛЬКО он, включая принадлежность к связке.
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.group_key ELSE o.group_key END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.group_size ELSE o.group_size END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.group_position ELSE o.group_position END, "
                 "COALESCE(ro.status, o.status), "
                 "COALESCE(ro.ozon_status, o.ozon_status), "
                 "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id, "
@@ -223,7 +239,14 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "count(DISTINCT msi.id) FILTER (WHERE msi.supply_id = %s) AS in_supply, "
                 "string_agg(DISTINCT o.order_number, ', ') AS numbers "
                 "FROM orders o "
-                "LEFT JOIN goods_warehouse gw ON gw.order_id = o.id "
+                # Вещь связки ищем по ТОМУ заказу, под который она едет.
+                # Связка живёт, только пока её заказ реально везётся: вещь,
+                # перешедшую под другое отправление, считать частью связки
+                # нельзя — иначе связка вечно «недобрана».
+                "LEFT JOIN goods_warehouse gw "
+                "  ON gw.id = o.fulfilled_from_stock_id "
+                "  OR (gw.reserved_order_id = o.id) "
+                "  OR (gw.order_id = o.id AND gw.reserved_order_id IS NULL) "
                 "LEFT JOIN marketplace_supply_items msi ON msi.goods_warehouse_id = gw.id "
                 # Берём связки, у которых хотя бы одна вещь уже в поставке ЛИБО
                 # ждёт сканирования (застикерована и свободна). Раньше учитывались
@@ -233,7 +256,12 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "WHERE o.group_key IS NOT NULL AND o.group_key IN ("
                 "  SELECT o2.group_key FROM marketplace_supply_items m2 "
                 "  JOIN goods_warehouse g2 ON g2.id = m2.goods_warehouse_id "
-                "  JOIN orders o2 ON o2.id = g2.order_id "
+                # Тот же принцип, что и в списке позиций: связку определяет
+                # заказ, под который вещь ЕДЕТ. Вещь, сшитая под отменённую
+                # связку Яндекса и позже подобранная под отправление OZON,
+                # затаскивала в поставку OZON чужой ямовский ключ — и в
+                # чек-листе появлялся «заказ Яндекса», которого там нет.
+                "  JOIN orders o2 ON o2.id = COALESCE(g2.reserved_order_id, g2.order_id) "
                 "  WHERE m2.supply_id = %s AND o2.group_key IS NOT NULL "
                 "  UNION "
                 "  SELECT o3.group_key FROM goods_warehouse g3 "
@@ -242,10 +270,20 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "    AND g3.status IN ('picking', 'awaiting_supply') "
                 "    AND g3.shipping_labeled_at IS NOT NULL "
                 "    AND g3.shipped_at IS NULL "
+                # Связка обязана совпадать с поставкой по ВСЕМ трём признакам:
+                # площадка, схема (FBS/FBO) и кабинет продавца. Раньше сверяли
+                # только площадку, и в поставку OZON FBS подмешивались связки
+                # из FBO и из чужого магазина — кладовщик искал вещи, которые
+                # в этот короб не едут вовсе.
                 "    AND o3.marketplace = (SELECT marketplace FROM marketplace_supplies "
-                "                          WHERE id = %s)) "
+                "                          WHERE id = %s) "
+                "    AND COALESCE(o3.order_type, '') = "
+                "        (SELECT COALESCE(type, '') FROM marketplace_supplies WHERE id = %s) "
+                "    AND o3.shop_id IS NOT DISTINCT FROM "
+                "        (SELECT shop_id FROM marketplace_supplies WHERE id = %s)) "
                 "GROUP BY o.group_key ORDER BY o.group_key",
-                (int(supply_id), int(supply_id), int(supply_id)),
+                (int(supply_id), int(supply_id), int(supply_id),
+                 int(supply_id), int(supply_id)),
             )
             groups = [
                 {
@@ -490,9 +528,16 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # ярлыком. Нужна и у НЕсобранных вещей — иначе в чек-листе
                 # связку не показать целиком: часть строк уехала бы в общий
                 # список, и кладовщик снова не понял бы, что вещи связаны.
-                "       COALESCE(ro.group_key, so.group_key), "
-                "       COALESCE(ro.group_size, so.group_size), "
-                "       COALESCE(ro.group_position, so.group_position) "
+                # Связку берём у заказа, под который вещь ЕДЕТ, — без COALESCE.
+                # Вещь, сшитая под отменённую связку Яндекса и подобранная
+                # позже под обычное отправление OZON, тащила за собой старый
+                # ямовский ключ и показывалась в чек-листе как связка.
+                "       CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "            THEN ro.group_key ELSE so.group_key END, "
+                "       CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "            THEN ro.group_size ELSE so.group_size END, "
+                "       CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "            THEN ro.group_position ELSE so.group_position END "
                 "FROM goods_warehouse gw "
                 "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
                 "LEFT JOIN orders so ON so.id = gw.order_id "

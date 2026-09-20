@@ -27,6 +27,7 @@ from shared import (
     ensure_ozon_assembled,
     find_cancelled_items,
     get_supply_lock,
+    keep_fbs_label,
     log_action,
     ozon_posting_status_live,
     ozon_ship_postings,
@@ -623,6 +624,50 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                  f'в короб своего магазина',
                     }, ensure_ascii=False),
                 }
+
+            # ВЕЩЬ ИЗ ЦЕХА С ПОТЕРЯННОЙ ОТМЕТКОЙ О ЯРЛЫКЕ — ЧИНИМ НА МЕСТЕ.
+            #
+            # Вещь, сшитую под FBS-заказ, упаковщица заклеивает ярлыком покупателя
+            # прямо в цехе — именно поэтому у такой записи receive_reason='fbs_ready'.
+            # Отметку shipping_labeled_at у неё могли снять при разборе поставки или
+            # при отмене, которая потом не подтвердилась. Ярлык при этом физически
+            # остался на пакете, и кладовщик держит в руках готовое отправление.
+            #
+            # Раньше мы разворачивали его в «Сборку товара с полок», а заказ туда
+            # не попадает: отправление уже «ожидает отгрузки», и второй ярлык OZON
+            # не выдаст. Кладовщик упирался в тупик, шёл стикеровать вещь СКЛАДСКИМ
+            # стикером — и живое отправление уезжало на полку хранения.
+            #
+            # Поэтому, если заказ жив и вещь пришла из цеха, отметку восстанавливаем
+            # сами: физический ярлык на вещи есть, сверка с площадкой идёт ниже.
+            if not labeled_at:
+                cur.execute(
+                    "UPDATE goods_warehouse gw SET shipping_labeled_at = now() "
+                    "FROM orders ro "
+                    "WHERE gw.id = %s "
+                    "  AND ro.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+                    "  AND COALESCE(gw.receive_reason, '') = 'fbs_ready' "
+                    "  AND COALESCE(ro.order_type, '') = 'FBS' "
+                    "  AND COALESCE(ro.status, '') NOT IN "
+                    "      ('Отменён', 'Отгружен', 'Доставлен') "
+                    "  AND COALESCE(ro.ozon_status, '') NOT IN "
+                    "      ('delivering', 'delivered', 'cancelled', "
+                    "       'not_accepted', 'driver_pickup') "
+                    "  AND COALESCE(ro.ym_status, '') NOT ILIKE 'cancel%%' "
+                    "RETURNING gw.id",
+                    (int(goods_id),),
+                )
+                if cur.fetchone():
+                    labeled_at = True
+                    log_action(
+                        cur, actor_id, body_data.get('actorName'),
+                        'restore_ship_label',
+                        'goods_warehouse', goods_id,
+                        f'Восстановлена отметка о ярлыке отправления по заказу '
+                        f'#{order_number}: вещь сшита под FBS и пришла из цеха '
+                        f'с наклеенным ярлыком',
+                    )
+                    conn.commit()
 
             # Ярлык маркетплейса ещё не наклеен: вещь лежит на полке, в короб её
             # класть нельзя — на приёмке маркетплейса её не опознают.
@@ -2475,6 +2520,21 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             )
             goods_ids = [r[0] for r in cur.fetchall()]
             for gid in goods_ids:
+                # ВЕЩЬ, СШИТУЮ ПОД ЖИВОЙ FBS-ЗАКАЗ, НА ПОЛКУ НЕ ОТПРАВЛЯЕМ.
+                #
+                # Удаляют ПОСТАВКУ (нашу тару), а не заказы покупателей. На вещи
+                # с receive_reason='fbs_ready' физически наклеен ярлык отправления,
+                # и покупатель её ждёт. Раньше здесь всем подряд снимали ярлык и
+                # клали вещь «на хранение» — и заказ намертво выпадал из работы:
+                # в очередь стикеровки он не возвращается (отправление уже
+                # «ожидает отгрузки», ярлык повторно не выдают), а в новую поставку
+                # не сканируется — система говорит «ярлык не наклеен», хотя он на
+                # пакете. Вещь при этом лежит без полки и её негде найти.
+                #
+                # Такая вещь просто возвращается в очередь на отгрузку и ждёт
+                # следующей поставки.
+                if keep_fbs_label(cur, gid):
+                    continue
                 # Вместе со статусом снимаем и резерв: вещь, вернувшаяся «На хранение»
                 # с чужим заказом на борту, пропадает из подбора и мешает работе
                 # сканера — он находит её, но застикеровать её нельзя.
@@ -2486,11 +2546,25 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             # Вещи, зарезервированные с полок под заказы этой поставки, возвращаем в
             # свободные — иначе они навсегда остались бы занятыми под удалённый заказ.
+            #
+            # Кроме тех же сшитых FBS-вещей с живым ярлыком: они едут покупателю,
+            # а не на полку.
             cur.execute(
-                "UPDATE goods_warehouse SET reserved_order_id = NULL, matched_at = NULL, "
-                "shipping_labeled_at = NULL "
-                "WHERE reserved_order_id IN (SELECT id FROM orders WHERE supply_id = %s) "
-                "RETURNING id",
+                "UPDATE goods_warehouse gw "
+                "SET reserved_order_id = NULL, matched_at = NULL, "
+                "    shipping_labeled_at = NULL "
+                "FROM orders ro "
+                "WHERE ro.id = gw.reserved_order_id "
+                "  AND ro.supply_id = %s "
+                "  AND NOT (COALESCE(gw.receive_reason, '') = 'fbs_ready' "
+                "           AND gw.shipping_labeled_at IS NOT NULL "
+                "           AND COALESCE(ro.status, '') NOT IN "
+                "               ('Отменён', 'Отгружен', 'Доставлен') "
+                "           AND COALESCE(ro.ozon_status, '') NOT IN "
+                "               ('delivering', 'delivered', 'cancelled', "
+                "                'not_accepted', 'driver_pickup') "
+                "           AND COALESCE(ro.ym_status, '') NOT ILIKE 'cancel%%') "
+                "RETURNING gw.id",
                 (int(item_id),),
             )
             freed_stock = len(cur.fetchall())
