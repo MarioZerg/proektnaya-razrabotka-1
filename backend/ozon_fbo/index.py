@@ -830,6 +830,17 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     })
     label_op = lbl.get('operation_id') if isinstance(lbl, dict) else None
     if label_op:
+        # Запоминаем операцию: если ниже не успеем дождаться файла, кнопка
+        # «Получить этикетку» ПРОДОЛЖИТ её, а не создаст новую (иначе файл не
+        # забирается никогда и мы упираемся в лимит частоты OZON).
+        if one_box_id:
+            cur.execute(
+                "UPDATE marketplace_supply_boxes SET ozon_label_operation_id = %s "
+                "WHERE id = %s",
+                (str(label_op), int(one_box_id)),
+            )
+            conn.commit()
+
         # 4) Получаем готовый PDF.
         #
         # Этикетку OZON отдаёт ССЫЛКОЙ на файл: {"status": "SUCCESS", "result":
@@ -887,7 +898,7 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
                     continue
                 cur.execute(
                     "UPDATE marketplace_supply_boxes SET sticker_url = %s, "
-                    "  sticker_name = %s WHERE id = %s",
+                    "  sticker_name = %s, ozon_label_operation_id = NULL WHERE id = %s",
                     (url, f'Стикер короба №{b_row[1]}.pdf', int(b_row[0])),
                 )
                 saved_ids.add(int(b_row[0]))
@@ -977,7 +988,7 @@ def handle_fetch_box_label(cur, conn, client_id, api_key, body_data):
 
     cur.execute(
         "SELECT b.supply_id, b.box_number, b.ozon_cargo_id, b.closed_at, "
-        "       s.ozon_supply_order_id "
+        "       b.ozon_label_operation_id, s.ozon_supply_order_id "
         "FROM marketplace_supply_boxes b "
         "JOIN marketplace_supplies s ON s.id = b.supply_id WHERE b.id = %s",
         (int(box_id),),
@@ -985,34 +996,75 @@ def handle_fetch_box_label(cur, conn, client_id, api_key, body_data):
     row = cur.fetchone()
     if not row:
         return _resp(404, {'error': 'Короб не найден'})
-    supply_id, box_number, cargo_id, closed_at, ozon_order_id = row
+    supply_id, box_number, cargo_id, closed_at, saved_op, ozon_order_id = row
 
     if not closed_at or not cargo_id:
         return _resp(409, {
             'error': 'Сначала закройте короб — этикетку OZON выдаёт на грузоместо',
         })
 
-    ozon_supply_id = get_ozon_supply_id(
-        cur, supply_id, ozon_order_id, client_id, api_key)
-    if not ozon_supply_id:
-        return _resp(502, {'error': 'Не удалось получить данные заявки OZON'})
-
-    st, lbl = ozon_post('/v1/cargoes-label/create', client_id, api_key, {
-        'supply_id': int(ozon_supply_id),
-        'cargo_ids': [int(cargo_id)],
-    })
-    label_op = lbl.get('operation_id') if isinstance(lbl, dict) else None
+    # ПРОДОЛЖАЕМ УЖЕ ЗАПУЩЕННУЮ ОПЕРАЦИЮ, А НЕ СОЗДАЁМ НОВУЮ.
+    #
+    # Этикетка готовится асинхронно: create возвращает operation_id, файл
+    # появляется через несколько секунд. Раньше каждое нажатие создавало
+    # НОВУЮ операцию и проверяло её один раз — она всегда была IN_PROGRESS.
+    # Кладовщик жал снова, операция создавалась заново, и файл не забирался
+    # никогда; частые вызовы упирались в лимит частоты OZON (429).
+    #
+    # Поэтому operation_id запоминаем: повторное нажатие ДОЖИДАЕТСЯ старой
+    # операции. Новую заводим, только если сохранённой нет.
+    label_op = saved_op
     if not label_op:
-        return _resp(502, {'error': f'OZON не принял запрос этикетки: {ozon_error_text(st, lbl)}'})
+        ozon_supply_id = get_ozon_supply_id(
+            cur, supply_id, ozon_order_id, client_id, api_key)
+        if not ozon_supply_id:
+            return _resp(502, {'error': 'Не удалось получить данные заявки OZON'})
 
-    # Одна короткая попытка: не готова — кладовщик нажмёт ещё раз. Долгое
-    # ожидание здесь снова упёрлось бы в таймаут функции.
+        st, lbl = ozon_post('/v1/cargoes-label/create', client_id, api_key, {
+            'supply_id': int(ozon_supply_id),
+            'cargo_ids': [int(cargo_id)],
+        })
+        label_op = lbl.get('operation_id') if isinstance(lbl, dict) else None
+        if not label_op:
+            if st == 429:
+                return _resp(429, {
+                    'ready': False,
+                    'note': 'OZON ограничивает частоту запросов — подождите минуту',
+                })
+            return _resp(502, {
+                'error': f'OZON не принял запрос этикетки: {ozon_error_text(st, lbl)}'})
+        # Сохраняем СРАЗУ и отдельным коммитом: если ожидание ниже оборвётся
+        # по таймауту, операция не потеряется и следующее нажатие продолжит её.
+        cur.execute(
+            "UPDATE marketplace_supply_boxes SET ozon_label_operation_id = %s WHERE id = %s",
+            (str(label_op), int(box_id)),
+        )
+        conn.commit()
+
+    # Ждём готовности, но с запасом до таймаута функции: лучше вернуть
+    # «ещё готовится» и дать нажать снова, чем оборваться на полпути.
     st, got = poll_operation(
         '/v1/cargoes-label/get', client_id, api_key, label_op,
-        attempts=1, delay=0.5,
+        attempts=4, delay=0.7,
     )
+    if st == 429:
+        return _resp(429, {
+            'ready': False,
+            'note': 'OZON ограничивает частоту запросов — подождите минуту и нажмите снова',
+        })
     lbl_result = got.get('result') if isinstance(got, dict) else None
     file_url = lbl_result.get('file_url') if isinstance(lbl_result, dict) else None
+
+    # Операция провалилась на стороне OZON — сбрасываем её, чтобы следующее
+    # нажатие запросило этикетку заново, а не ждало мёртвую вечно.
+    if isinstance(got, dict) and str(got.get('status', '')).upper() in ('FAILED', 'ERROR'):
+        cur.execute(
+            "UPDATE marketplace_supply_boxes SET ozon_label_operation_id = NULL WHERE id = %s",
+            (int(box_id),),
+        )
+        conn.commit()
+        return _resp(502, {'error': 'OZON не смог подготовить этикетку. Нажмите ещё раз'})
+
     if not file_url:
         return _resp(202, {
             'ready': False,
@@ -1027,9 +1079,11 @@ def handle_fetch_box_label(cur, conn, client_id, api_key, body_data):
     page_pdf = pages.get(int(cargo_id)) or pdf_bytes
 
     url = upload_pdf(page_pdf, f'supply-{supply_id}-box-{box_id}')
+    # Операцию закрываем: этикетка получена, и при следующем запросе (например,
+    # после переоткрытия короба) нужна будет уже новая.
     cur.execute(
-        "UPDATE marketplace_supply_boxes SET sticker_url = %s, sticker_name = %s "
-        "WHERE id = %s",
+        "UPDATE marketplace_supply_boxes SET sticker_url = %s, sticker_name = %s, "
+        "  ozon_label_operation_id = NULL WHERE id = %s",
         (url, f'Стикер короба №{box_number}.pdf', int(box_id)),
     )
     conn.commit()
@@ -1099,7 +1153,8 @@ def handle_reopen_box(cur, conn, client_id, api_key, body_data):
 
     cur.execute(
         "UPDATE marketplace_supply_boxes SET closed_at = NULL, ozon_cargo_id = NULL, "
-        "  sticker_url = NULL, sticker_name = NULL WHERE id = %s",
+        "  sticker_url = NULL, sticker_name = NULL, ozon_label_operation_id = NULL "
+        "WHERE id = %s",
         (int(box_id),),
     )
     log_action(

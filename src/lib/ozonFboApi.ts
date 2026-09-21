@@ -161,5 +161,20 @@ export interface OzonBoxLabelResult {
  * на полпути. Теперь короб закрывается сразу, а наклейка забирается этим
  * запросом — столько раз, сколько потребуется.
  */
-export const fetchOzonBoxLabel = (boxId: number): Promise<OzonBoxLabelResult> =>
-  post({ action: 'fetch_box_label', boxId }) as Promise<OzonBoxLabelResult>;
+export const fetchOzonBoxLabel = async (boxId: number): Promise<OzonBoxLabelResult> => {
+  const res = await fetch(OZON_FBO_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'fetch_box_label', boxId }),
+  });
+  const data = await res.json();
+
+  // «Ещё не готово» (202) и «слишком часто» (429) — НЕ ошибки, а нормальный
+  // ход дела: файл готовится асинхронно. Общий обработчик превратил бы их в
+  // исключение и оборвал ожидание на первом же заходе.
+  if (res.status === 202 || res.status === 429) {
+    return { ready: false, note: data.note };
+  }
+  if (!res.ok) throw new Error(data.error || 'Ошибка OZON FBO');
+  return data as OzonBoxLabelResult;
+};
