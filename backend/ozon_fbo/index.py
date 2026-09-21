@@ -904,6 +904,122 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     })
 
 
+def handle_all_labels(cur, conn, client_id, api_key, body_data):
+    """Собирает ОДИН PDF со стикерами всех коробов поставки — для печати пачкой.
+
+    ЗАЧЕМ. Короб закрывают по одному, и стикер печатают тут же — это рабочий
+    порядок. Но когда поставка собрана целиком, кладовщику удобнее один раз
+    отправить на принтер весь комплект наклеек, а не открывать каждый короб
+    заново и жать печать двадцать раз подряд.
+
+    Страницы идут В ПОРЯДКЕ НОМЕРОВ КОРОБОВ: лист №1 — короб №1. Иначе пачка
+    на выходе из принтера ложится в случайном порядке, и кладовщик
+    перебирает наклейки, сверяя ID грузоместа глазами.
+
+    Файл собираем из УЖЕ СОХРАНЁННЫХ стикеров коробов, не дёргая OZON заново:
+    каждый из них площадка уже отдала при закрытии короба, и они разложены по
+    коробам постранично. Повторный запрос к OZON только упёрся бы в лимит
+    частоты и вернул бы то же самое.
+    """
+    supply_id = body_data.get('supplyId')
+    if not supply_id:
+        return _resp(400, {'error': 'Укажите supplyId'})
+
+    cur.execute(
+        "SELECT marketplace, type FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    s_row = cur.fetchone()
+    if not s_row:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    if s_row[0] != 'OZON' or s_row[1] != 'FBO':
+        return _resp(400, {'error': 'Действие доступно только для поставок OZON FBO'})
+
+    # Короба поставки: сколько всего, у скольких есть стикер и все ли закрыты.
+    cur.execute(
+        "SELECT box_number, sticker_url, closed_at, ozon_cargo_id, "
+        "       (SELECT COUNT(*) FROM marketplace_supply_items i WHERE i.box_id = b.id) "
+        "FROM marketplace_supply_boxes b "
+        "WHERE b.supply_id = %s ORDER BY b.box_number",
+        (int(supply_id),),
+    )
+    boxes = cur.fetchall()
+    if not boxes:
+        return _resp(400, {'error': 'В поставке нет коробов'})
+
+    # Непустой короб без отметки о закрытии — работа не закончена: на OZON
+    # такого грузоместа нет, и печатать пачку рано.
+    open_boxes = [str(n) for n, _u, closed, _c, items in boxes if items and not closed]
+    if open_boxes:
+        return _resp(409, {
+            'error': f'Не закрыты короба: №{", №".join(open_boxes)}. '
+                     f'Закройте их — только тогда OZON выдаёт стикеры',
+        })
+
+    with_sticker = [(n, u, cargo) for n, u, _c, cargo, items in boxes if u and items]
+    if not with_sticker:
+        return _resp(409, {
+            'error': 'Ни у одного короба нет стикера. Закройте короба — '
+                     'стикер приходит с OZON при закрытии',
+        })
+
+    missing = [str(n) for n, u, _c, _cargo, items in boxes if items and not u]
+
+    try:
+        from pypdf import PdfWriter
+    except Exception:
+        return _resp(500, {'error': 'Не удалось собрать общий файл стикеров'})
+
+    writer = PdfWriter()
+    added = 0
+    for _box_number, url, cargo_id in with_sticker:
+        try:
+            box_pdf = download_file(url)
+        except Exception:
+            # Один недоступный файл не должен рушить всю пачку: остальные
+            # наклейки кладовщику нужны, а про пропуск скажем в ответе.
+            continue
+
+        # БЕРЁМ ТОЛЬКО СТРАНИЦУ СВОЕГО ГРУЗОМЕСТА.
+        #
+        # У коробов, закрытых до того, как мы научились резать ответ OZON,
+        # в стикере лежит ПОЛНЫЙ файл заявки — все грузоместа подряд.
+        # Склеив такие файлы как есть, кладовщик получил бы наклейки чужих
+        # коробов вперемешку со своими и наклеил бы их наугад.
+        #
+        # Поэтому разбираем файл по грузоместам и берём страницу нужного.
+        # Разобрать не вышло (одностраничный свежий стикер) — кладём как есть.
+        page_pdf = None
+        if cargo_id:
+            pages = split_label_pages(box_pdf)
+            page_pdf = pages.get(int(cargo_id))
+        try:
+            writer.append(io.BytesIO(page_pdf or box_pdf))
+            added += 1
+        except Exception:
+            continue
+
+    if not added:
+        return _resp(502, {'error': 'Не удалось прочитать ни один стикер короба'})
+
+    buf = io.BytesIO()
+    writer.write(buf)
+    url = upload_pdf(buf.getvalue(), f'supply-{supply_id}-all-boxes')
+
+    log_action(
+        cur, body_data.get('actorId'), body_data.get('actorName'),
+        'ozon_fbo_all_labels', supply_id,
+        f'Собрал общий файл стикеров коробов: {added} шт.',
+    )
+    conn.commit()
+
+    return _resp(200, {
+        'url': url,
+        'boxes': added,
+        'missingBoxes': missing,
+    })
+
+
 def handler(event: dict, context) -> dict:
     """Интеграция с OZON FBO (Seller API, Supply Order) — заявки на поставку.
 
@@ -929,6 +1045,10 @@ def handler(event: dict, context) -> dict:
           каждого короба (по артикулу offer_id), сохраняет их cargo_id, тянет PDF-этикетки
           коробов и привязывает их к коробам. boxId — закрыть ОДИН короб, добавив грузоместо к
           уже созданным. cargoType по умолчанию 'BOX'. Действует на реальной заявке.
+    POST /  { action: 'all_box_labels', supplyId }
+        - собирает ОДИН PDF со стикерами всех коробов поставки (по странице на короб, в
+          порядке их номеров) для печати пачкой. Берёт уже сохранённые стикеры коробов,
+          к OZON не обращается. Отклоняет запрос, если есть незакрытые непустые короба.
 
     Args:
         event: dict с httpMethod, body
@@ -945,7 +1065,8 @@ def handler(event: dict, context) -> dict:
 
     body_data = json.loads(event.get('body') or '{}')
     action = body_data.get('action')
-    if action not in ('list_applications', 'check_composition', 'import_composition', 'close_boxes'):
+    if action not in ('list_applications', 'check_composition', 'import_composition',
+                      'close_boxes', 'all_box_labels'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -985,5 +1106,7 @@ def handler(event: dict, context) -> dict:
             return handle_import_composition(cur, conn, client_id, api_key, body_data)
         if action == 'close_boxes':
             return handle_close_boxes(cur, conn, client_id, api_key, body_data)
+        if action == 'all_box_labels':
+            return handle_all_labels(cur, conn, client_id, api_key, body_data)
     finally:
         conn.close()

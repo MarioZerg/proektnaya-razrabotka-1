@@ -97,3 +97,29 @@ export const closeOzonBoxes = (
   boxId?: number,
 ): Promise<OzonCloseBoxesResult> =>
   post({ action: 'close_boxes', supplyId, boxId }) as Promise<OzonCloseBoxesResult>;
+export interface OzonAllBoxLabelsResult {
+  /** Ссылка на собранный PDF со стикерами всех коробов. */
+  url: string;
+  /** Сколько наклеек попало в файл. */
+  boxes: number;
+  /** Номера коробов, у которых стикера нет (в файл не вошли). */
+  missingBoxes: string[];
+}
+
+/**
+ * Собрать ОДИН PDF со стикерами всех коробов поставки — печать пачкой.
+ *
+ * Короба закрывают по одному и печатают стикер сразу, но когда поставка
+ * собрана целиком, удобнее отправить на принтер весь комплект разом.
+ * Страницы идут по номерам коробов: лист №1 — короб №1.
+ */
+export const fetchOzonAllBoxLabels = (
+  supplyId: number,
+  actor?: { id?: number | null; name?: string | null },
+): Promise<OzonAllBoxLabelsResult> =>
+  post({
+    action: 'all_box_labels',
+    supplyId,
+    actorId: actor?.id,
+    actorName: actor?.name,
+  }) as Promise<OzonAllBoxLabelsResult>;

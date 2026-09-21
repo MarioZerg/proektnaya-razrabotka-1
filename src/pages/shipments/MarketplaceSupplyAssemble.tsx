@@ -5,6 +5,7 @@ import CancelledScanDialog from '@/components/crm/marketplaceSupplies/CancelledS
 import SupplyCandidatesPanel from '@/components/crm/marketplaceSupplies/SupplyCandidatesPanel';
 import PassStickerCard from '@/components/crm/marketplaceSupplies/PassStickerCard';
 import GazelkaLabelsCard from '@/components/crm/marketplaceSupplies/GazelkaLabelsCard';
+import SupplyAllLabelsCard from '@/components/crm/marketplaceSupplies/SupplyAllLabelsCard';
 import SupplyAssembleHeader from '@/components/crm/marketplaceSupplies/SupplyAssembleHeader';
 import SupplyBoxesSection from '@/components/crm/marketplaceSupplies/SupplyBoxesSection';
 import SupplyAssembleFooter from '@/components/crm/marketplaceSupplies/SupplyAssembleFooter';
@@ -89,6 +90,13 @@ const MarketplaceSupplyAssemble = () => {
   const openBoxes = supply.boxes.filter(
     (b) => b.items.length > 0 && !b.closedAt,
   ).length;
+  // Весь ли товар по заявке разложен по коробам. Пока нет — пачку наклеек
+  // печатать рано: кладовщик решит, что комплект готов, и уедет неполным.
+  // План не задан (ручная поставка) — судить по количеству не можем.
+  const fullyAssembled =
+    supply.totalQuantityMarketplace != null
+      ? totalBoxedItems >= supply.totalQuantityMarketplace
+      : totalBoxedItems > 0;
 
   return (
     <CrmLayout>
@@ -138,6 +146,12 @@ const MarketplaceSupplyAssemble = () => {
           onDeleteBox={handleDeleteBox}
           onCloseBox={handleCloseBox}
         />
+
+        {/* Весь товар разложен и все короба закрыты — предлагаем напечатать
+            комплект наклеек одним файлом, чтобы не обходить короба поштучно. */}
+        {isOzonFbo && (
+          <SupplyAllLabelsCard supply={supply} fullyAssembled={fullyAssembled} />
+        )}
 
         {/* ПОСТАВКА СОБРАНА — последний шаг кладовщика.
             Появляется, когда все короба заклеены: дальше поставка уходит в
