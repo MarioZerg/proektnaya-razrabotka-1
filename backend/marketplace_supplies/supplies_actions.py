@@ -29,6 +29,7 @@ from shared import (
     get_supply_lock,
     keep_fbs_label,
     log_action,
+    notify_supply_assembled,
     ozon_posting_status_live,
     ozon_ship_postings,
     release_cancelled_item,
@@ -2030,6 +2031,37 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         }, ensure_ascii=False),
                     }
 
+                # НЕЗАКЛЕЕННЫЙ КОРОБ = НЕЗАКОНЧЕННАЯ РАБОТА.
+                #
+                # У FBO короб становится грузоместом на площадке только при
+                # закрытии: пока он открыт, OZON о нём не знает, этикетки нет и
+                # на приёмке такой короб окажется лишним.
+                #
+                # Проверку держим и на сервере, а не только кнопкой на экране:
+                # статус можно сменить из списка поставок и прямым запросом.
+                if (supply_type or '').upper() == 'FBO':
+                    cur.execute(
+                        "SELECT b.box_number, COUNT(msi.id) AS items "
+                        "FROM marketplace_supply_boxes b "
+                        "LEFT JOIN marketplace_supply_items msi ON msi.box_id = b.id "
+                        "WHERE b.supply_id = %s AND b.closed_at IS NULL "
+                        "GROUP BY b.id, b.box_number HAVING COUNT(msi.id) > 0 "
+                        "ORDER BY b.box_number",
+                        (int(supply_id),),
+                    )
+                    open_boxes = cur.fetchall()
+                    if open_boxes:
+                        nums = ', '.join(f'№{n}' for n, _ in open_boxes)
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Не закрыты короба: {nums}. Закройте их — '
+                                         f'на OZON грузоместо создаётся только при '
+                                         f'закрытии короба',
+                            }, ensure_ascii=False),
+                        }
+
                 # Газелька возит ТОЛЬКО поставки FBO — на склад маркетплейса.
                 #
                 # FBS уезжает напрямую в пункт приёма, никакой Газельки в этом
@@ -2158,6 +2190,21 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                         )
 
             conn.commit()
+
+            # Кладовщик закончил сборку — сообщаем менеджеру в MAX.
+            #
+            # Шлём ПОСЛЕ commit: поставка уже переведена в отгрузку, и сбой
+            # мессенджера не должен откатывать работу кладовщика. Сама функция
+            # глушит ошибки внутри — см. notify_supply_assembled.
+            notified = 0
+            if new_status == 'Отгрузка':
+                try:
+                    notified = notify_supply_assembled(
+                        cur, supply_id, body_data.get('actorName'),
+                    ).get('sent', 0)
+                except Exception:
+                    notified = 0
+
             return {
                 'statusCode': 200,
                 'headers': headers,
@@ -2170,6 +2217,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     # Сколько отправлений ещё не передано — фронт досылает их
                     # отдельными вызовами ship_ozon_postings.
                     'ozonRemaining': ozon_remaining,
+                    # Скольким менеджерам ушло уведомление о готовой поставке.
+                    'managersNotified': notified,
                 }, ensure_ascii=False),
             }
 

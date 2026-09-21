@@ -4,6 +4,7 @@ import Icon from '@/components/ui/icon';
 import CancelledScanDialog from '@/components/crm/marketplaceSupplies/CancelledScanDialog';
 import SupplyCandidatesPanel from '@/components/crm/marketplaceSupplies/SupplyCandidatesPanel';
 import PassStickerCard from '@/components/crm/marketplaceSupplies/PassStickerCard';
+import GazelkaLabelsCard from '@/components/crm/marketplaceSupplies/GazelkaLabelsCard';
 import SupplyAssembleHeader from '@/components/crm/marketplaceSupplies/SupplyAssembleHeader';
 import SupplyBoxesSection from '@/components/crm/marketplaceSupplies/SupplyBoxesSection';
 import SupplyAssembleFooter from '@/components/crm/marketplaceSupplies/SupplyAssembleFooter';
@@ -108,6 +109,10 @@ const MarketplaceSupplyAssemble = () => {
           />
         )}
 
+        {/* Листы Газельки клеятся на короба во время сборки — держим печать
+            здесь, а не только в карточке поставки у блока перевозки. */}
+        {supply.type === 'FBO' && <GazelkaLabelsCard supply={supply} />}
+
         <SupplyCandidatesPanel
           open={candidatesOpen}
           onOpenChange={setCandidatesOpen}
@@ -143,6 +148,7 @@ const MarketplaceSupplyAssemble = () => {
           <SupplyAssembleFooter
             openBoxes={openBoxes}
             totalBoxedItems={totalBoxedItems}
+            plannedItems={supply.totalQuantityMarketplace}
             completing={completing}
             onSupplyAssembled={handleSupplyAssembled}
           />

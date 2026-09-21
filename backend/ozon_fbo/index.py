@@ -460,9 +460,27 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
         )
         created = len(result)
 
+    # СКОЛЬКО ШТУК МЫ ОБЕЩАЛИ ПРИВЕЗТИ — ЭТО ПЛАН ПОСТАВКИ.
+    #
+    # По нему проверяется, собрана ли поставка целиком: пока в коробах меньше,
+    # кладовщику нельзя закрывать сборку, иначе на площадку уедет недовоз.
+    #
+    # Раньше план НЕ ЗАПИСЫВАЛСЯ вообще, поле оставалось пустым — и проверка
+    # недовоза (check_fbo_underfilled) молча пропускала любую поставку. Кнопка
+    # «Поставка собрана» горела при двух коробах из двадцати.
+    #
+    # Считаем по ВСЕЙ заявке, включая позиции без нашего товара: маркетплейс
+    # ждёт их все, и расхождение кладовщик должен видеть, а не узнавать на приёмке.
+    planned_units = sum(int(it.get('quantity') or 1) for it in items)
+    cur.execute(
+        "UPDATE marketplace_supplies SET total_quantity_marketplace = %s WHERE id = %s",
+        (planned_units, int(supply_id)),
+    )
+
     log_action(
         cur, actor_id, actor_name, 'ozon_fbo_import', supply_id,
-        f'Импорт заявки OZON FBO {order_number}: создано заказов {created}, без товара {skipped_no_item}',
+        f'Импорт заявки OZON FBO {order_number}: создано заказов {created}, '
+        f'без товара {skipped_no_item}, план поставки {planned_units} шт.',
     )
     conn.commit()
     return _resp(200, {
