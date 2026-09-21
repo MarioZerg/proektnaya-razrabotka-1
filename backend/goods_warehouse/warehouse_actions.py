@@ -9,6 +9,7 @@ import json
 import psycopg2
 
 from shared import (
+    GOODS_IN_LIVE_SUPPLY_SQL,
     OZON_CANCEL_REASONS,
     OZON_NOT_RETURNABLE,
     RESERVE_ALIVE_SQL,
@@ -304,7 +305,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # у WB он приходит картинкой, у OZON и Яндекса — файлом PDF.
             cur.execute(
                 "SELECT gw.id, gw.status, gw.reserved_order_id, ro.order_number, o.product, "
-                "s.name, ro.marketplace, ro.order_type "
+                "s.name, ro.marketplace, ro.order_type, "
+                # Вещь уже уложена в короб живой поставки — см. проверку ниже.
+                "(SELECT COALESCE(_s.supply_number, _s.wb_supply_id, "
+                "                 _s.ozon_application_number, '№' || _s.id) "
+                " FROM marketplace_supply_items _m "
+                " JOIN marketplace_supplies _s ON _s.id = _m.supply_id "
+                " WHERE _m.goods_warehouse_id = gw.id "
+                "   AND COALESCE(_s.status, '') NOT IN ('Выполнена', 'Отменена') "
+                " LIMIT 1) "
                 "FROM goods_warehouse gw "
                 "LEFT JOIN orders o ON o.id = gw.order_id "
                 "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -315,7 +324,26 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not gw_row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Стикер {scan_barcode} не найден'})}
             (gw_id, gw_status, reserved_order_id, target_number, gw_product,
-             shelf_name, mp, order_type) = gw_row
+             shelf_name, mp, order_type, gw_in_supply) = gw_row
+
+            # ВЕЩЬ ЛЕЖИТ В КОРОБЕ ПОСТАВКИ — ЯРЛЫК ОТПРАВЛЕНИЯ НА НЕЁ НЕ КЛЕИМ.
+            #
+            # Она физически уехала в коробе на склад площадки. Напечатать на неё
+            # ярлык FBS означало бы закрыть отправление вещью, которой у нас нет:
+            # покупатель не получит заказ, а по системе он будет собран.
+            #
+            # Ниже по коду есть перенос брони на «вещь в руках» — без этой
+            # проверки он мог перецепить живой заказ FBS именно на такую вещь.
+            if gw_in_supply:
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': f'Вещь уже уложена в короб поставки {gw_in_supply} — '
+                                 f'ярлык отправления на неё не печатается. '
+                                 f'Возьмите другую вещь этого размера',
+                    }, ensure_ascii=False),
+                }
             # Вещь без резерва — самая частая заминка на складе.
             #
             # На полке лежат две одинаковые вещи (один материал и размер), подбор
@@ -1604,6 +1632,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "  AND ro.fulfilled_from_stock_id = gw.id "
                 "  AND ro.sewing_status = 'Со склада' "
                 f"  AND {RESERVE_ALIVE_SQL} "
+                # Вещь уехала в коробе поставки — звать за ней кладовщика
+                # бессмысленно: на полке её нет.
+                f"  AND NOT {GOODS_IN_LIVE_SUPPLY_SQL.format(gw='gw')} "
                 + (f" AND gw.id = {int(gw_id)}" if gw_id else "") +
                 " RETURNING gw.id, gw.storage_barcode, ro.order_number"
             )
@@ -1674,7 +1705,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # 1. Что за вещь в руках: товар берём у заказа, в котором её сшили.
             cur.execute(
                 "SELECT gw.id, gw.status, gw.reserved_order_id, gw.shipping_labeled_at, "
-                "       src.product, src.marketplace_item_id, sh.name, gw.shipped_at "
+                "       src.product, src.marketplace_item_id, sh.name, gw.shipped_at, "
+                # Вещь уже уложена в короб живой поставки — см. проверку ниже.
+                "       (SELECT COALESCE(_s.supply_number, _s.wb_supply_id, "
+                "                        _s.ozon_application_number, '№' || _s.id) "
+                "        FROM marketplace_supply_items _m "
+                "        JOIN marketplace_supplies _s ON _s.id = _m.supply_id "
+                "        WHERE _m.goods_warehouse_id = gw.id "
+                "          AND COALESCE(_s.status, '') NOT IN ('Выполнена', 'Отменена') "
+                "        LIMIT 1) "
                 "FROM goods_warehouse gw "
                 "LEFT JOIN orders src ON src.id = gw.order_id "
                 "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
@@ -1686,7 +1725,26 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         'body': json.dumps({'error': f'Стикер {barcode} не найден'},
                                            ensure_ascii=False)}
             (gw_id, gw_status, gw_reserved, gw_labeled, gw_product,
-             gw_item_id, gw_shelf, gw_shipped_at) = row
+             gw_item_id, gw_shelf, gw_shipped_at, gw_in_supply) = row
+
+            # ВЕЩЬ ЛЕЖИТ В КОРОБЕ ПОСТАВКИ — В ПОДБОР ОНА НЕ ИДЁТ.
+            #
+            # Вещь, отсканированная в короб FBO, физически уехала на склад
+            # площадки, а в базе осталась записью со своим товаром и размером.
+            # Сканер подбора видел в ней подходящий остаток и отдавал её под
+            # новый заказ FBS: заказ помечался закрытым складом, кладовщик шёл
+            # к стеллажу — а вещь в заклеенном коробе. Отправление зависало, и
+            # причину по экранам было не найти: по системе всё «собрано».
+            #
+            # Проверку ставим ДО всех остальных: неважно, какой у вещи статус и
+            # чья на ней бронь — если она в живом коробе, работать с ней нельзя.
+            if gw_in_supply:
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'matched': False,
+                    'reason': f'Вещь уже уложена в короб поставки {gw_in_supply} — '
+                              f'в подбор она не идёт',
+                    'product': gw_product,
+                }, ensure_ascii=False)}
 
             # Вещь уже собрана или уехала — второй раз её не подбирают.
             # Вещь списали: не нашли на складе и отправили заказ в пошив заново.
