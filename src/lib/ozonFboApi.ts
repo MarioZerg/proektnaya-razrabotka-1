@@ -178,3 +178,39 @@ export const fetchOzonBoxLabel = async (boxId: number): Promise<OzonBoxLabelResu
   if (!res.ok) throw new Error(data.error || 'Ошибка OZON FBO');
   return data as OzonBoxLabelResult;
 };
+export interface OzonSyncCargoesResult {
+  done: boolean;
+  removed?: number;
+  onOzon?: number;
+  note?: string;
+}
+
+/**
+ * Сверить грузоместа на OZON с нашими коробами и снять лишние.
+ *
+ * На площадке копятся «сироты»: короб удалили у нас, а грузоместо осталось
+ * висеть с полным составом. Заявка ждёт больше коробов, чем приедет, и на
+ * приёмке товар двоится. Проверка ничего не создаёт — только убирает лишнее.
+ */
+export const syncOzonCargoes = async (
+  supplyId: number,
+  actor?: { id?: number | null; name?: string | null },
+): Promise<OzonSyncCargoesResult> => {
+  const res = await fetch(OZON_FBO_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'sync_cargoes',
+      supplyId,
+      actorId: actor?.id,
+      actorName: actor?.name,
+    }),
+  });
+  const data = await res.json();
+  // 202 — «ещё идёт», 429 — «слишком часто». Это не сбои, а ход дела.
+  if (res.status === 202 || res.status === 429) {
+    return { done: false, note: data.note || data.error };
+  }
+  if (!res.ok) throw new Error(data.error || 'Ошибка OZON FBO');
+  return data as OzonSyncCargoesResult;
+};

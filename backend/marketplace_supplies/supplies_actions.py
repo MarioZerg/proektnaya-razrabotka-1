@@ -1169,6 +1169,32 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if cur.fetchone()[0] > 0:
                 return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В коробе есть товары — сначала уберите их'})}
 
+            # КОРОБ С ГРУЗОМЕСТОМ НА OZON ПРОСТО ТАК НЕ УДАЛЯЕМ.
+            #
+            # Раньше запись стиралась у нас, а грузоместо оставалось на
+            # площадке — навсегда и с полным товарным составом. Заявка ждала
+            # больше коробов, чем реально приедет, и на приёмке всплывал
+            # «лишний» короб с тем же товаром.
+            #
+            # Снять место умеет только переоткрытие короба: там мы дожидаемся
+            # подтверждения от OZON. Поэтому отправляем кладовщика туда.
+            cur.execute(
+                "SELECT ozon_cargo_id, box_number FROM marketplace_supply_boxes WHERE id = %s",
+                (int(box_id),),
+            )
+            b_row = cur.fetchone()
+            if b_row and b_row[0]:
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': f'Короб №{b_row[1]} заведён на OZON как грузоместо '
+                                 f'{b_row[0]}. Сначала нажмите «Открыть короб и '
+                                 f'поправить состав» — это снимет грузоместо с '
+                                 f'площадки, иначе оно там останется навсегда',
+                    }, ensure_ascii=False),
+                }
+
             cur.execute("DELETE FROM marketplace_supply_boxes WHERE id = %s", (int(box_id),))
             conn.commit()
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

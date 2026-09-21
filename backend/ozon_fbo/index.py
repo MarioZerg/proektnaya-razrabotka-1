@@ -992,6 +992,132 @@ def get_ozon_supply_id(cur, supply_id, ozon_order_id, client_id, api_key):
     return int(value)
 
 
+def handle_sync_cargoes(cur, conn, client_id, api_key, body_data):
+    """Приводит грузоместа на OZON в соответствие с нашими коробами.
+
+    ЗАЧЕМ. На площадке копятся ГРУЗОМЕСТА-СИРОТЫ — места, которых у нас уже
+    нет, а на OZON они висят с полным товарным составом:
+
+      * короб удалили у нас (кнопка «Удалить короб») — грузоместо осталось;
+      * переоткрытие не сняло место, а следующее закрытие завело новое;
+      * связь оборвалась между созданием места и записью cargo_id к коробу.
+
+    Заявка в итоге ждёт больше коробов, чем реально приедет, и на приёмке
+    товар двоится: одинаковый состав под разными штрихкодами.
+
+    Как ищем лишние. Отдельного списка грузомест OZON не отдаёт, но этикетки
+    выдаёт НА ВСЕ места заявки разом — по странице на каждое, с номером на
+    самой наклейке. Читаем эти номера и сверяем с нашими коробами: чего нет
+    у нас — снимаем с площадки.
+
+    Ничего не создаёт и наши данные не трогает: только убирает с OZON лишнее.
+    """
+    supply_id = body_data.get('supplyId')
+    if not supply_id:
+        return _resp(400, {'error': 'Укажите supplyId'})
+
+    cur.execute(
+        "SELECT marketplace, type, ozon_supply_order_id FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    s_row = cur.fetchone()
+    if not s_row:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    if s_row[0] != 'OZON' or s_row[1] != 'FBO':
+        return _resp(400, {'error': 'Действие доступно только для поставок OZON FBO'})
+    ozon_order_id = s_row[2]
+
+    ozon_supply_id = get_ozon_supply_id(
+        cur, supply_id, ozon_order_id, client_id, api_key)
+    if not ozon_supply_id:
+        return _resp(502, {'error': 'Не удалось получить данные заявки OZON'})
+
+    # Наши грузоместа — эталон. Всё, чего здесь нет, на площадке лишнее.
+    cur.execute(
+        "SELECT ozon_cargo_id FROM marketplace_supply_boxes "
+        "WHERE supply_id = %s AND ozon_cargo_id IS NOT NULL",
+        (int(supply_id),),
+    )
+    ours = {int(r[0]) for r in cur.fetchall()}
+    if not ours:
+        return _resp(409, {
+            'error': 'Нет ни одного закрытого короба — не с чем сверять. '
+                     'Закройте короб, потом синхронизируйте',
+        })
+
+    # Просим этикетку на любое СВОЁ место: OZON отдаст файл на все места заявки.
+    probe = sorted(ours)[0]
+    st, lbl = ozon_post('/v1/cargoes-label/create', client_id, api_key, {
+        'supply_id': int(ozon_supply_id),
+        'cargo_ids': [probe],
+    })
+    if st == 429:
+        return _resp(429, {'error': 'OZON ограничивает частоту запросов — подождите минуту'})
+    label_op = lbl.get('operation_id') if isinstance(lbl, dict) else None
+    if not label_op:
+        return _resp(502, {'error': f'OZON не принял запрос: {ozon_error_text(st, lbl)}'})
+
+    st, got = poll_operation(
+        '/v1/cargoes-label/get', client_id, api_key, label_op,
+        attempts=4, delay=0.7,
+    )
+    lbl_result = got.get('result') if isinstance(got, dict) else None
+    file_url = lbl_result.get('file_url') if isinstance(lbl_result, dict) else None
+    if not file_url:
+        return _resp(202, {
+            'done': False,
+            'note': 'OZON ещё готовит данные — нажмите «Проверить OZON» ещё раз',
+        })
+
+    pdf_bytes = download_file(file_url)
+    on_ozon = set(split_label_pages(pdf_bytes).keys())
+
+    extra = sorted(on_ozon - ours)
+    if not extra:
+        return _resp(200, {
+            'done': True, 'removed': 0, 'onOzon': len(on_ozon),
+            'note': f'Всё сходится: на OZON {len(on_ozon)} грузомест, столько же у нас',
+        })
+
+    # Снимаем лишние. Удаление асинхронное — дожидаемся подтверждения, иначе
+    # вернёмся к тому же: место считается снятым, а на деле висит.
+    st, data = ozon_post('/v1/cargoes/delete', client_id, api_key, {
+        'supply_id': int(ozon_supply_id),
+        'cargo_ids': [int(c) for c in extra],
+    })
+    if st != 200:
+        return _resp(502, {'error': f'OZON не дал удалить лишние места: {ozon_error_text(st, data)}'})
+
+    del_op = data.get('operation_id') if isinstance(data, dict) else None
+    if del_op:
+        st2, res = poll_operation(
+            '/v1/cargoes/delete/status', client_id, api_key, del_op,
+            attempts=4, delay=0.7,
+        )
+        state = str(res.get('status', '')).upper() if isinstance(res, dict) else ''
+        if state != 'SUCCESS':
+            return _resp(202, {
+                'done': False,
+                'note': f'OZON ещё снимает {len(extra)} лишних грузомест — '
+                        f'нажмите «Проверить OZON» ещё раз через минуту',
+            })
+
+    log_action(
+        cur, body_data.get('actorId'), body_data.get('actorName'),
+        'ozon_fbo_sync_cargoes', supply_id,
+        f'Сняты лишние грузоместа на OZON: {", ".join(str(c) for c in extra)}',
+    )
+    conn.commit()
+
+    return _resp(200, {
+        'done': True,
+        'removed': len(extra),
+        'onOzon': len(ours),
+        'note': f'Снято лишних грузомест: {len(extra)}. На OZON осталось {len(ours)} — '
+                f'ровно столько, сколько закрытых коробов у нас',
+    })
+
+
 def handle_fetch_box_label(cur, conn, client_id, api_key, body_data):
     """Догружает этикетку уже закрытого короба.
 
@@ -1362,6 +1488,9 @@ def handler(event: dict, context) -> dict:
           каждого короба (по артикулу offer_id), сохраняет их cargo_id, тянет PDF-этикетки
           коробов и привязывает их к коробам. boxId — закрыть ОДИН короб, добавив грузоместо к
           уже созданным. cargoType по умолчанию 'BOX'. Действует на реальной заявке.
+    POST /  { action: 'sync_cargoes', supplyId }
+        - сверяет грузоместа на OZON с нашими коробами и снимает лишние (сироты от
+          удалённых коробов и неудавшихся переоткрытий). Ничего не создаёт.
     POST /  { action: 'fetch_box_label', boxId }
         - догружает этикетку уже закрытого короба (закрытие и этикетка разделены:
           обе операции в один вызов не укладываются в таймаут функции).
@@ -1391,7 +1520,7 @@ def handler(event: dict, context) -> dict:
     action = body_data.get('action')
     if action not in ('list_applications', 'check_composition', 'import_composition',
                       'close_boxes', 'all_box_labels', 'reopen_box',
-                      'fetch_box_label'):
+                      'fetch_box_label', 'sync_cargoes'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -1437,5 +1566,7 @@ def handler(event: dict, context) -> dict:
             return handle_reopen_box(cur, conn, client_id, api_key, body_data)
         if action == 'fetch_box_label':
             return handle_fetch_box_label(cur, conn, client_id, api_key, body_data)
+        if action == 'sync_cargoes':
+            return handle_sync_cargoes(cur, conn, client_id, api_key, body_data)
     finally:
         conn.close()

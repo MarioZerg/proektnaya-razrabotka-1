@@ -6,6 +6,7 @@ import SupplyCandidatesPanel from '@/components/crm/marketplaceSupplies/SupplyCa
 import PassStickerCard from '@/components/crm/marketplaceSupplies/PassStickerCard';
 import GazelkaLabelsCard from '@/components/crm/marketplaceSupplies/GazelkaLabelsCard';
 import SupplyAllLabelsCard from '@/components/crm/marketplaceSupplies/SupplyAllLabelsCard';
+import OzonCargoSyncCard from '@/components/crm/marketplaceSupplies/OzonCargoSyncCard';
 import SupplyAssembleHeader from '@/components/crm/marketplaceSupplies/SupplyAssembleHeader';
 import SupplyBoxesSection from '@/components/crm/marketplaceSupplies/SupplyBoxesSection';
 import SupplyAssembleFooter from '@/components/crm/marketplaceSupplies/SupplyAssembleFooter';
@@ -158,6 +159,10 @@ const MarketplaceSupplyAssemble = () => {
         {isOzonFbo && (
           <SupplyAllLabelsCard supply={supply} fullyAssembled={fullyAssembled} />
         )}
+
+        {/* Сверка с OZON: убирает с площадки короба-сироты, оставшиеся от
+            удалённых и переоткрытых — из-за них на приёмке двоился товар. */}
+        {isOzonFbo && <OzonCargoSyncCard supply={supply} onSynced={reload} />}
 
         {/* ПОСТАВКА СОБРАНА — последний шаг кладовщика.
             Появляется, когда все короба заклеены: дальше поставка уходит в
