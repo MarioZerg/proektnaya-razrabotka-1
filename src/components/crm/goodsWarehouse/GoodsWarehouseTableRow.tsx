@@ -3,6 +3,7 @@ import { TableCell, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import ShopBadge from '@/components/crm/ShopBadge';
+import SupplyLink from '@/components/crm/goodsWarehouse/SupplyLink';
 import { zoneDotClass, zoneLabels } from '@/lib/workZone';
 import { shortProductName } from '@/lib/shortProductName';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
@@ -129,6 +130,10 @@ const GoodsWarehouseTableRow = ({
                   <div className="mt-1 text-xs text-muted-foreground">
                     {reasonLabels[i.receiveReason] || 'Принят вручную'}
                   </div>
+                  {/* В какую именно отгрузку вещь отсканирована — кнопкой перехода.
+                      Раньше статус говорил «На поставку», а какую — приходилось
+                      искать перебором в списке отгрузок. */}
+                  <SupplyLink i={i} />
                 </TableCell>
                 {/* Стикер хранения: номер и кнопка перепечатать, если наклейка потерялась. */}
                 <TableCell>

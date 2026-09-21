@@ -837,13 +837,34 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # (возврат, отказ покупателя) и снова попасть в подбор под новый заказ.
             # Из-за старой записи кладовщик видел «Вещь на поставке» и не мог
             # напечатать стикер на вещь, которая прямо сейчас лежит у него в подборе.
+            #
+            # Заодно берём номер и схему поставки: кладовщику нужен не id из базы,
+            # а тот номер, которым поставка подписана в кабинете и на коробе, —
+            # по нему он переходит в отгрузку прямо с карточки.
+            #
+            # Две ветки, потому что состав поставки хранится в двух местах. OZON и
+            # Яндекс кладут в marketplace_supply_items саму ВЕЩЬ, а WB сканирует
+            # ЗАКАЗ в wb_supply_orders. Без второй ветки карточка вещи WB
+            # показывала «поставки нет», хотя вещь уже лежала в коробе.
             cur.execute(
-                "SELECT s.id, s.status FROM marketplace_supply_items msi "
+                "SELECT s.id, s.status, "
+                "       COALESCE(s.supply_number, s.wb_supply_id, "
+                "                s.ozon_application_number), s.type "
+                "FROM marketplace_supply_items msi "
                 "JOIN marketplace_supplies s ON s.id = msi.supply_id "
                 "WHERE msi.goods_warehouse_id = %s "
                 "  AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена') "
-                "ORDER BY msi.id DESC LIMIT 1",
-                (card_id,),
+                "UNION ALL "
+                "SELECT ws.id, ws.status, "
+                "       COALESCE(ws.supply_number, ws.wb_supply_id, "
+                "                ws.ozon_application_number), ws.type "
+                "FROM wb_supply_orders wso "
+                "JOIN marketplace_supplies ws ON ws.id = wso.supply_id "
+                "JOIN goods_warehouse g ON g.id = %s "
+                "WHERE wso.order_id = COALESCE(g.reserved_order_id, g.order_id) "
+                "  AND COALESCE(ws.status, '') NOT IN ('Выполнена', 'Отменена') "
+                "ORDER BY 1 DESC LIMIT 1",
+                (card_id, card_id),
             )
             sup = cur.fetchone()
 
@@ -945,6 +966,10 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     'disposeReason': r[22],
                     'supplyId': sup[0] if sup else None,
                     'supplyStatus': sup[1] if sup else None,
+                    # Номер поставки и её схема — по ним с карточки делается
+                    # переход в нужную отгрузку.
+                    'supplyNumber': sup[2] if sup else None,
+                    'supplyType': sup[3] if sup else None,
                     'history': history,
                 }, ensure_ascii=False),
             }
@@ -1095,11 +1120,12 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # Без этого она считалась «готовой к сборке» и в новой поставке тоже.
             # Завершённые поставки не учитываем: вещь могла вернуться к нам и снова
             # уйти в подбор — старая запись не должна её блокировать.
-            f"(SELECT msi.supply_id FROM marketplace_supply_items msi "
-            f" JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
-            f" WHERE msi.goods_warehouse_id = gw.id "
-            f"   AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена') "
-            f" ORDER BY msi.id DESC LIMIT 1), "
+            #
+            # У WB СВОЯ ТАБЛИЦА СОСТАВА — wb_supply_orders. OZON и Яндекс кладут
+            # вещь в marketplace_supply_items, а WB сканирует ЗАКАЗ. Без второй
+            # ветки кладовщик видел у вещи WB пустую поставку и шёл искать её
+            # руками по всему списку отгрузок.
+            f"supid.id, "
             # Заказ, под который вещь закреплена, уже забрали в цех: его кроят или
             # шьют. Стикер отправления на такую вещь не напечатать — отправление
             # закроет то, что выйдет с конвейера. Для склада вещь недоступна.
@@ -1117,12 +1143,49 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # Магазин вещи: берём у закреплённого заказа, а если его нет — у того,
             # в котором вещь сшили. Вещь МЕГАТЮЛЬ и вещь ДЮНЫ едут в разные
             # поставки, и на складе их надо различать.
-            f"shp.name, shp.color "
+            f"shp.name, shp.color, "
+            # ЧЕЛОВЕЧЕСКОЕ ИМЯ ПОСТАВКИ рядом с её номером в базе.
+            #
+            # Номер #1307 кладовщику ничего не говорит: в списке отгрузок он
+            # ищет «2000065880431» или «WB-GI-281233116». Отдаём и подпись, и
+            # схему — по ним строка в складе превращается в готовую ссылку.
+            f"supid.label, supid.supply_type "
             f"FROM goods_warehouse gw "
             f"LEFT JOIN orders o ON o.id = gw.order_id "
             f"LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
             f"LEFT JOIN shops shp ON shp.id = COALESCE(ro.shop_id, o.shop_id) "
             f"LEFT JOIN shelves s ON s.id = gw.shelf_id "
+            # ПОСТАВКА, В КОТОРОЙ ВЕЩЬ УЖЕ ЛЕЖИТ.
+            #
+            # Берём одним LATERAL вместо трёх подзапросов: иначе каждое поле
+            # (id, номер, схема) стоило бы отдельного прохода по составу поставок
+            # на каждую из 1500 строк склада.
+            #
+            # Завершённые и отменённые поставки не учитываем: вещь могла вернуться
+            # к нам и снова уйти в подбор — старая запись не должна её блокировать.
+            #
+            # Две ветки, потому что состав поставки хранится в двух местах. OZON и
+            # Яндекс кладут в marketplace_supply_items саму ВЕЩЬ, а WB сканирует
+            # ЗАКАЗ в wb_supply_orders. Без второй ветки у вещей WB поставка
+            # выглядела пустой, и кладовщик искал её руками по всему списку.
+            f"LEFT JOIN LATERAL ("
+            f"  SELECT ms.id, ms.type AS supply_type, "
+            f"         COALESCE(ms.supply_number, ms.wb_supply_id, "
+            f"                  ms.ozon_application_number) AS label "
+            f"  FROM marketplace_supply_items msi "
+            f"  JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+            f"  WHERE msi.goods_warehouse_id = gw.id "
+            f"    AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена') "
+            f"  UNION ALL "
+            f"  SELECT wms.id, wms.type, "
+            f"         COALESCE(wms.supply_number, wms.wb_supply_id, "
+            f"                  wms.ozon_application_number) "
+            f"  FROM wb_supply_orders wso "
+            f"  JOIN marketplace_supplies wms ON wms.id = wso.supply_id "
+            f"  WHERE wso.order_id = COALESCE(gw.reserved_order_id, gw.order_id) "
+            f"    AND COALESCE(wms.status, '') NOT IN ('Выполнена', 'Отменена') "
+            f"  ORDER BY 1 DESC LIMIT 1"
+            f") supid ON true "
             f"{where_clause} "
             f"ORDER BY gw.received_at DESC, gw.id DESC{limit_clause}"
         )
@@ -1165,6 +1228,10 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # Магазин вещи — по нему она уедет в свою поставку.
                 'shopName': r[27],
                 'shopColor': r[28],
+                # Подпись поставки и её схема: из них строка склада собирает
+                # ссылку «FBS 2000065880431» прямо на нужную отгрузку.
+                'supplyNumber': r[29],
+                'supplyType': r[30],
             }
             for r in cur.fetchall()
         ]

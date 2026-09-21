@@ -5,6 +5,7 @@ import Icon from '@/components/ui/icon';
 import { zoneBarClass, zoneLabels } from '@/lib/workZone';
 import { shortProductName } from '@/lib/shortProductName';
 import ShopBadge from '@/components/crm/ShopBadge';
+import SupplyLink from '@/components/crm/goodsWarehouse/SupplyLink';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useAuth } from '@/context/AuthContext';
 import { getAccessZone } from '@/lib/roles';
@@ -166,6 +167,9 @@ const GoodsWarehouseCards = ({
                   {i.shelfName}
                 </Badge>
               )}
+              {/* Отгрузка, в которую вещь уже отсканирована: с телефона у стеллажа
+                  кладовщик открывает её одним нажатием, а не ищет в общем списке. */}
+              <SupplyLink i={i} />
             </div>
 
             {i.status === 'lost' && i.lostReason && (
