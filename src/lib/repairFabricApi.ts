@@ -1,6 +1,15 @@
 const REPAIR_FABRIC_URL = 'https://functions.poehali.dev/580fc69a-16df-4299-ae73-af0a840f29d1';
 
-export type RepairPieceStatus = 'available' | 'used' | 'written_off';
+/**
+ * ПУТЬ КУСКА: available → reserved → used.
+ *
+ * available — лежит в цехе, доступен всем закройщицам;
+ * reserved  — закреплён за конкретным заказом. Из общего списка исчез, но
+ *             ткань ещё цела: кусок можно открепить, и он вернётся в перешив;
+ * used      — разрезан при раскрое, вернуть нельзя;
+ * written_off — списан администратором (брак, потеря).
+ */
+export type RepairPieceStatus = 'available' | 'reserved' | 'used' | 'written_off';
 
 /** Кусок ткани на перешив — отрез с фиксированными размерами, лежащий в цехе. */
 export interface RepairPiece {
@@ -93,7 +102,13 @@ export const sendToRepair = (
     userName: actor?.name,
   }) as Promise<{ success: true; pieceId: number; material: string; width: number; height: number }>;
 
-/** Закройщик берёт кусок под заказ — кусок уходит из остатков. */
+/**
+ * Закройщик закрепляет кусок за заказом.
+ *
+ * Кусок НЕ списывается — он переходит в reserved: из общего списка пропадает
+ * (двое один отрез не возьмут), но остаётся привязанным к заказу и виден в
+ * его карточке. Окончательно спишется при раскрое.
+ */
 export const takeRepairPiece = (
   pieceId: number,
   orderId: number,
@@ -107,6 +122,40 @@ export const takeRepairPiece = (
     userName: actor?.name,
   }) as Promise<{ success: true; material: string; width: number; height: number }>;
 
-/** Администратор списывает кусок (брак, потеря). */
+/**
+ * Открепить кусок от заказа — он возвращается в перешив к остальным.
+ *
+ * Доступно, пока ткань не разрезана. После этого в карточке заказа снова
+ * появляется выбор рулона, а кусок видят другие закройщицы.
+ */
+export const releaseRepairPiece = (
+  params: { pieceId?: number; orderId?: number },
+  actor?: { id?: number | null; name?: string | null },
+): Promise<{ success: true }> =>
+  post({
+    action: 'release',
+    pieceId: params.pieceId,
+    orderId: params.orderId,
+    userId: actor?.id,
+    userName: actor?.name,
+  }) as Promise<{ success: true }>;
+
+/** Кусок, закреплённый за заказом. null — заказ кроится от рулона. */
+export const fetchReservedPiece = (
+  orderId: number,
+): Promise<{ piece: RepairPiece | null }> =>
+  request(`${REPAIR_FABRIC_URL}?action=reserved&orderId=${orderId}`);
+
+/** Администратор списывает кусок (брак, потеря) — след остаётся в истории. */
 export const writeOffRepairPiece = (pieceId: number, reason: string) =>
   post({ action: 'write_off', pieceId, reason });
+
+/**
+ * Администратор УДАЛЯЕТ строку из таблицы перешива насовсем.
+ *
+ * В отличие от списания, следа в учёте не остаётся: это для мусора —
+ * отправили по ошибке, задублировали, завели неверный размер. Списывать
+ * такое нельзя, иначе в отчёте появится брак, которого не было.
+ */
+export const deleteRepairPiece = (pieceId: number) =>
+  post({ action: 'delete', pieceId });

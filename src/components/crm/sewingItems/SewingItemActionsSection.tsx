@@ -35,6 +35,13 @@ interface SewingItemActionsSectionProps {
    * 0 или не передано — можно сдавать.
    */
   sewWaitSec?: number;
+  /**
+   * Ткань на эту вещь уже взята с перешива.
+   *
+   * Тогда выбора рулона в блоке раскроя быть не должно: отрез лежит на столе,
+   * а списание метров с рулона поверх него означало бы двойной расход.
+   */
+  repairPieceTaken?: boolean;
 }
 
 const SewingItemActionsSection = ({
@@ -55,6 +62,7 @@ const SewingItemActionsSection = ({
   onSendToStickering,
   dialogOpen,
   sewWaitSec = 0,
+  repairPieceTaken = false,
 }: SewingItemActionsSectionProps) => {
   const [selectedRollId, setSelectedRollId] = useState<string>('');
   const [hangers, setHangers] = useState<Hanger[]>([]);
@@ -162,6 +170,7 @@ const SewingItemActionsSection = ({
         setSelectedHanger={setSelectedHanger}
         onCut={onCut}
         onCutGroup={onCutGroup}
+        repairPieceTaken={repairPieceTaken}
       />
     );
   }

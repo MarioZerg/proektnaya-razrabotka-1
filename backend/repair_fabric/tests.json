@@ -53,6 +53,46 @@
       "expectedStatus": 404
     },
     {
+      "name": "Reserved without orderId fails",
+      "method": "GET",
+      "path": "/?action=reserved",
+      "expectedStatus": 400
+    },
+    {
+      "name": "Reserved for order without piece returns null",
+      "method": "GET",
+      "path": "/?action=reserved&orderId=999999999",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Release without ids fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "release"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Release of non-reserved order fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "release", "orderId": 999999999},
+      "expectedStatus": 404
+    },
+    {
+      "name": "Delete without auth is rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "delete", "pieceId": 1},
+      "expectedStatus": 401
+    },
+    {
+      "name": "Delete without piece id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "delete"},
+      "expectedStatus": 400
+    },
+    {
       "name": "Write off without auth is rejected",
       "method": "POST",
       "path": "/",

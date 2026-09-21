@@ -29,6 +29,8 @@ interface CutterActionsCardProps {
   setSelectedHanger: (value: string) => void;
   onCut: (rollId?: number, hangerNumber?: number) => void;
   onCutGroup: (rollId?: number, hangerNumber?: number) => void;
+  /** Ткань взята с перешива: рулон не выбираем и не списываем. */
+  repairPieceTaken?: boolean;
 }
 
 /** Блок раскроя: выбор рулона тюля, вешалки и кнопки «Раскроено» / «Раскроить всю связку». */
@@ -46,6 +48,7 @@ const CutterActionsCard = ({
   setSelectedHanger,
   onCut,
   onCutGroup,
+  repairPieceTaken = false,
 }: CutterActionsCardProps) => {
   // Заказ уже ушёл дальше по конвейеру — раскраивать нечего, показываем причину,
   // а не молча заблокированные поля.
@@ -87,8 +90,8 @@ const CutterActionsCard = ({
       )}
       <CardHeader className="pb-3">
         <CardTitle className="break-words text-sm">
-          Выбор рулона тюля
-          {orderDetail?.requiredFabricMaterialName && (
+          {repairPieceTaken ? 'Раскрой куском с перешива' : 'Выбор рулона тюля'}
+          {!repairPieceTaken && orderDetail?.requiredFabricMaterialName && (
             <span className="ml-1 font-normal text-muted-foreground">
               — нужен материал «{orderDetail.requiredFabricMaterialName}»
             </span>
@@ -96,36 +99,49 @@ const CutterActionsCard = ({
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-wrap items-end gap-3">
-        <div className="w-full space-y-1.5 sm:w-64">
-          <Label>Рулон в вашем цехе/смене</Label>
-          <Select value={selectedRollId} onValueChange={setSelectedRollId} disabled={cutting || isAlreadyCut}>
-            <SelectTrigger>
-              <SelectValue placeholder="Выберите рулон" />
-            </SelectTrigger>
-            <SelectContent>
-              {matchingRolls.length === 0 ? (
-                <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет доступных рулонов</div>
-              ) : (
-                matchingRolls.map((r) => (
-                  <SelectItem key={r.id} value={String(r.id)}>
-                    {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)} {r.unit}
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-          {/* Пустой список — тупик: закройщик не понимает, почему нельзя раскроить.
-              Называем нужную ткань, чтобы было с чем идти к кладовщику. */}
-          {matchingRolls.length === 0 && (
-            <p className="text-xs text-amber-700">
-              В вашем цехе и смене нет рулонов
-              {orderDetail?.requiredFabricMaterialName
-                ? ` «${orderDetail.requiredFabricMaterialName}»`
-                : ' нужной ткани'}
-              . Попросите кладовщика передать рулон в цех.
-            </p>
-          )}
-        </div>
+        {/* РУЛОНЫ ПРЯЧЕМ, КОГДА ТКАНЬ ВЗЯТА С ПЕРЕШИВА.
+            Отрез уже закреплён за вещью и лежит на столе. Оставлять рядом
+            список рулонов нельзя: закройщица выберет рулон «до кучи», и заказ
+            съест материал дважды — метры спишутся с рулона, хотя резали кусок.
+            Блокировать поле мало, его надо убрать: выбор должен быть один.
+            Чтобы снова резать от рулона, кусок откреплеяют в блоке выше. */}
+        {repairPieceTaken ? (
+          <div className="w-full rounded-md border border-violet-200 bg-violet-50 p-2.5 text-sm text-violet-900">
+            Рулон выбирать не нужно — вещь кроится из куска с перешива. Чтобы взять
+            рулон, откре́пите кусок в блоке выше: он вернётся в перешив.
+          </div>
+        ) : (
+          <div className="w-full space-y-1.5 sm:w-64">
+            <Label>Рулон в вашем цехе/смене</Label>
+            <Select value={selectedRollId} onValueChange={setSelectedRollId} disabled={cutting || isAlreadyCut}>
+              <SelectTrigger>
+                <SelectValue placeholder="Выберите рулон" />
+              </SelectTrigger>
+              <SelectContent>
+                {matchingRolls.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет доступных рулонов</div>
+                ) : (
+                  matchingRolls.map((r) => (
+                    <SelectItem key={r.id} value={String(r.id)}>
+                      {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)} {r.unit}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+            {/* Пустой список — тупик: закройщик не понимает, почему нельзя раскроить.
+                Называем нужную ткань, чтобы было с чем идти к кладовщику. */}
+            {matchingRolls.length === 0 && (
+              <p className="text-xs text-amber-700">
+                В вашем цехе и смене нет рулонов
+                {orderDetail?.requiredFabricMaterialName
+                  ? ` «${orderDetail.requiredFabricMaterialName}»`
+                  : ' нужной ткани'}
+                . Попросите кладовщика передать рулон в цех.
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="w-40 space-y-1.5">
           <Label>Вешалка</Label>
@@ -154,7 +170,7 @@ const CutterActionsCard = ({
               selectedHanger ? Number(selectedHanger) : undefined
             )
           }
-          disabled={cutting || isAlreadyCut || !selectedRollId}
+          disabled={cutting || isAlreadyCut || (!selectedRollId && !repairPieceTaken)}
         >
           {cutting ? (
             <>
@@ -172,7 +188,10 @@ const CutterActionsCard = ({
         {/* Заказ Яндекса из нескольких вещей отправляем в цех ЦЕЛИКОМ одной кнопкой: иначе
             заказ из 30 вещей пришлось бы раскраивать 30 нажатиями, а швея потом собирала бы
             его по кусочкам. Связка вешается вместе — её берёт одна швея. */}
-        {selectedOrder.groupSize && selectedOrder.groupSize > 1 && (
+        {/* Кусок с перешива закреплён за ОДНОЙ вещью — на всю связку его не хватит:
+            остальные вещи нужно резать от рулона, а рулон здесь не выбран.
+            Поэтому кнопку связки прячем, вещь раскраивается отдельно. */}
+        {!repairPieceTaken && selectedOrder.groupSize && selectedOrder.groupSize > 1 && (
           <Button
             variant="outline"
             className="border-violet-500 text-violet-700 hover:bg-violet-50 hover:text-violet-800"

@@ -1284,7 +1284,26 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         elif pack_type_id and mt_row[0] == pack_type_id:
                                 packaging_material_ids.add(material_id)
 
-                if fabric_material_id and not roll_id_chosen:
+                # ТКАНЬ УЖЕ ВЗЯТА С ПЕРЕШИВА — РУЛОН НЕ НУЖЕН И НЕ ДОЛЖЕН ТРОГАТЬСЯ.
+                #
+                # Закройщица закрепила за заказом готовый отрез: ткань на неё уже
+                # лежит на столе. Если после этого списать ещё и метры с рулона,
+                # один заказ съест материал дважды — остаток рулона поедет вниз на
+                # штору, которую из него не резали.
+                #
+                # Поэтому при закреплённом куске: рулон не требуем, ткань из
+                # расхода исключаем целиком (аксессуары и упаковка списываются
+                # как обычно — их перешив не заменяет), а сам кусок переводим
+                # в 'used'. С этого момента открепить его уже нельзя: разрезали.
+                cur.execute(
+                        "SELECT id, material, width, height FROM repair_fabric_pieces "
+                        "WHERE used_order_id = %s AND status = 'reserved' FOR UPDATE",
+                        (int(item_id),),
+                )
+                repair_piece_row = cur.fetchone()
+                repair_piece_id = repair_piece_row[0] if repair_piece_row else None
+
+                if fabric_material_id and not roll_id_chosen and not repair_piece_id:
                         conn.rollback()
                         return {
                                 'statusCode': 400,
@@ -1294,8 +1313,17 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
                 shortages = []
                 write_offs = []
+                repair_fabric_qty = 0.0
                 for material_id, qty_needed in needed:
                         qty_needed = float(qty_needed)
+
+                        if repair_piece_id and fabric_material_id and material_id == fabric_material_id:
+                                # Ткань пришла с перешива — с рулона не снимаем ни метра.
+                                # Норму расхода запоминаем: ниже она ляжет в расход
+                                # заказа записью без рулона, чтобы себестоимость вещи
+                                # не оказалась нулевой по ткани.
+                                repair_fabric_qty = qty_needed
+                                continue
 
                         if material_id in accessory_material_ids:
                                 # Тесьма списывается позже швеёй перед отправкой на стикеровку
@@ -1445,6 +1473,26 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                 f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
                                 f"VALUES ({int(item_id)}, {material_id}, {roll_id}, {take})"
                         )
+
+                # КУСОК С ПЕРЕШИВА РАЗРЕЗАН — резерв становится расходом.
+                #
+                # До этой секунды кусок можно было открепить и вернуть в перешив.
+                # Теперь ткань физически раскроена: возвращать нечего, и в списке
+                # доступных он больше не появится. Запись без roll_id в
+                # order_material_usage показывает, что метры взяты не с рулона —
+                # иначе в расходе заказа ткань выглядела бы как бесплатная.
+                if repair_piece_id:
+                        cur.execute(
+                                "UPDATE repair_fabric_pieces SET status = 'used', used_at = now() "
+                                "WHERE id = %s AND status = 'reserved'",
+                                (repair_piece_id,),
+                        )
+                        if fabric_material_id and repair_fabric_qty > 0:
+                                cur.execute(
+                                        "INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
+                                        "VALUES (%s, %s, NULL, %s)",
+                                        (int(item_id), fabric_material_id, round(repair_fabric_qty, 3)),
+                                )
 
                 # cutter_user_id фиксирует, КТО именно раскроил заказ, отдельно от
                 # assigned_user_id — последний будет перезаписан на швею при take_order,
@@ -2550,6 +2598,20 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur.execute(
                     f"UPDATE orders SET sewing_status = 'Новый', assigned_user_id = NULL, "
                     f"workshop_id = NULL WHERE id = {int(item_id)}"
+                )
+                # ЗАКАЗ УШЁЛ ИЗ РАБОТЫ — КУСОК С ПЕРЕШИВА ВОЗВРАЩАЕМ В ЦЕХ.
+                #
+                # Закройщица успела закрепить за вещью отрез, а потом сбросила
+                # заказ обратно в «Новый». Ткань она не резала, но кусок остался
+                # привязан к заказу, которого у неё больше нет: в перешиве его не
+                # видно, вернуть некому — отрез просто терялся в цехе.
+                # Заказ возьмёт другой человек и подберёт кусок заново.
+                cur.execute(
+                    "UPDATE repair_fabric_pieces SET status = 'available', "
+                    "  used_order_id = NULL, used_by = NULL, used_by_name = NULL, "
+                    "  used_at = NULL "
+                    "WHERE used_order_id = %s AND status = 'reserved'",
+                    (int(item_id),),
                 )
             elif current_status == 'В работе':
                 cur.execute(

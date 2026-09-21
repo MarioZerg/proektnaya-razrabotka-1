@@ -17,11 +17,31 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/lib/dateUtils';
 import {
+  deleteRepairPiece,
   fetchRepairPieces,
   writeOffRepairPiece,
   type RepairPiece,
   type RepairPieceStatus,
 } from '@/lib/repairFabricApi';
+
+/**
+ * Состояние куска одним значком.
+ *
+ * «Под заказ» — отдельное состояние, а не разновидность «израсходован»:
+ * ткань ещё цела и её можно вернуть в цех, просто закройщица отложила её
+ * под конкретную вещь. Раньше такого состояния не было вовсе, и кусок,
+ * который только взяли в руки, уже числился потраченным.
+ */
+const StatusBadge = ({ status }: { status: RepairPieceStatus }) => {
+  if (status === 'available') {
+    return <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">В цехе</Badge>;
+  }
+  if (status === 'reserved') {
+    return <Badge className="bg-violet-600 text-white hover:bg-violet-600">Под заказ</Badge>;
+  }
+  if (status === 'used') return <Badge variant="secondary">Израсходован</Badge>;
+  return <Badge variant="destructive">Списан</Badge>;
+};
 
 /**
  * КУСКИ НА ПЕРЕШИВ — остатки ткани в цехе.
@@ -37,7 +57,11 @@ import {
  *     Выбирают кусок они не здесь, а в карточке заказа, где система сама
  *     отбирает подходящие по размеру;
  *   * администратору — полная картина: кто отправил, когда, из какой смены,
- *     под какие заказы кусок ещё годится, плюс возможность списать.
+ *     под какие заказы кусок ещё годится, плюс списание и удаление строк.
+ *
+ * СПИСАТЬ И УДАЛИТЬ — РАЗНОЕ. Списание говорит «кусок был, его испортили» и
+ * остаётся в истории. Удаление убирает строку целиком — для случаев, когда
+ * куска и не было: отправили по ошибке, задублировали, ошиблись в размерах.
  */
 const RepairFabric = () => {
   const { user } = useAuth();
@@ -50,6 +74,7 @@ const RepairFabric = () => {
   const [tab, setTab] = useState<RepairPieceStatus | 'all'>('available');
   const [material, setMaterial] = useState('all');
   const [writingOff, setWritingOff] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<number | null>(null);
   const [search, setSearch] = useState('');
 
   const load = () => {
@@ -105,6 +130,41 @@ const RepairFabric = () => {
     }
   };
 
+  /**
+   * УДАЛИТЬ СТРОКУ ИЗ ТАБЛИЦЫ ПЕРЕШИВА НАСОВСЕМ.
+   *
+   * Это НЕ списание. Списание — учётное событие: кусок был, его испортили,
+   * след остался в истории и в отчётах. Но в таблицу попадает и мусор:
+   * упаковщица отправила вещь по ошибке, задублировала строку, завела кусок
+   * с неверными размерами. Списывать такое нельзя — в отчётности появится
+   * брак, которого не было. Такие строки админ убирает.
+   *
+   * Вещь, которую отправили в перешив с перепаковки, возвращается в очередь
+   * перепаковки: иначе она исчезнет разом отовсюду.
+   */
+  const handleDelete = async (piece: RepairPiece) => {
+    const ok = window.confirm(
+      `Удалить из таблицы кусок ${piece.material} ${piece.width}×${piece.height}?\n\n` +
+        'Строка пропадёт насовсем, в отчётах её не будет. ' +
+        'Если кусок был и его испортили — используйте списание, а не удаление.',
+    );
+    if (!ok) return;
+    setDeleting(piece.id);
+    try {
+      await deleteRepairPiece(piece.id);
+      toast({ title: 'Кусок удалён из таблицы' });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось удалить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setDeleting(null);
+    }
+  };
+
   return (
     <CrmLayout>
       <div className="space-y-4">
@@ -147,6 +207,10 @@ const RepairFabric = () => {
           <Tabs value={tab} onValueChange={(v) => setTab(v as RepairPieceStatus | 'all')}>
             <TabsList className="flex h-auto w-full flex-wrap justify-start">
               <TabsTrigger value="available">В цехе</TabsTrigger>
+              {/* Закреплённые — это куски, которые закройщица отложила под заказ,
+                  но ещё не разрезала. Их важно видеть отдельно: если вещь зависла,
+                  отсюда понятно, какой отрез лежит без движения. */}
+              <TabsTrigger value="reserved">Под заказ</TabsTrigger>
               <TabsTrigger value="used">Израсходованы</TabsTrigger>
               <TabsTrigger value="written_off">Списаны</TabsTrigger>
               <TabsTrigger value="all">Все</TabsTrigger>
@@ -178,7 +242,11 @@ const RepairFabric = () => {
           <div className="rounded-lg border border-dashed border-border p-8 text-center">
             <Icon name="Scissors" size={32} className="mx-auto mb-2 text-muted-foreground" />
             <p className="font-medium">
-              {tab === 'available' ? 'В цехе нет кусков на перешив' : 'Ничего не найдено'}
+              {tab === 'available'
+                ? 'В цехе нет кусков на перешив'
+                : tab === 'reserved'
+                  ? 'Ни один кусок не закреплён за заказом'
+                  : 'Ничего не найдено'}
             </p>
             <p className="text-sm text-muted-foreground">
               Куски появляются здесь, когда упаковщица отправляет их с перепаковки
@@ -199,20 +267,44 @@ const RepairFabric = () => {
                         {p.createdByName || '—'} · {formatDateTime(p.createdAt)}
                       </p>
                     </div>
-                    {p.status === 'available' ? (
-                      <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
-                        В цехе
-                      </Badge>
-                    ) : p.status === 'used' ? (
-                      <Badge variant="secondary">Израсходован</Badge>
-                    ) : (
-                      <Badge variant="destructive">Списан</Badge>
-                    )}
+                    <StatusBadge status={p.status} />
                   </div>
                   {p.usedOrderNumber && (
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Ушёл на заказ {p.usedOrderNumber}
+                      {p.status === 'reserved' ? 'Закреплён за заказом ' : 'Ушёл на заказ '}
+                      {p.usedOrderNumber}
                     </p>
+                  )}
+                  {/* Удаление доступно и с телефона: админ чаще всего замечает
+                      ошибочную строку, стоя в цехе, а не за компьютером. */}
+                  {isAdmin && p.status !== 'used' && (
+                    <div className="mt-2 flex gap-2">
+                      {p.status !== 'written_off' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleWriteOff(p)}
+                          disabled={writingOff === p.id}
+                        >
+                          <Icon name="Ban" size={14} className="mr-1.5" />
+                          Списать
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => handleDelete(p)}
+                        disabled={deleting === p.id}
+                      >
+                        <Icon
+                          name={deleting === p.id ? 'Loader2' : 'Trash2'}
+                          size={14}
+                          className={`mr-1.5 ${deleting === p.id ? 'animate-spin' : ''}`}
+                        />
+                        Удалить
+                      </Button>
+                    </div>
                   )}
                 </div>
               ))}
@@ -240,15 +332,7 @@ const RepairFabric = () => {
                         {p.width}×{p.height}
                       </TableCell>
                       <TableCell>
-                        {p.status === 'available' ? (
-                          <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
-                            В цехе
-                          </Badge>
-                        ) : p.status === 'used' ? (
-                          <Badge variant="secondary">Израсходован</Badge>
-                        ) : (
-                          <Badge variant="destructive">Списан</Badge>
-                        )}
+                        <StatusBadge status={p.status} />
                       </TableCell>
                       {isAdmin && <TableCell>{p.createdByName || '—'}</TableCell>}
                       {isAdmin && (
@@ -276,21 +360,45 @@ const RepairFabric = () => {
                       )}
                       {isAdmin && (
                         <TableCell className="text-right">
-                          {p.status === 'available' && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-destructive hover:text-destructive"
-                              onClick={() => handleWriteOff(p)}
-                              disabled={writingOff === p.id}
-                            >
-                              <Icon
-                                name={writingOff === p.id ? 'Loader2' : 'Trash2'}
-                                size={14}
-                                className={writingOff === p.id ? 'animate-spin' : ''}
-                              />
-                            </Button>
-                          )}
+                          <div className="flex justify-end gap-1">
+                            {/* СПИСАТЬ — кусок был и испортился, след остаётся.
+                                Раскроенный списывать нечего: ткань уже в вещи. */}
+                            {(p.status === 'available' || p.status === 'reserved') && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="Списать: кусок был, но испорчен или потерян"
+                                onClick={() => handleWriteOff(p)}
+                                disabled={writingOff === p.id}
+                              >
+                                <Icon
+                                  name={writingOff === p.id ? 'Loader2' : 'Ban'}
+                                  size={14}
+                                  className={writingOff === p.id ? 'animate-spin' : ''}
+                                />
+                              </Button>
+                            )}
+                            {/* УДАЛИТЬ СТРОКУ — для мусора: ошибочная отправка,
+                                дубль, неверные размеры. Израсходованный кусок не
+                                трогаем: он уже вшит в заказ, и без него расход
+                                этого заказа перестанет сходиться. */}
+                            {p.status !== 'used' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                title="Удалить строку из таблицы насовсем"
+                                onClick={() => handleDelete(p)}
+                                disabled={deleting === p.id}
+                              >
+                                <Icon
+                                  name={deleting === p.id ? 'Loader2' : 'Trash2'}
+                                  size={14}
+                                  className={deleting === p.id ? 'animate-spin' : ''}
+                                />
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       )}
                     </TableRow>

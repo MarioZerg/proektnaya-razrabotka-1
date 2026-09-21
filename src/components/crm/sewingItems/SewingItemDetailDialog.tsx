@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import {
   Dialog,
@@ -109,6 +109,23 @@ const SewingItemDetailDialog = ({
   const isManager = user?.role === 'manager';
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
+  // ТКАНЬ ВЗЯТА С ПЕРЕШИВА — ВЫБОРА РУЛОНА В КАРТОЧКЕ БЫТЬ НЕ ДОЛЖНО.
+  //
+  // Из-за того, что блок подбора кусков и блок раскроя жили каждый сам по себе,
+  // получалось так: закройщица брала отрез с перешива, а рядом по-прежнему
+  // стоял список рулонов и кнопка «Раскроено». Ткань уже лежит на столе, а
+  // система предлагает отрезать ещё и от рулона — метры списались бы дважды.
+  //
+  // Держим признак здесь, в общем родителе обоих блоков: подбор сообщает,
+  // что кусок закреплён (или откреплён), а блок раскроя по этому признаку
+  // прячет рулоны. Откреплённый кусок возвращает рулоны на место.
+  const [repairPieceTaken, setRepairPieceTaken] = useState(false);
+  // При переходе к другому заказу признак обязан сброситься: иначе у соседней
+  // вещи, которую кроят от рулона, выбор рулона окажется скрыт.
+  useEffect(() => {
+    setRepairPieceTaken(false);
+  }, [selectedOrder?.id, dialogOpen]);
 
   // СНЯТЬ С КОНВЕЙЕРА — ПРАВО АДМИНИСТРАТОРА, И ТОЛЬКО ЗДЕСЬ.
   //
@@ -298,6 +315,7 @@ const SewingItemDetailDialog = ({
               <RepairPiecePicker
                 orderId={selectedOrder.id}
                 onUsed={() => onOrderUpdated?.()}
+                onReservedChange={(piece) => setRepairPieceTaken(!!piece)}
               />
             )}
 
@@ -320,6 +338,7 @@ const SewingItemDetailDialog = ({
                 onSendToStickering={onSendToStickering}
                 sewWaitSec={sewWaitSec}
                 dialogOpen={dialogOpen}
+                repairPieceTaken={repairPieceTaken}
               />
             )}
 
