@@ -1,5 +1,9 @@
-import { useRef, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -23,8 +27,23 @@ interface SupplyBoxCardProps {
   onRemoveItem: (itemId: number) => void;
   onDeleteBox: (boxId: number) => void;
   onCloseBox: (boxId: number) => Promise<void>;
+  /** Раскрыт ли короб. Открытым держим ровно один — тот, что набивают сейчас. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
+/**
+ * Короб поставки — свёрнутая плашка, которая раскрывается по клику.
+ *
+ * ПОЧЕМУ ПЛАШКА, А НЕ ОТКРЫТАЯ КАРТОЧКА. Раньше все короба висели развёрнутыми
+ * в три колонки: у каждого своё поле сканера и полный список вещей. На поставке
+ * в полсотни позиций экран превращался в простыню, и кладовщик пикал вещь в поле
+ * короба, который в этот момент не видел — товар уезжал в соседний.
+ *
+ * Теперь открыт РОВНО ОДИН короб — тот, который кладовщик сейчас набивает. Поле
+ * сканера есть только у него, промахнуться некуда. Свёрнутые показывают
+ * количество и статус: этого хватает, чтобы понять картину, не раскрывая.
+ */
 const SupplyBoxCard = ({
   box,
   supply,
@@ -36,11 +55,23 @@ const SupplyBoxCard = ({
   onRemoveItem,
   onDeleteBox,
   onCloseBox,
+  open,
+  onOpenChange,
 }: SupplyBoxCardProps) => {
   const [orderNumber, setOrderNumber] = useState('');
   const [scanning, setScanning] = useState(false);
   const [closing, setClosing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Раскрыли короб — сразу ставим курсор в поле сканера, чтобы кладовщик
+  // не тянулся к нему мышкой перед каждым пиком.
+  useEffect(() => {
+    if (open && canEdit && !box.closedAt) {
+      // Ждём окончания анимации раскрытия, иначе фокус слетает.
+      const t = setTimeout(() => inputRef.current?.focus(), 150);
+      return () => clearTimeout(t);
+    }
+  }, [open, canEdit, box.closedAt]);
 
   // OZON FBO: закрываем короб — сервер создаёт грузоместо на OZON и тянет PDF
   // этикетки именно этого короба. Печатать её кладовщик будет кнопкой ниже.
@@ -92,191 +123,243 @@ const SupplyBoxCard = ({
     }
   };
 
-  useScannerAutoSubmit(orderNumber, handleAdd, canEdit);
+  // Автоотправка работает только у РАСКРЫТОГО короба: у свёрнутых поля нет,
+  // и ловить ввод сканера им незачем.
+  useScannerAutoSubmit(orderNumber, handleAdd, canEdit && open);
+
+  const canScan = canEdit && !box.closedAt;
 
   return (
-    <Card className="border-border shadow-none">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-        <CardTitle className="text-sm">
-          Короб №{box.boxNumber}{' '}
-          <span className="font-mono-tech text-xs font-normal text-muted-foreground">({box.barcode})</span>
-          {box.closedAt && (
-            <Badge variant="secondary" className="ml-2 align-middle text-[10px]">Закрыт</Badge>
-          )}
-          {/* ГРУЗОМЕСТО НА ПЛОЩАДКЕ — ГЛАВНЫЙ ПРИЗНАК, ЧТО КОРОБ РЕАЛЬНО УЕХАЛ.
-              Закрытый короб без cargo_id означает, что на OZON его нет: заявка
-              придёт без этого грузоместа, и на приёмке короб окажется лишним.
-              Раньше оба состояния выглядели одинаково — просто «Закрыт». */}
-          {isOzonFbo && box.closedAt && (
-            box.ozonCargoId ? (
-              <Badge className="ml-1 bg-emerald-600 align-middle text-[10px] text-white hover:bg-emerald-600">
-                На OZON #{box.ozonCargoId}
-              </Badge>
-            ) : (
-              <Badge className="ml-1 bg-amber-600 align-middle text-[10px] text-white hover:bg-amber-600">
-                Не ушёл на OZON
-              </Badge>
-            )
-          )}
-        </CardTitle>
-        {canEdit && box.items.length === 0 && !box.closedAt && (
-          <Button variant="ghost" size="icon" onClick={() => onDeleteBox(box.id)}>
-            <Icon name="Trash2" size={14} />
-          </Button>
-        )}
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {canEdit && (
-          <div className="flex gap-2">
-            {/* У FBO в короб едет вещь с ярлыком ТОВАРА (OZN…) — именно его
-                читает приёмка площадки. Складской GW здесь не принимается:
-                по нему вещь только находят на полке перед стикеровкой. */}
-            <Input
-              ref={inputRef}
-              placeholder={
-                isOzonFbo
-                  ? 'Сканируйте ярлык товара OZON (OZN…)'
-                  : 'Сканируйте пакет с товаром'
-              }
-              value={orderNumber}
-              onChange={(e) => setOrderNumber(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-              className="font-mono-tech"
-            />
-            {scanning && (
-              <div className="flex h-9 w-9 items-center justify-center">
-                <Icon name="Loader2" size={16} className="animate-spin text-muted-foreground" />
-              </div>
+    <Collapsible
+      open={open}
+      onOpenChange={onOpenChange}
+      className={`rounded-lg border ${
+        open ? 'border-primary shadow-sm' : 'border-border'
+      }`}
+    >
+      <CollapsibleTrigger className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50">
+        <Icon
+          name="ChevronRight"
+          size={16}
+          className={`shrink-0 text-muted-foreground transition-transform ${
+            open ? 'rotate-90' : ''
+          }`}
+        />
+        <Icon
+          name={box.closedAt ? 'PackageCheck' : 'Package'}
+          size={18}
+          className={`shrink-0 ${box.closedAt ? 'text-emerald-600' : 'text-muted-foreground'}`}
+        />
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold">Короб №{box.boxNumber}</span>
+            {/* Количество вещей — главное число плашки: по нему кладовщик
+                понимает, куда класть следующую, не раскрывая короб. */}
+            <Badge variant={box.items.length ? 'default' : 'outline'}>
+              {box.items.length} шт.
+            </Badge>
+            {box.closedAt && (
+              <Badge variant="secondary" className="text-[10px]">Закрыт</Badge>
+            )}
+            {/* ГРУЗОМЕСТО НА ПЛОЩАДКЕ — ГЛАВНЫЙ ПРИЗНАК, ЧТО КОРОБ РЕАЛЬНО УЕХАЛ.
+                Закрытый короб без cargo_id означает, что на OZON его нет: заявка
+                придёт без этого грузоместа, и на приёмке короб окажется лишним.
+                Раньше оба состояния выглядели одинаково — просто «Закрыт». */}
+            {isOzonFbo && box.closedAt && (
+              box.ozonCargoId ? (
+                <Badge className="bg-emerald-600 text-[10px] text-white hover:bg-emerald-600">
+                  На OZON #{box.ozonCargoId}
+                </Badge>
+              ) : (
+                <Badge className="bg-amber-600 text-[10px] text-white hover:bg-amber-600">
+                  Не ушёл на OZON
+                </Badge>
+              )
             )}
           </div>
-        )}
+          <p className="truncate font-mono-tech text-xs text-muted-foreground">
+            {box.barcode}
+          </p>
+        </div>
 
-        {box.items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">В коробе пока нет товаров</p>
-        ) : (
-          <div className="space-y-1.5">
-            {box.items.map((item) => (
-              <div key={item.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm">
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{item.orderNumber || '—'}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {item.product} {item.material ? `— ${item.material}` : ''}
-                  </p>
+        {/* Подсказка на свёрнутой плашке: куда жать, чтобы начать набивать. */}
+        {!open && canScan && (
+          <span className="hidden shrink-0 items-center gap-1 text-xs text-muted-foreground sm:flex">
+            <Icon name="ScanLine" size={13} />
+            Открыть и сканировать
+          </span>
+        )}
+      </CollapsibleTrigger>
+
+      <CollapsibleContent>
+        <div className="space-y-3 border-t border-border p-4">
+          {canScan && (
+            <div className="flex gap-2">
+              {/* У FBO в короб едет вещь с ярлыком ТОВАРА (OZN…) — именно его
+                  читает приёмка площадки. Складской GW здесь не принимается:
+                  по нему вещь только находят на полке перед стикеровкой. */}
+              <Input
+                ref={inputRef}
+                placeholder={
+                  isOzonFbo
+                    ? 'Сканируйте ярлык товара OZON (OZN…)'
+                    : 'Сканируйте пакет с товаром'
+                }
+                value={orderNumber}
+                onChange={(e) => setOrderNumber(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                className="font-mono-tech"
+              />
+              {scanning && (
+                <div className="flex h-9 w-9 items-center justify-center">
+                  <Icon name="Loader2" size={16} className="animate-spin text-muted-foreground" />
                 </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="shrink-0">
-                    {item.goodsStatus === 'reserved' ? 'Зарезервирован' : item.goodsStatus === 'shipped' ? 'Отгружен' : item.goodsStatus}
-                  </Badge>
-                  {canEdit && (
-                    <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => onRemoveItem(item.id)}>
-                      <Icon name="X" size={12} />
-                    </Button>
-                  )}
+              )}
+            </div>
+          )}
+
+          {box.items.length === 0 ? (
+            <p className="text-sm text-muted-foreground">В коробе пока нет товаров</p>
+          ) : (
+            <div className="space-y-1.5">
+              {box.items.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{item.orderNumber || '—'}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {item.product} {item.material ? `— ${item.material}` : ''}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="shrink-0">
+                      {item.goodsStatus === 'reserved' ? 'Зарезервирован' : item.goodsStatus === 'shipped' ? 'Отгружен' : item.goodsStatus}
+                    </Badge>
+                    {canEdit && (
+                      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => onRemoveItem(item.id)}>
+                        <Icon name="X" size={12} />
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
 
-        {/* OZON FBO: короб набит — закрываем. Сервер заводит грузоместо на OZON
-            и возвращает этикетку на ЭТОТ короб, её сразу можно печатать. */}
-        {isOzonFbo && box.items.length > 0 && !box.closedAt && (
-          <Button
-            size="sm"
-            className="w-full"
-            onClick={handleCloseOzon}
-            disabled={closing}
-          >
-            <Icon
-              name={closing ? 'Loader2' : 'PackageCheck'}
-              size={14}
-              className={`mr-1.5 ${closing ? 'animate-spin' : ''}`}
-            />
-            {closing ? 'Закрываем короб и получаем стикер…' : 'Закрыть короб'}
-          </Button>
-        )}
+          {/* OZON FBO: короб набит — закрываем. Сервер заводит грузоместо на OZON
+              и возвращает этикетку на ЭТОТ короб, её сразу можно печатать. */}
+          {isOzonFbo && box.items.length > 0 && !box.closedAt && (
+            <Button
+              size="sm"
+              className="w-full"
+              onClick={handleCloseOzon}
+              disabled={closing}
+            >
+              <Icon
+                name={closing ? 'Loader2' : 'PackageCheck'}
+                size={14}
+                className={`mr-1.5 ${closing ? 'animate-spin' : ''}`}
+              />
+              {closing ? 'Закрываем короб и получаем стикер…' : 'Закрыть короб'}
+            </Button>
+          )}
 
-        {/* КОРОБ ЗАКРЫТ, НО ГРУЗОМЕСТА НА OZON НЕТ — ДАЁМ ПОВТОРИТЬ.
-            Так бывает, когда площадка не ответила или отклонила состав. Без
-            этой кнопки короб оставался закрытым навсегда: кладовщик не мог ни
-            доложить вещь, ни отправить его на OZON, и поставка уезжала
-            неполной. Повтор отправляет состав заново. */}
-        {isOzonFbo && box.closedAt && !box.ozonCargoId && box.items.length > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full border-amber-500 text-amber-800 hover:bg-amber-50"
-            onClick={handleCloseOzon}
-            disabled={closing}
-          >
-            <Icon
-              name={closing ? 'Loader2' : 'RefreshCw'}
-              size={14}
-              className={`mr-1.5 ${closing ? 'animate-spin' : ''}`}
-            />
-            {closing ? 'Отправляем на OZON…' : 'Повторить отправку на OZON'}
-          </Button>
-        )}
+          {/* КОРОБ ЗАКРЫТ, НО ГРУЗОМЕСТА НА OZON НЕТ — ДАЁМ ПОВТОРИТЬ.
+              Так бывает, когда площадка не ответила или отклонила состав. Без
+              этой кнопки короб оставался закрытым навсегда: кладовщик не мог ни
+              доложить вещь, ни отправить его на OZON, и поставка уезжала
+              неполной. Повтор отправляет состав заново. */}
+          {isOzonFbo && box.closedAt && !box.ozonCargoId && box.items.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full border-amber-500 text-amber-800 hover:bg-amber-50"
+              onClick={handleCloseOzon}
+              disabled={closing}
+            >
+              <Icon
+                name={closing ? 'Loader2' : 'RefreshCw'}
+                size={14}
+                className={`mr-1.5 ${closing ? 'animate-spin' : ''}`}
+              />
+              {closing ? 'Отправляем на OZON…' : 'Повторить отправку на OZON'}
+            </Button>
+          )}
 
-        {isWbFbo && box.items.length > 0 && !box.closedAt && (
-          <Button
-            size="sm"
-            className="w-full bg-[#CB11AB] text-white hover:bg-[#a60d8b]"
-            onClick={handleCloseAndPrint}
-            disabled={closing}
-          >
-            <Icon
-              name={closing ? 'Loader2' : 'PackageCheck'}
-              size={14}
-              className={`mr-1.5 ${closing ? 'animate-spin' : ''}`}
-            />
-            Закрыть короб и печать стикера
-          </Button>
-        )}
+          {isWbFbo && box.items.length > 0 && !box.closedAt && (
+            <Button
+              size="sm"
+              className="w-full bg-[#CB11AB] text-white hover:bg-[#a60d8b]"
+              onClick={handleCloseAndPrint}
+              disabled={closing}
+            >
+              <Icon
+                name={closing ? 'Loader2' : 'PackageCheck'}
+                size={14}
+                className={`mr-1.5 ${closing ? 'animate-spin' : ''}`}
+              />
+              Закрыть короб и печать стикера
+            </Button>
+          )}
 
-        {isWbFbo && box.closedAt && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => printWbBoxLabel(supply, box)}
-          >
-            <Icon name="Printer" size={14} className="mr-1.5" />
-            Печать стикера короба
-          </Button>
-        )}
-
-        {box.stickerUrl && (
-          <div className="space-y-1.5">
-            {/* Стикер короба от маркетплейса печатаем на наклейке 75×120 — той же, что у WB.
-                Раньше PDF просто открывался ссылкой и уходил на печать как A4. */}
+          {isWbFbo && box.closedAt && (
             <Button
               variant="outline"
               size="sm"
               className="w-full"
-              onClick={() =>
-                printBoxLabelFromUrl(
-                  box.stickerUrl as string,
-                  `Стикер короба №${box.boxNumber}`
-                )
-              }
+              onClick={() => printWbBoxLabel(supply, box)}
             >
               <Icon name="Printer" size={14} className="mr-1.5" />
-              Печать стикера короба (75×120)
+              Печать стикера короба
             </Button>
-            <a
-              href={box.stickerUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:underline"
+          )}
+
+          {box.stickerUrl && (
+            <div className="space-y-1.5">
+              {/* Стикер короба от маркетплейса печатаем на наклейке 75×120 — той же, что у WB.
+                  Раньше PDF просто открывался ссылкой и уходил на печать как A4. */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() =>
+                  printBoxLabelFromUrl(
+                    box.stickerUrl as string,
+                    `Стикер короба №${box.boxNumber}`
+                  )
+                }
+              >
+                <Icon name="Printer" size={14} className="mr-1.5" />
+                Печать стикера короба (75×120)
+              </Button>
+              <a
+                href={box.stickerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:underline"
+              >
+                <Icon name="FileText" size={12} />
+                Открыть PDF
+              </a>
+            </div>
+          )}
+
+          {/* Удаление — внизу раскрытого короба, а не иконкой в шапке: чтобы
+              случайно не снести короб, целясь в стрелку раскрытия. */}
+          {canEdit && box.items.length === 0 && !box.closedAt && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full text-destructive hover:text-destructive"
+              onClick={() => onDeleteBox(box.id)}
             >
-              <Icon name="FileText" size={12} />
-              Открыть PDF
-            </a>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+              <Icon name="Trash2" size={14} className="mr-1.5" />
+              Удалить пустой короб
+            </Button>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 };
 

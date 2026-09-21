@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -31,7 +32,13 @@ interface SupplyBoxesSectionProps {
 }
 
 /**
- * Короба поставки: панель управления сверху и сетка коробов под ней.
+ * Короба поставки: панель управления сверху и плашки коробов под ней.
+ *
+ * ОТКРЫТ ВСЕГДА РОВНО ОДИН КОРОБ. Кладовщик физически набивает один короб за
+ * раз — значит и поле сканера должно быть одно. Раньше короба висели
+ * развёрнутыми в три колонки, у каждого своё поле: на большой поставке экран
+ * превращался в простыню, и вещь улетала в короб, который в этот момент не
+ * виден. Теперь раскрытие одного само закрывает предыдущий.
  *
  * Тип грузоместа и закрытие всех коробов разом нужны только OZON FBO — там
  * короб превращается в грузоместо на стороне площадки.
@@ -53,74 +60,102 @@ const SupplyBoxesSection = ({
   onRemoveItem,
   onDeleteBox,
   onCloseBox,
-}: SupplyBoxesSectionProps) => (
-  <div className="space-y-3">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 className="font-semibold">Короба ({supply.boxes.length})</h2>
-      <div className="flex flex-wrap items-center gap-2">
-        {isOzonFbo && (
-          <Select value={cargoType} onValueChange={(v) => onCargoTypeChange(v as 'BOX' | 'PALLET')}>
-            <SelectTrigger className="h-9 w-[150px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="BOX">Короб</SelectItem>
-              <SelectItem value="PALLET">Палета</SelectItem>
-            </SelectContent>
-          </Select>
-        )}
-        {canCloseBoxes && (
-          <Button
-            size="sm"
-            className="bg-[#005BFF] text-white hover:bg-[#0047cc]"
-            onClick={onCloseBoxes}
-            disabled={closingBoxes}
-          >
-            <Icon
-              name={closingBoxes ? 'Loader2' : 'PackageCheck'}
-              size={14}
-              className={`mr-1 ${closingBoxes ? 'animate-spin' : ''}`}
-            />
-            Закрыть короба и получить стикеры
-          </Button>
-        )}
-        {canEdit && (
-          <Button size="sm" onClick={onAddBox} disabled={addingBox}>
-            {addingBox ? (
-              <Icon name="Loader2" size={14} className="mr-1 animate-spin" />
-            ) : (
-              <Icon name="PackagePlus" size={14} className="mr-1" />
-            )}
-            Добавить короб
-          </Button>
-        )}
-      </div>
-    </div>
+}: SupplyBoxesSectionProps) => {
+  const [openBoxId, setOpenBoxId] = useState<number | null>(null);
 
-    {supply.boxes.length === 0 ? (
-      <p className="text-sm text-muted-foreground">
-        Коробов пока нет — нажмите «Добавить короб», чтобы начать сборку
-      </p>
-    ) : (
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {supply.boxes.map((box) => (
-          <SupplyBoxCard
-            key={box.id}
-            box={box}
-            supply={supply}
-            canEdit={canEdit}
-            isWbFbo={isWbFbo}
-            isOzonFbo={isOzonFbo}
-            onCloseOzonBox={onCloseOzonBox}
-            onAddOrder={onAddOrder}
-            onRemoveItem={onRemoveItem}
-            onDeleteBox={onDeleteBox}
-            onCloseBox={onCloseBox}
-          />
-        ))}
+  // Сам открываем тот короб, который сейчас набивают: последний незакрытый.
+  // Кладовщик заходит на экран и сразу пикает, не ища, куда нажать.
+  // Трогаем только первый заход (openBoxId ещё пуст) — дальше выбор за человеком.
+  useEffect(() => {
+    if (openBoxId !== null || !canEdit) return;
+    const active = [...supply.boxes].reverse().find((b) => !b.closedAt);
+    if (active) setOpenBoxId(active.id);
+  }, [supply.boxes, canEdit, openBoxId]);
+
+  const closedCount = supply.boxes.filter((b) => b.closedAt).length;
+  const totalItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-semibold">Короба ({supply.boxes.length})</h2>
+          {supply.boxes.length > 0 && (
+            <p className="text-sm text-muted-foreground">
+              Уложено вещей: <b>{totalItems}</b>
+              {closedCount > 0 && ` · закрыто коробов: ${closedCount} из ${supply.boxes.length}`}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {isOzonFbo && (
+            <Select value={cargoType} onValueChange={(v) => onCargoTypeChange(v as 'BOX' | 'PALLET')}>
+              <SelectTrigger className="h-9 w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="BOX">Короб</SelectItem>
+                <SelectItem value="PALLET">Палета</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+          {canCloseBoxes && (
+            <Button
+              size="sm"
+              className="bg-[#005BFF] text-white hover:bg-[#0047cc]"
+              onClick={onCloseBoxes}
+              disabled={closingBoxes}
+            >
+              <Icon
+                name={closingBoxes ? 'Loader2' : 'PackageCheck'}
+                size={14}
+                className={`mr-1 ${closingBoxes ? 'animate-spin' : ''}`}
+              />
+              Закрыть короба и получить стикеры
+            </Button>
+          )}
+          {canEdit && (
+            <Button size="sm" onClick={onAddBox} disabled={addingBox}>
+              {addingBox ? (
+                <Icon name="Loader2" size={14} className="mr-1 animate-spin" />
+              ) : (
+                <Icon name="PackagePlus" size={14} className="mr-1" />
+              )}
+              Добавить короб
+            </Button>
+          )}
+        </div>
       </div>
-    )}
-  </div>
-);
+
+      {supply.boxes.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Коробов пока нет — нажмите «Добавить короб», чтобы начать сборку
+        </p>
+      ) : (
+        // Плашки идут в столбик, а не в сетку: раскрытый короб со списком
+        // вещей в колонке шириной в треть экрана нечитаем.
+        <div className="space-y-2">
+          {supply.boxes.map((box) => (
+            <SupplyBoxCard
+              key={box.id}
+              box={box}
+              supply={supply}
+              canEdit={canEdit}
+              isWbFbo={isWbFbo}
+              isOzonFbo={isOzonFbo}
+              onCloseOzonBox={onCloseOzonBox}
+              onAddOrder={onAddOrder}
+              onRemoveItem={onRemoveItem}
+              onDeleteBox={onDeleteBox}
+              onCloseBox={onCloseBox}
+              open={openBoxId === box.id}
+              onOpenChange={(next) => setOpenBoxId(next ? box.id : null)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default SupplyBoxesSection;
