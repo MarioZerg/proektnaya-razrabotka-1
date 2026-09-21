@@ -71,7 +71,6 @@ const SupplyBoxCard = ({
     scanning,
     closing,
     printing,
-    setPrinting,
     fetchingLabel,
     inputRef,
     canScan,
@@ -80,6 +79,8 @@ const SupplyBoxCard = ({
     handleCloseAndPrint,
     handleAdd,
     handleFetchLabel,
+    handlePrintSticker,
+    handlePrintWbSticker,
   } = useSupplyBoxCard({
     box,
     supply,
@@ -99,11 +100,21 @@ const SupplyBoxCard = ({
         open ? 'border-primary shadow-sm' : 'border-border'
       }`}
     >
+      {/* Печать стикера вынесена в саму полосу короба: кладовщик печатает
+          его с заклеенным коробом в руках, и раскрывать состав ради одной
+          кнопки внизу списка не должен. Обработчики те же, что у кнопок
+          внутри, — результат нажатия не зависит от того, откуда нажали. */}
       <SupplyBoxCardHeader
         box={box}
         isOzonFbo={isOzonFbo}
+        isWbFbo={isWbFbo}
         open={open}
         canScan={canScan}
+        printing={printing}
+        onPrintSticker={handlePrintSticker}
+        onPrintWbSticker={handlePrintWbSticker}
+        fetchingLabel={fetchingLabel}
+        onFetchLabel={handleFetchLabel}
       />
 
       <CollapsibleContent>
@@ -125,17 +136,17 @@ const SupplyBoxCard = ({
 
           <SupplyBoxActions
             box={box}
-            supply={supply}
             canEdit={canEdit}
             isWbFbo={isWbFbo}
             isOzonFbo={isOzonFbo}
             closing={closing}
             printing={printing}
-            setPrinting={setPrinting}
             fetchingLabel={fetchingLabel}
             onCloseOzon={handleCloseOzon}
             onCloseAndPrint={handleCloseAndPrint}
             onFetchLabel={handleFetchLabel}
+            onPrintSticker={handlePrintSticker}
+            onPrintWbSticker={handlePrintWbSticker}
             onReopenBox={onReopenBox}
             onDeleteBox={onDeleteBox}
           />

@@ -4,6 +4,7 @@ import { fetchOzonBoxLabel } from '@/lib/ozonFboApi';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { printWbBoxLabel } from '@/lib/wbBoxLabel';
+import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
 
 /** Строка списка: одинаковые вещи короба, схлопнутые в одну позицию. */
 export interface GroupedBoxItem {
@@ -160,6 +161,59 @@ export const useSupplyBoxCard = ({
     }
   };
 
+  /**
+   * ПЕЧАТЬ СТИКЕРА КОРОБА — ОДНИМ ДЕЙСТВИЕМ, ОТКУДА БЫ НИ НАЖАЛИ.
+   *
+   * Кладовщик печатает стикер у стола с коробом в руках, и путь к кнопке был
+   * длинный: раскрыть короб, пролистать весь список вещей вниз и только там
+   * найти кнопку. На поставке в двадцать коробов это двадцать раскрытий и
+   * двадцать прокруток — при том, что сам короб уже заклеен и трогать его
+   * состав незачем.
+   *
+   * Поэтому печать живёт здесь, в общем поведении короба: одну и ту же
+   * функцию зовут и кнопка в свёрнутой плашке, и кнопка внизу раскрытого
+   * короба. Поведение у них обязано совпадать до мелочей — иначе кладовщик
+   * получит разный результат в зависимости от того, куда нажал.
+   *
+   * Печатаем ТОЛЬКО своё грузоместо: в старых стикерах лежит полный файл
+   * заявки со всеми коробами сразу.
+   */
+  const handlePrintSticker = async () => {
+    if (!box.stickerUrl) return;
+    setPrinting(true);
+    try {
+      await printBoxLabelFromUrl(
+        box.stickerUrl,
+        `Стикер короба №${box.boxNumber}`,
+        box.ozonCargoId,
+      );
+    } catch (e) {
+      toast({
+        title: 'Не удалось напечатать стикер',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  /** Печать стикера короба WB — та же кнопка в плашке, но своя наклейка. */
+  const handlePrintWbSticker = async () => {
+    setPrinting(true);
+    try {
+      await printWbBoxLabel(supply, box);
+    } catch (e) {
+      toast({
+        title: 'Не удалось напечатать стикер',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   // ОДИНАКОВЫЙ ТОВАР — ОДНОЙ СТРОКОЙ С КОЛИЧЕСТВОМ.
   //
   // В коробе FBO лежат обезличенные вещи, и одного размера туда уходит по
@@ -207,8 +261,9 @@ export const useSupplyBoxCard = ({
     setOrderNumber,
     scanning,
     closing,
+    // Наружу отдаём только флаг: включают его сами обработчики печати ниже,
+    // чтобы состояние кнопок не разъехалось между плашкой и списком действий.
     printing,
-    setPrinting,
     fetchingLabel,
     inputRef,
     canScan,
@@ -217,6 +272,8 @@ export const useSupplyBoxCard = ({
     handleCloseAndPrint,
     handleAdd,
     handleFetchLabel,
+    handlePrintSticker,
+    handlePrintWbSticker,
   };
 };
 

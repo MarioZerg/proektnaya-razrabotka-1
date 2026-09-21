@@ -1,22 +1,22 @@
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
-import type { SupplyBox, SupplyDetail } from '@/lib/marketplaceSuppliesApi';
-import { printWbBoxLabel } from '@/lib/wbBoxLabel';
-import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
+import type { SupplyBox } from '@/lib/marketplaceSuppliesApi';
 
 interface SupplyBoxActionsProps {
   box: SupplyBox;
-  supply: SupplyDetail;
   canEdit: boolean;
   isWbFbo: boolean;
   isOzonFbo: boolean;
   closing: boolean;
   printing: boolean;
-  setPrinting: (value: boolean) => void;
   fetchingLabel: boolean;
   onCloseOzon: () => void;
   onCloseAndPrint: () => void;
   onFetchLabel: () => void;
+  /** Печать стикера маркетплейса — тот же обработчик, что и в полосе короба. */
+  onPrintSticker: () => void;
+  /** Печать стикера короба WB — тот же обработчик, что и в полосе короба. */
+  onPrintWbSticker: () => void;
   onReopenBox: (boxId: number) => void;
   onDeleteBox: (boxId: number) => void;
 }
@@ -24,23 +24,28 @@ interface SupplyBoxActionsProps {
 /**
  * Действия по коробу: закрыть, переоткрыть, забрать и напечатать этикетку.
  *
- * Все кнопки живут ВНИЗУ раскрытого короба, а не в шапке: там их нельзя задеть,
- * целясь в стрелку раскрытия. Набор зависит от площадки и того, ушло ли уже
- * грузоместо — состояния разведены намеренно, каждое со своим объяснением.
+ * Опасные действия (закрыть, переоткрыть, удалить) живут ВНИЗУ раскрытого
+ * короба, а не в шапке: там их нельзя задеть, целясь в стрелку раскрытия.
+ * Набор зависит от площадки и того, ушло ли уже грузоместо — состояния
+ * разведены намеренно, каждое со своим объяснением.
+ *
+ * Печать стикера продублирована в полосе короба (SupplyBoxCardHeader): она
+ * безопасна и нужна чаще всего. Обработчики у обеих кнопок ОДНИ И ТЕ ЖЕ —
+ * иначе поведение начало бы расходиться в зависимости от места нажатия.
  */
 const SupplyBoxActions = ({
   box,
-  supply,
   canEdit,
   isWbFbo,
   isOzonFbo,
   closing,
   printing,
-  setPrinting,
   fetchingLabel,
   onCloseOzon,
   onCloseAndPrint,
   onFetchLabel,
+  onPrintSticker,
+  onPrintWbSticker,
   onReopenBox,
   onDeleteBox,
 }: SupplyBoxActionsProps) => (
@@ -159,10 +164,15 @@ const SupplyBoxActions = ({
         variant="outline"
         size="sm"
         className="w-full"
-        onClick={() => printWbBoxLabel(supply, box)}
+        disabled={printing}
+        onClick={onPrintWbSticker}
       >
-        <Icon name="Printer" size={14} className="mr-1.5" />
-        Печать стикера короба
+        <Icon
+          name={printing ? 'Loader2' : 'Printer'}
+          size={14}
+          className={`mr-1.5 ${printing ? 'animate-spin' : ''}`}
+        />
+        {printing ? 'Готовим стикер…' : 'Печать стикера короба'}
       </Button>
     )}
 
@@ -178,20 +188,7 @@ const SupplyBoxActions = ({
           size="sm"
           className="w-full"
           disabled={printing}
-          onClick={async () => {
-            setPrinting(true);
-            try {
-              await printBoxLabelFromUrl(
-                box.stickerUrl as string,
-                `Стикер короба №${box.boxNumber}`,
-                // Печатаем ТОЛЬКО своё грузоместо: в старых стикерах
-                // лежит полный файл заявки со всеми коробами.
-                box.ozonCargoId,
-              );
-            } finally {
-              setPrinting(false);
-            }
-          }}
+          onClick={onPrintSticker}
         >
           <Icon
             name={printing ? 'Loader2' : 'Printer'}
