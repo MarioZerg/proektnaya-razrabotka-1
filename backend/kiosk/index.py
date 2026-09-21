@@ -1284,12 +1284,27 @@ def handler(event: dict, context) -> dict:
                             "VALUES (%s, 'awaiting_shelf', %s, %s)",
                             (int(order_id), storage_barcode, reason),
                         )
-                elif (order_type or '') == 'FBS':
-                    # Обычный FBS-заказ: вещь сшита, застикерована ярлыком маркетплейса и
-                    # лежит в контейнере — ждёт, когда кладовщик отсканирует её в поставку.
-                    # Заводим складскую запись в статусе 'awaiting_supply': она не на полке,
-                    # а «на поставку». Раньше записи не было совсем, и сканирование ярлыка
-                    # в поставку падало с «не найдено среди собранных с полок».
+                elif (order_type or '') in ('FBS', 'FBO'):
+                    # Заказ сшит в цехе, застикерован ярлыком маркетплейса и лежит в
+                    # контейнере — ждёт, когда кладовщик отсканирует его в поставку.
+                    # Заводим складскую запись в статусе 'awaiting_supply': вещь не на
+                    # полке, а «на поставку». Раньше записи не было совсем, и
+                    # сканирование ярлыка в поставку падало с «не найдено среди
+                    # собранных с полок».
+                    #
+                    # FBO СЮДА ВХОДИТ НАРАВНЕ С FBS — И ЭТО ГЛАВНОЕ.
+                    #
+                    # Раньше условие было только про FBS, и вещь, сшитая в цехе ПОД
+                    # ЗАЯВКУ FBO, после стикеровки нигде не появлялась: заказ уходил
+                    # в «Готовые», а складской записи под него не создавалось вовсе.
+                    # Кладовщик сканировал ярлык OZN в короб и получал «на складе нет
+                    # свободных вещей этого товара» — система искала вещь только среди
+                    # лежащих на полках, а сшитой в цехе для неё не существовало.
+                    #
+                    # Так зависали заказы вроде 2000065880431-217 (Мрамор 700x255):
+                    # сшит специально под Ярославль, прошёл раскрой, пошив и
+                    # стикеровку, а в поставку не добавлялся. Товар при этом физически
+                    # лежал в цехе.
                     cur.execute(
                         "SELECT id FROM goods_warehouse WHERE order_id = %s", (int(order_id),)
                     )
@@ -1308,11 +1323,18 @@ def handler(event: dict, context) -> dict:
                         # кнопка стикера, а упаковщице нечего было наклеить на вещь.
                         if group_key and (group_size or 0) > 1:
                             bundle_barcode = f"{group_key}-{group_position or 1}"
+                        # Вещь сразу закрепляем за своим заказом заявки (reserved_order_id):
+                        # товар FBO обезличен, и без этой привязки в короб могла уйти
+                        # соседняя штука того же артикула, а строка подбора осталась бы
+                        # висеть незакрытой.
                         cur.execute(
-                            "INSERT INTO goods_warehouse (order_id, status, storage_barcode, "
-                            "receive_reason, shipping_labeled_at, bundle_barcode) "
-                            "VALUES (%s, 'awaiting_supply', %s, 'fbs_ready', now(), %s)",
-                            (int(order_id), next_storage_barcode(cur), bundle_barcode),
+                            "INSERT INTO goods_warehouse (order_id, reserved_order_id, status, "
+                            "storage_barcode, receive_reason, shipping_labeled_at, "
+                            "matched_at, bundle_barcode) "
+                            "VALUES (%s, %s, 'awaiting_supply', %s, 'fbs_ready', now(), "
+                            "        now(), %s)",
+                            (int(order_id), int(order_id),
+                             next_storage_barcode(cur), bundle_barcode),
                         )
 
                 # Швея получает фиксированную ставку за штуку по ширине товара — именно сейчас,
