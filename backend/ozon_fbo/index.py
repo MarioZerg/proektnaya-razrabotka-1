@@ -670,6 +670,59 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     if not boxes:
         return _resp(400, {'error': 'В поставке нет коробов'})
 
+    # СНАЧАЛА ЗАБИРАЕМ НОМЕРА ПО НЕЗАВЕРШЁННЫМ ОПЕРАЦИЯМ.
+    #
+    # Если прошлый заход создал место на OZON, но оборвался по таймауту до
+    # записи cargo_id, операция осталась сохранённой. Доводим её до конца —
+    # тогда короб привяжется к УЖЕ созданному месту, а не получит второе.
+    # Ровно из-за пропуска этого шага «первый короб всегда висел» на площадке.
+    recovered = 0
+    for box_id, box_number, ozon_cargo_id in boxes:
+        if ozon_cargo_id:
+            continue
+        cur.execute(
+            "SELECT ozon_create_operation_id FROM marketplace_supply_boxes WHERE id = %s",
+            (int(box_id),),
+        )
+        op_row = cur.fetchone()
+        pending_op = op_row[0] if op_row else None
+        if not pending_op:
+            continue
+        st_p, info_p = poll_operation(
+            '/v2/cargoes/create/info', client_id, api_key, pending_op,
+            attempts=2, delay=0.5,
+        )
+        res_p = info_p.get('result') if isinstance(info_p, dict) else None
+        items_p = (res_p or {}).get('cargoes') or [] if isinstance(res_p, dict) else []
+        for c in items_p:
+            val = c.get('value') if isinstance(c.get('value'), dict) else {}
+            cid_p = val.get('cargo_id') or c.get('cargo_id')
+            if c.get('key') == f'box-{box_id}' and cid_p:
+                cur.execute(
+                    "UPDATE marketplace_supply_boxes SET ozon_cargo_id = %s, "
+                    "  closed_at = COALESCE(closed_at, now()), "
+                    "  ozon_create_operation_id = NULL WHERE id = %s",
+                    (int(cid_p), int(box_id)),
+                )
+                recovered += 1
+    if recovered:
+        conn.commit()
+        # Перечитываем короба: у восстановленных появился cargo_id, и второе
+        # место им заводить уже не нужно.
+        if one_box_id:
+            cur.execute(
+                "SELECT b.id, b.box_number, b.ozon_cargo_id FROM marketplace_supply_boxes b "
+                "WHERE b.supply_id = %s AND b.id = %s",
+                (int(supply_id), int(one_box_id)),
+            )
+        else:
+            cur.execute(
+                "SELECT b.id, b.box_number, b.ozon_cargo_id FROM marketplace_supply_boxes b "
+                "WHERE b.supply_id = %s ORDER BY b.box_number",
+                (int(supply_id),),
+            )
+        boxes = cur.fetchall()
+
     cargoes_payload = []
     box_keys = {}  # key -> box_id
     already_on_ozon = []
@@ -790,6 +843,25 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
         return _resp(502, {'error': f'OZON не принял короба: {ozon_error_text(st, data)}'})
     op_id = data['operation_id']
 
+    # ЗАПОМИНАЕМ ОПЕРАЦИЮ СРАЗУ — ИНАЧЕ ПЛОДИМ ГРУЗОМЕСТА-СИРОТЫ.
+    #
+    # Место на OZON уже создаётся, но его номер (cargo_id) придёт позже,
+    # отдельным запросом. У функции всего 5 секунд, а ожидание занимает до 22:
+    # она обрывается по таймауту ПОСЛЕ создания места, но ДО записи cargo_id.
+    #
+    # Так и появлялся «первый короб, который всегда висит»: на площадке место
+    # есть, у нас о нём ни следа, кладовщик жмёт «Закрыть» снова — создаётся
+    # ещё одно. Заявка показывает два одинаковых короба с разными штрихкодами.
+    #
+    # Сохранив operation_id отдельным коммитом, мы даём следующему заходу
+    # ЗАБРАТЬ номер уже созданного места вместо создания нового.
+    for _key, _box_id in box_keys.items():
+        cur.execute(
+            "UPDATE marketplace_supply_boxes SET ozon_create_operation_id = %s WHERE id = %s",
+            (str(op_id), int(_box_id)),
+        )
+    conn.commit()
+
     # 2) Ждём результат создания — получаем cargo_id по каждому key.
     #
     # Ответ приходит вложенным: {"status": "SUCCESS", "result": {"cargoes":
@@ -797,11 +869,24 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     # верхнем уровне, а cargo_id — прямо в элементе, минуя value. Оба ключа не
     # находились: грузоместо на площадке создавалось, а у нас короб оставался
     # незакрытым, без cargo_id и без этикетки.
-    st, info = poll_operation('/v2/cargoes/create/info', client_id, api_key, op_id)
+    #
+    # Ждём КОРОТКО, с запасом до таймаута функции: не успели — номер заберёт
+    # следующий заход по сохранённой операции, место при этом не задвоится.
+    st, info = poll_operation(
+        '/v2/cargoes/create/info', client_id, api_key, op_id,
+        attempts=3, delay=0.6,
+    )
     result = info.get('result') if isinstance(info, dict) else None
     cargoes_result = (result or {}).get('cargoes') or [] if isinstance(result, dict) else []
     if not cargoes_result:
-        return _resp(502, {'error': f'OZON не создал грузоместа: {ozon_error_text(st, info)}'})
+        # Место создаётся, номер ещё не пришёл. Это НЕ ошибка: операция
+        # сохранена, кладовщик нажмёт «Повторить отправку на OZON» и мы
+        # заберём номер, а не заведём второе место.
+        return _resp(202, {
+            'pending': True,
+            'note': 'OZON создаёт грузоместо. Нажмите «Повторить отправку на OZON» '
+                    'через несколько секунд — короб привяжется к уже созданному месту',
+        })
 
     cargo_ids = []
     for c in cargoes_result:
@@ -811,8 +896,9 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
         if key in box_keys and cargo_id:
             cargo_ids.append(int(cargo_id))
             cur.execute(
-                "UPDATE marketplace_supply_boxes SET ozon_cargo_id = %s, closed_at = COALESCE(closed_at, now()) "
-                "WHERE id = %s",
+                "UPDATE marketplace_supply_boxes SET ozon_cargo_id = %s, "
+                "  closed_at = COALESCE(closed_at, now()), "
+                "  ozon_create_operation_id = NULL WHERE id = %s",
                 (int(cargo_id), box_keys[key]),
             )
     conn.commit()
@@ -1332,8 +1418,8 @@ def handle_reopen_box(cur, conn, client_id, api_key, body_data):
 
     cur.execute(
         "UPDATE marketplace_supply_boxes SET closed_at = NULL, ozon_cargo_id = NULL, "
-        "  sticker_url = NULL, sticker_name = NULL, ozon_label_operation_id = NULL "
-        "WHERE id = %s",
+        "  sticker_url = NULL, sticker_name = NULL, ozon_label_operation_id = NULL, "
+        "  ozon_create_operation_id = NULL WHERE id = %s",
         (int(box_id),),
     )
     log_action(
