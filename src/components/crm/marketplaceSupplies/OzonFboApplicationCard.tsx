@@ -1,8 +1,8 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
+import SupplySection from '@/components/crm/marketplaceSupplies/SupplySection';
 import { formatDateTime } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import { formatDate } from '@/lib/dateUtils';
 
@@ -21,11 +21,19 @@ interface OzonFboApplicationCardProps {
 const OzonFboApplicationCard = ({ supply, onImportComposition, importing }: OzonFboApplicationCardProps) => {
   const closedBoxes = supply.boxes.filter((b) => b.closedAt).length;
 
+  // Сводка в свёрнутом виде: номер заявки и дата поставки — то, по чему
+  // поставку узнают, не открывая блок.
+  const summary = (
+    <>
+      <span className="font-mono-tech">{supply.supplyNumber || '—'}</span>
+      {supply.supplyDate && <span>· {formatDate(supply.supplyDate)}</span>}
+    </>
+  );
+
   return (
-    <Card className="border-border shadow-none">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-base">Данные поставки OZON FBO</CardTitle>
-        {supply.ozonSupplyOrderId && onImportComposition && (
+    <SupplySection title="Данные поставки OZON FBO" summary={summary}>
+      {supply.ozonSupplyOrderId && onImportComposition && (
+        <div className="mb-3 flex justify-end">
           <Button size="sm" onClick={onImportComposition} disabled={importing}>
             <Icon
               name={importing ? 'Loader2' : 'Download'}
@@ -34,9 +42,9 @@ const OzonFboApplicationCard = ({ supply, onImportComposition, importing }: Ozon
             />
             {importing ? 'Загрузка...' : 'Загрузить товарный состав'}
           </Button>
-        )}
-      </CardHeader>
-      <CardContent className="space-y-2 text-sm">
+        </div>
+      )}
+      <div className="space-y-2 text-sm">
         <div className="flex items-center justify-between border-b border-border pb-2">
           <span className="text-muted-foreground">Номер поставки (ID заявки OZON)</span>
           <span className="font-medium">{supply.supplyNumber || '—'}</span>
@@ -105,8 +113,8 @@ const OzonFboApplicationCard = ({ supply, onImportComposition, importing }: Ozon
             <span className="font-medium">Нет</span>
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </SupplySection>
   );
 };
 

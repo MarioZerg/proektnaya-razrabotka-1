@@ -9,6 +9,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
+import SupplySection from '@/components/crm/marketplaceSupplies/SupplySection';
 import type { SupplySewingOrder } from '@/lib/marketplaceSuppliesApi';
 
 /** Этапы, на которых изделие уже в производстве: ткань раскроена или идёт пошив. */
@@ -54,16 +55,25 @@ const SupplySewingSection = ({
   const fresh = active.filter((o) => o.sewingStatus === 'Новый');
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-semibold">Пошив по поставке ({active.length})</h2>
-        {canAdd && (
+    <SupplySection
+      title={`Пошив по поставке (${active.length})`}
+      summary={
+        active.length > 0 ? (
+          <span>
+            Сшито <b className="text-emerald-700">{done.length}</b> из {active.length}
+          </span>
+        ) : undefined
+      }
+    >
+      <div className="space-y-2">
+      {canAdd && (
+        <div className="flex justify-end">
           <Button size="sm" onClick={onAdd}>
             <Icon name="Plus" size={14} className="mr-1" />
             Догрузить товары
           </Button>
-        )}
-      </div>
+        </div>
+      )}
 
       {active.length > 0 && (
         <div className="flex flex-wrap gap-3 text-sm">
@@ -143,7 +153,8 @@ const SupplySewingSection = ({
           </Table>
         </div>
       )}
-    </div>
+      </div>
+    </SupplySection>
   );
 };
 

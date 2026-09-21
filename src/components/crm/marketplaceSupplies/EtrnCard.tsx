@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import SupplySection from '@/components/crm/marketplaceSupplies/SupplySection';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -221,11 +222,11 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
   // документа груз на СЦ не примут, и узнать об этом лучше до выезда машины.
   if (!doc) {
     return (
-      <Card className="border-border shadow-none">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Транспортная накладная (ЭТрН)</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      <SupplySection
+        title="Транспортная накладная (ЭТрН)"
+        summary={<Badge variant="destructive">Не заведена</Badge>}
+      >
+        <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
             По этой поставке накладная не заведена. С 1 сентября сортировочные центры
             принимают только электронные транспортные документы — бумажные версии
@@ -245,26 +246,24 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
               Накладную заводит менеджер — без неё груз на складе не примут.
             </p>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </SupplySection>
     );
   }
 
   const locked = doc.status === 'Подписана';
 
   return (
-    <Card className="border-border shadow-none">
-      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-          Транспортная накладная (ЭТрН)
+    <SupplySection
+      title="Транспортная накладная (ЭТрН)"
+      summary={
+        <>
           <Badge variant={statusVariant(doc.status)}>{doc.status}</Badge>
-          {doc.number && (
-            <span className="font-mono-tech text-xs font-normal text-muted-foreground">
-              № {doc.number}
-            </span>
-          )}
-        </CardTitle>
-        <div className="flex flex-wrap gap-2">
+          {doc.number && <span className="font-mono-tech">№ {doc.number}</span>}
+        </>
+      }
+    >
+      <div className="mb-4 flex flex-wrap justify-end gap-2">
           {doc.signedFileUrl && (
             <Button size="sm" variant="outline" asChild>
               <a href={doc.signedFileUrl} target="_blank" rel="noreferrer">
@@ -301,10 +300,9 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
               </Button>
             </>
           )}
-        </div>
-      </CardHeader>
+      </div>
 
-      <CardContent className="space-y-4">
+      <div className="space-y-4">
         {/* Главное, что человек должен понять про этот блок: подпись ставится не здесь.
             Без этой строки кладовщик будет искать в системе кнопку «подписать». */}
         <p className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
@@ -377,8 +375,8 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
             )}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </SupplySection>
   );
 };
 

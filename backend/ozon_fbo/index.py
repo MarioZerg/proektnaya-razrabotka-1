@@ -49,25 +49,41 @@ def get_ozon_credentials(cur):
     return (creds.get('clientId') or '').strip(), (creds.get('apiKey') or '').strip(), is_enabled
 
 
-def ozon_post(path, client_id, api_key, payload):
+def ozon_post(path, client_id, api_key, payload, retries=4):
+    """POST в Seller API OZON.
+
+    ПЛОЩАДКА ЖЁСТКО ОГРАНИЧИВАЕТ ЧАСТОТУ ЗАПРОСОВ и на превышение отвечает 429.
+    Закрытие короба — это цепочка из создания грузоместа, опроса операции и
+    запроса этикетки подряд; на середине цепочки 429 прилетает регулярно. Без
+    повтора короб закрывался «наполовину»: грузоместо создано, а этикетка не
+    пришла, и кладовщику нечего клеить. Ждём и пробуем снова.
+    """
     body = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(OZON_API_BASE + path, method='POST', data=body)
-    req.add_header('Client-Id', client_id)
-    req.add_header('Api-Key', api_key)
-    req.add_header('Content-Type', 'application/json')
-    try:
-        with urllib.request.urlopen(req, timeout=25) as r:
-            data = r.read().decode('utf-8')
-            return r.status, (json.loads(data) if data else {})
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode('utf-8', errors='replace')
+    status_code, detail = 0, {}
+    for attempt in range(retries):
+        req = urllib.request.Request(OZON_API_BASE + path, method='POST', data=body)
+        req.add_header('Client-Id', client_id)
+        req.add_header('Api-Key', api_key)
+        req.add_header('Content-Type', 'application/json')
         try:
-            detail = json.loads(detail)
-        except Exception:
-            pass
-        return e.code, detail
-    except Exception as e:
-        return 0, str(e)
+            with urllib.request.urlopen(req, timeout=25) as r:
+                data = r.read().decode('utf-8')
+                return r.status, (json.loads(data) if data else {})
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode('utf-8', errors='replace')
+            try:
+                detail = json.loads(detail)
+            except Exception:
+                pass
+            status_code = e.code
+            # Лимит частоты: ждём с нарастающей паузой и повторяем.
+            if e.code == 429 and attempt < retries - 1:
+                time.sleep(2 * (attempt + 1))
+                continue
+            return status_code, detail
+        except Exception as e:
+            return 0, str(e)
+    return status_code, detail
 
 
 def ozon_error_text(status_code, data):
@@ -457,18 +473,36 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
     })
 
 
-def poll_operation(path, client_id, api_key, operation_id, attempts=8, delay=1.2):
-    """Опрашивает статус асинхронной операции OZON по operation_id. Возвращает (status, data)."""
+def poll_operation(path, client_id, api_key, operation_id, attempts=15, delay=1.5):
+    """Опрашивает статус асинхронной операции OZON по operation_id. Возвращает (status, data).
+
+    ОТВЕТ ОПЕРАЦИИ УСТРОЕН ТАК: {"status": "SUCCESS|IN_PROGRESS|FAILED", "result": {...}}.
+    Полезное лежит ВНУТРИ result: грузоместа — result.cargoes, этикетка —
+    result.file_url.
+
+    Раньше готовность искали по ключам 'cargoes'/'content' на ВЕРХНЕМ уровне,
+    которых там нет никогда, а 'result' сравнивали со строкой 'SUCCESS' — но
+    result это объект, и сравнение не срабатывало. Ожидание всегда доходило до
+    конца по таймауту, а готовый ответ площадки отбрасывался как «OZON не
+    ответил». Именно поэтому короб не закрывался: грузоместо на OZON создавалось,
+    но мы считали операцию провалившейся и cargo_id не сохраняли.
+    """
+    status_code, data = 0, {}
     for _ in range(attempts):
         status_code, data = ozon_post(path, client_id, api_key, {'operation_id': operation_id})
         if status_code == 200 and isinstance(data, dict):
-            result = data.get('result') or data.get('status') or ''
-            # Операция завершена: есть результат/этикетка/грузоместа или явный статус success.
-            if data.get('cargoes') or data.get('content') or data.get('file_content') or \
-               str(result).upper() in ('SUCCESS', 'COMPLETED', 'DONE'):
+            state = str(data.get('status') or '').upper()
+            if state in ('SUCCESS', 'COMPLETED', 'DONE', 'FAILED', 'ERROR'):
                 return status_code, data
         time.sleep(delay)
     return status_code, data
+
+
+def download_file(url: str) -> bytes:
+    """Скачивает файл по ссылке OZON (этикетки отдаются ссылкой на S3, не base64)."""
+    req = urllib.request.Request(url, method='GET')
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return r.read()
 
 
 def handle_close_boxes(cur, conn, client_id, api_key, body_data):
@@ -509,36 +543,45 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
         return _resp(502, {'error': 'Не удалось получить данные заявки OZON'})
     ozon_supply_id = apps[0]['supplies'][0].get('supply_id')
 
-    # Короба с их составом: сопоставляем order_id заказов в коробе с ozon_sku их товара.
-    by_ozon_sku, by_offer = load_item_lookup(cur)
-    # Индекс товара по (material,width,height) -> ozon_sku, чтобы найти sku для заказа.
-    cur.execute("SELECT material, width, height, ozon_sku FROM marketplace_items WHERE ozon_sku IS NOT NULL")
-    sku_by_mwh = {(r[0], r[1], r[2]): r[3] for r in cur.fetchall()}
-    # Прямая связь «товар справочника -> ozon_sku». Надёжнее, чем подбор по
-    # материалу и размерам: у заказа хранится сам marketplace_item_id.
-    cur.execute("SELECT id, ozon_sku FROM marketplace_items WHERE ozon_sku IS NOT NULL")
-    sku_by_item = {r[0]: r[1] for r in cur.fetchall()}
-    # Короба, где нашлись вещи без ozon_sku: о них предупредим кладовщика.
+    # СОСТАВ ГРУЗОМЕСТА OZON ПРИНИМАЕТ ПО offer_id (НАШ АРТИКУЛ), А НЕ ПО sku.
+    #
+    # На /v1/cargoes/create с одним лишь sku площадка отвечает
+    # «One of offer_id or barcode must be specified» — и закрытие короба
+    # обрывалось на первом же запросе. offer_id хранится у нас в
+    # marketplace_items.sku, ozon_sku нужен только для поиска товара.
+    cur.execute(
+        "SELECT id, sku, ozon_sku, material, width, height "
+        "FROM marketplace_items WHERE sku IS NOT NULL AND sku <> ''"
+    )
+    offer_by_item = {}
+    offer_by_ozon_sku = {}
+    offer_by_mwh = {}
+    for item_id, offer_id, ozon_sku, material, width, height in cur.fetchall():
+        offer_by_item[item_id] = offer_id
+        if ozon_sku:
+            offer_by_ozon_sku[str(ozon_sku)] = offer_id
+        offer_by_mwh[(material, width, height)] = offer_id
+    # Короба, где нашлись вещи без артикула OZON: о них предупредим кладовщика.
     unmatched_boxes = []
 
     # КАКИЕ КОРОБА ОТПРАВЛЯЕМ НА OZON.
     #
-    # Тонкость: /v1/cargoes/create с delete_current_version пересоздаёт ВЕСЬ
-    # список грузомест заявки. Отправить только один короб нельзя — у ранее
-    # закрытых пропали бы cargo_id и этикетки, а кладовщик уже наклеил их на
-    # заклеенные короба.
+    # Закрываем один короб — отправляем ТОЛЬКО его, с delete_current_version =
+    # false: площадка добавляет грузоместо к уже существующим. Ранее закрытые
+    # короба не трогаются, их cargo_id и напечатанные этикетки остаются в силе.
     #
-    # Поэтому при закрытии одного короба отправляем состав ВСЕХ уже закрытых
-    # плюс закрываемый. Открытые (недобранные) в список не идут: их состав ещё
-    # меняется, и фиксировать его рано.
+    # Раньше при закрытии одного короба заново отправлялся состав ВСЕХ закрытых
+    # с delete_current_version = true. OZON при этом удалял прежние грузоместа и
+    # заводил новые с другими cargo_id: этикетки, уже наклеенные на заклеенные
+    # короба, переставали соответствовать заявке.
     if one_box_id:
         cur.execute(
             "SELECT b.id, b.box_number, b.ozon_cargo_id FROM marketplace_supply_boxes b "
-            "WHERE b.supply_id = %s AND (b.id = %s OR b.closed_at IS NOT NULL) "
-            "ORDER BY b.box_number",
+            "WHERE b.supply_id = %s AND b.id = %s",
             (int(supply_id), int(one_box_id)),
         )
     else:
+        # Закрытие всей поставки разом: пересоздаём список грузомест целиком.
         cur.execute(
             "SELECT b.id, b.box_number, b.ozon_cargo_id FROM marketplace_supply_boxes b "
             "WHERE b.supply_id = %s ORDER BY b.box_number",
@@ -578,27 +621,38 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
             "WHERE msi.supply_id = %s AND msi.box_id = %s",
             (int(supply_id), box_id),
         )
-        sku_counts = {}
+        offer_counts = {}
         unmatched = 0
         for material, width, height, order_sku, item_id in cur.fetchall():
-            sku = order_sku or sku_by_item.get(item_id) or sku_by_mwh.get((material, width, height))
-            if sku and str(sku).isdigit():
-                sku = str(sku)
-                sku_counts[sku] = sku_counts.get(sku, 0) + 1
+            offer_id = (
+                offer_by_item.get(item_id)
+                or (offer_by_ozon_sku.get(str(order_sku)) if order_sku else None)
+                or offer_by_mwh.get((material, width, height))
+            )
+            if offer_id:
+                offer_counts[offer_id] = offer_counts.get(offer_id, 0) + 1
             else:
                 unmatched += 1
-        # Товар без sku на OZON не передать — но и молчать нельзя: короб
+        # Товар без артикула на OZON не передать — но и молчать нельзя: короб
         # заклеят, а в заявке будет меньше штук, чем внутри.
         if unmatched:
             unmatched_boxes.append((box_number, unmatched))
-        if not sku_counts:
+        if not offer_counts:
             continue
         key = f'box-{box_id}'
         box_keys[key] = box_id
+        # Формат грузоместа: {key, value: {type, items}}. Плоская структура
+        # {key, cargo_type, items} площадкой не читается — она отвечала
+        # «CargoType must be set», и короб не закрывался никогда.
         cargoes_payload.append({
             'key': key,
-            'cargo_type': cargo_type,
-            'items': [{'sku': int(sku), 'quantity': int(q)} for sku, q in sku_counts.items()],
+            'value': {
+                'type': cargo_type,
+                'items': [
+                    {'offer_id': str(offer_id), 'quantity': int(q)}
+                    for offer_id, q in offer_counts.items()
+                ],
+            },
         })
 
     # НЕ ОТПРАВЛЯЕМ КОРОБ, СОСТАВ КОТОРОГО РАСХОДИТСЯ С РЕАЛЬНЫМ.
@@ -610,18 +664,24 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
         parts = '; '.join(f'короб №{n}: {c} шт.' for n, c in unmatched_boxes)
         return _resp(409, {
             'error': 'В коробах есть товар, которого нет в справочнике OZON '
-                     f'({parts}). Пропишите товару OZON SKU в справочнике и '
-                     'закройте короб заново — иначе на площадку уедет меньше, '
+                     f'({parts}). Пропишите товару артикул (offer_id) в справочнике '
+                     'и закройте короб заново — иначе на площадку уедет меньше, '
                      'чем лежит в коробе',
         })
 
     if not cargoes_payload:
-        return _resp(400, {'error': 'В коробах нет товаров с распознанным ozon_sku'})
+        return _resp(400, {'error': 'В коробах нет товаров с распознанным артикулом OZON'})
 
     # 1) Создаём грузоместа на OZON.
+    #
+    # delete_current_version = true стирает ВСЕ ранее созданные грузоместа
+    # заявки. При закрытии одного короба это недопустимо: у закрытых коробов
+    # сменились бы cargo_id, а этикетки на них уже наклеены. Поэтому один короб
+    # добавляем к существующим, а пересоздаём список только при закрытии всей
+    # поставки разом.
     st, data = ozon_post('/v1/cargoes/create', client_id, api_key, {
         'supply_id': int(ozon_supply_id),
-        'delete_current_version': True,
+        'delete_current_version': not one_box_id,
         'cargoes': cargoes_payload,
     })
     if st != 200 or not isinstance(data, dict) or not data.get('operation_id'):
@@ -629,15 +689,23 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     op_id = data['operation_id']
 
     # 2) Ждём результат создания — получаем cargo_id по каждому key.
+    #
+    # Ответ приходит вложенным: {"status": "SUCCESS", "result": {"cargoes":
+    # [{"key": "box-1", "value": {"cargo_id": 123}}]}}. Раньше cargoes искали на
+    # верхнем уровне, а cargo_id — прямо в элементе, минуя value. Оба ключа не
+    # находились: грузоместо на площадке создавалось, а у нас короб оставался
+    # незакрытым, без cargo_id и без этикетки.
     st, info = poll_operation('/v2/cargoes/create/info', client_id, api_key, op_id)
-    cargoes_result = info.get('cargoes', []) if isinstance(info, dict) else []
+    result = info.get('result') if isinstance(info, dict) else None
+    cargoes_result = (result or {}).get('cargoes') or [] if isinstance(result, dict) else []
     if not cargoes_result:
         return _resp(502, {'error': f'OZON не создал грузоместа: {ozon_error_text(st, info)}'})
 
     cargo_ids = []
     for c in cargoes_result:
         key = c.get('key')
-        cargo_id = c.get('cargo_id')
+        value = c.get('value') if isinstance(c.get('value'), dict) else {}
+        cargo_id = value.get('cargo_id') or c.get('cargo_id')
         if key in box_keys and cargo_id:
             cargo_ids.append(int(cargo_id))
             cur.execute(
@@ -646,6 +714,8 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
                 (int(cargo_id), box_keys[key]),
             )
     conn.commit()
+    if not cargo_ids:
+        return _resp(502, {'error': f'OZON не вернул номера грузомест: {ozon_error_text(st, info)}'})
 
     # 3) Запрашиваем генерацию этикеток коробов.
     #
@@ -669,14 +739,32 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     })
     label_op = lbl.get('operation_id') if isinstance(lbl, dict) else None
     if label_op:
-        # 4) Получаем готовый PDF (может содержать одну общую этикетку на все короба).
+        # 4) Получаем готовый PDF.
+        #
+        # Этикетку OZON отдаёт ССЫЛКОЙ на файл: {"status": "SUCCESS", "result":
+        # {"file_guid": "...", "file_url": "https://ir.ozone.ru/..."}}. Ключей
+        # content/file_content с base64 в ответе нет вовсе — раньше их и искали,
+        # поэтому стикер не сохранялся никогда, даже когда площадка его отдала.
         st, got = poll_operation('/v1/cargoes-label/get', client_id, api_key, label_op)
-        content = None
-        if isinstance(got, dict):
+        lbl_result = got.get('result') if isinstance(got, dict) else None
+        pdf_bytes = None
+        if isinstance(lbl_result, dict):
+            file_url = lbl_result.get('file_url')
+            if file_url:
+                try:
+                    pdf_bytes = download_file(file_url)
+                except Exception:
+                    pdf_bytes = None
+        if not pdf_bytes and isinstance(got, dict):
             content = got.get('content') or got.get('file_content')
-        if content:
+            if content:
+                try:
+                    pdf_bytes = base64.b64decode(content)
+                except Exception:
+                    pdf_bytes = None
+        if pdf_bytes:
             try:
-                pdf = base64.b64decode(content)
+                pdf = pdf_bytes
                 if one_box_id:
                     # Этикетка ОДНОГО короба — привязываем только к нему. Раньше
                     # ссылка проставлялась всем коробам поставки разом, и после
@@ -727,10 +815,11 @@ def handler(event: dict, context) -> dict:
           конвейер из её товарного состава (каждая штука → отдельный заказ order_type='FBO',
           status='Новый'). Товар сопоставляется по ozon_sku (фолбэк offer_id=sku). Возвращает
           supplyId (для перехода), число созданных заказов и нераспознанные артикулы.
-    POST /  { action: 'close_boxes', supplyId, cargoType? }
+    POST /  { action: 'close_boxes', supplyId, boxId?, cargoType? }
         - закрывает короба поставки OZON FBO: создаёт грузоместа (cargoes) на OZON из состава
-          каждого короба (по ozon_sku), сохраняет их cargo_id, тянет PDF-этикетки коробов и
-          привязывает их к коробам. cargoType по умолчанию 'BOX'. Действует на реальной заявке.
+          каждого короба (по артикулу offer_id), сохраняет их cargo_id, тянет PDF-этикетки
+          коробов и привязывает их к коробам. boxId — закрыть ОДИН короб, добавив грузоместо к
+          уже созданным. cargoType по умолчанию 'BOX'. Действует на реальной заявке.
 
     Args:
         event: dict с httpMethod, body
