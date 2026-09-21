@@ -124,13 +124,29 @@ def suitable_for_order(cur, event):
         return _resp(400, {'error': 'Укажите orderId'})
 
     cur.execute(
-        "SELECT material, width, height, order_number FROM orders WHERE id = %s",
+        "SELECT material, width, height, order_number, sewing_status FROM orders WHERE id = %s",
         (int(order_id),),
     )
     row = cur.fetchone()
     if not row:
         return _resp(404, {'error': 'Заказ не найден'})
-    material, width, height, order_number = row
+    material, width, height, order_number, sewing_status = row
+
+    # ПОДБОР КУСКА — ТОЛЬКО ПОКА ВЕЩЬ НА РАСКРОЕ.
+    #
+    # Дальше по конвейеру ткань уже разрезана и лежит у швеи: предлагать там
+    # отрез бессмысленно и опасно — кусок ушёл бы в резерв под вещь, которую
+    # никто не будет кроить, и пропал бы из перешива впустую.
+    if sewing_status != 'На раскрое':
+        return _resp(200, {
+            'pieces': [],
+            'order': {
+                'orderNumber': order_number, 'material': material,
+                'width': width, 'height': height,
+            },
+            'note': 'Кусок можно взять только пока вещь на раскрое',
+        })
+
     if not material or not width or not height:
         return _resp(200, {
             'pieces': [], 'order': {'material': material, 'width': width, 'height': height},
@@ -320,13 +336,24 @@ def use_piece(cur, conn, event, body):
     # Повторная проверка размеров на сервере: список мог устареть, а отдать
     # заказу кусок меньше нужного нельзя ни при каких условиях.
     cur.execute(
-        "SELECT material, width, height, order_number FROM orders WHERE id = %s",
+        "SELECT material, width, height, order_number, sewing_status FROM orders WHERE id = %s",
         (int(order_id),),
     )
     o_row = cur.fetchone()
     if not o_row:
         return _resp(404, {'error': 'Заказ не найден'})
-    o_material, o_width, o_height, order_number = o_row
+    o_material, o_width, o_height, order_number, o_status = o_row
+
+    # ВЗЯТЬ КУСОК МОЖНО ТОЛЬКО НА ЭТАПЕ РАСКРОЯ.
+    #
+    # На «Раскроено», «В работе», «Стикеровке» и дальше вещь уже выкроена —
+    # отрез ей не нужен. Если такой заказ закрепит за собой кусок, тот уйдёт
+    # из перешива в резерв навсегда: раскроя, который его спишет, не будет.
+    if o_status != 'На раскрое':
+        return _resp(409, {
+            'error': f'Вещь в статусе «{o_status}» — кусок с перешива берут только на раскрое',
+        })
+
     if material != o_material:
         return _resp(409, {
             'error': f'Кусок из материала «{material}», а заказу нужен «{o_material}»',

@@ -15,6 +15,15 @@ import {
 
 interface RepairPiecePickerProps {
   orderId: number;
+  /**
+   * Вещь сейчас на раскрое — только тогда предлагаем куски.
+   *
+   * Дальше по конвейеру («Раскроено», «В работе», «Стикеровка», «Готовые»)
+   * ткань уже разрезана: подбирать отрез нечему. Если бы список остался,
+   * закройщик мог закрепить кусок за вещью, которую никто не будет кроить, —
+   * отрез ушёл бы в резерв навсегда и пропал из перешива.
+   */
+  canTake?: boolean;
   /** Обновить карточку заказа после того, как кусок взят или откреплён. */
   onUsed?: () => void;
   /**
@@ -56,7 +65,12 @@ interface RepairPiecePickerProps {
  * «взято с перешива», выбор рулона в карточке пропадает, а рядом стоит
  * «Открепить» — кусок вернётся в перешив к остальным, и рулоны появятся снова.
  */
-const RepairPiecePicker = ({ orderId, onUsed, onReservedChange }: RepairPiecePickerProps) => {
+const RepairPiecePicker = ({
+  orderId,
+  canTake = true,
+  onUsed,
+  onReservedChange,
+}: RepairPiecePickerProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [pieces, setPieces] = useState<RepairPiece[]>([]);
@@ -79,11 +93,16 @@ const RepairPiecePicker = ({ orderId, onUsed, onReservedChange }: RepairPiecePic
     setLoading(true);
     // Сначала спрашиваем, не закреплён ли уже кусок: если да, подбирать нечего —
     // показываем взятый отрез и кнопку «Открепить».
-    Promise.all([fetchReservedPiece(orderId), fetchSuitablePieces(orderId)])
+    // Когда вещь ушла с раскроя, подбор не запрашиваем вовсе — но уже взятый
+    // кусок всё равно читаем: швея и админ должны видеть, из чего вещь скроена.
+    Promise.all([
+      fetchReservedPiece(orderId),
+      canTake ? fetchSuitablePieces(orderId) : Promise.resolve(null),
+    ])
       .then(([res, sug]) => {
         applyReserved(res.piece);
-        setPieces(sug.pieces);
-        setOrderInfo(sug.order);
+        setPieces(sug?.pieces ?? []);
+        setOrderInfo(sug?.order ?? null);
       })
       .catch(() => {
         setPieces([]);
@@ -92,7 +111,7 @@ const RepairPiecePicker = ({ orderId, onUsed, onReservedChange }: RepairPiecePic
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, [orderId]);
+  useEffect(load, [orderId, canTake]);
 
   const handleTake = async (piece: RepairPiece) => {
     setTakingId(piece.id);
@@ -145,7 +164,10 @@ const RepairPiecePicker = ({ orderId, onUsed, onReservedChange }: RepairPiecePic
   // обратно. Списка подбора здесь быть не должно: выбор сделан, второй кусок
   // на ту же вещь не берут.
   if (reserved) {
-    const cut = reserved.status === 'used';
+    // Открепить можно, только пока вещь на раскрое и кусок не пущен в дело.
+    // Если заказ ушёл дальше по конвейеру, ткань фактически уже в изделии —
+    // возвращать её в перешив нечем.
+    const cut = reserved.status === 'used' || !canTake;
     return (
       <Card className="border-violet-400 bg-violet-50 shadow-none">
         <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
