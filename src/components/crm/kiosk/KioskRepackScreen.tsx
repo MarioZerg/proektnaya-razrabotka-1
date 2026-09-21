@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
-import KioskReturnToRollDialog from '@/components/crm/kiosk/KioskReturnToRollDialog';
+import KioskSendToRepairDialog from '@/components/crm/kiosk/KioskSendToRepairDialog';
 import { useToast } from '@/hooks/use-toast';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printDisposeSticker } from '@/lib/printDisposeSticker';
@@ -54,7 +54,7 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
   /** Спрашиваем про новый пакет перед закрытием перепаковки. */
   const [bagAsk, setBagAsk] = useState(false);
   /** Окно возврата годного куска материала на рулон при перекрое. */
-  const [rollReturnOpen, setRollReturnOpen] = useState(false);
+  const [repairOpen, setRepairOpen] = useState(false);
   const [barcode, setBarcode] = useState('');
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -228,11 +228,14 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
 
       {/* Новый пакет? Спрашиваем перед закрытием перепаковки — по этим ответам видно
           реальный расход упаковки на возвратах. Кнопки крупные: экран сенсорный. */}
-      <KioskReturnToRollDialog
-        open={rollReturnOpen}
-        onOpenChange={setRollReturnOpen}
+      <KioskSendToRepairDialog
+        open={repairOpen}
+        onOpenChange={setRepairOpen}
         goodsWarehouseId={item?.id}
-        onReturned={() => {
+        material={item?.material}
+        width={item?.width}
+        height={item?.height}
+        onSent={() => {
           // Вещь ушла в материал: чистим экран и обновляем счётчик очереди,
           // как после обычного завершения.
           setItem(null);
@@ -355,19 +358,21 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
                   <span>Брак</span>
                 </div>
               </Button>
-              {/* Перекроила материал и остался годный кусок — вместо утилизации
-                  возвращаем его на рулон. Вещь при этом уходит с перепаковки:
-                  товара больше нет, есть метры на рулоне. */}
+              {/* Остался годный кусок — отправляем его закройщикам в перешив.
+                  Рулон выбирать больше не нужно: кусок уходит в цех со своими
+                  размерами, и закройщик найдёт его под конкретный заказ.
+                  Раньше кусок «распускали» в рулон, он терял размеры и
+                  превращался в обезличенные метры. */}
               <Button
                 size="lg"
                 variant="outline"
                 className="h-24 border-2 border-violet-300 text-lg text-violet-700 hover:bg-violet-50 hover:text-violet-800"
-                onClick={() => setRollReturnOpen(true)}
+                onClick={() => setRepairOpen(true)}
                 disabled={processing}
               >
                 <div className="flex flex-col items-center gap-1">
-                  <Icon name="Undo2" size={30} />
-                  <span>Добавить в рулон</span>
+                  <Icon name="Scissors" size={30} />
+                  <span>В перешив</span>
                 </div>
               </Button>
             </div>

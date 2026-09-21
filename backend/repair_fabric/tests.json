@@ -1,0 +1,69 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Get available pieces",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Suitable without orderId fails",
+      "method": "GET",
+      "path": "/?action=suitable",
+      "expectedStatus": 400
+    },
+    {
+      "name": "Suitable for missing order",
+      "method": "GET",
+      "path": "/?action=suitable&orderId=999999999",
+      "expectedStatus": 404
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "nope"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Send without goods id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "send"},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Use without piece fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "use", "orderId": 1},
+      "expectedStatus": 400
+    },
+    {
+      "name": "Use missing piece fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "use", "pieceId": 999999999, "orderId": 999999999},
+      "expectedStatus": 404
+    },
+    {
+      "name": "Write off without auth is rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "write_off", "pieceId": 1},
+      "expectedStatus": 401
+    },
+    {
+      "name": "PUT not allowed",
+      "method": "PUT",
+      "path": "/",
+      "expectedStatus": 405
+    }
+  ]
+}

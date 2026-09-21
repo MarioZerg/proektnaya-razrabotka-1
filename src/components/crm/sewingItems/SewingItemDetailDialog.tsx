@@ -29,6 +29,7 @@ import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { Roll } from '@/lib/rollsApi';
 import FboStickerCard from '@/components/crm/sewingItems/FboStickerCard';
+import RepairPiecePicker from '@/components/crm/sewingItems/RepairPiecePicker';
 import SewingItemActionsSection from '@/components/crm/sewingItems/SewingItemActionsSection';
 import SewingItemInfoCards from '@/components/crm/sewingItems/SewingItemInfoCards';
 import SewingItemTimeline from '@/components/crm/sewingItems/SewingItemTimeline';
@@ -288,6 +289,17 @@ const SewingItemDetailDialog = ({
                   }}
                 />
               )}
+
+            {/* КУСКИ НА ПЕРЕШИВ ПОД ЭТОТ ЗАКАЗ.
+                Показываем закройщику до блока действий: сначала предложить
+                готовый отрез, и только если его нет — брать новый рулон.
+                Блок сам прячется, когда подходящих кусков нет. */}
+            {!readOnly && (isCutterView || isAdminView) && (
+              <RepairPiecePicker
+                orderId={selectedOrder.id}
+                onUsed={() => onOrderUpdated?.()}
+              />
+            )}
 
             {!readOnly && (isCutterView || isSewerView || isAdminView) && (
               <SewingItemActionsSection
