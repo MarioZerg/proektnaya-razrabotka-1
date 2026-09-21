@@ -123,3 +123,24 @@ export const fetchOzonAllBoxLabels = (
     actorId: actor?.id,
     actorName: actor?.name,
   }) as Promise<OzonAllBoxLabelsResult>;
+
+/**
+ * Переоткрыть закрытый короб, чтобы поправить его состав.
+ *
+ * Закрытие короба необратимо: создаётся грузоместо на OZON, приходит этикетка,
+ * состав замораживается. Кладовщик же нередко видит ошибку сразу после
+ * закрытия — здесь он может вернуть короб в работу.
+ *
+ * Грузоместо на OZON удаляется, старый стикер стирается: печатать его после
+ * правки нельзя. Закроет короб заново — придёт свежая этикетка.
+ */
+export const reopenOzonBox = (
+  boxId: number,
+  actor?: { id?: number | null; name?: string | null },
+): Promise<{ success: true; boxNumber: number; note: string | null }> =>
+  post({
+    action: 'reopen_box',
+    boxId,
+    actorId: actor?.id,
+    actorName: actor?.name,
+  }) as Promise<{ success: true; boxNumber: number; note: string | null }>;

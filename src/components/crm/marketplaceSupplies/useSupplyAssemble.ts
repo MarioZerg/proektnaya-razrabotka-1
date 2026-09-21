@@ -18,7 +18,7 @@ import {
   type SupplyDetail,
   type SupplyCandidate,
 } from '@/lib/marketplaceSuppliesApi';
-import { closeOzonBoxes } from '@/lib/ozonFboApi';
+import { closeOzonBoxes, reopenOzonBox } from '@/lib/ozonFboApi';
 import { playScanSound, playScanErrorSound, playCancelSound } from '@/lib/scanSound';
 
 /** Что показываем, когда отсканировали вещь отменённого заказа. */
@@ -259,6 +259,27 @@ export const useSupplyAssemble = (supplyId: number) => {
     }
   };
 
+  // Кладовщик закрыл короб и сразу увидел ошибку в составе — возвращаем короб
+  // в работу. Грузоместо на OZON при этом снимается, иначе на приёмке окажется
+  // лишнее место со старым составом.
+  const handleReopenBox = async (boxId: number) => {
+    try {
+      const r = await reopenOzonBox(boxId);
+      toast({
+        title: `Короб №${r.boxNumber} снова открыт`,
+        description:
+          'Поправьте состав и закройте короб заново — придёт новая этикетка',
+      });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось открыть короб',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    }
+  };
+
   // Тип грузоместа (короб/палета) сохраняется в поставку и используется при закрытии коробов.
   const handleCargoTypeChange = async (value: 'BOX' | 'PALLET') => {
     setCargoType(value);
@@ -369,6 +390,7 @@ export const useSupplyAssemble = (supplyId: number) => {
     handleCloseBox,
     handleRemoveItem,
     handleSetItemCount,
+    handleReopenBox,
     handleCargoTypeChange,
     handleSupplyAssembled,
     handleCloseOzonBox,

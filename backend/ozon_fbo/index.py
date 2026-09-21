@@ -904,6 +904,84 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     })
 
 
+def handle_reopen_box(cur, conn, client_id, api_key, body_data):
+    """Переоткрывает закрытый короб, чтобы поправить его состав.
+
+    ЗАЧЕМ. Закрытие короба — необратимый шаг: создаётся грузоместо на OZON,
+    приходит этикетка, состав замораживается. Но кладовщик закрывает короб
+    и ТУТ ЖЕ видит, что положил лишнее или не доложил — а исправить нечем.
+    Оставалось собирать поставку заново.
+
+    Что делаем: удаляем грузоместо на стороне OZON (иначе на приёмке будет
+    лишнее место с неверным составом), снимаем отметку о закрытии и стираем
+    устаревший стикер. После правки короб закрывают заново — OZON заведёт
+    новое грузоместо и выдаст свежую этикетку.
+
+    Печатать старую наклейку после этого нельзя, поэтому и стираем: иначе
+    кладовщик наклеит грузоместо, которого на площадке уже нет.
+    """
+    box_id = body_data.get('boxId')
+    if not box_id:
+        return _resp(400, {'error': 'Укажите короб'})
+
+    cur.execute(
+        "SELECT b.supply_id, b.box_number, b.ozon_cargo_id, b.closed_at, "
+        "       s.status, s.ozon_supply_order_id "
+        "FROM marketplace_supply_boxes b "
+        "JOIN marketplace_supplies s ON s.id = b.supply_id WHERE b.id = %s",
+        (int(box_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return _resp(404, {'error': 'Короб не найден'})
+    supply_id, box_number, cargo_id, closed_at, s_status, ozon_order_id = row
+
+    if not closed_at:
+        return _resp(409, {'error': 'Короб и так открыт'})
+    # Поставка уже уехала — состав коробов трогать поздно, документы поданы.
+    if s_status not in ('Открытая', 'На сборке'):
+        return _resp(409, {
+            'error': 'Поставка уже в отгрузке — состав коробов менять нельзя',
+        })
+
+    # Убираем грузоместо на OZON. Если его там нет (короб закрылся, а площадка
+    # не ответила) — просто открываем короб у себя.
+    ozon_note = None
+    if cargo_id and ozon_order_id:
+        apps = fetch_application_details(client_id, api_key, [int(ozon_order_id)])
+        ozon_supply_id = None
+        if apps and (apps[0].get('supplies') or []):
+            ozon_supply_id = apps[0]['supplies'][0].get('supply_id')
+        if ozon_supply_id:
+            st, data = ozon_post('/v1/cargoes/delete', client_id, api_key, {
+                'supply_id': int(ozon_supply_id),
+                'cargo_ids': [int(cargo_id)],
+            })
+            if st != 200:
+                # Не смогли снять грузоместо — короб НЕ открываем. Иначе на
+                # OZON останется место с одним составом, а у нас будет другой.
+                return _resp(502, {
+                    'error': f'OZON не дал удалить грузоместо: {ozon_error_text(st, data)}. '
+                             f'Короб оставлен закрытым',
+                })
+            ozon_note = f'Грузоместо {cargo_id} удалено на OZON'
+
+    cur.execute(
+        "UPDATE marketplace_supply_boxes SET closed_at = NULL, ozon_cargo_id = NULL, "
+        "  sticker_url = NULL, sticker_name = NULL WHERE id = %s",
+        (int(box_id),),
+    )
+    log_action(
+        cur, body_data.get('actorId'), body_data.get('actorName'),
+        'ozon_fbo_reopen_box', supply_id,
+        f'Переоткрыт короб №{box_number} для правки состава'
+        + (f' ({ozon_note})' if ozon_note else ''),
+    )
+    conn.commit()
+
+    return _resp(200, {'success': True, 'boxNumber': box_number, 'note': ozon_note})
+
+
 def handle_all_labels(cur, conn, client_id, api_key, body_data):
     """Собирает ОДИН PDF со стикерами всех коробов поставки — для печати пачкой.
 
@@ -1045,6 +1123,9 @@ def handler(event: dict, context) -> dict:
           каждого короба (по артикулу offer_id), сохраняет их cargo_id, тянет PDF-этикетки
           коробов и привязывает их к коробам. boxId — закрыть ОДИН короб, добавив грузоместо к
           уже созданным. cargoType по умолчанию 'BOX'. Действует на реальной заявке.
+    POST /  { action: 'reopen_box', boxId }
+        - переоткрывает закрытый короб для правки состава: удаляет грузоместо на OZON,
+          снимает closed_at и стирает устаревший стикер. После правки короб закрывают заново.
     POST /  { action: 'all_box_labels', supplyId }
         - собирает ОДИН PDF со стикерами всех коробов поставки (по странице на короб, в
           порядке их номеров) для печати пачкой. Берёт уже сохранённые стикеры коробов,
@@ -1066,7 +1147,7 @@ def handler(event: dict, context) -> dict:
     body_data = json.loads(event.get('body') or '{}')
     action = body_data.get('action')
     if action not in ('list_applications', 'check_composition', 'import_composition',
-                      'close_boxes', 'all_box_labels'):
+                      'close_boxes', 'all_box_labels', 'reopen_box'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -1108,5 +1189,7 @@ def handler(event: dict, context) -> dict:
             return handle_close_boxes(cur, conn, client_id, api_key, body_data)
         if action == 'all_box_labels':
             return handle_all_labels(cur, conn, client_id, api_key, body_data)
+        if action == 'reopen_box':
+            return handle_reopen_box(cur, conn, client_id, api_key, body_data)
     finally:
         conn.close()

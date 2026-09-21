@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
@@ -112,41 +113,49 @@ const BoxItemRow = ({
             {busy ? <Icon name="Loader2" size={14} className="animate-spin" /> : count}
           </button>
         )}
-        <div className="min-w-0">
-          <p className="truncate font-medium">{title}</p>
-          <p className="truncate text-xs text-muted-foreground">
-            {goodsStatusLabel(goodsStatus)}
-          </p>
-        </div>
+        {/* Артикул — сам по себе, без подписи под ним: строка читается одним
+            взглядом, как в заявке. */}
+        <p className="min-w-0 truncate font-medium">{title}</p>
       </div>
 
-      {canEdit && !editing && (
-        <div className="flex shrink-0 items-center gap-1">
-          {/* Минус — убрать одну штуку. Самый частый случай: пикнул лишнюю
-              и сразу поправил, не заходя в ввод числа. */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            disabled={busy}
-            title="Убрать одну штуку"
-            onClick={() => apply(count - 1)}
-          >
-            <Icon name="Minus" size={14} />
-          </Button>
-          {/* Крестик — убрать весь размер целиком. */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-destructive hover:text-destructive"
-            disabled={busy}
-            title={count > 1 ? `Убрать все ${count} шт.` : 'Убрать из короба'}
-            onClick={() => apply(0)}
-          >
-            <Icon name="X" size={14} />
-          </Button>
-        </div>
-      )}
+      {/* ВСЁ СЛУЖЕБНОЕ — ВИДЖЕТАМИ СПРАВА.
+          Статус стоял серой строкой ПОД артикулом и ломал ритм списка: глаз
+          цеплялся за него вместо размера, и короб из двадцати позиций читался
+          вдвое дольше. Справа статусы выстраиваются в ровную колонку — сразу
+          видно, где строка в норме, а где выбивается. */}
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Badge variant="outline" className="font-normal">
+          {goodsStatusLabel(goodsStatus)}
+        </Badge>
+
+        {canEdit && !editing && (
+          <>
+            {/* Минус — убрать одну штуку. Самый частый случай: пикнул лишнюю
+                и сразу поправил, не заходя в ввод числа. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              disabled={busy}
+              title="Убрать одну штуку"
+              onClick={() => apply(count - 1)}
+            >
+              <Icon name="Minus" size={14} />
+            </Button>
+            {/* Крестик — убрать весь размер целиком. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-destructive hover:text-destructive"
+              disabled={busy}
+              title={count > 1 ? `Убрать все ${count} шт.` : 'Убрать из короба'}
+              onClick={() => apply(0)}
+            >
+              <Icon name="X" size={14} />
+            </Button>
+          </>
+        )}
+      </div>
     </div>
   );
 };

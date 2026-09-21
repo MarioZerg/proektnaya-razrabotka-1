@@ -28,6 +28,8 @@ interface SupplyBoxCardProps {
   onRemoveItem: (itemId: number) => void;
   /** Убрать сразу несколько штук одинакового товара из короба. */
   onSetItemCount: (boxId: number, itemIds: number[], removeCount: number) => void;
+  /** Вернуть закрытый короб в работу, чтобы поправить состав. */
+  onReopenBox: (boxId: number) => void;
   onDeleteBox: (boxId: number) => void;
   onCloseBox: (boxId: number) => Promise<void>;
   /** Раскрыт ли короб. Открытым держим ровно один — тот, что набивают сейчас. */
@@ -57,6 +59,7 @@ const SupplyBoxCard = ({
   onAddOrder,
   onRemoveItem,
   onSetItemCount,
+  onReopenBox,
   onDeleteBox,
   onCloseBox,
   open,
@@ -289,6 +292,30 @@ const SupplyBoxCard = ({
             </div>
           )}
 
+          {/* КОРОБ ЗАКРЫТ — ОБЪЯСНЯЕМ, ПОЧЕМУ СОСТАВ НЕ ПРАВИТСЯ, И ДАЁМ ВЫХОД.
+              Раньше кладовщик видел просто заблокированные кнопки и решал, что
+              количество вообще нельзя редактировать. */}
+          {isOzonFbo && box.closedAt && canEdit && box.items.length > 0 && (
+            <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3">
+              <p className="flex items-start gap-2 text-sm text-amber-900">
+                <Icon name="Lock" size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  Короб закрыт, состав не меняется — на OZON по нему заведено
+                  грузоместо. Чтобы поправить количество, верните короб в работу
+                </span>
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full border-amber-500 text-amber-900 hover:bg-amber-100"
+                onClick={() => onReopenBox(box.id)}
+              >
+                <Icon name="LockOpen" size={14} className="mr-1.5" />
+                Открыть короб и поправить состав
+              </Button>
+            </div>
+          )}
+
           {/* OZON FBO: короб набит — закрываем. Сервер заводит грузоместо на OZON
               и возвращает этикетку на ЭТОТ короб, её сразу можно печатать. */}
           {isOzonFbo && box.items.length > 0 && !box.closedAt && (
@@ -375,6 +402,9 @@ const SupplyBoxCard = ({
                     await printBoxLabelFromUrl(
                       box.stickerUrl as string,
                       `Стикер короба №${box.boxNumber}`,
+                      // Печатаем ТОЛЬКО своё грузоместо: в старых стикерах
+                      // лежит полный файл заявки со всеми коробами.
+                      box.ozonCargoId,
                     );
                   } finally {
                     setPrinting(false);

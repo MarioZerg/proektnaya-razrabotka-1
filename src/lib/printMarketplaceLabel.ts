@@ -154,9 +154,22 @@ export const printLabelFromUrl = async (url: string, title = 'Стикер от�
  * обычные изображения — тем же способом, что и ярлыки отправлений.
  *
  * В файле от OZON может быть НЕСКОЛЬКО страниц: площадка отдаёт один PDF на
- * все грузоместа заявки. Печатаем каждую страницу отдельной наклейкой.
+ * все грузоместа заявки, по странице на каждое.
+ *
+ * cargoId — номер грузоместа ЭТОГО короба. Если он задан, из файла печатается
+ * ТОЛЬКО его страница.
+ *
+ * Зачем: у коробов, закрытых до того, как мы научились резать ответ OZON, в
+ * стикере лежит полный файл заявки. Печать выдавала пачку наклеек на все
+ * короба разом — кладовщик клеил чужие грузоместа на свой короб, и на приёмке
+ * это расходилось с документами. Свою страницу узнаём по напечатанному на ней
+ * ID грузоместа.
  */
-export const printBoxLabelFromUrl = async (url: string, title = 'Стикер короба') => {
+export const printBoxLabelFromUrl = async (
+  url: string,
+  title = 'Стикер короба',
+  cargoId?: number | null,
+): Promise<void> => {
   if (!url) return;
 
   const res = await fetch(url);
@@ -190,6 +203,21 @@ export const printBoxLabelFromUrl = async (url: string, title = 'Стикер к
 
   for (let n = 1; n <= pdf.numPages; n += 1) {
     const page = await pdf.getPage(n);
+
+    // ОТБИРАЕМ СТРАНИЦУ СВОЕГО ГРУЗОМЕСТА.
+    //
+    // ID напечатан на наклейке дважды: с пробелом-разделителем и целиком под
+    // штрихкодом. Читаем весь текст страницы, оставляем только цифры и ищем
+    // в них номер своего грузоместа — так разделители не мешают.
+    if (cargoId) {
+      const text = await page.getTextContent();
+      const digits = text.items
+        .map((i) => ('str' in i ? i.str : ''))
+        .join('')
+        .replace(/\D/g, '');
+      if (!digits.includes(String(cargoId))) continue;
+    }
+
     // Наклейка вертикальная (75×120). Если страница пришла горизонтальной —
     // поворачиваем, иначе стикер займёт треть наклейки и коды не прочитаются.
     const base = page.getViewport({ scale });
@@ -207,6 +235,13 @@ export const printBoxLabelFromUrl = async (url: string, title = 'Стикер к
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvasContext: ctx, viewport }).promise;
     images.push(canvas.toDataURL('image/png'));
+  }
+
+  // Своё грузоместо в файле не нашлось (формат наклейки у OZON изменился) —
+  // печатаем файл целиком. Лишняя наклейка лучше, чем пустая печать и короб,
+  // уехавший без маркировки вовсе.
+  if (images.length === 0 && cargoId && pdf.numPages > 0) {
+    return printBoxLabelFromUrl(url, title, null);
   }
 
   if (images.length === 0) return;
