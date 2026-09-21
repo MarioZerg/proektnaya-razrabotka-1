@@ -222,9 +222,42 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "GROUP BY 1"
             )
             by_scheme = {r[0]: int(r[1]) for r in cur.fetchall()}
-            pending_fbo = by_scheme.get('FBO', 0)
             pending_fbs = by_scheme.get('FBS', 0)
-            pending = sum(by_scheme.values())
+
+            # FBO СЧИТАЕМ ПО НЕДОСТАЧЕ ЗАЯВКИ, А НЕ ПО СКЛАДСКИМ ЗАПИСЯМ.
+            #
+            # Вещи FBO обезличены и взаимозаменяемы: в короб уезжает та, что
+            # под рукой, а «запасная» остаётся в подборе со своим резервом.
+            # Считая записи, счётчик в меню показывал 37 при реальных 10 —
+            # и расходился и с карточкой поставки, и со списком подбора.
+            #
+            # Здесь ровно та же арифметика, что и в списке: заказано по
+            # заявке минус уже уложено в её короба. Разойтись числа не могут.
+            cur.execute(
+                "SELECT GREATEST(p.qty - COALESCE(b.qty, 0), 0) "
+                "FROM (SELECT o.supply_id AS sid, o.product AS prod, count(*) AS qty "
+                "      FROM orders o "
+                "      JOIN marketplace_supplies s ON s.id = o.supply_id "
+                "      WHERE s.type = 'FBO' "
+                "        AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена') "
+                "        AND COALESCE(o.status, '') <> 'Отменён' "
+                "        AND o.product IS NOT NULL "
+                "      GROUP BY 1, 2) p "
+                "LEFT JOIN (SELECT msi.supply_id AS sid, "
+                "                  COALESCE(ro.product, so.product) AS prod, count(*) AS qty "
+                "           FROM marketplace_supply_items msi "
+                "           JOIN goods_warehouse g ON g.id = msi.goods_warehouse_id "
+                "           LEFT JOIN orders ro ON ro.id = g.reserved_order_id "
+                "           LEFT JOIN orders so ON so.id = g.order_id "
+                "           GROUP BY 1, 2) b "
+                "  ON b.sid = p.sid AND b.prod = p.prod"
+            )
+            deficits = [int(r[0] or 0) for r in cur.fetchall()]
+
+            # Больше недостачи в подборе не бывает: если вещей на складе меньше,
+            # чем не хватает заявке, показываем то, что реально есть на полках.
+            pending_fbo = min(sum(deficits), by_scheme.get('FBO', 0))
+            pending = pending_fbo + pending_fbs
             return {
                 'statusCode': 200,
                 'headers': headers,
@@ -550,7 +583,11 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "       o.order_type, o.cluster, "
                 # Магазин заказа: вещь МЕГАТЮЛЬ и вещь ДЮНЫ едут в разные
                 # поставки, и кладовщик должен видеть это прямо в списке подбора.
-                "       shp.name, shp.color "
+                "       shp.name, shp.color, "
+                # Заявка FBO, к строке которой привязана вещь. По ней ниже
+                # считается, сколько штук этого размера ещё реально не уложено
+                # в короба — и сколько работы остаётся в подборе.
+                "       o.supply_id "
                 "FROM goods_warehouse gw "
                 "JOIN orders o ON o.id = gw.reserved_order_id "
                 "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
@@ -604,6 +641,93 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "ORDER BY gw.matched_at ASC NULLS LAST, gw.id ASC"
             )
             orders_rows = cur.fetchall()
+
+            # ============================================================
+            # FBO: ПОДБОР ОБРЕЗАЕТСЯ ПО РЕАЛЬНОЙ НЕДОСТАЧЕ ЗАЯВКИ.
+            # ============================================================
+            #
+            # Товар FBO обезличен: вещи одного артикула взаимозаменяемы, и в
+            # короб уезжает та, что оказалась под рукой, — не обязательно та,
+            # что система закрепила за строкой заявки. Сканирование в короб
+            # перецепляет заказ на уехавшую вещь, а «запасная» так и остаётся
+            # в статусе picking/awaiting_supply со своим reserved_order_id.
+            #
+            # Из-за этого счётчики расходились: карточка поставки считает по
+            # коробам («осталось добавить 10»), а подбор — по складским
+            # записям, и показывал 37. Кладовщик шёл к стеллажу за товаром,
+            # который уже лежит в заклеенном коробе.
+            #
+            # Считаем на каждый размер заявки: сколько штук заказано и сколько
+            # уже уложено в короба этой же поставки. Разница — сколько вещей
+            # этого размера имеет смысл держать в подборе. Лишние строки
+            # убираем: вещь физически на полке, но работы по ней нет.
+            #
+            # Лишнее не «теряется»: вещь остаётся на складе со своим стикером,
+            # и админ возвращает её в свободный остаток кнопкой в карточке.
+            supply_ids = {r[16] for r in orders_rows if r[16]}
+            fbo_need = {}
+            # Вещи, которые заявке больше не нужны: собраны сверх плана.
+            extra_fbo = []
+            if supply_ids:
+                ids_csv = ','.join(str(int(s)) for s in supply_ids)
+                # Заказано по заявке: строки-штуки, кроме отменённых.
+                cur.execute(
+                    "SELECT o.supply_id, o.product, count(*) "
+                    f"FROM orders o WHERE o.supply_id IN ({ids_csv}) "
+                    "  AND COALESCE(o.status, '') <> 'Отменён' "
+                    "  AND o.product IS NOT NULL "
+                    "GROUP BY o.supply_id, o.product"
+                )
+                for s_id, prod, cnt in cur.fetchall():
+                    fbo_need[(int(s_id), prod)] = int(cnt)
+
+                # Уже уложено в короба этой поставки. Берём ВСЕ позиции короба,
+                # а не только привязанные к строкам заявки: в короб FBO кладут
+                # и вещи со свободного остатка, и они точно так же закрывают
+                # потребность площадки по этому размеру.
+                cur.execute(
+                    "SELECT msi.supply_id, COALESCE(ro.product, so.product), count(*) "
+                    "FROM marketplace_supply_items msi "
+                    "JOIN goods_warehouse g ON g.id = msi.goods_warehouse_id "
+                    "LEFT JOIN orders ro ON ro.id = g.reserved_order_id "
+                    "LEFT JOIN orders so ON so.id = g.order_id "
+                    f"WHERE msi.supply_id IN ({ids_csv}) "
+                    "GROUP BY msi.supply_id, COALESCE(ro.product, so.product)"
+                )
+                for s_id, prod, cnt in cur.fetchall():
+                    key = (int(s_id), prod)
+                    if key in fbo_need:
+                        fbo_need[key] = max(0, fbo_need[key] - int(cnt))
+
+                # Оставляем ровно столько строк на размер, сколько недостаёт.
+                # Первыми держим уже отстикерованные и подтверждённые вещи:
+                # по ним работа начата, и снимать их с подбора нельзя.
+                orders_rows.sort(
+                    key=lambda r: (0 if r[10] else 1, r[0])
+                )
+                kept = []
+                for r in orders_rows:
+                    s_id, prod = r[16], r[2]
+                    if not s_id or prod is None:
+                        kept.append(r)
+                        continue
+                    left = fbo_need.get((int(s_id), prod))
+                    if left is None:
+                        kept.append(r)
+                        continue
+                    if left > 0:
+                        fbo_need[(int(s_id), prod)] = left - 1
+                        kept.append(r)
+                    else:
+                        # Лишняя вещь: заявка по этому размеру уже закрыта
+                        # коробами. Не прячем её молча — отдаём отдельным
+                        # списком. Молчаливое исчезновение и было исходной
+                        # бедой: вещь лежит на полке с чужим ярлыком OZN,
+                        # ни в подборе, ни в коробе, и найти её некому.
+                        extra_fbo.append(r)
+                # Возвращаем привычный порядок: сначала то, что дольше ждёт.
+                kept.sort(key=lambda r: (r[6] is None, r[6], r[0]))
+                orders_rows = kept
 
             # Сколько ТАКИХ ЖЕ вещей свободно лежит на складе и на каких полках.
             #
@@ -665,8 +789,14 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                         # Свободные такие же вещи на складе — запасной вариант,
                         # если по своей полке вещи не оказалось.
                         'alsoOnShelves': stock_by_product.get(r[2], []),
+                        # Вещь собрана сверх плана заявки: этот размер уже
+                        # закрыт коробами. Нести её в короб не нужно —
+                        # её возвращают на полки. Экран показывает такие
+                        # строки отдельным списком, а не вперемешку с работой.
+                        'extraForSupply': extra,
                     }
-                    for r in orders_rows
+                    for rows, extra in ((orders_rows, False), (extra_fbo, True))
+                    for r in rows
                 ], ensure_ascii=False),
             }
 
@@ -1060,4 +1190,3 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
         'headers': headers,
         'body': json.dumps({'items': items}, ensure_ascii=False),
     }
-

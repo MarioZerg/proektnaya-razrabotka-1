@@ -17,6 +17,7 @@ import Icon from '@/components/ui/icon';
 import ShopBadge from '@/components/crm/ShopBadge';
 import PickingScanDialog from '@/components/crm/goodsWarehouse/PickingScanDialog';
 import ShippedStuckPanel from '@/components/crm/goodsWarehouse/ShippedStuckPanel';
+import ExtraFboPanel from '@/components/crm/goodsWarehouse/ExtraFboPanel';
 import {
   fetchPickingOrders,
   verifyPicking,
@@ -155,14 +156,31 @@ const GoodsPicking = () => {
   // пока её не отправят на поставку кнопкой в карточке. Печать стикера сама по себе
   // из списка ничего не убирает.
   const labeledCount = useMemo(
-    () => orders.filter((o) => o.status === 'awaiting_supply').length,
+    () => orders.filter((o) => o.status === 'awaiting_supply' && !o.extraForSupply).length,
+    [orders]
+  );
+
+  /**
+   * Лишние вещи FBO: заявка по этому размеру уже закрыта коробами.
+   *
+   * Товар FBO обезличен, и в короб уезжает та вещь, что под рукой, — а
+   * «запасная» того же размера остаётся закреплённой за строкой заявки. Идти
+   * за ней к стеллажу не нужно: в короб она не пойдёт. Держим такие строки
+   * отдельно от настоящей работы, иначе кладовщик собирает заявку с перебором.
+   */
+  const extraItems = useMemo(
+    () => orders.filter((o) => o.extraForSupply),
+    [orders]
+  );
+  const workOrders = useMemo(
+    () => orders.filter((o) => !o.extraForSupply),
     [orders]
   );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter(
+    if (!q) return workOrders;
+    return workOrders.filter(
       (o) =>
         o.product?.toLowerCase().includes(q) ||
         o.orderNumber?.toLowerCase().includes(q) ||
@@ -286,7 +304,7 @@ const GoodsPicking = () => {
             маркетплейса; FBO складывают коробкой на склад площадки. Это разная работа
             и разный маршрут по складу, поэтому общая сумма кладовщику ничего не даёт:
             он планирует день по этим двум цифрам. Нажатие фильтрует список. */}
-        {orders.length > 0 && (
+        {workOrders.length > 0 && (
           <div className="grid max-w-xl grid-cols-2 gap-3">
             <button
               type="button"
@@ -325,6 +343,12 @@ const GoodsPicking = () => {
             иначе они висят в подборе вечно. */}
         <ShippedStuckPanel onReload={load} />
 
+        {/* Собрано сверх плана заявки FBO. Вещь обезличена, и в короб уехала
+            соседняя такая же — а эта осталась с ярлыком поставки и чужой
+            бронью. В короб её нести не надо: заявка этот размер уже набрала.
+            Возвращаем такие вещи на полки, иначе они лежат мёртвым остатком. */}
+        <ExtraFboPanel items={extraItems} onReload={load} />
+
         {/* Сколько вещей уже со стикером. Это не отдельный список, а подсказка:
             такие строки помечены в таблице, и по ним осталось одно действие —
             отправить на поставку из карточки. */}
@@ -339,7 +363,7 @@ const GoodsPicking = () => {
           </div>
         )}
 
-        {loading && orders.length === 0 ? (
+        {loading && workOrders.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
@@ -353,8 +377,8 @@ const GoodsPicking = () => {
             <div className="flex flex-wrap items-center gap-3">
               <p className="text-sm text-muted-foreground">
                 {search
-                  ? `Найдено: ${filtered.length} из ${orders.length}`
-                  : `Заказов к подбору: ${orders.length}`}
+                  ? `Найдено: ${filtered.length} из ${workOrders.length}`
+                  : `Заказов к подбору: ${workOrders.length}`}
               </p>
               {/* Сколько работы какого вида: FBS собирают поштучно с ярлыками,
                   FBO складывают коробкой. Кладовщик планирует день по этим числам. */}

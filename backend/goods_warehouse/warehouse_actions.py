@@ -1714,9 +1714,40 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # а сканер отвечал «уже собрана» и прятал её — вещь выглядела пропавшей.
             if gw_status != 'shipped' and not gw_shipped_at and gw_reserved and gw_labeled:
                 cur.execute(
-                    f"SELECT order_number FROM orders WHERE id = {int(gw_reserved)}"
+                    "SELECT o.order_number, upper(COALESCE(o.order_type, '')), "
+                    "       o.supply_id, s.supply_number "
+                    "FROM orders o "
+                    "LEFT JOIN marketplace_supplies s ON s.id = o.supply_id "
+                    f"WHERE o.id = {int(gw_reserved)}"
                 )
                 lbl = cur.fetchone()
+
+                # FBO: ЗАСТИКЕРОВАННАЯ ВЕЩЬ ЗАКРЕПЛЕНА ЗА СВОЕЙ ПОСТАВКОЙ.
+                #
+                # Кладовщик нашёл её на полке и наклеил ярлык OZN — работа по
+                # подбору на этом закончена. Дальше вещь только сканируют в
+                # короб. Отвечать «нужная» на повторный пик нельзя: товар FBO
+                # обезличен, вещи одного артикула неотличимы, и кладовщик,
+                # услышав успех, несёт к коробу ВТОРУЮ такую же — заявка
+                # собирается с перебором, а на полке образуется недостача.
+                #
+                # Отпустить вещь обратно может только отгрузка в эту поставку
+                # или администратор, вернувший её на полки из карточки.
+                if lbl and lbl[1] == 'FBO':
+                    where = (
+                        f'поставки #{lbl[2]}' + (f' ({lbl[3]})' if lbl[3] else '')
+                        if lbl[2] else 'своей поставки'
+                    )
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'matched': False,
+                        'goodsId': gw_id,
+                        'product': gw_product,
+                        'shelfName': gw_shelf,
+                        'reason': f'Уже застикерована и закреплена за составом {where} — '
+                                  f'повторно её не подбирают. Отсканируйте ярлык OZN '
+                                  f'в короб на экране сборки',
+                    }, ensure_ascii=False)}
+
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
                     'matched': True, 'goodsId': gw_id, 'product': gw_product,
                     'shelfName': gw_shelf,
@@ -1870,6 +1901,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "       OR twin.picked_confirmed_at < twin.matched_at) "
                 "  AND twin.shipping_labeled_at IS NULL "
                 "  AND twin.shipped_at IS NULL "
+                # Вещь FBO, уже отданная под состав заявки, из подбора не
+                # выдёргивается даже без ярлыка: её строка заявки закрыта,
+                # и перенос работы на соседнюю вещь просто удваивал бы сбор.
+                "  AND twin.status <> 'awaiting_supply' "
                 # Вещь уже уехала бы в коробе — её резерв трогать нельзя.
                 "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
                 "     JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
@@ -1995,6 +2030,133 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 'reason': 'Этот размер уже набран — больше не нужен',
                 'product': gw_product,
             }, ensure_ascii=False)}
+
+        if action == 'release_to_shelf':
+            # ВЕРНУТЬ ЛИШНЮЮ ВЕЩЬ FBO ОБРАТНО НА ПОЛКИ СКЛАДА.
+            #
+            # Товар FBO обезличен: в короб уезжает та вещь, что под рукой, а
+            # «запасная» того же размера остаётся закреплённой за строкой
+            # заявки, хотя заявка ею уже закрыта. Вещь лежит с наклеенным
+            # ярлыком, в подбор не идёт и в короб не нужна — мёртвый остаток.
+            #
+            # Здесь админ возвращает её в свободный остаток: снимаем бронь и
+            # ярлык отправления, вещь снова становится обычным товаром на
+            # полке, и автоподбор закроет ею ближайший подходящий заказ.
+            #
+            # Ярлык ОБЯЗАТЕЛЬНО сбрасывается: на вещи наклеен OZN чужой
+            # заявки, и в ответе отдаём данные для печати стикера хранения —
+            # иначе вещь уедет на полку неопознанной.
+            item_id = body_data.get('id')
+            note = (body_data.get('note') or '').strip()
+            shelf_id = body_data.get('shelfId')
+            if not item_id:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Укажите id'})}
+
+            # Решение меняет состав заявки и остатки склада — только админ и
+            # старший кладовщик. Проверяем на сервере, кнопки в экране мало.
+            if not is_admin_or_senior(cur, actor_id):
+                return {
+                    'statusCode': 403, 'headers': headers,
+                    'body': json.dumps(
+                        {'error': 'Вернуть вещь на полки может только администратор '
+                                  'или старший кладовщик'},
+                        ensure_ascii=False),
+                }
+
+            cur.execute(
+                "SELECT gw.status, gw.storage_barcode, gw.shelf_id, "
+                "       ro.order_number, COALESCE(ro.product, so.product), "
+                "       COALESCE(ro.material, so.material) "
+                "FROM goods_warehouse gw "
+                "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                "LEFT JOIN orders so ON so.id = gw.order_id "
+                "WHERE gw.id = %s",
+                (int(item_id),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Запись не найдена'})}
+            rs_status, rs_barcode, rs_shelf, rs_order, rs_product, rs_material = row
+
+            # Вещь уже в живой поставке — её физически положили в короб.
+            # Вынимают такую из самой поставки, а не отсюда: иначе состав
+            # короба и склад разойдутся.
+            cur.execute(
+                "SELECT si.supply_id FROM marketplace_supply_items si "
+                "JOIN marketplace_supplies s ON s.id = si.supply_id "
+                "WHERE si.goods_warehouse_id = %s "
+                "  AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена') LIMIT 1",
+                (int(item_id),),
+            )
+            in_supply = cur.fetchone()
+            if in_supply:
+                return {
+                    'statusCode': 409, 'headers': headers,
+                    'body': json.dumps({
+                        'error': f'Вещь лежит в коробе поставки #{in_supply[0]} — '
+                                 f'уберите её из короба на экране сборки',
+                    }, ensure_ascii=False),
+                }
+
+            if rs_status not in ('picking', 'awaiting_supply'):
+                return {
+                    'statusCode': 409, 'headers': headers,
+                    'body': json.dumps({
+                        'error': f'Вернуть на полку можно только вещь из подбора '
+                                 f'(сейчас статус: {rs_status})',
+                    }, ensure_ascii=False),
+                }
+
+            # Заказ больше не считается закрытым этой вещью: иначе он повиснет
+            # «собранным со склада» без товара и выпадет из работы совсем.
+            cur.execute(
+                "UPDATE orders SET fulfilled_from_stock_id = NULL "
+                "WHERE fulfilled_from_stock_id = %s",
+                (int(item_id),),
+            )
+
+            target_shelf = int(shelf_id) if shelf_id else rs_shelf
+            cur.execute(
+                "UPDATE goods_warehouse SET status = 'in_stock', "
+                "  reserved_order_id = NULL, matched_at = NULL, "
+                "  picked_confirmed_at = NULL, picked_confirmed_by = NULL, "
+                "  shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                "  shipping_labeled_by_name = NULL, shelf_id = %s "
+                "WHERE id = %s",
+                (target_shelf, int(item_id)),
+            )
+            shelf_name = None
+            if target_shelf:
+                cur.execute("SELECT name FROM shelves WHERE id = %s", (int(target_shelf),))
+                sh = cur.fetchone()
+                shelf_name = sh[0] if sh else None
+
+            log_action(
+                cur, actor_id, actor_name, 'release_to_shelf', 'goods_warehouse', item_id,
+                f'Вернул вещь {rs_barcode} в свободный остаток с подбора '
+                f'(заказ #{rs_order or "—"}){": " + note if note else ""}',
+            )
+            conn.commit()
+
+            # Вещь свободна — сразу пробуем закрыть ею ожидающий заказ.
+            matched = try_match_orders_from_stock(cur, int(item_id))
+            conn.commit()
+
+            return {
+                'statusCode': 200, 'headers': headers,
+                'body': json.dumps({
+                    'success': True,
+                    'storageBarcode': rs_barcode,
+                    'product': rs_product,
+                    'material': rs_material,
+                    'shelfName': shelf_name,
+                    # Ярлык отправления снят — на вещь нужен стикер хранения.
+                    'needsStorageLabel': True,
+                    'matched': len(matched),
+                }, ensure_ascii=False),
+            }
 
         if action == 'start_picking':
             barcode = (body_data.get('barcode') or '').strip()
