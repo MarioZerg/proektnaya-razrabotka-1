@@ -18,7 +18,10 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
-import { mpStatusInfo } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import {
+  goodsStatusLabel,
+  mpStatusInfo,
+} from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import CancelledItemShelfCell from './CancelledItemShelfCell';
@@ -179,7 +182,7 @@ const SupplyItemsSection = ({
                   <Badge variant="destructive">ЗАКАЗ ОТМЕНЁН</Badge>
                 ) : (
                   <Badge variant="outline">
-                    {item.goodsStatus === 'reserved' ? 'Зарезервирован' : item.goodsStatus === 'shipped' ? 'Отгружен' : item.goodsStatus}
+                    {goodsStatusLabel(item.goodsStatus)}
                   </Badge>
                 )}
                 {/* Статус НА ПЛОЩАДКЕ: показывает, куда движется отправление —

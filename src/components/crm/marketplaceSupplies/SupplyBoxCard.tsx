@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Collapsible,
   CollapsibleContent,
@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { SupplyBox, SupplyDetail } from '@/lib/marketplaceSuppliesApi';
+import { goodsStatusLabel } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { printWbBoxLabel } from '@/lib/wbBoxLabel';
 import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
@@ -130,6 +131,52 @@ const SupplyBoxCard = ({
 
   const canScan = canEdit && !box.closedAt;
 
+  // ОДИНАКОВЫЙ ТОВАР — ОДНОЙ СТРОКОЙ С КОЛИЧЕСТВОМ.
+  //
+  // В коробе FBO лежат обезличенные вещи, и одного размера туда уходит по
+  // десять-двадцать штук. Каждая занимала отдельную строку с номером складской
+  // записи — короб на полсотни вещей превращался в простыню, по которой
+  // невозможно сверить состав с заявкой.
+  //
+  // Номер складской записи кладовщику здесь не нужен: вещи взаимозаменяемы,
+  // на приёмке считают штуки по артикулу. Поэтому схлопываем одинаковые в
+  // строку «12 × Лен 300x255» — ровно то, что он сверяет глазами.
+  //
+  // Группируем по названию товара и статусу: вещь в статусе «Отгружен» и
+  // «В коробе» — разные состояния, смешивать их в одну строку нельзя.
+  const groupedItems = useMemo(() => {
+    const map = new Map<
+      string,
+      { key: string; title: string; goodsStatus: string; count: number; lastItemId: number }
+    >();
+    for (const item of box.items) {
+      const title =
+        item.product ||
+        [item.material, item.width && item.height ? `${item.width}×${item.height}` : null]
+          .filter(Boolean)
+          .join(' ') ||
+        item.orderNumber ||
+        'Товар';
+      const key = `${title}__${item.goodsStatus || ''}`;
+      const row = map.get(key);
+      if (row) {
+        row.count += 1;
+        // Убираем всегда ПОСЛЕДНЮЮ добавленную: кладовщик пикнул лишнюю
+        // штуку и тут же жмёт крестик — уйти должна именно она.
+        row.lastItemId = item.id;
+      } else {
+        map.set(key, {
+          key,
+          title,
+          goodsStatus: item.goodsStatus || '',
+          count: 1,
+          lastItemId: item.id,
+        });
+      }
+    }
+    return [...map.values()];
+  }, [box.items]);
+
   return (
     <Collapsible
       open={open}
@@ -224,24 +271,42 @@ const SupplyBoxCard = ({
             <p className="text-sm text-muted-foreground">В коробе пока нет товаров</p>
           ) : (
             <div className="space-y-1.5">
-              {box.items.map((item) => (
-                <div key={item.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm">
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{item.orderNumber || '—'}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {item.product} {item.material ? `— ${item.material}` : ''}
-                    </p>
+              {groupedItems.map((row) => (
+                <div
+                  key={row.key}
+                  className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    {/* Количество слева и крупно: кладовщик сверяет короб с
+                        заявкой по числу штук каждого размера, а не по номерам
+                        складских записей. */}
+                    <span className="shrink-0 rounded-md bg-primary px-2 py-1 font-bold text-primary-foreground">
+                      {row.count}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{row.title}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {goodsStatusLabel(row.goodsStatus)}
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="shrink-0">
-                      {item.goodsStatus === 'reserved' ? 'Зарезервирован' : item.goodsStatus === 'shipped' ? 'Отгружен' : item.goodsStatus}
-                    </Badge>
-                    {canEdit && (
-                      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => onRemoveItem(item.id)}>
-                        <Icon name="X" size={12} />
-                      </Button>
-                    )}
-                  </div>
+                  {canEdit && (
+                    // Убираем по одной штуке: в коробе десять одинаковых вещей,
+                    // и снести все разом из-за одной лишней — потерять работу.
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0"
+                      title={
+                        row.count > 1
+                          ? 'Убрать одну штуку этого размера'
+                          : 'Убрать из короба'
+                      }
+                      onClick={() => onRemoveItem(row.lastItemId)}
+                    >
+                      <Icon name="X" size={12} />
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>

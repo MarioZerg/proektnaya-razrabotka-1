@@ -4,7 +4,10 @@ import { Button } from '@/components/ui/button';
 import { TableCell, TableRow } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
-import { mpStatusInfo } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import {
+  goodsStatusLabel,
+  mpStatusInfo,
+} from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import CancelledItemShelfCell from './CancelledItemShelfCell';
 
 type Item = SupplyDetail['items'][number];
@@ -125,13 +128,7 @@ const SupplyBundleRow = ({
                 {item.isCancelled ? (
                   <Badge variant="destructive">ЗАКАЗ ОТМЕНЁН</Badge>
                 ) : (
-                  <Badge variant="outline">
-                    {item.goodsStatus === 'reserved'
-                      ? 'Зарезервирован'
-                      : item.goodsStatus === 'shipped'
-                        ? 'Отгружен'
-                        : item.goodsStatus}
-                  </Badge>
+                  <Badge variant="outline">{goodsStatusLabel(item.goodsStatus)}</Badge>
                 )}
                 {mp && !item.isCancelled && (
                   <div

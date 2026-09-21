@@ -54,6 +54,41 @@ export const mpStatusLabels: Record<string, { label: string; tone: 'ok' | 'wait'
   DELIVERED: { label: 'Доставлен', tone: 'ok' },
 };
 
+/**
+ * Состояние вещи НА НАШЕМ СКЛАДЕ — по-русски.
+ *
+ * В базе статусы лежат кодами (in_stock, awaiting_supply…), и в поставке они
+ * показывались как есть: кладовщик видел в коробе «awaiting_supply» и гадал,
+ * что это значит. Переведены были ровно два кода из двенадцати, остальные
+ * выводились латиницей.
+ *
+ * Словарь общий на все экраны поставки: список позиций, короб, связка. Иначе
+ * один и тот же статус назывался бы в трёх местах по-разному.
+ */
+export const goodsStatusLabels: Record<string, string> = {
+  awaiting_shelf: 'Ждёт полку',
+  checking: 'На проверке',
+  mp_return: 'Возврат с площадки',
+  repacking: 'На переупаковке',
+  inspected: 'Осмотрен',
+  taken: 'Забран из цеха',
+  to_dispose: 'На утилизацию',
+  returned_to_roll: 'Распущен в материал',
+  in_stock: 'На складе',
+  picking: 'На сборке',
+  awaiting_supply: 'Ждёт поставку',
+  reserved: 'В коробе',
+  shipped: 'Отгружен',
+  lost: 'Утерян',
+  disposed: 'Утилизирован',
+};
+
+/** Русское название складского статуса. Незнакомый код показываем как есть. */
+export const goodsStatusLabel = (raw?: string | null): string => {
+  if (!raw) return '—';
+  return goodsStatusLabels[raw] || raw;
+};
+
 /** Человеческое название статуса площадки. Незнакомый код показываем как есть. */
 export const mpStatusInfo = (raw?: string | null) => {
   if (!raw) return null;
