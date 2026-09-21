@@ -28,10 +28,31 @@ import requests
 #
 # Считаем только то, что действительно можно отгрузить: заказ не отменён, не отгружен,
 # не доставлен и не уехал к покупателю.
+#
+# СУДИМ ПО ОДНОМУ ЗАКАЗУ ЦЕЛИКОМ, А НЕ ПО ПОЛЯМ ВРАЗНОБОЙ.
+#
+# Здесь нельзя ставить COALESCE отдельно на каждое поле. У вещи два заказа, и это
+# нормальный ход жизни склада: сшили под FBS-отправление, его отменили, вещь легла
+# на полку и ушла в подбор под НОВЫЙ заказ (в том числе под заказ поставки FBO).
+# Старый заказ так и остаётся отменённым навсегда.
+#
+# У заказа FBO поля ozon_status нет вовсе — он наш внутренний, отправления на
+# площадке у него не существует. COALESCE(ro.ozon_status, so.ozon_status) видел
+# NULL у живого FBO-заказа и подставлял 'cancelled' СТАРОГО отгруженного FBS —
+# вещь считалась отменённой, хотя едет по живой заявке FBO.
+#
+# Поэтому: есть reserved_order_id — судьбу вещи решает ТОЛЬКО он, все его поля.
+# Нет резерва — смотрим заказ, под который вещь сшили.
 GOODS_READY_FOR_SUPPLY_SQL = (
-    "COALESCE(ro.status, so.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
-    "AND COALESCE(ro.ozon_status, so.ozon_status, '') NOT IN "
-    "    ('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup')"
+    "(CASE WHEN gw.reserved_order_id IS NOT NULL THEN ("
+    "   COALESCE(ro.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
+    "   AND COALESCE(ro.ozon_status, '') NOT IN "
+    "       ('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup')"
+    " ) ELSE ("
+    "   COALESCE(so.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
+    "   AND COALESCE(so.ozon_status, '') NOT IN "
+    "       ('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup')"
+    " ) END)"
 )
 
 
@@ -290,9 +311,18 @@ def ensure_ozon_assembled(cur, goods_id):
 
     Возвращает True, если отправление собрали сейчас.
     """
+    # Отправление и его статус берём у ОДНОГО заказа — того, под который вещь
+    # едет. Иначе у вещи, перешедшей со старого отменённого FBS на заказ FBO,
+    # сюда попал бы чужой номер отправления, и скан в короб FBO «собирал» бы
+    # на площадке посторонний FBS-заказ. Заказ FBO отправлений не имеет вовсе —
+    # для него эта досборка бессмысленна и пропускается.
     cur.execute(
-        "SELECT COALESCE(ro.ozon_posting_number, o.ozon_posting_number), "
-        "COALESCE(ro.ozon_status, o.ozon_status) "
+        "SELECT CASE WHEN gw.reserved_order_id IS NOT NULL "
+        "            THEN ro.ozon_posting_number ELSE o.ozon_posting_number END, "
+        "CASE WHEN gw.reserved_order_id IS NOT NULL "
+        "     THEN ro.ozon_status ELSE o.ozon_status END, "
+        "CASE WHEN gw.reserved_order_id IS NOT NULL "
+        "     THEN ro.order_type ELSE o.order_type END "
         "FROM goods_warehouse gw "
         "LEFT JOIN orders o ON o.id = gw.order_id "
         "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -302,7 +332,11 @@ def ensure_ozon_assembled(cur, goods_id):
     row = cur.fetchone()
     if not row or not row[0]:
         return False
-    posting_number, status = row
+    posting_number, status, order_type = row
+    # У FBO отправления нет: товар едет на склад площадки обезличенно, собирать
+    # на OZON нечего.
+    if (order_type or '') == 'FBO':
+        return False
     if status and status != 'awaiting_packaging':
         return False
 
@@ -470,17 +504,42 @@ def ozon_ship_postings(cur, supply_id, limit=None, deadline=None):
     # ozon_status: мы сами ставим его в 'delivering' после успешного ответа
     # площадки. Без этого условия каждая следующая порция начинала бы список
     # заново, гоняя по кругу уже отправленное.
+    #
+    # ОТПРАВЛЕНИЕ БЕРЁМ У ЗАКАЗА, ПОД КОТОРЫЙ ВЕЩЬ ЕДЕТ, И ТОЛЬКО У НЕГО.
+    #
+    # COALESCE здесь был опасен по-настоящему. Вещь сшили под FBS-отправление,
+    # оно отменилось, вещь легла на полку и уехала поставкой FBO. У заказа-штуки
+    # FBO номера отправления нет — его на площадке не существует, — и COALESCE
+    # подставлял номер СТАРОГО чужого отправления. Закрытие поставки FBO
+    # отправляло бы в доставку посторонние FBS-заказы, которые никуда не ехали.
+    #
+    # Поставка FBO вообще не имеет отправлений: она закрывается грузоместами
+    # (cargoes), а не last-mile. Поэтому у FBO список заведомо пустой.
     cur.execute(
-        "SELECT DISTINCT COALESCE(ro.ozon_posting_number, o.ozon_posting_number) "
+        "SELECT DISTINCT CASE WHEN gw.reserved_order_id IS NOT NULL "
+        "                     THEN ro.ozon_posting_number "
+        "                     ELSE o.ozon_posting_number END AS posting "
         "FROM marketplace_supply_items msi "
+        "JOIN marketplace_supplies s ON s.id = msi.supply_id "
         "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
         "LEFT JOIN orders o ON o.id = gw.order_id "
         "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
         "WHERE msi.supply_id = %s "
-        "AND COALESCE(ro.marketplace, o.marketplace) = 'OZON' "
-        "AND COALESCE(ro.ozon_posting_number, o.ozon_posting_number) IS NOT NULL "
-        "AND COALESCE(ro.ozon_status, o.ozon_status, '') NOT IN "
-        "    ('delivering', 'delivered', 'cancelled')",
+        # Поставка FBO едет грузоместами, а не отправлениями: last-mile ей не нужен.
+        "AND COALESCE(s.type, '') <> 'FBO' "
+        "AND (CASE WHEN gw.reserved_order_id IS NOT NULL THEN ("
+        "       COALESCE(ro.marketplace, '') = 'OZON' "
+        "       AND COALESCE(ro.order_type, '') <> 'FBO' "
+        "       AND ro.ozon_posting_number IS NOT NULL "
+        "       AND COALESCE(ro.ozon_status, '') NOT IN "
+        "           ('delivering', 'delivered', 'cancelled')"
+        "     ) ELSE ("
+        "       COALESCE(o.marketplace, '') = 'OZON' "
+        "       AND COALESCE(o.order_type, '') <> 'FBO' "
+        "       AND o.ozon_posting_number IS NOT NULL "
+        "       AND COALESCE(o.ozon_status, '') NOT IN "
+        "           ('delivering', 'delivered', 'cancelled')"
+        "     ) END)",
         (int(supply_id),),
     )
     numbers = [r[0] for r in cur.fetchall() if r[0]]
@@ -886,21 +945,61 @@ def find_cancelled_items(cur, supply_id):
     Такая вещь должна уехать на полку хранения и ждать нового покупателя, а поставку с ней
     внутри закрывать запрещено.
 
+    ПОСТАВКИ FBO ЭТА ПРОВЕРКА НЕ КАСАЕТСЯ ВОВСЕ.
+
+    Вся она построена вокруг заказа покупателя: отменили отправление — вещь ехать
+    не может. У FBO покупателя нет. Это поставка НА СКЛАД площадки: обезличенный
+    товар по заявке, который менеджер набирает со склада, а не чьё-то отправление.
+    Отменять там нечего — заявка либо есть, либо её нет целиком.
+
+    Вещи же в коробе FBO почти все прожили прошлую жизнь как FBS: их сшили под
+    отправление, оно отменилось, вещь легла на полку и стала свободным остатком.
+    Старый заказ навсегда остаётся отменённым — это нормальная история вещи, а не
+    её текущее состояние. Проверяя коробку FBO по этому старому заказу, система
+    объявляла отменённой половину поставки и требовала разложить товар по полкам,
+    хотя к заявке FBO те отправления никакого отношения не имеют.
+
     Возвращает список словарей: id позиции, штрихкод хранения, номер заказа, связка.
     """
+    cur.execute(
+        "SELECT COALESCE(type, '') FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    row = cur.fetchone()
+    if row and row[0] == 'FBO':
+        return []
     # Смотрим заказ, под который вещь ЕДЕТ (reserved_order_id): именно его могли
     # отменить. Заказ, в котором вещь когда-то сшили, к отгрузке отношения не имеет.
+    #
+    # ЗАКАЗ БЕРЁМ ЦЕЛИКОМ, ПОЛЯ ПО ОТДЕЛЬНОСТИ НЕ СМЕШИВАЕМ.
+    #
+    # Раньше каждое поле бралось своим COALESCE, и статусы двух РАЗНЫХ заказов
+    # склеивались в один несуществующий. Из-за этого вся поставка FBO вставала:
+    # у заказа-штуки FBO нет ozon_status (отправления на площадке у него нет),
+    # COALESCE проваливался на старый FBS-заказ вещи — а тот давно отменён.
+    # Кладовщик видел «в поставке 74 отменённых заказа» и требование положить
+    # их на полку, хотя к FBO эти отправления отношения не имеют.
     cur.execute(
         "SELECT msi.id, gw.storage_barcode, "
-        "COALESCE(ro.order_number, o.order_number), COALESCE(ro.group_key, o.group_key) "
+        "CASE WHEN gw.reserved_order_id IS NOT NULL THEN ro.order_number "
+        "     ELSE o.order_number END, "
+        "CASE WHEN gw.reserved_order_id IS NOT NULL THEN ro.group_key "
+        "     ELSE o.group_key END "
         "FROM marketplace_supply_items msi "
         "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+        "JOIN marketplace_supplies s ON s.id = msi.supply_id "
         "LEFT JOIN orders o ON o.id = gw.order_id "
         "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
         "WHERE msi.supply_id = %s AND ("
-        "  COALESCE(ro.status, o.status) = 'Отменён' "
-        "  OR lower(coalesce(COALESCE(ro.ozon_status, o.ozon_status), '')) LIKE '%%cancel%%' "
-        "  OR lower(coalesce(COALESCE(ro.ym_status, o.ym_status), '')) LIKE '%%cancel%%')",
+        "  CASE WHEN gw.reserved_order_id IS NOT NULL THEN ("
+        "    COALESCE(ro.status, '') = 'Отменён' "
+        "    OR lower(COALESCE(ro.ozon_status, '')) LIKE '%%cancel%%' "
+        "    OR lower(COALESCE(ro.ym_status, '')) LIKE '%%cancel%%'"
+        "  ) ELSE ("
+        "    COALESCE(o.status, '') = 'Отменён' "
+        "    OR lower(COALESCE(o.ozon_status, '')) LIKE '%%cancel%%' "
+        "    OR lower(COALESCE(o.ym_status, '')) LIKE '%%cancel%%'"
+        "  ) END)",
         (int(supply_id),),
     )
     direct = [

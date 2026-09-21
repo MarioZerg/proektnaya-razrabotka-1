@@ -178,9 +178,21 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "     THEN ro.group_size ELSE o.group_size END, "
                 "CASE WHEN gw.reserved_order_id IS NOT NULL "
                 "     THEN ro.group_position ELSE o.group_position END, "
-                "COALESCE(ro.status, o.status), "
-                "COALESCE(ro.ozon_status, o.ozon_status), "
-                "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id, "
+                # СТАТУСЫ — ТОЛЬКО ОТ ЗАКАЗА, ПОД КОТОРЫЙ ВЕЩЬ ЕДЕТ.
+                #
+                # Тот же запрет на COALESCE, что и для group_key выше, и по той же
+                # причине. Вещь сшили под FBS-отправление, его отменили, вещь легла
+                # на полку и ушла в поставку FBO под новый заказ-штуку. У заказа FBO
+                # ozon_status пустой — отправления на площадке у него нет вовсе, —
+                # и COALESCE подставлял 'cancelled' от старого FBS. Вся поставка FBO
+                # раскрашивалась отменами и не закрывалась.
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.status ELSE o.status END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.ozon_status ELSE o.ozon_status END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.ym_status ELSE o.ym_status END, "
+                "gw.storage_barcode, gw.shelf_id, "
                 "COALESCE(ro.marketplace, o.marketplace), gw.shipping_labeled_by_name, "
                 # Стикер связки — им вещь сканируют в поставку.
                 "gw.bundle_barcode "
@@ -210,7 +222,13 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     # Заказ могли отменить уже после стикеровки, когда вещь физически
                     # готова и лежит в поставке. Такую вещь отгружать НЕЛЬЗЯ — она должна
                     # уехать на полку хранения, а поставка не должна закрыться с ней внутри.
-                    'isCancelled': (
+                    #
+                    # В FBO отмен не бывает: там нет покупателя, товар едет на склад
+                    # площадки обезличенно по заявке. Отметка бралась от ПРОШЛОЙ жизни
+                    # вещи (её когда-то сшили под FBS-отправление, которое отменили) и
+                    # красила половину поставки в отмену, требуя разложить товар по
+                    # полкам. Подробный разбор — в find_cancelled_items.
+                    'isCancelled': (row[2] or '') != 'FBO' and (
                         r[13] == 'Отменён'
                         or 'cancel' in (r[14] or '').lower()
                         or 'cancel' in (r[15] or '').lower()
@@ -221,7 +239,10 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     # отправление — в отгрузку или в отмену. Раньше кладовщик видел
                     # только наш внутренний статус и узнавал об отмене слишком поздно.
                     'marketplace': r[18],
-                    'mpStatus': r[14] or r[15],
+                    # У FBO статуса отправления нет: его не существует на площадке.
+                    # Показывать здесь статус старого FBS-заказа вещи — вводить
+                    # кладовщика в заблуждение («отменён» у товара, который едет).
+                    'mpStatus': None if (row[2] or '') == 'FBO' else (r[14] or r[15]),
                     # Кто наклеил ярлык отправления на эту вещь.
                     'labeledByName': r[19],
                     # Стикер связки: им вещь сканируется в поставку, потому что

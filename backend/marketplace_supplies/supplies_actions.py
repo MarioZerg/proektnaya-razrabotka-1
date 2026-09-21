@@ -562,6 +562,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # навсегда — по нему судить нельзя. Иначе каждая вещь, однажды
             # побывавшая в отмене, до конца дней считалась бы отменённой и её
             # больше никогда не удалось бы отгрузить.
+            #
+            # Заказ берём ЦЕЛИКОМ — одной строкой из одной записи. Статусы двух
+            # разных заказов смешивать нельзя: у заказа-штуки FBO поля ozon_status
+            # нет вовсе (отправления на площадке у него не существует), и подстановка
+            # сюда статуса старого FBS-заказа превращала живую вещь в «отменённую».
             cur.execute(
                 "SELECT o.status, o.ozon_status, o.ym_status "
                 "FROM goods_warehouse gw "
@@ -695,9 +700,19 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Поэтому спрашиваем OZON напрямую прямо сейчас. Если площадка не
             # ответила (нет ключей, сеть) — сканирование НЕ блокируем: остановить
             # сборку поставки хуже, чем увезти одну спорную вещь.
+            #
+            # Номер отправления берём у ТОГО ЖЕ заказа, что и площадку: смешивать
+            # поля двух разных заказов нельзя. У вещи, перешедшей со старого
+            # отменённого FBS на заказ поставки FBO, сюда подставлялся чужой номер
+            # отправления — мы спрашивали у OZON про давно отменённый FBS и
+            # отбивали скан живой вещи FBO с требованием положить её на полку.
             cur.execute(
-                "SELECT COALESCE(ro.ozon_posting_number, o.ozon_posting_number), "
-                "       COALESCE(ro.marketplace, o.marketplace) "
+                "SELECT CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "            THEN ro.ozon_posting_number ELSE o.ozon_posting_number END, "
+                "       CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "            THEN ro.marketplace ELSE o.marketplace END, "
+                "       CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "            THEN ro.order_type ELSE o.order_type END "
                 "FROM goods_warehouse gw "
                 "LEFT JOIN orders o ON o.id = gw.order_id "
                 "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -705,7 +720,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 (goods_id,),
             )
             pn_row = cur.fetchone()
-            if pn_row and pn_row[0] and (pn_row[1] or '').upper() == 'OZON':
+            # У FBO отправления нет вовсе — спрашивать площадку не о чем.
+            if (pn_row and pn_row[0] and (pn_row[1] or '').upper() == 'OZON'
+                    and (pn_row[2] or '') != 'FBO'):
                 live_status = ozon_posting_status_live(cur, pn_row[0])
                 if live_status in OZON_DEAD_STATUSES:
                     conn.commit()
@@ -862,12 +879,22 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "COALESCE(ro.product, o.product), COALESCE(ro.material, o.material), "
                 "COALESCE(ro.width, o.width), COALESCE(ro.height, o.height), "
                 "gw.status, gw.shipped_at, msi.box_id, "
-                "COALESCE(ro.group_key, o.group_key), "
-                "COALESCE(ro.group_size, o.group_size), "
-                "COALESCE(ro.group_position, o.group_position), "
-                "COALESCE(ro.status, o.status), "
-                "COALESCE(ro.ozon_status, o.ozon_status), "
-                "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id, "
+                # Связка и статусы — только от заказа, под который вещь ЕДЕТ.
+                # COALESCE здесь склеивал бы два разных заказа в один
+                # несуществующий: см. подробный разбор в supplies_read.py.
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.group_key ELSE o.group_key END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.group_size ELSE o.group_size END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.group_position ELSE o.group_position END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.status ELSE o.status END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.ozon_status ELSE o.ozon_status END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.ym_status ELSE o.ym_status END, "
+                "gw.storage_barcode, gw.shelf_id, "
                 "COALESCE(ro.marketplace, o.marketplace), gw.shipping_labeled_by_name "
                 "FROM marketplace_supply_items msi "
                 "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
@@ -1671,12 +1698,22 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "COALESCE(ro.product, o.product), COALESCE(ro.material, o.material), "
                 "COALESCE(ro.width, o.width), COALESCE(ro.height, o.height), "
                 "gw.status, gw.shipped_at, msi.box_id, "
-                "COALESCE(ro.group_key, o.group_key), "
-                "COALESCE(ro.group_size, o.group_size), "
-                "COALESCE(ro.group_position, o.group_position), "
-                "COALESCE(ro.status, o.status), "
-                "COALESCE(ro.ozon_status, o.ozon_status), "
-                "COALESCE(ro.ym_status, o.ym_status), gw.storage_barcode, gw.shelf_id, "
+                # Связка и статусы — только от заказа, под который вещь ЕДЕТ.
+                # COALESCE здесь склеивал бы два разных заказа в один
+                # несуществующий: см. подробный разбор в supplies_read.py.
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.group_key ELSE o.group_key END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.group_size ELSE o.group_size END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.group_position ELSE o.group_position END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.status ELSE o.status END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.ozon_status ELSE o.ozon_status END, "
+                "CASE WHEN gw.reserved_order_id IS NOT NULL "
+                "     THEN ro.ym_status ELSE o.ym_status END, "
+                "gw.storage_barcode, gw.shelf_id, "
                 "COALESCE(ro.marketplace, o.marketplace), gw.shipping_labeled_by_name "
                 "FROM marketplace_supply_items msi "
                 "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
