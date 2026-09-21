@@ -834,6 +834,18 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     # сменились бы cargo_id, а этикетки на них уже наклеены. Поэтому один короб
     # добавляем к существующим, а пересоздаём список только при закрытии всей
     # поставки разом.
+    # ДОБИВАЕМ НЕСНЯТЫЕ МЕСТА ПЕРЕД СОЗДАНИЕМ НОВОГО.
+    #
+    # OZON подтверждает снятие грузоместа раньше, чем применяет его: ответ
+    # SUCCESS приходит сразу, а с заявки место пропадает через десятки секунд.
+    # Кладовщик переоткрывает короб и закрывает его через 5-10 секунд — старое
+    # место ещё живо, и рядом появляется новое. Это и есть «осиротевший дубль».
+    #
+    # Повторный запрос на снятие идемпотентен: если место уже исчезло, вреда
+    # нет, а если висит — уйдёт сейчас, до создания нового.
+    flush_pending_removals(cur, supply_id, ozon_supply_id, client_id, api_key)
+    conn.commit()
+
     st, data = ozon_post('/v1/cargoes/create', client_id, api_key, {
         'supply_id': int(ozon_supply_id),
         'delete_current_version': not one_box_id,
@@ -1078,6 +1090,86 @@ def get_ozon_supply_id(cur, supply_id, ozon_order_id, client_id, api_key):
     return int(value)
 
 
+def remember_removal(cur, supply_id, cargo_id):
+    """Запоминает грузоместо, которое попросили снять с OZON.
+
+    Площадка подтверждает снятие раньше, чем применяет его, поэтому одного
+    запроса мало — место надо добить позже (см. flush_pending_removals).
+    """
+    cur.execute(
+        "INSERT INTO ozon_cargo_removals (supply_id, cargo_id) VALUES (%s, %s) "
+        "ON CONFLICT (cargo_id) DO UPDATE SET attempts = ozon_cargo_removals.attempts + 1, "
+        "  confirmed_at = NULL",
+        (int(supply_id), int(cargo_id)),
+    )
+
+
+def flush_pending_removals(cur, supply_id, ozon_supply_id, client_id, api_key):
+    """ДОБИВАЕТ грузоместа, которые OZON обещал снять, но ещё не снял.
+
+    КОРЕНЬ ПРОБЛЕМЫ «ОСИРОТЕВШИХ ДУБЛЕЙ». Снятие места у OZON только на вид
+    мгновенное: статус операции отвечает SUCCESS почти сразу, а с заявки
+    место пропадает заметно позже — по замерам от 45 секунд.
+
+    Кладовщик переоткрывает короб и через 5-10 секунд закрывает его снова.
+    Старое место в этот момент ЕЩЁ ЖИВО, рядом создаётся новое — и на заявке
+    оказываются два одинаковых короба с разными штрихкодами. Поймать это по
+    ответу площадки было нельзя: она честно отвечала «снято».
+
+    Поэтому перед КАЖДЫМ созданием места мы повторяем снятие для всего, что
+    ещё не подтвердилось. Запрос идемпотентный: если место уже исчезло,
+    повтор ничего не испортит.
+
+    Возвращает число мест, по которым отправлен повторный запрос.
+    """
+    cur.execute(
+        "SELECT cargo_id FROM ozon_cargo_removals "
+        "WHERE supply_id = %s AND confirmed_at IS NULL "
+        "ORDER BY requested_at LIMIT 20",
+        (int(supply_id),),
+    )
+    pending = [int(r[0]) for r in cur.fetchall()]
+    if not pending or not ozon_supply_id:
+        return 0
+
+    st, data = ozon_post('/v1/cargoes/delete', client_id, api_key, {
+        'supply_id': int(ozon_supply_id),
+        'cargo_ids': pending,
+    })
+    # Площадка не приняла запрос — не страшно: попробуем в следующий раз,
+    # записи остаются неподтверждёнными.
+    if st != 200:
+        return 0
+
+    cur.execute(
+        "UPDATE ozon_cargo_removals SET attempts = attempts + 1 "
+        "WHERE supply_id = %s AND confirmed_at IS NULL",
+        (int(supply_id),),
+    )
+    return len(pending)
+
+
+def confirm_removals(cur, supply_id, alive_ids):
+    """Закрывает записи о снятии для мест, которых на заявке уже нет.
+
+    alive_ids — грузоместа, реально существующие на площадке сейчас.
+    """
+    cur.execute(
+        "SELECT cargo_id FROM ozon_cargo_removals "
+        "WHERE supply_id = %s AND confirmed_at IS NULL",
+        (int(supply_id),),
+    )
+    gone = [int(r[0]) for r in cur.fetchall() if int(r[0]) not in alive_ids]
+    if not gone:
+        return 0
+    ids_csv = ','.join(str(c) for c in gone)
+    cur.execute(
+        f"UPDATE ozon_cargo_removals SET confirmed_at = now() "
+        f"WHERE cargo_id IN ({ids_csv})"
+    )
+    return len(gone)
+
+
 def handle_sync_cargoes(cur, conn, client_id, api_key, body_data):
     """Приводит грузоместа на OZON в соответствие с нашими коробами.
 
@@ -1158,6 +1250,11 @@ def handle_sync_cargoes(cur, conn, client_id, api_key, body_data):
     pdf_bytes = download_file(file_url)
     on_ozon = set(split_label_pages(pdf_bytes).keys())
 
+    # Видим реальный состав заявки — закрываем записи о тех местах, которые
+    # уже действительно исчезли. Остальные продолжим добивать.
+    confirm_removals(cur, supply_id, on_ozon)
+    conn.commit()
+
     extra = sorted(on_ozon - ours)
     if not extra:
         return _resp(200, {
@@ -1173,6 +1270,12 @@ def handle_sync_cargoes(cur, conn, client_id, api_key, body_data):
     })
     if st != 200:
         return _resp(502, {'error': f'OZON не дал удалить лишние места: {ozon_error_text(st, data)}'})
+
+    # Запоминаем всё, что попросили снять: площадка применяет это не сразу,
+    # и недоснятое надо будет добить перед следующим созданием места.
+    for c in extra:
+        remember_removal(cur, supply_id, c)
+    conn.commit()
 
     del_op = data.get('operation_id') if isinstance(data, dict) else None
     if del_op:
@@ -1414,7 +1517,18 @@ def handle_reopen_box(cur, conn, client_id, api_key, body_data):
                         'error': 'OZON ещё удаляет грузоместо. Подождите минуту '
                                  'и нажмите «Открыть короб» ещё раз',
                     })
-            ozon_note = f'Грузоместо {cargo_id} удалено на OZON'
+
+            # SUCCESS ОТ OZON — ЕЩЁ НЕ ФАКТ, ЧТО МЕСТО СНЯТО.
+            #
+            # Площадка подтверждает снятие мгновенно, а применяет его через
+            # десятки секунд. Кладовщик успевает закрыть короб заново, пока
+            # старое место живо, — и получает два короба на заявке.
+            #
+            # Поэтому запоминаем место: перед следующим созданием мы добьём
+            # его повторным запросом, а закроем запись, только когда оно
+            # реально исчезнет с заявки.
+            remember_removal(cur, supply_id, cargo_id)
+            ozon_note = f'Грузоместо {cargo_id} снято на OZON'
 
     cur.execute(
         "UPDATE marketplace_supply_boxes SET closed_at = NULL, ozon_cargo_id = NULL, "
