@@ -144,3 +144,22 @@ export const reopenOzonBox = (
     actorId: actor?.id,
     actorName: actor?.name,
   }) as Promise<{ success: true; boxNumber: number; note: string | null }>;
+
+export interface OzonBoxLabelResult {
+  /** Готова ли этикетка. false — OZON ещё генерирует файл, нужно повторить. */
+  ready: boolean;
+  url?: string;
+  boxNumber?: number;
+  note?: string;
+}
+
+/**
+ * Догрузить этикетку уже закрытого короба.
+ *
+ * Закрытие короба и получение этикетки разделены: обе операции в один вызов
+ * не укладываются в отведённое функции время, и раньше закрытие обрывалось
+ * на полпути. Теперь короб закрывается сразу, а наклейка забирается этим
+ * запросом — столько раз, сколько потребуется.
+ */
+export const fetchOzonBoxLabel = (boxId: number): Promise<OzonBoxLabelResult> =>
+  post({ action: 'fetch_box_label', boxId }) as Promise<OzonBoxLabelResult>;

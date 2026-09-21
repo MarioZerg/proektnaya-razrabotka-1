@@ -45,6 +45,7 @@ const MarketplaceSupplyAssemble = () => {
     handleRemoveItem,
     handleSetItemCount,
     handleReopenBox,
+    reload,
     handleCargoTypeChange,
     handleSupplyAssembled,
     handleCloseOzonBox,
@@ -147,6 +148,7 @@ const MarketplaceSupplyAssemble = () => {
           onRemoveItem={handleRemoveItem}
           onSetItemCount={handleSetItemCount}
           onReopenBox={handleReopenBox}
+          onLabelFetched={reload}
           onDeleteBox={handleDeleteBox}
           onCloseBox={handleCloseBox}
         />

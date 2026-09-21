@@ -614,11 +614,13 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     if not ozon_order_id:
         return _resp(409, {'error': 'Поставка не связана с заявкой OZON'})
 
-    # supply_id на стороне OZON (для cargoes) берём из заявки: supplies[0].supply_id.
-    apps = fetch_application_details(client_id, api_key, [int(ozon_order_id)])
-    if not apps or not (apps[0].get('supplies') or []):
+    # supply_id на стороне OZON (для cargoes). Берём из кеша: лишний запрос к
+    # площадке съедает до 5с из 5, отведённых функции, и закрытие короба
+    # обрывается таймаутом.
+    ozon_supply_id = get_ozon_supply_id(
+        cur, supply_id, ozon_order_id, client_id, api_key)
+    if not ozon_supply_id:
         return _resp(502, {'error': 'Не удалось получить данные заявки OZON'})
-    ozon_supply_id = apps[0]['supplies'][0].get('supply_id')
 
     # СОСТАВ ГРУЗОМЕСТА OZON ПРИНИМАЕТ ПО offer_id (НАШ АРТИКУЛ), А НЕ ПО sku.
     #
@@ -810,6 +812,18 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
         if one_row and one_row[0]:
             label_cargo_ids = [int(one_row[0])]
 
+    # ГРУЗОМЕСТО УЖЕ СОЗДАНО — ФИКСИРУЕМ ЭТО ДО ПОХОДА ЗА ЭТИКЕТКОЙ.
+    #
+    # У функции 5 секунд на всю работу, а один запрос к OZON занимает до 5с
+    # сам по себе. Раньше закрытие короба и получение этикетки шли одним
+    # вызовом: грузоместо создавалось, но на этикетке функция обрывалась по
+    # таймауту — и весь коммит откатывался. Короб выглядел незакрытым, хотя
+    # на OZON место уже было заведено; повторное нажатие плодило дубли.
+    #
+    # Теперь закрытие фиксируем сразу, а этикетку тянем отдельным вызовом
+    # (действие fetch_box_label). Не успели здесь — фронт дозапросит её.
+    conn.commit()
+
     st, lbl = ozon_post('/v1/cargoes-label/create', client_id, api_key, {
         'supply_id': int(ozon_supply_id),
         'cargo_ids': label_cargo_ids,
@@ -822,7 +836,13 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
         # {"file_guid": "...", "file_url": "https://ir.ozone.ru/..."}}. Ключей
         # content/file_content с base64 в ответе нет вовсе — раньше их и искали,
         # поэтому стикер не сохранялся никогда, даже когда площадка его отдала.
-        st, got = poll_operation('/v1/cargoes-label/get', client_id, api_key, label_op)
+        # Ждём этикетку КОРОТКО: у функции 5 секунд на всё, а долгое ожидание
+        # обрывается таймаутом и откатывает работу. Не успела подготовиться —
+        # кладовщик заберёт её кнопкой «Получить этикетку», короб уже закрыт.
+        st, got = poll_operation(
+            '/v1/cargoes-label/get', client_id, api_key, label_op,
+            attempts=1, delay=0.5,
+        )
         lbl_result = got.get('result') if isinstance(got, dict) else None
         pdf_bytes = None
         if isinstance(lbl_result, dict):
@@ -904,6 +924,119 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     })
 
 
+def get_ozon_supply_id(cur, supply_id, ozon_order_id, client_id, api_key):
+    """Возвращает внутренний supply_id заявки на стороне OZON.
+
+    Для работы с грузоместами нужен не номер заказа поставки, а внутренний
+    supply_id заявки. Выяснять его запросом к площадке КАЖДЫЙ раз нельзя:
+    у функции 5 секунд на всё, а один запрос к OZON занимает до 5с — лишний
+    поход укладывает операцию в таймаут.
+
+    Значение постоянно на всю жизнь заявки, поэтому держим его в базе и
+    ходим в API только при первом обращении.
+    """
+    cur.execute(
+        "SELECT ozon_internal_supply_id FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    row = cur.fetchone()
+    if row and row[0]:
+        return int(row[0])
+
+    if not ozon_order_id:
+        return None
+    apps = fetch_application_details(client_id, api_key, [int(ozon_order_id)])
+    if not apps or not (apps[0].get('supplies') or []):
+        return None
+    value = apps[0]['supplies'][0].get('supply_id')
+    if not value:
+        return None
+    cur.execute(
+        "UPDATE marketplace_supplies SET ozon_internal_supply_id = %s WHERE id = %s",
+        (int(value), int(supply_id)),
+    )
+    return int(value)
+
+
+def handle_fetch_box_label(cur, conn, client_id, api_key, body_data):
+    """Догружает этикетку уже закрытого короба.
+
+    ЗАЧЕМ ОТДЕЛЬНЫМ ШАГОМ. У функции 5 секунд на всю работу, а один запрос к
+    OZON занимает до 5с сам по себе. Закрытие короба и получение этикетки в
+    одном вызове не укладывались: грузоместо создавалось, а на этикетке
+    функция обрывалась по таймауту и откатывала всё — короб выглядел
+    незакрытым, хотя на площадке место уже было заведено.
+
+    Теперь закрытие фиксируется сразу, а этикетка забирается этим действием —
+    столько раз, сколько нужно. Оно же чинит короба, закрытые ранее и
+    оставшиеся без стикера.
+    """
+    box_id = body_data.get('boxId')
+    if not box_id:
+        return _resp(400, {'error': 'Укажите короб'})
+
+    cur.execute(
+        "SELECT b.supply_id, b.box_number, b.ozon_cargo_id, b.closed_at, "
+        "       s.ozon_supply_order_id "
+        "FROM marketplace_supply_boxes b "
+        "JOIN marketplace_supplies s ON s.id = b.supply_id WHERE b.id = %s",
+        (int(box_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return _resp(404, {'error': 'Короб не найден'})
+    supply_id, box_number, cargo_id, closed_at, ozon_order_id = row
+
+    if not closed_at or not cargo_id:
+        return _resp(409, {
+            'error': 'Сначала закройте короб — этикетку OZON выдаёт на грузоместо',
+        })
+
+    ozon_supply_id = get_ozon_supply_id(
+        cur, supply_id, ozon_order_id, client_id, api_key)
+    if not ozon_supply_id:
+        return _resp(502, {'error': 'Не удалось получить данные заявки OZON'})
+
+    st, lbl = ozon_post('/v1/cargoes-label/create', client_id, api_key, {
+        'supply_id': int(ozon_supply_id),
+        'cargo_ids': [int(cargo_id)],
+    })
+    label_op = lbl.get('operation_id') if isinstance(lbl, dict) else None
+    if not label_op:
+        return _resp(502, {'error': f'OZON не принял запрос этикетки: {ozon_error_text(st, lbl)}'})
+
+    # Одна короткая попытка: не готова — кладовщик нажмёт ещё раз. Долгое
+    # ожидание здесь снова упёрлось бы в таймаут функции.
+    st, got = poll_operation(
+        '/v1/cargoes-label/get', client_id, api_key, label_op,
+        attempts=1, delay=0.5,
+    )
+    lbl_result = got.get('result') if isinstance(got, dict) else None
+    file_url = lbl_result.get('file_url') if isinstance(lbl_result, dict) else None
+    if not file_url:
+        return _resp(202, {
+            'ready': False,
+            'note': 'OZON ещё готовит этикетку — нажмите ещё раз через несколько секунд',
+        })
+
+    pdf_bytes = download_file(file_url)
+
+    # Берём страницу СВОЕГО грузоместа: OZON игнорирует cargo_ids и отдаёт
+    # файл со всеми местами заявки.
+    pages = split_label_pages(pdf_bytes)
+    page_pdf = pages.get(int(cargo_id)) or pdf_bytes
+
+    url = upload_pdf(page_pdf, f'supply-{supply_id}-box-{box_id}')
+    cur.execute(
+        "UPDATE marketplace_supply_boxes SET sticker_url = %s, sticker_name = %s "
+        "WHERE id = %s",
+        (url, f'Стикер короба №{box_number}.pdf', int(box_id)),
+    )
+    conn.commit()
+
+    return _resp(200, {'ready': True, 'url': url, 'boxNumber': box_number})
+
+
 def handle_reopen_box(cur, conn, client_id, api_key, body_data):
     """Переоткрывает закрытый короб, чтобы поправить его состав.
 
@@ -948,10 +1081,8 @@ def handle_reopen_box(cur, conn, client_id, api_key, body_data):
     # не ответила) — просто открываем короб у себя.
     ozon_note = None
     if cargo_id and ozon_order_id:
-        apps = fetch_application_details(client_id, api_key, [int(ozon_order_id)])
-        ozon_supply_id = None
-        if apps and (apps[0].get('supplies') or []):
-            ozon_supply_id = apps[0]['supplies'][0].get('supply_id')
+        ozon_supply_id = get_ozon_supply_id(
+            cur, supply_id, ozon_order_id, client_id, api_key)
         if ozon_supply_id:
             st, data = ozon_post('/v1/cargoes/delete', client_id, api_key, {
                 'supply_id': int(ozon_supply_id),
@@ -1123,6 +1254,10 @@ def handler(event: dict, context) -> dict:
           каждого короба (по артикулу offer_id), сохраняет их cargo_id, тянет PDF-этикетки
           коробов и привязывает их к коробам. boxId — закрыть ОДИН короб, добавив грузоместо к
           уже созданным. cargoType по умолчанию 'BOX'. Действует на реальной заявке.
+    POST /  { action: 'fetch_box_label', boxId }
+        - догружает этикетку уже закрытого короба (закрытие и этикетка разделены:
+          обе операции в один вызов не укладываются в таймаут функции).
+          Возвращает 202 с ready=false, если OZON ещё готовит файл.
     POST /  { action: 'reopen_box', boxId }
         - переоткрывает закрытый короб для правки состава: удаляет грузоместо на OZON,
           снимает closed_at и стирает устаревший стикер. После правки короб закрывают заново.
@@ -1147,7 +1282,8 @@ def handler(event: dict, context) -> dict:
     body_data = json.loads(event.get('body') or '{}')
     action = body_data.get('action')
     if action not in ('list_applications', 'check_composition', 'import_composition',
-                      'close_boxes', 'all_box_labels', 'reopen_box'):
+                      'close_boxes', 'all_box_labels', 'reopen_box',
+                      'fetch_box_label'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -1191,5 +1327,7 @@ def handler(event: dict, context) -> dict:
             return handle_all_labels(cur, conn, client_id, api_key, body_data)
         if action == 'reopen_box':
             return handle_reopen_box(cur, conn, client_id, api_key, body_data)
+        if action == 'fetch_box_label':
+            return handle_fetch_box_label(cur, conn, client_id, api_key, body_data)
     finally:
         conn.close()

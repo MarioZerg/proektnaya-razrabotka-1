@@ -391,6 +391,9 @@ export const useSupplyAssemble = (supplyId: number) => {
     handleRemoveItem,
     handleSetItemCount,
     handleReopenBox,
+    // Перечитать поставку — нужно экранам, которые меняют её в обход хука
+    // (например, забрали этикетку короба у OZON).
+    reload: load,
     handleCargoTypeChange,
     handleSupplyAssembled,
     handleCloseOzonBox,

@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { SupplyBox, SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import BoxItemRow from '@/components/crm/marketplaceSupplies/BoxItemRow';
+import { fetchOzonBoxLabel } from '@/lib/ozonFboApi';
+import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { printWbBoxLabel } from '@/lib/wbBoxLabel';
 import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
@@ -30,6 +32,8 @@ interface SupplyBoxCardProps {
   onSetItemCount: (boxId: number, itemIds: number[], removeCount: number) => void;
   /** Вернуть закрытый короб в работу, чтобы поправить состав. */
   onReopenBox: (boxId: number) => void;
+  /** Перечитать поставку после того, как этикетка получена. */
+  onLabelFetched: () => void;
   onDeleteBox: (boxId: number) => void;
   onCloseBox: (boxId: number) => Promise<void>;
   /** Раскрыт ли короб. Открытым держим ровно один — тот, что набивают сейчас. */
@@ -60,6 +64,7 @@ const SupplyBoxCard = ({
   onRemoveItem,
   onSetItemCount,
   onReopenBox,
+  onLabelFetched,
   onDeleteBox,
   onCloseBox,
   open,
@@ -69,6 +74,8 @@ const SupplyBoxCard = ({
   const [scanning, setScanning] = useState(false);
   const [closing, setClosing] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [fetchingLabel, setFetchingLabel] = useState(false);
+  const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Раскрыли короб — сразу ставим курсор в поле сканера, чтобы кладовщик
@@ -136,6 +143,36 @@ const SupplyBoxCard = ({
   useScannerAutoSubmit(orderNumber, handleAdd, canEdit && open);
 
   const canScan = canEdit && !box.closedAt;
+
+  // Забираем этикетку у OZON отдельным шагом. Площадка генерирует файл не
+  // мгновенно: если не готов — говорим об этом и предлагаем повторить, а не
+  // показываем ошибку (короб-то закрыт правильно).
+  const handleFetchLabel = async () => {
+    setFetchingLabel(true);
+    try {
+      const r = await fetchOzonBoxLabel(box.id);
+      if (r.ready) {
+        toast({
+          title: `Этикетка короба №${box.boxNumber} получена`,
+          description: 'Можно печатать',
+        });
+        onLabelFetched();
+      } else {
+        toast({
+          title: 'OZON ещё готовит этикетку',
+          description: r.note || 'Нажмите «Получить этикетку» ещё раз через несколько секунд',
+        });
+      }
+    } catch (e) {
+      toast({
+        title: 'Не удалось получить этикетку',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setFetchingLabel(false);
+    }
+  };
 
   // ОДИНАКОВЫЙ ТОВАР — ОДНОЙ СТРОКОЙ С КОЛИЧЕСТВОМ.
   //
@@ -332,6 +369,35 @@ const SupplyBoxCard = ({
               />
               {closing ? 'Закрываем короб и получаем стикер…' : 'Закрыть короб'}
             </Button>
+          )}
+
+          {/* ГРУЗОМЕСТО СОЗДАНО, А ЭТИКЕТКИ ЕЩЁ НЕТ — ДАЁМ ЗАБРАТЬ ЕЁ ОТДЕЛЬНО.
+              OZON готовит файл не мгновенно, и закрытие короба его не ждёт:
+              обе операции в один запрос не укладываются в отведённое время.
+              Короб при этом закрыт корректно, не хватает только наклейки. */}
+          {isOzonFbo && box.closedAt && box.ozonCargoId && !box.stickerUrl && (
+            <div className="space-y-2 rounded-md border border-sky-300 bg-sky-50 p-3">
+              <p className="flex items-start gap-2 text-sm text-sky-900">
+                <Icon name="Info" size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  Короб закрыт, грузоместо на OZON создано. Этикетка ещё
+                  готовится на стороне площадки
+                </span>
+              </p>
+              <Button
+                size="sm"
+                className="w-full bg-[#005BFF] text-white hover:bg-[#0047cc]"
+                onClick={handleFetchLabel}
+                disabled={fetchingLabel}
+              >
+                <Icon
+                  name={fetchingLabel ? 'Loader2' : 'Download'}
+                  size={14}
+                  className={`mr-1.5 ${fetchingLabel ? 'animate-spin' : ''}`}
+                />
+                {fetchingLabel ? 'Запрашиваем у OZON…' : 'Получить этикетку'}
+              </Button>
+            </div>
           )}
 
           {/* КОРОБ ЗАКРЫТ, НО ГРУЗОМЕСТА НА OZON НЕТ — ДАЁМ ПОВТОРИТЬ.
