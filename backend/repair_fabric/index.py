@@ -8,7 +8,6 @@ from authz import (
     auth_error_response,
     current_user,
     require_admin,
-    require_role,
 )
 
 CORS_HEADERS = {
@@ -186,7 +185,7 @@ def send_to_repair(cur, conn, event, body):
 
     user = current_user(cur, event)
     actor_id = user['id'] if user else body.get('userId')
-    actor_name = user['full_name'] if user else body.get('userName')
+    actor_name = user['name'] if user else body.get('userName')
 
     cur.execute(
         "SELECT gw.id, gw.status, o.material, o.width, o.height, o.order_number "
@@ -291,7 +290,7 @@ def use_piece(cur, conn, event, body):
 
     user = current_user(cur, event)
     actor_id = user['id'] if user else body.get('userId')
-    actor_name = user['full_name'] if user else body.get('userName')
+    actor_name = user['name'] if user else body.get('userName')
 
     cur.execute(
         "SELECT id FROM repair_fabric_pieces WHERE used_order_id = %s AND status = 'reserved'",
@@ -372,7 +371,7 @@ def release_piece(cur, conn, event, body):
 
     user = current_user(cur, event)
     actor_id = user['id'] if user else body.get('userId')
-    actor_name = user['full_name'] if user else body.get('userName')
+    actor_name = user['name'] if user else body.get('userName')
 
     if piece_id:
         cur.execute(
@@ -478,7 +477,7 @@ def delete_piece(cur, conn, event, body):
     cur.execute("DELETE FROM repair_fabric_pieces WHERE id = %s", (int(piece_id),))
 
     log_action(
-        cur, user['id'], user['full_name'], 'repair_piece_delete', piece_id,
+        cur, user['realUserId'], user['name'], 'repair_piece_delete', piece_id,
         f'Удалён из таблицы перешива кусок {material} {width}x{height} (был «{status}»)',
     )
     conn.commit()
@@ -511,10 +510,10 @@ def write_off_piece(cur, conn, event, body):
         "UPDATE repair_fabric_pieces SET status = 'written_off', used_at = now(), "
         "  used_by = %s, used_by_name = %s, "
         "  comment = COALESCE(comment || ' | ', '') || %s WHERE id = %s",
-        (user['id'], user['full_name'], f'Списан: {reason or "без причины"}', int(piece_id)),
+        (user['realUserId'], user['name'], f'Списан: {reason or "без причины"}', int(piece_id)),
     )
     log_action(
-        cur, user['id'], user['full_name'], 'repair_piece_write_off', piece_id,
+        cur, user['realUserId'], user['name'], 'repair_piece_write_off', piece_id,
         f'Списан кусок {material} {width}x{height}: {reason or "без причины"}',
     )
     conn.commit()
