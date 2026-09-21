@@ -509,6 +509,19 @@ export const addOrderToBox = (boxId: number, orderNumber: string): Promise<AddOr
 
 export const removeBoxItem = (itemId: number) => postAction({ action: 'remove_box_item', itemId });
 
+/**
+ * Убрать сразу несколько штук одинакового товара из короба.
+ *
+ * В коробе FBO одного размера лежит по десять-двадцать вещей, и на экране они
+ * показаны строкой «12 × Лен 300x255». Чтобы сделать из 12 восемь, кладовщик
+ * жал крестик четыре раза подряд — здесь он задаёт число сразу.
+ *
+ * itemIds — позиции этой строки (сервер берёт только те, что реально лежат
+ * в указанном коробе), removeCount — сколько убрать.
+ */
+export const setBoxItemCount = (boxId: number, itemIds: number[], removeCount: number) =>
+  postAction({ action: 'set_box_item_count', boxId, itemIds, removeCount });
+
 export const updateSupply = (
   supplyId: number,
   fields: Partial<{

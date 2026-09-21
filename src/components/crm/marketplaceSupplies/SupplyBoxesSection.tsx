@@ -27,6 +27,7 @@ interface SupplyBoxesSectionProps {
   onCloseOzonBox: (boxId: number) => Promise<void>;
   onAddOrder: (boxId: number, orderNumber: string) => Promise<void>;
   onRemoveItem: (itemId: number) => void;
+  onSetItemCount: (boxId: number, itemIds: number[], removeCount: number) => void;
   onDeleteBox: (boxId: number) => void;
   onCloseBox: (boxId: number) => Promise<void>;
 }
@@ -58,6 +59,7 @@ const SupplyBoxesSection = ({
   onCloseOzonBox,
   onAddOrder,
   onRemoveItem,
+  onSetItemCount,
   onDeleteBox,
   onCloseBox,
 }: SupplyBoxesSectionProps) => {
@@ -146,6 +148,7 @@ const SupplyBoxesSection = ({
               onCloseOzonBox={onCloseOzonBox}
               onAddOrder={onAddOrder}
               onRemoveItem={onRemoveItem}
+              onSetItemCount={onSetItemCount}
               onDeleteBox={onDeleteBox}
               onCloseBox={onCloseBox}
               open={openBoxId === box.id}

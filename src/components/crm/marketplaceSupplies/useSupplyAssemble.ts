@@ -9,6 +9,7 @@ import {
   closeSupplyBox,
   addOrderToBox,
   removeBoxItem,
+  setBoxItemCount,
   updateSupply,
   lockSupply,
   unlockSupply,
@@ -230,6 +231,34 @@ export const useSupplyAssemble = (supplyId: number) => {
     }
   };
 
+  // Кладовщик поправил количество одинакового товара в строке короба.
+  // Уменьшение делаем одним запросом, а не серией удалений по одной вещи:
+  // короб перезагружается один раз, и число на экране не «скачет».
+  const handleSetItemCount = async (
+    boxId: number,
+    itemIds: number[],
+    removeCount: number,
+  ) => {
+    try {
+      await setBoxItemCount(boxId, itemIds, removeCount);
+      toast({
+        title:
+          removeCount === 1
+            ? 'Убрана 1 шт.'
+            : `Убрано ${removeCount} шт.`,
+        description: 'Товар вернулся на склад',
+      });
+      load();
+      if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
+    } catch (e) {
+      toast({
+        title: 'Ошибка',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    }
+  };
+
   // Тип грузоместа (короб/палета) сохраняется в поставку и используется при закрытии коробов.
   const handleCargoTypeChange = async (value: 'BOX' | 'PALLET') => {
     setCargoType(value);
@@ -339,6 +368,7 @@ export const useSupplyAssemble = (supplyId: number) => {
     handleAddOrderToBox,
     handleCloseBox,
     handleRemoveItem,
+    handleSetItemCount,
     handleCargoTypeChange,
     handleSupplyAssembled,
     handleCloseOzonBox,

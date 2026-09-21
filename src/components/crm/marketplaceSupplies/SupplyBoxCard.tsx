@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { SupplyBox, SupplyDetail } from '@/lib/marketplaceSuppliesApi';
-import { goodsStatusLabel } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import BoxItemRow from '@/components/crm/marketplaceSupplies/BoxItemRow';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { printWbBoxLabel } from '@/lib/wbBoxLabel';
 import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
@@ -26,6 +26,8 @@ interface SupplyBoxCardProps {
   onCloseOzonBox?: (boxId: number) => Promise<void>;
   onAddOrder: (boxId: number, orderNumber: string) => Promise<void>;
   onRemoveItem: (itemId: number) => void;
+  /** Убрать сразу несколько штук одинакового товара из короба. */
+  onSetItemCount: (boxId: number, itemIds: number[], removeCount: number) => void;
   onDeleteBox: (boxId: number) => void;
   onCloseBox: (boxId: number) => Promise<void>;
   /** Раскрыт ли короб. Открытым держим ровно один — тот, что набивают сейчас. */
@@ -54,6 +56,7 @@ const SupplyBoxCard = ({
   onCloseOzonBox,
   onAddOrder,
   onRemoveItem,
+  onSetItemCount,
   onDeleteBox,
   onCloseBox,
   open,
@@ -147,7 +150,7 @@ const SupplyBoxCard = ({
   const groupedItems = useMemo(() => {
     const map = new Map<
       string,
-      { key: string; title: string; goodsStatus: string; count: number; lastItemId: number }
+      { key: string; title: string; goodsStatus: string; itemIds: number[] }
     >();
     for (const item of box.items) {
       const title =
@@ -160,21 +163,17 @@ const SupplyBoxCard = ({
       const key = `${title}__${item.goodsStatus || ''}`;
       const row = map.get(key);
       if (row) {
-        row.count += 1;
-        // Убираем всегда ПОСЛЕДНЮЮ добавленную: кладовщик пикнул лишнюю
-        // штуку и тут же жмёт крестик — уйти должна именно она.
-        row.lastItemId = item.id;
+        row.itemIds.push(item.id);
       } else {
         map.set(key, {
           key,
           title,
           goodsStatus: item.goodsStatus || '',
-          count: 1,
-          lastItemId: item.id,
+          itemIds: [item.id],
         });
       }
     }
-    return [...map.values()];
+    return [...map.values()].map((row) => ({ ...row, count: row.itemIds.length }));
   }, [box.items]);
 
   return (
@@ -272,42 +271,20 @@ const SupplyBoxCard = ({
           ) : (
             <div className="space-y-1.5">
               {groupedItems.map((row) => (
-                <div
+                <BoxItemRow
                   key={row.key}
-                  className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm"
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    {/* Количество слева и крупно: кладовщик сверяет короб с
-                        заявкой по числу штук каждого размера, а не по номерам
-                        складских записей. */}
-                    <span className="shrink-0 rounded-md bg-primary px-2 py-1 font-bold text-primary-foreground">
-                      {row.count}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{row.title}</p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {goodsStatusLabel(row.goodsStatus)}
-                      </p>
-                    </div>
-                  </div>
-                  {canEdit && (
-                    // Убираем по одной штуке: в коробе десять одинаковых вещей,
-                    // и снести все разом из-за одной лишней — потерять работу.
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 shrink-0"
-                      title={
-                        row.count > 1
-                          ? 'Убрать одну штуку этого размера'
-                          : 'Убрать из короба'
-                      }
-                      onClick={() => onRemoveItem(row.lastItemId)}
-                    >
-                      <Icon name="X" size={12} />
-                    </Button>
-                  )}
-                </div>
+                  title={row.title}
+                  goodsStatus={row.goodsStatus}
+                  itemIds={row.itemIds}
+                  // Состав закрытого короба менять нельзя: он заклеен, и на
+                  // OZON по нему уже заведено грузоместо с этикеткой.
+                  canEdit={canEdit && !box.closedAt}
+                  onRemoveCount={(ids, count) =>
+                    count === 1 && ids.length === 1
+                      ? onRemoveItem(ids[0])
+                      : onSetItemCount(box.id, ids, count)
+                  }
+                />
               ))}
             </div>
           )}

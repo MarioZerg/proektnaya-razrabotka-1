@@ -51,7 +51,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
     # сканируя товар со своих полок, а менеджер только наблюдает за ходом сборки.
     FBS_WRITE_ACTIONS = (
         'scan_order', 'remove_item', 'create_box', 'delete_box', 'close_box',
-        'add_order_to_box', 'remove_box_item', 'move_status', 'force_complete',
+        'add_order_to_box', 'remove_box_item', 'set_box_item_count',
+        'move_status', 'force_complete',
         'update', 'delete', 'add_sewing_orders', 'scan_bundle_label',
         'cancelled_scan_to_shelf',
     )
@@ -61,7 +62,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
     # это решения по поставке целиком, их принимает администратор.
     ASSEMBLY_ACTIONS = (
         'scan_order', 'remove_item', 'create_box', 'delete_box', 'close_box',
-        'add_order_to_box', 'remove_box_item', 'cancelled_to_shelf', 'add_sewing_orders',
+        'add_order_to_box', 'remove_box_item', 'set_box_item_count',
+        'cancelled_to_shelf', 'add_sewing_orders',
         'scan_bundle_label',
     )
 
@@ -1755,6 +1757,117 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'product': product,
                     'shelfName': shelf_name,
                 }, ensure_ascii=False),
+            }
+
+        if action == 'set_box_item_count':
+            # ИЗМЕНИТЬ КОЛИЧЕСТВО ОДИНАКОВОГО ТОВАРА В КОРОБЕ.
+            #
+            # ЗАЧЕМ. В коробе FBO одного размера лежит по десять-двадцать штук,
+            # и на экране они схлопнуты в строку «12 × Лен 300x255». Поправить
+            # число было НЕЧЕМ: крестик убирал ровно одну вещь, и чтобы из 12
+            # сделать 8, кладовщик жал его четыре раза подряд, каждый раз ожидая
+            # перезагрузку короба. Ошибся на пару штук — считай, пересобрал строку.
+            #
+            # Здесь количество задаётся сразу: сколько убрать — столько и уйдёт,
+            # одним запросом.
+            #
+            # УМЕНЬШАТЬ МОЖНО, УВЕЛИЧИВАТЬ — НЕТ, и это намеренно. Добавить вещь
+            # в короб можно только сканированием её ярлыка: система должна знать,
+            # КАКАЯ именно вещь со склада уехала. Нарисовать «+1» значило бы
+            # списать со склада случайную вещь и разойтись с фактом на полке.
+            box_id = body_data.get('boxId')
+            item_ids = body_data.get('itemIds')
+            remove_count = body_data.get('removeCount')
+            if not box_id or not isinstance(item_ids, list) or not item_ids:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Укажите короб и позиции'})}
+            try:
+                remove_count = int(remove_count)
+            except (TypeError, ValueError):
+                remove_count = 0
+            if remove_count <= 0:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Укажите, сколько штук убрать'})}
+
+            cur.execute(
+                "SELECT s.status, mb.closed_at FROM marketplace_supply_boxes mb "
+                "JOIN marketplace_supplies s ON s.id = mb.supply_id WHERE mb.id = %s",
+                (int(box_id),),
+            )
+            b_row = cur.fetchone()
+            if not b_row:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Короб не найден'})}
+            b_status, b_closed = b_row
+            if b_status not in ('Открытая', 'На сборке'):
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps({'error': 'Из этой поставки уже нельзя убрать товар'})}
+            # Закрытый короб — заклеен, на OZON по нему заведено грузоместо с
+            # этикеткой. Менять состав значит разойтись с документами площадки.
+            if b_closed:
+                return {
+                    'statusCode': 409, 'headers': headers,
+                    'body': json.dumps({
+                        'error': 'Короб закрыт — состав больше не меняется. '
+                                 'Откройте новый короб',
+                    }, ensure_ascii=False),
+                }
+
+            # Берём только позиции ЭТОГО короба: список id приходит с экрана, и
+            # доверять ему нельзя — иначе чужой короб можно разобрать подбором.
+            safe_ids = [int(i) for i in item_ids if str(i).isdigit() or isinstance(i, int)]
+            if not safe_ids:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Некорректные позиции'})}
+            ids_csv = ','.join(str(i) for i in safe_ids)
+            cur.execute(
+                f"SELECT msi.id, msi.goods_warehouse_id, gw.receive_reason, s.type "
+                f"FROM marketplace_supply_items msi "
+                f"JOIN marketplace_supplies s ON s.id = msi.supply_id "
+                f"JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+                f"WHERE msi.id IN ({ids_csv}) AND msi.box_id = {int(box_id)} "
+                f"ORDER BY msi.id DESC"
+            )
+            rows = cur.fetchall()
+            if not rows:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Позиции не найдены в этом коробе'})}
+
+            # Убираем ПОСЛЕДНИЕ добавленные (ORDER BY id DESC): кладовщик
+            # переложил лишнее только что, уйти должно оно, а не то, что
+            # лежало в коробе с начала смены.
+            to_remove = rows[:remove_count]
+            removed = 0
+            for msi_id, goods_id, receive_reason, s_type in to_remove:
+                cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(msi_id)}")
+                # Возврат вещи на склад — та же логика, что в remove_box_item:
+                # сшитое под FBS-заказ возвращается в очередь на отгрузку,
+                # остальное ложится на склад свободным остатком.
+                if s_type == 'FBS' and receive_reason == 'fbs_ready':
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'awaiting_supply' "
+                        f"WHERE id = {int(goods_id)}"
+                    )
+                    return_wb_order_to_accumulator(cur, goods_id)
+                else:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', "
+                        "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                        "shipping_labeled_by_name = NULL, reserved_order_id = NULL, "
+                        f"matched_at = NULL WHERE id = {int(goods_id)}"
+                    )
+                    cur.execute(
+                        "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                        "sewing_status = 'Новый' WHERE fulfilled_from_stock_id = %s",
+                        (int(goods_id),),
+                    )
+                removed += 1
+
+            conn.commit()
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'success': True, 'removed': removed}, ensure_ascii=False),
             }
 
         if action == 'update':
