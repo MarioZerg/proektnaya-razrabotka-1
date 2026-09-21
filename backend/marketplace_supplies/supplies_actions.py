@@ -2308,24 +2308,39 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                 rate_row = cur.fetchone()
                                 rate = float(rate_row[0]) if rate_row else 0
                                 if rate > 0:
-                                    # Оклад за смену — один раз в день. Две смены за день
-                                    # (своя и гостевая в другом цехе) — это разные записи
-                                    # смен, защита по смене их не ловит. От задвоения
-                                    # спасает дневной уникальный индекс, но он бьёт
-                                    # ошибкой и рвёт сборку поставки, поэтому проверяем
-                                    # день заранее.
+                                    # ОКЛАД ЗА СМЕНУ — ОДИН НА ЧЕЛОВЕКА В ДЕНЬ,
+                                    # КАКОЙ БЫ РОЛЬЮ ОН НИ БЫЛ НАЧИСЛЕН.
+                                    #
+                                    # Тип начисления зависит от роли: у кладовщика
+                                    # 'storekeeper_shift', у старшего —
+                                    # 'senior_storekeeper_shift'. Проверка смотрела
+                                    # только на СВОЙ тип, поэтому старший кладовщик
+                                    # получал оклад ДВАЖДЫ: здесь (за сборку
+                                    # поставки) и при закрытии смены — по 1200₽ в
+                                    # одной и той же смене.
+                                    #
+                                    # Поэтому проверяем ЛЮБОЙ оклад за смену: человек
+                                    # отработал один день и получает за него один раз.
+                                    # Тип пишем по его роли, чтобы в отчётах ставка
+                                    # соответствовала должности.
+                                    accrual_type = f'{user_row[0]}_shift'
                                     cur.execute(
                                         "SELECT 1 FROM salary_accruals WHERE user_id = %s "
-                                        "AND type = 'storekeeper_shift' "
+                                        "AND type IN ('storekeeper_shift', 'senior_storekeeper_shift') "
                                         "AND accrued_for = (now() + interval '3 hours')::date",
                                         (int(creator_id),),
                                     )
                                     if not cur.fetchone():
                                         cur.execute(
-                                            f"INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, description) "
-                                            f"VALUES ({creator_id}, 'storekeeper_shift', {rate}, {session_id}, "
-                                            f"'Оклад за смену (сборка поставки #{supply_id})') "
-                                            f"ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING"
+                                            "INSERT INTO salary_accruals "
+                                            "  (user_id, type, amount, shift_session_id, accrued_for, description) "
+                                            "VALUES (%s, %s, %s, %s, (now() + interval '3 hours')::date, %s) "
+                                            "ON CONFLICT (shift_session_id, type) "
+                                            "  WHERE shift_session_id IS NOT NULL DO NOTHING",
+                                            (
+                                                int(creator_id), accrual_type, rate, int(session_id),
+                                                f'Оклад за смену (сборка поставки #{supply_id})',
+                                            ),
                                         )
 
             conn.commit()

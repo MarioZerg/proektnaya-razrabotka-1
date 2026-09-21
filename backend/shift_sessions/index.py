@@ -298,12 +298,30 @@ def accrue_shift_salary(cur, user_id, session_id, session_workshop_id, accrual_d
         cur.execute(f"SELECT {SQL_MSK_TODAY}")
         accrual_day = cur.fetchone()[0]
 
-    # Оклад за смену платим ОДИН раз в день. Две смены за день (своя и гостевая в
-    # другом цехе) — это разные записи смен, и защита по смене их не ловит.
-    cur.execute(
-        "SELECT 1 FROM salary_accruals WHERE user_id = %s AND type = %s AND accrued_for = %s",
-        (int(user_id), accrual_type, accrual_day),
-    )
+    # ОКЛАД ЗА СМЕНУ — ОДИН НА ЧЕЛОВЕКА В ДЕНЬ, ЛЮБОЙ РОЛЬЮ.
+    #
+    # Две смены за день (своя и гостевая в другом цехе) — это разные записи
+    # смен, и защита по смене их не ловит, поэтому смотрим на день.
+    #
+    # Проверять только СВОЙ тип нельзя: у кладовщика оклад пишется как
+    # 'storekeeper_shift', у старшего — 'senior_storekeeper_shift'. Старший
+    # кладовщик получал оклад дважды — за сборку поставки одним типом и при
+    # закрытии смены другим, по 1200₽ в одной смене.
+    #
+    # Оклады за смену взаимоисключающие: отработал день — получил один раз.
+    shift_types = ('storekeeper_shift', 'senior_storekeeper_shift')
+    if accrual_type in shift_types:
+        cur.execute(
+            "SELECT 1 FROM salary_accruals WHERE user_id = %s "
+            "AND type IN ('storekeeper_shift', 'senior_storekeeper_shift') "
+            "AND accrued_for = %s",
+            (int(user_id), accrual_day),
+        )
+    else:
+        cur.execute(
+            "SELECT 1 FROM salary_accruals WHERE user_id = %s AND type = %s AND accrued_for = %s",
+            (int(user_id), accrual_type, accrual_day),
+        )
     if cur.fetchone():
         return False
 
