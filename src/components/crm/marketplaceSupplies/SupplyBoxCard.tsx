@@ -61,6 +61,7 @@ const SupplyBoxCard = ({
   const [orderNumber, setOrderNumber] = useState('');
   const [scanning, setScanning] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Раскрыли короб — сразу ставим курсор в поле сканера, чтобы кладовщик
@@ -317,20 +318,33 @@ const SupplyBoxCard = ({
           {box.stickerUrl && (
             <div className="space-y-1.5">
               {/* Стикер короба от маркетплейса печатаем на наклейке 75×120 — той же, что у WB.
-                  Раньше PDF просто открывался ссылкой и уходил на печать как A4. */}
+                  Раньше PDF просто открывался ссылкой и уходил на печать как A4.
+                  Печать не мгновенная: файл скачивается и перерисовывается в
+                  картинку. Без индикатора кладовщик жмёт кнопку повторно и
+                  получает несколько окон печати подряд. */}
               <Button
                 variant="outline"
                 size="sm"
                 className="w-full"
-                onClick={() =>
-                  printBoxLabelFromUrl(
-                    box.stickerUrl as string,
-                    `Стикер короба №${box.boxNumber}`
-                  )
-                }
+                disabled={printing}
+                onClick={async () => {
+                  setPrinting(true);
+                  try {
+                    await printBoxLabelFromUrl(
+                      box.stickerUrl as string,
+                      `Стикер короба №${box.boxNumber}`,
+                    );
+                  } finally {
+                    setPrinting(false);
+                  }
+                }}
               >
-                <Icon name="Printer" size={14} className="mr-1.5" />
-                Печать стикера короба (75×120)
+                <Icon
+                  name={printing ? 'Loader2' : 'Printer'}
+                  size={14}
+                  className={`mr-1.5 ${printing ? 'animate-spin' : ''}`}
+                />
+                {printing ? 'Готовим стикер…' : 'Печать стикера короба (75×120)'}
               </Button>
               <a
                 href={box.stickerUrl}

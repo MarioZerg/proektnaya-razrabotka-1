@@ -142,25 +142,96 @@ export const printLabelFromUrl = async (url: string, title = 'Стикер от�
 /**
  * Печать стикера короба FBO на наклейке 75×120 мм.
  *
- * OZON отдаёт готовый стикер короба PDF-ссылкой. Раньше её просто открывали в новой
- * вкладке — браузер печатал такой PDF на A4, и наклейка выходила не того размера. Здесь
- * задаём размер страницы явно: короб маркируется той же наклейкой 75×120, что и у WB.
+ * OZON отдаёт готовый стикер короба PDF-ссылкой.
+ *
+ * ПОЧЕМУ НЕ ЧЕРЕЗ <iframe src="…pdf">. Раньше PDF вставлялся вложенным iframe
+ * внутрь печатной страницы — и на печать уходил ПУСТОЙ БЕЛЫЙ ЛИСТ. Браузер
+ * печатает содержимое вложенного PDF-просмотрщика только если тот успел
+ * загрузиться и отрисоваться, а команда печати уходит раньше; в Chrome
+ * вложенные PDF в печать не попадают вовсе.
+ *
+ * Поэтому страницы PDF рисуем сами в картинки (300 dpi) и печатаем их как
+ * обычные изображения — тем же способом, что и ярлыки отправлений.
+ *
+ * В файле от OZON может быть НЕСКОЛЬКО страниц: площадка отдаёт один PDF на
+ * все грузоместа заявки. Печатаем каждую страницу отдельной наклейкой.
  */
-export const printBoxLabelFromUrl = (url: string, title = 'Стикер короба') => {
+export const printBoxLabelFromUrl = async (url: string, title = 'Стикер короба') => {
   if (!url) return;
-  const html = `<!DOCTYPE html>
+
+  const res = await fetch(url);
+  const blob = await res.blob();
+  const base64: string = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
+  // Картинку печатаем как есть — разбирать через pdf.js нечего.
+  const isPdf = atob(base64.slice(0, 8)).startsWith('%PDF');
+  if (!isPdf) {
+    const type = blob.type || 'image/png';
+    printHtmlInIframe(boxLabelHtml(title, [`data:${type};base64,${base64}`]));
+    return;
+  }
+
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+
+  const pdfjs = await import('pdfjs-dist');
+  const workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
+  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+
+  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+  const scale = 300 / 72;
+  const images: string[] = [];
+
+  for (let n = 1; n <= pdf.numPages; n += 1) {
+    const page = await pdf.getPage(n);
+    // Наклейка вертикальная (75×120). Если страница пришла горизонтальной —
+    // поворачиваем, иначе стикер займёт треть наклейки и коды не прочитаются.
+    const base = page.getViewport({ scale });
+    const viewport = base.width > base.height
+      ? page.getViewport({ scale, rotation: (page.rotate + 90) % 360 })
+      : base;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) continue;
+    // Белая подложка: фон в PDF прозрачный, без неё на печати выходит чёрное.
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    images.push(canvas.toDataURL('image/png'));
+  }
+
+  if (images.length === 0) return;
+  printHtmlInIframe(boxLabelHtml(title, images));
+};
+
+/** Печатная страница наклейки короба 75×120: по одной картинке на лист. */
+const boxLabelHtml = (title: string, images: string[]) => `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
   <title>${title}</title>
   <style>
     @page { size: 75mm 120mm; margin: 0; }
-    html, body { margin: 0; padding: 0; height: 100%; }
-    iframe { width: 100%; height: 100%; border: 0; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    img {
+      width: 75mm;
+      height: 120mm;
+      display: block;
+      object-fit: contain;
+      page-break-after: always;
+    }
+    img:last-child { page-break-after: auto; }
   </style>
 </head>
-<body><iframe src="${url}"></iframe></body>
+<body>${images.map((src) => `<img src="${src}" alt="${title}" />`).join('')}</body>
 </html>`;
-
-  printHtmlInIframe(html);
-};

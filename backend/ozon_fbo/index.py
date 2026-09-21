@@ -1,6 +1,8 @@
 import base64
+import io
 import json
 import os
+import re
 import time
 import uuid
 import urllib.request
@@ -505,6 +507,63 @@ def download_file(url: str) -> bytes:
         return r.read()
 
 
+def split_label_pages(pdf_bytes: bytes) -> dict:
+    """Режет PDF с наклейками на страницы и раскладывает по грузоместам.
+
+    ЗАЧЕМ. OZON не умеет отдавать наклейку на ОДНО грузоместо: сколько бы
+    cargo_ids мы ни передали в /v1/cargoes-label/create, в ответ приходит PDF
+    со ВСЕМИ грузоместами заявки — по странице на каждое. Сохранив такой файл
+    коробу целиком, кладовщик при печати получает пачку чужих наклеек.
+
+    На каждой странице крупно напечатан ID грузового места. По нему и
+    раскладываем: читаем текст страницы, достаём длинное число и считаем его
+    номером грузоместа.
+
+    Возвращает {cargo_id: pdf_одной_страницы}. Пустой словарь — разобрать не
+    вышло (сменился формат наклейки), вызывающий код сохранит файл как есть.
+    """
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except Exception:
+        return {}
+
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+    except Exception:
+        return {}
+
+    result = {}
+    for page in reader.pages:
+        try:
+            text = page.extract_text() or ''
+        except Exception:
+            continue
+        # ID грузоместа — длинное число (19 знаков). На наклейке оно напечатано
+        # ДВАЖДЫ: сверху с пробелом-разделителем («1000000000059 818626») и ниже
+        # целиком под штрихкодом. Читая страницу подряд, эти два вхождения
+        # сливаются в одно число двойной длины, поэтому берём ПОСЛЕДНИЕ 19 цифр
+        # найденной последовательности — это и есть сам номер.
+        cargo_id = None
+        for chunk in sorted(re.findall(r'[\d\s]{15,}', text), key=len, reverse=True):
+            bare = re.sub(r'\D', '', chunk)
+            if len(bare) < 15:
+                continue
+            # Номер повторён дважды — оставляем одну половину.
+            half = len(bare) // 2
+            if len(bare) % 2 == 0 and bare[:half] == bare[half:]:
+                bare = bare[:half]
+            cargo_id = int(bare)
+            break
+        if cargo_id is None or cargo_id in result:
+            continue
+        writer = PdfWriter()
+        writer.add_page(page)
+        buf = io.BytesIO()
+        writer.write(buf)
+        result[cargo_id] = buf.getvalue()
+    return result
+
+
 def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     """Закрывает короба поставки OZON FBO: создаёт грузоместа (cargoes) на стороне OZON из
     состава каждого короба (группировка по ozon_sku), затем получает PDF-этикетки коробов и
@@ -763,29 +822,61 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
                 except Exception:
                     pdf_bytes = None
         if pdf_bytes:
-            try:
-                pdf = pdf_bytes
-                if one_box_id:
-                    # Этикетка ОДНОГО короба — привязываем только к нему. Раньше
-                    # ссылка проставлялась всем коробам поставки разом, и после
-                    # закрытия второго короба на первом оказывался чужой PDF.
-                    url = upload_pdf(pdf, f'supply-{supply_id}-box-{one_box_id}')
-                    cur.execute(
-                        "UPDATE marketplace_supply_boxes SET sticker_url = %s, "
-                        "  sticker_name = %s WHERE id = %s",
-                        (url, f'Стикер короба #{one_box_id}.pdf', int(one_box_id)),
-                    )
-                    stickers_saved = 1
-                else:
-                    url = upload_pdf(pdf, f'supply-{supply_id}')
-                    cur.execute(
-                        "UPDATE marketplace_supply_boxes SET sticker_url = %s, sticker_name = %s "
-                        "WHERE supply_id = %s AND ozon_cargo_id IS NOT NULL",
-                        (url, f'Этикетки коробов #{supply_id}.pdf', int(supply_id)),
-                    )
-                    stickers_saved = len(cargo_ids)
-            except Exception:
-                pass
+            # OZON ИГНОРИРУЕТ cargo_ids И ОТДАЁТ ЭТИКЕТКИ ВСЕЙ ЗАЯВКИ.
+            #
+            # Мы просим наклейку на один короб, а в ответ приходит PDF со всеми
+            # грузоместами поставки — по странице на каждое. Если сохранить
+            # такой файл коробу целиком, кладовщик печатает пачку чужих
+            # наклеек и клеит их наугад.
+            #
+            # Поэтому режем PDF по страницам и раскладываем: на каждой
+            # странице напечатан ID грузового места — по нему и находим,
+            # какому коробу она принадлежит.
+            pages = split_label_pages(pdf_bytes)
+            saved_ids = set()
+            for cargo_id, page_pdf in pages.items():
+                cur.execute(
+                    "SELECT id, box_number FROM marketplace_supply_boxes "
+                    "WHERE supply_id = %s AND ozon_cargo_id = %s",
+                    (int(supply_id), int(cargo_id)),
+                )
+                b_row = cur.fetchone()
+                if not b_row:
+                    continue
+                try:
+                    url = upload_pdf(page_pdf, f'supply-{supply_id}-box-{b_row[0]}')
+                except Exception:
+                    continue
+                cur.execute(
+                    "UPDATE marketplace_supply_boxes SET sticker_url = %s, "
+                    "  sticker_name = %s WHERE id = %s",
+                    (url, f'Стикер короба №{b_row[1]}.pdf', int(b_row[0])),
+                )
+                saved_ids.add(int(b_row[0]))
+            stickers_saved = len(saved_ids)
+
+            # Разрезать не вышло (формат файла изменился) — сохраняем как есть,
+            # иначе кладовщик останется совсем без наклейки.
+            if not stickers_saved:
+                try:
+                    if one_box_id:
+                        url = upload_pdf(pdf_bytes, f'supply-{supply_id}-box-{one_box_id}')
+                        cur.execute(
+                            "UPDATE marketplace_supply_boxes SET sticker_url = %s, "
+                            "  sticker_name = %s WHERE id = %s",
+                            (url, f'Стикер короба #{one_box_id}.pdf', int(one_box_id)),
+                        )
+                        stickers_saved = 1
+                    else:
+                        url = upload_pdf(pdf_bytes, f'supply-{supply_id}')
+                        cur.execute(
+                            "UPDATE marketplace_supply_boxes SET sticker_url = %s, sticker_name = %s "
+                            "WHERE supply_id = %s AND ozon_cargo_id IS NOT NULL",
+                            (url, f'Этикетки коробов #{supply_id}.pdf', int(supply_id)),
+                        )
+                        stickers_saved = len(cargo_ids)
+                except Exception:
+                    pass
     conn.commit()
 
     return _resp(200, {

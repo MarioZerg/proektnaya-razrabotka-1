@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -61,16 +61,16 @@ const SupplyBoxesSection = ({
   onDeleteBox,
   onCloseBox,
 }: SupplyBoxesSectionProps) => {
+  // ВСЕ КОРОБА ЗАКРЫТЫ, ПОКА КЛАДОВЩИК САМ НЕ ОТКРОЕТ НУЖНЫЙ.
+  //
+  // Раньше экран сам раскрывал последний незакрытый короб — «чтобы сразу
+  // пикать». Но сканер стреляет в то поле, где стоит курсор, и кладовщик,
+  // зайдя на экран с вещью в руках, отправлял её в короб, который открылся
+  // САМ, а не который он выбрал. Товар уезжал не туда, а заметно это только
+  // при закрытии короба.
+  //
+  // Выбор короба — осознанное действие: сначала открыл нужный, потом пикаешь.
   const [openBoxId, setOpenBoxId] = useState<number | null>(null);
-
-  // Сам открываем тот короб, который сейчас набивают: последний незакрытый.
-  // Кладовщик заходит на экран и сразу пикает, не ища, куда нажать.
-  // Трогаем только первый заход (openBoxId ещё пуст) — дальше выбор за человеком.
-  useEffect(() => {
-    if (openBoxId !== null || !canEdit) return;
-    const active = [...supply.boxes].reverse().find((b) => !b.closedAt);
-    if (active) setOpenBoxId(active.id);
-  }, [supply.boxes, canEdit, openBoxId]);
 
   const closedCount = supply.boxes.filter((b) => b.closedAt).length;
   const totalItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
