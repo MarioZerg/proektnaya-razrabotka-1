@@ -1334,12 +1334,40 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # Поэтому сортировка: сначала вещь, отложенная под заказ ИМЕННО
                 # этой поставки, затем любая отложенная под поставку, и лишь
                 # потом свободный остаток со склада.
+                # ВЕЩЬ ЖИВОГО ЗАКАЗА FBS В КОРОБ FBO НЕ ОТДАЁМ.
+                #
+                # Это главная защита этого запроса. Вещи одного артикула
+                # физически неотличимы, и подбор искал ЛЮБУЮ подходящую по
+                # коду товара. Под это условие попадала и вещь, сшитая под
+                # конкретное отправление FBS: покупатель ждёт её, ярлык
+                # отправления наклеен, заказ жив — а она молча уезжала в
+                # короб FBO на склад площадки. Покупатель не получал заказ,
+                # мы — недостачу по FBS и лишнюю штуку в заявке FBO.
+                #
+                # Так ушли 0112212799-0220-1 и 47189664-0235-1: оба «Новый»,
+                # ozon_status awaiting_deliver, никем не отменённые.
+                #
+                # Отдаём в FBO только то, что действительно свободно:
+                #   * вещь БЕЗ живого заказа-владельца (свободный остаток), или
+                #   * вещь, закреплённая за заказом ЭТОЙ ЖЕ заявки FBO.
+                # Вещь мёртвого FBS (отменён / уже уехал) тоже свободна — её
+                # покупатель не ждёт, и она законно идёт в общий остаток.
+                owner_alive = (
+                    "(COALESCE(own.status, '') NOT IN "
+                    "     ('Отменён', 'Отгружен', 'Доставлен') "
+                    " AND COALESCE(own.ozon_status, '') NOT IN "
+                    "     ('delivering', 'delivered', 'cancelled', "
+                    "      'not_accepted', 'driver_pickup'))"
+                )
                 cur.execute(
                     "SELECT gw.id, gw.status, gw.storage_barcode, "
                     "       o.material, o.width, o.height, o.product "
                     "FROM goods_warehouse gw "
                     "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
                     "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                    # Заказ-владелец вещи: тот, под который она реально едет.
+                    "LEFT JOIN orders own "
+                    "       ON own.id = COALESCE(gw.reserved_order_id, gw.order_id) "
                     # Вещь должна лежать на складе и быть свободной от поставок.
                     "WHERE gw.status IN ('in_stock', 'awaiting_supply', 'picking') "
                     "  AND gw.shipped_at IS NULL "
@@ -1348,6 +1376,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "                  WHERE si.goods_warehouse_id = gw.id "
                     "                    AND COALESCE(s2.status, '') "
                     "                        NOT IN ('Выполнена', 'Отменена')) "
+                    # Чужое живое отправление не трогаем — см. пояснение выше.
+                    "  AND (COALESCE(own.order_type, '') = 'FBO' "
+                    f"       OR NOT {owner_alive}) "
                     "  AND ("
                     f"       upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
                     f"    OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
@@ -1360,6 +1391,48 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "LIMIT 1"
                 )
                 fbo_row = cur.fetchone()
+
+                # Подходящая вещь есть, но она занята живым заказом FBS.
+                # Молчать нельзя: кладовщик держит пакет в руках и должен
+                # понять, что эту штуку в короб класть не надо, — иначе он
+                # решит, что сканер не сработал, и попробует ещё раз.
+                if not fbo_row:
+                    cur.execute(
+                        "SELECT own.order_number, own.order_type, o.product "
+                        "FROM goods_warehouse gw "
+                        "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+                        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                        "JOIN orders own "
+                        "     ON own.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+                        "WHERE gw.status IN ('in_stock', 'awaiting_supply', 'picking') "
+                        "  AND gw.shipped_at IS NULL "
+                        "  AND COALESCE(own.order_type, '') <> 'FBO' "
+                        f"  AND {owner_alive} "
+                        "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items si "
+                        "                  JOIN marketplace_supplies s2 ON s2.id = si.supply_id "
+                        "                  WHERE si.goods_warehouse_id = gw.id "
+                        "                    AND COALESCE(s2.status, '') "
+                        "                        NOT IN ('Выполнена', 'Отменена')) "
+                        "  AND ("
+                        f"       upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}) "
+                        "  ) LIMIT 1"
+                    )
+                    busy_fbs = cur.fetchone()
+                    if busy_fbs:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'«{busy_fbs[2] or "Товар"}» — эта вещь сшита '
+                                         f'под заказ покупателя {busy_fbs[0]} '
+                                         f'({busy_fbs[1]}) и ждёт отгрузки ему. '
+                                         f'В короб FBO она не едет: отложите её '
+                                         f'в контейнер FBS',
+                            }, ensure_ascii=False),
+                        }
 
                 # Товар в справочнике есть, но свободных вещей на складе нет —
                 # это другая ситуация, чем «код не найден», и ответ должен
