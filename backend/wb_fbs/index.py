@@ -697,12 +697,20 @@ def _close_finished_supplies(cur, conn, api_key, use_sandbox, shop_id=None):
 
         # Вещи уехали — со склада их снимаем, иначе кладовщик ищет на полках то,
         # чего там уже нет.
+        #
+        # Снимаем ТОЛЬКО те вещи, что реально служат этим заказам сейчас. Условие
+        # «reserved_order_id IN (…) ИЛИ order_id IN (…)» цепляло и вещь, которая
+        # когда-то шилась под закрытый WB-заказ, а потом ушла свободным остатком
+        # в другую поставку (например, в заявку OZON FBO). Такая вещь физически
+        # лежит у нас в коробе — объявлять её отгруженной нельзя.
         if ids:
             ids_csv = ','.join(str(int(i)) for i in ids)
             cur.execute(
                 f"UPDATE goods_warehouse SET status = 'shipped', shipped_at = now() "
                 f"WHERE status <> 'shipped' "
-                f"  AND (reserved_order_id IN ({ids_csv}) OR order_id IN ({ids_csv}))"
+                f"  AND (CASE WHEN reserved_order_id IS NOT NULL "
+                f"            THEN reserved_order_id IN ({ids_csv}) "
+                f"            ELSE order_id IN ({ids_csv}) END)"
             )
 
         cur.execute(
@@ -871,6 +879,21 @@ def _drop_from_accumulator(cur, order_id):
     за товаром, которого нет, и не понимает, куда он делся.
 
     Складскую запись при этом помечаем отгруженной — вещь покинула склад.
+
+    ВЕЩЬ ТРОГАЕМ, ТОЛЬКО ЕСЛИ ОНА ЕЩЁ СЛУЖИТ ЭТОМУ ЗАКАЗУ.
+
+    У вещи два заказа: тот, под который её сшили (order_id), и тот, под который
+    она едет сейчас (reserved_order_id). Второй важнее — он и решает судьбу вещи.
+
+    Раньше условие было «order_id = заказ ИЛИ reserved_order_id = заказ», без
+    оглядки на резерв. Из-за этого отмена старого WB-заказа помечала отгруженной
+    вещь, которая давно живёт другой жизнью: отменилась WB-продажа → вещь легла
+    на полку свободным остатком → менеджер набрал её в заявку OZON FBO. Вещь
+    стояла в коробе несобранной поставки FBO, а WB-планировщик объявлял её
+    уехавшей — в списке товаров поставки появлялся «Отгружен» посреди сборки.
+
+    Поэтому: есть резерв — вещь принадлежит ТОЛЬКО заказу из резерва. Нет
+    резерва — смотрим заказ, под который сшили.
     """
     cur.execute(
         "DELETE FROM wb_supply_orders w USING marketplace_supplies s "
@@ -880,7 +903,8 @@ def _drop_from_accumulator(cur, order_id):
     )
     cur.execute(
         "UPDATE goods_warehouse SET status = 'shipped', shipped_at = COALESCE(shipped_at, now()) "
-        "WHERE (order_id = %s OR reserved_order_id = %s) "
+        "WHERE (CASE WHEN reserved_order_id IS NOT NULL "
+        "            THEN reserved_order_id = %s ELSE order_id = %s END) "
         "AND status IN ('picking', 'awaiting_supply')",
         (int(order_id), int(order_id)),
     )
