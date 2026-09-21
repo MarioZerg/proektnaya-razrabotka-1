@@ -232,18 +232,24 @@ const SupplyItemsSection = ({
   );
 
   // ============================================================
-  // FBO: КАРТОЧКА ПОКАЗЫВАЕТ КОРОБА, А НЕ ПРОСТЫНЮ ИЗ ВЕЩЕЙ.
+  // FBO: КОРОБА ЖИВУТ ТОЛЬКО НА ЭКРАНЕ СБОРКИ.
   // ============================================================
   //
-  // Раньше здесь висел плоский список всех позиций поставки — на FBO это
-  // сотни строк, через которые надо было прокручивать всю страницу. При этом
-  // вещь в FBO обезличена: её номер заказа кладовщику ничего не говорит, он
-  // работает коробами.
+  // Сначала здесь висел плоский список всех позиций поставки — на FBO это
+  // сотни строк. Вещь в FBO обезличена: её номер заказа кладовщику ничего не
+  // говорит, он работает коробами. Список заменили плашками коробов.
   //
-  // Поэтому для FBO показываем сводку по коробам: сколько уложено, сколько
-  // коробов закрыто. Сам состав — внутри короба на экране сборки, где его и
-  // набивают. Полный список остаётся доступен под раскрытием — он нужен
-  // менеджеру для разбора, но не должен занимать экран по умолчанию.
+  // Но плашки повторяли экран сборки один в один: те же короба, те же
+  // количества, те же значки — только нажать на них было нельзя, каждая
+  // просто вела на сборку. Один и тот же список в двух местах путает: человек
+  // видит короба в карточке, пытается работать здесь и не понимает, почему
+  // короб не раскрывается.
+  //
+  // Поэтому короба остались в ОДНОМ месте — на экране сборки, где их
+  // набивают. Здесь только итог одной строкой: сколько уложено и сколько
+  // коробов закрыто, чтобы менеджер видел состояние, не уходя со страницы.
+  // Полный список позиций — под раскрытием: он нужен для разбора конкретной
+  // вещи, но занимать экран по умолчанию не должен.
   if (supply.type === 'FBO') {
     const boxedItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
     const closedBoxes = supply.boxes.filter((b) => b.closedAt).length;
@@ -268,59 +274,51 @@ const SupplyItemsSection = ({
             сканируются вещи
           </p>
         ) : (
-          <div className="space-y-2">
-            {/* Плашка на каждый короб: номер, количество и состояние. Это всё,
-                что нужно видеть в карточке поставки — набивают короба на
-                отдельном экране сборки. */}
-            {supply.boxes.map((box) => (
-              <button
-                key={box.id}
-                type="button"
-                onClick={onNavigateAssemble}
-                className="flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left hover:bg-muted/50"
-              >
-                <Icon
-                  name={box.closedAt ? 'PackageCheck' : 'Package'}
-                  size={18}
-                  className={`shrink-0 ${
-                    box.closedAt ? 'text-emerald-600' : 'text-muted-foreground'
-                  }`}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold">Короб №{box.boxNumber}</span>
-                    <Badge variant={box.items.length ? 'default' : 'outline'}>
-                      {box.items.length} шт.
-                    </Badge>
-                    {box.closedAt && (
-                      <Badge variant="secondary" className="text-[10px]">Закрыт</Badge>
-                    )}
-                    {supply.marketplace === 'OZON' && box.closedAt && (
-                      box.ozonCargoId ? (
-                        <Badge className="bg-emerald-600 text-[10px] text-white hover:bg-emerald-600">
-                          На OZON #{box.ozonCargoId}
-                        </Badge>
-                      ) : (
-                        <Badge className="bg-amber-600 text-[10px] text-white hover:bg-amber-600">
-                          Не ушёл на OZON
-                        </Badge>
-                      )
-                    )}
-                  </div>
-                  <p className="truncate font-mono-tech text-xs text-muted-foreground">
-                    {box.barcode}
-                  </p>
-                </div>
-                <Icon name="ChevronRight" size={16} className="shrink-0 text-muted-foreground" />
-              </button>
-            ))}
-
-            <p className="text-sm text-muted-foreground">
-              Всего уложено: <b>{boxedItems}</b>
-              {closedBoxes > 0 && ` · закрыто коробов: ${closedBoxes} из ${supply.boxes.length}`}
-              {looseItems > 0 && ` · вне коробов: ${looseItems}`}
-            </p>
-          </div>
+          /* Итог одной строкой вместо списка коробов: работают с ними на
+             экране сборки, здесь важно только состояние поставки. */
+          <button
+            type="button"
+            onClick={onNavigateAssemble}
+            className="flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left hover:bg-muted/50"
+          >
+            <Icon
+              name={closedBoxes === supply.boxes.length ? 'PackageCheck' : 'Package'}
+              size={18}
+              className={`shrink-0 ${
+                closedBoxes === supply.boxes.length
+                  ? 'text-emerald-600'
+                  : 'text-muted-foreground'
+              }`}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold">
+                  Коробов: {supply.boxes.length}
+                </span>
+                <Badge variant={boxedItems ? 'default' : 'outline'}>
+                  {boxedItems} шт. уложено
+                  {supply.totalQuantityMarketplace
+                    ? ` из ${supply.totalQuantityMarketplace}`
+                    : ''}
+                </Badge>
+                {closedBoxes > 0 && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    Закрыто {closedBoxes} из {supply.boxes.length}
+                  </Badge>
+                )}
+                {/* Вещи мимо коробов — это расхождение, его видно сразу. */}
+                {looseItems > 0 && (
+                  <Badge className="bg-amber-600 text-[10px] text-white hover:bg-amber-600">
+                    Вне коробов: {looseItems}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Открыть экран сборки — там короба, сканер и печать стикеров
+              </p>
+            </div>
+            <Icon name="ChevronRight" size={16} className="shrink-0 text-muted-foreground" />
+          </button>
         )}
 
         {/* Полный список позиций — под раскрытием. Менеджеру он нужен, чтобы
