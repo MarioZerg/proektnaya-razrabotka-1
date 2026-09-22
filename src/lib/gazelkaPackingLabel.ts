@@ -29,18 +29,38 @@ const dateHuman = (date: string | null | undefined): string => {
 
 /**
  * Строит строку штрихкода короба в формате Газельки, например:
- * IDO=006632;IDZ=00335999;IDS=00005;IDM=00041;PAL=000;BOX=001;DTS=20260803;DTO=20260804;CAR=1;PLT=1
+ * IDO=006632;IDZ=00335999;IDS=00005;IDM=00001;PAL=000;BOX=001;DTS=20260803;DTO=20260804;CAR=1;PLT=1
+ *
+ * ОТКУДА БЕРУТСЯ ЗНАЧЕНИЯ.
+ * Большую часть отдаёт API Газельки (my-plans): IDO — id организации (on_behalf),
+ * IDZ — номер заявки, PAL — паллеты, DTO — дата поставки, CAR — забор Газелькой.
+ *
+ * IDM — код маркетплейса из их же справочника (/descriptions: 1=Ozon, 2=Яндекс,
+ * 4=WildBerries…). Раньше его вбивали руками, хотя заявка всегда приносит
+ * marketplace_id — и человек мог ошибиться или оставить ноль. Теперь берём из
+ * заявки, а ручное поле оставлено как запасной путь: если менеджер всё же ввёл
+ * своё значение, оно главнее — бывают случаи, когда Газелька просит другой код.
+ *
+ * IDS — код склада поставки. Его в API нет ни в каком виде (эндпоинта складов у
+ * Газельки тоже нет), поэтому он остаётся ручным: менеджер вводит его на карточке
+ * поставки, уточнив у Газельки. Пока не введён — печать листов заблокирована.
  */
 export const buildBarcodeValue = (data: PackingLabelData, boxNumber: number): string => {
   const { plan, supply } = data;
+  // Код маркетплейса: ручной ввод важнее, иначе — из заявки Газельки.
+  const idm = supply.gazelkaIdm || plan.marketplaceId || 0;
+  // Дата отгрузки: в заявке поля route.date может не быть (Газелька отдаёт его не
+  // всегда), тогда подставляем плановую дату отгрузки из нашей поставки — иначе в
+  // штрихкод уходили нули, и склад не понимал, к какому рейсу относится короб.
+  const shipDate = plan.shipDate || supply.shipToGazelkaAt || null;
   const parts = [
     `IDO=${pad(plan.onBehalf, 6)}`,
     `IDZ=${pad(plan.id, 8)}`,
     `IDS=${pad(supply.gazelkaIds, 5)}`,
-    `IDM=${pad(supply.gazelkaIdm, 5)}`,
+    `IDM=${pad(idm, 5)}`,
     `PAL=${pad(plan.pallets, 3)}`,
     `BOX=${pad(boxNumber, 3)}`,
-    `DTS=${dateCompact(plan.shipDate)}`,
+    `DTS=${dateCompact(shipDate)}`,
     `DTO=${dateCompact(plan.deliveryDate)}`,
     `CAR=${plan.cargoPickup ? 1 : 0}`,
     `PLT=${plan.palleting ? 1 : 0}`,

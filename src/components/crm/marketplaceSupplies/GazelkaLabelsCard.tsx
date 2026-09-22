@@ -44,10 +44,11 @@ const GazelkaLabelsCard = ({ supply }: GazelkaLabelsCardProps) => {
 
   if (!supply.gazelkaPlanId) return null;
 
-  // Штрихкод листа собирается из номеров IDS/IDM — их менеджер заполняет
-  // в карточке поставки. Без них лист напечатается с нулями, и перевозчик
-  // его не опознает: честнее сказать об этом сразу.
-  const ready = !!supply.gazelkaIds && !!supply.gazelkaIdm;
+  // Ждём только код склада (IDS): его в API Газельки нет ни в каком виде, менеджер
+  // вводит его руками на карточке поставки. Всё остальное штрихкод берёт из заявки —
+  // в том числе IDM (код маркетплейса), который раньше тоже требовали вводить.
+  // Без IDS лист печатается с нулями, и перевозчик его не опознаёт.
+  const ready = !!supply.gazelkaIds;
   const boxesCount = supply.boxes.length || plan?.boxes || 1;
 
   const handlePrint = async () => {
@@ -80,7 +81,7 @@ const GazelkaLabelsCard = ({ supply }: GazelkaLabelsCardProps) => {
               ? `Заявка №${supply.gazelkaPlanId} · ${boxesCount} ${
                   boxesCount === 1 ? 'лист' : 'листов'
                 } — по одному на короб. Наклейте на короба перед отгрузкой`
-              : 'Менеджер ещё не заполнил номера IDS/IDM по заявке — без них штрихкод листа не соберётся'}
+              : 'Менеджер ещё не заполнил код склада (IDS) по заявке — без него штрихкод листа не соберётся'}
           </p>
         </div>
         <Button

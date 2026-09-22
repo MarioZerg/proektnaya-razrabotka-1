@@ -218,7 +218,7 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
             {isManager && (
               <div className="space-y-1.5">
                 <Label className="text-xs">
-                  Коды склада для штрихкода (IDS и IDM) — уточните в Газельке, если стикеры не считываются
+                  Код склада для штрихкода (IDS) — единственное, чего нет в API Газельки
                 </Label>
                 <div className="flex flex-wrap items-center gap-2">
                   <Input
@@ -228,12 +228,14 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                     onChange={(e) => setIds(e.target.value)}
                     placeholder="IDS"
                   />
+                  {/* IDM подставляется сам из заявки (marketplace_id), поле нужно только
+                      на случай, когда Газелька просит другой код — тогда ввод главнее. */}
                   <Input
                     type="number"
                     className="w-24"
                     value={idm}
                     onChange={(e) => setIdm(e.target.value)}
-                    placeholder="IDM"
+                    placeholder={linkedPlan?.marketplaceId ? `IDM (авто: ${linkedPlan.marketplaceId})` : 'IDM'}
                   />
                   <Button
                     variant="outline"
