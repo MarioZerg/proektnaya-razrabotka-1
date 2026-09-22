@@ -104,10 +104,20 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
     }
   };
 
-  const handlePrintOurLabels = () => {
+  const handlePrintOurLabels = async () => {
     if (!linkedPlan) return;
     const boxesCount = linkedPlan.boxes || supply.boxes.length || 1;
-    printGazelkaLabels({ plan: linkedPlan, supply, boxesCount });
+    try {
+      // Коды рисуются асинхронно — без await ошибка ушла бы в пустоту, и на принтер
+      // отправились бы листы без кодов.
+      await printGazelkaLabels({ plan: linkedPlan, supply, boxesCount });
+    } catch (e) {
+      toast({
+        title: 'Не удалось напечатать листы',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    }
   };
 
   return (

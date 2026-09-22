@@ -56,7 +56,9 @@ const GazelkaLabelsCard = ({ supply }: GazelkaLabelsCardProps) => {
     setPrinting(true);
     try {
       const { printGazelkaLabels } = await import('@/lib/gazelkaPackingLabel');
-      printGazelkaLabels({ plan, supply, boxesCount });
+      // Ждём: коды рисуются асинхронно, и без await ошибка генерации потерялась бы —
+      // кладовщик увидел бы «готово», а на принтер ушли бы пустые листы.
+      await printGazelkaLabels({ plan, supply, boxesCount });
     } catch (e) {
       toast({
         title: 'Не удалось напечатать листы',

@@ -1,4 +1,4 @@
-import JsBarcode from 'jsbarcode';
+import QRCode from 'qrcode';
 import type { GazelkaPlan } from '@/lib/gazelkaApi';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 
@@ -68,54 +68,52 @@ export const buildBarcodeValue = (data: PackingLabelData, boxNumber: number): st
   return parts.join(';');
 };
 
-const svgBarcode = (value: string): string => {
-  const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  JsBarcode(el, value, {
-    format: 'CODE128',
-    width: 1,
-    height: 90,
-    displayValue: false,
-    margin: 0,
+/**
+ * Рисует QR-код с данными короба.
+ *
+ * ПОЧЕМУ QR, А НЕ ПОЛОСКИ. В строке Газельки около сотни символов. В линейном
+ * Code128 это примерно 1000 модулей: чтобы сканер уверенно читал, на модуль нужно
+ * хотя бы 0,25 мм, то есть код должен быть около 254 мм в ширину. Этикетка даёт
+ * максимум 112 мм — код физически не помещался.
+ *
+ * Пока его пытались уместить, он печатался сплюснутым: штрихи сливались в серую
+ * полосу, и сканер не брал их вовсе (ровно это видно на этикетке с заявкой 351229).
+ * Вёрсткой это не лечится — данных просто больше, чем помещается в линейный код.
+ *
+ * QR хранит те же данные в квадрате: при 28 мм на модуль приходится около 0,5 мм,
+ * вчетверо больше необходимого. Плюс встроенная коррекция ошибок — код читается,
+ * даже если этикетку потёрли или заклеили скотчем на складе.
+ *
+ * Уровень коррекции Q (~25% потерь) выбран намеренно: короба едут в кузове,
+ * этикетки трутся друг о друга, и запас здесь важнее компактности.
+ */
+const qrCode = async (value: string): Promise<string> =>
+  QRCode.toDataURL(value, {
+    errorCorrectionLevel: 'Q',
+    margin: 1,
+    width: 600,
+    color: { dark: '#000000', light: '#ffffff' },
   });
-
-  // ШТРИХКОД ТЯНЕМ ПО ШИРИНЕ ЭТИКЕТКИ, А НЕ ПО ВЫСОТЕ.
-  //
-  // В строке Газельки около сотни символов — это ~1025 модулей Code128. При высоте
-  // 21 мм натуральная ширина такого кода выходит под 240 мм, вдвое шире самой
-  // этикетки: он вылезал за поля и обрезался при печати.
-  //
-  // Раньше его пытался удержать max-width: 100%. Но у SVG с заданной высотой и
-  // auto-шириной это не уменьшает код пропорционально, а СЖИМАЕТ его по горизонтали
-  // сильнее, чем по вертикали. Узкие штрихи сливались, и сканер переставал читать —
-  // то самое «стикеры не считываются», из-за которого коды IDS/IDM считали неверными.
-  //
-  // Поэтому убираем жёсткие размеры и ставим viewBox с preserveAspectRatio="none":
-  // теперь вёрстка сама растягивает код ровно на ширину этикетки. Масштаб по
-  // горизонтали одинаков для всех штрихов, их пропорции сохраняются — код читается.
-  // Высота при этом задаётся отдельно и на читаемость не влияет.
-  const w = el.getAttribute('width') || '1000';
-  const h = el.getAttribute('height') || '90';
-  el.setAttribute('viewBox', `0 0 ${w} ${h}`);
-  el.setAttribute('preserveAspectRatio', 'none');
-  el.removeAttribute('width');
-  el.removeAttribute('height');
-  return new XMLSerializer().serializeToString(el);
-};
 
 const esc = (s: string | null | undefined): string =>
   String(s ?? '—').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
 
 /** Открывает окно печати с упаковочными листами Газельки — по одному листу на короб. */
-export const printGazelkaLabels = (data: PackingLabelData): void => {
+export const printGazelkaLabels = async (data: PackingLabelData): Promise<void> => {
   const { plan, supply, boxesCount } = data;
   const total = Math.max(1, boxesCount);
   // Абсолютный URL логотипа — окно печати живёт на about:blank, относительный путь не сработает.
   const logoUrl = `${window.location.origin}/gazelka-logo.jpg`;
 
-  const pages = Array.from({ length: total }, (_, i) => {
-    const boxNo = i + 1;
-    const bc = buildBarcodeValue(data, boxNo);
-    return `
+  // Коды рисуем заранее, до открытия окна: QR генерируется асинхронно, а вставлять
+  // картинки в уже открытое окно печати нельзя — браузер вызовет print() раньше, чем
+  // коды появятся, и часть этикеток уйдёт на принтер пустыми.
+  const pages = (
+    await Promise.all(
+      Array.from({ length: total }, async (_, i) => {
+        const boxNo = i + 1;
+        const qr = await qrCode(buildBarcodeValue(data, boxNo));
+        return `
       <div class="label">
         <table class="sheet">
           <tr><td class="k">№ заявки</td><td class="v">${esc(String(plan.id))}</td></tr>
@@ -124,18 +122,21 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
           <tr><td class="k">Дата поставки:</td><td class="v big">${dateHuman(plan.deliveryDate)}</td></tr>
           <tr><td class="k">Маркетплейс:</td><td class="v">${esc(plan.marketplaceLabel)}</td></tr>
           <tr><td class="k">№ пост. на маркетплейсе:</td><td class="v">${esc(supply.supplyNumber)}</td></tr>
-          <tr class="codeRow">
-            <td class="codeCell" colspan="2">
-              <img class="logo" src="${logoUrl}" alt="Газелька" />
-              <div class="barcode">${svgBarcode(bc)}</div>
-            </td>
-          </tr>
           <tr><td class="k">Клиент:</td><td class="v">${esc(supply.gazelkaClientName)}</td></tr>
           <tr><td class="k">Телефон:</td><td class="v">${esc(supply.gazelkaClientPhone)}</td></tr>
-          <tr><td class="k">Порядковый номер короба:</td><td class="v">${boxNo} / ${total} (Всего: ${esc(String(plan.pallets ?? 0))} паллет, ${total} коробов)</td></tr>
+          <tr class="codeRow">
+            <td class="boxNoCell">
+              <img class="logo" src="${logoUrl}" alt="Газелька" />
+              <div class="boxNo">Короб ${boxNo} / ${total}</div>
+              <div class="boxSub">Всего: ${esc(String(plan.pallets ?? 0))} паллет, ${total} коробов</div>
+            </td>
+            <td class="qrCell"><img class="qr" src="${qr}" alt="Код короба ${boxNo}" /></td>
+          </tr>
         </table>
       </div>`;
-  }).join('');
+      }),
+    )
+  ).join('');
 
   const win = window.open('', '_blank');
   if (!win) return;
@@ -147,8 +148,14 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
       /* РАЗМЕР ЛИСТА ЗАДАЁМ ЯВНО И ОДИНАКОВО В ДВУХ МЕСТАХ.
          @page управляет физическим листом принтера, .label — блоком на странице.
          Если они разойдутся, браузер допечатает пустое поле и сдвинет содержимое —
-         этикетка поедет относительно рулона. */
-      @page { size: 120mm 75mm; margin: 0; }
+         этикетка поедет относительно рулона.
+
+         landscape указан ОТДЕЛЬНО и намеренно. Лента у нас 120 мм шириной, этикетка
+         75 мм в высоту. От одних лишь размеров драйвер принтера не всегда понимает
+         ориентацию: он видит лист шире, чем выше, считает его повёрнутым и разворачивает
+         содержимое на 90°. Именно так напечаталась этикетка заявки 351229 — текст шёл
+         снизу вверх, поперёк ленты. Явное landscape снимает эту догадку у драйвера. */
+      @page { size: 120mm 75mm landscape; margin: 0; }
       * { box-sizing: border-box; }
       html, body { margin: 0; padding: 0; }
       body { font-family: Arial, Helvetica, sans-serif; color: #000; }
@@ -173,16 +180,18 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
         overflow: hidden; max-height: 7mm;
       }
-      /* ШТРИХКОД — НА ВСЮ ШИРИНУ ЭТИКЕТКИ, ЛОГОТИП НАД НИМ.
-         Раньше логотип и код делили строку пополам, и коду оставалось ~66 мм: при сотне
-         символов в строке Газельки он туда не помещался физически и вылезал за поля.
-         Теперь ячейка одна на всю ширину (colspan=2): код растягивается по ней ровно,
-         сохраняя пропорции штрихов. */
-      .codeRow td { padding: 0.8mm 1.5mm; height: 22mm; }
-      .codeCell { vertical-align: middle; text-align: center; }
-      .logo { height: 5mm; width: auto; display: block; margin: 0 auto 0.6mm; }
-      .barcode { line-height: 0; display: block; width: 100%; }
-      .barcode svg { display: block; width: 100%; height: 14mm; }
+      /* НИЖНЯЯ СТРОКА: НОМЕР КОРОБА СЛЕВА, QR СПРАВА.
+         QR — квадрат, растягивать его нельзя, иначе перестанет читаться. Даём ему
+         фиксированные 26 мм: при этом размере на модуль приходится ~0,5 мм, вчетверо
+         больше минимума для сканера. Освободившееся место слева занимает крупный
+         номер короба — по нему кладовщик сверяет коробки глазами, без сканера. */
+      .codeRow td { padding: 1mm 1.5mm; height: 28mm; }
+      .boxNoCell { vertical-align: middle; text-align: center; }
+      .qrCell { vertical-align: middle; text-align: center; width: 30mm; padding: 1mm; }
+      .logo { height: 5mm; width: auto; display: block; margin: 0 auto 1mm; }
+      .boxNo { font-size: 13pt; font-weight: 700; line-height: 1.1; }
+      .boxSub { font-size: 7pt; line-height: 1.1; margin-top: 0.5mm; }
+      .qr { display: block; width: 26mm; height: 26mm; margin: 0 auto; }
     </style></head><body onload="window.print()">${pages}</body></html>`);
   win.document.close();
 };
