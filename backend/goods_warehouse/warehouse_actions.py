@@ -3069,16 +3069,38 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         ensure_ascii=False,
                     ),
                 }
+            # Держит вещь только ЖИВАЯ поставка (ещё на сборке). Завершённая и
+            # отменённая — не в счёт: по такой вещь давно уехала, а к нам она
+            # вернулась возвратом и снова стала обычным остатком. Раньше
+            # проверяли любую строку marketplace_supply_items, и вернувшийся
+            # товар (например GW-724395 из поставки от августа) навсегда
+            # становился неудаляемым: «добавлен в поставку», хотя ни в одном
+            # подборе его нет.
             cur.execute(
-                "SELECT 1 FROM marketplace_supply_items WHERE goods_warehouse_id = %s LIMIT 1",
+                "SELECT ms.id FROM marketplace_supply_items msi "
+                "JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                "WHERE msi.goods_warehouse_id = %s "
+                "  AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена') "
+                "LIMIT 1",
                 (int(item_id),),
             )
-            if cur.fetchone():
+            live_supply = cur.fetchone()
+            if live_supply:
                 return {
                     'statusCode': 409,
                     'headers': headers,
-                    'body': json.dumps({'error': 'Товар добавлен в поставку — сначала уберите его оттуда'}, ensure_ascii=False),
+                    'body': json.dumps(
+                        {'error': f'Товар добавлен в поставку №{int(live_supply[0])} — '
+                                  f'сначала уберите его оттуда'},
+                        ensure_ascii=False,
+                    ),
                 }
+            # Строки из старых закрытых поставок удаляем вместе с вещью: без
+            # этого DELETE упрётся во внешний ключ.
+            cur.execute(
+                "DELETE FROM marketplace_supply_items WHERE goods_warehouse_id = %s",
+                (int(item_id),),
+            )
             # Вещь уже подобрана под заказ покупателя — удалять нельзя: заказ
             # останется без товара, и на сборке кладовщик упрётся в пустоту.
             cur.execute(
