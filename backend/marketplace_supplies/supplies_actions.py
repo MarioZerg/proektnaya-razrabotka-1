@@ -383,7 +383,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку и штрихкод хранения товара'})}
 
             cur.execute(
-                "SELECT s.status, s.shop_id, shp.name FROM marketplace_supplies s "
+                # Тип поставки (FBO/FBS) нужен ниже: вещь живого заказа FBS в
+                # поставку FBO класть нельзя — покупатель её не получит.
+                "SELECT s.status, s.shop_id, shp.name, s.type FROM marketplace_supplies s "
                 "LEFT JOIN shops shp ON shp.id = s.shop_id WHERE s.id = %s",
                 (int(supply_id),),
             )
@@ -391,6 +393,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
             supply_shop_id, supply_shop_name = row[1], row[2]
+            add_supply_type = (row[3] or '').upper()
             if row[0] not in ('Открытая', 'На сборке'):
                 return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять заказы'})}
 
@@ -603,6 +606,48 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'statusCode': 409,
                     'headers': headers,
                     'body': json.dumps(payload, ensure_ascii=False),
+                }
+
+            # ВЕЩЬ ЖИВОГО ЗАКАЗА FBS В ПОСТАВКУ FBO НЕ КЛАДЁМ.
+            #
+            # FBO и FBS — разные схемы. Вещь FBS сшита под конкретного покупателя,
+            # на ней его ярлык, и она должна уехать ему. Вещь FBO обезличена и
+            # едет на склад площадки по заявке.
+            #
+            # Если вещь живого FBS положить в короб FBO, покупатель свой заказ не
+            # получит, а на складе площадки появится товар, которого она не ждала.
+            # Поправить это после закрытия короба уже нельзя: на него заведено
+            # грузоместо.
+            #
+            # Так 21.09 в короб №8 заявки 2000065880431 уехали шесть вещей FBS,
+            # среди них 0112212799-0220-1 и 47189664-0235-1. Сканирование ярлыка
+            # товара OZON такую вещь отбивает — там проверка есть. А сканирование
+            # складского стикера GW (этот путь) её пропускало.
+            #
+            # Мёртвый FBS (отменён, уже уехал) не в счёт: покупатель его не ждёт,
+            # и вещь законно уходит в общий остаток.
+            cur.execute(
+                "SELECT own.order_number, own.order_type "
+                "FROM goods_warehouse gw "
+                "JOIN orders own ON own.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+                "WHERE gw.id = %s "
+                "  AND COALESCE(own.order_type, '') <> 'FBO' "
+                "  AND COALESCE(own.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
+                "  AND COALESCE(own.ozon_status, '') NOT IN "
+                "      ('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup') "
+                "  AND COALESCE(own.ym_status, '') NOT ILIKE 'cancel%%'",
+                (goods_id,),
+            )
+            fbs_owner = cur.fetchone()
+            if fbs_owner and add_supply_type == 'FBO':
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': f'Вещь сшита под заказ покупателя {fbs_owner[0]} '
+                                 f'({fbs_owner[1]}) и ждёт отгрузки ему. В поставку FBO '
+                                 f'она не едет — отложите её в контейнер FBS',
+                    }, ensure_ascii=False),
                 }
 
             # ВЕЩЬ ЧУЖОГО МАГАЗИНА В КОРОБ НЕ КЛАДЁМ.
