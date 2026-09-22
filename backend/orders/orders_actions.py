@@ -377,7 +377,55 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 )
                 siblings = [r[0] for r in cur.fetchall()]
                 if siblings:
-                    order_ids = sorted(set(order_ids) | set(siblings))
+                    # ЛИМИТ СТЕКА СЧИТАЕТСЯ ВМЕСТЕ С ДОБРАННЫМИ ОТПРАВЛЕНИЯМИ.
+                    #
+                    # Раньше добор шёл ПОВЕРХ уже набранных 20 заказов: стек брали
+                    # полным, а потом к нему добавляли соседние отправления тех же
+                    # покупок OZON. Так 22.09 закройщица получила 27 заказов вместо
+                    # 20 — покупка 47688307-0541 пришла десятью отправлениями, и семь
+                    # из них легли сверх предела. Стек столько не вмещает: доборы
+                    # закрыты, пока он не разобран, и лишние вещи просто запирают
+                    # человека на весь день.
+                    #
+                    # Поэтому набираем заказы ПОКУПКАМИ ЦЕЛИКОМ, в порядке очереди, и
+                    # останавливаемся на пределе: покупка, которая не влезает, целиком
+                    # остаётся в очереди и уедет следующим стеком. Разрезать её нельзя —
+                    # ровно от этого добор и защищает: отправления одной покупки часто
+                    # одинаковые вещи, и у разных закройщиков их потом не различить.
+                    all_ids = sorted(set(order_ids) | set(siblings))
+                    cur.execute(
+                        "SELECT id, regexp_replace(COALESCE(ozon_posting_number, ''), "
+                        "'-[0-9]+$', '') FROM orders WHERE id IN ("
+                        + ','.join(str(int(i)) for i in all_ids) + ")"
+                    )
+                    purchase_of = {}
+                    for p_id, p_key in cur.fetchall():
+                        purchase_of[p_id] = p_key or f'single:{p_id}'
+
+                    # Группируем по покупке, сохраняя порядок очереди: ведущим считаем
+                    # тот заказ, который система выбрала в стек сама (order_ids), —
+                    # добранные соседи подклеиваются к нему.
+                    groups = []
+                    seen_keys = {}
+                    for oid in order_ids:
+                        key = purchase_of.get(oid, f'single:{oid}')
+                        if key not in seen_keys:
+                            seen_keys[key] = len(groups)
+                            groups.append([])
+                        groups[seen_keys[key]].append(oid)
+                    for sid in siblings:
+                        key = purchase_of.get(sid, f'single:{sid}')
+                        if key in seen_keys:
+                            groups[seen_keys[key]].append(sid)
+
+                    # Первую покупку отдаём всегда, даже если она одна перекрывает
+                    # предел: иначе закройщик не получил бы вообще ничего и встал.
+                    limited_ids = []
+                    for group in groups:
+                        if limited_ids and len(limited_ids) + len(group) > stack_size:
+                            continue
+                        limited_ids.extend(group)
+                    order_ids = sorted(set(limited_ids))
 
                 # Связку отдаём закройщику ТОЛЬКО если тюля в его цехе хватит на ВСЕ её
                 # вещи. Заказ покупателя раскраивается по принципу «всё или ничего»:
