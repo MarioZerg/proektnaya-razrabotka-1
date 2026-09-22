@@ -91,6 +91,91 @@ def resolve_ozon_barcode(cur, barcode):
         return None
 
 
+# Статусы OZON, при которых заказ ТРОГАТЬ НЕЛЬЗЯ: отправление уже уехало от нас
+# или отменено площадкой. Вернуть такой заказ в цех — значит сшить вещь, которую
+# никто не ждёт: покупатель её уже получил либо отказался.
+OZON_FINAL_STATUSES = {
+    'cancelled': 'отменён покупателем',
+    'not_accepted': 'не принят на сортировке',
+    'delivering': 'уже едет к покупателю',
+    'delivered': 'уже доставлен покупателю',
+    'driver_pickup': 'уже забрал водитель',
+    'awaiting_deliver': 'собран и ждёт отгрузки — вещь уже отстикерована',
+}
+
+
+def ozon_status_live(cur, posting_number, shop_id=None):
+    """Спрашивает у OZON НАСТОЯЩИЙ статус отправления прямо сейчас (только чтение).
+
+    ЗАЧЕМ. Наш ozon_status обновляется синхронизацией и легко отстаёт на часы.
+    Прежде чем вернуть «зависший» заказ обратно в цех, надо убедиться, что
+    площадка всё ещё ждёт от нас эту вещь. Иначе цех сошьёт то, что покупатель
+    уже получил, — ткань и работа уйдут впустую.
+
+    КЛЮЧИ БЕРЁМ ПО МАГАЗИНУ ЗАКАЗА. У МЕГАТЮЛЬ и ДЮНЫ разные кабинеты OZON, и
+    чужой ключ на отправление отвечает «не найдено» — по такому ответу заказ
+    выглядел бы живым, хотя на деле давно уехал. Поэтому shop_id обязателен там,
+    где он известен; общий ключ — только запасной путь.
+
+    Возвращает строку статуса или None, если узнать не удалось (нет ключей, сеть,
+    отправление не найдено). None — это «не знаю», а НЕ «можно трогать»:
+    вызывающий код обязан трактовать его как запрет.
+    """
+    if not posting_number:
+        return None
+
+    creds_sql = (
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = 'ozon' "
+    )
+    if shop_id:
+        cur.execute(creds_sql + "AND shop_id = %s LIMIT 1", (int(shop_id),))
+        row = cur.fetchone()
+    else:
+        row = None
+    if not row:
+        cur.execute(
+            creds_sql + "ORDER BY is_enabled DESC, "
+            "(credentials::text <> '{}') DESC, shop_id LIMIT 1"
+        )
+        row = cur.fetchone()
+    if not row or not row[0] or not row[1]:
+        return None
+
+    creds = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+    client_id = (creds.get('clientId') or creds.get('client_id') or '').strip()
+    api_key = (creds.get('apiKey') or creds.get('api_key') or '').strip()
+    if not client_id or not api_key:
+        return None
+
+    try:
+        req = urllib.request.Request(
+            'https://api-seller.ozon.ru/v3/posting/fbs/get', method='POST',
+            data=json.dumps(
+                {'posting_number': str(posting_number), 'with': {}}
+            ).encode('utf-8'),
+        )
+        req.add_header('Client-Id', client_id)
+        req.add_header('Api-Key', api_key)
+        req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode('utf-8') or '{}')
+        status = ((data or {}).get('result') or {}).get('status')
+        if status:
+            # Раз уж спросили — сохраняем ответ у себя: следующий экран покажет
+            # свежие данные без ещё одного обращения к площадке.
+            cur.execute(
+                "UPDATE orders SET ozon_status = %s, "
+                "  cancelled_at = CASE WHEN %s LIKE 'cancel%%' AND cancelled_at IS NULL "
+                "                      THEN now() ELSE cancelled_at END "
+                "WHERE ozon_posting_number = %s",
+                (status, status, str(posting_number)),
+            )
+        return status
+    except Exception:
+        return None
+
+
 def is_admin(cur, actor_id) -> bool:
     """Роль берём из базы: в запросе её можно подменить, в базе — нет."""
     if not actor_id:

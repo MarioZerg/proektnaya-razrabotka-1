@@ -11,8 +11,10 @@ import psycopg2
 from shared import (
     GOODS_IN_LIVE_SUPPLY_SQL,
     OZON_CANCEL_REASONS,
+    OZON_FINAL_STATUSES,
     OZON_NOT_RETURNABLE,
     RESERVE_ALIVE_SQL,
+    ozon_status_live,
     is_admin,
     is_admin_or_senior,
     log_action,
@@ -1679,6 +1681,129 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 'statusCode': 200,
                 'headers': headers,
                 'body': json.dumps({'matched': len(rematched)}),
+            }
+
+        if action in ('orphan_stock_orders', 'fix_orphan_stock_orders'):
+            # ЗАКАЗЫ «СО СКЛАДА», ЗА КОТОРЫМИ НЕ СТОИТ НИ ОДНОЙ ВЕЩИ.
+            #
+            # ЧТО ЭТО. Заказ помечен закрытым со склада (sewing_status='Со склада'
+            # и заполнен fulfilled_from_stock_id), но вещь его больше не держит:
+            # её перецепили на другое отправление, вернули в свободный остаток,
+            # списали или отгрузили под чужой заказ.
+            #
+            # Такой заказ становится НЕВИДИМЫМ с обеих сторон: в цех он не уходит
+            # (статус не «Новый»), в подборе не показывается (вещи за ним нет).
+            # Он просто выпадает из работы — и обнаруживается только когда
+            # маркетплейс начинает считать просрочку.
+            #
+            # ПОЧЕМУ НЕЛЬЗЯ ПРОСТО ВЕРНУТЬ ВСЕХ В ЦЕХ. Среди таких заказов
+            # большинство — давно уехавшие: вещь отгрузили покупателю, а связь
+            # почистить забыли. Вернуть их в пошив значит сшить второй экземпляр
+            # того, что покупатель уже получил: ткань, работа цеха и вещь, которую
+            # некуда деть. Поэтому КАЖДЫЙ заказ сверяем с площадкой вживую.
+            #
+            # orphan_stock_orders      — только показать разбор (ничего не меняет);
+            # fix_orphan_stock_orders  — вернуть в цех то, что площадка ещё ждёт.
+            apply_fix = action == 'fix_orphan_stock_orders'
+            if apply_fix and not is_admin_or_senior(cur, actor_id):
+                return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                    {'error': 'Возвращать зависшие заказы в цех может администратор '
+                              'или старший кладовщик'}, ensure_ascii=False)}
+
+            cur.execute(
+                "SELECT o.id, o.order_number, o.product, o.marketplace, o.order_type, "
+                "       o.ozon_posting_number, o.ozon_status, o.shop_id, o.supply_id, "
+                "       o.fulfilled_from_stock_id, gw.storage_barcode, gw.status "
+                "FROM orders o "
+                "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+                "WHERE o.sewing_status = 'Со склада' "
+                # Наши собственные конечные состояния — заказ уже закрыт.
+                "  AND COALESCE(o.status, '') NOT IN ('Отгружен', 'Отменён', 'Доставлен') "
+                "  AND o.cancelled_at IS NULL "
+                # Ключевое условие: заказ не держит НИ ОДНА живая вещь.
+                "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse h "
+                "        WHERE h.reserved_order_id = o.id AND h.shipped_at IS NULL "
+                "          AND h.status IN ('picking', 'awaiting_supply')) "
+                "ORDER BY o.created_at"
+            )
+            orphans = cur.fetchall()
+
+            to_return = []   # площадка ещё ждёт — можно вернуть в цех
+            keep = []        # трогать нельзя: уехало, отменено или неизвестно
+            for (o_id, o_num, o_prod, o_mp, o_type, o_posting, o_ozon,
+                 o_shop, o_supply, o_gw_id, o_gw_bc, o_gw_st) in orphans:
+                item = {
+                    'orderId': int(o_id), 'orderNumber': o_num, 'product': o_prod,
+                    'marketplace': o_mp, 'orderType': o_type,
+                    'storageBarcode': o_gw_bc, 'goodsStatus': o_gw_st,
+                }
+
+                # FBO трогать не даём совсем. Товар там обезличен и привязан к
+                # строке заявки: вернуть такой заказ в пошив нельзя — количество
+                # по заявке считается коробами, а не отправлениями.
+                if (o_type or '') == 'FBO' or o_supply:
+                    item['reason'] = 'Заявка FBO — разбирается через карточку поставки'
+                    keep.append(item)
+                    continue
+
+                # Сверяемся с площадкой ВЖИВУЮ. Наш ozon_status отстаёт на часы, а
+                # решение здесь необратимое: вернули в цех — значит режем ткань.
+                if (o_mp or '') == 'OZON' and o_posting:
+                    live = ozon_status_live(cur, o_posting, o_shop)
+                    item['liveStatus'] = live
+                    if live is None:
+                        # «Не знаю» — это ЗАПРЕТ, а не разрешение. Площадка не
+                        # ответила (сеть, чужой кабинет, отправления нет) —
+                        # рисковать вторым пошивом нельзя.
+                        item['reason'] = 'OZON не ответил — статус неизвестен, не трогаем'
+                        keep.append(item)
+                        continue
+                    if live in OZON_FINAL_STATUSES:
+                        item['reason'] = f'OZON: {OZON_FINAL_STATUSES[live]}'
+                        keep.append(item)
+                        continue
+                    # Площадка всё ещё ждёт сборку — заказ живой.
+                    to_return.append(item)
+                    continue
+
+                # WB и Яндекс сверять нечем: здесь у нас нет готового запроса
+                # статуса отправления. Молча возвращать в цех нельзя — показываем
+                # администратору, он решит вручную.
+                item['reason'] = 'Нет живой сверки для этой площадки — решите вручную'
+                keep.append(item)
+
+            returned = 0
+            if apply_fix and to_return:
+                ids_csv = ','.join(str(int(i['orderId'])) for i in to_return)
+                # Возвращаем в общую очередь: связь со складской вещью рвём,
+                # исполнителей не трогаем — их и не было, заказ закрывался складом.
+                cur.execute(
+                    "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                    "  sewing_status = 'Новый' "
+                    f"WHERE id IN ({ids_csv}) AND sewing_status = 'Со склада'"
+                )
+                returned = cur.rowcount
+                for i in to_return:
+                    log_action(
+                        cur, actor_id, actor_name, 'return_orphan_stock', 'order',
+                        i['orderId'],
+                        f"Заказ #{i['orderNumber']} висел «Со склада» без вещи. "
+                        f"OZON подтвердил статус «{i.get('liveStatus')}» — "
+                        f"возвращён в очередь производства",
+                    )
+                # Вдруг на складе уже лежит подходящая вещь — пусть подбор
+                # закроет заказ сам, не гоняя цех впустую.
+                try_match_orders_from_stock(cur)
+            conn.commit()
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({
+                    'total': len(orphans),
+                    'canReturn': to_return,
+                    'keep': keep,
+                    'returned': returned,
+                }, ensure_ascii=False),
             }
 
         if action == 'scan_picking':
