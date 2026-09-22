@@ -16,7 +16,6 @@ export interface GazelkaPlan {
   payer: number | null;
   palleting: number | null;
   shipDate: string | null;
-  printUrl: string | null;
 }
 
 export const fetchGazelkaPlans = async (): Promise<GazelkaPlan[]> => {
@@ -31,7 +30,3 @@ export const fetchGazelkaPlans = async (): Promise<GazelkaPlan[]> => {
   }
   return (data.plans || []) as GazelkaPlan[];
 };
-
-/** Прямая ссылка на печать стикеров коробов в ЛК Газельки по id заявки. */
-export const gazelkaPrintUrl = (planId: number): string =>
-  `https://gazelka.space/print-labels?ids[]=${planId}`;

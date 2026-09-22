@@ -4,8 +4,13 @@ import urllib.request
 import urllib.error
 
 # API сервиса грузоперевозок Газелька (gazelka.space). Только чтение заявок для привязки к
-# нашим FBO-поставкам. Ключ — в секрете GAZELKA_API_KEY (Bearer). Стикеры коробов
-# (упаковочные листы) в API отсутствуют — печатаются в ЛК Газельки по ссылке print-labels.
+# нашим FBO-поставкам. Ключ — в секрете GAZELKA_API_KEY (Bearer).
+#
+# ПЕЧАТЬ СТИКЕРОВ. Отдачи готового PDF у Газельки нет: API умеет только список заявок
+# (my-plans) и справочники, а прежняя страница print-labels отвечает 404. Поэтому
+# упаковочный лист мы рисуем сами (src/lib/gazelkaPackingLabel.ts), а отсюда берём
+# только исходные данные для штрихкода: IDO, номер заявки, даты, паллеты, забор.
+# Если Газелька пришлёт адрес эндпоинта с PDF — добавлять его нужно сюда.
 GAZELKA_API_BASE = 'https://gazelka.space/api'
 
 CORS_HEADERS = {
@@ -50,13 +55,13 @@ def handler(event: dict, context) -> dict:
     """Интеграция с сервисом грузоперевозок Газелька (gazelka.space) — только чтение заявок.
 
     Позволяет менеджеру выбрать заявку Газельки для нашей OZON FBO-поставки (вручную) и
-    печатать стикеры коробов из ЛК Газельки. API-ключ берётся из секрета GAZELKA_API_KEY.
+    печатать упаковочные листы коробов (генерируются у нас). API-ключ — в секрете GAZELKA_API_KEY.
 
     POST /  { action: 'list_plans' }
         - список активных/запланированных заявок Газельки (метод my-plans) со статусом и
           маркетплейсом (расшифровка из descriptions): id, дата подачи, статус (текст),
-          маркетплейс (текст), склад доставки, дата доставки, число коробов/паллет.
-          Каждая заявка содержит ссылку на печать стикеров: printUrl.
+          маркетплейс (текст), склад доставки, дата доставки, число коробов/паллет,
+          плюс поля для штрихкода упаковочного листа (onBehalf, shipDate, pallets).
 
     Args:
         event: dict с httpMethod, body
@@ -122,7 +127,6 @@ def handler(event: dict, context) -> dict:
             'payer': p.get('payer'),
             'palleting': 1 if p.get('pallets') else 0,  # PLT — паллетирование
             'shipDate': route.get('date'),    # DTS — дата отгрузки (из маршрута)
-            'printUrl': f'https://gazelka.space/print-labels?ids[]={plan_id}' if plan_id else None,
         })
 
     return _resp(200, {'plans': plans})

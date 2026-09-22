@@ -14,7 +14,7 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/dateUtils';
-import { fetchGazelkaPlans, gazelkaPrintUrl, type GazelkaPlan } from '@/lib/gazelkaApi';
+import { fetchGazelkaPlans, type GazelkaPlan } from '@/lib/gazelkaApi';
 import { updateSupply, type SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { printGazelkaLabels } from '@/lib/gazelkaPackingLabel';
 
@@ -30,7 +30,8 @@ interface GazelkaShippingCardProps {
 
 /** Грузоперевозка через Газельку: менеджер вручную выбирает заявку Газельки под поставку,
  * после чего можно распечатать упаковочные листы коробов — прямо в нашей системе (штрихкод
- * Code128) либо ссылкой на печать в ЛК Газельки. */
+ * Code128). Лист печатаем сами: в API Газельки метода выдачи PDF нет, а её страница
+ * print-labels отключена, так что внешнего источника маркировки у нас не осталось. */
 const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: GazelkaShippingCardProps) => {
   const { toast } = useToast();
   const [plans, setPlans] = useState<GazelkaPlan[]>([]);
@@ -125,25 +126,20 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
               Синхронизировать данные
             </Button>
           )}
-          {/* Печать стикеров — доступна только после того, как менеджер синхронизировал данные */}
+          {/* Печать стикеров — доступна только после того, как менеджер синхронизировал данные.
+              Кнопки «В ЛК Газельки» больше нет: адрес print-labels у сервиса отключён (404),
+              а неработающая ссылка на складе опаснее её отсутствия — кладовщик жмёт её,
+              получает пустую страницу и уходит отгружать короба без маркировки. */}
           {gazelkaReady && supply.gazelkaPlanId && (
-            <>
-              <Button
-                size="sm"
-                className="bg-[#004cdb] text-white hover:bg-[#003bb0]"
-                onClick={handlePrintOurLabels}
-                disabled={!linkedPlan}
-              >
-                <Icon name="Printer" size={14} className="mr-1.5" />
-                Печать стикеров
-              </Button>
-              <Button size="sm" variant="outline" asChild>
-                <a href={gazelkaPrintUrl(supply.gazelkaPlanId)} target="_blank" rel="noreferrer">
-                  <Icon name="ExternalLink" size={14} className="mr-1.5" />
-                  В ЛК Газельки
-                </a>
-              </Button>
-            </>
+            <Button
+              size="sm"
+              className="bg-[#004cdb] text-white hover:bg-[#003bb0]"
+              onClick={handlePrintOurLabels}
+              disabled={!linkedPlan}
+            >
+              <Icon name="Printer" size={14} className="mr-1.5" />
+              Печать стикеров
+            </Button>
           )}
         </div>
       </CardHeader>
@@ -181,7 +177,7 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
             </div>
             <p className="text-xs text-muted-foreground">
               Выберите заявку и нажмите «Синхронизировать данные» — после этого кладовщику станут доступны
-              печать стикеров и вход в ЛК Газельки.
+              печать стикеров коробов.
             </p>
           </div>
         )}
