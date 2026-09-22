@@ -50,8 +50,6 @@ export const buildBarcodeValue = (data: PackingLabelData, boxNumber: number): st
 
 const svgBarcode = (value: string): string => {
   const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  // Плотный высокий штрихкод, как в оригинальном упаковочном листе Газельки. Не растягиваем
-  // по ширине в вёрстке (сохраняем натуральные пропорции модулей), чтобы код уверенно бился.
   JsBarcode(el, value, {
     format: 'CODE128',
     width: 1,
@@ -59,6 +57,28 @@ const svgBarcode = (value: string): string => {
     displayValue: false,
     margin: 0,
   });
+
+  // ШТРИХКОД ТЯНЕМ ПО ШИРИНЕ ЭТИКЕТКИ, А НЕ ПО ВЫСОТЕ.
+  //
+  // В строке Газельки около сотни символов — это ~1025 модулей Code128. При высоте
+  // 21 мм натуральная ширина такого кода выходит под 240 мм, вдвое шире самой
+  // этикетки: он вылезал за поля и обрезался при печати.
+  //
+  // Раньше его пытался удержать max-width: 100%. Но у SVG с заданной высотой и
+  // auto-шириной это не уменьшает код пропорционально, а СЖИМАЕТ его по горизонтали
+  // сильнее, чем по вертикали. Узкие штрихи сливались, и сканер переставал читать —
+  // то самое «стикеры не считываются», из-за которого коды IDS/IDM считали неверными.
+  //
+  // Поэтому убираем жёсткие размеры и ставим viewBox с preserveAspectRatio="none":
+  // теперь вёрстка сама растягивает код ровно на ширину этикетки. Масштаб по
+  // горизонтали одинаков для всех штрихов, их пропорции сохраняются — код читается.
+  // Высота при этом задаётся отдельно и на читаемость не влияет.
+  const w = el.getAttribute('width') || '1000';
+  const h = el.getAttribute('height') || '90';
+  el.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  el.setAttribute('preserveAspectRatio', 'none');
+  el.removeAttribute('width');
+  el.removeAttribute('height');
   return new XMLSerializer().serializeToString(el);
 };
 
@@ -80,13 +100,15 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
         <table class="sheet">
           <tr><td class="k">№ заявки</td><td class="v">${esc(String(plan.id))}</td></tr>
           <tr><td class="k">Дата отгрузки:</td><td class="v">${dateHuman(plan.shipDate)}</td></tr>
-          <tr><td class="k">Склад поставки:</td><td class="v">${esc(plan.deliveryAddress)}</td></tr>
+          <tr><td class="k">Склад поставки:</td><td class="v addr">${esc(plan.deliveryAddress)}</td></tr>
           <tr><td class="k">Дата поставки:</td><td class="v big">${dateHuman(plan.deliveryDate)}</td></tr>
           <tr><td class="k">Маркетплейс:</td><td class="v">${esc(plan.marketplaceLabel)}</td></tr>
           <tr><td class="k">№ пост. на маркетплейсе:</td><td class="v">${esc(supply.supplyNumber)}</td></tr>
           <tr class="codeRow">
-            <td class="logoCell"><img class="logo" src="${logoUrl}" alt="Газелька" /></td>
-            <td class="codeCell"><div class="barcode">${svgBarcode(bc)}</div></td>
+            <td class="codeCell" colspan="2">
+              <img class="logo" src="${logoUrl}" alt="Газелька" />
+              <div class="barcode">${svgBarcode(bc)}</div>
+            </td>
           </tr>
           <tr><td class="k">Клиент:</td><td class="v">${esc(supply.gazelkaClientName)}</td></tr>
           <tr><td class="k">Телефон:</td><td class="v">${esc(supply.gazelkaClientPhone)}</td></tr>
@@ -102,6 +124,10 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
     <style>
       /* Этикетка под термопринтер, дизайн как в оригинальном упаковочном листе Газельки:
          таблица с рамками (метка слева / значение справа), логотип и штрихкод строкой посередине. */
+      /* РАЗМЕР ЛИСТА ЗАДАЁМ ЯВНО И ОДИНАКОВО В ДВУХ МЕСТАХ.
+         @page управляет физическим листом принтера, .label — блоком на странице.
+         Если они разойдутся, браузер допечатает пустое поле и сдвинет содержимое —
+         этикетка поедет относительно рулона. */
       @page { size: 120mm 75mm; margin: 0; }
       * { box-sizing: border-box; }
       html, body { margin: 0; padding: 0; }
@@ -112,18 +138,31 @@ export const printGazelkaLabels = (data: PackingLabelData): void => {
       }
       .label:last-child { page-break-after: auto; }
       .sheet { width: 100%; height: 100%; border-collapse: collapse; table-layout: fixed; }
-      .sheet td { border: 0.3mm solid #000; padding: 0.4mm 2mm; font-size: 9pt; line-height: 1.15; }
-      .sheet td.k { width: 42%; color: #000; }
-      .sheet td.v { font-weight: 700; }
-      .sheet td.v.big { font-size: 13pt; }
-      /* Строка с логотипом и штрихкодом. Код занимает всю высоту ячейки, натуральной ширины
-         (без горизонтального растяжения) и центрируется — как в оригинале Газельки. */
-      .codeRow td { padding: 0.5mm 1mm; height: 22mm; }
-      .logoCell { text-align: center; vertical-align: middle; }
-      .logo { height: 14mm; width: auto; }
-      .codeCell { vertical-align: middle; text-align: center; padding: 0.5mm 1mm; }
-      .barcode { line-height: 0; display: inline-block; }
-      .barcode svg { display: block; height: 21mm; width: auto; max-width: 100%; }
+      .sheet td { border: 0.3mm solid #000; padding: 0.3mm 1.5mm; font-size: 8pt; line-height: 1.1; }
+      .sheet td.k { width: 40%; color: #000; }
+      /* Длинный адрес склада рвём по слогам, иначе одна строка растягивала таблицу
+         по ширине и всё содержимое уезжало за правый край этикетки. */
+      .sheet td.v { font-weight: 700; overflow-wrap: anywhere; }
+      .sheet td.v.big { font-size: 12pt; }
+      /* АДРЕС СКЛАДА ОБРЕЗАЕМ ДВУМЯ СТРОКАМИ.
+         Адреса приходят длинные, с описанием проезда («через шлагбаум, на проходной…»).
+         В три строки такой адрес раздувал таблицу, и нижние строки — клиент, телефон,
+         номер короба — уезжали за нижний край этикетки. Двух строк хватает, чтобы
+         опознать склад, а точный адрес у водителя и так есть в заявке. */
+      .sheet td.v.addr {
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+        overflow: hidden; max-height: 7mm;
+      }
+      /* ШТРИХКОД — НА ВСЮ ШИРИНУ ЭТИКЕТКИ, ЛОГОТИП НАД НИМ.
+         Раньше логотип и код делили строку пополам, и коду оставалось ~66 мм: при сотне
+         символов в строке Газельки он туда не помещался физически и вылезал за поля.
+         Теперь ячейка одна на всю ширину (colspan=2): код растягивается по ней ровно,
+         сохраняя пропорции штрихов. */
+      .codeRow td { padding: 0.8mm 1.5mm; height: 22mm; }
+      .codeCell { vertical-align: middle; text-align: center; }
+      .logo { height: 5mm; width: auto; display: block; margin: 0 auto 0.6mm; }
+      .barcode { line-height: 0; display: block; width: 100%; }
+      .barcode svg { display: block; width: 100%; height: 14mm; }
     </style></head><body onload="window.print()">${pages}</body></html>`);
   win.document.close();
 };
