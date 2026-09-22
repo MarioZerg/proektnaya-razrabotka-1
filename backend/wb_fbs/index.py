@@ -254,6 +254,99 @@ def match_from_stock(cur, order_id, item_id) -> bool:
     return True
 
 
+# Отмена глазами площадки: у каждой своё слово, а наш status остаётся прежним.
+_CANCELLED_SQL = (
+    "o.status = 'Отменён' OR o.sewing_status = 'Отменён' "
+    "OR o.cancelled_at IS NOT NULL "
+    "OR strpos(lower(COALESCE(o.ozon_status, '')), 'cancel') = 1 "
+    "OR strpos(upper(COALESCE(o.ym_status, '')), 'CANCEL') > 0"
+)
+
+
+def take_cancelled_cut(cur, order_id) -> bool:
+    """Отдаёт новому заказу готовый крой от ОТМЕНЁННОГО заказа того же размера.
+
+    Покупатель отменяет заказ уже после раскроя: ткань разрезана по его размеру
+    и обратно в рулон не вернётся. Такой крой висит на вешалке и дошивается «на
+    склад». Если следом приходит новый заказ того же размера и материала, шить
+    его с нуля незачем — отдаём ему готовый крой, и лишняя вещь на склад не
+    уезжает.
+
+    Это НЕ подбор со склада: там ищется готовая вещь, которую остаётся
+    отстикеровать. Здесь вещи нет — есть разрезанная ткань, её надо отшить.
+    Поэтому заказ идёт в «Раскроено», к швеям, а не в «Со склада».
+
+    ПОРЯДОК: сначала подбор со склада, и только если готовой вещи нет — это.
+
+    Бирка на вешалке остаётся со старым номером (перепечатать некому), поэтому
+    храним cut_from_order_id: по нему швея видит номер бирки, а терминал
+    стикеровки находит новый заказ по отсканированной старой наклейке.
+    """
+    cur.execute(
+        "SELECT product, material, width, height, workshop_id FROM orders WHERE id = %s",
+        (int(order_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    product, material, width, height, workshop_id = row
+    # Без размеров сопоставить крой не с чем: ткань режется ровно по ним.
+    if not product or not material or not width or not height:
+        return False
+
+    cur.execute(
+        "SELECT o.id, o.cut_at, o.cutter_user_id, o.hanger_number, o.workshop_id, "
+        "       o.requires_overlock, o.overlocked_at, o.overlock_user_id "
+        "FROM orders o "
+        "WHERE o.sewing_status = 'Раскроено' "
+        # Крой ещё никому не передан: иначе одну вешалку отдали бы двум заказам.
+        "  AND o.cut_given_to_order_id IS NULL "
+        # Только ОТМЕНЁННЫЕ: крой живого заказа ждёт свой покупатель.
+        f"  AND ({_CANCELLED_SQL}) "
+        # Размер и материал совпадают ТОЧНО: из кроя 300x255 штору 400x265 не
+        # сшить — «почти подходит» тут не бывает.
+        "  AND o.product = %s AND o.material = %s AND o.width = %s AND o.height = %s "
+        # Крой физически висит в своём цехе. Заказы без цеха подходят любому.
+        "  AND (o.workshop_id = %s OR o.workshop_id IS NULL OR %s IS NULL) "
+        "  AND o.id <> %s "
+        # Первым отдаём самый давний крой — он дольше всех висит на вешалке.
+        "ORDER BY o.cut_at ASC NULLS LAST, o.id ASC LIMIT 1 "
+        # Два заказа одного размера могут прийти одной секундой.
+        "FOR UPDATE OF o SKIP LOCKED",
+        (product, material, int(width), int(height),
+         workshop_id, workshop_id, int(order_id)),
+    )
+    cut = cur.fetchone()
+    if not cut:
+        return False
+    (cut_id, cut_at, cutter_id, hanger, cut_workshop,
+     req_overlock, overlocked_at, overlock_user) = cut
+
+    # cut_at берём СТАРЫЙ: по нему считается очередь пошива и выработка
+    # закройщика. Поставив now(), мы приписали бы работу сегодняшней смене и
+    # отправили вещь в конец очереди, хотя крой давно готов.
+    cur.execute(
+        "UPDATE orders SET sewing_status = 'Раскроено', "
+        "  cut_at = %s, cutter_user_id = %s, hanger_number = %s, "
+        "  workshop_id = COALESCE(%s, workshop_id), "
+        "  requires_overlock = %s, overlocked_at = %s, overlock_user_id = %s, "
+        "  cut_from_order_id = %s "
+        "WHERE id = %s",
+        (cut_at, cutter_id, hanger or 0, cut_workshop,
+         bool(req_overlock), overlocked_at, overlock_user,
+         int(cut_id), int(order_id)),
+    )
+    # Старый заказ отдал крой и уходит из работы: без смены статуса он остался бы
+    # в очереди «Раскроено» и его крой попытались бы отдать второй раз.
+    cur.execute(
+        "UPDATE orders SET cut_given_to_order_id = %s, sewing_status = 'Готовые' "
+        "WHERE id = %s",
+        (int(order_id), int(cut_id)),
+    )
+    # Списание ткани остаётся на СТАРОМ заказе: материал ушёл именно там.
+    return True
+
+
 def find_marketplace_item(cur, nm_id, skus, article, shop_id=None):
     """Ищет товар в marketplace_items: сначала по wb_sku (nmId), затем по любому баркоду
     из skus, затем по sku (артикул продавца). Возвращает (material, width, height, name, id) или None.
@@ -1833,6 +1926,9 @@ def handler(event: dict, context) -> dict:
 
         created = 0
         matched = 0
+        # Закрыто ГОТОВЫМ КРОЕМ от отменённых заказов: ткань уже разрезана под
+        # этот размер, шить с нуля не нужно и лишнее на склад не уедет.
+        cut_reused = 0
         skipped_existing = 0
         skipped_no_item = 0
         unmatched = []
@@ -1911,6 +2007,11 @@ def handler(event: dict, context) -> dict:
             # тогда шить заново не нужно, резервируем её под этот заказ.
             if match_from_stock(cur, new_id, item_id):
                 matched += 1
+            # Готовой вещи на полке нет — берём отменённый крой того же размера,
+            # если он висит в цехе. Иначе его дошили бы «на склад», а этот заказ
+            # поехал бы в раскрой второй раз из новой ткани.
+            elif take_cancelled_cut(cur, new_id):
+                cut_reused += 1
             created += 1
             created_numbers.append(order_number)
 
@@ -1923,13 +2024,18 @@ def handler(event: dict, context) -> dict:
         log_action(
             cur, actor_id, actor_name, 'wb_sync_orders', None,
             f'Загрузка заказов WB FBS: создано {created}, пропущено (уже есть) {skipped_existing}, '
-            f'без товара {skipped_no_item}',
+            f'без товара {skipped_no_item}'
+            # Пишем в журнал только когда крой реально переиспользовали: в
+            # обычный запуск это ноль, и лишнее слово в каждой строке мешает.
+            + (f', закрыто готовым кроем {cut_reused}' if cut_reused else ''),
         )
         conn.commit()
 
         return _resp(200, {
             'created': created,
             'matchedFromStock': matched,
+            # Закрыто готовым кроем от отменённых заказов.
+            'cutReused': cut_reused,
             'skippedExisting': skipped_existing,
             'skippedNoItem': skipped_no_item,
             'totalFromWb': len(wb_orders),

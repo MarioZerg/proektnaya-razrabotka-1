@@ -716,6 +716,21 @@ def handler(event: dict, context) -> dict:
                 f"   OR o.ozon_posting_number = '{order_number_esc}' "
                 f"   OR o.order_number = '{base_number_esc}' "
                 f"   OR o.ozon_posting_number = '{base_number_esc}' "
+                # БИРКА СО СТАРЫМ НОМЕРОМ НА ПЕРЕДАННОМ КРОЕ.
+                #
+                # Заказ отменили после раскроя, и его крой отдали новому заказу
+                # того же размера (cut_from_order_id). Ткань уже разрезана и висит
+                # на вешалке — но бирка на ней осталась от ОТМЕНЁННОГО заказа:
+                # перепечатать её некому, заказы приходят и ночью.
+                #
+                # Упаковщица сканирует эту бирку и без такого условия получила бы
+                # «заказ не найден» или, хуже, сам отменённый заказ — и вещь уехала
+                # бы на склад вместо покупателя, который её ждёт.
+                f"   OR o.cut_from_order_id IN ("
+                f"        SELECT c.id FROM orders c "
+                f"        WHERE c.order_number = '{order_number_esc}' "
+                f"           OR c.ozon_posting_number = '{order_number_esc}' "
+                f"           OR c.order_number = '{base_number_esc}') "
                 # Соседи по отправлению: OZON мог выдать вещам номера «-1» и «-3».
                 # Только те, что сейчас на стикеровке, и только для настоящего корня.
                 f"{root_clause}"

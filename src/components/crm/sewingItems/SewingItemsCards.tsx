@@ -215,6 +215,18 @@ const SewingItemsCards = ({
                 {formatDate(o.marketplaceCreatedAt || o.createdAt)}
               </p>
 
+              {/* КРОЙ ВИСИТ С ЧУЖОЙ БИРКОЙ.
+                  Заказ отменили после раскроя, ткань уже разрезана — крой отдали
+                  этому заказу, чтобы не шить такую же вещь заново. Но бирка на
+                  вешалке осталась от отменённого заказа: перепечатать её некому.
+                  Без этой строки швея искала бы вешалку по номеру, которого на
+                  ней нет. */}
+              {o.cutFromOrderNumber && (
+                <p className="rounded-sm bg-amber-100 px-2 py-1 text-sm font-semibold text-amber-900">
+                  Крой с биркой {o.cutFromOrderNumber}
+                </p>
+              )}
+
               {(o.assignedUserName || o.hangerNumber > 0) && (
                 <p className="flex items-baseline gap-1.5 text-xs text-muted-foreground">
                   {/* ФИО сокращаем до «Фамилия И.О.»: полное имя занимало всю строку и

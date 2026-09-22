@@ -127,8 +127,16 @@ export const isCancelledWithCut = (o: {
   status?: string;
   sewingStatus?: string;
   cutAt?: string | null;
+  cutGivenToOrderId?: number | null;
 }): boolean => {
   if (!isOrderCancelled(o)) return false;
+  // КРОЙ УЖЕ ОТДАН ЖИВОМУ ЗАКАЗУ — доделывать по этому заказу нечего.
+  //
+  // Пришёл новый заказ того же размера, и висящий крой передали ему: вещь
+  // сошьют под новым номером и отправят покупателю, а не на склад. Здесь такой
+  // заказ показывать нельзя — швея пошла бы искать вешалку, которую уже
+  // забрала другая работа, и в списке «доделать» он висел бы вечно.
+  if (o.cutGivenToOrderId) return false;
   // Вещь уже на складе — доделывать нечего.
   if (o.sewingStatus === 'Готовые' || o.sewingStatus === 'Со склада') return false;
   // Крой отмечен в системе — вещь точно существует в цехе.

@@ -166,6 +166,127 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
 STATUS_ORDER = ['Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка', 'Готовые']
 
 
+def take_cancelled_cut(cur, order_id) -> dict | None:
+    """Отдаёт новому заказу готовый крой от ОТМЕНЁННОГО заказа того же размера.
+
+    ЗАЧЕМ. Покупатель отменяет заказ уже после раскроя: ткань разрезана по его
+    размеру и в рулон не вернётся. Такой крой висит на вешалке и дошивается «на
+    склад» — вещь ложится на полку и ждёт, пока под неё найдётся покупатель.
+    Если ровно в этот момент приходит новый заказ того же размера и материала,
+    шить его с нуля незачем — подходящий крой уже висит в цехе.
+
+    Передаём крой новому заказу: он сразу встаёт в очередь «Раскроено», швея
+    берёт его как обычную работу, и на склад ничего лишнего не уезжает.
+
+    ПОЧЕМУ ЭТО НЕ ТО ЖЕ САМОЕ, ЧТО ПОДБОР СО СКЛАДА. Подбор (match_from_stock)
+    ищет ГОТОВУЮ вещь на полке — её остаётся только отстикеровать. Здесь вещи
+    ещё нет: есть разрезанная ткань, которую надо отшить. Поэтому заказ идёт не
+    в «Со склада», а в «Раскроено» — на конвейер, к швеям.
+
+    ПОРЯДОК ВАЖЕН: сначала подбор со склада (готовая вещь лучше кроя), и только
+    если готовой нет — эта функция.
+
+    БИРКА НА ВЕШАЛКЕ ОСТАЁТСЯ СО СТАРЫМ НОМЕРОМ.
+
+    Перепечатать её некому: заказы приходят круглосуточно, в том числе ночью.
+    Поэтому храним обе ссылки (cut_from_order_id / cut_given_to_order_id): по
+    ним швея видит на экране, с какой биркой искать крой, а терминал стикеровки
+    находит новый заказ по отсканированной старой бирке.
+
+    Возвращает данные переданного кроя (для журнала) или None.
+    """
+    cur.execute(
+        "SELECT product, material, width, height, workshop_id, order_type "
+        "FROM orders WHERE id = %s",
+        (int(order_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    product, material, width, height, workshop_id, order_type = row
+    # Без размеров сопоставить крой не с чем: ткань режется ровно по ним.
+    if not product or not material or not width or not height:
+        return None
+
+    cur.execute(
+        "SELECT o.id, o.order_number, o.cut_at, o.cutter_user_id, o.hanger_number, "
+        "       o.workshop_id, o.requires_overlock, o.overlocked_at, o.overlock_user_id "
+        "FROM orders o "
+        "WHERE o.sewing_status = 'Раскроено' "
+        # Крой ещё никому не передан: иначе одну вешалку отдали бы двум заказам.
+        "  AND o.cut_given_to_order_id IS NULL "
+        # Только ОТМЕНЁННЫЕ: живой заказ ждёт свой покупатель, его крой не трогаем.
+        f"  AND ({cancelled_sql('o')}) "
+        # Размер и материал совпадают ТОЧНО. Ткань разрезана под конкретную вещь:
+        # из кроя 300x255 штору 400x265 не сшить, и «почти подходит» тут не бывает.
+        "  AND o.product = %s "
+        "  AND o.material = %s AND o.width = %s AND o.height = %s "
+        # Крой физически висит в своём цехе — в чужой его никто не понесёт.
+        # Заказы без цеха (ручные, из старой базы) подходят любому.
+        "  AND (o.workshop_id = %s OR o.workshop_id IS NULL OR %s IS NULL) "
+        "  AND o.id <> %s "
+        # Первым отдаём самый давний крой: он дольше всех висит на вешалке.
+        "ORDER BY o.cut_at ASC NULLS LAST, o.id ASC LIMIT 1 "
+        # Два заказа одного размера могут прийти одной секундой — без блокировки
+        # обоим достался бы один и тот же крой.
+        "FOR UPDATE OF o SKIP LOCKED",
+        (
+            product, material, int(width), int(height),
+            workshop_id, workshop_id, int(order_id),
+        ),
+    )
+    cut = cur.fetchone()
+    if not cut:
+        return None
+    (cut_id, cut_number, cut_at, cutter_id, hanger, cut_workshop,
+     req_overlock, overlocked_at, overlock_user) = cut
+
+    # НОВЫЙ ЗАКАЗ ВСТАЁТ В ОЧЕРЕДЬ «РАСКРОЕНО» — КАК ОБЫЧНАЯ РАБОТА.
+    #
+    # Переносим на него всё, что относится к физическому крою: время раскроя,
+    # закройщика, вешалку, цех и этап оверлока. Швея должна увидеть вещь ровно
+    # такой, какой она висит в цехе.
+    #
+    # cut_at берём СТАРЫЙ, а не now(): по нему считается очередь пошива и
+    # выработка закройщика. Поставив текущее время, мы бы приписали работу
+    # сегодняшней смене и подвинули вещь в конец очереди, хотя крой давно готов.
+    cur.execute(
+        "UPDATE orders SET sewing_status = 'Раскроено', "
+        "  cut_at = %s, cutter_user_id = %s, hanger_number = %s, "
+        "  workshop_id = COALESCE(%s, workshop_id), "
+        "  requires_overlock = %s, overlocked_at = %s, overlock_user_id = %s, "
+        "  cut_from_order_id = %s "
+        "WHERE id = %s",
+        (
+            cut_at, cutter_id, hanger or 0, cut_workshop,
+            bool(req_overlock), overlocked_at, overlock_user,
+            int(cut_id), int(order_id),
+        ),
+    )
+
+    # СТАРЫЙ ЗАКАЗ ОТДАЛ СВОЙ КРОЙ И УХОДИТ ИЗ РАБОТЫ.
+    #
+    # Статус меняем на «Готовые»: для цеха по нему работы больше нет — вещь из
+    # этой ткани сошьют, но уже под новым номером. Без смены статуса он остался
+    # бы висеть в очереди «Раскроено» и его крой попытались бы отдать второй раз.
+    cur.execute(
+        "UPDATE orders SET cut_given_to_order_id = %s, sewing_status = 'Готовые' "
+        "WHERE id = %s",
+        (int(order_id), int(cut_id)),
+    )
+
+    # Списание ткани остаётся на СТАРОМ заказе — материал ушёл именно там, и
+    # переносить расход нельзя: иначе рулон сойдётся неверно. Новый заказ
+    # закрывается без своего списания, ткань за него уже потрачена.
+    return {
+        'cutOrderId': int(cut_id),
+        'cutOrderNumber': cut_number,
+        'product': product,
+        'hangerNumber': hanger,
+        'orderType': order_type,
+    }
+
+
 def write_off_materials_once(cur, order_id, material, width, height, workshop_id=None):
     """Списывает материалы заказа по FIFO ОДИН раз (для случая, когда админ двигает статус
     заказа, а не проходит обычный конвейер раскроя). Если по заказу уже есть списания
