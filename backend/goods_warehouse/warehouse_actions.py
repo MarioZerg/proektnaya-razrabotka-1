@@ -3167,6 +3167,29 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur, actor_id, actor_name, 'delete_goods', 'goods_warehouse', item_id,
                 f'Удалил товар #{item_id} {where}' + (f' ({details})' if details else ''),
             )
+
+            # ОТВЯЗЫВАЕМ ОСТАЛЬНЫЕ ССЫЛКИ НА ВЕЩЬ.
+            #
+            # На запись склада смотрят ещё две таблицы, и без этого DELETE падает
+            # с ошибкой внешнего ключа — пользователь видел «ошибка запроса» без
+            # всякого объяснения.
+            #
+            # Карточку возврата (marketplace_returns) НЕ удаляем: это история
+            # претензии с маркетплейса — сколько вернули, почему, что решили с
+            # вещью. Удалять её вместе с вещью нельзя, иначе пропадёт учёт
+            # возвратов. Просто снимаем ссылку на исчезнувшую вещь.
+            cur.execute(
+                "UPDATE marketplace_returns SET goods_warehouse_id = NULL "
+                "WHERE goods_warehouse_id = %s",
+                (int(item_id),),
+            )
+            # Куски ткани от перешива: сама вещь пропала, значит и кусок от неё
+            # больше ни на что не ссылается.
+            cur.execute(
+                "UPDATE repair_fabric_pieces SET goods_warehouse_id = NULL "
+                "WHERE goods_warehouse_id = %s",
+                (int(item_id),),
+            )
             cur.execute("DELETE FROM goods_warehouse WHERE id = %s", (int(item_id),))
             conn.commit()
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
