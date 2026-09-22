@@ -28,6 +28,22 @@ const dateHuman = (date: string | null | undefined): string => {
 };
 
 /**
+ * Дата отгрузки со склада — та, в которую Газелька забирает короба у нас.
+ *
+ * ПОЧЕМУ НЕ ПРОСТО plan.shipDate. Этой даты в ответе Газельки чаще всего нет:
+ * она лежит в блоке route, а его API отдаёт не всегда (по заявке 351229 route
+ * приходит пустым). Тогда на этикетке в строке «Дата отгрузки» стоял прочерк,
+ * а в штрихкод уходили нули — склад не понимал, к какому рейсу короб.
+ *
+ * Поэтому берём запасной путь: плановую дату отгрузки, проставленную в нашей
+ * поставке. Считаем в одном месте, чтобы текст на этикетке и значение в коде
+ * не могли разойтись — раньше подстановка была только в коде, и этикетка всё
+ * равно печаталась с прочерком.
+ */
+const resolveShipDate = (data: PackingLabelData): string | null =>
+  data.plan.shipDate || data.supply.shipToGazelkaAt || null;
+
+/**
  * Строит строку штрихкода короба в формате Газельки, например:
  * IDO=006632;IDZ=00335999;IDS=00005;IDM=00001;PAL=000;BOX=001;DTS=20260803;DTO=20260804;CAR=1;PLT=1
  *
@@ -49,10 +65,7 @@ export const buildBarcodeValue = (data: PackingLabelData, boxNumber: number): st
   const { plan, supply } = data;
   // Код маркетплейса: ручной ввод важнее, иначе — из заявки Газельки.
   const idm = supply.gazelkaIdm || plan.marketplaceId || 0;
-  // Дата отгрузки: в заявке поля route.date может не быть (Газелька отдаёт его не
-  // всегда), тогда подставляем плановую дату отгрузки из нашей поставки — иначе в
-  // штрихкод уходили нули, и склад не понимал, к какому рейсу относится короб.
-  const shipDate = plan.shipDate || supply.shipToGazelkaAt || null;
+  const shipDate = resolveShipDate(data);
   const parts = [
     `IDO=${pad(plan.onBehalf, 6)}`,
     `IDZ=${pad(plan.id, 8)}`,
@@ -102,6 +115,9 @@ const esc = (s: string | null | undefined): string =>
 export const printGazelkaLabels = async (data: PackingLabelData): Promise<void> => {
   const { plan, supply, boxesCount } = data;
   const total = Math.max(1, boxesCount);
+  // Дата отгрузки — той же функцией, что и для кода: печатаем ровно то, что зашито
+  // в QR, иначе на складе сверяют бумагу с кодом и видят разные даты.
+  const shipDate = resolveShipDate(data);
   // Абсолютный URL логотипа — окно печати живёт на about:blank, относительный путь не сработает.
   const logoUrl = `${window.location.origin}/gazelka-logo.jpg`;
 
@@ -117,7 +133,7 @@ export const printGazelkaLabels = async (data: PackingLabelData): Promise<void> 
       <div class="label">
         <table class="sheet">
           <tr><td class="k">№ заявки</td><td class="v">${esc(String(plan.id))}</td></tr>
-          <tr><td class="k">Дата отгрузки:</td><td class="v">${dateHuman(plan.shipDate)}</td></tr>
+          <tr><td class="k">Дата отгрузки:</td><td class="v">${dateHuman(shipDate)}</td></tr>
           <tr><td class="k">Склад поставки:</td><td class="v addr">${esc(plan.deliveryAddress)}</td></tr>
           <tr><td class="k">Дата поставки:</td><td class="v big">${dateHuman(plan.deliveryDate)}</td></tr>
           <tr><td class="k">Маркетплейс:</td><td class="v">${esc(plan.marketplaceLabel)}</td></tr>

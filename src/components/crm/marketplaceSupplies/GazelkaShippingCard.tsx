@@ -43,6 +43,11 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   const [idm, setIdm] = useState(String(supply.gazelkaIdm ?? 0));
   const [savingIds, setSavingIds] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // Дата отгрузки: Газелька присылает её не всегда (блок route в ответе бывает пуст),
+  // поэтому менеджер должен иметь возможность проставить её руками — иначе на этикетке
+  // в строке «Дата отгрузки» остаётся прочерк.
+  const [shipAt, setShipAt] = useState((supply.shipToGazelkaAt ?? '').slice(0, 10));
+  const [savingShipAt, setSavingShipAt] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -86,21 +91,50 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
     if (!linkedPlan) return;
     setSyncing(true);
     try {
+      // ДАТУ ОТГРУЗКИ НЕ ЗАТИРАЕМ, ЕСЛИ ГАЗЕЛЬКА ЕЁ НЕ ПРИСЛАЛА.
+      //
+      // shipDate лежит в блоке route, а его API отдаёт не всегда. Раньше в таком
+      // случае сюда уходила пустая строка — и синхронизация СТИРАЛА дату, которую
+      // менеджер проставил руками. Получался тупик: на этикетке вечный прочерк,
+      // сколько ни нажимай «Синхронизировать».
+      const shipAt = linkedPlan.shipDate
+        ? `${linkedPlan.shipDate.slice(0, 10)}T00:00:00`
+        : undefined;
       await updateSupply(supply.id, {
         gazelkaId: String(linkedPlan.id),
-        shipToGazelkaAt: linkedPlan.shipDate ? `${linkedPlan.shipDate.slice(0, 10)}T00:00:00` : '',
+        ...(shipAt ? { shipToGazelkaAt: shipAt } : {}),
         gazelkaPickup: !!linkedPlan.cargoPickup,
         packagingCount: linkedPlan.boxes ?? null,
       });
+      // Про дату пишем только когда она реально пришла: иначе сообщение обещало
+      // «дата обновлена», менеджер шёл печатать — а там прочерк.
       toast({
         title: 'Данные из Газельки подтянуты',
-        description: `ID отгрузки, дата, забор и ${linkedPlan.boxes ?? 0} коробов обновлены.`,
+        description: shipAt
+          ? `ID отгрузки, дата, забор и ${linkedPlan.boxes ?? 0} коробов обновлены.`
+          : `ID отгрузки, забор и ${linkedPlan.boxes ?? 0} коробов обновлены. `
+            + 'Дату отгрузки Газелька не прислала — проставьте её в поле «Отгрузка в Газельку».',
       });
       onReload();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleSaveShipAt = async () => {
+    setSavingShipAt(true);
+    try {
+      await updateSupply(supply.id, {
+        shipToGazelkaAt: shipAt ? `${shipAt}T00:00:00` : '',
+      });
+      toast({ title: shipAt ? 'Дата отгрузки сохранена' : 'Дата отгрузки очищена' });
+      onReload();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSavingShipAt(false);
     }
   };
 
@@ -223,6 +257,34 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                 </span>
               </div>
             </div>
+
+            {/* ДАТА ОТГРУЗКИ — РУЧНОЕ ПОЛЕ.
+                Газелька отдаёт её в блоке route, которого в ответе часто нет. Без
+                ручного ввода на этикетке в строке «Дата отгрузки» оставался прочерк,
+                и исправить это было нечем — синхронизация тянула то же пустое поле. */}
+            {isManager && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">
+                  Дата отгрузки со склада
+                  {!linkedPlan.shipDate && ' — Газелька её не прислала, проставьте вручную'}
+                </Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    type="date"
+                    className="w-44"
+                    value={shipAt}
+                    onChange={(e) => setShipAt(e.target.value)}
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={handleSaveShipAt}
+                    disabled={savingShipAt || shipAt === (supply.shipToGazelkaAt ?? '').slice(0, 10)}
+                  >
+                    {savingShipAt ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить дату'}
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {/* Коды склада для штрихкода — редактирует только менеджер */}
             {isManager && (
