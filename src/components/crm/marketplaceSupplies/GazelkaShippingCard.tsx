@@ -16,7 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/dateUtils';
 import { fetchGazelkaPlans, type GazelkaPlan } from '@/lib/gazelkaApi';
 import { updateSupply, type SupplyDetail } from '@/lib/marketplaceSuppliesApi';
-import { printGazelkaLabels } from '@/lib/gazelkaPackingLabel';
+import { printGazelkaLabels, missingLabelFields } from '@/lib/gazelkaPackingLabel';
 
 interface GazelkaShippingCardProps {
   supply: SupplyDetail;
@@ -58,6 +58,16 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   }, []);
 
   const linkedPlan = plans.find((p) => p.id === supply.gazelkaPlanId);
+
+  // Чего не хватает для печати листов. Считаем здесь же, чтобы менеджер видел
+  // недостающее рядом с полями, которые он и заполняет.
+  const missing = linkedPlan
+    ? missingLabelFields({
+        plan: linkedPlan,
+        supply,
+        boxesCount: linkedPlan.boxes || supply.boxes.length || 1,
+      })
+    : [];
 
   const handleSave = async () => {
     setSaving(true);
@@ -179,7 +189,12 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
               size="sm"
               className="bg-[#004cdb] text-white hover:bg-[#003bb0]"
               onClick={handlePrintOurLabels}
-              disabled={!linkedPlan}
+              disabled={!linkedPlan || missing.length > 0}
+              title={
+                missing.length > 0
+                  ? `Не заполнено: ${missing.join(', ')}`
+                  : undefined
+              }
             >
               <Icon name="Printer" size={14} className="mr-1.5" />
               Печать стикеров
@@ -257,6 +272,23 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                 </span>
               </div>
             </div>
+
+            {/* ЧЕГО НЕ ХВАТАЕТ ДЛЯ ПЕЧАТИ.
+                Показываем списком у полей, которые менеджер и заполняет: иначе он
+                видит серую кнопку печати и не понимает, чего от него хотят. */}
+            {missing.length > 0 && (
+              <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                <p className="flex items-center gap-1.5 font-medium">
+                  <Icon name="CircleAlert" size={13} className="shrink-0" />
+                  Печать листов закрыта — не заполнено:
+                </p>
+                <ul className="ml-5 list-disc space-y-0.5">
+                  {missing.map((m) => (
+                    <li key={m}>{m}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* ДАТА ОТГРУЗКИ — РУЧНОЕ ПОЛЕ.
                 Газелька отдаёт её в блоке route, которого в ответе часто нет. Без

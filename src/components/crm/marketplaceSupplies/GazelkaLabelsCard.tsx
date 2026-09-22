@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchGazelkaPlans, type GazelkaPlan } from '@/lib/gazelkaApi';
+import { missingLabelFields } from '@/lib/gazelkaPackingLabel';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 
 interface GazelkaLabelsCardProps {
@@ -44,12 +45,15 @@ const GazelkaLabelsCard = ({ supply }: GazelkaLabelsCardProps) => {
 
   if (!supply.gazelkaPlanId) return null;
 
-  // Ждём только код склада (IDS): его в API Газельки нет ни в каком виде, менеджер
-  // вводит его руками на карточке поставки. Всё остальное штрихкод берёт из заявки —
-  // в том числе IDM (код маркетплейса), который раньше тоже требовали вводить.
-  // Без IDS лист печатается с нулями, и перевозчик его не опознаёт.
-  const ready = !!supply.gazelkaIds;
   const boxesCount = supply.boxes.length || plan?.boxes || 1;
+
+  // Печать открываем только когда заполнено ВСЁ, что попадает на лист: даты, склад,
+  // номер поставки, код IDS и реквизиты клиента. Незаполненное печатается прочерком
+  // (а в QR — нулями), и выясняется это уже на приёмке, когда короба сняты с машины.
+  // Список недостающего показываем прямо здесь, чтобы кладовщик знал, что просить
+  // у менеджера, а не гадал, почему кнопка серая.
+  const missing = plan ? missingLabelFields({ plan, supply, boxesCount }) : [];
+  const ready = !!plan && missing.length === 0;
 
   const handlePrint = async () => {
     if (!plan) return;
@@ -83,8 +87,20 @@ const GazelkaLabelsCard = ({ supply }: GazelkaLabelsCardProps) => {
               ? `Заявка №${supply.gazelkaPlanId} · ${boxesCount} ${
                   boxesCount === 1 ? 'лист' : 'листов'
                 } — по одному на короб. Наклейте на короба перед отгрузкой`
-              : 'Менеджер ещё не заполнил код склада (IDS) по заявке — без него штрихкод листа не соберётся'}
+              : loading
+                ? 'Загружаем заявку Газельки…'
+                : 'Менеджер ещё не заполнил данные поставки — лист напечатался бы с пустыми полями'}
           </p>
+          {!ready && !loading && missing.length > 0 && (
+            <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+              {missing.map((m) => (
+                <li key={m} className="flex items-center gap-1.5">
+                  <Icon name="CircleAlert" size={12} className="shrink-0 text-amber-600" />
+                  {m}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
         <Button
           className="bg-[#004cdb] text-white hover:bg-[#003bb0]"
