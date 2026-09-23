@@ -113,31 +113,46 @@ const KioskSendToRepairDialog = ({
         { id: user?.id, name: user?.name },
       );
 
-      // Стикер печатаем сразу: наклейка должна лечь на вещь, пока она в руках.
-      // Уйди кусок на стеллаж без номера — найти его потом можно только
-      // разворачивая всю стопку, ради чего номер и заводился.
-      printRepairSticker({
-        barcode: r.barcode,
-        material: r.material,
-        width: r.width,
-        height: r.height,
-        reason: r.reasonLabel,
-        orderNumber: r.orderNumber || orderNumber,
-      });
+      // СНАЧАЛА ЗАКРЫВАЕМ ОКНО, ПЕЧАТАЕМ ПОСЛЕ — ИНАЧЕ ТЕРМИНАЛ ЗАВИСАЕТ.
+      //
+      // Печать идёт в скрытом iframe: он забирает фокус себе и вызывает
+      // window.print(), который ОСТАНАВЛИВАЕТ страницу до закрытия диалога
+      // печати. А это окно — модальное: оно держит фокус-ловушку и пытается
+      // вернуть фокус обратно. Два механизма тянут фокус друг у друга, и
+      // терминал замирает с открытым окном причин: кнопки не нажимаются,
+      // упаковщице остаётся только перезагружать планшет.
+      //
+      // Поэтому порядок строгий: закрыли окно, отпустили вещь, и только
+      // потом, следующим кадром, отправили стикер на принтер. К этому моменту
+      // ловушки фокуса уже нет и забирать его некому.
+      onOpenChange(false);
+      onSent?.();
+      setSaving(false);
 
       toast({
         title: `Отправлено в перешив · ${r.barcode}`,
         description: `${r.reasonLabel}. Наклейте стикер на вещь — закройщик найдёт её по номеру`,
       });
-      onOpenChange(false);
-      onSent?.();
+
+      // 300 мс — время закрытия окна. Печатать раньше нельзя: окно ещё в DOM
+      // и фокус-ловушка жива.
+      setTimeout(() => {
+        printRepairSticker({
+          barcode: r.barcode,
+          material: r.material,
+          width: r.width,
+          height: r.height,
+          reason: r.reasonLabel,
+          orderNumber: r.orderNumber || orderNumber,
+        });
+      }, 300);
+      return;
     } catch (e) {
       toast({
         title: 'Не удалось отправить',
         description: e instanceof Error ? e.message : undefined,
         variant: 'destructive',
       });
-    } finally {
       setSaving(false);
     }
   };

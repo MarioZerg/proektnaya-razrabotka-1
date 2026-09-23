@@ -27,15 +27,32 @@ const PAGE_PADDING_PX = 12;
  * PDF «в обрез» (0,0,210,297) рамки крайних ячеек и таблички ID срезались, а картинка
  * выглядела съехавшей. Печатаем с полем и сохраняем пропорции A4-макета. */
 const PDF_MARGIN_MM = 6;
-/** Отступ между блоками разных материалов. */
-const GROUP_GAP_PX = 4;
-// Высота ячейки: в неё должны помещаться материал+размер, номер заказа, маркетплейс
-// и до трёх меток (связка, покупка OZON, оверлок) — при 79px нижние метки обрезались.
-//
-// Раньше шрифт номера был 11px: швея не могла прочитать его на вешалке, не поднося
-// лист к глазам. Кегли увеличены вдвое; число позиций на листе теперь считается по
-// реальной высоте сетки, а не жёстко «20 штук».
-const CELL_HEIGHT_PX = 92;
+
+/* СТЕК ЗАКРОЙЩИКА — 20 ПОЗИЦИЙ, И ЛИСТ РОВНО ПОД НЕГО.
+ *
+ * Больше двадцати вещей закройщику на руки не выдают (настройка цеха
+ * max_quantity_orders_to_cutter), поэтому лист печатается ОДНОЙ страницей на
+ * весь стек: 10 рядов по 2 колонки.
+ *
+ * Была попытка считать число позиций по реальной высоте сетки — и она вышла
+ * боком. Сетка резалась на блоки по материалу, каждый блок занимал целые ряды
+ * (материал с одной позицией съедал ряд целиком), и на десяти материалах лист
+ * распухал вдвое: двадцать вещей уезжали на две-три страницы. Закройщик
+ * получал пачку бумаги вместо одного листа.
+ *
+ * Поэтому сетка теперь СПЛОШНАЯ, без разрывов между материалами: заказы и так
+ * отсортированы по материалу и идут подряд, а смену материала показываем
+ * жирной линией внутри той же сетки — она не отнимает ни одного ряда. */
+const ROWS_PER_PAGE = 10;
+const ITEMS_PER_PAGE = COLS * ROWS_PER_PAGE;
+
+/* Высота ячейки. Считается от худшего случая: лист с шапкой И обоими
+ * баннерами (связки + покупки OZON) обязан влезть в страницу целиком.
+ *   1123 − 12·2 (поля) − 42 (шапка) − 62 (баннер связок) − 82 (баннер покупок)
+ *   = 891 на десять рядов → 89 px на ряд.
+ * Берём 88: с запасом, и это БОЛЬШЕ прежних 79 px — у текста стало больше
+ * места по высоте, а не меньше. */
+const CELL_HEIGHT_PX = 88;
 // QR печатается ВНУТРИ рамки, поэтому он должен быть заметно меньше её высоты:
 // иначе картинка упирается в границы и вылезает за рамку соседней колонки.
 //
@@ -131,130 +148,73 @@ const overlockNote = (o: TakenOrder) =>
                    padding:0 4px;display:inline-block;align-self:center;">ОВЕРЛОК</div>`
     : '';
 
-/* ------------------------------------------------------------------ *
- * Разбиение на страницы по РЕАЛЬНОЙ высоте сетки.
- *
- * Раньше лист резался жёстко по 20 позиций. Но блок материала всегда занимает
- * целые ряды: материал с одной позицией съедает ряд целиком (вторая половина
- * ряда пустая), а между блоками ещё и отступ. При нескольких таких материалах
- * сетка вырастала выше листа A4, нижние позиции уезжали за край и обрезались
- * `overflow:hidden` — заказ просто не попадал на лист закройщика.
- *
- * Теперь считаем высоту: шапка + баннеры + ряды каждого блока, и переносим на
- * следующую страницу то, что не влезло.
- * ------------------------------------------------------------------ */
-
-/** Полезная высота страницы под шапку и сетку. */
-const CONTENT_HEIGHT_PX = A4_HEIGHT_PX - PAGE_PADDING_PX * 2;
-/** Шапка с фамилией и датой. */
-const HEADER_HEIGHT_PX = 42;
-/** Баннер связок (заголовок + перечисление). */
-const GROUPS_BANNER_PX = 62;
-/** Баннер покупок OZON — заголовок в две строки, поэтому выше. */
-const PURCHASES_BANNER_PX = 82;
-
-/** Высота всего, что стоит над сеткой на конкретной странице. */
-const headerHeight = (pageOrders: TakenOrder[]) => {
-  const hasGroups = pageOrders.some((o) => o.groupKey && o.groupSize && o.groupSize > 1);
-  const hasPurchases = pageOrders.some((o) => o.purchaseKey && o.purchaseSize && o.purchaseSize > 1);
-  return (
-    HEADER_HEIGHT_PX + (hasGroups ? GROUPS_BANNER_PX : 0) + (hasPurchases ? PURCHASES_BANNER_PX : 0)
-  );
-};
-
-/** Непрерывные блоки одного материала — в том порядке, в котором они лягут на лист. */
-const materialBlocks = (orders: TakenOrder[]): TakenOrder[][] => {
-  const blocks: TakenOrder[][] = [];
-  let current: string | null = null;
-  for (const o of orders) {
-    const key = o.material || '—';
-    if (key !== current || blocks.length === 0) blocks.push([]);
-    current = key;
-    blocks[blocks.length - 1].push(o);
-  }
-  return blocks;
-};
-
-/** Режет заказы на страницы так, чтобы сетка гарантированно влезала в лист A4. */
+/** Режет заказы на страницы по 20 позиций — ровно столько влезает в лист A4. */
 const paginate = (orders: TakenOrder[]): TakenOrder[][] => {
   const pages: TakenOrder[][] = [];
-  let page: TakenOrder[] = [];
-  let used = 0;
-  const flush = () => {
-    if (page.length) pages.push(page);
-    page = [];
-    used = 0;
-  };
-  // Высоту шапки берём по худшему случаю для всей пачки: баннер связок или покупок
-  // может появиться на любой странице, и если считать его по уже набранным позициям,
-  // сетка «подрастёт» задним числом и опять вылезет за край листа.
-  const reserved = headerHeight(orders);
-  for (const block of materialBlocks(orders)) {
-    let rest = block;
-    while (rest.length) {
-      const available = CONTENT_HEIGHT_PX - reserved - used - GROUP_GAP_PX;
-      let maxRows = Math.floor(available / CELL_HEIGHT_PX);
-      if (maxRows < 1) {
-        if (page.length) {
-          flush();
-          continue;
-        }
-        // На пустой странице ряд обязан поместиться всегда: иначе цикл «нечего
-        // сбрасывать — нечего добавить» молча выбросил бы остаток заказов с листа.
-        maxRows = 1;
-      }
-      const take = Math.min(rest.length, maxRows * COLS);
-      page = [...page, ...rest.slice(0, take)];
-      used += Math.ceil(take / COLS) * CELL_HEIGHT_PX + GROUP_GAP_PX;
-      rest = rest.slice(take);
-      if (rest.length) flush();
-    }
+  for (let i = 0; i < orders.length; i += ITEMS_PER_PAGE) {
+    pages.push(orders.slice(i, i + ITEMS_PER_PAGE));
   }
-  flush();
   return pages;
 };
 
 const sizeLabel = (o: TakenOrder) => `${o.material || '—'} ${o.width ?? '—'} × ${o.height ?? '—'}`;
 
-/** Сколько строк-меток (связка, покупка OZON, оверлок) висит под номером заказа.
+/** Ширина ячейки в сетке 2 колонки. */
+const CELL_WIDTH_PX = (A4_WIDTH_PX - PAGE_PADDING_PX * 2) / COLS;
+
+/* РАЗМЕР И НОМЕР ЗАКАЗА — САМОЕ ГЛАВНОЕ НА ЛИСТЕ. ИХ НЕ МЕЛЬЧИМ.
  *
- * Каждая метка занимает строку в ячейке фиксированной высоты. Раньше учитывались
- * только две из трёх, и позиция с тремя метками обрезалась ровно посередине
- * предупреждения — закройщик читал «1 ПОКУПАТЕЛЬ 1/2 — НЕ ПУ». */
+ * Была попытка «честно» подбирать кегль под ширину строки и дополнительно
+ * ужимать его на 15–30 %, если в ячейке есть метки. Результат: на обычном
+ * листе размер и номер стали мелкими, и закройщик перестал их читать, не
+ * поднося лист к глазам. Ради того, чтобы метка влезла, испортили ровно то,
+ * что на листе читают чаще всего.
+ *
+ * Правильный порядок обратный: кегль держим крупным всегда, а длинную строку
+ * при необходимости сжимаем по ГОРИЗОНТАЛИ (transform: scaleX). Высота букв
+ * при этом не меняется — строка остаётся такой же читаемой, просто буквы чуть
+ * уже. За рамку она при этом не выходит никогда.
+ *
+ * Метки (связка, покупка, оверлок) занимают свои строки снизу; под них в
+ * ячейке 88 px места хватает и при полном кегле. */
+
+/** Ширина строки в пикселях при данном кегле. Arial Bold ≈ 0.58 кегля на знак. */
+const textWidthPx = (text: string, font: number) => Math.max(text.length, 1) * font * 0.58;
+
+/**
+ * Горизонтальное сжатие строки, если она не влезает в ширину ячейки.
+ *
+ * Возвращает готовый стиль. 1 — строка влезает как есть, меньше 1 — буквы
+ * сужаются. Ниже 0.62 не опускаемся: дальше текст превращается в нечитаемую
+ * гармошку, и лучше дать строке чуть вылезти, чем напечатать нечитаемое.
+ */
+const squeeze = (text: string, font: number, availWidth: number) => {
+  const w = textWidthPx(text, font);
+  if (w <= availWidth) return '';
+  const scale = Math.max(0.62, availWidth / w);
+  return `display:inline-block;transform:scaleX(${scale.toFixed(2)});transform-origin:center;`;
+};
+
+/** Сколько строк-меток (связка, покупка OZON, оверлок) висит под номером. */
 const noteLines = (o: TakenOrder) =>
   (o.groupSize && o.groupSize > 1 ? 1 : 0) +
   (o.purchaseSize && o.purchaseSize > 1 ? 1 : 0) +
   (o.requiresOverlock ? 1 : 0);
 
-/** Ширина ячейки в сетке 2 колонки. */
-const CELL_WIDTH_PX = (A4_WIDTH_PX - PAGE_PADDING_PX * 2) / COLS;
-
-/** Кегль, при котором строка гарантированно влезает в одну строку по ширине.
+/**
+ * Строка маркетплейса — печатаем, только если под номером не больше одной метки.
  *
- * Раньше кегль подбирался по «длиннее 16 символов — уменьшить на 12%»: для
- * «Мрамор мятный 300 × 250» этого не хватало, строка переносилась и съезжала за
- * рамку. Считаем честно: у Arial Bold средняя ширина знака ≈ 0.6 кегля. */
-const fitFont = (text: string, max: number, availWidth: number) => {
-  const len = Math.max(text.length, 1);
-  return Math.max(9, Math.min(max, Math.floor(availWidth / (len * 0.6))));
-};
-
-/** Базовый кегль строки: чем больше меток в ячейке, тем меньше места под текст.
- * Предупреждение важнее лишних пунктов кегля — оно должно быть видно целиком. */
-const baseFont = (o: TakenOrder, max: number) => {
-  const lines = noteLines(o);
-  if (lines >= 3) return Math.round(max * 0.7);
-  if (lines === 2) return Math.round(max * 0.78);
-  if (lines === 1) return Math.round(max * 0.85);
-  return max;
-};
-
-const sizeFont = (o: TakenOrder, max: number, availWidth: number) =>
-  fitFont(sizeLabel(o), baseFont(o, max), availWidth);
-
-/** То же для номера заказа: у WB он короткий, у OZON — длинный с дефисами. */
-const numberFont = (o: TakenOrder, max: number, availWidth: number) =>
-  fitFont(o.orderNumber || '', baseFont(o, max), availWidth);
+ * В ячейке 88 px место не резиновое: размер, номер и две метки занимают его
+ * целиком, и нижняя метка обрезалась ровно посередине — закройщик видел
+ * половину слова «ОВЕРЛ». Жертвуем именно маркетплейсом: это наименее нужная
+ * строка (площадку видно по формату номера, и она продублирована на QR-листе),
+ * а предупреждение обязано быть целым. Размер и номер при этом не мельчают.
+ */
+const marketplaceLine = (o: TakenOrder, font: number) =>
+  noteLines(o) >= 2
+    ? ''
+    : `<div style="font-size:${font}px;font-weight:700;color:#222;margin-top:1px;
+                   line-height:1;">${o.marketplace}</div>`;
 
 // Ячейка одной позиции: слева крупно материал+размер и мелко маркетплейс+номер (+ID закройщика
 // на QR-листе), справа узкая колонка (пустая — под галочку/крепление бирки), как в образце.
@@ -274,43 +234,49 @@ const idBadge = (cutterId: number | null) =>
          <div style="font-size:26px;font-weight:800;">${cutterId}</div>
        </div>`;
 
-const cell = (inner: string, isGroup = false, cutterId: number | null = null) =>
+/**
+ * Ячейка одной позиции.
+ *
+ * isNewMaterial — с этой позиции начинается другой материал. Помечаем ТОЛСТОЙ
+ * верхней линией вместо разрыва сетки: раньше между материалами вставлялся
+ * отступ, из-за чего каждый материал занимал целые ряды и двадцать позиций
+ * переставали помещаться на лист. Линия показывает границу так же наглядно, но
+ * не съедает ни одного ряда.
+ */
+const cell = (
+  inner: string,
+  isGroup = false,
+  cutterId: number | null = null,
+  isNewMaterial = false
+) =>
   `<div style="display:grid;grid-template-columns:1fr${
     cutterId != null ? ' 52px' : ''
   };border:${
     isGroup ? '4px solid #000' : '2px solid #000'
-  };box-sizing:border-box;height:${CELL_HEIGHT_PX}px;overflow:hidden;${
+  };${
+    isNewMaterial ? 'border-top:5px solid #000;' : ''
+  }box-sizing:border-box;height:${CELL_HEIGHT_PX}px;overflow:hidden;${
     isGroup ? 'background:#e8e8e8;' : ''
   }">
      ${inner}
      ${idBadge(cutterId)}
    </div>`;
 
-/** Сетка позиций, сгруппированная по материалу: между группами материала — визуальный отступ. */
+/** Сплошная сетка 2 колонки: смена материала отмечена жирной линией сверху. */
 const groupedGrid = (
   pageOrders: TakenOrder[],
   renderInner: (o: TakenOrder) => string,
   cutterId: number | null = null
 ) => {
-  const blocks: string[] = [];
   let current: string | null = null;
-  let rows: string[] = [];
-  const flush = () => {
-    if (rows.length) {
-      blocks.push(`<div style="display:grid;grid-template-columns:1fr 1fr;">${rows.join('')}</div>`);
-      rows = [];
-    }
-  };
-  for (const o of pageOrders) {
+  const cells = pageOrders.map((o, i) => {
     const key = o.material || '—';
-    if (current !== null && key !== current) flush();
+    // Первый ряд линией не отбиваем: сверху и так рамка ячейки.
+    const isNew = current !== null && key !== current && i >= COLS;
     current = key;
-    rows.push(cell(renderInner(o), !!(o.groupSize && o.groupSize > 1), cutterId));
-  }
-  flush();
-  return `<div style="display:flex;flex-direction:column;gap:${GROUP_GAP_PX}px;">${blocks.join(
-    ''
-  )}</div>`;
+    return cell(renderInner(o), !!(o.groupSize && o.groupSize > 1), cutterId, isNew);
+  });
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;">${cells.join('')}</div>`;
 };
 
 const page = (inner: string) =>
@@ -372,18 +338,23 @@ const buildChecklistPageHtml = (
     </div>` + groupsBanner + purchasesBanner;
   // Полезная ширина текста: ячейка минус табличка ID и внутренние отступы.
   const textWidth = CELL_WIDTH_PX - (cutterId != null ? 52 : 0) - 24;
+  // Кегль ПОСТОЯННЫЙ и крупный — 23 px. Длинные строки ужимаются по ширине,
+  // высота букв не меняется: читается с вытянутой руки в любом случае.
+  const SIZE_FONT = 23;
+  const NUM_FONT = 23;
   const grid = groupedGrid(
     pageOrders,
     (o) => `
       <div style="padding:4px 10px;text-align:center;display:flex;flex-direction:column;
                   justify-content:center;height:100%;box-sizing:border-box;overflow:hidden;">
-        <div style="font-size:${sizeFont(o, 23, textWidth)}px;
-                    font-weight:800;line-height:1.05;white-space:nowrap;">${sizeLabel(o)}</div>
-        <div style="font-size:${numberFont(o, 23, textWidth)}px;
-                    font-weight:800;margin-top:2px;letter-spacing:0.3px;white-space:nowrap;
-                    line-height:1.1;">${o.orderNumber}</div>
-        <div style="font-size:${noteLines(o) ? 9 : 11}px;font-weight:700;
-                    color:#222;margin-top:1px;line-height:1;">${o.marketplace}</div>
+        <div style="font-size:${SIZE_FONT}px;font-weight:800;line-height:1.05;
+                    white-space:nowrap;${squeeze(sizeLabel(o), SIZE_FONT, textWidth)}">${sizeLabel(
+                      o
+                    )}</div>
+        <div style="font-size:${NUM_FONT}px;font-weight:800;margin-top:2px;
+                    letter-spacing:0.3px;white-space:nowrap;line-height:1.1;
+                    ${squeeze(o.orderNumber || '', NUM_FONT, textWidth)}">${o.orderNumber}</div>
+        ${marketplaceLine(o, 11)}
         ${groupNote(o)}
         ${purchaseNote(o)}
         ${overlockNote(o)}
@@ -401,6 +372,10 @@ const buildQrPageHtml = (
   // На QR-листе текст стоит справа от кода, поэтому доступной ширины заметно меньше,
   // чем в чек-листе: без этого вычитания строка наезжала на QR и на рамку.
   const textWidth = CELL_WIDTH_PX - (cutterId != null ? 52 : 0) - QR_SIZE_PX - 20;
+  // Кегль постоянный: бирку читают уже приколотой к ткани на вешалке, мелкий
+  // шрифт там не разобрать. Длинные строки ужимаются по ширине.
+  const SIZE_FONT = 20;
+  const NUM_FONT = 20;
   const grid = groupedGrid(
     pageOrders,
     (o) => `
@@ -410,13 +385,19 @@ const buildQrPageHtml = (
         <img src="${qrDataUrls[o.id]}"
              style="position:absolute;left:5px;top:50%;transform:translateY(-50%);
                     width:${QR_SIZE_PX}px;height:${QR_SIZE_PX}px;" />
-        <div style="font-size:${sizeFont(o, 20, textWidth)}px;font-weight:800;line-height:1.05;
-                    white-space:nowrap;">${sizeLabel(o)}</div>
-        <div style="font-size:${numberFont(o, 20, textWidth)}px;font-weight:800;margin-top:2px;
-                    white-space:nowrap;line-height:1.1;">${o.orderNumber}</div>
-        <div style="font-size:10px;font-weight:700;color:#222;margin-top:1px;line-height:1;">
-          ${o.marketplace} [${o.orderType}]
-        </div>
+        <div style="font-size:${SIZE_FONT}px;font-weight:800;line-height:1.05;
+                    white-space:nowrap;${squeeze(sizeLabel(o), SIZE_FONT, textWidth)}">${sizeLabel(
+                      o
+                    )}</div>
+        <div style="font-size:${NUM_FONT}px;font-weight:800;margin-top:2px;
+                    white-space:nowrap;line-height:1.1;
+                    ${squeeze(o.orderNumber || '', NUM_FONT, textWidth)}">${o.orderNumber}</div>
+        ${
+          noteLines(o) >= 2
+            ? ''
+            : `<div style="font-size:10px;font-weight:700;color:#222;margin-top:1px;
+                           line-height:1;">${o.marketplace} [${o.orderType}]</div>`
+        }
         ${groupNote(o)}
         ${purchaseNote(o)}
         ${overlockNote(o)}
