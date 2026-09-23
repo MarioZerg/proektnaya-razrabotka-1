@@ -83,6 +83,8 @@ export interface OzonCloseBoxesResult {
   closedBoxes: number;
   stickersSaved: number;
   note: string | null;
+  /** Короб закрыт, но OZON ещё присваивает номер грузоместа: этикетка придёт позже. */
+  pending?: boolean;
 }
 
 /**

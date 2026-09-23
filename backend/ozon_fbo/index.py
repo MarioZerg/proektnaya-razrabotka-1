@@ -891,13 +891,32 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     result = info.get('result') if isinstance(info, dict) else None
     cargoes_result = (result or {}).get('cargoes') or [] if isinstance(result, dict) else []
     if not cargoes_result:
-        # Место создаётся, номер ещё не пришёл. Это НЕ ошибка: операция
-        # сохранена, кладовщик нажмёт «Повторить отправку на OZON» и мы
-        # заберём номер, а не заведём второе место.
-        return _resp(202, {
+        # НОМЕР ЕЩЁ НЕ ПРИШЁЛ — КОРОБ ВСЁ РАВНО ЗАКРЫВАЕМ.
+        #
+        # Раньше здесь возвращалась 202 с просьбой нажать «Повторить отправку
+        # на OZON». На деле это выглядело как ошибка: кладовщик видел красное
+        # сообщение, обновлял страницу — и короб оказывался закрыт. Место на
+        # площадке к тому моменту уже создавалось, номер просто приходил
+        # секундой позже, и его забирал следующий заход.
+        #
+        # Теперь короб закрываем сразу: физически он заклеен, и держать его
+        # открытым из-за задержки площадки незачем. Операция сохранена
+        # (ozon_create_operation_id), поэтому номер подтянется автоматически —
+        # при следующем открытии карточки или запросе этикетки. Второго места
+        # при этом не заведётся: перед созданием мы всегда проверяем операцию.
+        for _key, _box_id in box_keys.items():
+            cur.execute(
+                "UPDATE marketplace_supply_boxes SET closed_at = COALESCE(closed_at, now()) "
+                "WHERE id = %s",
+                (int(_box_id),),
+            )
+        conn.commit()
+        return _resp(200, {
+            'closedBoxes': len(box_keys),
+            'stickersSaved': 0,
             'pending': True,
-            'note': 'OZON создаёт грузоместо. Нажмите «Повторить отправку на OZON» '
-                    'через несколько секунд — короб привяжется к уже созданному месту',
+            'note': 'Короб закрыт. OZON ещё присваивает номер грузоместа — '
+                    'этикетка появится через несколько секунд',
         })
 
     cargo_ids = []
@@ -1371,7 +1390,8 @@ def handle_fetch_box_label(cur, conn, client_id, api_key, body_data):
 
     cur.execute(
         "SELECT b.supply_id, b.box_number, b.ozon_cargo_id, b.closed_at, "
-        "       b.ozon_label_operation_id, s.ozon_supply_order_id "
+        "       b.ozon_label_operation_id, s.ozon_supply_order_id, "
+        "       b.ozon_create_operation_id "
         "FROM marketplace_supply_boxes b "
         "JOIN marketplace_supplies s ON s.id = b.supply_id WHERE b.id = %s",
         (int(box_id),),
@@ -1379,11 +1399,50 @@ def handle_fetch_box_label(cur, conn, client_id, api_key, body_data):
     row = cur.fetchone()
     if not row:
         return _resp(404, {'error': 'Короб не найден'})
-    supply_id, box_number, cargo_id, closed_at, saved_op, ozon_order_id = row
+    (supply_id, box_number, cargo_id, closed_at, saved_op,
+     ozon_order_id, create_op) = row
 
-    if not closed_at or not cargo_id:
+    if not closed_at:
         return _resp(409, {
             'error': 'Сначала закройте короб — этикетку OZON выдаёт на грузоместо',
+        })
+
+    # НОМЕРА ГРУЗОМЕСТА ЕЩЁ НЕТ — ЗАБИРАЕМ ЕГО ПО СОХРАНЁННОЙ ОПЕРАЦИИ.
+    #
+    # Площадка присваивает номер не мгновенно, и закрытие короба его не ждёт.
+    # Раньше здесь возвращалась ошибка «сначала закройте короб», хотя короб
+    # закрыт, — и единственным выходом казалось переоткрыть его и закрыть
+    # заново. Это худшее, что можно посоветовать: при переоткрытии место на
+    # OZON снимается, а новое получает ДРУГОЙ номер — наклеенные на короба
+    # стикеры приходится переклеивать.
+    #
+    # Вместо этого доводим до конца ту же операцию создания: номер приходит
+    # сам, стикер остаётся прежним.
+    if not cargo_id and create_op:
+        st_c, info_c = poll_operation(
+            '/v2/cargoes/create/info', client_id, api_key, create_op,
+            attempts=3, delay=0.6,
+        )
+        res_c = info_c.get('result') if isinstance(info_c, dict) else None
+        items_c = (res_c or {}).get('cargoes') or [] if isinstance(res_c, dict) else []
+        for c in items_c:
+            val = c.get('value') if isinstance(c.get('value'), dict) else {}
+            cid = val.get('cargo_id') or c.get('cargo_id')
+            if c.get('key') == f'box-{box_id}' and cid:
+                cargo_id = int(cid)
+                cur.execute(
+                    "UPDATE marketplace_supply_boxes SET ozon_cargo_id = %s, "
+                    "  ozon_create_operation_id = NULL WHERE id = %s",
+                    (cargo_id, int(box_id)),
+                )
+                conn.commit()
+                break
+
+    if not cargo_id:
+        return _resp(202, {
+            'ready': False,
+            'note': 'OZON ещё присваивает номер грузоместа — нажмите «Получить '
+                    'этикетку» ещё раз через несколько секунд',
         })
 
     # ПРОДОЛЖАЕМ УЖЕ ЗАПУЩЕННУЮ ОПЕРАЦИЮ, А НЕ СОЗДАЁМ НОВУЮ.

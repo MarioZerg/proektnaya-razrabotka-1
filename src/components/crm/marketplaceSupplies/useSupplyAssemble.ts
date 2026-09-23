@@ -323,6 +323,11 @@ export const useSupplyAssemble = (supplyId: number) => {
   const handleCloseOzonBox = async (boxId: number) => {
     try {
       const r = await closeOzonBoxes(supplyId, boxId);
+      // Задержка площадки — не повод пугать кладовщика: короб закрыт в любом
+      // случае, а номер грузоместа и стикер подтянутся кнопкой «Получить
+      // этикетку». Переоткрывать короб для этого НЕ нужно — при переоткрытии
+      // место на OZON заводится заново, с другим номером, и уже наклеенные
+      // стикеры пришлось бы переклеивать.
       toast({
         title: 'Короб закрыт',
         description:
