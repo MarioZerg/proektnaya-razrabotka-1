@@ -49,10 +49,14 @@ const ITEMS_PER_PAGE = COLS * ROWS_PER_PAGE;
 /* Высота ячейки. Считается от худшего случая: лист с шапкой И обоими
  * баннерами (связки + покупки OZON) обязан влезть в страницу целиком.
  *   1123 − 12·2 (поля) − 42 (шапка) − 62 (баннер связок) − 82 (баннер покупок)
- *   = 891 на десять рядов → 89 px на ряд.
- * Берём 88: с запасом, и это БОЛЬШЕ прежних 79 px — у текста стало больше
- * места по высоте, а не меньше. */
-const CELL_HEIGHT_PX = 88;
+ *   = 913 на десять рядов → 91 px на ряд.
+ *
+ * Берём 90. Содержимому самой плотной ячейки (размер + номер + плашка
+ * «НЕ ПУТАТЬ» + «ОВЕРЛОК» + площадка) нужно 77 px — замерено. Запас 13 px
+ * нужен обязательно: на планшете шрифт может отрисоваться чуть крупнее
+ * нашего расчёта, и при запасе в пару пикселей строки наезжали друг на
+ * друга — именно это видно на листе от 23.09. */
+const CELL_HEIGHT_PX = 90;
 // QR печатается ВНУТРИ рамки, поэтому он должен быть заметно меньше её высоты:
 // иначе картинка упирается в границы и вылезает за рамку соседней колонки.
 //
@@ -219,14 +223,21 @@ const noteRow = (o: TakenOrder, mpFont: number, mpText?: string) => {
                            line-height:1;white-space:nowrap;">${mpText || o.marketplace}</span>`;
   // Меток нет — площадка просто стоит по центру, как раньше.
   if (!parts.length) {
-    return `<div style="margin-top:1px;line-height:1;">${mp}</div>`;
+    return `<div style="flex:0 0 auto;margin-top:1px;line-height:1;">${mp}</div>`;
   }
-  // Ряд сдвинут влево отрицательным полем: плашка уходит ближе к краю ячейки,
-  // освобождая место названию площадки справа от себя. Размер и номер выше
-  // при этом остаются ровно по центру — их разметка не тронута.
-  return `<div style="margin:2px -6px 0 -6px;display:flex;align-items:center;
+  // flex:0 0 auto ОБЯЗАТЕЛЕН.
+  //
+  // Ячейка — колоночный flex, и её содержимое по умолчанию СЖИМАЕТСЯ, когда не
+  // помещается. Сжимается при этом блок, а не буквы: текст остаётся прежнего
+  // размера и вылезает за края своего блока — плашка наползала на номер заказа
+  // и срезалась нижней рамкой. Запрещаем сжатие: пусть лучше ряд встанет как
+  // есть, чем строки наедут друг на друга.
+  //
+  // Отрицательных полей здесь быть не должно: они выносили плашку за внутренний
+  // отступ ячейки, и рамка резала её сбоку.
+  return `<div style="flex:0 0 auto;margin-top:2px;display:flex;align-items:center;
                       justify-content:center;gap:5px;flex-wrap:nowrap;
-                      overflow:hidden;">${parts.join('')}${mp}</div>`;
+                      line-height:1;">${parts.join('')}${mp}</div>`;
 };
 
 // Ячейка одной позиции: слева крупно материал+размер и мелко маркетплейс+номер (+ID закройщика
@@ -358,13 +369,13 @@ const buildChecklistPageHtml = (
   const grid = groupedGrid(
     pageOrders,
     (o) => `
-      <div style="padding:4px 10px;text-align:center;display:flex;flex-direction:column;
+      <div style="padding:3px 10px;text-align:center;display:flex;flex-direction:column;
                   justify-content:center;height:100%;box-sizing:border-box;overflow:hidden;">
-        <div style="font-size:${SIZE_FONT}px;font-weight:800;line-height:1.05;
+        <div style="flex:0 0 auto;font-size:${SIZE_FONT}px;font-weight:800;line-height:1.05;
                     white-space:nowrap;${squeeze(sizeLabel(o), SIZE_FONT, textWidth)}">${sizeLabel(
                       o
                     )}</div>
-        <div style="font-size:${NUM_FONT}px;font-weight:800;margin-top:2px;
+        <div style="flex:0 0 auto;font-size:${NUM_FONT}px;font-weight:800;margin-top:2px;
                     letter-spacing:0.3px;white-space:nowrap;line-height:1.1;
                     ${squeeze(o.orderNumber || '', NUM_FONT, textWidth)}">${o.orderNumber}</div>
         ${noteRow(o, 11)}
@@ -390,16 +401,16 @@ const buildQrPageHtml = (
     pageOrders,
     (o) => `
       <div style="position:relative;height:100%;box-sizing:border-box;overflow:hidden;
-                  padding:4px 6px 4px ${QR_SIZE_PX + 10}px;
+                  padding:3px 6px 3px ${QR_SIZE_PX + 10}px;
                   display:flex;flex-direction:column;justify-content:center;text-align:center;">
         <img src="${qrDataUrls[o.id]}"
              style="position:absolute;left:5px;top:50%;transform:translateY(-50%);
                     width:${QR_SIZE_PX}px;height:${QR_SIZE_PX}px;" />
-        <div style="font-size:${SIZE_FONT}px;font-weight:800;line-height:1.05;
+        <div style="flex:0 0 auto;font-size:${SIZE_FONT}px;font-weight:800;line-height:1.05;
                     white-space:nowrap;${squeeze(sizeLabel(o), SIZE_FONT, textWidth)}">${sizeLabel(
                       o
                     )}</div>
-        <div style="font-size:${NUM_FONT}px;font-weight:800;margin-top:2px;
+        <div style="flex:0 0 auto;font-size:${NUM_FONT}px;font-weight:800;margin-top:2px;
                     white-space:nowrap;line-height:1.1;
                     ${squeeze(o.orderNumber || '', NUM_FONT, textWidth)}">${o.orderNumber}</div>
         ${noteRow(o, 10, `${o.marketplace} [${o.orderType}]`)}
