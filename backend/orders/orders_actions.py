@@ -956,6 +956,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 fields.append("sewer_user_id = NULL")
                 fields.append("sewn_at = NULL")
                 fields.append("taken_at = NULL")
+                # Сдвиг сдачи привязан к тому, сколько вещей было на руках у ТОЙ швеи в
+                # момент взятия. Вещь вернулась в очередь — старый номер к новой швее
+                # отношения не имеет, его проставят заново при следующем взятии.
+                fields.append("sew_stagger_index = 0")
                 # Если админ тем же действием назначает нового исполнителя, его
                 # выбор главнее: очистку не добавляем, иначе одна колонка попала бы
                 # в UPDATE дважды и Postgres отклонил бы весь запрос.
@@ -2134,6 +2138,31 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 taken_ids += [r[0] for r in cur.fetchall()]
 
             ids_csv = ','.join(str(int(i)) for i in taken_ids)
+
+            # НОМЕР ВЕЩИ «НА РУКАХ» — по нему таймер сдачи сдвигается на 5 минут.
+            #
+            # Швея держит в работе несколько вещей сразу. Ширина у них сплошь и рядом
+            # одинаковая, а берёт она их почти подряд — значит и таймеры по ширине кончаются
+            # в одну и ту же секунду: обе вещи открываются вместе, швея сдаёт их подряд, и на
+            # стикеровку прилетает пачка вместо ровного потока.
+            #
+            # Поэтому смотрим, сколько вещей у неё уже в работе, и этим числом нумеруем
+            # взятые сейчас: первая вещь — 0 (время только по ширине), взятая поверх неё
+            # вторая — 1 (своё время + 5 минут), третья — 2 (+10). Номер фиксируем прямо в
+            # заказе, а не считаем на лету: иначе отсчёт прыгал бы назад, как только
+            # соседнюю вещь сдали.
+            #
+            # Связка Яндекса выдаётся целиком и получает ОДИН номер на все вещи. Нумеровать
+            # внутри неё нельзя: в заказе бывает три десятка вещей, и последняя ждала бы
+            # лишние два часа на ровном месте. Потолок в 3 сдвига здесь по той же причине —
+            # сдвиг разводит сдачу по времени, а не удлиняет смену.
+            cur.execute(
+                "SELECT COUNT(*) FROM orders WHERE assigned_user_id = %s "
+                "AND sewing_status = 'В работе'",
+                (int(user_id),),
+            )
+            stagger_idx = min(int(cur.fetchone()[0]), 3)
+
             cur.execute(
                 # Цех проставляем по смене швеи, если у заказа его ещё нет.
                 #
@@ -2144,7 +2173,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # получала за неё ничего, а в отчётах это выглядело как «не работала».
                 f"UPDATE orders SET sewing_status = 'В работе', assigned_user_id = {int(user_id)}, "
                 f"workshop_id = COALESCE(workshop_id, {int(session_workshop_id)}), "
-                f"taken_at = now() WHERE id IN ({ids_csv})"
+                f"taken_at = now(), sew_stagger_index = {stagger_idx} "
+                f"WHERE id IN ({ids_csv})"
             )
             if group_key and len(taken_ids) > 1:
                 log_action(
@@ -2195,7 +2225,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 }
 
             cur.execute(
-                "SELECT material, width, height, workshop_id, sewing_status, assigned_user_id, taken_at "
+                "SELECT material, width, height, workshop_id, sewing_status, assigned_user_id, taken_at, "
+                "COALESCE(sew_stagger_index, 0) "
                 "FROM orders WHERE id = %s",
                 (int(item_id),),
             )
@@ -2203,7 +2234,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not order_row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
             (material, width, height, order_workshop_id, current_status,
-             order_assigned_user_id, order_taken_at) = order_row
+             order_assigned_user_id, order_taken_at, order_stagger_index) = order_row
             if current_status == 'Стикеровка':
                 return {
                     'statusCode': 409,
@@ -2242,6 +2273,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # ограничения теряется: швея за минуту «сдавала» бы всё подряд, освобождая
             # места в работе, и разбирала бы очередь цеха.
             #
+            # К вещи, взятой поверх уже имеющейся в работе, добавляется сдвиг
+            # sewing_stagger_minutes (номер зафиксирован в sew_stagger_index при взятии):
+            # так две вещи одной ширины не открываются к сдаче в одну секунду.
+            #
             # Проверку делает СЕРВЕР, а не только кнопка на экране: интерфейс можно
             # обойти старой вкладкой или повторным запросом, сервер — нет.
             #
@@ -2259,7 +2294,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 wait_ws_id = ws_row[0] if ws_row else None
 
             sew_wait, _sew_next = sewing_wait_for_order(
-                cur, wait_ws_id, width, order_taken_at
+                cur, wait_ws_id, width, order_taken_at, order_stagger_index
             )
             if sew_wait > 0:
                 return {
@@ -2638,7 +2673,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur.execute(
                     f"UPDATE orders SET overlocked_at = now(), "
                     f"overlock_user_id = {int(actor_id)}, sewing_status = 'Раскроено', "
-                    f"assigned_user_id = NULL, taken_at = NULL WHERE id = {int(item_id)}"
+                    f"assigned_user_id = NULL, taken_at = NULL, sew_stagger_index = 0 "
+                    f"WHERE id = {int(item_id)}"
                 )
                 log_action(
                     cur, actor_id, actor_name, 'overlock_done', 'order', item_id,

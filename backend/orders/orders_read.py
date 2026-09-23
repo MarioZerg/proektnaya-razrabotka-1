@@ -278,16 +278,17 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # Все вещи «В работе» у этой швеи. Цех берём у заказа, а если он не
             # проставлен (FBO мимо раскроя) — из её открытой смены.
             cur.execute(
-                "SELECT id, width, workshop_id, taken_at FROM orders "
+                "SELECT id, width, workshop_id, taken_at, COALESCE(sew_stagger_index, 0) "
+                "FROM orders "
                 "WHERE assigned_user_id = %s AND sewing_status = 'В работе'",
                 (waits_user_id,),
             )
             waits = {}
             in_work_count = 0
-            for w_id, w_width, w_ws, w_taken in cur.fetchall():
+            for w_id, w_width, w_ws, w_taken, w_stagger in cur.fetchall():
                 in_work_count += 1
                 w_sec, w_next = sewing_wait_for_order(
-                    cur, w_ws or session_ws, w_width, w_taken
+                    cur, w_ws or session_ws, w_width, w_taken, w_stagger
                 )
                 if w_sec > 0:
                     waits[str(w_id)] = {'waitSeconds': w_sec, 'nextAt': w_next}

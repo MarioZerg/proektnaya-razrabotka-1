@@ -610,7 +610,7 @@ def nearest_timeout_width(width):
     return TIMEOUT_WIDTHS[-1]
 
 
-def sewing_wait_for_order(cur, workshop_id, width, taken_at):
+def sewing_wait_for_order(cur, workshop_id, width, taken_at, stagger_index=0):
     """Сколько секунд ещё шить ЭТУ вещь, прежде чем сдать её на стикеровку.
 
     Время берётся из настроек цеха по ширине изделия (timeout_200…800, в МИНУТАХ) и
@@ -621,6 +621,16 @@ def sewing_wait_for_order(cur, workshop_id, width, taken_at):
     считает время по конкретной вещи, а не общим счётчиком за смену. Раньше таймер
     был накопительным от первого заказа смены — к вечеру он разрастался до часа и
     переставал отражать реальность.
+
+    СДВИГ ВТОРОЙ ВЕЩИ (stagger_index). Швея держит в работе несколько вещей и берёт
+    их почти подряд. Ширина у них сплошь и рядом одинаковая — значит и таймеры по
+    ширине кончаются в одну и ту же секунду: обе вещи разблокируются вместе, швея
+    сдаёт их подряд, и на стикеровку прилетает пачка вместо ровного потока.
+
+    Поэтому каждой следующей вещи «на руках» добавляем сдвиг sewing_stagger_minutes
+    (по умолчанию 5 минут): первая идёт со своим временем по ширине, вторая — со своим
+    плюс 5 минут, третья — плюс 10. Номер вещи зафиксирован при взятии, так что отсчёт
+    не прыгает, когда соседнюю вещь уже сдали.
 
     Возвращает (wait_sec, next_at_iso): сколько секунд осталось (0 — можно сдавать) и
     момент разблокировки в ISO, по которому фронт тикает сам, не дёргая сервер.
@@ -633,6 +643,10 @@ def sewing_wait_for_order(cur, workshop_id, width, taken_at):
     minutes = get_setting_int(cur, workshop_id, f'timeout_{bucket}', 0)
     if minutes <= 0:
         return 0, None
+    if stagger_index and stagger_index > 0:
+        minutes += stagger_index * get_setting_int(
+            cur, workshop_id, 'sewing_stagger_minutes', 0
+        )
 
     cur.execute("SELECT EXTRACT(EPOCH FROM (now() - %s))::float", (taken_at,))
     elapsed = float(cur.fetchone()[0] or 0)

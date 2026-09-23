@@ -33,6 +33,9 @@ SETTINGS_KEYS = [
     'timeout_600',
     'timeout_700',
     'timeout_800',
+    # Сдвиг сдачи для каждой следующей вещи «на руках» у швеи — чтобы две вещи одной
+    # ширины не открывались к отправке на стикеровку в одну и ту же секунду.
+    'sewing_stagger_minutes',
     'print_qr_cutting',
     'sticking_otk',
     'sticking_seamstress',
