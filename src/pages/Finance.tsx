@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
@@ -74,52 +74,47 @@ const Finance = () => {
   // Новичкам зарплата открывается через 2 недели после регистрации — считает сервер.
   const [myLocked, setMyLocked] = useState(false);
   const [myDaysLeft, setMyDaysLeft] = useState(0);
-  // Период в личных финансах. Фильтруем на клиенте: сервер и так отдаёт сотруднику
-  // последние 200 его начислений — лишний запрос на каждое нажатие «Сегодня» не нужен.
+  // Период в личных финансах. Фильтрует и считает итоги сервер: за смену набегает
+  // две-три сотни начислений, и фильтр по уже загруженному куску списка показывал
+  // пустой период и заниженный заработок.
   const [myDateFrom, setMyDateFrom] = useState('');
   const [myDateTo, setMyDateTo] = useState('');
 
-  const myFiltered = useMemo(() => {
-    if (!myDateFrom && !myDateTo) return myAccruals;
-    return myAccruals.filter((a) => {
-      // Считаем по дате, ЗА которую начислено: работу нередко проводят задним
-      // числом, и по дате создания записи день выглядел бы пустым.
-      const d = (a.accruedFor || '').slice(0, 10);
-      if (!d) return false;
-      if (myDateFrom && d < myDateFrom) return false;
-      if (myDateTo && d > myDateTo) return false;
-      return true;
-    });
-  }, [myAccruals, myDateFrom, myDateTo]);
-
   // Заработок и удержания за период показываем порознь: сотруднику важно видеть,
   // что штраф — это отдельная строка, а не «мне меньше начислили за работу».
-  const myEarned = useMemo(
-    () => myFiltered.reduce((s, a) => (a.amount > 0 ? s + a.amount : s), 0),
-    [myFiltered],
-  );
-  const myPenalties = useMemo(
-    () => myFiltered.reduce((s, a) => (a.amount < 0 ? s + a.amount : s), 0),
-    [myFiltered],
-  );
+  const [myEarned, setMyEarned] = useState(0);
+  const [myPenalties, setMyPenalties] = useState(0);
+  const [myCount, setMyCount] = useState(0);
 
   useEffect(() => {
     fetchEmployees().then(setEmployees);
   }, []);
 
+  // Быстро нажимая «Сегодня» → «7 дней» → «Этот месяц», сотрудник запускает
+  // несколько запросов подряд, а отвечают они не по порядку. Принимаем только
+  // ответ на последний запрос, иначе на экране осталась бы сумма чужого периода.
+  const mySalaryReqId = useRef(0);
+
   useEffect(() => {
     if (user?.role === 'admin' || !user?.id) return;
+    const reqId = ++mySalaryReqId.current;
     setMyLoading(true);
-    fetchMySalary(user.id)
+    fetchMySalary(user.id, { dateFrom: myDateFrom, dateTo: myDateTo })
       .then((data) => {
+        if (reqId !== mySalaryReqId.current) return;
         setMyAccruals(data.accruals);
         setMyBalance(data.balance);
         setMyPayouts(data.payouts);
         setMyLocked(!!data.salaryLocked);
         setMyDaysLeft(data.daysLeft || 0);
+        setMyEarned(data.periodEarned);
+        setMyPenalties(data.periodPenalties);
+        setMyCount(data.periodCount);
       })
-      .finally(() => setMyLoading(false));
-  }, [user?.role, user?.id]);
+      .finally(() => {
+        if (reqId === mySalaryReqId.current) setMyLoading(false);
+      });
+  }, [user?.role, user?.id, myDateFrom, myDateTo]);
 
   // Сменили фильтр — возвращаемся на первую страницу: иначе можно оказаться на
   // десятой странице выборки, где записей уже нет, и увидеть пустую таблицу.
@@ -350,7 +345,8 @@ const Finance = () => {
         setMyDateTo={setMyDateTo}
         myEarned={myEarned}
         myPenalties={myPenalties}
-        myFiltered={myFiltered}
+        myFiltered={myAccruals}
+        myCount={myCount}
         myBalance={myBalance}
         myPayouts={myPayouts}
       />

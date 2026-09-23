@@ -156,10 +156,23 @@ export interface MySalaryData {
   daysLeft?: number;
   /** Дата, когда баланс откроется сам. */
   unlockAt?: string | null;
+  /** Заработано за выбранный период — считает сервер по ВСЕМ начислениям периода,
+   * а не по строкам, попавшим в таблицу. */
+  periodEarned: number;
+  /** Удержано за тот же период (отрицательное число). */
+  periodPenalties: number;
+  /** Сколько всего начислений в периоде. */
+  periodCount: number;
 }
 
-export const fetchMySalary = async (userId: number): Promise<MySalaryData> => {
-  const res = await fetch(`${SALARY_URL}?my=1&userId=${userId}`);
+export const fetchMySalary = async (
+  userId: number,
+  period?: { dateFrom?: string; dateTo?: string },
+): Promise<MySalaryData> => {
+  const params = new URLSearchParams({ my: '1', userId: String(userId) });
+  if (period?.dateFrom) params.set('dateFrom', period.dateFrom);
+  if (period?.dateTo) params.set('dateTo', period.dateTo);
+  const res = await fetch(`${SALARY_URL}?${params.toString()}`);
   const data = res.ok ? await res.json() : {};
   // Пустые списки вместо отсутствующих полей — иначе экран «Моя зарплата» падает.
   return {
@@ -167,6 +180,9 @@ export const fetchMySalary = async (userId: number): Promise<MySalaryData> => {
     accruals: Array.isArray(data.accruals) ? data.accruals : [],
     payouts: Array.isArray(data.payouts) ? data.payouts : [],
     balance: data.balance ?? 0,
+    periodEarned: data.periodEarned ?? 0,
+    periodPenalties: data.periodPenalties ?? 0,
+    periodCount: data.periodCount ?? 0,
   };
 };
 

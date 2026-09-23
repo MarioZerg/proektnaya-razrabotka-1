@@ -20,9 +20,13 @@ import { useTablePage } from '@/components/crm/finance/useTablePage';
 interface MyAccrualsTableProps {
   accruals: MyAccrual[];
   loading: boolean;
+  /** Выбран период — пустой список значит «за эти дни ничего», а не «начислений нет». */
+  filtered?: boolean;
 }
 
-const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
+const MyAccrualsTable = ({ accruals, loading, filtered }: MyAccrualsTableProps) => {
+  const emptyText = filtered ? 'За выбранный период начислений нет' : 'Начислений пока нет';
+
   // Один и тот же набор строк для телефона (карточки) и компьютера (таблица).
   const { visible, page, setPage, totalPages, total } = useTablePage(accruals);
 
@@ -36,7 +40,7 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
           Загрузка...
         </div>
       ) : accruals.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Начислений пока нет</p>
+        <p className="text-sm text-muted-foreground">{emptyText}</p>
       ) : (
         visible.map((a) => (
           <div key={a.id} className="rounded-md border border-border p-3">
@@ -100,7 +104,7 @@ const MyAccrualsTable = ({ accruals, loading }: MyAccrualsTableProps) => {
           ) : accruals.length === 0 ? (
             <TableRow>
               <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
-                Начислений пока нет
+                {emptyText}
               </TableCell>
             </TableRow>
           ) : (

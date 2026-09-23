@@ -697,6 +697,42 @@ def handler(event: dict, context) -> dict:
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
 
+                # Период выбирает сотрудник в фильтре. Считаем и фильтруем на сервере:
+                # раньше клиент резал последние 200 строк у себя, но за смену их
+                # набирается две-три сотни, и «7 дней» или «этот месяц» показывали
+                # пустой список и заниженный заработок.
+                my_from = params.get('dateFrom')
+                my_to = params.get('dateTo')
+                my_cond = ["sa.user_id = %s"]
+                my_args = [int(user_id)]
+                try:
+                    if my_from:
+                        my_cond.append("sa.accrued_for >= %s")
+                        my_args.append(_esc_date(my_from))
+                    if my_to:
+                        my_cond.append("sa.accrued_for <= %s")
+                        my_args.append(_esc_date(my_to))
+                except ValueError:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Неверная дата периода'}, ensure_ascii=False),
+                    }
+                my_where = " AND ".join(my_cond)
+
+                # Итоги считаем по ВСЕМУ периоду, а не по показанным строкам: список
+                # всё равно ограничен, а цифра «заработано за период» должна быть полной.
+                cur.execute(
+                    "SELECT COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0), "
+                    "COALESCE(SUM(amount) FILTER (WHERE amount < 0), 0), count(*) "
+                    f"FROM salary_accruals sa WHERE {my_where}",
+                    tuple(my_args),
+                )
+                t_row = cur.fetchone()
+                period_earned = float(t_row[0])
+                period_penalties = float(t_row[1])
+                period_count = int(t_row[2])
+
                 # Вместе с начислением отдаём смену, за которую оно сделано (цех, номер,
                 # время). Нужно для окладов: если сотрудник за день отработал две смены —
                 # свою и гостевую в чужом цехе — по отчёту сразу видно, что оклад
@@ -708,8 +744,9 @@ def handler(event: dict, context) -> dict:
                     "FROM salary_accruals sa LEFT JOIN orders o ON o.id = sa.order_id "
                     "LEFT JOIN shift_sessions ss ON ss.id = sa.shift_session_id "
                     "LEFT JOIN workshops w ON w.id = ss.workshop_id "
-                    "WHERE sa.user_id = %s ORDER BY sa.created_at DESC LIMIT 200",
-                    (int(user_id),),
+                    f"WHERE {my_where} "
+                    "ORDER BY sa.accrued_for DESC, sa.created_at DESC LIMIT 500",
+                    tuple(my_args),
                 )
                 accruals = [
                     {
@@ -765,6 +802,9 @@ def handler(event: dict, context) -> dict:
                         'accruals': accruals,
                         'balance': balance,
                         'payouts': payouts,
+                        'periodEarned': period_earned,
+                        'periodPenalties': period_penalties,
+                        'periodCount': period_count,
                         'salaryLocked': salary_locked,
                         'daysLeft': days_left,
                         'unlockAt': unlock_at,

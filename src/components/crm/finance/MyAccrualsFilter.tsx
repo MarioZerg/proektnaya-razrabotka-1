@@ -13,11 +13,23 @@ interface MyAccrualsFilterProps {
   earned: number;
   /** Удержано штрафами за тот же период. */
   penalties: number;
-  /** Сколько строк попало в период — чтобы было видно, что фильтр сработал. */
+  /** Сколько начислений в периоде всего — считает сервер. */
   count: number;
+  /** Сколько строк реально пришло в таблицу: длинные периоды сервер обрезает. */
+  shown: number;
 }
 
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+/**
+ * Дата в виде ГГГГ-ММ-ДД по МЕСТНОМУ времени.
+ *
+ * Через toISOString() здесь нельзя: он переводит в UTC, и у нас (UTC+3) ночью
+ * и ранним утром «Сегодня» подставляло вчерашнее число — сотрудник после ночной
+ * смены видел пустой день.
+ */
+const iso = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate(),
+  ).padStart(2, '0')}`;
 
 /**
  * Фильтр по датам в личных финансах сотрудника.
@@ -39,6 +51,7 @@ const MyAccrualsFilter = ({
   earned,
   penalties,
   count,
+  shown,
 }: MyAccrualsFilterProps) => {
   const setDay = (offset: number) => {
     const d = new Date();
@@ -137,7 +150,13 @@ const MyAccrualsFilter = ({
               </p>
             </div>
           )}
-          <p className="text-xs text-muted-foreground">{count} начислений</p>
+          <p className="text-xs text-muted-foreground">
+            {count} начислений
+            {/* Итог считается по всему периоду, а в таблицу сервер отдаёт
+                не больше 500 строк — предупреждаем, чтобы цифра и список
+                не выглядели противоречащими друг другу. */}
+            {shown < count ? ` (в списке показаны последние ${shown})` : ''}
+          </p>
         </div>
       )}
     </div>

@@ -17,6 +17,8 @@ interface MySalaryViewProps {
   myEarned: number;
   myPenalties: number;
   myFiltered: MyAccrual[];
+  /** Сколько начислений в периоде всего — считает сервер, в таблицу попадают не все. */
+  myCount: number;
   myBalance: number;
   myPayouts: MyPayout[];
 }
@@ -38,6 +40,7 @@ const MySalaryView = ({
   myEarned,
   myPenalties,
   myFiltered,
+  myCount,
   myBalance,
   myPayouts,
 }: MySalaryViewProps) => (
@@ -79,9 +82,14 @@ const MySalaryView = ({
             setDateTo={setMyDateTo}
             earned={myEarned}
             penalties={myPenalties}
-            count={myFiltered.length}
+            count={myCount}
+            shown={myFiltered.length}
           />
-          <MyAccrualsTable accruals={myFiltered} loading={myLoading} />
+          <MyAccrualsTable
+            accruals={myFiltered}
+            loading={myLoading}
+            filtered={!!myDateFrom || !!myDateTo}
+          />
         </div>
         <div className="space-y-6 lg:col-span-1">
           <div className="rounded-md border border-border p-4">
