@@ -137,7 +137,7 @@ export const printLabelFromUrl = async (url: string, title = 'Стикер от�
 };
 
 /**
- * Печать стикера короба FBO на наклейке 75×120 мм.
+ * Печать стикера короба FBO на стандартной наклейке 120×75 мм.
  *
  * OZON отдаёт готовый стикер короба PDF-ссылкой.
  *
@@ -213,10 +213,12 @@ export const printBoxLabelFromUrl = async (
       if (!digits.includes(String(cargoId))) continue;
     }
 
-    // Наклейка вертикальная (75×120). Если страница пришла горизонтальной —
-    // поворачиваем, иначе стикер займёт треть наклейки и коды не прочитаются.
+    // Наклейка горизонтальная (120×75) — тот же стандартный рулон, что и под
+    // упаковочные листы. Если страница пришла вертикальной (OZON отдаёт стикер
+    // книжной ориентации) — поворачиваем, иначе стикер займёт узкую полосу
+    // посреди наклейки и коды не прочитаются.
     const base = page.getViewport({ scale });
-    const viewport = base.width > base.height
+    const viewport = base.height > base.width
       ? page.getViewport({ scale, rotation: (page.rotate + 90) % 360 })
       : base;
 
@@ -243,19 +245,19 @@ export const printBoxLabelFromUrl = async (
   printHtmlInIframe(boxLabelHtml(title, images));
 };
 
-/** Печатная страница наклейки короба 75×120: по одной картинке на лист. */
+/** Печатная страница наклейки короба 120×75: по одной картинке на лист. */
 const boxLabelHtml = (title: string, images: string[]) => `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
   <title>${title}</title>
   <style>
-    @page { size: 75mm 120mm; margin: 0; }
+    @page { size: 120mm 75mm landscape; margin: 0; }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
     img {
-      width: 75mm;
-      height: 120mm;
+      width: 120mm;
+      height: 75mm;
       display: block;
       object-fit: contain;
       page-break-after: always;

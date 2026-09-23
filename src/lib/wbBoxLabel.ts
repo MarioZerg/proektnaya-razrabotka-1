@@ -17,9 +17,13 @@ const boxCode = (supply: SupplyDetail, box: SupplyBox): string =>
   box.barcode || `WB-${supply.id}-${box.boxNumber}`;
 
 /**
- * Печатает стикер короба WB FBO (75×120 мм) прямо в нашей системе — по формату Wildberries:
+ * Печатает стикер короба WB FBO на стандартной наклейке 120×75 мм — по формату Wildberries:
  * заголовок FBO-WB_<штрихкод> + номер короба, крупный QR, номер поставки, плановая дата,
  * склад назначения и продавец.
+ *
+ * Наклейка горизонтальная: на складе один рулон 120×75 на все ярлыки коробов и упаковочные
+ * листы, вертикальный стикер печатался на нём криво и его переклеивали руками. Поэтому QR
+ * стоит слева, а реквизиты колонкой справа — так всё влезает без уменьшения шрифта.
  */
 export const printWbBoxLabel = async (supply: SupplyDetail, box: SupplyBox): Promise<void> => {
   const code = boxCode(supply, box);
@@ -31,31 +35,37 @@ export const printWbBoxLabel = async (supply: SupplyDetail, box: SupplyBox): Pro
   const html = `<!doctype html><html><head><meta charset="utf-8">
     <title>Стикер короба WB — №${box.boxNumber}</title>
     <style>
-      @page { size: 75mm 120mm; margin: 0; }
+      @page { size: 120mm 75mm landscape; margin: 0; }
       * { box-sizing: border-box; }
       html, body { margin: 0; padding: 0; }
       body { font-family: Arial, Helvetica, sans-serif; color: #000; }
       .label {
-        width: 75mm; height: 120mm; padding: 5mm 5mm 4mm;
-        display: flex; flex-direction: column; align-items: center;
+        width: 120mm; height: 75mm; padding: 4mm;
+        display: flex; gap: 4mm;
         page-break-after: always; overflow: hidden;
       }
-      .head { width: 100%; text-align: center; font-size: 14pt; font-weight: 400; line-height: 1.1; }
-      .head b { font-weight: 800; }
-      .kind { margin-top: 1mm; font-size: 12pt; font-weight: 700; }
-      .qr { width: 46mm; height: 46mm; margin: 3mm 0 4mm; }
+      .left {
+        width: 46mm; flex: 0 0 46mm;
+        display: flex; flex-direction: column; align-items: center;
+      }
+      .qr { width: 44mm; height: 44mm; }
       .qr img { width: 100%; height: 100%; }
-      .rows { width: 100%; }
-      .pair { display: flex; gap: 6mm; }
-      .field { margin-bottom: 3mm; }
-      .field .cap { font-size: 9pt; color: #444; line-height: 1.1; }
-      .field .val { font-size: 12pt; font-weight: 700; line-height: 1.15; word-break: break-word; }
+      .kind { margin-top: 2mm; font-size: 12pt; font-weight: 700; }
+      .right { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+      .head { font-size: 13pt; font-weight: 400; line-height: 1.1; margin-bottom: 3mm; }
+      .head b { font-weight: 800; }
+      .pair { display: flex; gap: 4mm; }
+      .field { margin-bottom: 2.5mm; min-width: 0; }
+      .field .cap { font-size: 8pt; color: #444; line-height: 1.1; }
+      .field .val { font-size: 11pt; font-weight: 700; line-height: 1.15; word-break: break-word; }
     </style></head><body onload="window.print()">
     <div class="label">
-      <div class="head">${esc(headPrefix)} <b>${boxNoLabel}</b></div>
-      <div class="kind">${supply.ozonCargoType === 'PALLET' ? 'Палета' : 'Короб'}</div>
-      <div class="qr"><img src="${qrDataUrl}" alt="QR" /></div>
-      <div class="rows">
+      <div class="left">
+        <div class="qr"><img src="${qrDataUrl}" alt="QR" /></div>
+        <div class="kind">${supply.ozonCargoType === 'PALLET' ? 'Палета' : 'Короб'}</div>
+      </div>
+      <div class="right">
+        <div class="head">${esc(headPrefix)} <b>${boxNoLabel}</b></div>
         <div class="pair">
           <div class="field" style="flex:1">
             <div class="cap">Номер поставки</div>
