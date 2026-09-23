@@ -109,6 +109,12 @@ const WorkshopMaterials = () => {
       ? roleColumns.filter((c) => String(c.workshopId) === tab)
       : roleColumns;
 
+  // «Итого» на телефоне прячем, когда колонка всего одна: у швеи это её смена, и
+  // итог дословно повторяет соседнюю ячейку. Лишняя колонка вытесняла таблицу за
+  // край экрана — ради повтора приходилось листать вбок. На планшете и компьютере
+  // место есть, там итог остаётся всегда.
+  const hideTotalOnMobile = visibleColumns.length <= 1;
+
   // При выборе цеха «Итого» должно считать ПО ЭТОМУ ЦЕХУ: общая цифра по компании
   // рядом с колонками одного цеха выглядит как ошибка в остатках.
   const totalFor = (m: WorkshopMaterialType['materials'][number]) => {
@@ -193,14 +199,32 @@ const WorkshopMaterials = () => {
 
             {types.map((type) => (
               <div key={type.id} className="rounded-md border border-border">
-                <div className="flex items-center justify-between border-b border-border bg-muted/50 px-4 py-2">
+                <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/50 px-4 py-2">
                   <span className="text-sm font-semibold">{type.name}</span>
-                  <Badge variant="secondary">{type.materials.length} поз.</Badge>
+                  <div className="flex items-center gap-2">
+                    {/* Колонок несколько — на телефоне они не помещаются, и таблица
+                        прокручивается вбок. Без подсказки это незаметно: край колонки
+                        выглядит как край таблицы, и остальные смены считают пропавшими.
+                        При одной колонке всё влезает, подсказка не нужна. */}
+                    {!hideTotalOnMobile && (
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground sm:hidden">
+                        <Icon name="MoveHorizontal" size={12} />
+                        листайте вбок
+                      </span>
+                    )}
+                    <Badge variant="secondary">{type.materials.length} поз.</Badge>
+                  </div>
                 </div>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-full sm:w-56">Материал</TableHead>
+                      {/* БЕЗ w-full — ИНАЧЕ НА ТЕЛЕФОНЕ ПРОПАДАЮТ ОСТАТКИ.
+                          Таблица объявлена как min-w-max и прокручивается вбок.
+                          «w-full» на первой колонке отдавало ей всю ширину экрана,
+                          и колонки смен с «Итого» уезжали за край — прокрутки при
+                          этом не появлялось, швея видела только названия материалов
+                          без единой цифры. Ширину задаём только с планшета. */}
+                      <TableHead className="min-w-[8.5rem] sm:w-56">Материал</TableHead>
                       {visibleColumns.map((col) => (
                         <TableHead
                           key={`${col.workshopId}-${col.shiftNumber}`}
@@ -218,7 +242,11 @@ const WorkshopMaterials = () => {
                           {col.shiftLabel}
                         </TableHead>
                       ))}
-                      <TableHead className="w-48 text-center">Итого</TableHead>
+                      <TableHead
+                        className={`w-48 text-center ${hideTotalOnMobile ? 'hidden sm:table-cell' : ''}`}
+                      >
+                        Итого
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -240,11 +268,22 @@ const WorkshopMaterials = () => {
                               }`}
                             >
                               {cell ? `${formatQuantity(cell.quantity)} ${m.unit}, ${cell.rollCount} рул.` : '—'}
+                              {/* «В пути» живёт в колонке «Итого», но на телефоне её
+                                  скрываем — и предупреждение пропадало вместе с ней.
+                                  Материал, который смена ещё не приняла, в раскрой не
+                                  пойдёт: швея обязана видеть это в своей ячейке. */}
+                              {hideTotalOnMobile && (cell?.pendingQuantity ?? 0) > 0 && (
+                                <div className="text-xs font-medium text-amber-600 sm:hidden">
+                                  в пути: {formatQuantity(cell?.pendingQuantity ?? 0)} {m.unit}
+                                </div>
+                              )}
                             </TableCell>
                           );
                         })}
                         <TableCell
-                          className={`text-center font-semibold ${(() => {
+                          className={`text-center font-semibold ${
+                            hideTotalOnMobile ? 'hidden sm:table-cell' : ''
+                          } ${(() => {
                             // Итог подсвечиваем по той же шкале, что и ячейки смен.
                             const lvl = getStockLevel(totalFor(m).quantity, m.unit);
                             return lvl ? stockCellClass[lvl] : '';
