@@ -961,7 +961,6 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     # При закрытии ОДНОГО короба просим этикетку только на него: OZON отдаёт
     # один PDF на все переданные грузоместа, и общий файл на десять коробов
     # кладовщику бесполезен — ему нужна наклейка на тот короб, что в руках.
-    stickers_saved = 0
     label_cargo_ids = cargo_ids
     if one_box_id:
         cur.execute(
@@ -972,16 +971,11 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
         if one_row and one_row[0]:
             label_cargo_ids = [int(one_row[0])]
 
-    # ГРУЗОМЕСТО УЖЕ СОЗДАНО — ФИКСИРУЕМ ЭТО ДО ПОХОДА ЗА ЭТИКЕТКОЙ.
+    # ГРУЗОМЕСТО СОЗДАНО — ФИКСИРУЕМ ЭТО ДО ЗАПРОСА ЭТИКЕТКИ.
     #
-    # У функции 5 секунд на всю работу, а один запрос к OZON занимает до 5с
-    # сам по себе. Раньше закрытие короба и получение этикетки шли одним
-    # вызовом: грузоместо создавалось, но на этикетке функция обрывалась по
-    # таймауту — и весь коммит откатывался. Короб выглядел незакрытым, хотя
-    # на OZON место уже было заведено; повторное нажатие плодило дубли.
-    #
-    # Теперь закрытие фиксируем сразу, а этикетку тянем отдельным вызовом
-    # (действие fetch_box_label). Не успели здесь — фронт дозапросит её.
+    # Если запрос этикетки ниже не пройдёт (площадка тормозит, лимит частоты),
+    # короб всё равно останется закрытым: место на OZON заведено, и терять эту
+    # запись нельзя — иначе повторное нажатие заведёт второе место.
     conn.commit()
 
     st, lbl = ozon_post('/v1/cargoes-label/create', client_id, api_key, {
@@ -1009,97 +1003,31 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
             )
         conn.commit()
 
-        # 4) Получаем готовый PDF.
-        #
-        # Этикетку OZON отдаёт ССЫЛКОЙ на файл: {"status": "SUCCESS", "result":
-        # {"file_guid": "...", "file_url": "https://ir.ozone.ru/..."}}. Ключей
-        # content/file_content с base64 в ответе нет вовсе — раньше их и искали,
-        # поэтому стикер не сохранялся никогда, даже когда площадка его отдала.
-        # Ждём этикетку КОРОТКО: у функции 5 секунд на всё, а долгое ожидание
-        # обрывается таймаутом и откатывает работу. Не успела подготовиться —
-        # кладовщик заберёт её кнопкой «Получить этикетку», короб уже закрыт.
-        st, got = poll_operation(
-            '/v1/cargoes-label/get', client_id, api_key, label_op,
-            attempts=1, delay=0.5,
-        )
-        lbl_result = got.get('result') if isinstance(got, dict) else None
-        pdf_bytes = None
-        if isinstance(lbl_result, dict):
-            file_url = lbl_result.get('file_url')
-            if file_url:
-                try:
-                    pdf_bytes = download_file(file_url)
-                except Exception:
-                    pdf_bytes = None
-        if not pdf_bytes and isinstance(got, dict):
-            content = got.get('content') or got.get('file_content')
-            if content:
-                try:
-                    pdf_bytes = base64.b64decode(content)
-                except Exception:
-                    pdf_bytes = None
-        if pdf_bytes:
-            # OZON ИГНОРИРУЕТ cargo_ids И ОТДАЁТ ЭТИКЕТКИ ВСЕЙ ЗАЯВКИ.
-            #
-            # Мы просим наклейку на один короб, а в ответ приходит PDF со всеми
-            # грузоместами поставки — по странице на каждое. Если сохранить
-            # такой файл коробу целиком, кладовщик печатает пачку чужих
-            # наклеек и клеит их наугад.
-            #
-            # Поэтому режем PDF по страницам и раскладываем: на каждой
-            # странице напечатан ID грузового места — по нему и находим,
-            # какому коробу она принадлежит.
-            pages = split_label_pages(pdf_bytes)
-            saved_ids = set()
-            for cargo_id, page_pdf in pages.items():
-                cur.execute(
-                    "SELECT id, box_number FROM marketplace_supply_boxes "
-                    "WHERE supply_id = %s AND ozon_cargo_id = %s",
-                    (int(supply_id), int(cargo_id)),
-                )
-                b_row = cur.fetchone()
-                if not b_row:
-                    continue
-                try:
-                    url = upload_pdf(page_pdf, f'supply-{supply_id}-box-{b_row[0]}')
-                except Exception:
-                    continue
-                cur.execute(
-                    "UPDATE marketplace_supply_boxes SET sticker_url = %s, "
-                    "  sticker_name = %s, ozon_label_operation_id = NULL WHERE id = %s",
-                    (url, f'Стикер короба №{b_row[1]}.pdf', int(b_row[0])),
-                )
-                saved_ids.add(int(b_row[0]))
-            stickers_saved = len(saved_ids)
-
-            # Разрезать не вышло (формат файла изменился) — сохраняем как есть,
-            # иначе кладовщик останется совсем без наклейки.
-            if not stickers_saved:
-                try:
-                    if one_box_id:
-                        url = upload_pdf(pdf_bytes, f'supply-{supply_id}-box-{one_box_id}')
-                        cur.execute(
-                            "UPDATE marketplace_supply_boxes SET sticker_url = %s, "
-                            "  sticker_name = %s WHERE id = %s",
-                            (url, f'Стикер короба #{one_box_id}.pdf', int(one_box_id)),
-                        )
-                        stickers_saved = 1
-                    else:
-                        url = upload_pdf(pdf_bytes, f'supply-{supply_id}')
-                        cur.execute(
-                            "UPDATE marketplace_supply_boxes SET sticker_url = %s, sticker_name = %s "
-                            "WHERE supply_id = %s AND ozon_cargo_id IS NOT NULL",
-                            (url, f'Этикетки коробов #{supply_id}.pdf', int(supply_id)),
-                        )
-                        stickers_saved = len(cargo_ids)
-                except Exception:
-                    pass
+    # ЗА САМИМ ФАЙЛОМ ЗДЕСЬ НЕ ХОДИМ — ЭТО И БЫЛА ПРИЧИНА ОШИБКИ 504.
+    #
+    # Раньше закрытие короба доделывало всю цепочку в одном вызове: ждало
+    # готовности этикетки, скачивало PDF, резало его по страницам и грузило
+    # каждую в хранилище. Только скачивание и нарезка занимают несколько
+    # секунд, а у функции на всё около 5 — она обрывалась по таймауту уже
+    # ПОСЛЕ того, как грузоместо на OZON создано и записано.
+    #
+    # Кладовщик видел красную ошибку, обновлял страницу — и короб оказывался
+    # закрыт и переданным на площадку. Работа сделана, а выглядит как сбой.
+    #
+    # Теперь закрытие заканчивается здесь: грузоместо создано, номер записан,
+    # генерация этикетки запущена и её operation_id сохранён. Файл забирает
+    # отдельный короткий вызов fetch_box_label — фронт дёргает его сразу после
+    # закрытия. Так каждый запрос укладывается в отведённое время.
     conn.commit()
 
     return _resp(200, {
         'closedBoxes': 1 if one_box_id else len(cargo_ids),
-        'stickersSaved': stickers_saved,
-        'note': None if stickers_saved else 'Грузоместо создано, но этикетка ещё готовится — обновите через минуту.',
+        # Стикер на этом шаге не сохраняется никогда: его забирает следующий
+        # вызов fetch_box_label. Поле оставлено для совместимости с фронтом.
+        'stickersSaved': 0,
+        'labelPending': bool(label_op),
+        'note': 'Короб закрыт, грузоместо создано. Этикетка готовится — '
+                'забираем её следующим шагом',
     })
 
 

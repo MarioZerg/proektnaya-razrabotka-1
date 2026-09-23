@@ -337,11 +337,7 @@ export const useSupplyAssemble = (supplyId: number) => {
       // стикеры пришлось бы переклеивать.
       toast({
         title: 'Короб закрыт',
-        description:
-          r.note ||
-          (r.stickersSaved
-            ? 'Стикер получен с OZON — можно печатать'
-            : 'Грузоместо создано на OZON'),
+        description: r.note || 'Грузоместо создано на OZON',
       });
       load(true);
     } catch (e) {
@@ -397,15 +393,30 @@ export const useSupplyAssemble = (supplyId: number) => {
       for (let i = 0; i < queue.length; i += 1) {
         const box = queue[i];
         setCloseProgress({ current: i + 1, total: queue.length });
-        try {
-          await closeOzonBoxes(supplyId, box.id);
-          closed += 1;
-        } catch (e) {
-          // Один упавший короб не должен останавливать всю пачку: остальные
-          // кладовщику нужно закрыть сейчас, а про этот скажем в конце.
+        // ОДНА ПОВТОРНАЯ ПОПЫТКА НА КОРОБ.
+        //
+        // Самый частый отказ — лимит частоты OZON (429): площадка не любит
+        // запросы подряд. Место при этом не создаётся, поэтому повтор
+        // безопасен и дублей не даёт. Без него короб уходил в «не закрылись»
+        // из-за секундной заминки площадки.
+        let ok = false;
+        for (let attempt = 0; attempt < 2 && !ok; attempt += 1) {
+          try {
+            await closeOzonBoxes(supplyId, box.id);
+            ok = true;
+          } catch (e) {
+            if (attempt === 0) {
+              await new Promise((resolve) => setTimeout(resolve, 4000));
+            }
+          }
+        }
+        if (!ok) {
+          // Короб так и не закрылся: остальные кладовщику нужно закрыть
+          // сейчас, а про этот скажем в конце.
           failed.push(box.boxNumber);
           continue;
         }
+        closed += 1;
 
         // Стикер OZON готовит асинхронно и на первый запрос почти всегда
         // отвечает «ещё не готово». Ждём его здесь же — кладовщик нажал одну
@@ -417,6 +428,16 @@ export const useSupplyAssemble = (supplyId: number) => {
             break;
           }
           await new Promise((resolve) => setTimeout(resolve, 2500));
+        }
+
+        // ПАУЗА ПЕРЕД СЛЕДУЮЩИМ КОРОБОМ.
+        //
+        // OZON жёстко ограничивает частоту: короба, отправленные подряд без
+        // передышки, начинают получать отказ по лимиту. Полторы секунды между
+        // коробами заметно снижают число таких отказов, а на девяти коробах
+        // добавляют к общему времени меньше пятнадцати секунд.
+        if (i < queue.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
         }
       }
 
