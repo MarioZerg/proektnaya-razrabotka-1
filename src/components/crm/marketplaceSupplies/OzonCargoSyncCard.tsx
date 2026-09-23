@@ -62,7 +62,7 @@ const OzonCargoSyncCard = ({ supply, onSynced }: OzonCargoSyncCardProps) => {
         title: r.removed
           ? `Снято лишних коробов: ${r.removed}`
           : r.lost
-            ? `Коробов без грузоместа на OZON: ${r.lost}`
+            ? `Открыто заново коробов без места: ${r.lost}`
             : 'Всё сходится',
         description: r.note,
         variant: r.lost ? 'destructive' : undefined,
@@ -92,8 +92,9 @@ const OzonCargoSyncCard = ({ supply, onSynced }: OzonCargoSyncCardProps) => {
               Сверка коробов с OZON
             </p>
             <p className="text-sm text-muted-foreground">
-              Проверит, не осталось ли на площадке лишних коробов от удалённых или
-              переоткрытых — и уберёт их. У нас закрыто и заведено: {closedOnOzon}
+              Сверит короба с площадкой: лишние на OZON уберёт, а те, что остались
+              без грузоместа, откроет заново — их нужно будет закрыть ещё раз.
+              У нас закрыто и заведено: {closedOnOzon}
             </p>
           </div>
           <Button variant="outline" onClick={handleSync} disabled={busy}>

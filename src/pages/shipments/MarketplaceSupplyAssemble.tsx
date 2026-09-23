@@ -51,6 +51,7 @@ const MarketplaceSupplyAssemble = () => {
     handleSupplyAssembled,
     handleCloseOzonBox,
     handleCloseBoxes,
+    closeProgress,
     handleUploadSticker,
   } = useSupplyAssemble(supplyId);
 
@@ -141,6 +142,7 @@ const MarketplaceSupplyAssemble = () => {
           cargoType={cargoType}
           addingBox={addingBox}
           closingBoxes={closingBoxes}
+          closeProgress={closeProgress}
           onCargoTypeChange={handleCargoTypeChange}
           onCloseBoxes={handleCloseBoxes}
           onAddBox={handleAddBox}

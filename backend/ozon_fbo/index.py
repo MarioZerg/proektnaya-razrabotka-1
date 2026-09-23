@@ -829,11 +829,20 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
 
     # 1) Создаём грузоместа на OZON.
     #
-    # delete_current_version = true стирает ВСЕ ранее созданные грузоместа
-    # заявки. При закрытии одного короба это недопустимо: у закрытых коробов
-    # сменились бы cargo_id, а этикетки на них уже наклеены. Поэтому один короб
-    # добавляем к существующим, а пересоздаём список только при закрытии всей
-    # поставки разом.
+    # delete_current_version НИКОГДА НЕ СТАВИМ В true.
+    #
+    # Этот флаг стирает на заявке ВСЕ ранее созданные грузоместа и оставляет
+    # только те, что пришли в текущем запросе. Раньше при нажатии «Закрыть
+    # короба» на всю поставку он включался — и получалось вот что: короба,
+    # закрытые по одному ранее, в payload не попадают (у них уже есть
+    # cargo_id, мы их осознанно пропускаем), а флаг всё равно приказывает
+    # площадке снести прежний список. Собрали девять коробов, шесть закрыли
+    # по одному, нажали «Закрыть короба» — OZON снёс шесть мест и завёл три.
+    # В поставке осталось три короба, остальные «не подтянулись», хотя
+    # физически стоят заклеенные на складе.
+    #
+    # Грузоместа всегда ДОБАВЛЯЕМ к существующим. Снятие лишнего — отдельная,
+    # явная операция (/v1/cargoes/delete) с подтверждением от площадки.
     # ДОБИВАЕМ НЕСНЯТЫЕ МЕСТА ПЕРЕД СОЗДАНИЕМ НОВОГО.
     #
     # OZON подтверждает снятие грузоместа раньше, чем применяет его: ответ
@@ -848,7 +857,7 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
 
     st, data = ozon_post('/v1/cargoes/create', client_id, api_key, {
         'supply_id': int(ozon_supply_id),
-        'delete_current_version': not one_box_id,
+        'delete_current_version': False,
         'cargoes': cargoes_payload,
     })
     # ЛИМИТ ЧАСТОТЫ — НЕ ОШИБКА СБОРКИ.
@@ -981,16 +990,24 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
     })
     label_op = lbl.get('operation_id') if isinstance(lbl, dict) else None
     if label_op:
-        # Запоминаем операцию: если ниже не успеем дождаться файла, кнопка
-        # «Получить этикетку» ПРОДОЛЖИТ её, а не создаст новую (иначе файл не
-        # забирается никогда и мы упираемся в лимит частоты OZON).
-        if one_box_id:
+        # ЗАПОМИНАЕМ ОПЕРАЦИЮ ПО КАЖДОМУ КОРОБУ ПАКЕТА, А НЕ ТОЛЬКО ОДИНОЧНОМУ.
+        #
+        # Если ниже не успеем дождаться файла, кнопка «Получить этикетку»
+        # ПРОДОЛЖИТ эту операцию, а не создаст новую (иначе файл не забирается
+        # никогда и мы упираемся в лимит частоты OZON).
+        #
+        # Раньше operation_id сохранялся только при закрытии одного короба. При
+        # закрытии пачкой короба оставались без ссылки на операцию: каждая
+        # кнопка «Получить этикетку» заводила новую и тут же упиралась в 429.
+        target_ids = [int(one_box_id)] if one_box_id else [
+            int(b) for b in box_keys.values()]
+        for _bid in target_ids:
             cur.execute(
                 "UPDATE marketplace_supply_boxes SET ozon_label_operation_id = %s "
                 "WHERE id = %s",
-                (str(label_op), int(one_box_id)),
+                (str(label_op), _bid),
             )
-            conn.commit()
+        conn.commit()
 
         # 4) Получаем готовый PDF.
         #
@@ -1312,25 +1329,56 @@ def handle_sync_cargoes(cur, conn, client_id, api_key, body_data):
 
     extra = sorted(on_ozon - ours)
     # Наше место, которого на площадке нет: короб у нас закрыт и считается
-    # уехавшим, а грузоместа под него на заявке не существует. Снять такое
-    # нечем — это расхождение в ДРУГУЮ сторону, и чинится оно переоткрытием
-    # короба с повторным закрытием. Раньше об этом не говорилось вовсе.
+    # уехавшим, а грузоместа под него на заявке не существует. Именно так
+    # выглядела поставка после того, как delete_current_version снёс ранее
+    # закрытые места: у нас девять коробов, на OZON три.
     lost = sorted(ours - on_ozon)
+    lost_nums = []
+    if lost:
+        # ЧИНИМ САМИ, А НЕ ПРОСИМ КЛАДОВЩИКА ПЕРЕОТКРЫТЬ КОРОБ.
+        #
+        # Совет «откройте короб и закройте заново» тут вредный: переоткрытие
+        # шлёт на OZON снятие места, которого там и так нет, и занимает у
+        # кладовщика по минуте на короб. А чинить нужно ровно одно — забыть
+        # мёртвый cargo_id, чтобы короб снова стал кандидатом на отправку.
+        #
+        # Ставим место в очередь на снятие: если оно на самом деле живо (не
+        # прочиталась страница наклейки), перед созданием нового его добьют,
+        # и дубля на приёмке не будет.
+        cur.execute(
+            "SELECT id, box_number FROM marketplace_supply_boxes "
+            "WHERE supply_id = %s AND ozon_cargo_id = ANY(%s) ORDER BY box_number",
+            (int(supply_id), [int(c) for c in lost]),
+        )
+        for _bid, _bnum in cur.fetchall():
+            lost_nums.append(_bnum)
+        for c in lost:
+            remember_removal(cur, supply_id, c)
+        cur.execute(
+            "UPDATE marketplace_supply_boxes SET ozon_cargo_id = NULL, closed_at = NULL, "
+            "  sticker_url = NULL, sticker_name = NULL, ozon_label_operation_id = NULL, "
+            "  ozon_create_operation_id = NULL "
+            "WHERE supply_id = %s AND ozon_cargo_id = ANY(%s)",
+            (int(supply_id), [int(c) for c in lost]),
+        )
+        log_action(
+            cur, body_data.get('actorId'), body_data.get('actorName'),
+            'ozon_fbo_sync_cargoes', supply_id,
+            f'Короба без грузоместа на OZON открыты заново: '
+            f'{", ".join(f"№{n}" for n in lost_nums)}',
+        )
+        conn.commit()
+
     if not extra:
         if lost:
-            cur.execute(
-                "SELECT box_number FROM marketplace_supply_boxes "
-                "WHERE supply_id = %s AND ozon_cargo_id = ANY(%s) ORDER BY box_number",
-                (int(supply_id), [int(c) for c in lost]),
-            )
-            nums = ', '.join(f'№{r[0]}' for r in cur.fetchall())
+            nums = ', '.join(f'№{n}' for n in lost_nums)
             return _resp(200, {
                 'done': True, 'removed': 0, 'onOzon': len(on_ozon),
                 'lost': len(lost),
                 'note': f'На OZON {len(on_ozon)} грузомест, а закрытых коробов у нас '
-                        f'{len(ours)}. Нет на площадке: {nums or len(lost)}. '
-                        f'Откройте такой короб и закройте заново — тогда '
-                        f'грузоместо заведётся',
+                        f'было {len(ours)}. Без места остались короба {nums} — '
+                        f'они снова открыты. Нажмите «Закрыть короба и получить '
+                        f'стикеры»: места заведутся, стикеры придут',
             })
         return _resp(200, {
             'done': True, 'removed': 0, 'onOzon': len(on_ozon),
@@ -1373,12 +1421,21 @@ def handle_sync_cargoes(cur, conn, client_id, api_key, body_data):
     )
     conn.commit()
 
+    # Короба, потерявшие место, мы только что открыли заново — они больше не
+    # числятся закрытыми, и в остатке на OZON их нет.
+    alive = len(ours) - len(lost)
+    note = (f'Снято лишних грузомест: {len(extra)}. На OZON осталось {alive} — '
+            f'ровно столько, сколько закрытых коробов у нас')
+    if lost_nums:
+        note += (f'. Короба {", ".join(f"№{n}" for n in lost_nums)} остались без '
+                 f'места и снова открыты — нажмите «Закрыть короба и получить стикеры»')
+
     return _resp(200, {
         'done': True,
         'removed': len(extra),
-        'onOzon': len(ours),
-        'note': f'Снято лишних грузомест: {len(extra)}. На OZON осталось {len(ours)} — '
-                f'ровно столько, сколько закрытых коробов у нас',
+        'onOzon': alive,
+        'lost': len(lost),
+        'note': note,
     })
 
 

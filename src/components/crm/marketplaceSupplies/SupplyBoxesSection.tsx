@@ -21,6 +21,8 @@ interface SupplyBoxesSectionProps {
   cargoType: 'BOX' | 'PALLET';
   addingBox: boolean;
   closingBoxes: boolean;
+  /** Какой короб закрывается сейчас — показываем ход работы на кнопке. */
+  closeProgress: { current: number; total: number } | null;
   onCargoTypeChange: (value: 'BOX' | 'PALLET') => void;
   onCloseBoxes: () => void;
   onAddBox: () => void;
@@ -55,6 +57,7 @@ const SupplyBoxesSection = ({
   cargoType,
   addingBox,
   closingBoxes,
+  closeProgress,
   onCargoTypeChange,
   onCloseBoxes,
   onAddBox,
@@ -117,7 +120,9 @@ const SupplyBoxesSection = ({
                 size={14}
                 className={`mr-1 ${closingBoxes ? 'animate-spin' : ''}`}
               />
-              Закрыть короба и получить стикеры
+              {closeProgress
+                ? `Короб ${closeProgress.current} из ${closeProgress.total}…`
+                : 'Закрыть короба и получить стикеры'}
             </Button>
           )}
           {canEdit && (

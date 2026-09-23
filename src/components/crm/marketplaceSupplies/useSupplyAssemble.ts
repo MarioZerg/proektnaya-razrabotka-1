@@ -18,7 +18,7 @@ import {
   type SupplyDetail,
   type SupplyCandidate,
 } from '@/lib/marketplaceSuppliesApi';
-import { closeOzonBoxes, reopenOzonBox } from '@/lib/ozonFboApi';
+import { closeOzonBoxes, reopenOzonBox, fetchOzonBoxLabel } from '@/lib/ozonFboApi';
 import { playScanSound, playScanErrorSound, playCancelSound } from '@/lib/scanSound';
 
 /** Что показываем, когда отсканировали вещь отменённого заказа. */
@@ -52,6 +52,13 @@ export const useSupplyAssemble = (supplyId: number) => {
   const [candidatesLoading, setCandidatesLoading] = useState(false);
 
   const [closingBoxes, setClosingBoxes] = useState(false);
+  // Какой короб закрывается прямо сейчас. Закрытие идёт по одному коробу и на
+  // девяти занимает минуту: без счётчика экран выглядит зависшим, и кладовщик
+  // жмёт кнопку повторно.
+  const [closeProgress, setCloseProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
   const [cargoType, setCargoType] = useState<'BOX' | 'PALLET'>('BOX');
 
   // Поставку собирает кто-то другой: показываем предупреждение вместо рабочего экрана.
@@ -346,21 +353,88 @@ export const useSupplyAssemble = (supplyId: number) => {
     }
   };
 
-  // Закрытие коробов OZON FBO: создаёт грузоместа на OZON из состава каждого короба и тянет
-  // PDF-этикетки. Действует на реальной заявке OZON.
+  /**
+   * «Закрыть короба и получить стикеры» — ПРОХОДИМ КОРОБА ПО ОДНОМУ.
+   *
+   * ПОЧЕМУ НЕ ОДНИМ ЗАПРОСОМ НА ВСЮ ПОСТАВКУ. У функции на бэкенде около
+   * пяти секунд, а один запрос к OZON занимает до пяти сам по себе: создание
+   * грузоместа, ожидание номера, запрос этикетки и её скачивание в один
+   * вызов не укладываются никогда. Пачка из девяти коробов обрывалась по
+   * таймауту на середине — и в поставке оседало три короба, остальные
+   * «не подтягивались», хотя физически стояли заклеенные на складе.
+   *
+   * Теперь кнопка делает ровно то же, что кладовщик руками: берёт короб,
+   * закрывает его, дожидается стикера, берёт следующий. Каждый шаг —
+   * отдельный короткий запрос, который успевает завершиться. Короб, уже
+   * заведённый на OZON, пропускаем — второго грузоместа ему не нужно.
+   *
+   * Ход работы виден на кнопке: «Короб 4 из 9». Иначе на девяти коробах
+   * экран замирает на минуту и выглядит зависшим.
+   */
   const handleCloseBoxes = async () => {
-    setClosingBoxes(true);
-    try {
-      const r = await closeOzonBoxes(supplyId);
+    if (!supply) return;
+
+    // Короба по порядку номеров: пустые не отправляем — грузоместо без товара
+    // площадка не примет, а закрытых повторно не трогаем.
+    const queue = supply.boxes
+      .filter((b) => b.items.length > 0 && !b.ozonCargoId)
+      .sort((a, b) => a.boxNumber - b.boxNumber);
+
+    if (!queue.length) {
       toast({
-        title: `Коробов закрыто: ${r.closedBoxes}`,
-        description: r.note || `Стикеров получено: ${r.stickersSaved}. PDF-этикетки доступны в коробах.`,
+        title: 'Закрывать нечего',
+        description: 'Все непустые короба уже заведены на OZON',
       });
-      load();
-    } catch (e) {
-      toast({ title: 'Не удалось закрыть короба', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+      return;
+    }
+
+    setClosingBoxes(true);
+    let closed = 0;
+    let stickers = 0;
+    const failed: number[] = [];
+
+    try {
+      for (let i = 0; i < queue.length; i += 1) {
+        const box = queue[i];
+        setCloseProgress({ current: i + 1, total: queue.length });
+        try {
+          await closeOzonBoxes(supplyId, box.id);
+          closed += 1;
+        } catch (e) {
+          // Один упавший короб не должен останавливать всю пачку: остальные
+          // кладовщику нужно закрыть сейчас, а про этот скажем в конце.
+          failed.push(box.boxNumber);
+          continue;
+        }
+
+        // Стикер OZON готовит асинхронно и на первый запрос почти всегда
+        // отвечает «ещё не готово». Ждём его здесь же — кладовщик нажал одну
+        // кнопку и должен получить готовую пачку, а не список недоделок.
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          const r = await fetchOzonBoxLabel(box.id);
+          if (r.ready) {
+            stickers += 1;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+        }
+      }
+
+      toast({
+        title: `Коробов закрыто: ${closed} из ${queue.length}`,
+        description: failed.length
+          ? `Стикеров получено: ${stickers}. Не закрылись короба: №${failed.join(', №')} — `
+            + 'закройте их по одному из карточки короба'
+          : `Стикеров получено: ${stickers} из ${closed}`
+            + (stickers < closed
+              ? '. По остальным нажмите «Получить этикетку» в коробе через минуту'
+              : '. Можно печатать пачкой'),
+        variant: failed.length ? 'destructive' : undefined,
+      });
     } finally {
+      setCloseProgress(null);
       setClosingBoxes(false);
+      load();
     }
   };
 
@@ -385,6 +459,7 @@ export const useSupplyAssemble = (supplyId: number) => {
     candidates,
     candidatesLoading,
     closingBoxes,
+    closeProgress,
     cargoType,
     lockedByOther,
     cancelledScan,
