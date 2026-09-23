@@ -1,4 +1,5 @@
 import printHtmlInIframe from '@/lib/printInIframe';
+import loadPdfjs from '@/lib/pdfjs';
 
 /**
  * Ярлык Яндекс Маркета на термонаклейке 58×40 мм.
@@ -159,9 +160,7 @@ export const buildYandexLabelHtml = async (
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
 
-  const pdfjs = await import('pdfjs-dist');
-  const workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
-  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+  const pdfjs = await loadPdfjs();
 
   const pdf = await pdfjs.getDocument({ data: bytes }).promise;
   const page = await pdf.getPage(1);
