@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Order } from '@/lib/ordersApi';
 import type { Material } from '@/lib/materialsApi';
+import compareCutQueue from '@/components/crm/sewingItems/cutQueueOrder';
 import {
   OVERLOCK_TAB,
   CANCELLED_CUT_TAB,
@@ -131,10 +132,11 @@ export const useSewingItemsFilters = ({
       return o.sewingStatus === activeTab;
     })
     .sort((a, b) => {
-      if (activeTab === 'Новый') {
-        const fbs = Number(b.orderType === 'FBS') - Number(a.orderType === 'FBS');
-        if (fbs !== 0) return fbs;
-      }
+      // На вкладке «Новый» показываем ровно тот порядок, в котором заказы уйдут
+      // закройщику: залежавшиеся, затем FBS, затем быстрые в раскрое ткани.
+      // Правило живёт в одном месте (cutQueueOrder) и повторяет серверное —
+      // иначе список на экране расходился бы с выдачей стека.
+      if (activeTab === 'Новый') return compareCutQueue(a, b);
       const da = new Date(a.marketplaceCreatedAt || a.createdAt).getTime();
       const db = new Date(b.marketplaceCreatedAt || b.createdAt).getTime();
       return da - db;

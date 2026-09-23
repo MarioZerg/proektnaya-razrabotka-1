@@ -14,6 +14,7 @@ from shared import (
     CANCELLED_SQL,
     CLOSED_ORDERS_LIMIT,
     _fit_orders_body,
+    cut_queue_order_sql,
     get_setting_int,
     sewing_wait_for_order,
 )
@@ -363,9 +364,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "AND fulfilled_from_stock_id IS NULL "
                 "AND COALESCE(status, '') <> 'Отменён' "
                 "AND material IN (" + p_names_csv + ") "
-                "ORDER BY (order_type = 'FBS') DESC, "
-                "COALESCE(marketplace_created_at, created_at) ASC, "
-                "group_key NULLS FIRST, group_position ASC NULLS LAST, id ASC LIMIT %s",
+                "ORDER BY " + cut_queue_order_sql() + " LIMIT %s",
                 (p_stack_size,),
             )
             p_rows = cur.fetchall()

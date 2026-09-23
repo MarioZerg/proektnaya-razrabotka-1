@@ -21,6 +21,7 @@ from shared import (
     STATUS_ORDER,
     apply_penalty,
     cancelled_sql,
+    cut_queue_order_sql,
     award_variki,
     can_work_as,
     format_wait,
@@ -230,8 +231,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 }
 
             names_csv = ','.join("'" + n.replace("'", "''") + "'" for n in allowed_names)
-            # FBS-заказы раскраиваются первыми (жёсткое правило по всему конвейеру —
-            # сжатые сроки отгрузки), при равенстве — сначала самые давние заказы.
+            # Порядок очереди задан одним местом — cut_queue_order_sql (shared.py):
+            # залежавшиеся заказы, затем FBS, затем быстрые в раскрое ткани, затем
+            # дата заказа. Здесь его не дублируем, чтобы выдача стека и предпросмотр
+            # не разъехались.
             #
             # Считаем по дате заказа У ПОКУПАТЕЛЯ (marketplace_created_at), а не по
             # дате загрузки к нам. Это принципиально: заказы приезжают из маркетплейса
@@ -289,11 +292,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"AND NOT ({cancelled_sql('')}) "
                 "AND material IN (" + names_csv + ") "
                 + single_sql +
-                "ORDER BY " + cut_ozon_last_sql +
-                "(order_type = 'FBS') DESC, "
-                "COALESCE(marketplace_created_at, created_at) ASC, "
-                "group_key NULLS FIRST, group_position ASC NULLS LAST, id ASC LIMIT %s "
-                "FOR UPDATE SKIP LOCKED",
+                "ORDER BY " + cut_ozon_last_sql + cut_queue_order_sql()
+                + " LIMIT %s FOR UPDATE SKIP LOCKED",
                 (stack_size,),
             )
             picked = cur.fetchall()
