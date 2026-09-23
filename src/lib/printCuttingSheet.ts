@@ -216,6 +216,11 @@ const squeeze = (text: string, font: number, availWidth: number) => {
  * поэтому в ряду максимум: одна такая метка + «ОВЕРЛОК» + название площадки.
  * Ряд выровнен по левому краю с небольшим отступом — так плашка стоит чуть
  * левее центра, как и просили, а размер с номером остаются по центру.
+ *
+ * Отступ сверху — 7 px, а не 2. При двух пикселях рамка плашки «НЕ ПУТАТЬ»
+ * подходила вплотную к цифрам номера заказа и на печати читалась как одна
+ * слитая строка. Запас высоты в ячейке (90 px против 77 px содержимого) это
+ * позволяет — ничего не выдавливается за рамку.
  */
 const noteRow = (o: TakenOrder, mpFont: number, mpText?: string) => {
   const parts = [groupNote(o), purchaseNote(o), overlockNote(o)].filter(Boolean);
@@ -223,7 +228,7 @@ const noteRow = (o: TakenOrder, mpFont: number, mpText?: string) => {
                            line-height:1;white-space:nowrap;">${mpText || o.marketplace}</span>`;
   // Меток нет — площадка просто стоит по центру, как раньше.
   if (!parts.length) {
-    return `<div style="flex:0 0 auto;margin-top:1px;line-height:1;">${mp}</div>`;
+    return `<div style="flex:0 0 auto;margin-top:4px;line-height:1;">${mp}</div>`;
   }
   // flex:0 0 auto ОБЯЗАТЕЛЕН.
   //
@@ -235,7 +240,7 @@ const noteRow = (o: TakenOrder, mpFont: number, mpText?: string) => {
   //
   // Отрицательных полей здесь быть не должно: они выносили плашку за внутренний
   // отступ ячейки, и рамка резала её сбоку.
-  return `<div style="flex:0 0 auto;margin-top:2px;display:flex;align-items:center;
+  return `<div style="flex:0 0 auto;margin-top:7px;display:flex;align-items:center;
                       justify-content:center;gap:5px;flex-wrap:nowrap;
                       line-height:1;">${parts.join('')}${mp}</div>`;
 };
