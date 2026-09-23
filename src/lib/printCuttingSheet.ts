@@ -88,9 +88,44 @@ const formatNowTime = () =>
     timeZone: MSK_TZ,
   });
 
-/** Группирует заказы по материалу, сохраняя порядок первого появления материала. Внутри
- * материала вещи одной связки Яндекса идут подряд и по порядку — их вешают на одну вешалку,
- * поэтому в листе они не должны перемешиваться с другими заказами. */
+/**
+ * Порядок вещей ВНУТРИ одного материала.
+ *
+ * ПОЧЕМУ ЛИСТ ВЫГЛЯДЕЛ «ВПЕРЕМЕШКУ». Раньше здесь сортировались только связки
+ * Яндекса — по groupKey и позиции в связке. У заказов OZON groupKey пустой,
+ * поэтому для них сортировка не делала НИЧЕГО: вещи оставались в том порядке,
+ * в каком их выдал сервер (по срокам и приоритету), и размеры шли вразнобой —
+ * «Лен 200×245, Лен 300×265, Лен 300×255, Лен 300×245».
+ *
+ * Для закройщицы это лишняя работа: одинаковые размеры она кроит стопкой за
+ * один заход, а разбросанные по листу — ищет глазами и перекладывает ткань.
+ *
+ * Теперь порядок такой:
+ *   1) сначала одиночные вещи, потом связки (у связок groupKey непустой);
+ *   2) связка идёт целиком и по своим позициям — её вешают на одну вешалку;
+ *   3) одиночные — по ширине, затем по высоте: одинаковые размеры рядом;
+ *   4) при полном совпадении — по номеру заказа, чтобы порядок не «плавал»
+ *      от печати к печати.
+ */
+const compareWithinMaterial = (a: TakenOrder, b: TakenOrder) => {
+  const ga = a.groupKey || '';
+  const gb = b.groupKey || '';
+  if (ga !== gb) return ga.localeCompare(gb);
+  // Обе вещи из одной связки — только позиция в ней и решает.
+  if (ga) return (a.groupPosition || 0) - (b.groupPosition || 0);
+  if ((a.width || 0) !== (b.width || 0)) return (a.width || 0) - (b.width || 0);
+  if ((a.height || 0) !== (b.height || 0)) return (a.height || 0) - (b.height || 0);
+  return (a.orderNumber || '').localeCompare(b.orderNumber || '');
+};
+
+/**
+ * Группирует заказы по материалу: один материал идёт сплошным блоком.
+ *
+ * Порядок САМИХ материалов не трогаем — он приходит с сервера и учитывает
+ * приоритет раскроя (залежавшиеся заказы, FBS, быстрые в раскрое ткани).
+ * Пересортируй мы материалы по алфавиту, и очередь цеха сломалась бы.
+ * Наводим порядок только ВНУТРИ материала — см. compareWithinMaterial.
+ */
 const groupByMaterial = (orders: TakenOrder[]): TakenOrder[] => {
   const groups = new Map<string, TakenOrder[]>();
   for (const o of orders) {
@@ -98,14 +133,7 @@ const groupByMaterial = (orders: TakenOrder[]): TakenOrder[] => {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(o);
   }
-  for (const list of groups.values()) {
-    list.sort((a, b) => {
-      const ga = a.groupKey || '';
-      const gb = b.groupKey || '';
-      if (ga !== gb) return ga.localeCompare(gb);
-      return (a.groupPosition || 0) - (b.groupPosition || 0);
-    });
-  }
+  for (const list of groups.values()) list.sort(compareWithinMaterial);
   return Array.from(groups.values()).flat();
 };
 
@@ -127,11 +155,21 @@ const groupNote = (o: TakenOrder) =>
  * покупки легли на вешалку 1, и швеи час выясняли, где чей крой. Метка предупреждает
  * закройщицу заранее: вещи похожи, бирки путать нельзя.
  */
+/* ПОЧЕМУ line-height:1.4, А НЕ 1.
+ *
+ * При line-height:1 строка ровно равна кеглю, и места под выносные элементы
+ * букв не остаётся: глиф прижимается к нижнему краю строки, а рамка обводки
+ * рисуется по ней. На печати текст выглядел приклеенным к нижней линии и
+ * наезжал на неё, хотя сверху внутри рамки оставался пустой зазор.
+ *
+ * Полуторный интервал даёт одинаковый отступ сверху и снизу — текст встаёт
+ * по центру обводки. Высоту плашки это добавляет на 3–4 px, запас в ячейке
+ * (90 px против 77 px содержимого) их выдерживает. */
 const purchaseNote = (o: TakenOrder) =>
   o.purchaseSize && o.purchaseSize > 1
     ? `<span style="font-size:10px;font-weight:900;white-space:nowrap;
-                    line-height:1;border:2px solid #000;border-radius:2px;
-                    padding:1px 3px;display:inline-block;">1 ПОКУПАТЕЛЬ ${
+                    line-height:1.4;border:2px solid #000;border-radius:2px;
+                    padding:0 4px;display:inline-block;">1 ПОКУПАТЕЛЬ ${
                       o.purchasePosition
                     }/${o.purchaseSize} — НЕ ПУТАТЬ</span>`
     : '';
@@ -148,8 +186,8 @@ const purchaseNote = (o: TakenOrder) =>
 const overlockNote = (o: TakenOrder) =>
   o.requiresOverlock
     ? `<span style="font-size:11px;font-weight:900;white-space:nowrap;
-                    line-height:1;background:#000;color:#fff;border-radius:2px;
-                    padding:1px 4px;display:inline-block;">ОВЕРЛОК</span>`
+                    line-height:1.4;background:#000;color:#fff;border-radius:2px;
+                    padding:0 5px;display:inline-block;">ОВЕРЛОК</span>`
     : '';
 
 /** Режет заказы на страницы по 20 позиций — ровно столько влезает в лист A4. */
@@ -222,10 +260,12 @@ const squeeze = (text: string, font: number, availWidth: number) => {
  * слитая строка. Запас высоты в ячейке (90 px против 77 px содержимого) это
  * позволяет — ничего не выдавливается за рамку.
  */
-const noteRow = (o: TakenOrder, mpFont: number, mpText?: string) => {
+const noteRow = (o: TakenOrder, mpFont: number) => {
   const parts = [groupNote(o), purchaseNote(o), overlockNote(o)].filter(Boolean);
+  // Схема отгрузки (FBS/FBO) здесь больше не печатается — она переехала в
+  // табличку справа, над ID закройщика. В этой строке остаётся только площадка.
   const mp = `<span style="font-size:${mpFont}px;font-weight:700;color:#222;
-                           line-height:1;white-space:nowrap;">${mpText || o.marketplace}</span>`;
+                           line-height:1;white-space:nowrap;">${o.marketplace}</span>`;
   // Меток нет — площадка просто стоит по центру, как раньше.
   if (!parts.length) {
     return `<div style="flex:0 0 auto;margin-top:4px;line-height:1;">${mp}</div>`;
@@ -254,14 +294,40 @@ const noteRow = (o: TakenOrder, mpFont: number, mpText?: string) => {
  * По этому номеру швея и бригадир понимают, кто раскроил вещь: на вешалке висит
  * десяток бирок от разных закройщиков, и разобрать их иначе невозможно. Раньше ID
  * печатался мелким шрифтом в общей строке с маркетплейсом — его не читали. */
-const idBadge = (cutterId: number | null) =>
-  cutterId == null
-    ? ''
-    : `<div style="border-left:2px solid #000;display:flex;flex-direction:column;
-                   align-items:center;justify-content:center;line-height:1;">
-         <div style="font-size:9px;font-weight:700;letter-spacing:0.5px;">ID</div>
-         <div style="font-size:26px;font-weight:800;">${cutterId}</div>
-       </div>`;
+/**
+ * Табличка справа: схема отгрузки СВЕРХУ, ID закройщика снизу.
+ *
+ * ЗАЧЕМ СХЕМА ПЕРЕЕХАЛА СЮДА. Раньше «FBS»/«FBO» стояли в нижней строке рядом
+ * с площадкой и метками. Строка там и так самая тесная: в неё вмещаются плашка
+ * «НЕ ПУТАТЬ», «ОВЕРЛОК» и название площадки — схему в этой мешанине не
+ * читали. А работа по ней разная: FBS клеится поштучно своим ярлыком, FBO
+ * уезжает коробкой на склад площадки.
+ *
+ * В правой табличке для неё есть место, и она попадает на одну вертикаль с ID —
+ * два самых «служебных» поля собраны в один угол. Заодно нижняя строка ячейки
+ * разгружается, и метки перестают тесниться.
+ *
+ * Схема залита чёрным: на листе из двадцати позиций серый текст теряется, а
+ * различать FBS и FBO нужно с одного взгляда.
+ */
+const idBadge = (cutterId: number | null, orderType?: string | null) => {
+  if (cutterId == null) return '';
+  const scheme = orderType
+    ? `<div style="background:#000;color:#fff;font-size:11px;font-weight:900;
+                   letter-spacing:0.5px;padding:2px 0;width:100%;text-align:center;
+                   line-height:1.3;">${orderType}</div>`
+    : '';
+  return `<div style="border-left:2px solid #000;display:flex;flex-direction:column;
+                      align-items:center;justify-content:center;line-height:1;
+                      overflow:hidden;">
+            ${scheme}
+            <div style="display:flex;flex-direction:column;align-items:center;
+                        justify-content:center;flex:1 1 auto;line-height:1;">
+              <div style="font-size:9px;font-weight:700;letter-spacing:0.5px;">ID</div>
+              <div style="font-size:24px;font-weight:800;">${cutterId}</div>
+            </div>
+          </div>`;
+};
 
 /**
  * Ячейка одной позиции.
@@ -276,7 +342,8 @@ const cell = (
   inner: string,
   isGroup = false,
   cutterId: number | null = null,
-  isNewMaterial = false
+  isNewMaterial = false,
+  orderType?: string | null
 ) =>
   `<div style="display:grid;grid-template-columns:1fr${
     cutterId != null ? ' 52px' : ''
@@ -288,7 +355,7 @@ const cell = (
     isGroup ? 'background:#e8e8e8;' : ''
   }">
      ${inner}
-     ${idBadge(cutterId)}
+     ${idBadge(cutterId, orderType)}
    </div>`;
 
 /** Сплошная сетка 2 колонки: смена материала отмечена жирной линией сверху. */
@@ -303,7 +370,13 @@ const groupedGrid = (
     // Первый ряд линией не отбиваем: сверху и так рамка ячейки.
     const isNew = current !== null && key !== current && i >= COLS;
     current = key;
-    return cell(renderInner(o), !!(o.groupSize && o.groupSize > 1), cutterId, isNew);
+    return cell(
+      renderInner(o),
+      !!(o.groupSize && o.groupSize > 1),
+      cutterId,
+      isNew,
+      o.orderType
+    );
   });
   return `<div style="display:grid;grid-template-columns:1fr 1fr;">${cells.join('')}</div>`;
 };
@@ -418,7 +491,7 @@ const buildQrPageHtml = (
         <div style="flex:0 0 auto;font-size:${NUM_FONT}px;font-weight:800;margin-top:2px;
                     white-space:nowrap;line-height:1.1;
                     ${squeeze(o.orderNumber || '', NUM_FONT, textWidth)}">${o.orderNumber}</div>
-        ${noteRow(o, 10, `${o.marketplace} [${o.orderType}]`)}
+        ${noteRow(o, 10)}
       </div>`,
     cutterId
   );
