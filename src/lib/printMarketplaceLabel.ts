@@ -137,6 +137,49 @@ export const printLabelFromUrl = async (url: string, title = 'Стикер от�
 };
 
 /**
+ * Короб поставки в том виде, в каком он нужен для подписи наклейки.
+ *
+ * Намеренно не завязываемся на полный тип короба: печати нужны только два
+ * номера — наш и площадки.
+ */
+export interface BoxCaptionSource {
+  boxNumber: number;
+  ozonCargoId?: number | null;
+}
+
+const escapeHtml = (v: string): string =>
+  v.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+
+/**
+ * Строка подписи: наш номер короба слева, ID грузоместа OZON справа.
+ *
+ * Оба номера обязательны именно вместе. Наш номер — то, чем короб называют в
+ * цехе и в системе; ID грузоместа — то, что видит приёмка маркетплейса. Пока
+ * на наклейке был только второй, кладовщик не мог понять, какой это короб, и
+ * сверял их вручную по списку.
+ */
+const boxCaption = (box: BoxCaptionSource, all?: BoxCaptionSource[]): string => {
+  const total = all?.length || 0;
+  const left = total > 1
+    ? `Короб ${box.boxNumber} из ${total}`
+    : `Короб ${box.boxNumber}`;
+  const right = box.ozonCargoId
+    ? `<div class="cargo"><span>Грузоместо OZON</span>${escapeHtml(String(box.ozonCargoId))}</div>`
+    : '';
+  return `<div class="cap"><div class="box">${escapeHtml(left)}</div>${right}</div>`;
+};
+
+/** Подпись, когда короб известен только по номеру грузоместа. */
+const captionFor = (cargoId: number | null, all?: BoxCaptionSource[]): string => {
+  const box = cargoId ? all?.find((b) => b.ozonCargoId === cargoId) : undefined;
+  if (box) return boxCaption(box, all);
+  // Короб не опознан: печатать пустую шапку нельзя — кладовщик решит, что
+  // наклейка бракованная. Показываем хотя бы номер грузоместа площадки.
+  if (!cargoId) return '';
+  return `<div class="cap"><div class="box">Грузоместо ${escapeHtml(String(cargoId))}</div></div>`;
+};
+
+/**
  * Печать стикера короба FBO на стандартной наклейке 120×75 мм.
  *
  * OZON отдаёт готовый стикер короба PDF-ссылкой.
@@ -166,6 +209,7 @@ export const printBoxLabelFromUrl = async (
   url: string,
   title = 'Стикер короба',
   cargoId?: number | null,
+  boxes?: BoxCaptionSource[],
 ): Promise<void> => {
   if (!url) return;
 
@@ -182,7 +226,10 @@ export const printBoxLabelFromUrl = async (
   const isPdf = atob(base64.slice(0, 8)).startsWith('%PDF');
   if (!isPdf) {
     const type = blob.type || 'image/png';
-    printHtmlInIframe(boxLabelHtml(title, [`data:${type};base64,${base64}`]));
+    printHtmlInIframe(boxLabelHtml(title, [{
+      src: `data:${type};base64,${base64}`,
+      caption: captionFor(cargoId ?? null, boxes),
+    }]));
     return;
   }
 
@@ -194,24 +241,36 @@ export const printBoxLabelFromUrl = async (
 
   const pdf = await pdfjs.getDocument({ data: bytes }).promise;
   const scale = 300 / 72;
-  const images: string[] = [];
+  const pages: LabelPage[] = [];
 
   for (let n = 1; n <= pdf.numPages; n += 1) {
     const page = await pdf.getPage(n);
 
-    // ОТБИРАЕМ СТРАНИЦУ СВОЕГО ГРУЗОМЕСТА.
+    // ЧИТАЕМ ЦИФРЫ СО СТРАНИЦЫ — ПО НИМ УЗНАЁМ ГРУЗОМЕСТО.
     //
     // ID напечатан на наклейке дважды: с пробелом-разделителем и целиком под
-    // штрихкодом. Читаем весь текст страницы, оставляем только цифры и ищем
-    // в них номер своего грузоместа — так разделители не мешают.
-    if (cargoId) {
+    // штрихкодом. Оставляем только цифры — так разделители не мешают.
+    //
+    // Нужно это для двух вещей сразу: отобрать страницу своего короба и
+    // подписать её крупным номером (какой короб и какое грузоместо).
+    let digits = '';
+    if (cargoId || boxes?.length) {
       const text = await page.getTextContent();
-      const digits = text.items
+      digits = text.items
         .map((i) => ('str' in i ? i.str : ''))
         .join('')
         .replace(/\D/g, '');
-      if (!digits.includes(String(cargoId))) continue;
     }
+    if (cargoId && !digits.includes(String(cargoId))) continue;
+
+    // Ищем, какому коробу принадлежит страница: сверяем напечатанный ID
+    // грузоместа со списком коробов поставки. При печати пачкой порядок
+    // страниц задаёт сервер, но полагаться на него нельзя — подпись должна
+    // соответствовать тому, что реально напечатано на наклейке.
+    const matched = boxes?.find((b) => b.ozonCargoId && digits.includes(String(b.ozonCargoId)));
+    const caption = matched
+      ? boxCaption(matched, boxes)
+      : captionFor(cargoId ?? null, boxes);
 
     // Наклейка горизонтальная (120×75) — тот же стандартный рулон, что и под
     // упаковочные листы. Если страница пришла вертикальной (OZON отдаёт стикер
@@ -231,22 +290,46 @@ export const printBoxLabelFromUrl = async (
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvasContext: ctx, viewport }).promise;
-    images.push(canvas.toDataURL('image/png'));
+    pages.push({ src: canvas.toDataURL('image/png'), caption });
   }
 
   // Своё грузоместо в файле не нашлось (формат наклейки у OZON изменился) —
   // печатаем файл целиком. Лишняя наклейка лучше, чем пустая печать и короб,
   // уехавший без маркировки вовсе.
-  if (images.length === 0 && cargoId && pdf.numPages > 0) {
-    return printBoxLabelFromUrl(url, title, null);
+  if (pages.length === 0 && cargoId && pdf.numPages > 0) {
+    return printBoxLabelFromUrl(url, title, null, boxes);
   }
 
-  if (images.length === 0) return;
-  printHtmlInIframe(boxLabelHtml(title, images));
+  if (pages.length === 0) return;
+  printHtmlInIframe(boxLabelHtml(title, pages));
 };
 
-/** Печатная страница наклейки короба 120×75: по одной картинке на лист. */
-const boxLabelHtml = (title: string, images: string[]) => `<!DOCTYPE html>
+/** Одна наклейка: картинка от площадки плюс наша крупная подпись сверху. */
+interface LabelPage {
+  src: string;
+  caption: string;
+}
+
+/**
+ * Печатная страница наклейки короба 120×75.
+ *
+ * СВЕРХУ — НАША ПОДПИСЬ КРУПНО, НИЖЕ — НАКЛЕЙКА ПЛОЩАДКИ.
+ *
+ * На стикере OZON номер грузоместа напечатан мелко и в общей массе цифр:
+ * кладовщик не мог опознать короб, не поднося наклейку к глазам. А главное —
+ * наш номер короба (1, 2, 3…) и номер грузоместа на площадке НЕ СОВПАДАЮТ:
+ * в системе значится «короб 3», на стикере — восьмизначный ID, и сверить их
+ * было не с чем.
+ *
+ * Поэтому печатаем оба номера одной строкой: слева наш («Короб 3 из 7»),
+ * справа — ID грузоместа OZON. Кладовщик читает свой номер, приёмка сканирует
+ * свой, и расхождения больше нет.
+ *
+ * Картинку площадки НЕ ТРОГАЕМ и не масштабируем по своему усмотрению — она
+ * занимает всё оставшееся место как есть, коды на ней печатаются в полный
+ * размер и читаются сканером.
+ */
+const boxLabelHtml = (title: string, pages: LabelPage[]) => `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -254,16 +337,40 @@ const boxLabelHtml = (title: string, images: string[]) => `<!DOCTYPE html>
   <style>
     @page { size: 120mm 75mm landscape; margin: 0; }
     * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; }
-    img {
+    html, body { margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; }
+    .sheet {
       width: 120mm;
       height: 75mm;
-      display: block;
-      object-fit: contain;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
       page-break-after: always;
     }
-    img:last-child { page-break-after: auto; }
+    .sheet:last-child { page-break-after: auto; }
+    /* Подпись во всю ширину: крупные цифры читаются с вытянутой руки, поэтому
+       кладовщику не приходится нагибаться к коробу, чтобы опознать его. */
+    .cap {
+      flex: 0 0 auto;
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: 3mm; padding: 1mm 3mm 0.5mm;
+      border-bottom: 0.4mm solid #000;
+    }
+    .cap .box { font-size: 20pt; font-weight: 800; line-height: 1; white-space: nowrap; }
+    /* Номер грузоместа — то, что сверяют с маркетплейсом, поэтому он такой же
+       крупный, как наш номер короба, и набран моноширинно: в длинной цепочке
+       цифр так не сбиваются при сверке со списком на площадке. */
+    .cap .cargo {
+      font-size: 16pt; font-weight: 700; line-height: 1;
+      text-align: right; white-space: nowrap;
+      font-family: 'Courier New', monospace; letter-spacing: 0.2pt;
+    }
+    .cap .cargo span {
+      display: block; font-size: 7pt; font-weight: 400; color: #333;
+      font-family: Arial, Helvetica, sans-serif; letter-spacing: 0;
+    }
+    .pic { flex: 1; min-height: 0; }
+    .pic img { width: 100%; height: 100%; display: block; object-fit: contain; }
   </style>
 </head>
-<body>${images.map((src) => `<img src="${src}" alt="${title}" />`).join('')}</body>
+<body>${pages.map((p) => `<div class="sheet">${p.caption}<div class="pic"><img src="${p.src}" alt="${title}" /></div></div>`).join('')}</body>
 </html>`;

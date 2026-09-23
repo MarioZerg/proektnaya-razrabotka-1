@@ -193,10 +193,13 @@ export const useSupplyBoxCard = ({
     if (!box.stickerUrl) return;
     setPrinting(true);
     try {
+      // Передаём все короба поставки: по ним печать подписывает наклейку
+      // «Короб N из M» — номером, под которым короб известен в цехе.
       await printBoxLabelFromUrl(
         box.stickerUrl,
         `Стикер короба №${box.boxNumber}`,
         box.ozonCargoId,
+        supply.boxes.filter((b) => b.items.length > 0),
       );
     } catch (e) {
       toast({

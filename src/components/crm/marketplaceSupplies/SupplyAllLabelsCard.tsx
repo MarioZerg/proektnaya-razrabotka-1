@@ -49,7 +49,14 @@ const SupplyAllLabelsCard = ({ supply, fullyAssembled }: SupplyAllLabelsCardProp
         id: user?.id,
         name: user?.name,
       });
-      await printBoxLabelFromUrl(res.url, `Стикеры коробов поставки №${supply.id}`);
+      // Список коробов нужен печати, чтобы подписать каждую наклейку нашим
+      // номером короба: на стикере OZON его нет, там только ID грузоместа.
+      await printBoxLabelFromUrl(
+        res.url,
+        `Стикеры коробов поставки №${supply.id}`,
+        null,
+        filledBoxes,
+      );
 
       // Короб без стикера — редкость (OZON не отдал этикетку), но молчать
       // о нём нельзя: кладовщик уедет с непромаркированным коробом.
