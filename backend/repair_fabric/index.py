@@ -27,6 +27,71 @@ def _resp(status, body):
     }
 
 
+# ПРИЧИНЫ ПЕРЕШИВА — ЗАЧЕМ ОНИ ВООБЩЕ НУЖНЫ.
+#
+# Раньше упаковщица отправляла вещь в перешив молча. Кусок появлялся у
+# закройщицы как «Вуаль 300x255» — и всё. Что с ним не так, где именно дефект,
+# можно ли его обойти раскроем — приходилось разворачивать весь отрез на столе
+# и искать глазами. Дырка размером с ноготь в углу полотна находится не сразу,
+# а найти её нужно ДО раскроя: иначе брак уедет в готовую вещь второй раз.
+#
+# Теперь упаковщица одним нажатием говорит, ЧТО не так. Закройщица видит это в
+# карточке заказа рядом с номером стикера: «дырка на ткани» — значит смотреть
+# полотно, «кривой шов» — значит ткань целая и её можно кроить смело.
+#
+# Список сгруппирован по тому, КУДА смотреть, а не по виновным. Группа — это
+# подсказка закройщице, а не отчёт для бухгалтерии.
+REPAIR_REASONS = [
+    # Полотно. Ткань испорчена — кроить придётся в обход дефекта.
+    {'code': 'fabric_hole', 'label': 'Дырка на ткани', 'group': 'Ткань'},
+    {'code': 'fabric_snag', 'label': 'Затяжка', 'group': 'Ткань'},
+    {'code': 'fabric_stripe', 'label': 'Полоса на полотне', 'group': 'Ткань'},
+    {'code': 'fabric_stain', 'label': 'Пятно, грязь', 'group': 'Ткань'},
+    {'code': 'fabric_burn', 'label': 'Прожог, след утюга', 'group': 'Ткань'},
+    {'code': 'fabric_shade', 'label': 'Разнооттеночность', 'group': 'Ткань'},
+    {'code': 'fabric_weight', 'label': 'Брак утяжелителя', 'group': 'Ткань'},
+    {'code': 'fabric_factory', 'label': 'Заводской брак полотна', 'group': 'Ткань'},
+    # Пошив. Полотно целое — виноват шов, кроить можно спокойно.
+    {'code': 'sew_crooked', 'label': 'Кривой шов', 'group': 'Пошив'},
+    {'code': 'sew_unravel', 'label': 'Шов распустился', 'group': 'Пошив'},
+    {'code': 'sew_skip', 'label': 'Пропуск стежка', 'group': 'Пошив'},
+    {'code': 'sew_pucker', 'label': 'Шов стянут, посадка', 'group': 'Пошив'},
+    {'code': 'sew_overlock', 'label': 'Брак оверлока', 'group': 'Пошив'},
+    {'code': 'sew_hem', 'label': 'Неровный низ, кривая подгибка', 'group': 'Пошив'},
+    # Тесьма. Меняется отдельно, ткань чаще всего цела.
+    {'code': 'trim_loops', 'label': 'Брак петель тесьмы', 'group': 'Тесьма'},
+    {'code': 'trim_crooked', 'label': 'Тесьма пришита криво', 'group': 'Тесьма'},
+    {'code': 'trim_off', 'label': 'Тесьма отпоролась', 'group': 'Тесьма'},
+    {'code': 'trim_factory', 'label': 'Заводской брак тесьмы', 'group': 'Тесьма'},
+    # Размер. Ткань целая, но вещь не той величины — перекроить под нужный.
+    {'code': 'size_wrong', 'label': 'Сшит не тот размер', 'group': 'Размер'},
+    {'code': 'size_height', 'label': 'Не та высота', 'group': 'Размер'},
+    {'code': 'size_width', 'label': 'Не та ширина', 'group': 'Размер'},
+    # Прочее. Дефекта нет — вещь просто вернулась и годится в раскрой целиком.
+    {'code': 'return_no_defect', 'label': 'Возврат без дефекта', 'group': 'Прочее'},
+    {'code': 'wrong_item', 'label': 'Отправлен не тот товар', 'group': 'Прочее'},
+    {'code': 'other', 'label': 'Другое', 'group': 'Прочее'},
+]
+
+REPAIR_REASON_LABELS = {r['code']: r['label'] for r in REPAIR_REASONS}
+
+
+def next_repair_barcode(cur) -> str:
+    """Следующий номер стикера куска — RS-XXXXXX, выдаёт САМА БАЗА.
+
+    Номер печатается на наклейке, которую упаковщица клеит на вещь, уходящую
+    в перешив. По нему закройщица находит нужный отрез на стеллаже, не
+    разворачивая остальные: в карточке заказа стоит тот же номер.
+
+    Счётчик базы выдаёт значение атомарно. Считать «максимум плюс один»
+    нельзя: два терминала, отправившие вещи в одну секунду, прочитали бы одно
+    и то же число и напечатали два одинаковых номера — а весь смысл номера в
+    том, что он у куска ровно один.
+    """
+    cur.execute("SELECT nextval('repair_piece_barcode_seq')")
+    return f"RS-{int(cur.fetchone()[0]):06d}"
+
+
 def log_action(cur, actor_id, actor_name, action, entity_id, description):
     """Пишет в журнал: движение материала должно оставлять именной след."""
     cur.execute(
@@ -68,7 +133,8 @@ def list_pieces(cur, event):
         f"SELECT p.id, p.material, p.material_id, p.width, p.height, p.status, "
         f"       p.workshop_id, w.name, p.shift_number, "
         f"       p.created_by_name, p.created_at, "
-        f"       p.used_order_id, o.order_number, p.used_by_name, p.used_at, p.comment "
+        f"       p.used_order_id, o.order_number, p.used_by_name, p.used_at, p.comment, "
+        f"       p.barcode, p.reason_label "
         f"FROM repair_fabric_pieces p "
         f"LEFT JOIN workshops w ON w.id = p.workshop_id "
         f"LEFT JOIN orders o ON o.id = p.used_order_id "
@@ -84,6 +150,7 @@ def list_pieces(cur, event):
             'createdByName': r[9], 'createdAt': r[10],
             'usedOrderId': r[11], 'usedOrderNumber': r[12],
             'usedByName': r[13], 'usedAt': r[14], 'comment': r[15],
+            'barcode': r[16], 'reasonLabel': r[17],
         }
         for r in cur.fetchall()
     ]
@@ -155,7 +222,7 @@ def suitable_for_order(cur, event):
 
     cur.execute(
         "SELECT p.id, p.material, p.width, p.height, p.created_by_name, p.created_at, "
-        "       w.name, p.shift_number "
+        "       w.name, p.shift_number, p.barcode, p.reason_label "
         "FROM repair_fabric_pieces p "
         "LEFT JOIN workshops w ON w.id = p.workshop_id "
         "WHERE p.status = 'available' "
@@ -171,6 +238,9 @@ def suitable_for_order(cur, event):
             'id': r[0], 'material': r[1], 'width': r[2], 'height': r[3],
             'createdByName': r[4], 'createdAt': r[5],
             'workshopName': r[6], 'shiftNumber': r[7],
+            # Номер со стикера и причина — по ним закройщица находит отрез на
+            # стеллаже и сразу знает, где искать дефект.
+            'barcode': r[8], 'reasonLabel': r[9],
             # Насколько кусок больше заказа — закройщик видит запас сразу.
             'extraWidth': r[2] - int(width),
             'extraHeight': r[3] - int(height),
@@ -194,10 +264,32 @@ def send_to_repair(cur, conn, event, body):
     сканировала его, и кусок растворялся в метраже. Теперь она просто
     отправляет вещь в перешив — кусок сохраняет свои размеры и достаётся
     закройщику как отдельный отрез.
+
+    ПРИЧИНА ОБЯЗАТЕЛЬНА. Кусок без причины бесполезен закройщице: она не знает,
+    искать ли дефект на полотне или ткань целая и виноват шов. Раньше это
+    выяснялось разворачиванием отреза на столе — самая долгая часть работы.
+
+    НОМЕР СТИКЕРА ВЫДАЁМ ЗДЕСЬ ЖЕ. Упаковщица печатает наклейку с этим номером
+    и клеит её на вещь, а закройщица видит тот же номер в карточке заказа —
+    и берёт нужный отрез со стеллажа сразу, не перебирая соседние.
     """
     gw_id = body.get('goodsWarehouseId')
     if not gw_id:
         return _resp(400, {'error': 'Укажите вещь'})
+
+    reason_code = (body.get('reasonCode') or '').strip()
+    reason_label = (body.get('reasonLabel') or '').strip()
+    # Своя формулировка («Другое») идёт как есть, известный код — по словарю:
+    # так подпись на стикере всегда совпадает с тем, что видит закройщица.
+    if reason_code and reason_code in REPAIR_REASON_LABELS:
+        reason_label = REPAIR_REASON_LABELS[reason_code]
+    if not reason_label:
+        return _resp(400, {
+            'error': 'Укажите причину перешива — без неё закройщик не поймёт, '
+                     'что с куском не так',
+        })
+    if len(reason_label) > 200:
+        reason_label = reason_label[:200]
 
     user = current_user(cur, event)
     actor_id = user['id'] if user else body.get('userId')
@@ -247,16 +339,20 @@ def send_to_repair(cur, conn, event, body):
     m_row = cur.fetchone()
     material_id = m_row[0] if m_row else None
 
+    barcode = next_repair_barcode(cur)
+
     cur.execute(
         "INSERT INTO repair_fabric_pieces "
         "  (goods_warehouse_id, material_id, material, width, height, "
-        "   workshop_id, shift_number, created_by, created_by_name, comment) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        "   workshop_id, shift_number, created_by, created_by_name, comment, "
+        "   barcode, reason_code, reason_label) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             int(gw_id), material_id, material, int(width), int(height),
             workshop_id, shift_number,
             int(actor_id) if actor_id else None, actor_name,
             f'Из заказа {order_number}' if order_number else None,
+            barcode, reason_code or None, reason_label,
         ),
     )
     piece_id = cur.fetchone()[0]
@@ -272,13 +368,17 @@ def send_to_repair(cur, conn, event, body):
 
     log_action(
         cur, actor_id, actor_name, 'repair_piece_add', piece_id,
-        f'В перешив: {material} {width}x{height} (вещь #{gw_id})',
+        f'В перешив {barcode}: {material} {width}x{height} — {reason_label} (вещь #{gw_id})',
     )
     conn.commit()
 
     return _resp(200, {
         'success': True, 'pieceId': piece_id,
         'material': material, 'width': width, 'height': height,
+        # Номер и причину возвращаем терминалу: он тут же печатает наклейку,
+        # и на ней стоит ровно то, что записано в базе.
+        'barcode': barcode, 'reasonLabel': reason_label,
+        'orderNumber': order_number,
     })
 
 
@@ -447,7 +547,8 @@ def reserved_for_order(cur, event):
         return _resp(400, {'error': 'Укажите orderId'})
 
     cur.execute(
-        "SELECT id, material, width, height, status, used_by_name, used_at "
+        "SELECT id, material, width, height, status, used_by_name, used_at, "
+        "       barcode, reason_label "
         "FROM repair_fabric_pieces "
         "WHERE used_order_id = %s AND status IN ('reserved', 'used') "
         "ORDER BY CASE status WHEN 'reserved' THEN 0 ELSE 1 END, id DESC LIMIT 1",
@@ -459,6 +560,9 @@ def reserved_for_order(cur, event):
     return _resp(200, {'piece': {
         'id': row[0], 'material': row[1], 'width': row[2], 'height': row[3],
         'status': row[4], 'usedByName': row[5], 'usedAt': row[6],
+        # Номер стикера остаётся в карточке НАВСЕГДА, в том числе после
+        # раскроя: по нему видно, из какого именно куска сделана вещь.
+        'barcode': row[7], 'reasonLabel': row[8],
     }})
 
 
@@ -558,6 +662,8 @@ def handler(event: dict, context) -> dict:
     ПУТЬ КУСКА: available → reserved → used. Резерв обратим — пока ткань не
     разрезана, кусок можно открепить от заказа и вернуть в перешив.
 
+    GET  /?action=reasons
+        - справочник причин перешива для терминала упаковщицы.
     GET  /?status=available&material=Вуаль
         - остатки кусков в цехе (таблица закройщиков и администратора).
           status: available (по умолчанию) | reserved | used | written_off | all
@@ -566,8 +672,10 @@ def handler(event: dict, context) -> dict:
           НЕ МЕНЬШЕ заказа. Отсортированы от наименее расточительных.
     GET  /?action=reserved&orderId=123
         - кусок, закреплённый за заказом (по нему карточка прячет рулоны).
-    POST / { action: 'send', goodsWarehouseId }
+    POST / { action: 'send', goodsWarehouseId, reasonCode | reasonLabel }
         - упаковщица отправляет вещь в перешив (рулон указывать не нужно).
+          Причина обязательна. В ответ приходит номер стикера RS-XXXXXX —
+          терминал печатает наклейку, закройщица видит тот же номер в карточке.
     POST / { action: 'use', pieceId, orderId }
         - закройщик закрепляет кусок за заказом (reserved).
     POST / { action: 'release', pieceId | orderId }
@@ -587,6 +695,11 @@ def handler(event: dict, context) -> dict:
 
         if method == 'GET':
             q = event.get('queryStringParameters') or {}
+            if q.get('action') == 'reasons':
+                # Справочник причин живёт на сервере, а не в коде терминала:
+                # подпись на стикере, запись в базе и текст в карточке
+                # закройщицы обязаны совпадать до буквы.
+                return _resp(200, {'reasons': REPAIR_REASONS})
             if q.get('action') == 'suitable':
                 return suitable_for_order(cur, event)
             if q.get('action') == 'reserved':

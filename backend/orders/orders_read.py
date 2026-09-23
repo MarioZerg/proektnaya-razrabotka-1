@@ -467,6 +467,35 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 for r in cur.fetchall()
             ]
 
+            # ИЗ КАКОГО КУСКА СДЕЛАНА ВЕЩЬ — ОСТАЁТСЯ В КАРТОЧКЕ НАВСЕГДА.
+            #
+            # Когда заказ закрыт куском с перешива, рулона в расходе нет вовсе:
+            # в блоке «Материалы» ткань стоит без рулона, и след того, откуда
+            # она взялась, обрывался. Разобрать потом жалобу или повторный брак
+            # было нечем — вещь выглядела сшитой из воздуха.
+            #
+            # Отдаём номер стикера, причину перешива и кто отправил: карточка
+            # показывает это любому, кто её открыл, а не только закройщице на
+            # этапе раскроя.
+            cur.execute(
+                "SELECT id, barcode, material, width, height, status, reason_label, "
+                "       created_by_name, used_by_name, used_at "
+                "FROM repair_fabric_pieces "
+                "WHERE used_order_id = %s AND status IN ('reserved', 'used') "
+                "ORDER BY CASE status WHEN 'reserved' THEN 0 ELSE 1 END, id DESC LIMIT 1",
+                (int(order_id),),
+            )
+            rp = cur.fetchone()
+            repair_piece = None
+            if rp:
+                repair_piece = {
+                    'id': rp[0], 'barcode': rp[1], 'material': rp[2],
+                    'width': rp[3], 'height': rp[4], 'status': rp[5],
+                    'reasonLabel': rp[6], 'createdByName': rp[7],
+                    'usedByName': rp[8],
+                    'usedAt': (rp[9].isoformat() + 'Z') if rp[9] else None,
+                }
+
             material_name, width_val, height_val = row[11], row[12], row[13]
             required_fabric_material_id = None
             required_fabric_material_name = None
@@ -541,6 +570,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'groupKey': row[30],
                 'groupSize': row[31],
                 'groupPosition': row[32],
+                # Кусок с перешива, из которого скроена вещь (null — от рулона).
+                'repairPiece': repair_piece,
             }
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'order': detail})}
 

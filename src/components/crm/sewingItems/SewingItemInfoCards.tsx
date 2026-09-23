@@ -64,6 +64,46 @@ const SewingItemInfoCards = ({
           <CardTitle className="text-sm">Материалы</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
+          {/* ИЗ КАКОГО КУСКА СДЕЛАНА ВЕЩЬ — ПЕРВОЙ СТРОКОЙ И НАВСЕГДА.
+              Заказ, закрытый куском с перешива, не расходует ни одного рулона:
+              в списке ниже ткань стоит без строки «Рулон #...», и раньше на
+              этом след обрывался — вещь выглядела сшитой из воздуха.
+              Номер стикера и причина отвечают на вопрос «из чего это сшито»
+              и через месяц, когда разбирают жалобу или повторный брак. */}
+          {orderDetail?.repairPiece && (
+            <div className="rounded border-2 border-violet-300 bg-violet-50 p-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Icon name="Scissors" size={14} className="shrink-0 text-violet-700" />
+                <span className="font-semibold text-violet-900">Скроено из куска</span>
+                {orderDetail.repairPiece.barcode && (
+                  <span className="font-mono-tech font-bold text-violet-900">
+                    {orderDetail.repairPiece.barcode}
+                  </span>
+                )}
+              </div>
+              <p className="text-sm text-violet-900">
+                {orderDetail.repairPiece.material} {orderDetail.repairPiece.width}×
+                {orderDetail.repairPiece.height}
+              </p>
+              {orderDetail.repairPiece.reasonLabel && (
+                <p className="text-xs text-violet-900/80">
+                  Причина перешива: {orderDetail.repairPiece.reasonLabel}
+                </p>
+              )}
+              <p className="text-xs text-violet-900/70">
+                {orderDetail.repairPiece.createdByName
+                  ? `Отправил(а) ${orderDetail.repairPiece.createdByName}`
+                  : ''}
+                {orderDetail.repairPiece.usedByName
+                  ? ` · взял(а) ${orderDetail.repairPiece.usedByName}`
+                  : ''}
+              </p>
+              <p className="mt-1 text-xs font-medium text-violet-900">
+                Рулон на эту вещь не расходовался
+              </p>
+            </div>
+          )}
+
           {detailLoading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Icon name="Loader2" size={14} className="animate-spin" />
@@ -78,9 +118,19 @@ const SewingItemInfoCards = ({
                     {formatQuantity(mu.quantity)} {mu.unit}
                   </span>
                 </div>
-                {mu.rollBarcode && (
+                {/* Расход без рулона бывает ровно в одном случае — ткань взята
+                    с перешива. Раньше такая строка выглядела как недоработка:
+                    материал есть, рулона нет, и непонятно, баг это или нет. */}
+                {mu.rollBarcode ? (
                   <div className="text-xs text-muted-foreground">
                     Рулон #{mu.rollBarcode}
+                  </div>
+                ) : (
+                  <div className="text-xs font-medium text-violet-700">
+                    С перешива — рулон не расходовался
+                    {orderDetail?.repairPiece?.barcode
+                      ? ` (${orderDetail.repairPiece.barcode})`
+                      : ''}
                   </div>
                 )}
               </div>

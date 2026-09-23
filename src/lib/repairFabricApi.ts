@@ -11,6 +11,20 @@ const REPAIR_FABRIC_URL = 'https://functions.poehali.dev/580fc69a-16df-4299-ae73
  */
 export type RepairPieceStatus = 'available' | 'reserved' | 'used' | 'written_off';
 
+/**
+ * Причина, по которой вещь ушла в перешив.
+ *
+ * Список приходит с сервера, а не лежит в коде терминала: подпись на стикере,
+ * запись в базе и текст, который видит закройщица в карточке заказа, обязаны
+ * совпадать до буквы. Две копии списка рано или поздно разойдутся.
+ */
+export interface RepairReason {
+  code: string;
+  label: string;
+  /** Куда смотреть: «Ткань», «Пошив», «Тесьма», «Размер», «Прочее». */
+  group: string;
+}
+
 /** Кусок ткани на перешив — отрез с фиксированными размерами, лежащий в цехе. */
 export interface RepairPiece {
   id: number;
@@ -29,6 +43,15 @@ export interface RepairPiece {
   usedByName?: string | null;
   usedAt?: string | null;
   comment?: string | null;
+  /**
+   * Номер со стикера, который упаковщица наклеила на вещь: RS-000042.
+   *
+   * По нему закройщица берёт со стеллажа нужный отрез, не разворачивая
+   * соседние: тот же номер стоит в карточке заказа.
+   */
+  barcode?: string | null;
+  /** Что с куском не так — где закройщице искать брак перед раскроем. */
+  reasonLabel?: string | null;
   /** Насколько кусок больше заказа — только в подборе под заказ. */
   extraWidth?: number;
   extraHeight?: number;
@@ -85,22 +108,45 @@ export const fetchRepairPieces = (
 export const fetchSuitablePieces = (orderId: number): Promise<SuitablePiecesResult> =>
   request(`${REPAIR_FABRIC_URL}?action=suitable&orderId=${orderId}`);
 
+/** Справочник причин перешива для терминала упаковщицы. */
+export const fetchRepairReasons = (): Promise<{ reasons: RepairReason[] }> =>
+  request(`${REPAIR_FABRIC_URL}?action=reasons`);
+
+export interface SendToRepairResult {
+  success: true;
+  pieceId: number;
+  material: string;
+  width: number;
+  height: number;
+  /** Номер для стикера — терминал тут же печатает наклейку. */
+  barcode: string;
+  reasonLabel: string;
+  orderNumber?: string | null;
+}
+
 /**
  * Упаковщица отправляет вещь в перешив.
  *
  * Рулон указывать не нужно: кусок сохраняет свои размеры и попадает
  * закройщикам как отдельный отрез.
+ *
+ * ПРИЧИНА ОБЯЗАТЕЛЬНА. Без неё закройщица получает безымянный отрез и ищет
+ * дефект, разворачивая всё полотно на столе, — самая долгая часть перекроя.
+ * В ответ приходит номер стикера: его печатают и клеят на вещь.
  */
 export const sendToRepair = (
   goodsWarehouseId: number,
+  reason: { code?: string; label?: string },
   actor?: { id?: number | null; name?: string | null },
-): Promise<{ success: true; pieceId: number; material: string; width: number; height: number }> =>
+): Promise<SendToRepairResult> =>
   post({
     action: 'send',
     goodsWarehouseId,
+    reasonCode: reason.code,
+    reasonLabel: reason.label,
     userId: actor?.id,
     userName: actor?.name,
-  }) as Promise<{ success: true; pieceId: number; material: string; width: number; height: number }>;
+  }) as Promise<SendToRepairResult>;
 
 /**
  * Закройщик закрепляет кусок за заказом.

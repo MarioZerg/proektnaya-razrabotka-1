@@ -39,6 +39,19 @@
       "expectedStatus": 400
     },
     {
+      "name": "Reasons list available",
+      "method": "GET",
+      "path": "/?action=reasons",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Send without reason fails",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "send", "goodsWarehouseId": 999999999},
+      "expectedStatus": 400
+    },
+    {
       "name": "Use without piece fails",
       "method": "POST",
       "path": "/",

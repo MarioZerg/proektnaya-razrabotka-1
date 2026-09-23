@@ -144,8 +144,35 @@ export interface OrderMaterialUsage {
   createdAt: string;
 }
 
+/**
+ * Кусок с перешива, из которого скроена вещь.
+ *
+ * Остаётся в карточке НАВСЕГДА. Когда заказ закрыт куском, рулона в расходе
+ * нет вовсе: ткань стоит без рулона, и без этой справки след обрывался бы —
+ * вещь выглядела бы сшитой из воздуха, а разобрать жалобу или повторный брак
+ * было бы нечем.
+ */
+export interface OrderRepairPiece {
+  id: number;
+  /** Номер со стикера, который упаковщица наклеила на вещь: RS-000042. */
+  barcode: string | null;
+  material: string;
+  width: number;
+  height: number;
+  status: string;
+  /** За что вещь ушла в перешив. */
+  reasonLabel: string | null;
+  /** Кто отправил кусок в перешив. */
+  createdByName: string | null;
+  /** Кто из закройщиков взял его под этот заказ. */
+  usedByName: string | null;
+  usedAt: string | null;
+}
+
 export interface OrderDetail extends Order {
   materialUsage: OrderMaterialUsage[];
+  /** Кусок с перешива, из которого сделана вещь. null — кроили от рулона. */
+  repairPiece?: OrderRepairPiece | null;
   requiredFabricMaterialId: number | null;
   requiredFabricMaterialName: string | null;
   requiredTrimMaterialId: number | null;

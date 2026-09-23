@@ -101,9 +101,13 @@ const RepairFabric = () => {
       if (material !== 'all' && p.material !== material) return false;
       if (!q) return true;
       return (
+        // Номер со стикера ищем первым: с этой бумажкой в руках человек
+        // и приходит к таблице — «что это за кусок и куда он делся».
+        (p.barcode || '').toLowerCase().includes(q) ||
         p.material.toLowerCase().includes(q) ||
         `${p.width}x${p.height}`.includes(q) ||
         `${p.width}×${p.height}`.includes(q) ||
+        (p.reasonLabel || '').toLowerCase().includes(q) ||
         (p.createdByName || '').toLowerCase().includes(q)
       );
     });
@@ -220,7 +224,7 @@ const RepairFabric = () => {
 
         <div className="flex flex-wrap gap-2">
           <Input
-            placeholder="Поиск: материал, размер, кто отправил"
+            placeholder="Поиск: номер RS-…, материал, размер, причина, кто отправил"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full sm:w-80"
@@ -260,9 +264,19 @@ const RepairFabric = () => {
                 <div key={p.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
+                      {p.barcode && (
+                        <p className="font-mono-tech font-bold text-violet-900">
+                          {p.barcode}
+                        </p>
+                      )}
                       <p className="font-semibold">
                         {p.material} {p.width}×{p.height}
                       </p>
+                      {p.reasonLabel && (
+                        <p className="text-xs font-medium text-amber-800">
+                          {p.reasonLabel}
+                        </p>
+                      )}
                       <p className="text-xs text-muted-foreground">
                         {p.createdByName || '—'} · {formatDateTime(p.createdAt)}
                       </p>
@@ -314,8 +328,12 @@ const RepairFabric = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {/* Номер стикера — первая колонка: именно по нему кусок
+                        ищут на стеллаже и сверяют с карточкой заказа. */}
+                    <TableHead>Номер</TableHead>
                     <TableHead>Материал</TableHead>
                     <TableHead>Размер</TableHead>
+                    <TableHead>Причина перешива</TableHead>
                     <TableHead>Статус</TableHead>
                     {isAdmin && <TableHead>Кто отправил</TableHead>}
                     {isAdmin && <TableHead>Цех / смена</TableHead>}
@@ -327,9 +345,17 @@ const RepairFabric = () => {
                 <TableBody>
                   {visible.map((p) => (
                     <TableRow key={p.id}>
+                      <TableCell className="font-mono-tech font-bold text-violet-900">
+                        {p.barcode || '—'}
+                      </TableCell>
                       <TableCell className="font-medium">{p.material}</TableCell>
                       <TableCell className="font-mono-tech">
                         {p.width}×{p.height}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {p.reasonLabel || (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={p.status} />

@@ -118,7 +118,7 @@ const RepairPiecePicker = ({
     try {
       await takeRepairPiece(piece.id, orderId, { id: user?.id, name: user?.name });
       toast({
-        title: 'Кусок закреплён за заказом',
+        title: `Кусок закреплён за заказом${piece.barcode ? ` · ${piece.barcode}` : ''}`,
         description: `${piece.material} ${piece.width}×${piece.height} — рулон для этой вещи брать не нужно`,
       });
       load();
@@ -176,11 +176,29 @@ const RepairPiecePicker = ({
               <Icon name="Scissors" size={16} />
               Ткань взята с перешива — рулон не нужен
             </p>
+            {/* НОМЕР СТИКЕРА ОСТАЁТСЯ В КАРТОЧКЕ НАВСЕГДА.
+                Это ответ на вопрос «из чего сделана эта вещь»: рулона в
+                расходе нет, и без номера след обрывался бы на слове «кусок».
+                Пока вещь на раскрое — по нему её находят на стеллаже, после
+                раскроя — по нему разбирают жалобы и повторный брак. */}
+            {reserved.barcode && (
+              <p className="font-mono-tech text-lg font-bold text-violet-900">
+                {reserved.barcode}
+              </p>
+            )}
             <p className="text-sm text-violet-900">
               {reserved.material} {reserved.width}×{reserved.height}
               {reserved.usedByName ? ` · взял(а) ${reserved.usedByName}` : ''}
             </p>
-            <p className="text-xs text-violet-900/70">
+            {/* Причина — где искать брак до раскроя. «Дырка на ткани» значит
+                смотреть полотно, «кривой шов» — ткань целая, кроить смело. */}
+            {reserved.reasonLabel && (
+              <p className="mt-1 inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm font-medium text-amber-900">
+                <Icon name="TriangleAlert" size={14} className="shrink-0" />
+                {reserved.reasonLabel}
+              </p>
+            )}
+            <p className="mt-1 text-xs text-violet-900/70">
               {cut
                 ? 'Кусок уже раскроен — вернуть его в перешив нельзя'
                 : 'Пока вещь не раскроена, кусок можно вернуть в перешив и взять рулон'}
@@ -242,15 +260,37 @@ const RepairPiecePicker = ({
                   className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-violet-200 bg-white p-2"
                 >
                   <div className="min-w-0">
-                    <p className="font-medium">
-                      {p.material} {p.width}×{p.height}
+                    <p className="flex flex-wrap items-center gap-2 font-medium">
+                      {/* НОМЕР — ПЕРВОЕ, ЧТО ЧИТАЕТ ЗАКРОЙЩИЦА.
+                          На стеллаже лежит стопка одинаковых с виду отрезов.
+                          Размер их не различает — «Вуаль 300×255» может быть
+                          у пяти сразу. Номер со стикера различает: она берёт
+                          нужный с первого раза, не разворачивая соседние. */}
+                      {p.barcode && (
+                        <span className="font-mono-tech text-base font-bold text-violet-900">
+                          {p.barcode}
+                        </span>
+                      )}
+                      <span>
+                        {p.material} {p.width}×{p.height}
+                      </span>
                       {/* Отрез впритык — самый выгодный, помечаем его явно. */}
                       {exact && (
-                        <Badge className="ml-2 bg-emerald-600 text-white hover:bg-emerald-600">
+                        <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
                           точный размер
                         </Badge>
                       )}
                     </p>
+                    {/* ПРИЧИНА ВИДНА ДО ТОГО, КАК КУСОК ВЗЯЛИ.
+                        Так закройщица выбирает осознанно: при «дырке на ткани»
+                        запас в пару сантиметров может не спасти, а при «кривом
+                        шве» полотно целое и годится впритык. */}
+                    {p.reasonLabel && (
+                      <p className="mt-0.5 inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">
+                        <Icon name="TriangleAlert" size={12} className="shrink-0" />
+                        {p.reasonLabel}
+                      </p>
+                    )}
                     <p className="text-xs text-muted-foreground">
                       {exact
                         ? 'Ровно под заказ, без обрезков'

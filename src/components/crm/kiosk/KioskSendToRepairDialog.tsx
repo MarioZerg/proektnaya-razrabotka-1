@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Dialog,
   DialogContent,
@@ -9,7 +10,12 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import { sendToRepair } from '@/lib/repairFabricApi';
+import { printRepairSticker } from '@/lib/printRepairSticker';
+import {
+  fetchRepairReasons,
+  sendToRepair,
+  type RepairReason,
+} from '@/lib/repairFabricApi';
 
 interface KioskSendToRepairDialogProps {
   open: boolean;
@@ -20,21 +26,29 @@ interface KioskSendToRepairDialogProps {
   material?: string | null;
   width?: number | null;
   height?: number | null;
+  orderNumber?: string | null;
   /** Вещь ушла в материал — экран перепаковки должен её отпустить. */
   onSent?: () => void;
 }
 
 /**
- * Отправка годного куска в перешив.
+ * Отправка годного куска в перешив: причина → стикер → цех.
  *
  * ПОЧЕМУ БОЛЬШЕ НЕ НУЖЕН РУЛОН. Раньше упаковщица искала подходящий рулон,
  * сканировала его, и кусок растворялся в метраже: рулон просто прибавлял себе
  * несколько метров. Кусок терял размеры и переставал существовать как вещь —
  * закройщик видел обезличенные метры и не мог найти нужный отрез.
  *
- * Теперь упаковщица ничего не выбирает: одно нажатие, и кусок уходит в цех
- * СО СВОИМИ РАЗМЕРАМИ. Закройщик увидит его в списке под конкретный заказ —
- * система сама покажет только те куски, которые не меньше нужного размера.
+ * ЗАЧЕМ ПРИЧИНА. До неё кусок приезжал к закройщице безымянным: «Вуаль
+ * 300×255», и всё. Чтобы понять, что с ним не так, она разворачивала весь
+ * отрез на столе и искала брак глазами — дырку размером с ноготь можно искать
+ * минутами. А найти её нужно ДО раскроя, иначе брак уедет в готовую вещь
+ * второй раз. Теперь одно нажатие упаковщицы экономит этот поиск: «дырка на
+ * ткани» — смотреть полотно, «кривой шов» — ткань целая, кроить смело.
+ *
+ * ЗАЧЕМ СТИКЕР. В цехе на стеллаже лежит стопка одинаковых с виду отрезов.
+ * Номер RS-XXXXXX печатается на наклейке и стоит в карточке заказа: закройщица
+ * берёт нужный кусок с первого раза, не трогая соседние.
  *
  * Размеры берутся из заказа, руками ничего не вводится: промахнуться цифрой
  * и создать кусок, которого нет, невозможно.
@@ -46,20 +60,74 @@ const KioskSendToRepairDialog = ({
   material,
   width,
   height,
+  orderNumber,
   onSent,
 }: KioskSendToRepairDialogProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [saving, setSaving] = useState(false);
+  const [reasons, setReasons] = useState<RepairReason[]>([]);
+  const [chosen, setChosen] = useState<RepairReason | null>(null);
+  /** Своя формулировка — нужна только для «Другое». */
+  const [customReason, setCustomReason] = useState('');
+
+  useEffect(() => {
+    fetchRepairReasons()
+      .then((r) => setReasons(r.reasons))
+      .catch(() => setReasons([]));
+  }, []);
+
+  // Каждая вещь — свой разбор. Причина от предыдущей не должна переноситься:
+  // иначе упаковщица на потоке отправит три куска с одной и той же пометкой.
+  useEffect(() => {
+    if (!open) {
+      setChosen(null);
+      setCustomReason('');
+    }
+  }, [open]);
+
+  /** Группируем в том порядке, в каком причины пришли с сервера. */
+  const groups = useMemo(() => {
+    const out: Array<{ name: string; items: RepairReason[] }> = [];
+    for (const r of reasons) {
+      const g = out.find((x) => x.name === r.group);
+      if (g) g.items.push(r);
+      else out.push({ name: r.group, items: [r] });
+    }
+    return out;
+  }, [reasons]);
+
+  const needsCustom = chosen?.code === 'other';
+  const canSend =
+    !!goodsWarehouseId && !!chosen && (!needsCustom || customReason.trim().length > 0);
 
   const handleSend = async () => {
-    if (!goodsWarehouseId) return;
+    if (!goodsWarehouseId || !chosen) return;
     setSaving(true);
     try {
-      const r = await sendToRepair(goodsWarehouseId, { id: user?.id, name: user?.name });
+      const r = await sendToRepair(
+        goodsWarehouseId,
+        needsCustom
+          ? { label: customReason.trim() }
+          : { code: chosen.code, label: chosen.label },
+        { id: user?.id, name: user?.name },
+      );
+
+      // Стикер печатаем сразу: наклейка должна лечь на вещь, пока она в руках.
+      // Уйди кусок на стеллаж без номера — найти его потом можно только
+      // разворачивая всю стопку, ради чего номер и заводился.
+      printRepairSticker({
+        barcode: r.barcode,
+        material: r.material,
+        width: r.width,
+        height: r.height,
+        reason: r.reasonLabel,
+        orderNumber: r.orderNumber || orderNumber,
+      });
+
       toast({
-        title: 'Отправлено в перешив',
-        description: `${r.material} ${r.width}×${r.height} — закройщики увидят этот кусок`,
+        title: `Отправлено в перешив · ${r.barcode}`,
+        description: `${r.reasonLabel}. Наклейте стикер на вещь — закройщик найдёт её по номеру`,
       });
       onOpenChange(false);
       onSent?.();
@@ -76,7 +144,7 @@ const KioskSendToRepairDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="kiosk-root sm:max-w-lg">
+      <DialogContent className="kiosk-root max-h-[92vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="text-2xl">Отправить в перешив?</DialogTitle>
         </DialogHeader>
@@ -92,9 +160,70 @@ const KioskSendToRepairDialog = ({
             <p className="mt-1 text-base text-violet-800">сантиметров</p>
           </div>
 
-          <p className="text-lg text-muted-foreground">
-            Кусок уйдёт закройщикам в цех. Они увидят его под заказы, для которых
-            он подходит по размеру. Рулон указывать не нужно
+          {/* ПРИЧИНА — ОБЯЗАТЕЛЬНЫЙ ШАГ, А НЕ ГАЛОЧКА ДЛЯ ОТЧЁТА.
+              Она попадёт на стикер и в карточку заказа: именно по ней
+              закройщица поймёт, где искать брак, не разворачивая отрез. */}
+          <div className="space-y-3">
+            <p className="text-lg font-semibold">
+              Что с вещью не так?
+              <span className="ml-2 text-base font-normal text-muted-foreground">
+                закройщик увидит это на стикере
+              </span>
+            </p>
+
+            {groups.length === 0 ? (
+              <p className="flex items-center gap-2 text-base text-muted-foreground">
+                <Icon name="Loader2" size={18} className="animate-spin" />
+                Загружаем причины…
+              </p>
+            ) : (
+              groups.map((g) => (
+                <div key={g.name} className="space-y-2">
+                  <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+                    {g.name}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {g.items.map((r) => {
+                      const active = chosen?.code === r.code;
+                      return (
+                        <button
+                          key={r.code}
+                          type="button"
+                          onClick={() => setChosen(r)}
+                          disabled={saving}
+                          className={`min-h-14 rounded-xl border-2 px-3 py-2 text-left text-base font-medium transition ${
+                            active
+                              ? 'border-violet-600 bg-violet-600 text-white'
+                              : 'border-border bg-white hover:border-violet-400'
+                          }`}
+                        >
+                          {r.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+
+            {/* «Другое» без расшифровки бесполезно — это та же безымянная вещь,
+                от которой мы уходим. Поэтому текст обязателен. */}
+            {needsCustom && (
+              <Input
+                autoFocus
+                value={customReason}
+                onChange={(e) => setCustomReason(e.target.value)}
+                placeholder="Напишите, что именно не так"
+                className="h-14 text-lg"
+                maxLength={200}
+                disabled={saving}
+              />
+            )}
+          </div>
+
+          <p className="text-base text-muted-foreground">
+            Кусок уйдёт закройщикам в цех со своими размерами. Рулон указывать не
+            нужно. После отправки напечатается стикер — наклейте его на вещь
           </p>
 
           <div className="flex gap-3">
@@ -109,16 +238,24 @@ const KioskSendToRepairDialog = ({
             <Button
               className="h-16 flex-1 bg-violet-600 text-lg text-white hover:bg-violet-700"
               onClick={handleSend}
-              disabled={saving || !goodsWarehouseId}
+              disabled={saving || !canSend}
             >
               <Icon
-                name={saving ? 'Loader2' : 'Scissors'}
+                name={saving ? 'Loader2' : 'Printer'}
                 size={20}
                 className={`mr-2 ${saving ? 'animate-spin' : ''}`}
               />
-              {saving ? 'Отправляем…' : 'В перешив'}
+              {saving ? 'Отправляем…' : 'В перешив и печать'}
             </Button>
           </div>
+
+          {/* Пока причина не выбрана, кнопка неактивна — говорим почему,
+              иначе упаковщица жмёт её и не понимает, что не работает. */}
+          {!chosen && (
+            <p className="text-center text-base text-amber-700">
+              Выберите причину — без неё отправить нельзя
+            </p>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -235,6 +235,7 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
         material={item?.material}
         width={item?.width}
         height={item?.height}
+        orderNumber={item?.orderNumber}
         onSent={() => {
           // Вещь ушла в материал: чистим экран и обновляем счётчик очереди,
           // как после обычного завершения.

@@ -298,6 +298,21 @@ def write_off_materials_once(cur, order_id, material, width, height, workshop_id
     у людей физически нет. Раньше склад шёл в общий котёл, и заказы «списывались»
     с рулонов, которые лежали на складе нетронутыми: у цеха остаток не убывал,
     а на складе таял материал, к которому никто не подходил.
+
+    ЗАКАЗ ЗАКРЫВАЮТ КУСКОМ — РУЛОН НЕ РАСХОДУЕТСЯ ВООБЩЕ.
+
+    За заказом может быть закреплён отрез с перешива. На обычном конвейере это
+    учитывалось (см. раскрой в orders_actions), а здесь — нет: админ двигал
+    статус, и ткань молча списывалась с рулона ПОВЕРХ уже лежащего на столе
+    куска. Один заказ съедал материал дважды: остаток рулона уезжал вниз на
+    штору, которую из него не резали, а кусок навсегда зависал в 'reserved' —
+    из перешива пропал, в расход не попал, вернуть некому.
+
+    Поэтому при закреплённом куске ткань из расхода исключается целиком, сам
+    кусок переводится в 'used', а в order_material_usage появляется запись
+    БЕЗ roll_id: по ней в карточке видно, что метры взяты не с рулона, и
+    себестоимость вещи не оказывается нулевой по ткани. Аксессуары и упаковка
+    списываются как обычно — их перешив не заменяет.
     """
     # Уже списывали по этому заказу — расход идёт один раз (при откате статуса не трогаем).
     cur.execute("SELECT 1 FROM order_material_usage WHERE order_id = %s LIMIT 1", (order_id,))
@@ -322,10 +337,46 @@ def write_off_materials_once(cur, order_id, material, width, height, workshop_id
     if not needed:
         return None
 
+    # Закреплён ли за заказом кусок с перешива. Берём и 'reserved', и 'used':
+    # раскроенный кусок означает ровно то же самое — ткань уже взята не с
+    # рулона, и списывать её повторно нельзя ни при каком порядке действий.
+    cur.execute(
+        "SELECT id, status FROM repair_fabric_pieces "
+        "WHERE used_order_id = %s AND status IN ('reserved', 'used') "
+        "ORDER BY CASE status WHEN 'reserved' THEN 0 ELSE 1 END, id DESC LIMIT 1 "
+        "FOR UPDATE",
+        (int(order_id),),
+    )
+    piece_row = cur.fetchone()
+    repair_piece_id = piece_row[0] if piece_row else None
+
+    # Какой из материалов товара — ткань. Только её заменяет кусок: тесьму и
+    # упаковку вещь расходует независимо от того, откуда взято полотно.
+    fabric_material_id = None
+    if repair_piece_id:
+        cur.execute("SELECT id FROM material_types WHERE name = 'Тюль'")
+        t_row = cur.fetchone()
+        tul_type_id = t_row[0] if t_row else None
+        if tul_type_id:
+            for mat_id, _qty in needed:
+                cur.execute("SELECT type_id FROM materials WHERE id = %s", (mat_id,))
+                mt_row = cur.fetchone()
+                if mt_row and mt_row[0] == tul_type_id:
+                    fabric_material_id = mat_id
+                    break
+
     shortages = []
     write_offs = []
+    repair_fabric_qty = 0.0
     for material_id, qty_needed in needed:
         qty_needed = float(qty_needed)
+
+        if repair_piece_id and fabric_material_id and material_id == fabric_material_id:
+            # Ткань пришла с перешива — с рулона не снимаем ни метра.
+            # Норму запоминаем: ниже она ляжет в расход записью без рулона.
+            repair_fabric_qty = qty_needed
+            continue
+
         cur.execute(
             "SELECT id, remaining_quantity FROM rolls "
             # Только рулоны В ЦЕХЕ и только ПРИНЯТЫЕ сменой: склад в расход не идёт,
@@ -379,6 +430,31 @@ def write_off_materials_once(cur, order_id, material, width, height, workshop_id
             "INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) VALUES (%s, %s, %s, %s)",
             (int(order_id), material_id, roll_id, take),
         )
+
+    # КУСОК С ПЕРЕШИВА ПОШЁЛ В ДЕЛО — резерв становится расходом.
+    #
+    # Раньше этого здесь не было: кусок оставался в 'reserved' у закрытого
+    # заказа навсегда. В перешиве он не виден (значит, никто его не возьмёт),
+    # в расходе его нет (значит, ткань вещи выглядела взятой ниоткуда), и
+    # открепить его невозможно — заказ давно ушёл с раскроя. Отрез просто
+    # исчезал из учёта, оставаясь физически в цехе.
+    #
+    # Запись БЕЗ roll_id — это и есть ответ «из чего сделана вещь»: рулон не
+    # тронут, а норма ткани в себестоимости учтена. Сам след «какой именно
+    # кусок» остаётся в repair_fabric_pieces.used_order_id и виден в карточке.
+    if repair_piece_id:
+        cur.execute(
+            "UPDATE repair_fabric_pieces SET status = 'used', "
+            "  used_at = COALESCE(used_at, now()) "
+            "WHERE id = %s AND status = 'reserved'",
+            (repair_piece_id,),
+        )
+        if fabric_material_id and repair_fabric_qty > 0:
+            cur.execute(
+                "INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
+                "VALUES (%s, %s, NULL, %s)",
+                (int(order_id), fabric_material_id, round(repair_fabric_qty, 3)),
+            )
     return None
 
 
