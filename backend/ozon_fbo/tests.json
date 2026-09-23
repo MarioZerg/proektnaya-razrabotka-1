@@ -39,6 +39,13 @@
       "path": "/",
       "body": {"action": "list_applications"},
       "expectedStatus": 401
+    },
+    {
+      "name": "Sync cargoes without auth is rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "sync_cargoes", "supplyId": 1},
+      "expectedStatus": 401
     }
   ]
 }

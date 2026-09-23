@@ -182,6 +182,8 @@ export interface OzonSyncCargoesResult {
   done: boolean;
   removed?: number;
   onOzon?: number;
+  /** Наши закрытые короба, которым на площадке не нашлось грузоместа. */
+  lost?: number;
   note?: string;
 }
 
