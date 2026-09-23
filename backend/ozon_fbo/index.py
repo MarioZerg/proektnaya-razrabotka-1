@@ -851,6 +851,17 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
         'delete_current_version': not one_box_id,
         'cargoes': cargoes_payload,
     })
+    # ЛИМИТ ЧАСТОТЫ — НЕ ОШИБКА СБОРКИ.
+    #
+    # Кладовщик закрывает короба подряд, по одному в 6-8 секунд, и площадка
+    # начинает отвечать 429. Короб при этом НЕ создан — повторять можно
+    # спокойно, дублей не будет. Красное «OZON не принял короба» здесь только
+    # пугает: человек думает, что сломал поставку, хотя надо просто подождать.
+    if st == 429:
+        return _resp(429, {
+            'error': 'OZON ограничивает частоту запросов. Подождите полминуты '
+                     'и нажмите «Закрыть короб» ещё раз — короб не пострадал',
+        })
     if st != 200 or not isinstance(data, dict) or not data.get('operation_id'):
         return _resp(502, {'error': f'OZON не принял короба: {ozon_error_text(st, data)}'})
     op_id = data['operation_id']

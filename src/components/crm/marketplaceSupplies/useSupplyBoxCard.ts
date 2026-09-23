@@ -61,6 +61,50 @@ export const useSupplyBoxCard = ({
     }
   }, [open, canEdit, box.closedAt]);
 
+  // ДОЖИДАЕМСЯ ЭТИКЕТКИ САМИ, НЕ ЗАСТАВЛЯЯ ЖАТЬ КНОПКУ ПО КРУГУ.
+  //
+  // OZON готовит файл асинхронно и на первый запрос почти всегда отвечает
+  // «ещё не готово». Раньше экран просто показывал «нажмите позже» — и
+  // кладовщик жал снова и снова, а этикетка не появлялась.
+  //
+  // Теперь повторяем запрос сами, с паузами, пока файл не будет готов.
+  // Сервер продолжает ОДНУ операцию (operation_id сохранён), поэтому
+  // повторы не плодят задачи на стороне площадки.
+  const handleFetchLabel = async () => {
+    setFetchingLabel(true);
+    try {
+      // 6 заходов с паузой 3с — до ~20 секунд ожидания. Дольше держать
+      // кладовщика у экрана бессмысленно: скажем, что файл задерживается.
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const r = await fetchOzonBoxLabel(box.id);
+        if (r.ready) {
+          toast({
+            title: `Этикетка короба №${box.boxNumber} получена`,
+            description: 'Можно печатать',
+          });
+          onLabelFetched();
+          return;
+        }
+        // Уперлись в лимит частоты — ждём дольше, иначе повторы бесполезны.
+        const pause = r.note?.includes('частот') ? 8000 : 3000;
+        await new Promise((resolve) => setTimeout(resolve, pause));
+      }
+      toast({
+        title: 'OZON пока не отдал этикетку',
+        description:
+          'Площадка задерживает файл. Нажмите «Получить этикетку» ещё раз через минуту — короб уже закрыт, ничего переделывать не нужно',
+      });
+    } catch (e) {
+      toast({
+        title: 'Не удалось получить этикетку',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setFetchingLabel(false);
+    }
+  };
+
   // OZON FBO: закрываем короб — сервер создаёт грузоместо на OZON и тянет PDF
   // этикетки именно этого короба. Печатать её кладовщик будет кнопкой ниже.
   const handleCloseOzon = async () => {
@@ -68,6 +112,17 @@ export const useSupplyBoxCard = ({
     setClosing(true);
     try {
       await onCloseOzonBox(box.id);
+      // СРАЗУ ИДЁМ ЗА СТИКЕРОМ, НЕ ЗАСТАВЛЯЯ ЖАТЬ ВТОРУЮ КНОПКУ.
+      //
+      // Закрытие и этикетка разделены: обе операции в один запрос не
+      // укладываются в отведённое функции время. Но для кладовщика это один
+      // шаг — «закрыл короб, наклеил стикер». Он закрывал короб, видел, что
+      // наклейки нет, и шёл искать причину, хотя надо было просто подождать
+      // несколько секунд.
+      //
+      // Ошибку здесь не показываем: короб уже закрыт, и если площадка
+      // задерживает файл, об этом скажет сам handleFetchLabel.
+      await handleFetchLabel();
     } finally {
       setClosing(false);
     }
@@ -116,50 +171,6 @@ export const useSupplyBoxCard = ({
   useScannerAutoSubmit(orderNumber, handleAdd, canEdit && open);
 
   const canScan = canEdit && !box.closedAt;
-
-  // ДОЖИДАЕМСЯ ЭТИКЕТКИ САМИ, НЕ ЗАСТАВЛЯЯ ЖАТЬ КНОПКУ ПО КРУГУ.
-  //
-  // OZON готовит файл асинхронно и на первый запрос почти всегда отвечает
-  // «ещё не готово». Раньше экран просто показывал «нажмите позже» — и
-  // кладовщик жал снова и снова, а этикетка не появлялась.
-  //
-  // Теперь повторяем запрос сами, с паузами, пока файл не будет готов.
-  // Сервер продолжает ОДНУ операцию (operation_id сохранён), поэтому
-  // повторы не плодят задачи на стороне площадки.
-  const handleFetchLabel = async () => {
-    setFetchingLabel(true);
-    try {
-      // 6 заходов с паузой 3с — до ~20 секунд ожидания. Дольше держать
-      // кладовщика у экрана бессмысленно: скажем, что файл задерживается.
-      for (let attempt = 0; attempt < 6; attempt += 1) {
-        const r = await fetchOzonBoxLabel(box.id);
-        if (r.ready) {
-          toast({
-            title: `Этикетка короба №${box.boxNumber} получена`,
-            description: 'Можно печатать',
-          });
-          onLabelFetched();
-          return;
-        }
-        // Уперлись в лимит частоты — ждём дольше, иначе повторы бесполезны.
-        const pause = r.note?.includes('частот') ? 8000 : 3000;
-        await new Promise((resolve) => setTimeout(resolve, pause));
-      }
-      toast({
-        title: 'OZON пока не отдал этикетку',
-        description:
-          'Площадка задерживает файл. Нажмите «Получить этикетку» ещё раз через минуту — короб уже закрыт, ничего переделывать не нужно',
-      });
-    } catch (e) {
-      toast({
-        title: 'Не удалось получить этикетку',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setFetchingLabel(false);
-    }
-  };
 
   /**
    * ПЕЧАТЬ СТИКЕРА КОРОБА — ОДНИМ ДЕЙСТВИЕМ, ОТКУДА БЫ НИ НАЖАЛИ.

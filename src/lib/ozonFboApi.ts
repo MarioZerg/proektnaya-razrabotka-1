@@ -94,11 +94,30 @@ export interface OzonCloseBoxesResult {
  * наклеил этикетку, взял следующий. Закрывать всё скопом в конце неудобно —
  * к тому моменту короба уже заклеены, и разложить по ним этикетки нечем.
  */
-export const closeOzonBoxes = (
+export const closeOzonBoxes = async (
   supplyId: number,
   boxId?: number,
-): Promise<OzonCloseBoxesResult> =>
-  post({ action: 'close_boxes', supplyId, boxId }) as Promise<OzonCloseBoxesResult>;
+): Promise<OzonCloseBoxesResult> => {
+  const res = await fetch(OZON_FBO_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'close_boxes', supplyId, boxId }),
+  });
+  const data = await res.json();
+  // ЛИМИТ ЧАСТОТЫ — НЕ ПОЛОМКА.
+  //
+  // Кладовщик закрывает короба подряд, и OZON начинает отвечать 429. Короб при
+  // этом не создан: можно спокойно повторить, дублей не будет. Пробрасываем
+  // понятное сообщение вместо общего «Ошибка OZON FBO», чтобы человек не решил,
+  // что сломал поставку.
+  if (res.status === 429) {
+    throw new Error(
+      data.error || 'OZON ограничивает частоту запросов. Подождите полминуты и нажмите ещё раз',
+    );
+  }
+  if (!res.ok) throw new Error(data.error || 'Ошибка OZON FBO');
+  return data as OzonCloseBoxesResult;
+};
 export interface OzonAllBoxLabelsResult {
   /** Ссылка на собранный PDF со стикерами всех коробов. */
   url: string;
