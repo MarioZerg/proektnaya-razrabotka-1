@@ -108,8 +108,8 @@ const groupByMaterial = (orders: TakenOrder[]): TakenOrder[] => {
 /** Подпись связки в позиции листа: «СВЯЗКА 3/32 — одна вешалка». */
 const groupNote = (o: TakenOrder) =>
   o.groupSize && o.groupSize > 1
-    ? `<div style="margin-top:1px;font-size:10px;font-weight:800;white-space:nowrap;
-                    line-height:1;">СВЯЗКА ${o.groupPosition}/${o.groupSize} — ОДНА ВЕШАЛКА</div>`
+    ? `<span style="font-size:10px;font-weight:800;white-space:nowrap;
+                    line-height:1;">СВЯЗКА ${o.groupPosition}/${o.groupSize} — ОДНА ВЕШАЛКА</span>`
     : '';
 
 /**
@@ -125,11 +125,11 @@ const groupNote = (o: TakenOrder) =>
  */
 const purchaseNote = (o: TakenOrder) =>
   o.purchaseSize && o.purchaseSize > 1
-    ? `<div style="margin-top:1px;font-size:10px;font-weight:900;white-space:nowrap;
-                   line-height:1.15;border:2px solid #000;border-radius:2px;
-                   padding:0 3px;display:inline-block;align-self:center;">1 ПОКУПАТЕЛЬ ${
-                     o.purchasePosition
-                   }/${o.purchaseSize} — НЕ ПУТАТЬ</div>`
+    ? `<span style="font-size:10px;font-weight:900;white-space:nowrap;
+                    line-height:1;border:2px solid #000;border-radius:2px;
+                    padding:1px 3px;display:inline-block;">1 ПОКУПАТЕЛЬ ${
+                      o.purchasePosition
+                    }/${o.purchaseSize} — НЕ ПУТАТЬ</span>`
     : '';
 
 /**
@@ -143,9 +143,9 @@ const purchaseNote = (o: TakenOrder) =>
  */
 const overlockNote = (o: TakenOrder) =>
   o.requiresOverlock
-    ? `<div style="margin-top:1px;font-size:11px;font-weight:900;white-space:nowrap;
-                   line-height:1.15;background:#000;color:#fff;border-radius:2px;
-                   padding:0 4px;display:inline-block;align-self:center;">ОВЕРЛОК</div>`
+    ? `<span style="font-size:11px;font-weight:900;white-space:nowrap;
+                    line-height:1;background:#000;color:#fff;border-radius:2px;
+                    padding:1px 4px;display:inline-block;">ОВЕРЛОК</span>`
     : '';
 
 /** Режет заказы на страницы по 20 позиций — ровно столько влезает в лист A4. */
@@ -195,26 +195,39 @@ const squeeze = (text: string, font: number, availWidth: number) => {
   return `display:inline-block;transform:scaleX(${scale.toFixed(2)});transform-origin:center;`;
 };
 
-/** Сколько строк-меток (связка, покупка OZON, оверлок) висит под номером. */
-const noteLines = (o: TakenOrder) =>
-  (o.groupSize && o.groupSize > 1 ? 1 : 0) +
-  (o.purchaseSize && o.purchaseSize > 1 ? 1 : 0) +
-  (o.requiresOverlock ? 1 : 0);
-
 /**
- * Строка маркетплейса — печатаем, только если под номером не больше одной метки.
+ * НИЖНЯЯ СТРОКА ЯЧЕЙКИ: МЕТКИ И МАРКЕТПЛЕЙС — В ОДИН РЯД.
  *
- * В ячейке 88 px место не резиновое: размер, номер и две метки занимают его
- * целиком, и нижняя метка обрезалась ровно посередине — закройщик видел
- * половину слова «ОВЕРЛ». Жертвуем именно маркетплейсом: это наименее нужная
- * строка (площадку видно по формату номера, и она продублирована на QR-листе),
- * а предупреждение обязано быть целым. Размер и номер при этом не мельчают.
+ * Раньше маркетплейс стоял отдельной строкой, а метки шли под ним каждая со
+ * своей строки. В ячейке 88 px это не помещалось: размер, номер, «OZON» и
+ * плашка «1 ПОКУПАТЕЛЬ 1/4 — НЕ ПУТАТЬ» в сумме выше ячейки — плашку
+ * выдавливало вниз, она налезала на «OZON» и срезалась рамкой. Именно это
+ * видно на листе Коротаевой от 23.09.
+ *
+ * Чинится не уменьшением шрифта, а раскладкой: плашка и название площадки
+ * занимают ОДНУ строку бок о бок. Высота экономится сразу на целую строку,
+ * и всё встаёт внутрь рамки без потери кегля.
+ *
+ * Связка (Яндекс) и покупка (OZON) — с разных площадок и вместе не встречаются,
+ * поэтому в ряду максимум: одна такая метка + «ОВЕРЛОК» + название площадки.
+ * Ряд выровнен по левому краю с небольшим отступом — так плашка стоит чуть
+ * левее центра, как и просили, а размер с номером остаются по центру.
  */
-const marketplaceLine = (o: TakenOrder, font: number) =>
-  noteLines(o) >= 2
-    ? ''
-    : `<div style="font-size:${font}px;font-weight:700;color:#222;margin-top:1px;
-                   line-height:1;">${o.marketplace}</div>`;
+const noteRow = (o: TakenOrder, mpFont: number, mpText?: string) => {
+  const parts = [groupNote(o), purchaseNote(o), overlockNote(o)].filter(Boolean);
+  const mp = `<span style="font-size:${mpFont}px;font-weight:700;color:#222;
+                           line-height:1;white-space:nowrap;">${mpText || o.marketplace}</span>`;
+  // Меток нет — площадка просто стоит по центру, как раньше.
+  if (!parts.length) {
+    return `<div style="margin-top:1px;line-height:1;">${mp}</div>`;
+  }
+  // Ряд сдвинут влево отрицательным полем: плашка уходит ближе к краю ячейки,
+  // освобождая место названию площадки справа от себя. Размер и номер выше
+  // при этом остаются ровно по центру — их разметка не тронута.
+  return `<div style="margin:2px -6px 0 -6px;display:flex;align-items:center;
+                      justify-content:center;gap:5px;flex-wrap:nowrap;
+                      overflow:hidden;">${parts.join('')}${mp}</div>`;
+};
 
 // Ячейка одной позиции: слева крупно материал+размер и мелко маркетплейс+номер (+ID закройщика
 // на QR-листе), справа узкая колонка (пустая — под галочку/крепление бирки), как в образце.
@@ -354,10 +367,7 @@ const buildChecklistPageHtml = (
         <div style="font-size:${NUM_FONT}px;font-weight:800;margin-top:2px;
                     letter-spacing:0.3px;white-space:nowrap;line-height:1.1;
                     ${squeeze(o.orderNumber || '', NUM_FONT, textWidth)}">${o.orderNumber}</div>
-        ${marketplaceLine(o, 11)}
-        ${groupNote(o)}
-        ${purchaseNote(o)}
-        ${overlockNote(o)}
+        ${noteRow(o, 11)}
       </div>`,
     cutterId
   );
@@ -392,15 +402,7 @@ const buildQrPageHtml = (
         <div style="font-size:${NUM_FONT}px;font-weight:800;margin-top:2px;
                     white-space:nowrap;line-height:1.1;
                     ${squeeze(o.orderNumber || '', NUM_FONT, textWidth)}">${o.orderNumber}</div>
-        ${
-          noteLines(o) >= 2
-            ? ''
-            : `<div style="font-size:10px;font-weight:700;color:#222;margin-top:1px;
-                           line-height:1;">${o.marketplace} [${o.orderType}]</div>`
-        }
-        ${groupNote(o)}
-        ${purchaseNote(o)}
-        ${overlockNote(o)}
+        ${noteRow(o, 10, `${o.marketplace} [${o.orderType}]`)}
       </div>`,
     cutterId
   );
