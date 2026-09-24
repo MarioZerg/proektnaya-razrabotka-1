@@ -46,29 +46,32 @@ const FIELDS: {
   { key: 'docDate', label: 'Дата', group: 'Документ', type: 'date' },
   { key: 'operatorDocId', label: 'ID документа в Диадоке', group: 'Документ', hint: 'По нему документ ищут у оператора' },
 
-  { key: 'shipperName', label: 'Грузоотправитель', group: 'Отправитель' },
-  { key: 'shipperInn', label: 'ИНН', group: 'Отправитель' },
-  { key: 'shipperAddress', label: 'Адрес', group: 'Отправитель' },
-  { key: 'pickupAddress', label: 'Адрес погрузки', group: 'Отправитель' },
-  { key: 'pickupAt', label: 'Время погрузки', group: 'Отправитель', type: 'datetime-local' },
+  { key: 'shipperName', label: 'Грузоотправитель (мы)', group: 'Наши реквизиты' },
+  { key: 'shipperInn', label: 'ИНН', group: 'Наши реквизиты' },
+  { key: 'shipperAddress', label: 'Адрес', group: 'Наши реквизиты' },
+  { key: 'pickupAddress', label: 'Адрес погрузки', group: 'Наши реквизиты' },
+  { key: 'pickupAt', label: 'Время погрузки', group: 'Наши реквизиты', type: 'datetime-local' },
 
+  { key: 'consigneeName', label: 'Грузополучатель', group: 'Куда едет груз' },
+  { key: 'consigneeAddress', label: 'Адрес СЦ', group: 'Куда едет груз' },
+  { key: 'deliveryAt', label: 'Время сдачи', group: 'Куда едет груз', type: 'datetime-local' },
+
+  { key: 'cargoPlaces', label: 'Мест (коробов)', group: 'Груз', type: 'number' },
+  { key: 'cargoWeightKg', label: 'Вес, кг', group: 'Груз', type: 'number' },
+  { key: 'cargoDescription', label: 'Наименование груза', group: 'Груз' },
+
+  // Титул перевозчика. Мы его не заполняем — эти поля держим только «для себя»,
+  // чтобы знать, кого ждать на погрузке.
   { key: 'carrierName', label: 'Перевозчик', group: 'Перевозчик' },
   { key: 'carrierInn', label: 'ИНН перевозчика', group: 'Перевозчик' },
   { key: 'driverName', label: 'Водитель', group: 'Перевозчик' },
   { key: 'driverPhone', label: 'Телефон водителя', group: 'Перевозчик' },
   { key: 'vehicleNumber', label: 'Госномер машины', group: 'Перевозчик' },
   { key: 'vehicleModel', label: 'Марка машины', group: 'Перевозчик' },
-
-  { key: 'consigneeName', label: 'Грузополучатель', group: 'Получатель' },
-  { key: 'consigneeAddress', label: 'Адрес СЦ', group: 'Получатель' },
-  { key: 'deliveryAt', label: 'Время сдачи', group: 'Получатель', type: 'datetime-local' },
-
-  { key: 'cargoPlaces', label: 'Мест (коробов)', group: 'Груз', type: 'number' },
-  { key: 'cargoWeightKg', label: 'Вес, кг', group: 'Груз', type: 'number' },
-  { key: 'cargoDescription', label: 'Наименование груза', group: 'Груз' },
 ];
 
-const GROUPS = ['Документ', 'Отправитель', 'Перевозчик', 'Получатель', 'Груз'];
+/** Титул грузоотправителя — то, что заполняем мы и без чего документ не отправить. */
+const OUR_GROUPS = ['Документ', 'Наши реквизиты', 'Куда едет груз', 'Груз'];
 
 /** Значение для input: даты обрезаем под формат поля, null превращаем в пустую строку. */
 const toInput = (v: unknown, type?: string): string => {
@@ -131,7 +134,7 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
       fillForm(d);
       toast({
         title: 'Накладная заведена',
-        description: 'Реквизиты отправителя и склад подставлены — проверьте водителя и машину',
+        description: 'Наши реквизиты и склад подставлены — проверьте груз и время погрузки',
       });
     } catch (e) {
       toast({
@@ -308,9 +311,11 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
         {/* Главное, что человек должен понять про этот блок: подпись ставится не здесь.
             Без этой строки кладовщик будет искать в системе кнопку «подписать». */}
         <p className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
-          Подписание идёт в {doc.operatorName || 'Контур.Диадок'} — по закону ЭТрН
-          подписывается только через аккредитованного оператора ИС ЭПД. Здесь готовятся
-          реквизиты перевозки; подписанный документ загружается обратно и хранится в поставке.
+          Мы — грузоотправитель, поэтому заполняем только первый титул: свои реквизиты,
+          куда и когда едет груз, что именно отправляем. Титул перевозчика (водитель,
+          машина, приём груза) заполняет и подписывает он сам в{' '}
+          {doc.operatorName || 'Контур.Диадоке'}. Подписанный документ загружается обратно
+          и хранится в поставке.
         </p>
 
         {doc.status === 'На подписи' && (
@@ -330,7 +335,7 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
           </p>
         )}
 
-        {GROUPS.map((group) => (
+        {OUR_GROUPS.map((group) => (
           <div key={group} className="space-y-2">
             <p className="text-xs font-semibold uppercase text-muted-foreground">{group}</p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -351,6 +356,38 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
             </div>
           </div>
         ))}
+
+        {/* Титул перевозчика по закону заполняет сам перевозчик своей подписью.
+            Раньше эти поля стояли вперемешку с нашими, и менеджер пытался угадать
+            водителя и машину за транспортную компанию. Теперь блок убран под спойлер
+            и подписан как необязательный: это заметка для себя, а не часть нашего титула. */}
+        <details className="rounded-md border border-border">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase text-muted-foreground">
+            Перевозчик — заполняет он сам (необязательно)
+          </summary>
+          <div className="space-y-2 border-t border-border p-3">
+            <p className="text-xs text-muted-foreground">
+              Свой титул перевозчик подписывает в Диадоке отдельно: водителя, машину и
+              приём груза вносит он. Заполняйте здесь только если хотите держать под
+              рукой, кого ждать на погрузке — в наш титул это не попадает.
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {FIELDS.filter((f) => f.group === 'Перевозчик').map((f) => (
+                <div key={f.key} className="space-y-1">
+                  <Label className="text-xs">{f.label}</Label>
+                  <Input
+                    type={f.type || 'text'}
+                    value={form[f.key] ?? ''}
+                    disabled={!isManager || locked}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, [f.key]: e.target.value }))
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </details>
 
         <div className="space-y-1">
           <Label className="text-xs">Комментарий</Label>
