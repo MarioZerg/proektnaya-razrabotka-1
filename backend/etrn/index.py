@@ -1,6 +1,8 @@
 import base64
 import json
 import os
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
 
@@ -217,6 +219,59 @@ def _upload_signed(base64_data, filename):
     return f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
 
 
+def _kontur_check():
+    """Проверяет, работает ли ключ Диадока и к какой организации он привязан.
+
+    Отдельная кнопка «Проверить связь» нужна, чтобы поймать неверный ключ
+    заранее — в спокойной обстановке, а не когда машина стоит под погрузкой.
+    """
+    api_key = os.environ.get('KONTUR_DIADOC_API_KEY')
+    if not api_key:
+        return {
+            'ok': False,
+            'stage': 'key',
+            'error': 'Ключ Контура ещё не добавлен',
+            'hint': 'Добавьте KONTUR_DIADOC_API_KEY в настройках проекта',
+        }
+
+    # Тестовая площадка Диадока — отдельный адрес. Боевые накладные туда не
+    # попадают, поэтому пробовать обмен безопасно.
+    base = os.environ.get('KONTUR_DIADOC_URL', 'https://diadoc-api.kontur.ru')
+    try:
+        req = urllib.request.Request(
+            f'{base}/GetMyOrganizations',
+            headers={'Authorization': f'DiadocAuth ddauth_api_client_id={api_key}'},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        # 401 при живом ключе означает: ключ верный, но нет авторизации
+        # пользователя — для неё нужен облачный сертификат.
+        if e.code == 401:
+            return {
+                'ok': False,
+                'stage': 'auth',
+                'error': 'Ключ принят, но вход по сертификату не выполнен',
+                'hint': 'Запросите у Контура облачный сертификат (DSS) и доступ к API ЭПД',
+            }
+        if e.code == 403:
+            return {
+                'ok': False,
+                'stage': 'access',
+                'error': 'Ключ есть, но доступ к API не открыт',
+                'hint': 'Напишите в поддержку Контура: нужен доступ к API ЭТрН и тестовый ящик',
+            }
+        return {'ok': False, 'stage': 'http', 'error': f'Контур ответил {e.code}'}
+    except Exception as e:
+        return {'ok': False, 'stage': 'network', 'error': f'Нет связи с Контуром: {e}'}
+
+    orgs = [
+        {'name': o.get('FullName') or o.get('ShortName'), 'inn': o.get('Inn')}
+        for o in (data.get('Organizations') or [])
+    ]
+    return {'ok': True, 'organizations': orgs}
+
+
 def handler(event: dict, context) -> dict:
     """Электронная транспортная накладная (ЭТрН) по поставке FBO.
 
@@ -298,6 +353,12 @@ def handler(event: dict, context) -> dict:
                     for r in cur.fetchall()
                 ]
                 return _resp(200, {'items': items})
+
+            # Проверка связи с Контуром: живой ли ключ и к какой организации он
+            # привязан. Без неё «не работает» выясняется в момент отгрузки, когда
+            # машина уже стоит под погрузкой и разбираться некогда.
+            if params.get('view') == 'kontur_check':
+                return _resp(200, _kontur_check())
 
             supply_id = params.get('supplyId')
             if not supply_id:

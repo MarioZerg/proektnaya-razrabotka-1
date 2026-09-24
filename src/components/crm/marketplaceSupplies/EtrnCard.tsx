@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import SupplySection from '@/components/crm/marketplaceSupplies/SupplySection';
+import KonturStatus from '@/components/crm/marketplaceSupplies/KonturStatus';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -263,6 +264,7 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
         </>
       }
     >
+      {isManager && <div className="mb-3"><KonturStatus /></div>}
       <div className="mb-4 flex flex-wrap justify-end gap-2">
           {doc.signedFileUrl && (
             <Button size="sm" variant="outline" asChild>

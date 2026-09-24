@@ -143,6 +143,30 @@ export const fetchPendingEtrn = async (): Promise<EtrnPendingItem[]> => {
   return data.items || [];
 };
 
+/** Результат проверки связи с Контуром. */
+export interface KonturCheck {
+  ok: boolean;
+  /** На каком шаге остановились: key | auth | access | http | network. */
+  stage?: string;
+  error?: string;
+  /** Что сделать, чтобы починить. */
+  hint?: string;
+  organizations?: { name: string | null; inn: string | null }[];
+}
+
+/**
+ * Проверяет ключ Контура заранее — в спокойной обстановке.
+ *
+ * Иначе неверный ключ всплывает в момент отгрузки, когда машина уже под
+ * погрузкой и разбираться некогда.
+ */
+export const checkKontur = async (): Promise<KonturCheck> => {
+  const res = await fetch(`${ETRN_URL}?view=kontur_check`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось проверить связь');
+  return data;
+};
+
 /** Накладная поставки. null — ещё не заводили. */
 export const fetchEtrn = async (supplyId: number): Promise<EtrnDocument | null> => {
   const res = await fetch(`${ETRN_URL}?supplyId=${supplyId}`);
