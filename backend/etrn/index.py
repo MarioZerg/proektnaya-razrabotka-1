@@ -372,7 +372,7 @@ def handler(event: dict, context) -> dict:
         action = body_data.get('action')
         # Действие проверяем ДО работы с базой: иначе опечатка в action возвращала
         # «накладная не заведена» — ошибка про данные вместо ошибки про запрос.
-        if action not in ('create', 'update', 'set_status', 'attach_signed'):
+        if action not in ('create', 'update', 'set_status', 'attach_signed', 'refresh_cargo'):
             return _resp(400, {'error': 'Неизвестное действие'})
         supply_id = body_data.get('supplyId')
         if not supply_id:
@@ -431,6 +431,26 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return _resp(200, {'document': _get_doc(cur, supply_id)})
 
+        # Пересчёт груза по факту сборки.
+        #
+        # Накладную заводят заранее, когда коробов ещё нет: в черновике мест
+        # оказывается пусто. К моменту отправки на подпись коробы собраны, но
+        # число в накладной так и остаётся пустым — а СЦ принимает груз по
+        # количеству мест, и расхождение означает разбирательство на приёмке.
+        if action == 'refresh_cargo':
+            if doc['status'] == 'Подписана':
+                return _resp(400, {'error': 'Подписанную накладную изменить нельзя'})
+            d = _defaults(cur, supply_id)
+            if d is None:
+                return _resp(404, {'error': 'Поставка не найдена'})
+            cur.execute(
+                'UPDATE etrn_documents SET cargo_places = %s, cargo_description = %s, '
+                'updated_at = now() WHERE supply_id = %s',
+                (d['cargo_places'], d['cargo_description'], int(supply_id)),
+            )
+            conn.commit()
+            return _resp(200, {'document': _get_doc(cur, supply_id)})
+
         if action == 'attach_signed':
             if role not in MANAGER_ROLES:
                 return _resp(403, {'error': 'Загрузить подписанный документ может только руководитель'})
@@ -460,6 +480,14 @@ def handler(event: dict, context) -> dict:
             if status == 'Подписана' and not doc.get('signedFileUrl'):
                 return _resp(400, {
                     'error': 'Сначала приложите подписанный документ от оператора ЭДО'
+                })
+            # Без числа мест накладную отправлять нельзя: СЦ принимает груз по
+            # количеству мест, и пустая графа — это спор на приёмке. Накладную
+            # заводят заранее, когда коробов ещё нет, поэтому проверяем здесь.
+            if status == 'На подписи' and not doc.get('cargoPlaces'):
+                return _resp(400, {
+                    'error': 'Не указано количество мест. Нажмите «Обновить груз» — '
+                             'число коробов подставится из собранной поставки',
                 })
             if status == 'Аннулирована' and role not in MANAGER_ROLES:
                 return _resp(403, {'error': 'Аннулировать накладную может только руководитель'})

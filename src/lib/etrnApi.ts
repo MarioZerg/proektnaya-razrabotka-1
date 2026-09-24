@@ -184,6 +184,15 @@ export const updateEtrn = (supplyId: number, fields: EtrnEditableFields) =>
 export const setEtrnStatus = (supplyId: number, status: EtrnStatus) =>
   post({ action: 'set_status', supplyId, status });
 
+/**
+ * Пересчитать груз по факту сборки: места и состав берутся из поставки.
+ *
+ * Накладную заводят заранее, когда коробов ещё нет, и число мест остаётся пустым.
+ * СЦ принимает груз по количеству мест — расхождение означает спор на приёмке.
+ */
+export const refreshEtrnCargo = (supplyId: number) =>
+  post({ action: 'refresh_cargo', supplyId });
+
 /** Приложить подписанный файл от оператора — документ становится «Подписана». */
 export const attachSignedEtrn = (supplyId: number, fileBase64: string, fileName: string) =>
   post({ action: 'attach_signed', supplyId, fileBase64, fileName });

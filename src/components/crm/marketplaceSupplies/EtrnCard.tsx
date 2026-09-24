@@ -16,6 +16,7 @@ import {
   updateEtrn,
   setEtrnStatus,
   attachSignedEtrn,
+  refreshEtrnCargo,
   type EtrnDocument,
   type EtrnEditableFields,
 } from '@/lib/etrnApi';
@@ -54,15 +55,15 @@ const FIELDS: {
 
   { key: 'consigneeName', label: 'Грузополучатель', group: 'Куда едет груз' },
   { key: 'consigneeAddress', label: 'Адрес СЦ', group: 'Куда едет груз' },
-  { key: 'deliveryAt', label: 'Время сдачи', group: 'Куда едет груз', type: 'datetime-local' },
+  { key: 'deliveryAt', label: 'Дата сдачи на СЦ', group: 'Куда едет груз', type: 'datetime-local' },
 
-  { key: 'cargoPlaces', label: 'Мест (коробов)', group: 'Груз', type: 'number' },
+  { key: 'cargoPlaces', label: 'Мест (коробов)', group: 'Груз', type: 'number', hint: 'Должно совпадать с числом коробов' },
   { key: 'cargoWeightKg', label: 'Вес, кг', group: 'Груз', type: 'number' },
   { key: 'cargoDescription', label: 'Наименование груза', group: 'Груз' },
 
-  // Титул перевозчика. Мы его не заполняем — эти поля держим только «для себя»,
-  // чтобы знать, кого ждать на погрузке.
-  { key: 'carrierName', label: 'Перевозчик', group: 'Перевозчик' },
+  // Титул перевозчика — Газельки. Мы его не заполняем: водителя, машину и приём
+  // груза она вносит сама. Держим поля только как заметку, кого ждать.
+  { key: 'carrierName', label: 'Перевозчик', group: 'Перевозчик', hint: 'Обычно Газелька' },
   { key: 'carrierInn', label: 'ИНН перевозчика', group: 'Перевозчик' },
   { key: 'driverName', label: 'Водитель', group: 'Перевозчик' },
   { key: 'driverPhone', label: 'Телефон водителя', group: 'Перевозчик' },
@@ -167,6 +168,24 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRefreshCargo = async () => {
+    try {
+      const d = await refreshEtrnCargo(supply.id);
+      setDoc(d);
+      fillForm(d);
+      toast({
+        title: 'Груз пересчитан',
+        description: `Мест: ${d.cargoPlaces ?? '—'}`,
+      });
+    } catch (e) {
+      toast({
+        title: 'Не удалось пересчитать',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
     }
   };
 
@@ -277,6 +296,12 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
               </a>
             </Button>
           )}
+          {isManager && !locked && (
+            <Button size="sm" variant="outline" onClick={handleRefreshCargo}>
+              <Icon name="RefreshCw" size={14} className="mr-1.5" />
+              Обновить груз
+            </Button>
+          )}
           {isManager && !locked && doc.status === 'Черновик' && (
             <Button size="sm" variant="secondary" onClick={() => handleStatus('На подписи')}>
               <Icon name="Send" size={14} className="mr-1.5" />
@@ -311,12 +336,25 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
         {/* Главное, что человек должен понять про этот блок: подпись ставится не здесь.
             Без этой строки кладовщик будет искать в системе кнопку «подписать». */}
         <p className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
-          Мы — грузоотправитель, поэтому заполняем только первый титул: свои реквизиты,
-          куда и когда едет груз, что именно отправляем. Титул перевозчика (водитель,
-          машина, приём груза) заполняет и подписывает он сам в{' '}
-          {doc.operatorName || 'Контур.Диадоке'}. Подписанный документ загружается обратно
-          и хранится в поставке.
+          Мы — грузоотправитель: заполняем только первый титул (свои реквизиты, куда
+          едет груз, сколько мест) и передаём короба Газельке. Дальше Газелька как
+          перевозчик вносит своё — водителя, машину, приём груза — и подписывает свой
+          титул в {doc.operatorName || 'Контур.Диадоке'}. «Адрес погрузки» — это откуда
+          Газелька забирает короба, «Адрес СЦ» — куда она их везёт. Подписанный документ
+          загружается обратно и хранится в поставке.
         </p>
+
+        {/* Мест в накладной должно быть столько же, сколько коробов уехало.
+            СЦ принимает груз по местам: расхождение — это спор на приёмке, а
+            заметить его надо здесь, а не у ворот склада. */}
+        {supply.boxes?.length > 0 && doc.cargoPlaces !== supply.boxes.length && (
+          <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <Icon name="TriangleAlert" size={15} className="mt-0.5 shrink-0" />
+            В накладной мест: {doc.cargoPlaces ?? '—'}, а коробов собрано:{' '}
+            {supply.boxes.length}. СЦ принимает груз по числу мест — нажмите
+            «Обновить груз».
+          </p>
+        )}
 
         {doc.status === 'На подписи' && (
           <p className="flex items-start gap-2 rounded-md border border-border p-3 text-sm">
