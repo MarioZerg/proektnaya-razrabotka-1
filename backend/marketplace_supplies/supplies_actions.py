@@ -460,6 +460,20 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Раньше резерв не проверялся, и собранная с полки вещь в поставку не
             # сканировалась: система находила ВТОРУЮ вещь того же отправления и
             # говорила «на неё не наклеен ярлык», хотя в руках была первая.
+            # В КОРОБ КЛАДЁМ ИМЕННО ТУ ВЕЩЬ, НА КОТОРУЮ НАКЛЕЕН ЯРЛЫК.
+            #
+            # Кладовщик держит в руках конкретный пакет: он сам его отстикеровал,
+            # и ярлык привязан к одной-единственной записи. Но заказу могут
+            # соответствовать несколько одинаковых вещей (двойники на полке), и
+            # раньше первым критерием стояло «свободна от поставок». Если
+            # застикерованная вещь числилась в какой-нибудь старой поставке, её
+            # обходил незастикерованный двойник с полки — в короб записывалась
+            # одна вещь, а физически уезжала другая. Так и появлялись дубли:
+            # двойник помечен уложенным, а настоящая вещь остаётся «в поставке»
+            # и попадается кладовщику на полке.
+            #
+            # Поэтому наличие ярлыка — первый приоритет, а свободной считаем
+            # вещь, не лежащую в ЖИВОЙ поставке: старые выполненные не мешают.
             find_sql = (
                 "SELECT gw.id, gw.status, o.order_number, gw.shipping_labeled_at "
                 "FROM orders o "
@@ -468,9 +482,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "  OR gw.id = o.fulfilled_from_stock_id "
                 "  OR gw.order_id = o.id "
                 "LEFT JOIN marketplace_supply_items msi ON msi.goods_warehouse_id = gw.id "
+                "  AND EXISTS (SELECT 1 FROM marketplace_supplies _ms "
+                "              WHERE _ms.id = msi.supply_id "
+                "                AND COALESCE(_ms.status, '') "
+                "                    NOT IN ('Выполнена', 'Отменена')) "
                 "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}') "
-                # Сначала берём вещь, готовую ехать: свободна от поставок и с ярлыком.
-                "ORDER BY (msi.id IS NULL) DESC, (gw.shipping_labeled_at IS NOT NULL) DESC, "
+                "ORDER BY (gw.shipping_labeled_at IS NOT NULL) DESC, "
+                "         (msi.id IS NULL) DESC, "
+                "         gw.shipping_labeled_at DESC NULLS LAST, "
                 "         (gw.status = 'awaiting_supply') DESC, "
                 "         (gw.reserved_order_id = o.id) DESC LIMIT 1"
             )

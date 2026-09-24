@@ -484,6 +484,39 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     }, ensure_ascii=False),
                 }
 
+            # НА ОДИН ЗАКАЗ — ОДИН ЯРЛЫК. Если под этот же заказ ярлык уже наклеен
+            # на другую вещь, второй печатать нельзя.
+            #
+            # Иначе получаются двойники: на полке лежат две одинаковые вещи, обе
+            # застикерованы под один заказ, в короб уезжает одна, а вторая
+            # навсегда остаётся «в поставке» и всплывает у кладовщика в руках —
+            # ровно та история, из-за которой концов потом не найти.
+            #
+            # Показываем код и полку уже застикерованной вещи: её и надо взять.
+            cur.execute(
+                "SELECT gw.storage_barcode, s.name FROM goods_warehouse gw "
+                "LEFT JOIN shelves s ON s.id = gw.shelf_id "
+                "WHERE COALESCE(gw.reserved_order_id, gw.order_id) = %s "
+                "  AND gw.id <> %s "
+                "  AND gw.shipping_labeled_at IS NOT NULL "
+                "  AND gw.shipped_at IS NULL "
+                "  AND gw.status NOT IN ('lost', 'in_stock') LIMIT 1",
+                (int(reserved_order_id), int(gw_id)),
+            )
+            dup_row = cur.fetchone()
+            if dup_row:
+                dup_bc, dup_shelf = dup_row
+                where = f' (полка {dup_shelf})' if dup_shelf else ''
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': f'На заказ #{target_number} ярлык уже наклеен — '
+                                 f'на вещь {dup_bc}{where}. Второй стикер печатать '
+                                 f'нельзя: возьмите ту вещь, она ждёт этот заказ.',
+                    }, ensure_ascii=False),
+                }
+
             # picking = отстикерована и готова к сканированию в поставку FBS.
             # Запоминаем и КТО наклеил ярлык: в поставке кладовщик видит имя рядом с
             # вещью, и при разборе «откуда взялась эта штука» есть кого спросить.
