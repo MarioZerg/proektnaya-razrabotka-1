@@ -1312,10 +1312,6 @@ def handler(event: dict, context) -> dict:
                 created_rolls = []
                 # Коды, уже использованные в этом подтверждении: один штрихкод — один рулон.
                 taken_codes = set()
-                # Позиции, которые не удалось оприходовать. Раньше любая такая строка
-                # откатывала подтверждение целиком и материал не попадал на склад
-                # вообще; теперь просто перечисляем их администратору.
-                approve_skipped = []
                 # Заготовки для трёх итоговых запросов: строки рулонов и план того,
                 # как разложить их по позициям приёмки.
                 roll_rows = []
@@ -1364,26 +1360,44 @@ def handler(event: dict, context) -> dict:
                     norm_sql = 'NULL' if row_norm is None else str(row_norm)
                     cost_sql = 'NULL' if cost_per_unit is None else str(cost_per_unit)
                     supplier_sql = 'NULL' if not row_supplier else str(int(row_supplier))
-                    # ОДНА КРИВАЯ ПОЗИЦИЯ НЕ ДОЛЖНА БЛОКИРОВАТЬ ВСЮ ПРИЁМКУ.
+                    # ПОДТВЕРЖДЕНИЕ — ВСЁ ИЛИ НИЧЕГО.
                     #
-                    # Раньше любая такая строка откатывала подтверждение целиком:
-                    # машина разгружена, материал физически лежит на складе, а
-                    # оприходовать его нельзя, пока кто-то не найдёт и не исправит
-                    # одну позицию из шестидесяти. Теперь годное приходуем, а
-                    # пропущенное перечисляем в ответе — приёмка остаётся в работе,
-                    # и недостающие строки можно добавить отдельно.
+                    # Здесь материал физически встаёт на склад, и частичный приход
+                    # опаснее отказа: кладовщик видит «принято» и считает, что
+                    # приёмка закрыта, а часть рулонов на склад не попала. Недостача
+                    # всплывает через недели — на инвентаризации, когда уже не
+                    # вспомнить, чего именно не хватило.
+                    #
+                    # Поэтому при любой негодной позиции откатываем целиком и прямо
+                    # говорим, какую строку править. Приёмка остаётся «Новой»,
+                    # рулоны не создаются, повторное нажатие после правки проходит
+                    # чисто. Терпимость к кривым строкам живёт на шаге ОФОРМЛЕНИЯ —
+                    # там она ничего не портит, потому что склад ещё не тронут.
                     if quantity <= 0 or number_rolls < 1:
-                        approve_skipped.append(
-                            f'позиция #{item_id}: некорректное количество — не оприходована'
-                        )
-                        continue
+                        conn.rollback()
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Позиция #{item_id}: некорректное количество '
+                                         f'({quantity} / рулонов {number_rolls}). Приёмка не '
+                                         f'принята целиком — исправьте эту строку и нажмите '
+                                         f'«Принять» ещё раз.',
+                            }, ensure_ascii=False),
+                        }
 
                     type_id = type_by_material.get(int(material_id))
                     if type_id is None:
-                        approve_skipped.append(
-                            f'позиция #{item_id}: материал #{material_id} не найден в справочнике'
-                        )
-                        continue
+                        conn.rollback()
+                        return {
+                            'statusCode': 404,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Позиция #{item_id}: материал #{material_id} не найден '
+                                         f'в справочнике. Приёмка не принята целиком — исправьте '
+                                         f'эту строку и нажмите «Принять» ещё раз.',
+                            }, ensure_ascii=False),
+                        }
 
                     # КЛЮЧЕВОЕ: берём штрихкоды, забронированные при оформлении приёмки, —
                     # именно они уже наклеены на рулоны. Сгенерировать новые здесь значило бы
@@ -1438,14 +1452,33 @@ def handler(event: dict, context) -> dict:
 
                 if not roll_rows:
                     conn.rollback()
-                    detail = ('. ' + '; '.join(approve_skipped[:10])) if approve_skipped else ''
                     return {
                         'statusCode': 400,
                         'headers': headers,
                         'body': json.dumps(
-                            {'error': 'В приёмке не осталось позиций для оприходования' + detail},
+                            {'error': 'В приёмке не осталось позиций для оприходования'},
                             ensure_ascii=False,
                         ),
+                    }
+
+                # СВЕРКА ПЕРЕД ЗАПИСЬЮ: СКОЛЬКО ЖДАЛИ — СТОЛЬКО И ПРИХОДУЕМ.
+                #
+                # Складываем number_rolls по всем позициям и сравниваем с числом
+                # рулонов, которое реально собралось. Разойдётся хоть на один —
+                # значит по дороге что-то потерялось, и приёмку принимать нельзя:
+                # частичный приход тихо оставляет склад без материала.
+                expected_rolls = sum(int(it[3] or 1) for it in pending_items)
+                if len(roll_rows) != expected_rolls:
+                    conn.rollback()
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Сбой разбивки: по позициям должно быть {expected_rolls} '
+                                     f'рулонов, собралось {len(roll_rows)}. Приёмка не принята — '
+                                     f'откройте её, проверьте метраж и число рулонов в позициях '
+                                     f'и попробуйте снова.',
+                        }, ensure_ascii=False),
                     }
 
                 # 1. Создаём разом все рулоны документа и получаем их id.
@@ -1457,6 +1490,21 @@ def handler(event: dict, context) -> dict:
                 )
                 roll_id_by_code = {bc: rid for rid, bc in cur.fetchall()}
                 created_rolls = [bc for p in plan for bc in p['codes']]
+
+                # Рулонов создалось меньше, чем строк на запись, — база отвергла
+                # часть значений. Откатываем: половина приёмки на складе хуже,
+                # чем её отсутствие.
+                if len(roll_id_by_code) != len(roll_rows):
+                    conn.rollback()
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'На склад встало {len(roll_id_by_code)} рулонов из '
+                                     f'{len(roll_rows)} — приёмка отменена целиком, склад не '
+                                     f'тронут. Попробуйте принять ещё раз.',
+                        }, ensure_ascii=False),
+                    }
 
                 # 2. Привязываем первый рулон к самой позиции — одним UPDATE через
                 #    список значений вместо запроса на каждую позицию.
@@ -1498,16 +1546,15 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"UPDATE shipments SET status = 'Завершено', completed_at = now() WHERE id = {int(shipment_id)}")
                 log_action(
                     cur, actor_id, actor_name, 'approve_supply', 'shipment', shipment_id,
-                    f'Подтвердил поставку #{shipment_id}, создано рулонов: {len(created_rolls)}'
-                    + (f', пропущено позиций: {len(approve_skipped)}' if approve_skipped else ''),
+                    f'Подтвердил поставку #{shipment_id}, создано рулонов: {len(created_rolls)} '
+                    f'(ожидалось {expected_rolls})',
                 )
                 conn.commit()
                 return {
                     'statusCode': 200,
                     'headers': headers,
                     'body': json.dumps(
-                        {'success': True, 'createdRolls': created_rolls,
-                         'skipped': approve_skipped},
+                        {'success': True, 'createdRolls': created_rolls},
                         ensure_ascii=False,
                     ),
                 }
@@ -2114,34 +2161,40 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': 'Удалить можно только заявку в статусе "Новый" или "Отправлено"'}),
                     }
 
-                # Поставку от поставщика можно удалить в любом статусе. Если она уже подтверждена
-                # (status='Завершено') — рулоны, созданные при подтверждении, тоже удаляются, но
-                # ТОЛЬКО если они ещё не использованы (остаток = исходному кол-ву, статус
-                # 'in_storage' — не списаны, не переданы в цех). Если хотя бы один рулон уже тронут —
-                # удаление всей поставки блокируется, чтобы не потерять историю расхода материала.
-                supply_roll_ids_to_delete: list = []
+                # ПОДТВЕРЖДЁННУЮ ПРИЁМКУ УДАЛИТЬ НЕЛЬЗЯ — ЭТО ПРИХОД МАТЕРИАЛА.
+                #
+                # Раньше удаление приёмки в статусе «Завершено» сносило и созданные
+                # ею рулоны: документ исчезал, а вместе с ним — весь принятый
+                # материал. Ровно так 24.09 пропало 66 рулонов: приёмки #548 и #549
+                # подтвердили (37 и 29 рулонов), а через минуту удалили документы —
+                # склад опустел, и следов в базе не осталось, только строка в журнале.
+                #
+                # Кнопка выглядела безобидно («убрать лишний документ»), а по факту
+                # списывала со склада десятки тысяч рублей материала без единого
+                # предупреждения. Приход отменяют не удалением, а возвратом
+                # поставщику или списанием — там остаётся след и причина.
+                #
+                # Незавершённую приёмку («Новый», «Отклонена») удалять можно:
+                # рулонов по ней ещё нет, материал на склад не вставал.
                 if sh_type == 'from_supplier' and sh_status == 'Завершено':
                     cur.execute(
-                        "SELECT r.id, r.barcode, r.status, r.initial_quantity, r.remaining_quantity "
-                        "FROM shipment_items si JOIN rolls r ON r.id = si.roll_id "
-                        "WHERE si.shipment_id = %s",
+                        "SELECT count(*) FROM rolls WHERE shipment_id = %s",
                         (int(item_id),),
                     )
-                    roll_rows = cur.fetchall()
-                    touched = [
-                        r[1] for r in roll_rows
-                        if r[2] != 'in_storage' or float(r[3]) != float(r[4])
-                    ]
-                    if touched:
-                        return {
-                            'statusCode': 409,
-                            'headers': headers,
-                            'body': json.dumps({
-                                'error': 'Нельзя удалить: рулоны уже используются (списаны или переданы в цех): '
-                                + ', '.join(touched)
-                            }),
-                        }
-                    supply_roll_ids_to_delete = [r[0] for r in roll_rows]
+                    rolls_cnt = int(cur.fetchone()[0] or 0)
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Приёмка #{item_id} уже подтверждена, по ней принято '
+                                     f'рулонов: {rolls_cnt}. Удалить её нельзя — вместе с '
+                                     f'документом со склада пропал бы весь этот материал. '
+                                     f'Если материал вернули поставщику или он испорчен, '
+                                     f'оформите возврат поставщику или списание брака: '
+                                     f'так останется след и причина.',
+                        }, ensure_ascii=False),
+                    }
+                supply_roll_ids_to_delete: list = []
 
                 # Если отправленная заявка уже собрала рулоны (status='Отправлено' или
                 # они привязаны к цеху) — возвращаем их на склад, чтобы удаление не "теряло" материал.

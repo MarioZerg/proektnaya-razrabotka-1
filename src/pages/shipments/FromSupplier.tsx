@@ -328,13 +328,11 @@ const FromSupplier = () => {
         exchangeRate: exchangeRate.trim() ? Number(exchangeRate.replace(',', '.')) : null,
         logisticsCost: logisticsCost.trim() ? Number(logisticsCost.replace(',', '.')) : 0,
       });
+      // Приход «всё или ничего»: дошли сюда — значит на склад встали ВСЕ рулоны
+      // приёмки. Частичного результата здесь не бывает, сервер откатывает целиком.
       toast({
         title: 'Поставка подтверждена',
-        description:
-          `Создано рулонов: ${res.createdRolls.length}` +
-          (res.skipped && res.skipped.length > 0
-            ? `. Не оприходовано позиций: ${res.skipped.length} — ${res.skipped.slice(0, 2).join('; ')}`
-            : ''),
+        description: `Создано рулонов: ${res.createdRolls.length} — все позиции приёмки на складе`,
       });
       setLastCreatedRolls({ shipmentId: reviewShipment.id, rolls: res.createdRolls });
       setReviewShipment(null);
