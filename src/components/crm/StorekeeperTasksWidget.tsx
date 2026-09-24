@@ -51,6 +51,25 @@ const StorekeeperTasksWidget = () => {
   // на экране, чтобы администратор мог понажимать и посмотреть, как это работает.
   const [demoDone, setDemoDone] = useState<Set<string>>(new Set());
 
+  // СВЁРНУТ В ЗНАЧОК.
+  //
+  // Карточка висит в правом верхнем углу поверх страницы и перекрывает то, что
+  // под ней: на многих экранах там кнопки. Полупрозрачность помогала видеть, но
+  // не нажимать — клик всё равно уходил в виджет. Поэтому даём свернуть его в
+  // маленький кружок: место под ним освобождается полностью.
+  //
+  // Выбор запоминаем в браузере — кладовщик сворачивает один раз, а не на
+  // каждой странице заново.
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem('storekeeper_tasks_collapsed') === '1',
+  );
+
+  const toggleCollapsed = (v: boolean) => {
+    setCollapsed(v);
+    localStorage.setItem('storekeeper_tasks_collapsed', v ? '1' : '0');
+    if (v) setOpen(false);
+  };
+
   const isStorekeeper = isStorekeeperRole(user?.role);
   // ПРОСМОТР ГЛАЗАМИ КЛАДОВЩИКА, БЕЗ ОТКРЫТОЙ СМЕНЫ.
   //
@@ -171,6 +190,36 @@ const StorekeeperTasksWidget = () => {
     }
   };
 
+  // СВЁРНУТЫЙ ВИД — маленький кружок со счётчиком.
+  //
+  // Занимает угол вместо всей карточки, поэтому кнопки под ним снова доступны.
+  // Нажатие разворачивает список обратно.
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => toggleCollapsed(false)}
+        title={`Задания смены: выполнено ${doneCount} из ${shown.length}`}
+        className={`fixed top-16 right-3 z-40 flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 shadow-lg backdrop-blur transition-colors sm:right-4 ${
+          allDone
+            ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+            : blocking.length > 0
+              ? 'border-amber-300 bg-amber-50 text-amber-800'
+              : 'border-border bg-card text-foreground'
+        }`}
+      >
+        <Icon
+          name={allDone ? 'CircleCheckBig' : 'ClipboardList'}
+          size={16}
+          className="shrink-0"
+        />
+        <span className="text-xs font-bold tabular-nums">
+          {doneCount}/{shown.length}
+        </span>
+      </button>
+    );
+  }
+
   return (
     <div
       // Полупрозрачный в покое, непрозрачный под курсором — не закрывает работу,
@@ -215,7 +264,7 @@ const StorekeeperTasksWidget = () => {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+        className="flex w-full items-center gap-2 py-2.5 pl-3 pr-9 text-left"
       >
         <Icon
           name={allDone ? 'CircleCheckBig' : 'ClipboardList'}
@@ -246,11 +295,21 @@ const StorekeeperTasksWidget = () => {
         >
           {doneCount}/{shown.length}
         </span>
-        <Icon
-          name={open ? 'ChevronUp' : 'ChevronDown'}
-          size={14}
-          className="shrink-0 text-muted-foreground"
-        />
+      </button>
+
+      {/* Убрать виджет с дороги. Стоит поверх шапки-кнопки отдельным слоем:
+          вложенная кнопка внутри кнопки недопустима в вёрстке, а вынести её
+          в ряд — значит отобрать место у заголовка. */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleCollapsed(true);
+        }}
+        title="Свернуть — чтобы не мешал нажимать кнопки под ним"
+        className="absolute right-1.5 top-3 z-10 grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <Icon name="Minus" size={14} />
       </button>
 
       {/* Полоса выполнения: видно продвижение за день одним взглядом. */}
