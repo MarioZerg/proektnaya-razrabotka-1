@@ -372,6 +372,23 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "        JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
                 "        WHERE msi.goods_warehouse_id = gw.id "
                 "          AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                # ЗАКАЗ УЖЕ ЛЕЖИТ В КОРОБЕ — ПУСТЬ И ДРУГОЙ ВЕЩЬЮ.
+                #
+                # Вещи обезличены: кладовщик берёт с полки любую подходящую по
+                # материалу и размеру. Поэтому в короб регулярно уезжает не та
+                # вещь, что была назначена подбором, а соседняя такая же —
+                # назначенная остаётся лежать свободным остатком.
+                #
+                # По вещи работы действительно нет, но по ЗАКАЗУ она сделана:
+                # он собран и ждёт отгрузки. Без этой проверки такие заказы
+                # горели как зависшие (2000065880431-122 и -170), и человек шёл
+                # искать на складе товар, который уже заклеен в коробе.
+                "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse g2 "
+                "        JOIN marketplace_supply_items msi2 "
+                "          ON msi2.goods_warehouse_id = g2.id "
+                "        JOIN marketplace_supplies ms2 ON ms2.id = msi2.supply_id "
+                "        WHERE COALESCE(g2.reserved_order_id, g2.order_id) = o.id "
+                "          AND COALESCE(ms2.status, '') NOT IN ('Отменена')) "
                 "ORDER BY o.created_at ASC LIMIT 50"
             )
             items = [
