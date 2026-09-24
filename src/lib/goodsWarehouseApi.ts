@@ -956,9 +956,10 @@ export const clearSupplyTails = (
   ids: number[],
   actorId?: number,
   actorName?: string,
-): Promise<{ freed: number }> =>
+): Promise<{ freed: number; remaining: number }> =>
   postAction({ action: 'clear_supply_tails', ids, actorId, actorName }) as Promise<{
     freed: number;
+    remaining: number;
   }>;
 
 /** Зависшее отправление: маркетплейс ждёт товар, а по заказу никто не работает. */

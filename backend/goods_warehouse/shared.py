@@ -237,6 +237,28 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
+def log_bulk(cur, actor_id, actor_name, action, entity_type, entity_ids, description):
+    """Пишет одинаковую запись журнала сразу по многим объектам — одним запросом.
+
+    Отдельный вызов log_action на каждую вещь означает столько же обращений к
+    базе: на сотне объектов функция упирается в лимит времени и падает по
+    таймауту, а человек видит «ошибка запроса» и не понимает, прошло действие
+    или нет. Здесь все строки уходят одной вставкой.
+    """
+    if not entity_ids:
+        return
+    uid = int(actor_id) if actor_id not in (None, '') else None
+    rows = ','.join(cur.mogrify(
+        '(%s,%s,%s,%s,%s,%s,%s)',
+        (uid, actor_name or None, 'warehouse', action, entity_type,
+         int(e), description),
+    ).decode('utf-8') for e in entity_ids)
+    cur.execute(
+        'INSERT INTO audit_log (user_id, user_name, category, action, '
+        'entity_type, entity_id, description) VALUES ' + rows
+    )
+
+
 # Этапы, после которых вещь уже в производстве: ткань раскроена, потрачен труд.
 # Такой заказ подбирать со склада поздно — иначе работа цеха пропадёт впустую.
 NOT_STARTED_SEWING = 'Новый'

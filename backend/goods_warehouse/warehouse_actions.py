@@ -18,6 +18,7 @@ from shared import (
     is_admin,
     is_admin_or_senior,
     log_action,
+    log_bulk,
     log_return_history,
     next_storage_barcode,
     notify_admin,
@@ -2943,7 +2944,21 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not ids:
                 return {'statusCode': 400, 'headers': headers,
                         'body': json.dumps({'error': 'Выберите вещи'}, ensure_ascii=False)}
-            ids_csv = ','.join(str(int(i)) for i in ids)
+
+            # РАБОТАЕМ ПОРЦИЯМИ, А НЕ ВСЕМ СПИСКОМ СРАЗУ.
+            #
+            # Накопившихся хвостов бывает под сотню, и одним запросом это не
+            # проходило: на каждую освобождённую вещь пишется строка в журнал
+            # действий, и функция упиралась в лимит времени. Ответ терялся,
+            # человек видел «ошибка запроса» и не понимал, сняло что-то или нет.
+            #
+            # Поэтому берём не больше BATCH за раз и честно возвращаем, сколько
+            # осталось: экран повторит вызов и дочистит остаток. Каждая порция
+            # фиксируется своим commit — прерванная операция не откатывает уже
+            # сделанное, и повторный запуск просто продолжает с места остановки.
+            BATCH = 25
+            batch_ids = [int(i) for i in ids][:BATCH]
+            ids_csv = ','.join(str(i) for i in batch_ids)
 
             cur.execute(
                 "DELETE FROM marketplace_supply_items si "
@@ -2958,16 +2973,22 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "RETURNING si.goods_warehouse_id"
             )
             freed = cur.fetchall()
-            for r in freed:
-                log_action(
-                    cur, actor_id, actor_name, 'clear_supply_tail',
-                    'goods_warehouse', r[0],
-                    'Снята запись старой выполненной поставки: вещь физически '
-                    'на складе, а числилась уложенной в короб',
-                )
+
+            # Журнал пишем ОДНИМ запросом на всю порцию: по строке на вещь — это
+            # и есть то, что упиралось в лимит времени.
+            if freed:
+                note = ('Снята запись старой выполненной поставки: вещь физически '
+                        'на складе, а числилась уложенной в короб')
+                log_bulk(cur, actor_id, actor_name, 'clear_supply_tail',
+                         'goods_warehouse', [r[0] for r in freed], note)
+
             conn.commit()
             return {'statusCode': 200, 'headers': headers,
-                    'body': json.dumps({'freed': len(freed)}, ensure_ascii=False)}
+                    'body': json.dumps({
+                        'freed': len(freed),
+                        # Сколько ещё ждёт — экран повторит вызов и дочистит.
+                        'remaining': max(0, len(ids) - len(batch_ids)),
+                    }, ensure_ascii=False)}
 
         if action == 'restore_lost':
             # «Нашёлся» — списанная вещь обнаружилась и физически цела.

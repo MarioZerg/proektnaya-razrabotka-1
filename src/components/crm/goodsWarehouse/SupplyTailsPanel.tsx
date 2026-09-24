@@ -52,13 +52,22 @@ const SupplyTailsPanel = ({ onReload }: SupplyTailsPanelProps) => {
     if (clearing) return;
     setClearing(true);
     try {
-      const res = await clearSupplyTails(
-        items.map((i) => i.id),
-        user?.id,
-        user?.name,
-      );
+      // ЧИСТИМ ПОРЦИЯМИ, ПОКА НЕ ЗАКОНЧИТСЯ.
+      //
+      // Сервер за один раз берёт ограниченное число вещей: на сотне записей
+      // одним запросом функция упиралась в лимит времени и отвечала ошибкой.
+      // Здесь просто повторяем вызов, пока сервер сообщает об остатке — для
+      // человека это одно нажатие.
+      let rest = items.map((i) => i.id);
+      let total = 0;
+      while (rest.length > 0) {
+        const res = await clearSupplyTails(rest, user?.id, user?.name);
+        total += res.freed;
+        if (!res.remaining) break;
+        rest = rest.slice(rest.length - res.remaining);
+      }
       toast({
-        title: `Освобождено вещей: ${res.freed}`,
+        title: `Освобождено вещей: ${total}`,
         description: 'Записи старых поставок сняты — вещи снова свободны',
       });
       setOpen(false);
