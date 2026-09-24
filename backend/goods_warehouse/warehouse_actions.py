@@ -2923,6 +2923,52 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             return {'statusCode': 200, 'headers': headers,
                     'body': json.dumps({'closed': len(rows)}, ensure_ascii=False)}
 
+        if action == 'clear_supply_tails':
+            # СНЯТЬ ХВОСТЫ ОТ СТАРЫХ УЕХАВШИХ ПОСТАВОК.
+            #
+            # Вещь сняли с отгрузки и вернули на полку, а строка в коробе уехавшей
+            # поставки осталась. Вещь лежит на складе, но числится уложенной — и
+            # кладовщик при подборе FBS видит «товар в поставке FBO», идёт к полке
+            # и не понимает, почему система спорит с тем, что у него в руках.
+            #
+            # Удаляем ТОЛЬКО строки выполненных и отменённых поставок: состав живой
+            # поставки так тронуть нельзя. Вещи с отметкой об отгрузке тоже не
+            # трогаем — у них эта строка законная история, а не расхождение.
+            if not is_admin_or_senior(cur, actor_id):
+                return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                    {'error': 'Освобождать вещи может администратор '
+                              'или старший кладовщик'}, ensure_ascii=False)}
+
+            ids = body_data.get('ids') or []
+            if not ids:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Выберите вещи'}, ensure_ascii=False)}
+            ids_csv = ','.join(str(int(i)) for i in ids)
+
+            cur.execute(
+                "DELETE FROM marketplace_supply_items si "
+                "USING marketplace_supplies s "
+                "WHERE si.supply_id = s.id "
+                f"  AND si.goods_warehouse_id IN ({ids_csv}) "
+                "  AND COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
+                "  AND EXISTS (SELECT 1 FROM goods_warehouse gw "
+                "              WHERE gw.id = si.goods_warehouse_id "
+                "                AND gw.shipped_at IS NULL "
+                "                AND gw.status NOT IN ('lost', 'shipped')) "
+                "RETURNING si.goods_warehouse_id"
+            )
+            freed = cur.fetchall()
+            for r in freed:
+                log_action(
+                    cur, actor_id, actor_name, 'clear_supply_tail',
+                    'goods_warehouse', r[0],
+                    'Снята запись старой выполненной поставки: вещь физически '
+                    'на складе, а числилась уложенной в короб',
+                )
+            conn.commit()
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({'freed': len(freed)}, ensure_ascii=False)}
+
         if action == 'restore_lost':
             # «Нашёлся» — списанная вещь обнаружилась и физически цела.
             #

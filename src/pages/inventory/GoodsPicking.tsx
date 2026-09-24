@@ -3,6 +3,7 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import Icon from '@/components/ui/icon';
 import PickingScanDialog from '@/components/crm/goodsWarehouse/PickingScanDialog';
 import ShippedStuckPanel from '@/components/crm/goodsWarehouse/ShippedStuckPanel';
+import SupplyTailsPanel from '@/components/crm/goodsWarehouse/SupplyTailsPanel';
 import ExtraFboPanel from '@/components/crm/goodsWarehouse/ExtraFboPanel';
 import GoodsPickingHeader from '@/components/crm/goodsWarehouse/GoodsPickingHeader';
 import GoodsPickingFilters from '@/components/crm/goodsWarehouse/GoodsPickingFilters';
@@ -66,6 +67,11 @@ const GoodsPicking = () => {
         {/* Позиции, которые уже уехали к клиентам: их закрывает администратор,
             иначе они висят в подборе вечно. */}
         <ShippedStuckPanel onReload={load} />
+
+        {/* Вещи на полках, за которыми тянется запись старой уехавшей поставки.
+            Кладовщик держит вещь в руках, а система говорит «в поставке FBO» —
+            снимаем запись, и спор с очевидностью заканчивается. */}
+        <SupplyTailsPanel onReload={load} />
 
         {/* Собрано сверх плана заявки FBO. Вещь обезличена, и в короб уехала
             соседняя такая же — а эта осталась с ярлыком поставки и чужой

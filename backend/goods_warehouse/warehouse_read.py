@@ -101,6 +101,60 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps(
                 {'items': stuck, 'count': len(stuck)}, ensure_ascii=False)}
 
+        if params.get('supply_tails'):
+            # ХВОСТЫ ОТ СТАРЫХ УЕХАВШИХ ПОСТАВОК.
+            #
+            # Вещь сняли с отгрузки и вернули на полку, а строка в коробе уехавшей
+            # поставки осталась. Физически вещь лежит на складе со складским
+            # стикером, но по системе числится уложенной в короб — и всплывает у
+            # кладовщика при подборе FBS: он идёт за товаром, а тот «в поставке».
+            #
+            # Показываем только вещи, которые НЕ уехали (shipped_at пуст): у
+            # реально отгруженных такая строка — законная история отгрузки.
+            cur.execute(
+                "SELECT gw.id, gw.storage_barcode, gw.status, sh.name, "
+                "       o.order_number, o.product, o.material, o.width, o.height, "
+                "       s.id, COALESCE(s.supply_number, s.ozon_application_number, "
+                "                      '№' || s.id), s.status, "
+                "       EXISTS (SELECT 1 FROM marketplace_supply_items si2 "
+                "               JOIN marketplace_supplies s2 ON s2.id = si2.supply_id "
+                "               WHERE si2.goods_warehouse_id = gw.id "
+                "                 AND COALESCE(s2.status, '') "
+                "                     NOT IN ('Выполнена', 'Отменена')) "
+                "FROM marketplace_supply_items si "
+                "JOIN marketplace_supplies s ON s.id = si.supply_id "
+                "JOIN goods_warehouse gw ON gw.id = si.goods_warehouse_id "
+                "LEFT JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+                "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                "WHERE COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
+                "  AND gw.shipped_at IS NULL "
+                "  AND gw.status NOT IN ('lost', 'shipped') "
+                "ORDER BY gw.storage_barcode"
+            )
+            rows = cur.fetchall()
+            items = [
+                {
+                    'id': r[0],
+                    'storageBarcode': r[1],
+                    'status': r[2],
+                    'shelfName': r[3],
+                    'orderNumber': r[4],
+                    'product': r[5],
+                    'material': r[6],
+                    'width': r[7],
+                    'height': r[8],
+                    'supplyId': r[9],
+                    'supplyNumber': r[10],
+                    'supplyStatus': r[11],
+                    # Вещь уже лежит в живой поставке — значит её просто переложили,
+                    # и хвост тем более лишний.
+                    'inLiveSupply': r[12],
+                }
+                for r in rows
+            ]
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps(
+                {'items': items, 'count': len(items)}, ensure_ascii=False)}
+
         if params.get('shipped_stuck'):
             # ВЕЩИ, КОТОРЫЕ УЖЕ УЕХАЛИ К КЛИЕНТУ, НО ВИСЯТ В ПОДБОРЕ.
             #

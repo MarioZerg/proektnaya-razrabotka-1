@@ -912,6 +912,55 @@ export const closeShippedStuck = (
   postAction({ action: 'close_shipped_stuck', ids, actorId, actorName }) as Promise<{
     closed: number;
   }>;
+/**
+ * Вещь на складе, за которой тянется запись старой уехавшей поставки.
+ *
+ * Физически лежит на полке, а по системе числится уложенной в короб — из-за
+ * этого при подборе FBS она показывается как «в поставке FBO».
+ */
+export interface SupplyTailItem {
+  id: number;
+  storageBarcode: string | null;
+  status: string;
+  shelfName: string | null;
+  orderNumber: string | null;
+  product: string | null;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  /** Старая поставка, от которой остался хвост. */
+  supplyId: number;
+  supplyNumber: string | null;
+  supplyStatus: string | null;
+  /** Вещь уже лежит в живой поставке — значит её просто переложили. */
+  inLiveSupply: boolean;
+}
+
+/** Вещи, за которыми тянется запись старой выполненной поставки. */
+export const fetchSupplyTails = async (): Promise<{
+  items: SupplyTailItem[];
+  count: number;
+}> => {
+  const res = await fetch(`${GOODS_WAREHOUSE_URL}?supply_tails=1`);
+  if (!res.ok) return { items: [], count: 0 };
+  const data = await res.json();
+  return { items: data.items || [], count: data.count || 0 };
+};
+
+/**
+ * Снять записи старых уехавших поставок — вещь снова считается свободной.
+ * Состав живых поставок не затрагивается. Доступно администратору и старшему
+ * кладовщику.
+ */
+export const clearSupplyTails = (
+  ids: number[],
+  actorId?: number,
+  actorName?: string,
+): Promise<{ freed: number }> =>
+  postAction({ action: 'clear_supply_tails', ids, actorId, actorName }) as Promise<{
+    freed: number;
+  }>;
+
 /** Зависшее отправление: маркетплейс ждёт товар, а по заказу никто не работает. */
 export interface StalledShipment {
   orderId: number;
