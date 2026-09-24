@@ -1216,7 +1216,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not supply_id:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите supplyId'})}
 
-            cur.execute("SELECT status, type FROM marketplace_supplies WHERE id = %s", (int(supply_id),))
+            cur.execute(
+                "SELECT status, type, packaging_count, packaging_type "
+                "FROM marketplace_supplies WHERE id = %s",
+                (int(supply_id),),
+            )
             row = cur.fetchone()
             if not row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
@@ -1224,6 +1228,35 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Короба доступны только для FBO'})}
             if row[0] not in ('Открытая', 'На сборке'):
                 return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'В эту поставку уже нельзя добавлять короба'})}
+
+            # БОЛЬШЕ ЗАЯВЛЕННОГО КОРОБА НЕ СОЗДАЁМ.
+            #
+            # Количество мест менеджер согласовал с маркетплейсом и перевозчиком: под
+            # него забронирован тайм-слот, выписаны грузоместа и заполнена накладная.
+            # Лишний короб, собранный кладовщиком «по ходу дела», на приёмке лишний —
+            # его не ждут, и расхождение по местам разбирают уже у ворот склада.
+            #
+            # Поэтому предел жёсткий, и снять его можно только сознательно: менеджер
+            # меняет количество мест в настройках поставки. Это ровно тот момент, когда
+            # он и должен переcогласовать цифру со стороной приёмки.
+            declared = row[2]
+            if declared:
+                cur.execute(
+                    "SELECT COUNT(*) FROM marketplace_supply_boxes WHERE supply_id = %s",
+                    (int(supply_id),),
+                )
+                made = cur.fetchone()[0]
+                if made >= int(declared):
+                    unit = 'паллет' if row[3] == 'pallets' else 'коробов'
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'В поставке заявлено {declared} {unit}, все уже созданы. '
+                                     f'Чтобы добавить ещё, менеджер должен изменить '
+                                     f'количество мест в настройках поставки.',
+                        }, ensure_ascii=False),
+                    }
 
             cur.execute(
                 "SELECT COALESCE(MAX(box_number), 0) FROM marketplace_supply_boxes WHERE supply_id = %s",

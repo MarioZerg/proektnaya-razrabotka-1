@@ -84,11 +84,21 @@ const SupplyBoxesSection = ({
   const closedCount = supply.boxes.filter((b) => b.closedAt).length;
   const totalItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
 
+  // Заявленное число мест — согласованная с маркетплейсом цифра: под неё забронирован
+  // слот и заполнена накладная. Лишний короб на приёмке не ждут, поэтому кнопка гаснет
+  // на пределе, а не выдаёт ошибку после нажатия.
+  const declared = supply.packagingCount;
+  const limitReached = !!declared && supply.boxes.length >= declared;
+  const unitWord = supply.packagingType === 'pallets' ? 'палет' : 'коробов';
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-semibold">Короба ({supply.boxes.length})</h2>
+          <h2 className="font-semibold">
+            Короба ({supply.boxes.length}
+            {declared ? ` из ${declared}` : ''})
+          </h2>
           {supply.boxes.length > 0 && (
             <p className="text-sm text-muted-foreground">
               Уложено вещей: <b>{totalItems}</b>
@@ -126,7 +136,7 @@ const SupplyBoxesSection = ({
             </Button>
           )}
           {canEdit && (
-            <Button size="sm" onClick={onAddBox} disabled={addingBox}>
+            <Button size="sm" onClick={onAddBox} disabled={addingBox || limitReached}>
               {addingBox ? (
                 <Icon name="Loader2" size={14} className="mr-1 animate-spin" />
               ) : (
@@ -137,6 +147,17 @@ const SupplyBoxesSection = ({
           )}
         </div>
       </div>
+
+      {/* Предел достигнут — объясняем, почему кнопка неактивна и что делать.
+          Без этой строки кладовщик решит, что система сломалась. */}
+      {canEdit && limitReached && (
+        <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <Icon name="TriangleAlert" size={15} className="mt-0.5 shrink-0" />
+          В поставке заявлено {declared} {unitWord} — все созданы. Если мест нужно
+          больше, менеджер меняет количество в настройках поставки: цифру ждут на
+          приёмке, и её надо пересогласовать.
+        </p>
+      )}
 
       {supply.boxes.length === 0 ? (
         <p className="text-sm text-muted-foreground">
