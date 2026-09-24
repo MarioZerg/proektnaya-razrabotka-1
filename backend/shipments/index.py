@@ -492,36 +492,54 @@ def handler(event: dict, context) -> dict:
                     )
                     shipment_id = cur.fetchone()[0]
 
-                    for item in items:
+                    # ПРИЁМКА НЕ ДОЛЖНА ПАДАТЬ ИЗ-ЗА ОДНОЙ КРИВОЙ СТРОКИ.
+                    #
+                    # Раньше любая подозрительная позиция обрывала весь запрос: машина
+                    # разгружена, кладовщик забил 60 строк, на 58-й опечатался — и
+                    # приёмка не сохранялась целиком. Хуже того, выход был БЕЗ отката:
+                    # часть позиций и забронированные штрихкоды оставались в базе,
+                    # и повторная попытка порождала дубли.
+                    #
+                    # Теперь работаем аккуратно: годные позиции принимаем, негодные
+                    # тихо пропускаем и перечисляем в ответе. Кладовщик видит, что
+                    # именно не сошлось, и правит это в уже сохранённой приёмке —
+                    # вместо того чтобы набивать всё заново.
+                    skipped = []
+                    saved = 0
+                    for idx, item in enumerate(items, start=1):
                         material_id = item.get('materialId')
                         quantity = item.get('quantity')
                         number_rolls = item.get('numberRolls')
-                        if not material_id or quantity in (None, '') or not number_rolls:
-                            return {
-                                'statusCode': 400,
-                                'headers': headers,
-                                'body': json.dumps({'error': 'Для каждой позиции укажите материал, количество и число рулонов'}),
-                            }
-                        material_id = int(material_id)
-                        quantity = float(quantity)
-                        number_rolls = int(number_rolls)
+
+                        # Число рулонов не указано — это чаще всего «одна позиция = один
+                        # рулон», а не ошибка. Раньше такая строка роняла всю приёмку.
+                        if number_rolls in (None, '', 0):
+                            number_rolls = 1
+
+                        if not material_id or quantity in (None, ''):
+                            skipped.append(f'строка {idx}: не выбран материал или не указан метраж')
+                            continue
+                        try:
+                            material_id = int(material_id)
+                            quantity = float(str(quantity).replace(',', '.'))
+                            number_rolls = int(number_rolls)
+                        except (TypeError, ValueError):
+                            skipped.append(f'строка {idx}: метраж или число рулонов записаны не числом')
+                            continue
+
                         if number_rolls < 1:
-                            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Число рулонов должно быть не меньше 1'})}
+                            number_rolls = 1
                         # Принять «минус метров» нельзя: такой рулон создал бы отрицательный
                         # остаток на складе, и вся аналитика по материалу поехала бы.
                         if quantity <= 0:
-                            return {
-                                'statusCode': 400,
-                                'headers': headers,
-                                'body': json.dumps(
-                                    {'error': 'Количество должно быть больше нуля'}, ensure_ascii=False
-                                ),
-                            }
+                            skipped.append(f'строка {idx}: метраж должен быть больше нуля')
+                            continue
 
                         cur.execute("SELECT id, type_id FROM materials WHERE id = %s", (material_id,))
                         mat_row = cur.fetchone()
                         if not mat_row:
-                            return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Материал #{material_id} не найден'})}
+                            skipped.append(f'строка {idx}: материал #{material_id} не найден в справочнике')
+                            continue
 
                         # Поставщик позиции: свой, либо общий поставщик приёмки.
                         item_supplier = item.get('supplierId')
@@ -544,13 +562,38 @@ def handler(event: dict, context) -> dict:
                             f"VALUES ({shipment_id}, {material_id}, {quantity}, {quantity}, {number_rolls}, "
                             f"{item_supplier_sql}, {codes_sql})"
                         )
+                        saved += 1
+
+                    # Ни одной годной позиции — сохранять пустой документ незачем.
+                    # Откатываем целиком, чтобы не плодить пустые приёмки в списке.
+                    if saved == 0:
+                        conn.rollback()
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Ни одну позицию не удалось принять. '
+                                          + '; '.join(skipped[:10])},
+                                ensure_ascii=False,
+                            ),
+                        }
 
                     log_action(
                         cur, actor_id, actor_name, 'create_pending_supply',
-                        'shipment', shipment_id, f'Оформил приёмку от поставщика #{shipment_id}, ожидает подтверждения',
+                        'shipment', shipment_id,
+                        f'Оформил приёмку от поставщика #{shipment_id}: принято позиций {saved}'
+                        + (f', пропущено {len(skipped)}' if skipped else '')
+                        + ', ожидает подтверждения',
                     )
                     conn.commit()
-                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'id': shipment_id, 'saved': saved, 'skipped': skipped},
+                            ensure_ascii=False,
+                        ),
+                    }
 
                 # Списание брака может оформлять ТОЛЬКО штатный сотрудник того цеха, где
                 # находится рулон. Если сотрудник пришёл работать в чужой цех — брак за него
@@ -696,44 +739,52 @@ def handler(event: dict, context) -> dict:
                     old_codes_by_material.setdefault(old_mat, []).append(codes_list)
 
                 cur.execute("DELETE FROM shipment_items WHERE shipment_id = %s", (int(shipment_id),))
-                for item in items:
+                # Правка приёмки терпима к кривым строкам ровно так же, как и её
+                # создание: позиции уже удалены, и выход посреди цикла оставил бы
+                # кладовщика вообще без приёмки. Годное сохраняем, негодное
+                # перечисляем в ответе.
+                skipped = []
+                saved = 0
+                for idx, item in enumerate(items, start=1):
                     material_id = item.get('materialId')
                     quantity = item.get('quantity')
                     number_rolls = item.get('numberRolls')
-                    if not material_id or quantity in (None, '') or not number_rolls:
-                        return {
-                            'statusCode': 400,
-                            'headers': headers,
-                            'body': json.dumps({'error': 'Для каждой позиции укажите материал, количество и число рулонов'}),
-                        }
-                    if float(quantity) <= 0:
-                        return {
-                            'statusCode': 400,
-                            'headers': headers,
-                            'body': json.dumps(
-                                {'error': 'Количество должно быть больше нуля'}, ensure_ascii=False
-                            ),
-                        }
-                    if int(number_rolls) < 1:
-                        return {
-                            'statusCode': 400,
-                            'headers': headers,
-                            'body': json.dumps(
-                                {'error': 'Число рулонов должно быть не меньше 1'}, ensure_ascii=False
-                            ),
-                        }
+
+                    # Пустое число рулонов читаем как «один рулон», а не как ошибку.
+                    if number_rolls in (None, '', 0):
+                        number_rolls = 1
+
+                    if not material_id or quantity in (None, ''):
+                        skipped.append(f'строка {idx}: не выбран материал или не указан метраж')
+                        continue
+                    try:
+                        material_id = int(material_id)
+                        quantity = float(str(quantity).replace(',', '.'))
+                        number_rolls = int(number_rolls)
+                    except (TypeError, ValueError):
+                        skipped.append(f'строка {idx}: метраж или число рулонов записаны не числом')
+                        continue
+                    if quantity <= 0:
+                        skipped.append(f'строка {idx}: метраж должен быть больше нуля')
+                        continue
+                    if number_rolls < 1:
+                        number_rolls = 1
                     # Цена за единицу в валюте поставщика — администратор указывает её
                     # при проверке поставки. Пусто = подставится прайс поставщика.
                     price = item.get('price')
                     currency = (item.get('currency') or '').strip().upper()[:10]
-                    price_sql = 'NULL' if price in (None, '') else str(float(price))
+                    try:
+                        price_val = None if price in (None, '') else float(str(price).replace(',', '.'))
+                    except (TypeError, ValueError):
+                        price_val = None
+                    # Отрицательная цена — почти наверняка опечатка. Не роняем из-за
+                    # неё всю приёмку: принимаем позицию без цены, её подставит прайс
+                    # поставщика или администратор при подтверждении.
+                    if price_val is not None and price_val < 0:
+                        price_val = None
+                        skipped.append(f'строка {idx}: отрицательная цена не сохранена, подставится прайс поставщика')
+                    price_sql = 'NULL' if price_val is None else str(price_val)
                     currency_sql = 'NULL' if not currency else f"'{currency}'"
-                    if price not in (None, '') and float(price) < 0:
-                        return {
-                            'statusCode': 400,
-                            'headers': headers,
-                            'body': json.dumps({'error': 'Цена не может быть отрицательной'}, ensure_ascii=False),
-                        }
                     # Поставщик позиции — в одной приёмке их может быть несколько.
                     item_supplier = item.get('supplierId')
                     item_supplier_sql = 'NULL' if item_supplier in (None, '') else str(int(item_supplier))
@@ -771,19 +822,44 @@ def handler(event: dict, context) -> dict:
                         f"VALUES ({int(shipment_id)}, {int(material_id)}, {float(quantity)}, {float(quantity)}, "
                         f"{int(number_rolls)}, {price_sql}, {currency_sql}, {item_supplier_sql}, {codes_sql})"
                     )
+                    saved += 1
+
+                # Все строки оказались негодными — приёмка осталась бы пустой.
+                # Откатываем правку: пусть лучше сохранится прежний состав.
+                if saved == 0:
+                    conn.rollback()
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Ни одну позицию не удалось сохранить, приёмка осталась прежней. '
+                                      + '; '.join(skipped[:10])},
+                            ensure_ascii=False,
+                        ),
+                    }
 
                 if 'supplierId' in body_data:
                     supplier_id = body_data['supplierId']
                     if supplier_id in (None, ''):
+                        conn.rollback()
                         return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нельзя убрать поставщика'})}
                     cur.execute("UPDATE shipments SET supplier_id = %s WHERE id = %s", (int(supplier_id), int(shipment_id)))
 
                 log_action(
                     cur, actor_id, actor_name, 'update_pending_supply', 'shipment', shipment_id,
-                    f'Отредактировал позиции поставки #{shipment_id} перед подтверждением',
+                    f'Отредактировал позиции поставки #{shipment_id}: сохранено {saved}'
+                    + (f', пропущено {len(skipped)}' if skipped else '')
+                    + ' — перед подтверждением',
                 )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps(
+                        {'success': True, 'saved': saved, 'skipped': skipped},
+                        ensure_ascii=False,
+                    ),
+                }
 
             if action == 'update_roll_quantity':
                 """Правка метража одного рулона в уже принятой приёмке (только админ).
@@ -1236,6 +1312,10 @@ def handler(event: dict, context) -> dict:
                 created_rolls = []
                 # Коды, уже использованные в этом подтверждении: один штрихкод — один рулон.
                 taken_codes = set()
+                # Позиции, которые не удалось оприходовать. Раньше любая такая строка
+                # откатывала подтверждение целиком и материал не попадал на склад
+                # вообще; теперь просто перечисляем их администратору.
+                approve_skipped = []
                 # Заготовки для трёх итоговых запросов: строки рулонов и план того,
                 # как разложить их по позициям приёмки.
                 roll_rows = []
@@ -1284,30 +1364,26 @@ def handler(event: dict, context) -> dict:
                     norm_sql = 'NULL' if row_norm is None else str(row_norm)
                     cost_sql = 'NULL' if cost_per_unit is None else str(cost_per_unit)
                     supplier_sql = 'NULL' if not row_supplier else str(int(row_supplier))
-                    # Последняя проверка перед созданием реальных рулонов на складе.
+                    # ОДНА КРИВАЯ ПОЗИЦИЯ НЕ ДОЛЖНА БЛОКИРОВАТЬ ВСЮ ПРИЁМКУ.
+                    #
+                    # Раньше любая такая строка откатывала подтверждение целиком:
+                    # машина разгружена, материал физически лежит на складе, а
+                    # оприходовать его нельзя, пока кто-то не найдёт и не исправит
+                    # одну позицию из шестидесяти. Теперь годное приходуем, а
+                    # пропущенное перечисляем в ответе — приёмка остаётся в работе,
+                    # и недостающие строки можно добавить отдельно.
                     if quantity <= 0 or number_rolls < 1:
-                        conn.rollback()
-                        return {
-                            'statusCode': 400,
-                            'headers': headers,
-                            'body': json.dumps(
-                                {'error': 'В поставке есть позиция с некорректным количеством — исправьте её перед подтверждением'},
-                                ensure_ascii=False,
-                            ),
-                        }
+                        approve_skipped.append(
+                            f'позиция #{item_id}: некорректное количество — не оприходована'
+                        )
+                        continue
 
                     type_id = type_by_material.get(int(material_id))
                     if type_id is None:
-                        conn.rollback()
-                        return {
-                            'statusCode': 404,
-                            'headers': headers,
-                            'body': json.dumps(
-                                {'error': f'Материал #{material_id} не найден — '
-                                          f'исправьте позицию перед подтверждением'},
-                                ensure_ascii=False,
-                            ),
-                        }
+                        approve_skipped.append(
+                            f'позиция #{item_id}: материал #{material_id} не найден в справочнике'
+                        )
+                        continue
 
                     # КЛЮЧЕВОЕ: берём штрихкоды, забронированные при оформлении приёмки, —
                     # именно они уже наклеены на рулоны. Сгенерировать новые здесь значило бы
@@ -1362,11 +1438,12 @@ def handler(event: dict, context) -> dict:
 
                 if not roll_rows:
                     conn.rollback()
+                    detail = ('. ' + '; '.join(approve_skipped[:10])) if approve_skipped else ''
                     return {
                         'statusCode': 400,
                         'headers': headers,
                         'body': json.dumps(
-                            {'error': 'В приёмке не осталось позиций для оприходования'},
+                            {'error': 'В приёмке не осталось позиций для оприходования' + detail},
                             ensure_ascii=False,
                         ),
                     }
@@ -1421,10 +1498,19 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"UPDATE shipments SET status = 'Завершено', completed_at = now() WHERE id = {int(shipment_id)}")
                 log_action(
                     cur, actor_id, actor_name, 'approve_supply', 'shipment', shipment_id,
-                    f'Подтвердил поставку #{shipment_id}, создано рулонов: {len(created_rolls)}',
+                    f'Подтвердил поставку #{shipment_id}, создано рулонов: {len(created_rolls)}'
+                    + (f', пропущено позиций: {len(approve_skipped)}' if approve_skipped else ''),
                 )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'createdRolls': created_rolls})}
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps(
+                        {'success': True, 'createdRolls': created_rolls,
+                         'skipped': approve_skipped},
+                        ensure_ascii=False,
+                    ),
+                }
 
             # Отклонить приёмку — решение администратора: позиции удаляются,
             # материал на склад не встаёт.

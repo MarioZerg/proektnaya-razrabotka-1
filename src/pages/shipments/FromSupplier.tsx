@@ -102,34 +102,64 @@ const FromSupplier = () => {
     setDialogOpen(true);
   };
 
-  // Отрицательное и нулевое количество отбрасываем ещё до отправки: такой рулон
-  // создал бы минусовой остаток на складе.
-  //
+  // Число, записанное как угодно: «40,8» и «40.8» — одно и то же. Кладовщик
+  // вводит метраж с бирки поставщика, а там запятая, и раньше такая строка
+  // молча выпадала из приёмки.
+  const num = (v: string | number | null | undefined) => {
+    if (v === null || v === undefined) return NaN;
+    return Number(String(v).replace(',', '.').trim());
+  };
+
   // ВАЖНО про количество. В форме сотрудник указывает метраж ОДНОГО рулона (как написано
   // на самом рулоне) и сколько таких рулонов пришло: «100 пог.м.» и «10 рулонов» = 1000 м.
   // В систему уходит общий метраж — по нему считается склад и логистика на единицу.
+  //
+  // ПУСТОЕ ЧИСЛО РУЛОНОВ = ОДИН РУЛОН. Это самая частая ситуация при разгрузке:
+  // один рулон — одна строка, и поле просто не заполняют. Раньше такая строка
+  // тихо исчезала из приёмки, а кладовщик узнавал об этом только по недостающему
+  // материалу на складе.
   const rowsToItems = (list: ItemRow[]) =>
     list
-      .filter(
-        (r) =>
-          r.materialId && Number(r.quantity) > 0 && Number(r.numberRolls) >= 1
-      )
-      .map((r) => ({
-        id: r.id,
-        materialId: Number(r.materialId),
-        quantity: Number(r.quantity) * Number(r.numberRolls),
-        numberRolls: Number(r.numberRolls),
-        // Цена за единицу в валюте поставщика. Пусто — подставится прайс поставщика.
-        price: r.price && r.price.trim() !== '' ? Number(r.price.replace(',', '.')) : null,
-        currency: r.currency || null,
-        // Поставщик строки. Пусто — берётся основной поставщик приёмки.
-        supplierId: r.supplierId ? Number(r.supplierId) : null,
-      }));
+      .filter((r) => r.materialId && num(r.quantity) > 0)
+      .map((r) => {
+        const rolls = num(r.numberRolls) >= 1 ? Math.floor(num(r.numberRolls)) : 1;
+        return {
+          id: r.id,
+          materialId: Number(r.materialId),
+          quantity: num(r.quantity) * rolls,
+          numberRolls: rolls,
+          // Цена за единицу в валюте поставщика. Пусто — подставится прайс поставщика.
+          price: r.price && r.price.trim() !== '' ? num(r.price) : null,
+          currency: r.currency || null,
+          // Поставщик строки. Пусто — берётся основной поставщик приёмки.
+          supplierId: r.supplierId ? Number(r.supplierId) : null,
+        };
+      });
+
+  /** Заполненные строки, которые всё же не попадут в приёмку — чтобы сказать почему. */
+  const droppedRows = (list: ItemRow[]) =>
+    list
+      .map((r, i) => ({ r, i: i + 1 }))
+      .filter(({ r }) => {
+        const touched = r.materialId || (r.quantity && r.quantity.trim() !== '');
+        if (!touched) return false; // пустая строка-заготовка — молчим
+        return !(r.materialId && num(r.quantity) > 0);
+      })
+      .map(({ r, i }) =>
+        !r.materialId
+          ? `строка ${i}: не выбран материал`
+          : `строка ${i}: метраж не указан или не больше нуля`,
+      );
 
   const handleSave = async () => {
     const items = rowsToItems(rows);
+    const dropped = droppedRows(rows);
     if (items.length === 0) {
-      toast({ title: 'Добавьте хотя бы одну позицию', variant: 'destructive' });
+      toast({
+        title: 'Добавьте хотя бы одну позицию',
+        description: dropped.length > 0 ? dropped.slice(0, 3).join('; ') : undefined,
+        variant: 'destructive',
+      });
       return;
     }
     if (!supplierId) {
@@ -138,16 +168,31 @@ const FromSupplier = () => {
     }
     setSaving(true);
     try {
-      await createShipmentFromSupplier({
+      const res = await createShipmentFromSupplier({
         supplierId: Number(supplierId),
         comment: comment.trim() || undefined,
         createdBy: user?.id,
         items,
       });
-      toast({
-        title: 'Приёмка оформлена',
-        description: 'Отправлена администратору на подтверждение — материал появится на складе после проверки',
-      });
+      // Часть строк могла не пройти — приёмка при этом сохранена целиком.
+      // Показываем ровно то, что нужно поправить, вместо общей ошибки.
+      // Складываем со строками, отсеянными ещё до отправки: для кладовщика
+      // это один и тот же вопрос — «почему принято меньше, чем я набил».
+      const allSkipped = [...dropped, ...(res.skipped || [])];
+      if (allSkipped.length > 0) {
+        toast({
+          title: `Приёмка оформлена: принято позиций ${res.saved ?? items.length}`,
+          description:
+            `Не удалось принять ${allSkipped.length}: ${allSkipped.slice(0, 3).join('; ')}` +
+            (allSkipped.length > 3 ? ' и ещё…' : '') +
+            '. Откройте приёмку и допишите их',
+        });
+      } else {
+        toast({
+          title: 'Приёмка оформлена',
+          description: 'Отправлена администратору на подтверждение — материал появится на складе после проверки',
+        });
+      }
       setDialogOpen(false);
       setRows([{ ...emptyRow }]);
       load();
@@ -240,17 +285,32 @@ const FromSupplier = () => {
   const handleSaveReview = async () => {
     if (!reviewShipment) return;
     const items = rowsToItems(reviewRows);
+    const dropped = droppedRows(reviewRows);
     if (items.length === 0) {
-      toast({ title: 'Добавьте хотя бы одну позицию', variant: 'destructive' });
+      toast({
+        title: 'Добавьте хотя бы одну позицию',
+        description: dropped.length > 0 ? dropped.slice(0, 3).join('; ') : undefined,
+        variant: 'destructive',
+      });
       return;
     }
     setReviewSaving(true);
     try {
-      await updatePendingSupply(reviewShipment.id, {
+      const res = await updatePendingSupply(reviewShipment.id, {
         supplierId: reviewSupplierId ? Number(reviewSupplierId) : undefined,
         items,
       });
-      toast({ title: 'Позиции обновлены' });
+      const allSkipped = [...dropped, ...(res.skipped || [])];
+      if (allSkipped.length > 0) {
+        toast({
+          title: `Сохранено позиций: ${res.saved ?? items.length}`,
+          description:
+            `Не сохранились ${allSkipped.length}: ${allSkipped.slice(0, 3).join('; ')}` +
+            (allSkipped.length > 3 ? ' и ещё…' : ''),
+        });
+      } else {
+        toast({ title: 'Позиции обновлены' });
+      }
       const detail = await fetchShipmentDetail(reviewShipment.id);
       setReviewShipment(detail);
     } catch (e) {
@@ -268,7 +328,14 @@ const FromSupplier = () => {
         exchangeRate: exchangeRate.trim() ? Number(exchangeRate.replace(',', '.')) : null,
         logisticsCost: logisticsCost.trim() ? Number(logisticsCost.replace(',', '.')) : 0,
       });
-      toast({ title: 'Поставка подтверждена', description: `Создано рулонов: ${res.createdRolls.length}` });
+      toast({
+        title: 'Поставка подтверждена',
+        description:
+          `Создано рулонов: ${res.createdRolls.length}` +
+          (res.skipped && res.skipped.length > 0
+            ? `. Не оприходовано позиций: ${res.skipped.length} — ${res.skipped.slice(0, 2).join('; ')}`
+            : ''),
+      });
       setLastCreatedRolls({ shipmentId: reviewShipment.id, rolls: res.createdRolls });
       setReviewShipment(null);
       load();

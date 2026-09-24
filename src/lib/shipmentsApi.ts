@@ -137,6 +137,16 @@ const postAction = async (payload: Record<string, unknown>) => {
 
 export interface CreateFromSupplierResult {
   id: number;
+  /** Сколько позиций реально сохранено. */
+  saved?: number;
+  /**
+   * Позиции, которые не удалось принять, с объяснением по каждой.
+   *
+   * Приёмка больше не падает целиком из-за одной кривой строки: годное
+   * сохраняется, а это — список того, что нужно поправить. Раньше кладовщик
+   * терял весь набитый документ и начинал заново.
+   */
+  skipped?: string[];
 }
 
 // Приёмка от поставщика теперь уходит на подтверждение админом — рулоны создаются
@@ -171,11 +181,14 @@ export const updatePendingSupply = (
       supplierId?: number | null;
     }>;
   }
-) => postAction({ action: 'update_pending_supply', id, ...payload });
+): Promise<{ success: true; saved?: number; skipped?: string[] }> =>
+  postAction({ action: 'update_pending_supply', id, ...payload });
 
 export interface ApproveSupplyResult {
   success: true;
   createdRolls: string[];
+  /** Позиции, которые не удалось оприходовать — остальное встало на склад. */
+  skipped?: string[];
 }
 
 /** Подтверждение поставки: только теперь создаются реальные рулоны на складе и
