@@ -1566,23 +1566,41 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 (fbo_gid, fbo_status, fbo_barcode,
                  fbo_material, fbo_width, fbo_height, fbo_product) = fbo_row
 
-                # Вещь уже лежит в какой-то живой поставке — второй раз её не положить.
+                # ВЕЩЬ, УЖЕ ЧИСЛЯЩУЮСЯ В ЛЮБОЙ ПОСТАВКЕ, ВТОРОЙ РАЗ НЕ КЛАДЁМ.
+                #
+                # Раньше здесь пропускались вещи из «Выполненных» поставок — по мысли,
+                # что старая поставка уехала и вещь свободна. На деле выполненная
+                # поставка не означает, что вещь уехала: её могли снять с отгрузки,
+                # вернуть на полку или списать строку, а запись в коробе осталась.
+                # Такая вещь физически лежит на полке со складским стикером, но
+                # числится уложенной — и всплывает у кладовщика при подборе FBS
+                # (GW-729379, GW-723571, GW-729384).
+                #
+                # Признак реальной отгрузки — shipped_at у самой вещи, а не статус
+                # поставки. Если вещь не отгружена, но где-то числится в коробе,
+                # это расхождение, и класть её в новый короб нельзя: так один товар
+                # оказывается в двух поставках сразу.
                 cur.execute(
                     "SELECT si.supply_id, s.status FROM marketplace_supply_items si "
                     "JOIN marketplace_supplies s ON s.id = si.supply_id "
                     "WHERE si.goods_warehouse_id = %s "
-                    "  AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена') "
-                    "LIMIT 1",
+                    "ORDER BY (COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена')) DESC, "
+                    "         si.id DESC LIMIT 1",
                     (int(fbo_gid),),
                 )
                 busy = cur.fetchone()
                 if busy:
+                    live = busy[1] not in ('Выполнена', 'Отменена')
+                    msg = (
+                        f'Эта вещь уже в поставке #{busy[0]} ({busy[1]})'
+                        if live else
+                        f'Вещь числится в поставке #{busy[0]} ({busy[1]}), но не отгружена — '
+                        f'это расхождение. Освободите её на карточке вещи, затем сканируйте снова'
+                    )
                     return {
                         'statusCode': 409,
                         'headers': headers,
-                        'body': json.dumps({
-                            'error': f'Эта вещь уже в поставке #{busy[0]} ({busy[1]})'
-                        }, ensure_ascii=False),
+                        'body': json.dumps({'error': msg}, ensure_ascii=False),
                     }
 
                 # Товар должен физически лежать на складе. Уехавшую или списанную
