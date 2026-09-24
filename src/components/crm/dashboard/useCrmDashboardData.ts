@@ -30,7 +30,11 @@ export const useCrmDashboardData = () => {
   const { user, setActiveShift } = useAuth();
   const { toast } = useToast();
   const isAdmin = user?.role === 'admin';
-  const isCleaner = user?.role === 'cleaner';
+  // Уборщица и бухгалтер — роли без дашборда: у первой нет плиток по смыслу
+  // работы, второй сразу уходит на расчёт себестоимости. Запросы за сводкой и
+  // сменами для них не делаем вовсе — иначе страница, которую они даже не
+  // увидят, успевает дёрнуть базу.
+  const isCleaner = user?.role === 'cleaner' || user?.role === 'accountant';
   const isCutter = user?.role === 'cutter';
   const isSewer = user?.role === 'sewer';
   const canSeeWarehouseWidgets = user?.role === 'admin' || isStorekeeperRole(user?.role);

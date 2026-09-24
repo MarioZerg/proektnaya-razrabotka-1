@@ -12,7 +12,8 @@ import psycopg2
 from authz import AuthError, auth_error_response, current_user, require_admin, require_auth
 
 
-ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner', 'admin', 'manager'}
+ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner',
+         'admin', 'manager', 'accountant'}
 
 
 # График по умолчанию для каждой должности. Цех работает сменами 2/2 по 12 часов,

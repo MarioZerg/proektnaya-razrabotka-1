@@ -709,3 +709,76 @@ export const fetchCutterRolls = async (userId: number): Promise<CutterRollRow[]>
   if (!res.ok) throw new Error(data.error || 'Не удалось загрузить рулоны');
   return data.items || [];
 };
+/**
+ * Один материал внутри партии: во сколько обошёлся его метр с учётом потерь.
+ *
+ * В одной машине едут и тюль, и тесьма, и пакеты. Средняя цена «по партии»
+ * смешала бы метры со штуками, поэтому цифра, по которой принимают решения, —
+ * именно эта, построчная.
+ */
+export interface BatchCostLine {
+  material: string;
+  unit: string;
+  materialType: string | null;
+  supplier: string;
+  rolls: number;
+  /** Метраж по накладной — за что заплатили. */
+  initial: number;
+  /** Не довезли: остаток, списанный при закрытии рулона. */
+  shortage: number;
+  /** Вырезано и списано в брак. */
+  defects: number;
+  /** Что реально можно раскроить: накладная минус недостача и брак. */
+  usable: number;
+  goodsCost: number;
+  logisticsCost: number;
+  totalCost: number;
+  /** Цена из накладной — с чем сравнивать итог. */
+  invoicePrice: number;
+  /** С логистикой, но ещё без потерь. */
+  nominalPrice: number;
+  /** Фактическая цена годного метра — главная цифра отчёта. */
+  realPrice: number;
+}
+
+/** Партия: приёмка от поставщика либо, для старых рулонов, день завоза. */
+export interface BatchCost {
+  key: string;
+  shipmentId: number | null;
+  date: string | null;
+  logisticsTotal: number;
+  rolls: number;
+  rollsClosed: number;
+  initial: number;
+  remaining: number;
+  shortage: number;
+  defects: number;
+  usable: number;
+  /** Доля потерь в процентах — по ней видно проблемные завозы. */
+  lossPercent: number;
+  goodsCost: number;
+  logisticsCost: number;
+  totalCost: number;
+  nominalPrice: number;
+  realPrice: number;
+  materialsCount: number;
+  suppliersCount: number;
+  lines: BatchCostLine[];
+}
+
+/**
+ * Фактическая цена погонного метра по партиям.
+ *
+ * Отвечает на вопрос, который по накладной не виден: во сколько обошёлся метр,
+ * который реально можно раскроить. Все деньги партии (товар + логистика)
+ * делятся не на метраж накладной, а на годный метраж — за вычетом недостач
+ * с рулонов и вырезанного брака.
+ */
+export const fetchBatchCosts = async (materialId?: number): Promise<BatchCost[]> => {
+  const qs = new URLSearchParams({ batch_cost: '1' });
+  if (materialId) qs.set('material_id', String(materialId));
+  const res = await fetch(`${ROLLS_URL}?${qs.toString()}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось посчитать цену партий');
+  return data.batches || [];
+};

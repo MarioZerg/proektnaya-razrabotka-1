@@ -35,7 +35,6 @@
   "wb_fbs": "https://functions.poehali.dev/142096e2-0171-412b-b6df-1631cb52574a",
   "marketplace_integrations": "https://functions.poehali.dev/74493687-7597-43cc-a138-fa8c1e7215b4",
   "shifts": "https://functions.poehali.dev/88851192-9090-480d-b9f7-aecfea5e7bdf",
-  "salary": "https://functions.poehali.dev/16c53065-6726-495b-9e59-70d16dd9328f",
   "kiosk": "https://functions.poehali.dev/646f604e-57e9-47fb-b2ca-dd424abfba48",
   "shift_sessions": "https://functions.poehali.dev/6143d29d-094c-4dc6-a520-eb0eeb10d8a0",
   "max_bot": "https://functions.poehali.dev/b640dd15-78fa-45ad-9614-b4ba6879c7a9",
@@ -43,13 +42,11 @@
   "marketplace_supplies": "https://functions.poehali.dev/d0a75e82-2c63-440c-8eae-dd036df61fac",
   "goods_warehouse": "https://functions.poehali.dev/370fdff8-7cae-4cc7-a853-b664f3da61cf",
   "shelves": "https://functions.poehali.dev/06b83d03-2e1c-4061-972d-a39d81cf0b2d",
-  "shipments": "https://functions.poehali.dev/a68cce8d-f3b0-4f06-a66a-305eeacd17bb",
   "rolls": "https://functions.poehali.dev/10824802-d4e4-48de-b98a-0fc06f8412d5",
   "suppliers": "https://functions.poehali.dev/eb3fba8a-def9-443a-a867-97243dacc9f8",
   "marketplace_items": "https://functions.poehali.dev/9959a7b8-9bf6-4fbe-8170-68cc9e031f77",
   "workshops": "https://functions.poehali.dev/c3ce83da-9296-40d9-b00b-720d364431ea",
   "users": "https://functions.poehali.dev/1db3a89a-f0f6-470e-bef4-fb5ca8fa02df",
-  "orders": "https://functions.poehali.dev/1d8ed922-bded-4f5a-a367-a0742711203a",
   "materials": "https://functions.poehali.dev/642e7cf2-2a7e-4c6e-81c6-c31c19737524",
   "auth": "https://functions.poehali.dev/eca1843f-b794-48c6-a9e6-4dead2174136"
 }

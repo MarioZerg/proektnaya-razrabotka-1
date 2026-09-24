@@ -120,6 +120,7 @@ def _denied_text(roles) -> str:
     titles = {
         'admin': 'администратор',
         'manager': 'менеджер',
+        'accountant': 'бухгалтер',
         'senior_storekeeper': 'старший кладовщик',
         'storekeeper': 'кладовщик',
         'cutter': 'закройщик',

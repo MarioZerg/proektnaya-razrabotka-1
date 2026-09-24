@@ -6,7 +6,8 @@ export type Role =
   | 'senior_storekeeper'
   | 'cleaner'
   | 'admin'
-  | 'manager';
+  | 'manager'
+  | 'accountant';
 
 /**
  * Зона доступа — укрупнённая группировка ролей, используется для разграничения прав
@@ -67,6 +68,7 @@ export const roleLabels: Record<Role, string> = {
   cleaner: 'Уборщица',
   admin: 'Администратор',
   manager: 'Менеджер',
+  accountant: 'Бухгалтер',
 };
 
 /**
@@ -352,6 +354,25 @@ const managerNav: NavItem[] = [
   // решения по ценам по нему принимать рано. Пункт вернём, когда цифры устоятся.
 ];
 
+/**
+ * Бухгалтер — узкая учётная запись под одну задачу: себестоимость товара.
+ *
+ * Сознательно НЕ даём ему ни склада, ни отгрузок, ни зарплат: бухгалтер считает,
+ * во сколько обходится вещь, и не участвует в производственных операциях. Одна
+ * страница вместо меню из двадцати пунктов — это не урезание прав ради галочки,
+ * а защита от случайного нажатия там, где он не разбирается.
+ *
+ * Главной страницы у него тоже нет: дашборд собран из плиток про смены, подбор
+ * и поставки — для бухгалтера это пустой экран. Вход сразу ведёт на расчёт.
+ */
+const accountantNav: NavItem[] = [
+  {
+    label: 'Себестоимость товара',
+    icon: 'Calculator',
+    path: '/crm/analytics/product-cost',
+  },
+];
+
 const adminNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
   // Помощник по системе живёт кнопкой в правом нижнем углу (AiAssistantWidget),
@@ -471,6 +492,7 @@ const baseNavByRole: Record<Role, NavItem[]> = {
   cleaner: cleanerNav,
   admin: adminNav,
   manager: managerNav,
+  accountant: accountantNav,
 };
 
 /**
@@ -487,8 +509,12 @@ const chatNavItem: NavItem = { label: 'Чат', icon: 'MessagesSquare', path: '/
 export const navByRole: Record<Role, NavItem[]> = Object.fromEntries(
   (Object.keys(baseNavByRole) as Role[]).map((role) => {
     const guides = buildGuidesNav(role);
-    // Чат ставим вторым пунктом — сразу после «Главной».
     const base = baseNavByRole[role];
+    // Бухгалтер — исключение из «чат всем»: у него в меню ровно один пункт,
+    // и рабочая переписка цеха к его задаче отношения не имеет. Добавили бы
+    // чат — получилось бы меню из двух пунктов, где второй никому не нужен.
+    if (role === 'accountant') return [role, base];
+    // Чат ставим вторым пунктом — сразу после «Главной».
     const withChat = [base[0], chatNavItem, ...base.slice(1)];
     return [role, guides.children?.length ? [...withChat, guides] : withChat];
   }),

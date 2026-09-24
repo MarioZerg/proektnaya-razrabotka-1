@@ -19,6 +19,12 @@
       "expectedStatus": 404
     },
     {
+      "name": "Цена погонного метра без входа не отдаётся",
+      "method": "GET",
+      "path": "/?batch_cost=1",
+      "expectedStatus": 401
+    },
+    {
       "name": "Создание рулона без входа отклоняется",
       "method": "POST",
       "path": "/",

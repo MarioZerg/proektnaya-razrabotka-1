@@ -10,6 +10,7 @@ const roleIcons: Record<Role, string> = {
   packer: 'PackageCheck',
   cleaner: 'Sparkles',
   manager: 'Briefcase',
+  accountant: 'Calculator',
 };
 
 interface RoleSelectScreenProps {

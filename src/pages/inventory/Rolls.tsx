@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import StockValueCard from '@/components/crm/rolls/StockValueCard';
 import CutterAnalysisTab from '@/components/crm/rolls/CutterAnalysisTab';
+import BatchCostTab from '@/components/crm/rolls/BatchCostTab';
 import RollCreateDialog, { type RollForm } from '@/components/crm/rolls/RollCreateDialog';
 import RollsFilters from '@/components/crm/rolls/RollsFilters';
 import LowStockPrintCard from '@/components/crm/rolls/LowStockPrintCard';
@@ -234,6 +235,10 @@ const Rolls = () => {
             <TabsList>
               <TabsTrigger value="list">Список рулонов</TabsTrigger>
               <TabsTrigger value="cutters">Анализ закройщиков</TabsTrigger>
+              {/* Цена метра — вопрос денег, а не склада: сколько на самом деле
+                  стоит метр из конкретной партии, когда часть её не доехала
+                  или ушла в брак. */}
+              <TabsTrigger value="batch-cost">Цена 1 пог. м.</TabsTrigger>
             </TabsList>
           )}
 
@@ -276,6 +281,12 @@ const Rolls = () => {
           {isAdmin && (
             <TabsContent value="cutters">
               <CutterAnalysisTab />
+            </TabsContent>
+          )}
+
+          {isAdmin && (
+            <TabsContent value="batch-cost">
+              <BatchCostTab />
             </TabsContent>
           )}
         </Tabs>

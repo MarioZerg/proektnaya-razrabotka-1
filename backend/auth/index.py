@@ -7,7 +7,8 @@ import secrets
 import psycopg2
 
 
-ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner', 'admin', 'manager'}
+ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner',
+         'admin', 'manager', 'accountant'}
 
 
 def issue_session(cur, user_id, role, real_user_id=None) -> str:

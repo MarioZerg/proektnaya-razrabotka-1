@@ -400,6 +400,207 @@ def handler(event: dict, context) -> dict:
         status = params.get('status')
         roll_id = params.get('id')
 
+        # ФАКТИЧЕСКАЯ ЦЕНА ОДНОГО ПОГОННОГО МЕТРА ПО ПАРТИИ.
+        #
+        # Цена в накладной — не та цена, по которой метр реально достался. Между
+        # ними стоят три вещи, каждая из которых съедает метры, но не рубли:
+        #
+        #   1. Логистика. Заплачена за всю машину и уже разложена по метрам при
+        #      приёмке (rolls.logistics_per_unit). Отдельной строкой её тут не
+        #      считаем — она сидит внутри cost_per_unit.
+        #   2. Недостача. Поставщик намотал на рулон меньше, чем написал на
+        #      этикетке. Деньги за эти метры заплачены, метров нет.
+        #   3. Брак. Куски, вырезанные из полотна и списанные: дырки, затяжки,
+        #      непрокрас. Тоже оплачены и тоже в изделие не пошли.
+        #
+        # Поэтому считаем так: ВСЕ деньги партии делим на те метры, которые
+        # реально можно раскроить. Заплатили за 30 000 м, годных вышло 29 700 —
+        # значит метр стоит не 5.90, а 5.96. На тираже в тысячи изделий эта
+        # разница и есть вся разница между «в плюсе» и «в минусе».
+        #
+        # Что считаем недостачей: остаток НА МОМЕНТ ЗАКРЫТИЯ рулона
+        # (remaining_at_close). Поле «недостача», которое швея вбивает руками на
+        # терминале, почти всегда нулевое — его просто не заполняют. Та же
+        # формула стоит в расчёте штрафа и в анализе сырья: страницы должны
+        # считать одинаково, иначе цифрам перестают верить.
+        #
+        # Партия = приёмка (shipment_id). Рулоны, заведённые до того, как
+        # появились документы приёмки, собираем в отдельные строки по дате
+        # создания — у них нет ни номера машины, ни логистики, но цена закупки
+        # есть, и выкидывать их из отчёта нельзя.
+        if params.get('batch_cost'):
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                # Цену партии видит тот же круг, что и закупочные цены рулонов:
+                # владелец, бухгалтер и менеджер, который торгуется по нижней
+                # границе цены. Цеху закупка не нужна и знать её незачем.
+                require_role(cur, event, 'admin', 'accountant', 'manager')
+
+                material_filter = (params.get('material_id') or '').strip()
+                where = ['r.purchase_price IS NOT NULL']
+                if material_filter.isdigit():
+                    where.append(f'r.material_id = {int(material_filter)}')
+                where_sql = ' AND '.join(where)
+
+                # Ключ партии: приёмка, если она есть, иначе день завоза. Один и
+                # тот же выражение нужно и в SELECT, и в GROUP BY.
+                batch_key = (
+                    "COALESCE('S' || r.shipment_id::text, "
+                    "'D' || to_char(r.created_at, 'YYYY-MM-DD'))"
+                )
+                # Недостача — непришедшие метры закрытых рулонов.
+                shortage_sql = (
+                    "CASE WHEN r.status = 'completed' "
+                    "THEN COALESCE(r.remaining_at_close, r.shortage_quantity, 0) "
+                    "ELSE 0 END"
+                )
+
+                cur.execute(
+                    f"SELECT {batch_key} AS batch, "
+                    "  MAX(r.shipment_id), "
+                    "  MIN(r.created_at)::date, "
+                    "  MAX(sh.logistics_cost), "
+                    "  COUNT(*), "
+                    "  COUNT(*) FILTER (WHERE r.status = 'completed'), "
+                    "  COALESCE(SUM(r.initial_quantity), 0), "
+                    "  COALESCE(SUM(r.remaining_quantity), 0), "
+                    # Деньги за товар: цена накладной в валюте на курс той поставки.
+                    "  COALESCE(SUM(r.purchase_price * COALESCE(r.purchase_rate, 1) "
+                    "               * r.initial_quantity), 0), "
+                    # Логистика, разложенная по метрам при приёмке.
+                    "  COALESCE(SUM(COALESCE(r.logistics_per_unit, 0) "
+                    "               * r.initial_quantity), 0), "
+                    f"  COALESCE(SUM({shortage_sql}), 0), "
+                    # Брак по рулонам партии — отдельным подзапросом: соединять
+                    # таблицу брака напрямую нельзя, иначе рулон с тремя кусками
+                    # брака посчитался бы в метраже трижды.
+                    "  COALESCE(SUM(("
+                    "     SELECT COALESCE(SUM(d.quantity), 0) FROM material_defects d "
+                    "     WHERE d.roll_id = r.id)), 0), "
+                    "  COUNT(DISTINCT r.material_id), "
+                    "  COUNT(DISTINCT r.supplier_id) "
+                    "FROM rolls r "
+                    "LEFT JOIN shipments sh ON sh.id = r.shipment_id "
+                    f"WHERE {where_sql} "
+                    "GROUP BY 1 "
+                    "ORDER BY MIN(r.created_at) DESC "
+                    "LIMIT 60"
+                )
+                batch_rows = cur.fetchall()
+
+                # Названия материалов и поставщиков партии — отдельным проходом.
+                # В одной машине едут и тюль, и тесьма, и пакеты: без разбивки
+                # «средняя цена метра по партии» смешала бы метры с штуками.
+                cur.execute(
+                    f"SELECT {batch_key} AS batch, m.name, m.unit, mt.name, "
+                    "  COALESCE(s.name, '—'), "
+                    "  COALESCE(SUM(r.initial_quantity), 0), "
+                    "  COALESCE(SUM(r.purchase_price * COALESCE(r.purchase_rate, 1) "
+                    "               * r.initial_quantity), 0), "
+                    "  COALESCE(SUM(COALESCE(r.logistics_per_unit, 0) "
+                    "               * r.initial_quantity), 0), "
+                    f"  COALESCE(SUM({shortage_sql}), 0), "
+                    "  COALESCE(SUM(("
+                    "     SELECT COALESCE(SUM(d.quantity), 0) FROM material_defects d "
+                    "     WHERE d.roll_id = r.id)), 0), "
+                    "  COUNT(*), "
+                    "  AVG(r.purchase_price * COALESCE(r.purchase_rate, 1)) "
+                    "FROM rolls r "
+                    "JOIN materials m ON m.id = r.material_id "
+                    "LEFT JOIN material_types mt ON mt.id = m.type_id "
+                    "LEFT JOIN suppliers s ON s.id = r.supplier_id "
+                    f"WHERE {where_sql} "
+                    "GROUP BY 1, m.id, m.name, m.unit, mt.name, s.name "
+                    "ORDER BY 6 DESC"
+                )
+                line_rows = cur.fetchall()
+            except AuthError as err:
+                conn.close()
+                return auth_error_response(err, headers)
+            finally:
+                if not conn.closed:
+                    conn.close()
+
+            def _line(row):
+                """Одна строка материала внутри партии со всеми потерями."""
+                initial = float(row[5] or 0)
+                goods = float(row[6] or 0)
+                logistics = float(row[7] or 0)
+                shortage = float(row[8] or 0)
+                defects = float(row[9] or 0)
+                total_money = goods + logistics
+                # Годный метраж: за что заплатили, минус то, чего не довезли,
+                # и минус вырезанный брак. Ниже нуля не опускаем: испорченные
+                # данные не должны рисовать отрицательную цену.
+                usable = max(initial - shortage - defects, 0)
+                return {
+                    'material': row[1],
+                    'unit': row[2] or 'м',
+                    'materialType': row[3],
+                    'supplier': row[4],
+                    'rolls': int(row[10]),
+                    'initial': round(initial, 2),
+                    'shortage': round(shortage, 2),
+                    'defects': round(defects, 2),
+                    'usable': round(usable, 2),
+                    'goodsCost': round(goods, 2),
+                    'logisticsCost': round(logistics, 2),
+                    'totalCost': round(total_money, 2),
+                    # Цена по накладной — с чем сравнивать итог.
+                    'invoicePrice': round(float(row[11] or 0), 4),
+                    # Цена с логистикой, но ещё без учёта потерь.
+                    'nominalPrice': round(total_money / initial, 4) if initial > 0 else 0,
+                    # ГЛАВНАЯ ЦИФРА: во сколько обошёлся метр, который реально
+                    # можно раскроить.
+                    'realPrice': round(total_money / usable, 4) if usable > 0 else 0,
+                }
+
+            lines_by_batch = {}
+            for row in line_rows:
+                lines_by_batch.setdefault(row[0], []).append(_line(row))
+
+            batches = []
+            for row in batch_rows:
+                key = row[0]
+                initial = float(row[6] or 0)
+                goods = float(row[8] or 0)
+                logistics = float(row[9] or 0)
+                shortage = float(row[10] or 0)
+                defects = float(row[11] or 0)
+                total_money = goods + logistics
+                usable = max(initial - shortage - defects, 0)
+                batches.append({
+                    'key': key,
+                    'shipmentId': row[1],
+                    'date': row[2].isoformat() if row[2] else None,
+                    'logisticsTotal': float(row[3]) if row[3] is not None else logistics,
+                    'rolls': int(row[4]),
+                    'rollsClosed': int(row[5]),
+                    'initial': round(initial, 2),
+                    'remaining': round(float(row[7] or 0), 2),
+                    'shortage': round(shortage, 2),
+                    'defects': round(defects, 2),
+                    'usable': round(usable, 2),
+                    # Доля потерь: по ней сразу видно проблемные завозы.
+                    'lossPercent': round((shortage + defects) / initial * 100, 2)
+                    if initial > 0 else 0,
+                    'goodsCost': round(goods, 2),
+                    'logisticsCost': round(logistics, 2),
+                    'totalCost': round(total_money, 2),
+                    'nominalPrice': round(total_money / initial, 4) if initial > 0 else 0,
+                    'realPrice': round(total_money / usable, 4) if usable > 0 else 0,
+                    'materialsCount': int(row[12] or 0),
+                    'suppliersCount': int(row[13] or 0),
+                    'lines': lines_by_batch.get(key, []),
+                })
+
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'batches': batches}, ensure_ascii=False, default=str),
+            }
+
         # ЕДИНЫЙ ОТЧЁТ «АНАЛИЗ СЫРЬЯ»: НЕДОСТАЧИ И БРАК В ОДНОМ МЕСТЕ.
         #
         # Раньше это были две отдельные страницы, и в этом была главная беда: они

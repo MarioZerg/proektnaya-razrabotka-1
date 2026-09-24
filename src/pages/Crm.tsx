@@ -1,3 +1,4 @@
+import { Navigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import CrmDashboardHeader from '@/components/crm/dashboard/CrmDashboardHeader';
 import CrmDashboardSections from '@/components/crm/dashboard/CrmDashboardSections';
@@ -60,6 +61,13 @@ const CrmDashboard = () => {
       />
     </div>
   );
+
+  // У бухгалтера дашборда нет: главная собрана из плиток про смены, подбор и
+  // поставки — для него это пустой экран. Ведём сразу на его единственную
+  // страницу, чтобы вход не упирался в «ничего не найдено».
+  if (user?.role === 'accountant') {
+    return <Navigate to="/crm/analytics/product-cost" replace />;
+  }
 
   if (user && user.availableRoles.length === 0) {
     return (
