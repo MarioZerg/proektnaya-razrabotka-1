@@ -1,0 +1,45 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "GET without supplyId fails",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 400,
+      "expectedBody": { "error": "string" },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "POST without supplyId fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "create" },
+      "expectedStatus": 400,
+      "expectedBody": { "error": "string" },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Unknown action fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "whatever", "supplyId": 1 },
+      "expectedStatus": 400,
+      "expectedBody": { "error": "string" },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Create without manager role forbidden",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "create", "supplyId": 1 },
+      "expectedStatus": 403,
+      "expectedBody": { "error": "string" },
+      "bodyMatcher": "partial"
+    }
+  ]
+}

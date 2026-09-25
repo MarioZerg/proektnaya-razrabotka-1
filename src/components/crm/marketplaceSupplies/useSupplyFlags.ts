@@ -23,6 +23,13 @@ export const useSupplyFlags = (supply: SupplyDetail) => {
   // там товарный состав ведёт именно он.
   const isManagerRole = user?.role === 'manager';
   const isManager = user?.role === 'manager' || user?.role === 'admin';
+  // ЭТрН показываем ТОЛЬКО администратору.
+  //
+  // Электронную транспортную накладную оформляет сам перевозчик (Газелька) в своём
+  // контуре — наша карточка дублировала его работу и путала менеджера с кладовщиком.
+  // Убирать блок совсем рано: он понадобится для кросс-докинга, когда мы возим груз
+  // не через перевозчика. Поэтому оставляем администратору как задел.
+  const isAdmin = user?.role === 'admin';
   const canEditItems =
     (supply.status === 'Открытая' || supply.status === 'На сборке') &&
     !(isManagerRole && supply.type === 'FBS');
@@ -53,6 +60,7 @@ export const useSupplyFlags = (supply: SupplyDetail) => {
     nextStatus,
     isManagerRole,
     isManager,
+    isAdmin,
     canEditItems,
     canRemoveItems,
     isOzonFbo,
