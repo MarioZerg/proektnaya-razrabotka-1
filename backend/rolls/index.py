@@ -45,6 +45,51 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
+def recalc_shipment_costs(cur, shipment_id):
+    """Пересчитывает логистику на единицу и себестоимость рулонов приёмки.
+
+    Логистика делится поровну на все метры приёмки. Стоит поменять метраж одного
+    рулона — и доля логистики меняется у ВСЕХ рулонов этой машины, а вместе с ней
+    и себестоимость метра.
+
+    Считаем только целые рулоны на складе: у тронутого рулона по себестоимости
+    уже могли пройти списания и недостачи, и менять её задним числом означало бы
+    переписать закрытые расчёты.
+
+    Повторяет логику из модуля приёмок: правка метража доступна из двух мест
+    (карточка приёмки и вкладка рулонов), и в обоих случаях себестоимость должна
+    пересчитываться одинаково.
+    """
+    if not shipment_id:
+        return
+    cur.execute(
+        "SELECT COALESCE(logistics_cost, 0) FROM shipments WHERE id = %s",
+        (int(shipment_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return
+    logistics_cost = float(row[0])
+
+    # Общий объём — по всем рулонам приёмки, включая отгруженные: логистику
+    # заплатили за всю машину, и делить её надо на весь привезённый объём.
+    cur.execute(
+        "SELECT COALESCE(SUM(initial_quantity), 0) FROM rolls WHERE shipment_id = %s",
+        (int(shipment_id),),
+    )
+    total_units = float(cur.fetchone()[0] or 0)
+    per_unit = round(logistics_cost / total_units, 4) if total_units > 0 else 0.0
+
+    cur.execute(
+        "UPDATE rolls SET logistics_per_unit = %s, "
+        "  cost_per_unit = CASE WHEN purchase_price IS NULL THEN NULL "
+        "                      ELSE ROUND(purchase_price * COALESCE(purchase_rate, 1) + %s, 4) END "
+        "WHERE shipment_id = %s AND status = 'in_storage' "
+        "  AND initial_quantity = remaining_quantity",
+        (per_unit, per_unit, int(shipment_id)),
+    )
+
+
 def notify_admin(cur, kind, title, message, actor_id, actor_name, link=None,
                  entity_type=None, entity_id=None):
     """Кладёт событие на панель администратора.
@@ -1475,7 +1520,13 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
-            conditions = []
+            # Убранные рулоны в списках не показываем НИКОМУ.
+            #
+            # Рулон убирают, когда его завели ошибочно — дубль при разгрузке,
+            # опечатка, дважды оформленная приёмка. Физически такого рулона нет,
+            # и склад не должен его видеть: иначе кладовщик пойдёт искать ткань,
+            # которой не существует. След остаётся в приёмке и в журнале действий.
+            conditions = ['r.removed_at IS NULL']
             # Поиск по штрихкоду ищем в БАЗЕ, а не в загруженном списке: список
             # ограничен свежими рулонами, и закрытый рулон полугодовой давности
             # иначе бы не нашёлся вообще.
@@ -3045,41 +3096,150 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
-            if action == 'delete':
-                # УДАЛЕНИЕ РУЛОНА — ТОЛЬКО АДМИНИСТРАТОР.
+            if action == 'set_quantity':
+                # ПРАВКА МЕТРАЖА РУЛОНА — ТОЛЬКО АДМИНИСТРАТОР.
                 #
-                # Раньше проверки не было вовсе, и запись не попадала в журнал: рулон
-                # с остатком исчезал бесследно, если по нему ещё не резали заказы.
-                # Это был самый тихий способ спрятать недостачу.
+                # Бирки поставщика врут: на рулоне «50 м», по факту 47. Или просто
+                # опечатка при вводе сотни позиций за разгрузку. Пока рулон целый
+                # лежит на складе, цифру нужно поправить — иначе от неверного числа
+                # считается и остаток материала, и себестоимость метра.
+                #
+                # Такая же правка есть в карточке приёмки, но туда администратор
+                # попадает, только если помнит, с какой машиной приехал рулон.
+                # Здесь он правит рулон там, где его нашёл — на вкладке «Рулоны».
+                #
+                # ГРАНИЦА. Править можно ТОЛЬКО целый рулон на складе. Если из него
+                # уже кроили или он уехал в цех — за цифрой стоят чужие списания,
+                # остатки и зарплата за раскрой. Такой рулон не трогаем.
+                admin = require_admin(cur, event)
+                item_id = body_data.get('id')
+                new_qty = body_data.get('quantity')
+                if not item_id or new_qty in (None, ''):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите рулон и метраж'},
+                                               ensure_ascii=False)}
+                try:
+                    new_qty = float(str(new_qty).replace(',', '.'))
+                except (TypeError, ValueError):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Метраж указан неверно'},
+                                               ensure_ascii=False)}
+                if new_qty <= 0:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Метраж должен быть больше нуля'},
+                                               ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT r.status, r.initial_quantity, r.remaining_quantity, r.barcode, "
+                    "       r.shipment_id, m.name, r.removed_at "
+                    "FROM rolls r LEFT JOIN materials m ON m.id = r.material_id "
+                    "WHERE r.id = %s",
+                    (int(item_id),),
+                )
+                rq = cur.fetchone()
+                if not rq:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Рулон не найден'}, ensure_ascii=False)}
+                r_status, r_init, r_remain, r_barcode, r_shipment, mat_name, r_removed = rq
+                if r_removed:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Рулон убран из работы'},
+                                               ensure_ascii=False)}
+                if r_status != 'in_storage' or float(r_init) != float(r_remain):
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps(
+                                {'error': f'Рулон {r_barcode} уже в работе — '
+                                          f'метраж изменить нельзя'},
+                                ensure_ascii=False)}
+
+                old_qty = float(r_init)
+                cur.execute(
+                    "UPDATE rolls SET initial_quantity = %s, remaining_quantity = %s "
+                    "WHERE id = %s",
+                    (new_qty, new_qty, int(item_id)),
+                )
+                # Метраж рулона и позиции приёмки держим одинаковыми: по позиции
+                # считается объём поставки, по рулону — склад. Разойдутся — отчёты
+                # перестанут сходиться, и расхождение всплывёт на сверке с поставщиком.
+                cur.execute(
+                    "UPDATE shipment_items SET quantity = %s WHERE roll_id = %s",
+                    (new_qty, int(item_id)),
+                )
+                # Логистика делится на весь объём приёмки — при смене метража доля
+                # на метр «едет» у всех рулонов этой машины.
+                recalc_shipment_costs(cur, r_shipment)
+
+                log_action(
+                    cur, admin['id'], admin['name'], 'update_roll_quantity', 'roll',
+                    int(item_id),
+                    f'Изменил метраж рулона {r_barcode} ({mat_name or "материал"}) '
+                    f'с {round(old_qty, 2)} на {round(new_qty, 2)}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'quantity': new_qty})}
+
+            if action == 'delete':
+                # УБРАТЬ РУЛОН ИЗ РАБОТЫ — ТОЛЬКО АДМИНИСТРАТОР.
+                #
+                # Рулон убирают, когда его завели ошибочно: дубль при разгрузке,
+                # опечатка в штрихкоде, приёмка оформлена дважды.
+                #
+                # ЗАПИСЬ НЕ СТИРАЕМ, А ПОМЕЧАЕМ. Строка приёмки — первичный
+                # документ: по ней считается объём поставки, себестоимость метра
+                # и расчёты с поставщиком. Стереть рулон значит вычеркнуть позицию
+                # из документа задним числом, и приёмка перестанет сходиться с тем,
+                # что подписали при разгрузке. Поэтому рулон исчезает из складских
+                # списков, а в приёмке остаётся с пометкой «убран» — видно, что
+                # позиция была, кто и когда её убрал и почему.
                 admin = require_admin(cur, event)
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                reason = (body_data.get('reason') or '').strip()
+                if not reason:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите причину — без неё непонятно, '
+                                                         'куда делся рулон'}, ensure_ascii=False)}
+
+                # Рулон в работе не трогаем: за ним стоят раскрои, остатки и
+                # зарплата за работу. Убрать его значит оставить заказы без
+                # материала, из которого они физически сшиты.
                 cur.execute("SELECT id FROM order_material_usage WHERE roll_id = %s LIMIT 1", (int(item_id),))
                 if cur.fetchone():
                     return {
                         'statusCode': 409,
                         'headers': headers,
-                        'body': json.dumps({'error': 'Нельзя удалить рулон — по нему уже есть списания на заказы'}),
+                        'body': json.dumps({'error': 'Нельзя убрать рулон — по нему уже есть '
+                                                     'списания на заказы'}, ensure_ascii=False),
                     }
-                # Пишем в журнал ДО удаления: после него данных о рулоне уже не будет.
+
                 cur.execute(
-                    "SELECT barcode, remaining_quantity FROM rolls WHERE id = %s",
+                    "SELECT barcode, remaining_quantity, removed_at FROM rolls WHERE id = %s",
                     (int(item_id),),
                 )
                 del_row = cur.fetchone()
                 if not del_row:
                     return {'statusCode': 404, 'headers': headers,
                             'body': json.dumps({'error': 'Рулон не найден'}, ensure_ascii=False)}
+                if del_row[2]:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Рулон уже убран'}, ensure_ascii=False)}
+
+                reason_short = reason[:500]
+                cur.execute(
+                    "UPDATE rolls SET removed_at = now(), removed_by = %s, "
+                    "removed_by_name = %s, removed_reason = %s WHERE id = %s",
+                    (admin['id'], admin['name'], reason_short, int(item_id)),
+                )
                 cur.execute(
                     "INSERT INTO audit_log (category, user_id, user_name, action, "
                     "entity_type, entity_id, description) VALUES "
-                    "('warehouse', %s, %s, 'roll_delete', 'roll', %s, %s)",
+                    "('warehouse', %s, %s, 'roll_remove', 'roll', %s, %s)",
                     (admin['id'], admin['name'], int(item_id),
-                     f'Удалил рулон {del_row[0]} (остаток был '
-                     f'{round(float(del_row[1] or 0), 2)})'),
+                     f'Убрал рулон {del_row[0]} (остаток был '
+                     f'{round(float(del_row[1] or 0), 2)}). Причина: {reason_short}'),
                 )
-                cur.execute("DELETE FROM rolls WHERE id = %s", (int(item_id),))
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 

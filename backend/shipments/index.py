@@ -255,7 +255,12 @@ def handler(event: dict, context) -> dict:
                     "     ELSE si.quantity END, "
                     "si.requested_quantity, si.number_rolls, si.price, si.currency, "
                     "r.cost_per_unit, sp.price, sp.currency, si.supplier_id, isup.name, "
-                    "si.reserved_barcodes, r.status, r.initial_quantity, r.remaining_quantity "
+                    "si.reserved_barcodes, r.status, r.initial_quantity, r.remaining_quantity, "
+                    # Рулон убран из работы администратором (дубль, опечатка). Строка
+                    # приёмки остаётся — это первичный документ, по нему считали объём
+                    # поставки и расчёты с поставщиком. Но позицию подписываем, иначе
+                    # приёмка обещает рулон, которого на складе нет.
+                    "r.removed_at, r.removed_by_name, r.removed_reason "
                     "FROM shipment_items si "
                     "LEFT JOIN materials m ON m.id = si.material_id "
                     "LEFT JOIN rolls r ON r.id = si.roll_id "
@@ -303,7 +308,12 @@ def handler(event: dict, context) -> dict:
                             and r[19] is not None
                             and r[20] is not None
                             and float(r[19]) == float(r[20])
+                            and r[21] is None
                         ),
+                        # Позиция осталась в документе, но рулона на складе нет.
+                        'removedAt': (r[21].isoformat() + 'Z') if r[21] else None,
+                        'removedByName': r[22],
+                        'removedReason': r[23],
                     }
                     for r in cur.fetchall()
                 ]

@@ -42,30 +42,46 @@ const SupplyShowCards = ({
       const code = item.barcode || item.reservedBarcodes?.[0];
       const editing = editItemId === item.id;
       return (
-        <div key={item.id} className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3">
+        <div
+          key={item.id}
+          className={`min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3 ${
+            item.removedAt ? 'opacity-60' : ''
+          }`}
+        >
           <div className="min-w-0">
-            <div className="break-words font-medium">{item.materialName}</div>
+            <div className={`break-words font-medium ${item.removedAt ? 'line-through' : ''}`}>
+              {item.materialName}
+            </div>
             <div className="mt-0.5 break-all font-mono-tech text-xs text-muted-foreground">
               {code || '—'}
             </div>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            {item.rollStatus === 'in_storage' && (
+            {/* Рулон убран администратором: позиция осталась в документе приёмки,
+                но материала на складе нет. */}
+            {item.removedAt && <Badge variant="destructive">Убран</Badge>}
+            {!item.removedAt && item.rollStatus === 'in_storage' && (
               <Badge variant="secondary">На складе</Badge>
             )}
-            {item.rollStatus === 'in_workshop' && (
+            {!item.removedAt && item.rollStatus === 'in_workshop' && (
               <Badge variant="default">В цехе</Badge>
             )}
-            {item.rollStatus === 'completed' && (
+            {!item.removedAt && item.rollStatus === 'completed' && (
               <Badge variant="outline">Израсходован</Badge>
             )}
-            {!item.rollStatus && (
+            {!item.removedAt && !item.rollStatus && (
               <span className="text-xs text-muted-foreground">не принят</span>
             )}
             <span className="text-xs text-muted-foreground">
               {item.supplierName || detail.supplierName || '—'}
             </span>
           </div>
+          {item.removedAt && (
+            <div className="mt-1 text-xs text-destructive">
+              {item.removedReason || 'Убран из работы'}
+              {item.removedByName ? ` · ${item.removedByName}` : ''}
+            </div>
+          )}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             {editing ? (
               <div className="flex min-w-0 items-center gap-1">

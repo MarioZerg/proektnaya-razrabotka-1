@@ -72,9 +72,11 @@ const SupplyShowTable = ({
           const code = item.barcode || item.reservedBarcodes?.[0];
           const editing = editItemId === item.id;
           return (
-            <TableRow key={item.id}>
+            <TableRow key={item.id} className={item.removedAt ? 'opacity-60' : undefined}>
               <TableCell className="whitespace-normal break-words align-top">
-                <div className="font-medium">{item.materialName}</div>
+                <div className={`font-medium ${item.removedAt ? 'line-through' : ''}`}>
+                  {item.materialName}
+                </div>
                 <div className="mt-0.5 break-all font-mono-tech text-xs text-muted-foreground">
                   {code || '—'}
                 </div>
@@ -133,19 +135,31 @@ const SupplyShowTable = ({
               </TableCell>
               <TableCell className="whitespace-normal break-words align-top">
                 <div>
-                  {item.rollStatus === 'in_storage' && (
+                  {/* Рулон убран администратором: строка приёмки осталась как часть
+                      первичного документа, но материала на складе нет. Без этой
+                      пометки приёмка обещала бы рулон, которого не существует. */}
+                  {item.removedAt && (
+                    <Badge variant="destructive">Убран</Badge>
+                  )}
+                  {!item.removedAt && item.rollStatus === 'in_storage' && (
                     <Badge variant="secondary">На складе</Badge>
                   )}
-                  {item.rollStatus === 'in_workshop' && (
+                  {!item.removedAt && item.rollStatus === 'in_workshop' && (
                     <Badge variant="default">В цехе</Badge>
                   )}
-                  {item.rollStatus === 'completed' && (
+                  {!item.removedAt && item.rollStatus === 'completed' && (
                     <Badge variant="outline">Израсходован</Badge>
                   )}
-                  {!item.rollStatus && (
+                  {!item.removedAt && !item.rollStatus && (
                     <span className="text-xs text-muted-foreground">не принят</span>
                   )}
                 </div>
+                {item.removedAt && (
+                  <div className="mt-1 text-xs text-destructive">
+                    {item.removedReason || 'Убран из работы'}
+                    {item.removedByName ? ` · ${item.removedByName}` : ''}
+                  </div>
+                )}
                 <div className="mt-1 text-xs text-muted-foreground">
                   {item.supplierName || detail.supplierName || '—'}
                 </div>

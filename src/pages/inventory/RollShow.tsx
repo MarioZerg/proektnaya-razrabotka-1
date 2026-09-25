@@ -13,6 +13,8 @@ import { isStorekeeperRole } from '@/lib/roles';
 import { printBarcodes } from '@/lib/printBarcodes';
 import RollWriteOffDialog from '@/components/crm/rolls/RollWriteOffDialog';
 import RollMoveDialog from '@/components/crm/rolls/RollMoveDialog';
+import RollEditDialog from '@/components/crm/rolls/RollEditDialog';
+import RollRemoveDialog from '@/components/crm/rolls/RollRemoveDialog';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { currencySymbols } from '@/lib/suppliersApi';
 
@@ -51,6 +53,8 @@ const RollShow = () => {
   const [error, setError] = useState<string | null>(null);
   const [writeOffOpen, setWriteOffOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
   /** Цеха нужны для выбора смены при перемещении рулона. */
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
 
@@ -178,7 +182,56 @@ const RollShow = () => {
                 {roll.status === 'in_workshop' ? 'Вернуть или передать' : 'Выдать в цех'}
               </Button>
             )}
+
+            {/* ПРАВКА МЕТРАЖА. Бирки поставщика врут: на рулоне «50 м», по факту 47.
+                Правим только целый рулон на складе — у тронутого за цифрой уже стоят
+                чужие раскрои, списания и зарплата за работу. */}
+            {isAdmin
+              && roll.status === 'in_storage'
+              && roll.remainingQuantity === roll.initialQuantity && (
+              <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
+                <Icon name="Pencil" size={14} className="mr-1" />
+                Изменить метраж
+              </Button>
+            )}
+
+            {/* УБРАТЬ РУЛОН. Завели ошибочно — дубль при разгрузке, опечатка,
+                приёмка оформлена дважды. Рулон с раскроями система не отдаст:
+                за ним стоит выполненная работа. */}
+            {isAdmin && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive hover:bg-destructive/5 hover:text-destructive"
+                onClick={() => setRemoveOpen(true)}
+              >
+                <Icon name="Trash2" size={14} className="mr-1" />
+                Убрать рулон
+              </Button>
+            )}
           </div>
+
+          <RollEditDialog
+            open={editOpen}
+            onOpenChange={setEditOpen}
+            rollId={roll.id}
+            barcode={roll.barcode}
+            materialName={roll.materialName || 'Материал'}
+            unit={unit}
+            currentQuantity={roll.initialQuantity}
+            onDone={load}
+          />
+
+          <RollRemoveDialog
+            open={removeOpen}
+            onOpenChange={setRemoveOpen}
+            rollId={roll.id}
+            barcode={roll.barcode}
+            materialName={roll.materialName || 'Материал'}
+            unit={unit}
+            remainingQuantity={roll.remainingQuantity}
+            onDone={() => navigate('/crm/inventory/rolls')}
+          />
 
           <RollMoveDialog
             open={moveOpen}

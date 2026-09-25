@@ -75,6 +75,16 @@ export interface ShipmentItem {
   rollRemainingQuantity?: number | null;
   /** Метраж можно править: рулон целый и лежит на складе. */
   canEditQuantity?: boolean;
+  /**
+   * Рулон убран администратором из работы (дубль, опечатка при разгрузке).
+   *
+   * Позиция остаётся в приёмке — это первичный документ, по нему считали объём
+   * поставки и расчёты с поставщиком. Но на складе такого рулона нет, и строку
+   * надо подписать, иначе приёмка обещает материал, которого не существует.
+   */
+  removedAt?: string | null;
+  removedByName?: string | null;
+  removedReason?: string | null;
 }
 
 export interface ShipmentDetail extends Shipment {
