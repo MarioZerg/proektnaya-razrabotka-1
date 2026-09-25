@@ -1932,7 +1932,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if gw_status != 'shipped' and not gw_shipped_at and gw_reserved and gw_labeled:
                 cur.execute(
                     "SELECT o.order_number, upper(COALESCE(o.order_type, '')), "
-                    "       o.supply_id, s.supply_number "
+                    "       o.supply_id, s.supply_number, "
+                    # Поставка заказа уже закрыта или отменена — вещь по ней
+                    # никуда не уедет, см. проверку ниже.
+                    "       COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
                     "FROM orders o "
                     "LEFT JOIN marketplace_supplies s ON s.id = o.supply_id "
                     f"WHERE o.id = {int(gw_reserved)}"
@@ -1950,7 +1953,22 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 #
                 # Отпустить вещь обратно может только отгрузка в эту поставку
                 # или администратор, вернувший её на полки из карточки.
-                if lbl and lbl[1] == 'FBO':
+                # ПОСТАВКА ЗАКРЫТА, А ВЕЩЬ ОСТАЛАСЬ НА ПОЛКЕ — ЭТО СВОБОДНЫЙ ОСТАТОК.
+                #
+                # Заявку FBO собирают с запасом: стикеруют больше вещей, чем уезжает
+                # в коробах. Поставка уходит, а лишние застикерованные вещи так и
+                # лежат на полках со статусом «ждёт поставки» и бронью закрытого
+                # заказа.
+                #
+                # Сканер отвечал на них «закреплена за составом поставки — повторно
+                # не подбирают», и кладовщик слышал это, держа вещь в руках: по
+                # системе она в коробе, а по факту на полке. Найти причину по
+                # экранам было невозможно — поставка-то давно уехала.
+                #
+                # Отпускать такую вещь можно смело: короба закрыты, грузоместа
+                # сданы, добавить в них уже ничего нельзя. Вещь возвращается в
+                # свободный остаток и идёт в подбор под новые заказы.
+                if lbl and lbl[1] == 'FBO' and not lbl[4]:
                     where = (
                         f'поставки #{lbl[2]}' + (f' ({lbl[3]})' if lbl[3] else '')
                         if lbl[2] else 'своей поставки'
@@ -1963,6 +1981,44 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         'reason': f'Уже застикерована и закреплена за составом {where} — '
                                   f'повторно её не подбирают. Отсканируйте ярлык OZN '
                                   f'в короб на экране сборки',
+                    }, ensure_ascii=False)}
+
+                # Поставка закрыта — снимаем бронь и ярлык, вещь снова остаток.
+                #
+                # Без этого она провалится в проверки ниже и получит «уже собрана:
+                # на ней стикер отправления» — тот самый ответ, из-за которого
+                # кладовщик не мог понять, почему вещь у него в руках «в коробе».
+                # Ярлык старой поставки на ней недействителен: грузоместа сданы,
+                # добавить в них нечего, и перед новой отгрузкой его всё равно
+                # печатают заново.
+                if lbl and lbl[4]:
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', "
+                        "reserved_order_id = NULL, matched_at = NULL, "
+                        "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                        "shipping_labeled_by_name = NULL WHERE id = %s",
+                        (int(gw_id),),
+                    )
+                    cur.execute(
+                        "UPDATE orders SET fulfilled_from_stock_id = NULL "
+                        "WHERE fulfilled_from_stock_id = %s",
+                        (int(gw_id),),
+                    )
+                    log_action(
+                        cur, actor_id, actor_name, 'release_closed_supply',
+                        'goods_warehouse', gw_id,
+                        f'Освободил вещь при сканировании: поставка заказа '
+                        f'{lbl[0]} закрыта, вещь осталась на полке',
+                    )
+                    conn.commit()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'matched': False,
+                        'goodsId': gw_id,
+                        'product': gw_product,
+                        'shelfName': gw_shelf,
+                        'reason': 'Поставка уже отгружена — вещь освобождена и снова '
+                                  'в свободном остатке. Отсканируйте её ещё раз, '
+                                  'чтобы подобрать под новый заказ',
                     }, ensure_ascii=False)}
 
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
@@ -2974,6 +3030,38 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             )
             freed = cur.fetchall()
 
+            # СНИМАЕМ И БРОНЬ ЗАКРЫТОЙ ПОСТАВКИ.
+            #
+            # Строки в коробе мало: вещь остаётся со статусом «ждёт поставки»,
+            # бронью закрытого заказа и ярлыком старой отгрузки. Сканер подбора
+            # по такой вещи отвечает «уже собрана», и расхождение никуда не
+            # девается — кладовщик по-прежнему держит в руках товар, который
+            # система считает уехавшим.
+            #
+            # Ярлык снимаем вместе с бронью: грузоместа той поставки сданы,
+            # добавить в них нечего, а перед новой отгрузкой ярлык всё равно
+            # печатают заново.
+            cur.execute(
+                "UPDATE goods_warehouse gw SET status = 'in_stock', "
+                "  reserved_order_id = NULL, matched_at = NULL, "
+                "  shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                "  shipping_labeled_by_name = NULL "
+                "FROM orders ro, marketplace_supplies s "
+                "WHERE ro.id = gw.reserved_order_id AND s.id = ro.supply_id "
+                f"  AND gw.id IN ({ids_csv}) "
+                "  AND COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
+                "  AND gw.shipped_at IS NULL "
+                "  AND gw.status NOT IN ('lost', 'shipped') "
+                "RETURNING gw.id"
+            )
+            released = cur.fetchall()
+            if released:
+                rel_csv = ','.join(str(int(r[0])) for r in released)
+                cur.execute(
+                    "UPDATE orders SET fulfilled_from_stock_id = NULL "
+                    f"WHERE fulfilled_from_stock_id IN ({rel_csv})"
+                )
+
             # Журнал пишем ОДНИМ запросом на всю порцию: по строке на вещь — это
             # и есть то, что упиралось в лимит времени.
             if freed:
@@ -2981,11 +3069,18 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         'на складе, а числилась уложенной в короб')
                 log_bulk(cur, actor_id, actor_name, 'clear_supply_tail',
                          'goods_warehouse', [r[0] for r in freed], note)
+            if released:
+                note2 = ('Снята бронь закрытой поставки: вещь застикеровали с запасом, '
+                         'в короб она не уехала и осталась на полке')
+                log_bulk(cur, actor_id, actor_name, 'clear_supply_tail',
+                         'goods_warehouse', [r[0] for r in released], note2)
 
             conn.commit()
             return {'statusCode': 200, 'headers': headers,
                     'body': json.dumps({
-                        'freed': len(freed),
+                        # Вещь могла попасть в обе выборки сразу — считаем по
+                        # уникальным, иначе счётчик на экране завышает результат.
+                        'freed': len({r[0] for r in freed} | {r[0] for r in released}),
                         # Сколько ещё ждёт — экран повторит вызов и дочистит.
                         'remaining': max(0, len(ids) - len(batch_ids)),
                     }, ensure_ascii=False)}
