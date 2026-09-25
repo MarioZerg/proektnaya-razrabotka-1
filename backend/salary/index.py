@@ -1717,18 +1717,21 @@ def handler(event: dict, context) -> dict:
                         return {'statusCode': 400, 'headers': headers,
                                 'body': json.dumps({'error': 'Сумма должна быть больше нуля'},
                                                    ensure_ascii=False)}
-                    # Больше начисленного не платим: это уже не выплата, а аванс.
-                    # Для аванса есть отдельное ручное начисление.
-                    if custom_amount > balance + 0.009:
-                        return {
-                            'statusCode': 409,
-                            'headers': headers,
-                            'body': json.dumps({
-                                'error': f'К выплате за период {balance:.2f} ₽ — '
-                                         f'больше этой суммы выплатить нельзя. '
-                                         f'Для аванса используйте ручное начисление'
-                            }, ensure_ascii=False),
-                        }
+                    # ОКРУГЛЕНИЕ В БОЛЬШУЮ СТОРОНУ — ТОЖЕ РАЗРЕШЕНО.
+                    #
+                    # Зарплату выдают наличными и переводом круглыми суммами: к
+                    # выплате 12 480,50 ₽, а на руки отдают 12 500 ₽. Раньше
+                    # система такое запрещала, и бухгалтер либо выдавал копейки,
+                    # либо держал переплату в голове до следующего расчёта.
+                    #
+                    # Теперь переплата уходит в минус на следующий период: заводим
+                    # её отрицательным начислением, и ближайшая выплата
+                    # автоматически станет на эту сумму меньше. Никто ничего не
+                    # запоминает, а расчёты по сотруднику в итоге сходятся в ноль.
+                    #
+                    # Ограничения по величине нет намеренно: аванс «в счёт будущей
+                    # зарплаты» — та же переплата, только крупнее, и работает она
+                    # по тому же правилу.
                     carry_over = round(balance - custom_amount, 2)
                     balance = custom_amount
 
@@ -1800,10 +1803,22 @@ def handler(event: dict, context) -> dict:
                 # Дата — СЕГОДНЯШНЯЯ, а не из закрытого периода: иначе запись
                 # снова попала бы в те же даты, и при повторной выплате за тот
                 # же период всё повторилось бы по кругу.
-                if carry_over > 0.009:
+                # Тот же механизм работает и в обратную сторону: если выдали
+                # БОЛЬШЕ начисленного (округлили вверх), carry_over уходит в
+                # минус и запись становится удержанием — ближайшая выплата сама
+                # окажется на эту сумму меньше.
+                if abs(carry_over) > 0.009:
                     period_label = (
                         f'{p_from}—{p_to}' if p_from and p_to
                         else (f'с {p_from}' if p_from else (f'по {p_to}' if p_to else 'весь остаток'))
+                    )
+                    note = (
+                        f'Остаток зарплаты за {period_label}: начислено '
+                        f'{accrued_total:.2f} ₽, выплачено {balance:.2f} ₽'
+                        if carry_over > 0 else
+                        f'Переплата за {period_label}: начислено '
+                        f'{accrued_total:.2f} ₽, выдано {balance:.2f} ₽ — '
+                        f'удержим из следующей выплаты'
                     )
                     cur.execute(
                         "INSERT INTO salary_accruals "
@@ -1811,9 +1826,7 @@ def handler(event: dict, context) -> dict:
                         " carry_from_payout_id) "
                         "VALUES (%s, 'manual', %s, %s, (now() + interval '3 hours')::date, "
                         "        %s, %s)",
-                        (int(user_id), carry_over,
-                         f'Остаток зарплаты за {period_label}: начислено '
-                         f'{accrued_total:.2f} ₽, выплачено {balance:.2f} ₽',
+                        (int(user_id), carry_over, note,
                          int(actor_id) if actor_id not in (None, '') else None,
                          payout_id),
                     )
@@ -1831,7 +1844,9 @@ def handler(event: dict, context) -> dict:
                     f'Выплатил сотруднику #{user_id} {balance}'
                     + (f', удержано долгов {repaid_total}' if repaid_total else '')
                     + (f', перенесено на следующую выплату {carry_over}'
-                       if carry_over > 0.009 else ''),
+                       if carry_over > 0.009 else '')
+                    + (f', переплата {abs(carry_over)} удержится из следующей выплаты'
+                       if carry_over < -0.009 else ''),
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({

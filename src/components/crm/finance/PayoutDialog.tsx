@@ -138,23 +138,28 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
   /** Сколько выйдет к выдаче, если платить период целиком. */
   const fullAmount = Math.max(accrued - willRepay, 0);
 
-  // ЧАСТИЧНАЯ ВЫПЛАТА.
+  // ВЫПЛАТА С ОКРУГЛЕНИЕМ — В ЛЮБУЮ СТОРОНУ.
   //
-  // Поле пустое — платим всё, как раньше. Ввели меньшую сумму — выдаём её,
-  // а разницу сервер оставит невыплаченной, и она сама попадёт в следующий
-  // расчёт. Больше начисленного ввести нельзя: это уже аванс, для него есть
-  // отдельное ручное начисление.
+  // Поле пустое — платим всё, как раньше. Зарплату выдают круглыми суммами:
+  // к выплате 12 480,50 ₽, а на руки идёт 12 500 ₽ или 12 000 ₽.
+  //
+  // Недоплата остаётся за сотрудником и сама войдёт в следующий расчёт.
+  // Переплата работает так же, только в минус: сервер заводит её удержанием,
+  // и ближайшая выплата окажется на эту сумму меньше. В обоих случаях
+  // бухгалтеру не нужно ничего держать в голове.
   const typedAmount = payAmount.trim()
     ? Number(payAmount.replace(',', '.'))
     : null;
   const amountValid =
-    typedAmount === null ||
-    (Number.isFinite(typedAmount) && typedAmount > 0 && typedAmount <= fullAmount + 0.009);
+    typedAmount === null || (Number.isFinite(typedAmount) && typedAmount > 0);
   const amount =
     typedAmount !== null && amountValid ? typedAmount : fullAmount;
   /** Что уедет на следующий период из-за недоплаты. */
   const restToNextPeriod =
     typedAmount !== null && amountValid ? Math.max(fullAmount - typedAmount, 0) : 0;
+  /** Переплата: удержится из ближайшей следующей выплаты. */
+  const overPaid =
+    typedAmount !== null && amountValid ? Math.max(typedAmount - fullAmount, 0) : 0;
 
   const notEnough = !!preview && preview.cashBalance < amount;
   const wholePeriod = !from && !to;
@@ -212,6 +217,7 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
               setPayAmount={setPayAmount}
               amountValid={amountValid}
               restToNextPeriod={restToNextPeriod}
+              overPaid={overPaid}
               accrued={accrued}
               willRepay={willRepay}
               notEnough={notEnough}

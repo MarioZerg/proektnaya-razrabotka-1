@@ -15,6 +15,8 @@ interface PayoutAmountPanelProps {
   setPayAmount: (v: string) => void;
   amountValid: boolean;
   restToNextPeriod: number;
+  /** Выдали больше начисленного — разница удержится из следующей выплаты. */
+  overPaid: number;
   accrued: number;
   willRepay: number;
   notEnough: boolean;
@@ -31,6 +33,7 @@ const PayoutAmountPanel = ({
   setPayAmount,
   amountValid,
   restToNextPeriod,
+  overPaid,
   accrued,
   willRepay,
   notEnough,
@@ -62,16 +65,15 @@ const PayoutAmountPanel = ({
         </p>
         <p className="text-lg font-bold">{formatMoney(fullAmount)} ₽</p>
 
-        {/* ЧАСТИЧНАЯ ВЫПЛАТА.
-            Денег в кассе хватило не на всё, договорились выдать
-            часть — вводим сумму здесь. Разница не теряется и не
-            требует памяти бухгалтера: она остаётся невыплаченной
-            и сама войдёт в следующий расчёт. */}
+        {/* ВЫПЛАТА КРУГЛОЙ СУММОЙ — В ЛЮБУЮ СТОРОНУ.
+            Зарплату выдают наличными и переводом без копеек: к выплате
+            12 480,50 ₽, а на руки идёт 12 500 ₽ или 12 000 ₽. Недоплата
+            остаётся за сотрудником, переплата удержится из следующей
+            выплаты — держать разницу в голове не нужно. */}
         {fullAmount > 0 && (
           <div className="mt-3 border-t border-border pt-3">
             <Label className="text-xs text-muted-foreground">
-              Выплатить сейчас (можно меньше — остаток перейдёт в следующий
-              период)
+              Выплатить сейчас — можно округлить в любую сторону
             </Label>
             <div className="mt-1.5 flex items-center gap-2">
               <Input
@@ -95,6 +97,42 @@ const PayoutAmountPanel = ({
               )}
             </div>
 
+            {/* Округление в один клик: вручную набирать круглое число
+                каждому сотруднику — та же рутина, от которой уходим. */}
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-muted-foreground">Округлить:</span>
+              {[100, 500, 1000].map((step) => {
+                const down = Math.floor(fullAmount / step) * step;
+                const up = Math.ceil(fullAmount / step) * step;
+                return (
+                  <span key={step} className="flex gap-1">
+                    {down > 0 && down !== fullAmount && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 text-[11px]"
+                        onClick={() => setPayAmount(String(down))}
+                      >
+                        {formatMoney(down)}
+                      </Button>
+                    )}
+                    {up !== fullAmount && up !== down && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 text-[11px]"
+                        onClick={() => setPayAmount(String(up))}
+                      >
+                        {formatMoney(up)}
+                      </Button>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+
             {/* Ошибку показываем сразу, а не отказом сервера после
                 нажатия: админ должен понять причину, пока правит. */}
             {!amountValid && (
@@ -104,9 +142,7 @@ const PayoutAmountPanel = ({
                   size={12}
                   className="mt-0.5 shrink-0"
                 />
-                Сумма должна быть больше нуля и не больше{' '}
-                {formatMoney(fullAmount)} ₽. Чтобы выдать сверх заработанного,
-                оформите аванс отдельным начислением
+                Сумма должна быть больше нуля
               </p>
             )}
 
@@ -121,6 +157,23 @@ const PayoutAmountPanel = ({
                   На следующий период перейдёт{' '}
                   <b>{formatMoney(restToNextPeriod)} ₽</b> — сумма останется
                   за сотрудником и сама войдёт в ближайшую выплату
+                </span>
+              </p>
+            )}
+
+            {/* Выдали больше начисленного. Это не ошибка, а обычное
+                округление вверх: разница станет удержанием и уменьшит
+                ближайшую следующую выплату. */}
+            {overPaid > 0 && (
+              <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+                <Icon
+                  name="Undo2"
+                  size={12}
+                  className="mt-0.5 shrink-0"
+                />
+                <span>
+                  Выдаём на <b>{formatMoney(overPaid)} ₽</b> больше начисленного
+                  — эта сумма удержится из следующей выплаты сотрудника
                 </span>
               </p>
             )}
