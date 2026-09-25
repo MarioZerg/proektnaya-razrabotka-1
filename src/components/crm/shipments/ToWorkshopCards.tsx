@@ -70,6 +70,12 @@ const ToWorkshopCards = ({
                     Автозаказ
                   </Badge>
                 )}
+                {/* Заявку оформил админ за цех, а не сотрудник смены. */}
+                {s.requestedByAdmin && (
+                  <Badge variant="outline" className="border-primary/40 text-xs text-primary">
+                    Заявка от админа
+                  </Badge>
+                )}
               </div>
             </div>
 
@@ -89,6 +95,7 @@ const ToWorkshopCards = ({
               <div>
                 <span className="text-muted-foreground">Запросил: </span>
                 {s.requestedByName || '—'}
+                {s.requestedByAdmin && <span className="text-muted-foreground"> (админ)</span>}
               </div>
               <div>
                 <span className="text-muted-foreground">Создано: </span>

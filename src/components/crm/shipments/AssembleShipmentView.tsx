@@ -64,6 +64,8 @@ const AssembleShipmentView = ({
               : ''}
             {activeShipment.workshopName ? ` · ${activeShipment.workshopName}` : ''}
             {` · запросил ${activeShipment.requestedByName || '—'}`}
+            {/* Заявку оформил админ за цех — вопросы по составу к нему, не к смене. */}
+            {activeShipment.requestedByAdmin ? ' (админ)' : ''}
           </p>
         </div>
         <Button

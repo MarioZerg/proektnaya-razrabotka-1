@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import type { Material } from '@/lib/materialsApi';
+import type { Workshop } from '@/lib/workshopsApi';
 
 interface RequestMaterialDialogProps {
   open: boolean;
@@ -29,12 +30,22 @@ interface RequestMaterialDialogProps {
   setReqComment: (value: string) => void;
   creating: boolean;
   onCreate: () => void;
+  /**
+   * Админский режим: цех и смену берём не из профиля (у админа их нет), а из
+   * выпадающих списков — он оформляет заявку за конкретную смену конкретного цеха.
+   */
+  isAdmin?: boolean;
+  workshops?: Workshop[];
+  reqWorkshopId?: string;
+  setReqWorkshopId?: (value: string) => void;
+  reqShiftNumber?: string;
+  setReqShiftNumber?: (value: string) => void;
 }
 
-// Заявку на материал в цех создаёт только сам сотрудник цеха (швея/закройщик/упаковщик) —
-// цех и смена берутся из его профиля автоматически, кладовщик заявки не создаёт (он только
-// собирает и отправляет то, что уже запросили). Сотрудник выбирает материал и отправляет —
-// кладовщик сам определит количество и рулоны при сборке.
+// Заявку на материал в цех создаёт сотрудник цеха (швея/закройщик/упаковщик) — цех и смена
+// берутся из его профиля автоматически. Кладовщик заявки не создаёт (он только собирает и
+// отправляет то, что уже запросили). Администратор может оформить заявку за цех: тогда он
+// сам выбирает цех и смену, а заявка подписывается его именем с пометкой «Заявка от админа».
 const RequestMaterialDialog = ({
   open,
   onOpenChange,
@@ -46,20 +57,77 @@ const RequestMaterialDialog = ({
   setReqComment,
   creating,
   onCreate,
+  isAdmin = false,
+  workshops = [],
+  reqWorkshopId = '',
+  setReqWorkshopId,
+  reqShiftNumber = '',
+  setReqShiftNumber,
 }: RequestMaterialDialogProps) => {
+  const selectedWorkshop = workshops.find((w) => String(w.id) === reqWorkshopId);
+  const shiftOptions = Array.from(
+    { length: selectedWorkshop?.shiftsCount || 0 },
+    (_, i) => i + 1
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
         <Button onClick={onOpenCreate} className="w-full shrink-0 sm:w-auto">
           <Icon name="Plus" size={16} className="mr-2" />
-          Запросить материал
+          {isAdmin ? 'Заявка за цех' : 'Запросить материал'}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] max-w-md overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Запросить материал</DialogTitle>
+          <DialogTitle>{isAdmin ? 'Заявка за цех' : 'Запросить материал'}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          {isAdmin && (
+            <>
+              <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                Заявка уйдёт кладовщику с пометкой «Заявка от админа» — в списке будет видно,
+                что её оформили вы, а не смена.
+              </p>
+              <div className="space-y-1.5">
+                <Label>Цех</Label>
+                <Select value={reqWorkshopId} onValueChange={(v) => setReqWorkshopId?.(v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите цех" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workshops.map((w) => (
+                      <SelectItem key={w.id} value={String(w.id)}>
+                        {w.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Смена</Label>
+                <Select
+                  value={reqShiftNumber}
+                  onValueChange={(v) => setReqShiftNumber?.(v)}
+                  disabled={!selectedWorkshop}
+                >
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder={selectedWorkshop ? 'Выберите смену' : 'Сначала выберите цех'}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {shiftOptions.map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {selectedWorkshop?.shiftNames?.[n - 1] || `Смена № ${n}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
+          )}
+
           <div className="space-y-1.5">
             <Label>Материал</Label>
             <Select value={reqMaterialId} onValueChange={setReqMaterialId}>

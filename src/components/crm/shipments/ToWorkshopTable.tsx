@@ -186,6 +186,13 @@ const ToWorkshopTable = ({
                           Автозаказ
                         </Badge>
                       )}
+                      {/* Заявку оформил админ за цех — кладовщик уточняет состав у него,
+                          а не у смены. */}
+                      {s.requestedByAdmin && (
+                        <Badge variant="outline" className="border-primary/40 text-xs text-primary">
+                          Заявка от админа
+                        </Badge>
+                      )}
                     </div>
                     {needsCorrection && (
                       <p className="mt-1 text-xs text-destructive">Отказано: {s.rejectReason}</p>
@@ -198,7 +205,12 @@ const ToWorkshopTable = ({
                     </div>
                   </TableCell>
                   <TableCell className="whitespace-normal align-top text-xs">
-                    <div>{s.requestedByName || '—'}</div>
+                    <div>
+                      {s.requestedByName || '—'}
+                      {s.requestedByAdmin && (
+                        <span className="text-muted-foreground"> (админ)</span>
+                      )}
+                    </div>
                     <div className="mt-0.5 text-muted-foreground">{formatDate(s.createdAt)}</div>
                   </TableCell>
                   <TableCell className="min-w-0 align-top">

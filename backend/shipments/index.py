@@ -230,7 +230,7 @@ def handler(event: dict, context) -> dict:
                     "SELECT s.id, s.type, s.status, s.supplier_id, sup.name, s.workshop_id, w.name, "
                     "s.shift_number, s.comment, s.created_at, s.completed_at, s.requested_by, u.full_name, "
                     "s.created_by, cu.full_name, s.is_auto_order, s.reject_reason, "
-                    "s.logistics_cost, s.exchange_rate "
+                    "s.logistics_cost, s.exchange_rate, u.role "
                     "FROM shipments s "
                     "LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                     "LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -340,6 +340,9 @@ def handler(event: dict, context) -> dict:
                     # администратор дозаполняет её позже — себестоимость пересчитается.
                     'logisticsCost': float(row[17]) if row[17] is not None else 0.0,
                     'exchangeRate': float(row[18]) if row[18] is not None else None,
+                    # Заявку мог оформить администратор за цех — в списке и на сборке это
+                    # должно быть видно, иначе кладовщик не поймёт, откуда взялся запрос.
+                    'requestedByAdmin': row[19] == 'admin',
                     'items': items,
                 }
 
@@ -400,7 +403,10 @@ def handler(event: dict, context) -> dict:
                 f"JOIN suppliers isup ON isup.id = si.supplier_id WHERE si.shipment_id = s.id) as item_suppliers, "
                 # Логистика нужна прямо в списке: счёт за перевозку приходит позже машины,
                 # и по списку сразу видно, в какой приёмке сумму ещё не проставили.
-                f"COALESCE(s.logistics_cost, 0) as logistics_cost "
+                f"COALESCE(s.logistics_cost, 0) as logistics_cost, "
+                # Роль автора заявки: заявку в цех может оформить администратор, и в списке
+                # это подписывается отдельно — кладовщик видит, что запрос не от смены.
+                f"u.role "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                 f"LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -434,6 +440,8 @@ def handler(event: dict, context) -> dict:
                     'itemSuppliers': r[19],
                     # Ноль — логистику ещё не проставили: в списке это видно сразу.
                     'logisticsCost': float(r[20]) if r[20] is not None else 0.0,
+                    # Заявку оформил администратор за цех, а не сотрудник смены.
+                    'requestedByAdmin': r[21] == 'admin',
                 }
                 for r in cur.fetchall()
             ]
@@ -1612,6 +1620,7 @@ def handler(event: dict, context) -> dict:
                 # упаковщик) или админ — кладовщик заявки не создаёт (только собирает и
                 # отправляет то, что уже запросили). Проверяем на сервере, чтобы нельзя было
                 # обойти проверку на фронтенде.
+                actor_row = None
                 if actor_id:
                     cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
                     actor_row = cur.fetchone()
@@ -1670,6 +1679,10 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': f'Материала "{material_name or "—"}" нет на складе — заявку создать нельзя'}),
                     }
 
+                # Если автора явно не передали — ставим того, кто дёрнул ручку (админ
+                # оформляет заявку за цех, и в списке должно быть видно его имя).
+                if requested_by in (None, '') and actor_id:
+                    requested_by = actor_id
                 requested_by_sql = int(requested_by) if requested_by not in (None, '') else 'NULL'
                 comment_esc = comment.replace("'", "''")
 
@@ -1686,9 +1699,11 @@ def handler(event: dict, context) -> dict:
                     f"VALUES ({shipment_id}, {int(material_id)}, {requested_qty_sql})"
                 )
 
+                is_admin_request = bool(actor_row and actor_row[0] == 'admin')
                 log_action(
                     cur, actor_id, actor_name, 'request_to_workshop', 'shipment', shipment_id,
-                    f'Создал заявку на отгрузку в цех #{workshop_id}',
+                    ('Администратор создал заявку на отгрузку в цех #' if is_admin_request
+                     else 'Создал заявку на отгрузку в цех #') + str(workshop_id),
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}

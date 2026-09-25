@@ -33,6 +33,9 @@ const ToWorkshop = () => {
   const { user } = useAuth();
   const isProduction = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
   const zone = getAccessZone(user?.role);
+  // Админ тоже может оформить заявку кладовщику — но за конкретный цех и смену, которые
+  // он выбирает руками (своего цеха у него нет). Заявка уходит с его именем и пометкой.
+  const isAdmin = user?.role === 'admin';
 
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
@@ -49,6 +52,9 @@ const ToWorkshop = () => {
   const [creating, setCreating] = useState(false);
   const [reqComment, setReqComment] = useState('');
   const [reqMaterialId, setReqMaterialId] = useState('');
+  // Только для админского режима: цех и смена, за которые оформляется заявка.
+  const [reqWorkshopId, setReqWorkshopId] = useState('');
+  const [reqShiftNumber, setReqShiftNumber] = useState('');
 
   const [activeShipment, setActiveShipment] = useState<ShipmentDetail | null>(null);
   const [scanCode, setScanCode] = useState('');
@@ -184,18 +190,49 @@ const ToWorkshop = () => {
   const openCreate = () => {
     setReqComment('');
     setReqMaterialId('');
+    setReqWorkshopId('');
+    setReqShiftNumber('');
     setCreateOpen(true);
   };
 
+  // Материалы в диалоге: у сотрудника — всё, что пришло с сервера, у админа — только
+  // разрешённые выбранному цеху, иначе он закажет ткань, которую этот цех не шьёт.
+  const dialogWorkshopAllowed = isAdmin
+    ? workshops.find((w) => String(w.id) === reqWorkshopId)?.allowedMaterials || null
+    : null;
+  const dialogMaterials = dialogWorkshopAllowed
+    ? materials.filter((m) => dialogWorkshopAllowed.includes(m.id))
+    : materials;
+
+  // Цех и смена в заявке: у сотрудника из открытой смены, у админа — выбранные в диалоге.
+  const requestWorkshopId = isAdmin ? Number(reqWorkshopId) || null : effectiveWorkshopId;
+  const requestShiftNumber = isAdmin ? Number(reqShiftNumber) || null : effectiveShiftNumber;
+
+  // Сменили цех — выбранные смена и материал могли остаться от прошлого цеха.
+  useEffect(() => {
+    setReqShiftNumber('');
+    setReqMaterialId('');
+  }, [reqWorkshopId]);
+
   const handleCreate = async () => {
-    if (!effectiveWorkshopId) {
-      toast({ title: 'За вами не закреплён цех — откройте смену на главной странице', variant: 'destructive' });
+    if (!requestWorkshopId) {
+      toast({
+        title: isAdmin
+          ? 'Выберите цех, за который оформляете заявку'
+          : 'За вами не закреплён цех — откройте смену на главной странице',
+        variant: 'destructive',
+      });
       return;
     }
     // Рулон, который в итоге попадёт в цех по этой заявке, обязан принадлежать смене —
     // без открытой смены заявку создать нельзя (проверяется и на сервере).
-    if (!effectiveShiftNumber) {
-      toast({ title: 'За вами не закреплена смена — откройте смену на главной странице', variant: 'destructive' });
+    if (!requestShiftNumber) {
+      toast({
+        title: isAdmin
+          ? 'Выберите смену, на которую нужен материал'
+          : 'За вами не закреплена смена — откройте смену на главной странице',
+        variant: 'destructive',
+      });
       return;
     }
     if (!reqMaterialId) {
@@ -205,8 +242,8 @@ const ToWorkshop = () => {
     setCreating(true);
     try {
       await requestToWorkshop({
-        workshopId: effectiveWorkshopId,
-        shiftNumber: effectiveShiftNumber ?? undefined,
+        workshopId: requestWorkshopId,
+        shiftNumber: requestShiftNumber,
         comment: reqComment.trim() || undefined,
         materialId: Number(reqMaterialId),
         requestedBy: user?.id,
@@ -370,21 +407,29 @@ const ToWorkshop = () => {
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
               {isProduction
                 ? 'Запросите нужный материал — кладовщик соберёт рулоны и отправит вам'
-                : 'Заявку создаёт сотрудник цеха → сборка рулонов сканированием → отправка → приём в цехе'}
+                : isAdmin
+                  ? 'Заявку создаёт сотрудник цеха или админ за цех → сборка рулонов сканированием → отправка → приём в цехе'
+                  : 'Заявку создаёт сотрудник цеха → сборка рулонов сканированием → отправка → приём в цехе'}
             </p>
           </div>
-          {isProduction && (
+          {(isProduction || isAdmin) && (
             <RequestMaterialDialog
               open={createOpen}
               onOpenChange={setCreateOpen}
               onOpenCreate={openCreate}
-              materials={materials}
+              materials={dialogMaterials}
               reqMaterialId={reqMaterialId}
               setReqMaterialId={setReqMaterialId}
               reqComment={reqComment}
               setReqComment={setReqComment}
               creating={creating}
               onCreate={handleCreate}
+              isAdmin={isAdmin}
+              workshops={workshops}
+              reqWorkshopId={reqWorkshopId}
+              setReqWorkshopId={setReqWorkshopId}
+              reqShiftNumber={reqShiftNumber}
+              setReqShiftNumber={setReqShiftNumber}
             />
           )}
         </div>

@@ -23,6 +23,13 @@ export interface Shipment {
   completedAt: string | null;
   itemsCount: number;
   requestedByName: string | null;
+  /**
+   * Заявку оформил администратор за цех, а не сотрудник смены.
+   *
+   * Кладовщику это важно видеть: запрос пришёл не от людей у станка, уточнять
+   * состав надо у администратора.
+   */
+  requestedByAdmin?: boolean;
   createdByName: string | null;
   totalQuantity: number;
   isAutoOrder: boolean;
