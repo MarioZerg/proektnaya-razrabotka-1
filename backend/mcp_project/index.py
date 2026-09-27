@@ -143,7 +143,10 @@ def _gh(path, params=None):
         url += '?' + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={
         'Accept': 'application/vnd.github+json',
-        'Authorization': f'Bearer {os.environ["GITHUB_TOKEN"]}',
+        # Имя MCP_GITHUB_TOKEN, а не GITHUB_TOKEN: короткое имя занято самой
+        # платформой под её собственную интеграцию с GitHub, и секрет с таким
+        # именем в проект не добавляется.
+        'Authorization': f'Bearer {os.environ["MCP_GITHUB_TOKEN"]}',
         'User-Agent': 'poehali-mcp',
         'X-GitHub-Api-Version': '2022-11-28',
     })
